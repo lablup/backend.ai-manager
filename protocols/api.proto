@@ -1,0 +1,29 @@
+syntax = "proto3";
+package sorna;
+
+enum ActionType {
+    PING      = 0;
+    CREATE    = 1;
+    DESTROY   = 2;
+    EXECUTE   = 3;
+}
+
+message InputMessage {
+    ActionType action = 1;
+    string kernel_id  = 2;
+    int32 length      = 3;
+    string content    = 4;
+}
+
+enum ReplyType {
+    PONG          = 0;
+    TEXT_OUTPUT   = 1;
+    STREAM_OUTPUT = 2;
+}
+
+message OutputMessage {
+    ReplyType reply  = 1;
+    string kernel_id = 2;
+    int32 length     = 3;
+    string content   = 4;
+}
