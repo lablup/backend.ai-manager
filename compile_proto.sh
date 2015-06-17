@@ -1,5 +1,9 @@
 #! /bin/bash
-protoc -I./protocols --python_out=./sorna/proto ./protocols/api.proto
+for fname in $(ls ./protocols/*.proto); do
+    protoc -I./protocols --python_out=./sorna/proto $fname
+done
 
 # Temporary patch
-sed -i "s%\([ \t]\+\)\(syntax=\)%\1# \2%" ./sorna/proto/api_pb2.py
+for fname in $(ls ./sorna/proto/*_pb2.py); do
+    sed -i "s%\([ \t]\+\)\(syntax=\)%\1# \2%" $fname
+done

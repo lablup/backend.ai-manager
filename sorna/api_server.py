@@ -6,7 +6,9 @@ The Sorna API Server
 It routes the API requests to kernel agents in VMs and manages the VM instance pool.
 '''
 
-from sorna.proto.api_pb2 import InputMessage, OutputMessage, ActionType, ReplyType
+from .proto.api_pb2 import InputMessage, OutputMessage, ActionType, ReplyType
+from .proto.agent_pb2 import AgentRequest, AgentResponse
+from .utils.protobuf import read_message, write_message
 import asyncio, aiozmq, zmq
 import docker
 import signal
@@ -46,17 +48,14 @@ def find_avail_instance():
 @asyncio.coroutine
 def handle_api(reader, writer):
     while not reader.at_eof():
-        input_len     = yield from reader.readexactly(2)
-        input_msg_len = struct.unpack('>H', input_len)
-        input_data    = yield from reader.readexactly(input_msg_len)
-        input_msg     = InputMessage.ParseFromString(input_data)
+        input_msg = yield from read_message(InputMessage, reader)
         output_msg = OutputMessage()
 
         if input_msg.action == ActionType.PING:
 
             output_msg.reply     = ReplyType.PONG
             output_msg.kernel_id = 0
-            output_msg.length    = 0
+            output_msg.body      = ''
 
         elif input_msg.action == ActionType.CREATE:
 
@@ -67,23 +66,29 @@ def handle_api(reader, writer):
                 base_url='tcp://{0}:{1}'.format(instance.ip, instance.docker_port),
                 timeout=5, version='auto'
             )
+            # TODO: create the container image
+            # TODO: change the command to "python3 -m sorna.kernel_agent"
             container = cli.create_container(image='lablup-python-kernel:latest',
                                              command='/usr/bin/python3')
             kernel = Kernel(instance=instance, container=container.id)
             kernel_key = '{0}:{1}'.format(instance.ip, kernel.container)
             kernel_registry[kernel_key] = kernel
 
+            # TODO: run the container and set the port mappings
+
+            # TODO: check heartbeats to see if the container is running correctly.
+            while tries < 5:
+                yield from asyncio.sleep(1)
+
             # TODO: restore the user module state?
-            # TODO: check if the container is running correctly.
 
             output_msg.reply     = ReplyType.KERNEL_INFO
             output_msg.kernel_id = kernel_key
-            output_msg.content   = json.loads({ # TODO: implement
+            output_msg.body      = json.loads({ # TODO: implement
                 'stdin_sock': '',
                 'stdout_sock': '',
                 'stderr_sock': '',
             })
-            output_msg.length = len(output_msg.content)
 
         elif input_msg.action == ActionType.DESTROY:
 
@@ -95,14 +100,12 @@ def handle_api(reader, writer):
                 # TODO: implement
             else:
                 raise RuntimeError('No such kernel.')
-
-        output = output_msg.SerializeToString()
-        writer.write(struct.pack('>H', len(output)))
-        writer.write(output)
-        yield from writer.drain()
+        
+        yield from write_message(output_msg, writer)
 
 def handle_exit():
     loop.stop()
+
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()

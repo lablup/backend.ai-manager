@@ -20,7 +20,7 @@ DESCRIPTOR = _descriptor.FileDescriptor(
   name='api.proto',
   package='sorna',
   # syntax='proto3',
-  serialized_pb=_b('\n\tapi.proto\x12\x05sorna\"e\n\x0cInputMessage\x12!\n\x06\x61\x63tion\x18\x01 \x01(\x0e\x32\x11.sorna.ActionType\x12\x11\n\tkernel_id\x18\x02 \x01(\t\x12\x0e\n\x06length\x18\x03 \x01(\x05\x12\x0f\n\x07\x63ontent\x18\x04 \x01(\t\"d\n\rOutputMessage\x12\x1f\n\x05reply\x18\x01 \x01(\x0e\x32\x10.sorna.ReplyType\x12\x11\n\tkernel_id\x18\x02 \x01(\t\x12\x0e\n\x06length\x18\x03 \x01(\x05\x12\x0f\n\x07\x63ontent\x18\x04 \x01(\t*<\n\nActionType\x12\x08\n\x04PING\x10\x00\x12\n\n\x06\x43REATE\x10\x01\x12\x0b\n\x07\x44\x45STROY\x10\x02\x12\x0b\n\x07\x45XECUTE\x10\x03*9\n\tReplyType\x12\x08\n\x04PONG\x10\x00\x12\x0f\n\x0bTEXT_OUTPUT\x10\x01\x12\x11\n\rSTREAM_OUTPUT\x10\x02\x62\x06proto3')
+  serialized_pb=_b('\n\tapi.proto\x12\x05sorna\"R\n\x0cInputMessage\x12!\n\x06\x61\x63tion\x18\x01 \x01(\x0e\x32\x11.sorna.ActionType\x12\x11\n\tkernel_id\x18\x02 \x01(\t\x12\x0c\n\x04\x62ody\x18\x03 \x01(\t\"T\n\rOutputMessage\x12\x1f\n\x05reply\x18\x01 \x01(\x0e\x32\x10.sorna.ReplyType\x12\x11\n\tkernel_id\x18\x02 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x03 \x01(\t*<\n\nActionType\x12\x08\n\x04PING\x10\x00\x12\n\n\x06\x43REATE\x10\x01\x12\x0b\n\x07\x44\x45STROY\x10\x02\x12\x0b\n\x07\x45XECUTE\x10\x03*&\n\tReplyType\x12\x08\n\x04PONG\x10\x00\x12\x0f\n\x0bKERNEL_INFO\x10\x01\x62\x06proto3')
 )
 _sym_db.RegisterFileDescriptor(DESCRIPTOR)
 
@@ -49,8 +49,8 @@ _ACTIONTYPE = _descriptor.EnumDescriptor(
   ],
   containing_type=None,
   options=None,
-  serialized_start=225,
-  serialized_end=285,
+  serialized_start=190,
+  serialized_end=250,
 )
 _sym_db.RegisterEnumDescriptor(_ACTIONTYPE)
 
@@ -66,18 +66,14 @@ _REPLYTYPE = _descriptor.EnumDescriptor(
       options=None,
       type=None),
     _descriptor.EnumValueDescriptor(
-      name='TEXT_OUTPUT', index=1, number=1,
-      options=None,
-      type=None),
-    _descriptor.EnumValueDescriptor(
-      name='STREAM_OUTPUT', index=2, number=2,
+      name='KERNEL_INFO', index=1, number=1,
       options=None,
       type=None),
   ],
   containing_type=None,
   options=None,
-  serialized_start=287,
-  serialized_end=344,
+  serialized_start=252,
+  serialized_end=290,
 )
 _sym_db.RegisterEnumDescriptor(_REPLYTYPE)
 
@@ -87,8 +83,7 @@ CREATE = 1
 DESTROY = 2
 EXECUTE = 3
 PONG = 0
-TEXT_OUTPUT = 1
-STREAM_OUTPUT = 2
+KERNEL_INFO = 1
 
 
 
@@ -114,15 +109,8 @@ _INPUTMESSAGE = _descriptor.Descriptor(
       is_extension=False, extension_scope=None,
       options=None),
     _descriptor.FieldDescriptor(
-      name='length', full_name='sorna.InputMessage.length', index=2,
-      number=3, type=5, cpp_type=1, label=1,
-      has_default_value=False, default_value=0,
-      message_type=None, enum_type=None, containing_type=None,
-      is_extension=False, extension_scope=None,
-      options=None),
-    _descriptor.FieldDescriptor(
-      name='content', full_name='sorna.InputMessage.content', index=3,
-      number=4, type=9, cpp_type=9, label=1,
+      name='body', full_name='sorna.InputMessage.body', index=2,
+      number=3, type=9, cpp_type=9, label=1,
       has_default_value=False, default_value=_b("").decode('utf-8'),
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
@@ -140,7 +128,7 @@ _INPUTMESSAGE = _descriptor.Descriptor(
   oneofs=[
   ],
   serialized_start=20,
-  serialized_end=121,
+  serialized_end=102,
 )
 
 
@@ -166,15 +154,8 @@ _OUTPUTMESSAGE = _descriptor.Descriptor(
       is_extension=False, extension_scope=None,
       options=None),
     _descriptor.FieldDescriptor(
-      name='length', full_name='sorna.OutputMessage.length', index=2,
-      number=3, type=5, cpp_type=1, label=1,
-      has_default_value=False, default_value=0,
-      message_type=None, enum_type=None, containing_type=None,
-      is_extension=False, extension_scope=None,
-      options=None),
-    _descriptor.FieldDescriptor(
-      name='content', full_name='sorna.OutputMessage.content', index=3,
-      number=4, type=9, cpp_type=9, label=1,
+      name='content', full_name='sorna.OutputMessage.content', index=2,
+      number=3, type=9, cpp_type=9, label=1,
       has_default_value=False, default_value=_b("").decode('utf-8'),
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
@@ -191,8 +172,8 @@ _OUTPUTMESSAGE = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=123,
-  serialized_end=223,
+  serialized_start=104,
+  serialized_end=188,
 )
 
 _INPUTMESSAGE.fields_by_name['action'].enum_type = _ACTIONTYPE

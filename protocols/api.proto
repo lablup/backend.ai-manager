@@ -11,8 +11,7 @@ enum ActionType {
 message InputMessage {
     ActionType action = 1;
     string kernel_id  = 2;
-    int32 length      = 3;
-    string content    = 4;
+    string body       = 3;
 }
 
 enum ReplyType {
@@ -23,6 +22,5 @@ enum ReplyType {
 message OutputMessage {
     ReplyType reply  = 1;
     string kernel_id = 2;
-    int32 length     = 3;
-    string content   = 4;
+    string content   = 3;
 }

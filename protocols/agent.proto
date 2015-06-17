@@ -1,0 +1,17 @@
+syntax = "proto3";
+package sorna;
+
+enum AgentReqType {
+    HEARTBEAT    = 0;
+    SOCKET_INFO  = 1;
+    EXECUTE      = 2;
+}
+
+message AgentRequest {
+    AgentReqType req_type = 1;
+    string body	          = 2;
+}
+
+message AgentResponse {
+    string body = 1;
+}
