@@ -1,1 +1,4 @@
 protobuf>=3.0
+docker-py
+namedlist
+aiozmq

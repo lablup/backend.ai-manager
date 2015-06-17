@@ -17,8 +17,7 @@ message InputMessage {
 
 enum ReplyType {
     PONG          = 0;
-    TEXT_OUTPUT   = 1;
-    STREAM_OUTPUT = 2;
+    KERNEL_INFO	  = 1;
 }
 
 message OutputMessage {
