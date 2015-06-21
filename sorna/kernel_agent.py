@@ -6,7 +6,8 @@ The Sorna Kernel Agent
 It manages the namespace and hooks for the Python code requested and execute it.
 '''
 
-from .proto.agent_pb2 import AgentRequest, AgentResponse, AgentReqType
+import sys
+from .proto.agent_pb2 import AgentRequest, AgentResponse, HEARTBEAT, SOCKET_INFO, EXECUTE
 from .utils.protobuf import read_message, write_message
 import asyncio, zmq, aiozmq
 import code
@@ -14,6 +15,24 @@ from functools import partial
 import signal
 import struct, types
 import builtins as builtin_mod
+
+class SockWriter(object):
+    def __init__(self, sock):
+        self._sock = sock
+
+    def write(self, s):
+        # TODO: wrap each string as a structured message
+        #       (to distinguish which cell sent the output in the frontend)
+        self._sock.send(s)
+
+class SockReader(object):
+    def __init__(self, sock):
+        self._sock = sock
+
+    def read(self, n):
+        # TODO: derwap string from a structured message
+        #       (the frontend should tag which cell sent this input)
+        return self._sock.read(n)
 
 class Kernel(object):
     '''
@@ -35,6 +54,10 @@ class Kernel(object):
         self.stderr_socket = context.socket(zmq.PUB)
         self.stderr_port = self.stderr_socket.bind_to_random_port('tcp://{0}'.format(self.ip))
 
+        self.stdin_reader = SockReader(self.stdin_socket)
+        self.stdout_writer = SockWriter(self.stdout_socket)
+        self.stderr_writer = SockWriter(self.stdout_socket)
+
         # Initialize user module and namespaces.
         user_module = types.ModuleType('__main__',
                                        doc='Automatically created module for the interactive shell.')
@@ -47,50 +70,57 @@ class Kernel(object):
 
     def execute_code(self, src):
 
-        sys.stdin, orig_stdin   = self.stdin_reader, sys.stdin
-        sys.stdout, orig_stdout = self.stdout_writer, sys.stdout
-        sys.stderr, orig_stderr   = self.stderr_reader, sys.stderr
+        # TODO: limit the scope of changed sys.std*
+        #       (use a proxy object for sys module?)
+        #sys.stdin, orig_stdin   = self.stdin_reader, sys.stdin
+        #sys.stdout, orig_stdout = self.stdout_writer, sys.stdout
+        #sys.stderr, orig_stderr = self.stderr_writer, sys.stderr
 
         try:
             # TODO: cache the compiled code in the memory
-            code_obj = code.compile(src)
+            code_obj = code.compile_command(src, symbol='eval')
         except IndentationError as e:
             raise
         except (OverflowError, SyntaxError, ValueError, TypeError, MemoryError) as e:
             raise
 
         try:
-            exec(code_obj, user_global_ns, user_ns)
+            # TODO: distinguish whethe we should do exec or eval...
+            exec_result = eval(code_obj, self.user_global_ns, self.user_ns)
         except SystemExit as e:
             raise RuntimeError('You cannot shut-down the Python environment.')
         except:
             raise
 
         # TODO: wrap exceptions as a structured reply
+        #sys.stdin = orig_stdin
+        #sys.stdout = orig_stdout
+        #sys.stderr = orig_stderr
 
-        sys.stdin = orig_stdin
-        sys.stdout = orig_stdout
-        sys.stderr = orig_stderr
+        return exec_result
 
 
 @asyncio.coroutine
-def handle_request(kernel, reader, writer):
-    req = yield from read_message(AgentReqMessage, reader)
+def handle_request(kernel, router):
+    req_data = yield from router.read()
+    req = AgentRequest()
+    # req_data[0] is the identity of client.
+    req.ParseFromString(req_data[1])
     resp = AgentResponse()
 
-    if req.req_type == AgentReqType.HEARTBEAT:
+    if req.req_type == HEARTBEAT:
         raise NotImplementedError()
-    elif req.req_type == AgentReqType.SOCK_INFO:
+    elif req.req_type == SOCKET_INFO:
         resp.body = json.loads({
             'stdin': 'tcp://{0}:{1}'.format(kernel.ip, kernel.stdin_port),
             'stdout': 'tcp://{0}:{1}'.format(kernel.ip, kernel.stdout_port),
             'stderr': 'tcp://{0}:{1}'.format(kernel.ip, kernel.stderr_port),
         })
-    elif req.req_type == AgentReqType.EXECUTE:
+    elif req.req_type == EXECUTE:
         result = kernel.execute_code(req.body)
-        resp.body = result
+        resp.body = str(result)
 
-    yield from write_message(resp, writer)
+    router.write([req_data[0], resp.SerializeToString()])
 
 def handle_exit():
     loop.stop()
@@ -99,16 +129,16 @@ def handle_exit():
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
     kernel = Kernel('127.0.0.1')  # for testing
-    start_coro = asyncio.start_server(partial(handle_request, kernel), '0.0.0.0', 5002, loop=loop)
-    server = loop.run_until_complete(start_coro)
+    start_coro = aiozmq.create_zmq_stream(zmq.ROUTER, bind='tcp://0.0.0.0:5002', loop=loop)
+    router = loop.run_until_complete(start_coro)
     print('Started serving...')
     try:
         loop.add_signal_handler(signal.SIGTERM, handle_exit)
+        asyncio.async(handle_request(kernel, router), loop=loop)
         loop.run_forever()
     except KeyboardInterrupt:
         print()
         pass
-    server.close()
-    loop.run_until_complete(server.wait_closed())
+    router.close()
     loop.close()
     print('Exit.')
