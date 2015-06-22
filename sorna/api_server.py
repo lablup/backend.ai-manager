@@ -178,7 +178,7 @@ def handle_api(loop, router):
                     break
                 else:
                     yield from asyncio.sleep(1, loop=loop)
-                    tried += 1
+                    tries += 1
             else:
                 output_msg.reply     = FAILURE
                 output_msg.kernel_id = ''
