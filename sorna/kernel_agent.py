@@ -107,7 +107,6 @@ class Kernel(object):
 def handle_request(loop, router, kernel):
     client_id, req_data = yield from router.read()
     req = AgentRequest()
-    # req_data[0] is the identity of client.
     req.ParseFromString(req_data)
     resp = AgentResponse()
 

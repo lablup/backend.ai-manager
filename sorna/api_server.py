@@ -50,6 +50,11 @@ class KernelDriver(metaclass=ABCMeta):
 
     @asyncio.coroutine
     @abstractmethod
+    def find_avail_instance():
+        pass
+
+    @asyncio.coroutine
+    @abstractmethod
     def create_kernel(self, instance):
         '''
         Launches the kernel and return its ID.
@@ -70,6 +75,14 @@ class KernelDriver(metaclass=ABCMeta):
 class DockerKernelDriver(KernelDriver):
 
     @asyncio.coroutine
+    def find_avail_instance():
+        for instance in instance_registry:
+            if instance.cur_kernels < instance.max_kernels:
+                instance.cur_kernels += 1
+                return instance
+        return None
+
+    @asyncio.coroutine
     def create_kernel(self, instance):
         cli = docker.Client(
             base_url='tcp://{0}:{1}'.format(instance.ip, instance.docker_port),
@@ -82,10 +95,12 @@ class DockerKernelDriver(KernelDriver):
         kernel = Kernel(instance=instance, container=container.id)
         kernel_id = '{0}:{1}'.format(instance.ip, kernel.container)
         # TODO: run the container and set the port mappings
+        kernel_registry[kernel_id] = kernel
         return kernel_id
 
     @asyncio.coroutine
     def destroy_kernel(self, kernel_id):
+        del kernel_registry[input_msg.kernel_id]
         raise NotImplementedError()
 
     @asyncio.coroutine
@@ -96,6 +111,16 @@ class DockerKernelDriver(KernelDriver):
 class LocalKernelDriver(KernelDriver):
 
     @asyncio.coroutine
+    def find_avail_instance():
+        for instance in instance_registry:
+            if kernel_driver == 'local' and instance.ip != '127.0.0.1':
+                continue
+            if instance.cur_kernels < instance.max_kernels:
+                instance.cur_kernels += 1
+                return instance
+        return None
+
+    @asyncio.coroutine
     def create_kernel(self, instance):
         unique_id = str(uuid.uuid4())
         kernel_id = '127.0.0.1:{0}'.format(unique_id)
@@ -104,6 +129,7 @@ class LocalKernelDriver(KernelDriver):
                    '--kernel-id', kernel_id)
         proc = yield from loop.create_subprocess_exec(*cmdargs)
         kernel.priv = proc
+        kernel_registry[kernel_id] = kernel
         return kernel_id
 
     @asyncio.coroutine
@@ -113,6 +139,7 @@ class LocalKernelDriver(KernelDriver):
         assert(kernel.instance.cur_kernels >= 0)
         proc = kernel.priv
         proc.terminate()
+        del kernel_registry[input_msg.kernel_id]
         yield from proc.wait()
 
     @asyncio.coroutine
@@ -125,22 +152,17 @@ class LocalKernelDriver(KernelDriver):
         req.body = req_id
         dealer.write([req])
         # TODO: handle timeout
-        resp = yield from dealer.read()
+        resp_data = yield from dealer.read()
+        resp = AgentResponse()
+        resp.ParseFromString(resp_data[0])
         return (resp.body == req_id)
+
 
 instance_registry = {
     'test': Instance(ip='127.0.0.1')
 }
 kernel_registry = dict()
 
-def find_avail_instance():
-    for instance in instance_registry:
-        if kernel_driver == 'local' and instance.ip != '127.0.0.1':
-            continue
-        if instance.cur_kernels < instance.max_kernels:
-            instance.cur_kernels += 1
-            return instance
-    return None
 
 @asyncio.coroutine
 def handle_api(loop, router):
@@ -158,17 +180,16 @@ def handle_api(loop, router):
 
         elif input_msg.action == CREATE:
 
-            instance = find_avail_instance()
-            if instance is None:
-                raise RuntimeError('No instance is available to launch a new kernel.')
             if kernel_driver == 'docker':
                 driver = DockerKernelDriver(loop)
             elif kernel_driver == 'local':
                 driver = LocalKernelDriver(loop)
             else:
                 assert False, 'Should not reach here.'
+            instance = yield from driver.find_avail_instance()
+            if instance is None:
+                raise RuntimeError('No instance is available to launch a new kernel.')
             kernel_id = driver.create_kernel()
-            kernel_registry[kernel_id] = kernel
 
             yield from asyncio.sleep(0.2, loop=loop)
             tries = 0
