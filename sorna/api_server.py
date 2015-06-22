@@ -171,12 +171,14 @@ def handle_api(loop, router):
             kernel_registry[kernel_id] = kernel
 
             yield from asyncio.sleep(0.2, loop=loop)
+            tries = 0
             while tries < 5:
                 success = yield from driver.ping_kernel(kernel_id)
                 if success:
                     break
                 else:
                     yield from asyncio.sleep(1, loop=loop)
+                    tried += 1
             else:
                 output_msg.reply     = FAILURE
                 output_msg.kernel_id = ''
