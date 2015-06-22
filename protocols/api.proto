@@ -16,11 +16,13 @@ message InputMessage {
 
 enum ReplyType {
     PONG          = 0;
-    KERNEL_INFO	  = 1;
+    SUCCESS	  = 200;
+    INVALID_INPUT = 400;
+    FAILURE	  = 500;
 }
 
 message OutputMessage {
     ReplyType reply  = 1;
     string kernel_id = 2;
-    string content   = 3;
+    string body      = 3;
 }

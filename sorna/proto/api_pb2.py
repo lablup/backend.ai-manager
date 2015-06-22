@@ -20,7 +20,7 @@ DESCRIPTOR = _descriptor.FileDescriptor(
   name='api.proto',
   package='sorna',
   # syntax='proto3',
-  serialized_pb=_b('\n\tapi.proto\x12\x05sorna\"R\n\x0cInputMessage\x12!\n\x06\x61\x63tion\x18\x01 \x01(\x0e\x32\x11.sorna.ActionType\x12\x11\n\tkernel_id\x18\x02 \x01(\t\x12\x0c\n\x04\x62ody\x18\x03 \x01(\t\"T\n\rOutputMessage\x12\x1f\n\x05reply\x18\x01 \x01(\x0e\x32\x10.sorna.ReplyType\x12\x11\n\tkernel_id\x18\x02 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x03 \x01(\t*<\n\nActionType\x12\x08\n\x04PING\x10\x00\x12\n\n\x06\x43REATE\x10\x01\x12\x0b\n\x07\x44\x45STROY\x10\x02\x12\x0b\n\x07\x45XECUTE\x10\x03*&\n\tReplyType\x12\x08\n\x04PONG\x10\x00\x12\x0f\n\x0bKERNEL_INFO\x10\x01\x62\x06proto3')
+  serialized_pb=_b('\n\tapi.proto\x12\x05sorna\"R\n\x0cInputMessage\x12!\n\x06\x61\x63tion\x18\x01 \x01(\x0e\x32\x11.sorna.ActionType\x12\x11\n\tkernel_id\x18\x02 \x01(\t\x12\x0c\n\x04\x62ody\x18\x03 \x01(\t\"Q\n\rOutputMessage\x12\x1f\n\x05reply\x18\x01 \x01(\x0e\x32\x10.sorna.ReplyType\x12\x11\n\tkernel_id\x18\x02 \x01(\t\x12\x0c\n\x04\x62ody\x18\x03 \x01(\t*<\n\nActionType\x12\x08\n\x04PING\x10\x00\x12\n\n\x06\x43REATE\x10\x01\x12\x0b\n\x07\x44\x45STROY\x10\x02\x12\x0b\n\x07\x45XECUTE\x10\x03*E\n\tReplyType\x12\x08\n\x04PONG\x10\x00\x12\x0c\n\x07SUCCESS\x10\xc8\x01\x12\x12\n\rINVALID_INPUT\x10\x90\x03\x12\x0c\n\x07\x46\x41ILURE\x10\xf4\x03\x62\x06proto3')
 )
 _sym_db.RegisterFileDescriptor(DESCRIPTOR)
 
@@ -49,8 +49,8 @@ _ACTIONTYPE = _descriptor.EnumDescriptor(
   ],
   containing_type=None,
   options=None,
-  serialized_start=190,
-  serialized_end=250,
+  serialized_start=187,
+  serialized_end=247,
 )
 _sym_db.RegisterEnumDescriptor(_ACTIONTYPE)
 
@@ -66,14 +66,22 @@ _REPLYTYPE = _descriptor.EnumDescriptor(
       options=None,
       type=None),
     _descriptor.EnumValueDescriptor(
-      name='KERNEL_INFO', index=1, number=1,
+      name='SUCCESS', index=1, number=200,
+      options=None,
+      type=None),
+    _descriptor.EnumValueDescriptor(
+      name='INVALID_INPUT', index=2, number=400,
+      options=None,
+      type=None),
+    _descriptor.EnumValueDescriptor(
+      name='FAILURE', index=3, number=500,
       options=None,
       type=None),
   ],
   containing_type=None,
   options=None,
-  serialized_start=252,
-  serialized_end=290,
+  serialized_start=249,
+  serialized_end=318,
 )
 _sym_db.RegisterEnumDescriptor(_REPLYTYPE)
 
@@ -83,7 +91,9 @@ CREATE = 1
 DESTROY = 2
 EXECUTE = 3
 PONG = 0
-KERNEL_INFO = 1
+SUCCESS = 200
+INVALID_INPUT = 400
+FAILURE = 500
 
 
 
@@ -154,7 +164,7 @@ _OUTPUTMESSAGE = _descriptor.Descriptor(
       is_extension=False, extension_scope=None,
       options=None),
     _descriptor.FieldDescriptor(
-      name='content', full_name='sorna.OutputMessage.content', index=2,
+      name='body', full_name='sorna.OutputMessage.body', index=2,
       number=3, type=9, cpp_type=9, label=1,
       has_default_value=False, default_value=_b("").decode('utf-8'),
       message_type=None, enum_type=None, containing_type=None,
@@ -173,7 +183,7 @@ _OUTPUTMESSAGE = _descriptor.Descriptor(
   oneofs=[
   ],
   serialized_start=104,
-  serialized_end=188,
+  serialized_end=185,
 )
 
 _INPUTMESSAGE.fields_by_name['action'].enum_type = _ACTIONTYPE

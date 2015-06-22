@@ -6,15 +6,17 @@ The Sorna Kernel Agent
 It manages the namespace and hooks for the Python code requested and execute it.
 '''
 
-import sys
 from .proto.agent_pb2 import AgentRequest, AgentResponse, HEARTBEAT, SOCKET_INFO, EXECUTE
 from .utils.protobuf import read_message, write_message
 import asyncio, zmq, aiozmq
+import argparse
+import builtins as builtin_mod
 import code
 from functools import partial
 import signal
 import struct, types
-import builtins as builtin_mod
+import sys
+import uuid
 
 class SockWriter(object):
     def __init__(self, sock):
@@ -42,8 +44,9 @@ class Kernel(object):
     (e.g., variables and functions).
     '''
 
-    def __init__(self, ip):
+    def __init__(self, ip, kernel_id):
         self.ip = ip
+        self.kernel_id = kernel_id
 
         # Initialize sockets.
         context = zmq.Context.instance()
@@ -101,7 +104,7 @@ class Kernel(object):
 
 
 @asyncio.coroutine
-def handle_request(kernel, router):
+def handle_request(loop, router, kernel):
     client_id, req_data = yield from router.read()
     req = AgentRequest()
     # req_data[0] is the identity of client.
@@ -109,7 +112,7 @@ def handle_request(kernel, router):
     resp = AgentResponse()
 
     if req.req_type == HEARTBEAT:
-        raise NotImplementedError()
+        resp.body = req.body
     elif req.req_type == SOCKET_INFO:
         resp.body = json.loads({
             'stdin': 'tcp://{0}:{1}'.format(kernel.ip, kernel.stdin_port),
@@ -128,13 +131,17 @@ def handle_exit():
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
-    kernel = Kernel('127.0.0.1')  # for testing
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument('--kernel-id', default=None)
+    args = argparser.parse_args()
+    kernel_id = args.kernel_id if args.kernel_id else str(uuid.uuid4())
+    kernel = Kernel('127.0.0.1', kernel_id)  # for testing
     start_coro = aiozmq.create_zmq_stream(zmq.ROUTER, bind='tcp://0.0.0.0:5002', loop=loop)
     router = loop.run_until_complete(start_coro)
-    print('Started serving...')
+    print('[Kernel {0}] Started serving...'.format(kernel_id))
     try:
         loop.add_signal_handler(signal.SIGTERM, handle_exit)
-        asyncio.async(handle_request(kernel, router), loop=loop)
+        asyncio.async(handle_request(loop, router, kernel), loop=loop)
         loop.run_forever()
     except KeyboardInterrupt:
         print()
