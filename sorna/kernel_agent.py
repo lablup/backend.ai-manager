@@ -102,10 +102,10 @@ class Kernel(object):
 
 @asyncio.coroutine
 def handle_request(kernel, router):
-    req_data = yield from router.read()
+    client_id, req_data = yield from router.read()
     req = AgentRequest()
     # req_data[0] is the identity of client.
-    req.ParseFromString(req_data[1])
+    req.ParseFromString(req_data)
     resp = AgentResponse()
 
     if req.req_type == HEARTBEAT:
@@ -120,7 +120,7 @@ def handle_request(kernel, router):
         result = kernel.execute_code(req.body)
         resp.body = str(result)
 
-    router.write([req_data[0], resp.SerializeToString()])
+    router.write([client_id, resp.SerializeToString()])
 
 def handle_exit():
     loop.stop()

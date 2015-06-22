@@ -6,8 +6,10 @@ The Sorna API Server
 It routes the API requests to kernel agents in VMs and manages the VM instance pool.
 '''
 
-from .proto.api_pb2 import InputMessage, OutputMessage, ActionType, ReplyType
+from .proto.api_pb2 import InputMessage, OutputMessage
+from .proto.api_pb2 import PING, PONG, CREATE, DESTROY, KERNEL_INFO
 from .proto.agent_pb2 import AgentRequest, AgentResponse
+from .proto.agent_pb2 import HEARTBEAT, SOCKET_INFO
 from .utils.protobuf import read_message, write_message
 import asyncio, aiozmq, zmq
 import docker
@@ -46,18 +48,20 @@ def find_avail_instance():
     return None
 
 @asyncio.coroutine
-def handle_api(reader, writer):
-    while not reader.at_eof():
-        input_msg = yield from read_message(InputMessage, reader)
+def handle_api(router):
+    while True:
+        client_id, input_data = yield from router.read()
+        input_msg = InputMessage()
+        input_msg.ParseFromString(input_data)
         output_msg = OutputMessage()
 
-        if input_msg.action == ActionType.PING:
+        if input_msg.action == PING:
 
-            output_msg.reply     = ReplyType.PONG
+            output_msg.reply     = PONG
             output_msg.kernel_id = 0
             output_msg.body      = ''
 
-        elif input_msg.action == ActionType.CREATE:
+        elif input_msg.action == CREATE:
 
             instance = find_avail_instance()
             if instance is None:
@@ -82,7 +86,7 @@ def handle_api(reader, writer):
 
             # TODO: restore the user module state?
 
-            output_msg.reply     = ReplyType.KERNEL_INFO
+            output_msg.reply     = KERNEL_INFO
             output_msg.kernel_id = kernel_key
             output_msg.body      = json.loads({ # TODO: implement
                 'stdin_sock': '',
@@ -90,7 +94,7 @@ def handle_api(reader, writer):
                 'stderr_sock': '',
             })
 
-        elif input_msg.action == ActionType.DESTROY:
+        elif input_msg.action == DESTROY:
 
             if input_msg.kernel_id in kernel_registry:
                 kernel = kernel_registry[input_msg.kernel_id]
@@ -100,8 +104,8 @@ def handle_api(reader, writer):
                 # TODO: implement
             else:
                 raise RuntimeError('No such kernel.')
-        
-        yield from write_message(output_msg, writer)
+
+        router.write([client_id, output_msg])
 
 def handle_exit():
     loop.stop()
@@ -109,16 +113,16 @@ def handle_exit():
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
-    start_coro = asyncio.start_server(handle_api, '0.0.0.0', 5001, loop=loop)
-    server = loop.run_until_complete(start_coro)
+    start_coro = aiozmq.create_zmq_stream(zmq.ROUTER, bind='tcp://0.0.0.0:5001', loop=loop)
+    router = loop.run_until_complete(start_coro)
     print('Started serving...')
     try:
         loop.add_signal_handler(signal.SIGTERM, handle_exit)
+        asyncio.async(handle_api(router), loop=loop)
         loop.run_forever()
     except KeyboardInterrupt:
         print()
         pass
-    server.close()
-    loop.run_until_complete(server.wait_closed())
+    router.close()
     loop.close()
     print('Exit.')
