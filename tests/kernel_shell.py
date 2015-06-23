@@ -2,12 +2,43 @@
 
 # TODO: transform this as a proper test suite
 
-from sorna.proto.agent_pb2 import AgentRequest, AgentResponse, EXECUTE, SOCKET_INFO
+from sorna.proto.api_pb2 import ManagerRequest, ManagerResponse
+from sorna.proto.api_pb2 import PING, PONG, CREATE, DESTROY, SUCCESS, INVALID_INPUT, FAILURE
+from sorna.proto.agent_pb2 import AgentRequest, AgentResponse
+from sorna.proto.agent_pb2 import EXECUTE, SOCKET_INFO
 import asyncio, zmq, aiozmq
 import signal
+import uuid
 
 @asyncio.coroutine
-def shell_loop(dealer):
+def create_kernel():
+    api_sock = yield from aiozmq.create_zmq_stream(zmq.DEALER, connect='tcp://127.0.0.1:5001', loop=loop)
+
+    # Test if ping works.
+    req_id = str(uuid.uuid4())
+    req = ManagerRequest()
+    req.action = PING
+    req.kernel_id = ''
+    req.body   = req_id
+    api_sock.write([req.SerializeToString()])
+    resp_data = yield from api_sock.read()
+    resp = ManagerResponse()
+    resp.ParseFromString(resp_data[0])
+    assert resp.reply == PONG
+    assert resp.body == req.body
+
+    # Create a kernel instance.
+    req.action = CREATE
+    req.kernel_id = ''
+    req.body = ''
+    api_sock.write([req.SerializeToString()])
+    resp_data = yield from api_sock.read()
+    resp.ParseFromString(resp_data[0])
+    assert resp.reply == SUCCESS
+    print(resp.body)
+
+@asyncio.coroutine
+def shell_loop(kernel_dealer):
     while True:
         try:
             line = input('>>> ')
@@ -19,10 +50,10 @@ def shell_loop(dealer):
         req = AgentRequest()
         req.req_type = EXECUTE
         req.body = line
-        dealer.write([req.SerializeToString()])
+        kernel_dealer.write([req.SerializeToString()])
 
         # TODO: multiplex stdout/stderr streams
-        resp_data = yield from dealer.read()
+        resp_data = yield from kernel_dealer.read()
         resp = AgentResponse()
         resp.ParseFromString(resp_data[0])
         print(resp.body)
@@ -32,16 +63,15 @@ def handle_exit():
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
-    conn_coro = aiozmq.create_zmq_stream(zmq.DEALER, connect='tcp://127.0.0.1:5002', loop=loop)
-    dealer = loop.run_until_complete(conn_coro)
-    # TODO: get SOCKET_INFO
+    loop.run_until_complete(create_kernel())
+    kernel_dealer = loop.run_until_complete(aiozmq.create_zmq_stream(zmq.DEALER, connect='tcp://127.0.0.1:5002', loop=loop))
     try:
         loop.add_signal_handler(signal.SIGTERM, handle_exit)
-        asyncio.async(shell_loop(dealer), loop=loop)
+        asyncio.async(shell_loop(kernel_dealer), loop=loop)
         loop.run_forever()
     except KeyboardInterrupt:
         print()
         pass
-    dealer.close()
+    kernel_dealer.close()
     loop.close()
     print('Exit.')

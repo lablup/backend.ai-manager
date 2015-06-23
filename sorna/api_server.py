@@ -34,7 +34,7 @@ Instance = namedlist('Instance', [
 
 Kernel = namedlist('Kernel', [
     ('instance', None),
-    ('container_id', None),
+    ('kernel_id', None),
     ('spec', 'python34'),  # later, extend this to multiple languages and setups
     ('agent_sock', None),
     ('stdin_sock', None),
@@ -50,7 +50,7 @@ class KernelDriver(metaclass=ABCMeta):
 
     @asyncio.coroutine
     @abstractmethod
-    def find_avail_instance():
+    def find_avail_instance(self):
         pass
 
     @asyncio.coroutine
@@ -75,7 +75,7 @@ class KernelDriver(metaclass=ABCMeta):
 class DockerKernelDriver(KernelDriver):
 
     @asyncio.coroutine
-    def find_avail_instance():
+    def find_avail_instance(self):
         for instance in instance_registry:
             if instance.cur_kernels < instance.max_kernels:
                 instance.cur_kernels += 1
@@ -92,15 +92,16 @@ class DockerKernelDriver(KernelDriver):
         # TODO: change the command to "python3 -m sorna.kernel_agent"
         container = cli.create_container(image='lablup-python-kernel:latest',
                                          command='/usr/bin/python3')
-        kernel = Kernel(instance=instance, container=container.id)
-        kernel_id = '{0}:{1}'.format(instance.ip, kernel.container)
+        kernel = Kernel(instance=instance, kernel_id=container.id)
+        kernel.priv = container.id
+        kernel.kernel_id = '{0}:{1}'.format(instance.ip, kernel.priv)
         # TODO: run the container and set the port mappings
-        kernel_registry[kernel_id] = kernel
+        kernel_registry[kernel.kernel_id] = kernel
         return kernel_id
 
     @asyncio.coroutine
     def destroy_kernel(self, kernel_id):
-        del kernel_registry[input_msg.kernel_id]
+        del kernel_registry[req.kernel_id]
         raise NotImplementedError()
 
     @asyncio.coroutine
@@ -111,8 +112,8 @@ class DockerKernelDriver(KernelDriver):
 class LocalKernelDriver(KernelDriver):
 
     @asyncio.coroutine
-    def find_avail_instance():
-        for instance in instance_registry:
+    def find_avail_instance(self):
+        for instance in instance_registry.values():
             if kernel_driver == 'local' and instance.ip != '127.0.0.1':
                 continue
             if instance.cur_kernels < instance.max_kernels:
@@ -124,10 +125,11 @@ class LocalKernelDriver(KernelDriver):
     def create_kernel(self, instance):
         unique_id = str(uuid.uuid4())
         kernel_id = '127.0.0.1:{0}'.format(unique_id)
-        kernel = Kernel(instance=instance, container=unique_id)
+        kernel = Kernel(instance=instance, kernel_id=unique_id)
         cmdargs = ('/usr/bin/python3', '-m', kernel_agent.__file__,
                    '--kernel-id', kernel_id)
         proc = yield from loop.create_subprocess_exec(*cmdargs)
+        kernel.kernel_id = kernel_id
         kernel.priv = proc
         kernel_registry[kernel_id] = kernel
         return kernel_id
@@ -139,7 +141,7 @@ class LocalKernelDriver(KernelDriver):
         assert(kernel.instance.cur_kernels >= 0)
         proc = kernel.priv
         proc.terminate()
-        del kernel_registry[input_msg.kernel_id]
+        del kernel_registry[req.kernel_id]
         yield from proc.wait()
 
     @asyncio.coroutine
@@ -150,7 +152,7 @@ class LocalKernelDriver(KernelDriver):
         req = AgentRequest()
         req.req_type = HEARTBEAT
         req.body = req_id
-        dealer.write([req])
+        dealer.write([req.SerializeToString()])
         # TODO: handle timeout
         resp_data = yield from dealer.read()
         resp = AgentResponse()
@@ -189,7 +191,7 @@ def handle_api(loop, router):
             instance = yield from driver.find_avail_instance()
             if instance is None:
                 raise RuntimeError('No instance is available to launch a new kernel.')
-            kernel_id = driver.create_kernel()
+            kernel_id = yield from driver.create_kernel(instance)
 
             yield from asyncio.sleep(0.2, loop=loop)
             tries = 0
