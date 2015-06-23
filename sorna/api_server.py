@@ -12,16 +12,18 @@ from .proto.agent_pb2 import AgentRequest, AgentResponse
 from .proto.agent_pb2 import HEARTBEAT, SOCKET_INFO
 from . import kernel_agent
 from .utils.protobuf import read_message, write_message
+import argparse
 import asyncio, aiozmq, zmq
 from abc import ABCMeta, abstractmethod
 import docker
+from enum import Enum
 from namedlist import namedtuple, namedlist
 import signal
 import struct
 import subprocess
 import uuid
 
-kernel_driver = 'local'  # or 'docker'
+KernelDriverTypes = Enum('KernelDriverTypes', 'local docker')
 
 Instance = namedlist('Instance', [
     ('ip', None),
@@ -114,7 +116,7 @@ class LocalKernelDriver(KernelDriver):
     @asyncio.coroutine
     def find_avail_instance(self):
         for instance in instance_registry.values():
-            if kernel_driver == 'local' and instance.ip != '127.0.0.1':
+            if instance.ip != '127.0.0.1':
                 continue
             if instance.cur_kernels < instance.max_kernels:
                 instance.cur_kernels += 1
@@ -160,11 +162,16 @@ class LocalKernelDriver(KernelDriver):
         return (resp.body == req_id)
 
 
+# Module states
+
+kernel_driver = KernelDriverTypes.docker
 instance_registry = {
     'test': Instance(ip='127.0.0.1')
 }
 kernel_registry = dict()
 
+
+# Module functions
 
 @asyncio.coroutine
 def handle_api(loop, router):
@@ -174,6 +181,13 @@ def handle_api(loop, router):
         req.ParseFromString(req_data)
         resp = ManagerResponse()
 
+        if kernel_driver == KernelDriverTypes.docker:
+            driver = DockerKernelDriver(loop)
+        elif kernel_driver == KernelDriverTypes.local:
+            driver = LocalKernelDriver(loop)
+        else:
+            assert False, 'Should not reach here.'
+
         if req.action == PING:
 
             resp.reply     = PONG
@@ -182,12 +196,6 @@ def handle_api(loop, router):
 
         elif req.action == CREATE:
 
-            if kernel_driver == 'docker':
-                driver = DockerKernelDriver(loop)
-            elif kernel_driver == 'local':
-                driver = LocalKernelDriver(loop)
-            else:
-                assert False, 'Should not reach here.'
             instance = yield from driver.find_avail_instance()
             if instance is None:
                 raise RuntimeError('No instance is available to launch a new kernel.')
@@ -221,13 +229,6 @@ def handle_api(loop, router):
 
         elif req.action == DESTROY:
 
-            if kernel_driver == 'docker':
-                driver = DockerKernelDriver(loop)
-            elif kernel_driver == 'local':
-                driver = LocalKernelDriver(loop)
-            else:
-                assert False, 'Should not reach here.'
-
             if req.kernel_id in kernel_registry:
                 yield from driver.destroy_kernel(req.kernel_id)
                 resp.reply = SUCCESS
@@ -245,6 +246,12 @@ def handle_exit():
 
 
 if __name__ == '__main__':
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument('--kernel-driver', default='docker', choices=('docker', 'local'))
+    args = argparser.parse_args()
+
+    kernel_driver = KernelDriverTypes[args.kernel_driver]
+
     loop = asyncio.get_event_loop()
     start_coro = aiozmq.create_zmq_stream(zmq.ROUTER, bind='tcp://0.0.0.0:5001', loop=loop)
     router = loop.run_until_complete(start_coro)
