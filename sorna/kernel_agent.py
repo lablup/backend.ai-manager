@@ -105,7 +105,7 @@ class Kernel(object):
 
 @asyncio.coroutine
 def handle_request(loop, router, kernel):
-    client_id, req_data = yield from router.read()
+    client_id, _, req_data = yield from router.read()
     req = AgentRequest()
     req.ParseFromString(req_data)
     resp = AgentResponse()
@@ -122,7 +122,7 @@ def handle_request(loop, router, kernel):
         result = kernel.execute_code(req.body)
         resp.body = str(result)
 
-    router.write([client_id, resp.SerializeToString()])
+    router.write([client_id, b'', resp.SerializeToString()])
 
 def handle_exit():
     loop.stop()
@@ -137,8 +137,7 @@ if __name__ == '__main__':
     kernel = Kernel('127.0.0.1', kernel_id)  # for testing
 
     loop = asyncio.get_event_loop()
-    start_coro = aiozmq.create_zmq_stream(zmq.ROUTER, bind='tcp://0.0.0.0:5002', loop=loop)
-    router = loop.run_until_complete(start_coro)
+    router = loop.run_until_complete(aiozmq.create_zmq_stream(zmq.ROUTER, bind='tcp://0.0.0.0:5002', loop=loop))
     print('[Kernel {0}] Started serving...'.format(kernel_id))
     try:
         loop.add_signal_handler(signal.SIGTERM, handle_exit)

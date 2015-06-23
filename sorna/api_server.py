@@ -176,7 +176,7 @@ kernel_registry = dict()
 @asyncio.coroutine
 def handle_api(loop, router):
     while True:
-        client_id, req_data = yield from router.read()
+        client_id, _, req_data = yield from router.read()
         req = ManagerRequest()
         req.ParseFromString(req_data)
         resp = ManagerResponse()
@@ -213,8 +213,8 @@ def handle_api(loop, router):
             else:
                 resp.reply     = FAILURE
                 resp.kernel_id = ''
-                resp.body      = ''
-                router.write([client_id, resp.SerializeToString()])
+                resp.body      = 'The created kernel did not respond!'
+                router.write([client_id, b'', resp.SerializeToString()])
                 return
 
             # TODO: restore the user module state?
@@ -222,9 +222,10 @@ def handle_api(loop, router):
             resp.reply     = SUCCESS
             resp.kernel_id = kernel_id
             resp.body      = json.loads({ # TODO: implement
-                'stdin_sock': '',
-                'stdout_sock': '',
-                'stderr_sock': '',
+                'agent_socket': 'tcp://{0}:{1}'.format(instance.ip, 5002),
+                'stdin_sock': '<not-implemented>',
+                'stdout_sock': '<not-implemented>',
+                'stderr_sock': '<not-implemented>',
             })
 
         elif req.action == DESTROY:
@@ -239,7 +240,7 @@ def handle_api(loop, router):
                 resp.kernel_id = ''
                 resp.body = 'No such kernel.'
 
-        router.write([client_id, resp.SerializeToString()])
+        router.write([client_id, b'', resp.SerializeToString()])
 
 def handle_exit():
     loop.stop()

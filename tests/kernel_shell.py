@@ -12,7 +12,7 @@ import uuid
 
 @asyncio.coroutine
 def create_kernel():
-    api_sock = yield from aiozmq.create_zmq_stream(zmq.DEALER, connect='tcp://127.0.0.1:5001', loop=loop)
+    api_sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect='tcp://127.0.0.1:5001', loop=loop)
 
     # Test if ping works.
     req_id = str(uuid.uuid4())
@@ -36,6 +36,8 @@ def create_kernel():
     resp.ParseFromString(resp_data[0])
     assert resp.reply == SUCCESS
     print(resp.body)
+
+    return resp.body
 
 @asyncio.coroutine
 def shell_loop(kernel_dealer):
@@ -63,8 +65,10 @@ def handle_exit():
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
+    print('Contacting the API server...')
     loop.run_until_complete(create_kernel())
-    kernel_dealer = loop.run_until_complete(aiozmq.create_zmq_stream(zmq.DEALER, connect='tcp://127.0.0.1:5002', loop=loop))
+    print('The kernel is created. Trying to connect to it...')
+    kernel_dealer = loop.run_until_complete(aiozmq.create_zmq_stream(zmq.REQ, connect='tcp://127.0.0.1:5002', loop=loop))
     try:
         loop.add_signal_handler(signal.SIGTERM, handle_exit)
         asyncio.async(shell_loop(kernel_dealer), loop=loop)
