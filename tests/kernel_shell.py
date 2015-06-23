@@ -18,9 +18,9 @@ def create_kernel():
     # Test if ping works.
     req_id = str(uuid.uuid4())
     req = ManagerRequest()
-    req.action = PING
+    req.action    = PING
     req.kernel_id = ''
-    req.body   = req_id
+    req.body      = req_id
     api_sock.write([req.SerializeToString()])
     resp_data = yield from api_sock.read()
     resp = ManagerResponse()
@@ -29,18 +29,17 @@ def create_kernel():
     assert resp.body == req.body
 
     # Create a kernel instance.
-    req.action = CREATE
+    req.action    = CREATE
     req.kernel_id = ''
-    req.body = ''
+    req.body      = ''
     api_sock.write([req.SerializeToString()])
     resp_data = yield from api_sock.read()
     resp.ParseFromString(resp_data[0])
     assert resp.reply == SUCCESS
-    kernel_info = json.loads(resp.body)
-    return kernel_info
+    return resp.kernel_id, json.loads(resp.body)
 
 @asyncio.coroutine
-def shell_loop(kernel_dealer):
+def shell_loop(kernel_sock):
     while True:
         try:
             line = input('>>> ')
@@ -51,11 +50,11 @@ def shell_loop(kernel_dealer):
 
         req = AgentRequest()
         req.req_type = EXECUTE
-        req.body = line
-        kernel_dealer.write([req.SerializeToString()])
+        req.body     = line
+        kernel_sock.write([req.SerializeToString()])
 
         # TODO: multiplex stdout/stderr streams
-        resp_data = yield from kernel_dealer.read()
+        resp_data = yield from kernel_sock.read()
         resp = AgentResponse()
         resp.ParseFromString(resp_data[0])
         print(resp.body)
@@ -66,17 +65,16 @@ def handle_exit():
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
     print('Contacting the API server...')
-    kernel_info = loop.run_until_complete(create_kernel())
-    print(kernel_info)
+    kernel_id, kernel_info = loop.run_until_complete(create_kernel())
+    print(kernel_id, kernel_info)
     print('The kernel is created. Trying to connect to it...')
-    kernel_dealer = loop.run_until_complete(aiozmq.create_zmq_stream(zmq.REQ, connect='tcp://127.0.0.1:5002', loop=loop))
+    kernel_sock = loop.run_until_complete(aiozmq.create_zmq_stream(zmq.REQ, connect=kernel_info['agent_socket'], loop=loop))
     try:
         loop.add_signal_handler(signal.SIGTERM, handle_exit)
-        asyncio.async(shell_loop(kernel_dealer), loop=loop)
-        loop.run_forever()
+        loop.run_until_complete(shell_loop(kernel_sock))
     except KeyboardInterrupt:
         print()
         pass
-    kernel_dealer.close()
+    kernel_sock.close()
     loop.close()
     print('Exit.')

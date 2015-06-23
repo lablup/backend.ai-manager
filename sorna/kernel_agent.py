@@ -140,7 +140,7 @@ if __name__ == '__main__':
 
     loop = asyncio.get_event_loop()
     router = loop.run_until_complete(aiozmq.create_zmq_stream(zmq.ROUTER, bind='tcp://0.0.0.0:5002', loop=loop))
-    print('[Kernel {0}] Started serving...'.format(kernel_id))
+    print('[{0}] Started serving...'.format(kernel_id))
     try:
         loop.add_signal_handler(signal.SIGTERM, handle_exit)
         asyncio.async(handle_request(loop, router, kernel), loop=loop)
