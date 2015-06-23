@@ -7,6 +7,7 @@ from sorna.proto.api_pb2 import PING, PONG, CREATE, DESTROY, SUCCESS, INVALID_IN
 from sorna.proto.agent_pb2 import AgentRequest, AgentResponse
 from sorna.proto.agent_pb2 import EXECUTE, SOCKET_INFO
 import asyncio, zmq, aiozmq
+import json
 import signal
 import uuid
 
@@ -35,9 +36,8 @@ def create_kernel():
     resp_data = yield from api_sock.read()
     resp.ParseFromString(resp_data[0])
     assert resp.reply == SUCCESS
-    print(resp.body)
-
-    return resp.body
+    kernel_info = json.loads(resp.body)
+    return kernel_info
 
 @asyncio.coroutine
 def shell_loop(kernel_dealer):
@@ -66,7 +66,8 @@ def handle_exit():
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
     print('Contacting the API server...')
-    loop.run_until_complete(create_kernel())
+    kernel_info = loop.run_until_complete(create_kernel())
+    print(kernel_info)
     print('The kernel is created. Trying to connect to it...')
     kernel_dealer = loop.run_until_complete(aiozmq.create_zmq_stream(zmq.REQ, connect='tcp://127.0.0.1:5002', loop=loop))
     try:

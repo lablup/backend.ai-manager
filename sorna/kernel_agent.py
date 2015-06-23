@@ -13,6 +13,7 @@ import argparse
 import builtins as builtin_mod
 import code
 from functools import partial
+import json
 import signal
 import struct, types
 import sys
@@ -111,9 +112,10 @@ def handle_request(loop, router, kernel):
     resp = AgentResponse()
 
     if req.req_type == HEARTBEAT:
+        print('[{0}] heartbeat!'.format(kernel.kernel_id))
         resp.body = req.body
     elif req.req_type == SOCKET_INFO:
-        resp.body = json.loads({
+        resp.body = json.dumps({
             'stdin': 'tcp://{0}:{1}'.format(kernel.ip, kernel.stdin_port),
             'stdout': 'tcp://{0}:{1}'.format(kernel.ip, kernel.stdout_port),
             'stderr': 'tcp://{0}:{1}'.format(kernel.ip, kernel.stderr_port),

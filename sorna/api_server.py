@@ -17,6 +17,7 @@ import asyncio, aiozmq, zmq
 from abc import ABCMeta, abstractmethod
 import docker
 from enum import Enum
+import json
 from namedlist import namedtuple, namedlist
 import signal
 import struct
@@ -97,6 +98,7 @@ class DockerKernelDriver(KernelDriver):
         kernel = Kernel(instance=instance, kernel_id=container.id)
         kernel.priv = container.id
         kernel.kernel_id = '{0}:{1}'.format(instance.ip, kernel.priv)
+        kernel.agent_sock = 'tcp://{0}:{1}'.format(instance.ip, 5002)
         # TODO: run the container and set the port mappings
         kernel_registry[kernel.kernel_id] = kernel
         return kernel_id
@@ -132,6 +134,7 @@ class LocalKernelDriver(KernelDriver):
                    '--kernel-id', kernel_id)
         proc = yield from asyncio.create_subprocess_exec(*cmdargs, loop=loop)
         kernel.kernel_id = kernel_id
+        kernel.agent_sock = 'tcp://{0}:{1}'.format(instance.ip, 5002)
         kernel.priv = proc
         kernel_registry[kernel_id] = kernel
         return kernel_id
@@ -149,14 +152,15 @@ class LocalKernelDriver(KernelDriver):
     @asyncio.coroutine
     def ping_kernel(self, kernel_id):
         kernel = kernel_registry[kernel_id]
-        dealer = yield from aiozmq.create_zmq_stream(zmq.DEALER, connect=kernel.agent_sock, loop=loop)
+        sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.agent_sock, loop=loop)
         req_id = str(uuid.uuid4())
         req = AgentRequest()
         req.req_type = HEARTBEAT
         req.body = req_id
-        dealer.write([req.SerializeToString()])
+        sock.write([req.SerializeToString()])
         # TODO: handle timeout
-        resp_data = yield from dealer.read()
+        print("pinging the kernel....")
+        resp_data = yield from sock.read()
         resp = AgentResponse()
         resp.ParseFromString(resp_data[0])
         return (resp.body == req_id)
@@ -203,11 +207,13 @@ def handle_api(loop, router):
 
             yield from asyncio.sleep(0.2, loop=loop)
             tries = 0
+            print('Checking if the kernel is up...')
             while tries < 5:
                 success = yield from driver.ping_kernel(kernel_id)
                 if success:
                     break
                 else:
+                    print('  retrying after 1 sec...')
                     yield from asyncio.sleep(1, loop=loop)
                     tries += 1
             else:
@@ -221,7 +227,7 @@ def handle_api(loop, router):
 
             resp.reply     = SUCCESS
             resp.kernel_id = kernel_id
-            resp.body      = json.loads({ # TODO: implement
+            resp.body      = json.dumps({ # TODO: implement
                 'agent_socket': 'tcp://{0}:{1}'.format(instance.ip, 5002),
                 'stdin_sock': '<not-implemented>',
                 'stdout_sock': '<not-implemented>',
