@@ -20,7 +20,7 @@ DESCRIPTOR = _descriptor.FileDescriptor(
   name='api.proto',
   package='sorna',
   # syntax='proto3',
-  serialized_pb=_b('\n\tapi.proto\x12\x05sorna\"R\n\x0cInputMessage\x12!\n\x06\x61\x63tion\x18\x01 \x01(\x0e\x32\x11.sorna.ActionType\x12\x11\n\tkernel_id\x18\x02 \x01(\t\x12\x0c\n\x04\x62ody\x18\x03 \x01(\t\"Q\n\rOutputMessage\x12\x1f\n\x05reply\x18\x01 \x01(\x0e\x32\x10.sorna.ReplyType\x12\x11\n\tkernel_id\x18\x02 \x01(\t\x12\x0c\n\x04\x62ody\x18\x03 \x01(\t*<\n\nActionType\x12\x08\n\x04PING\x10\x00\x12\n\n\x06\x43REATE\x10\x01\x12\x0b\n\x07\x44\x45STROY\x10\x02\x12\x0b\n\x07\x45XECUTE\x10\x03*E\n\tReplyType\x12\x08\n\x04PONG\x10\x00\x12\x0c\n\x07SUCCESS\x10\xc8\x01\x12\x12\n\rINVALID_INPUT\x10\x90\x03\x12\x0c\n\x07\x46\x41ILURE\x10\xf4\x03\x62\x06proto3')
+  serialized_pb=_b('\n\tapi.proto\x12\x05sorna\"T\n\x0eManagerRequest\x12!\n\x06\x61\x63tion\x18\x01 \x01(\x0e\x32\x11.sorna.ActionType\x12\x11\n\tkernel_id\x18\x02 \x01(\t\x12\x0c\n\x04\x62ody\x18\x03 \x01(\t\"S\n\x0fManagerResponse\x12\x1f\n\x05reply\x18\x01 \x01(\x0e\x32\x10.sorna.ReplyType\x12\x11\n\tkernel_id\x18\x02 \x01(\t\x12\x0c\n\x04\x62ody\x18\x03 \x01(\t*<\n\nActionType\x12\x08\n\x04PING\x10\x00\x12\n\n\x06\x43REATE\x10\x01\x12\x0b\n\x07\x44\x45STROY\x10\x02\x12\x0b\n\x07\x45XECUTE\x10\x03*E\n\tReplyType\x12\x08\n\x04PONG\x10\x00\x12\x0c\n\x07SUCCESS\x10\xc8\x01\x12\x12\n\rINVALID_INPUT\x10\x90\x03\x12\x0c\n\x07\x46\x41ILURE\x10\xf4\x03\x62\x06proto3')
 )
 _sym_db.RegisterFileDescriptor(DESCRIPTOR)
 
@@ -49,8 +49,8 @@ _ACTIONTYPE = _descriptor.EnumDescriptor(
   ],
   containing_type=None,
   options=None,
-  serialized_start=187,
-  serialized_end=247,
+  serialized_start=191,
+  serialized_end=251,
 )
 _sym_db.RegisterEnumDescriptor(_ACTIONTYPE)
 
@@ -80,8 +80,8 @@ _REPLYTYPE = _descriptor.EnumDescriptor(
   ],
   containing_type=None,
   options=None,
-  serialized_start=249,
-  serialized_end=318,
+  serialized_start=253,
+  serialized_end=322,
 )
 _sym_db.RegisterEnumDescriptor(_REPLYTYPE)
 
@@ -97,29 +97,29 @@ FAILURE = 500
 
 
 
-_INPUTMESSAGE = _descriptor.Descriptor(
-  name='InputMessage',
-  full_name='sorna.InputMessage',
+_MANAGERREQUEST = _descriptor.Descriptor(
+  name='ManagerRequest',
+  full_name='sorna.ManagerRequest',
   filename=None,
   file=DESCRIPTOR,
   containing_type=None,
   fields=[
     _descriptor.FieldDescriptor(
-      name='action', full_name='sorna.InputMessage.action', index=0,
+      name='action', full_name='sorna.ManagerRequest.action', index=0,
       number=1, type=14, cpp_type=8, label=1,
       has_default_value=False, default_value=0,
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
       options=None),
     _descriptor.FieldDescriptor(
-      name='kernel_id', full_name='sorna.InputMessage.kernel_id', index=1,
+      name='kernel_id', full_name='sorna.ManagerRequest.kernel_id', index=1,
       number=2, type=9, cpp_type=9, label=1,
       has_default_value=False, default_value=_b("").decode('utf-8'),
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
       options=None),
     _descriptor.FieldDescriptor(
-      name='body', full_name='sorna.InputMessage.body', index=2,
+      name='body', full_name='sorna.ManagerRequest.body', index=2,
       number=3, type=9, cpp_type=9, label=1,
       has_default_value=False, default_value=_b("").decode('utf-8'),
       message_type=None, enum_type=None, containing_type=None,
@@ -138,33 +138,33 @@ _INPUTMESSAGE = _descriptor.Descriptor(
   oneofs=[
   ],
   serialized_start=20,
-  serialized_end=102,
+  serialized_end=104,
 )
 
 
-_OUTPUTMESSAGE = _descriptor.Descriptor(
-  name='OutputMessage',
-  full_name='sorna.OutputMessage',
+_MANAGERRESPONSE = _descriptor.Descriptor(
+  name='ManagerResponse',
+  full_name='sorna.ManagerResponse',
   filename=None,
   file=DESCRIPTOR,
   containing_type=None,
   fields=[
     _descriptor.FieldDescriptor(
-      name='reply', full_name='sorna.OutputMessage.reply', index=0,
+      name='reply', full_name='sorna.ManagerResponse.reply', index=0,
       number=1, type=14, cpp_type=8, label=1,
       has_default_value=False, default_value=0,
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
       options=None),
     _descriptor.FieldDescriptor(
-      name='kernel_id', full_name='sorna.OutputMessage.kernel_id', index=1,
+      name='kernel_id', full_name='sorna.ManagerResponse.kernel_id', index=1,
       number=2, type=9, cpp_type=9, label=1,
       has_default_value=False, default_value=_b("").decode('utf-8'),
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
       options=None),
     _descriptor.FieldDescriptor(
-      name='body', full_name='sorna.OutputMessage.body', index=2,
+      name='body', full_name='sorna.ManagerResponse.body', index=2,
       number=3, type=9, cpp_type=9, label=1,
       has_default_value=False, default_value=_b("").decode('utf-8'),
       message_type=None, enum_type=None, containing_type=None,
@@ -182,30 +182,30 @@ _OUTPUTMESSAGE = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=104,
-  serialized_end=185,
+  serialized_start=106,
+  serialized_end=189,
 )
 
-_INPUTMESSAGE.fields_by_name['action'].enum_type = _ACTIONTYPE
-_OUTPUTMESSAGE.fields_by_name['reply'].enum_type = _REPLYTYPE
-DESCRIPTOR.message_types_by_name['InputMessage'] = _INPUTMESSAGE
-DESCRIPTOR.message_types_by_name['OutputMessage'] = _OUTPUTMESSAGE
+_MANAGERREQUEST.fields_by_name['action'].enum_type = _ACTIONTYPE
+_MANAGERRESPONSE.fields_by_name['reply'].enum_type = _REPLYTYPE
+DESCRIPTOR.message_types_by_name['ManagerRequest'] = _MANAGERREQUEST
+DESCRIPTOR.message_types_by_name['ManagerResponse'] = _MANAGERRESPONSE
 DESCRIPTOR.enum_types_by_name['ActionType'] = _ACTIONTYPE
 DESCRIPTOR.enum_types_by_name['ReplyType'] = _REPLYTYPE
 
-InputMessage = _reflection.GeneratedProtocolMessageType('InputMessage', (_message.Message,), dict(
-  DESCRIPTOR = _INPUTMESSAGE,
+ManagerRequest = _reflection.GeneratedProtocolMessageType('ManagerRequest', (_message.Message,), dict(
+  DESCRIPTOR = _MANAGERREQUEST,
   __module__ = 'api_pb2'
-  # @@protoc_insertion_point(class_scope:sorna.InputMessage)
+  # @@protoc_insertion_point(class_scope:sorna.ManagerRequest)
   ))
-_sym_db.RegisterMessage(InputMessage)
+_sym_db.RegisterMessage(ManagerRequest)
 
-OutputMessage = _reflection.GeneratedProtocolMessageType('OutputMessage', (_message.Message,), dict(
-  DESCRIPTOR = _OUTPUTMESSAGE,
+ManagerResponse = _reflection.GeneratedProtocolMessageType('ManagerResponse', (_message.Message,), dict(
+  DESCRIPTOR = _MANAGERRESPONSE,
   __module__ = 'api_pb2'
-  # @@protoc_insertion_point(class_scope:sorna.OutputMessage)
+  # @@protoc_insertion_point(class_scope:sorna.ManagerResponse)
   ))
-_sym_db.RegisterMessage(OutputMessage)
+_sym_db.RegisterMessage(ManagerResponse)
 
 
 # @@protoc_insertion_point(module_scope)

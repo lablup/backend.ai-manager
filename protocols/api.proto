@@ -8,7 +8,7 @@ enum ActionType {
     EXECUTE   = 3;
 }
 
-message InputMessage {
+message ManagerRequest {
     ActionType action = 1;
     string kernel_id  = 2;
     string body       = 3;
@@ -21,7 +21,7 @@ enum ReplyType {
     FAILURE	  = 500;
 }
 
-message OutputMessage {
+message ManagerResponse {
     ReplyType reply  = 1;
     string kernel_id = 2;
     string body      = 3;

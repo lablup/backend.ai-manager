@@ -6,7 +6,7 @@ The Sorna API Server
 It routes the API requests to kernel agents in VMs and manages the VM instance pool.
 '''
 
-from .proto.api_pb2 import InputMessage, OutputMessage
+from .proto.api_pb2 import ManagerRequest, ManagerResponse
 from .proto.api_pb2 import PING, PONG, CREATE, DESTROY, SUCCESS, INVALID_INPUT, FAILURE
 from .proto.agent_pb2 import AgentRequest, AgentResponse
 from .proto.agent_pb2 import HEARTBEAT, SOCKET_INFO
@@ -167,18 +167,18 @@ kernel_registry = dict()
 @asyncio.coroutine
 def handle_api(loop, router):
     while True:
-        client_id, input_data = yield from router.read()
-        input_msg = InputMessage()
-        input_msg.ParseFromString(input_data)
-        output_msg = OutputMessage()
+        client_id, req_data = yield from router.read()
+        req = ManagerRequest()
+        req.ParseFromString(req_data)
+        resp = ManagerResponse()
 
-        if input_msg.action == PING:
+        if req.action == PING:
 
-            output_msg.reply     = PONG
-            output_msg.kernel_id = ''
-            output_msg.body      = input_msg.body
+            resp.reply     = PONG
+            resp.kernel_id = ''
+            resp.body      = req.body
 
-        elif input_msg.action == CREATE:
+        elif req.action == CREATE:
 
             if kernel_driver == 'docker':
                 driver = DockerKernelDriver(loop)
@@ -201,23 +201,23 @@ def handle_api(loop, router):
                     yield from asyncio.sleep(1, loop=loop)
                     tries += 1
             else:
-                output_msg.reply     = FAILURE
-                output_msg.kernel_id = ''
-                output_msg.body      = ''
-                router.write([client_id, output_msg])
+                resp.reply     = FAILURE
+                resp.kernel_id = ''
+                resp.body      = ''
+                router.write([client_id, resp.SerializeToString()])
                 return
 
             # TODO: restore the user module state?
 
-            output_msg.reply     = SUCCESS
-            output_msg.kernel_id = kernel_id
-            output_msg.body      = json.loads({ # TODO: implement
+            resp.reply     = SUCCESS
+            resp.kernel_id = kernel_id
+            resp.body      = json.loads({ # TODO: implement
                 'stdin_sock': '',
                 'stdout_sock': '',
                 'stderr_sock': '',
             })
 
-        elif input_msg.action == DESTROY:
+        elif req.action == DESTROY:
 
             if kernel_driver == 'docker':
                 driver = DockerKernelDriver(loop)
@@ -226,17 +226,17 @@ def handle_api(loop, router):
             else:
                 assert False, 'Should not reach here.'
 
-            if input_msg.kernel_id in kernel_registry:
-                yield from driver.destroy_kernel(input_msg.kernel_id)
-                output_msg.reply = SUCCESS
-                output_msg.kernel_id = input_msg.kernel_id
-                output_msg.body = ''
+            if req.kernel_id in kernel_registry:
+                yield from driver.destroy_kernel(req.kernel_id)
+                resp.reply = SUCCESS
+                resp.kernel_id = req.kernel_id
+                resp.body = ''
             else:
-                output_msg.reply = INVALID_INPUT
-                output_msg.kernel_id = ''
-                output_msg.body = 'No such kernel.'
+                resp.reply = INVALID_INPUT
+                resp.kernel_id = ''
+                resp.body = 'No such kernel.'
 
-        router.write([client_id, output_msg])
+        router.write([client_id, resp.SerializeToString()])
 
 def handle_exit():
     loop.stop()
