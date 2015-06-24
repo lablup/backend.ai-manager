@@ -80,6 +80,12 @@ class Kernel(object):
         #sys.stdout, orig_stdout = self.stdout_writer, sys.stdout
         #sys.stderr, orig_stderr = self.stderr_writer, sys.stderr
 
+        exceptions = []
+
+        def my_excepthook(type_, value, tb):
+            exception.append((type_, value, tb))
+        sys.excepthook = my_excepthook
+
         try:
             # TODO: cache the compiled code in the memory
             code_obj = code.compile_command(src, symbol='eval')
@@ -96,12 +102,14 @@ class Kernel(object):
         except:
             raise
 
+        sys.excepthook = sys.__excepthook__
+
         # TODO: wrap exceptions as a structured reply
         #sys.stdin = orig_stdin
         #sys.stdout = orig_stdout
         #sys.stderr = orig_stderr
 
-        return exec_result
+        return exec_result, exceptions
 
 
 @asyncio.coroutine
@@ -112,17 +120,22 @@ def handle_request(loop, router, kernel):
     resp = AgentResponse()
 
     if req.req_type == HEARTBEAT:
-        print('[{0}] heartbeat!'.format(kernel.kernel_id))
+        print('[{0}] HEARTBEAT'.format(kernel.kernel_id))
         resp.body = req.body
     elif req.req_type == SOCKET_INFO:
+        print('[{0}] SOCKET_INFO'.format(kernel.kernel_id))
         resp.body = json.dumps({
             'stdin': 'tcp://{0}:{1}'.format(kernel.ip, kernel.stdin_port),
             'stdout': 'tcp://{0}:{1}'.format(kernel.ip, kernel.stdout_port),
             'stderr': 'tcp://{0}:{1}'.format(kernel.ip, kernel.stderr_port),
         })
     elif req.req_type == EXECUTE:
-        result = kernel.execute_code(req.body)
-        resp.body = str(result)
+        print('[{0}] EXECUTE'.format(kernel.kernel_id))
+        result, exceptions = kernel.execute_code(req.body)
+        resp.body = json.dumps({
+            'eval': str(result),
+            'exceptions': exceptions,
+        })
 
     router.write([client_id, b'', resp.SerializeToString()])
 
@@ -141,8 +154,8 @@ if __name__ == '__main__':
     loop = asyncio.get_event_loop()
     router = loop.run_until_complete(aiozmq.create_zmq_stream(zmq.ROUTER, bind='tcp://0.0.0.0:5002', loop=loop))
     print('[{0}] Started serving...'.format(kernel_id))
+    loop.add_signal_handler(signal.SIGTERM, handle_exit)
     try:
-        loop.add_signal_handler(signal.SIGTERM, handle_exit)
         asyncio.async(handle_request(loop, router, kernel), loop=loop)
         loop.run_forever()
     except KeyboardInterrupt:

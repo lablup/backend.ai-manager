@@ -54,7 +54,7 @@ class KernelDriver(metaclass=ABCMeta):
     @asyncio.coroutine
     @abstractmethod
     def find_avail_instance(self):
-        pass
+        raise NotImplementedError()
 
     @asyncio.coroutine
     @abstractmethod
@@ -62,17 +62,29 @@ class KernelDriver(metaclass=ABCMeta):
         '''
         Launches the kernel and return its ID.
         '''
-        pass
+        raise NotImplementedError()
 
     @asyncio.coroutine
     @abstractmethod
     def destroy_kernel(self, kernel_id):
-        pass
+        raise NotImplementedError()
 
     @asyncio.coroutine
-    @abstractmethod
     def ping_kernel(self, kernel_id):
-        pass
+        kernel = kernel_registry[kernel_id]
+        sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.agent_sock, loop=loop)
+        req_id = str(uuid.uuid4())
+        req = AgentRequest()
+        req.req_type = HEARTBEAT
+        req.body = req_id
+        sock.write([req.SerializeToString()])
+        try:
+            resp_data = yield from asyncio.wait_for(sock.read(), timeout=2.0, loop=self.loop)
+            resp = AgentResponse()
+            resp.ParseFromString(resp_data[0])
+            return (resp.body == req_id)
+        except asyncio.TimeoutError:
+            return False
 
 
 class DockerKernelDriver(KernelDriver):
@@ -106,10 +118,6 @@ class DockerKernelDriver(KernelDriver):
     @asyncio.coroutine
     def destroy_kernel(self, kernel_id):
         del kernel_registry[req.kernel_id]
-        raise NotImplementedError()
-
-    @asyncio.coroutine
-    def ping_kernel(self, kernel_id):
         raise NotImplementedError()
 
 
@@ -148,22 +156,6 @@ class LocalKernelDriver(KernelDriver):
         proc.terminate()
         del kernel_registry[req.kernel_id]
         yield from proc.wait()
-
-    @asyncio.coroutine
-    def ping_kernel(self, kernel_id):
-        kernel = kernel_registry[kernel_id]
-        sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.agent_sock, loop=loop)
-        req_id = str(uuid.uuid4())
-        req = AgentRequest()
-        req.req_type = HEARTBEAT
-        req.body = req_id
-        sock.write([req.SerializeToString()])
-        # TODO: handle timeout
-        print("pinging the kernel....")
-        resp_data = yield from sock.read()
-        resp = AgentResponse()
-        resp.ParseFromString(resp_data[0])
-        return (resp.body == req_id)
 
 
 # Module states
@@ -263,8 +255,8 @@ if __name__ == '__main__':
     start_coro = aiozmq.create_zmq_stream(zmq.ROUTER, bind='tcp://0.0.0.0:5001', loop=loop)
     router = loop.run_until_complete(start_coro)
     print('Started serving...')
+    loop.add_signal_handler(signal.SIGTERM, handle_exit)
     try:
-        loop.add_signal_handler(signal.SIGTERM, handle_exit)
         asyncio.async(handle_api(loop, router), loop=loop)
         loop.run_forever()
     except KeyboardInterrupt:

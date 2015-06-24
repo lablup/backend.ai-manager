@@ -36,28 +36,36 @@ def create_kernel():
     resp_data = yield from api_sock.read()
     resp.ParseFromString(resp_data[0])
     assert resp.reply == SUCCESS
+    api_sock.close()
     return resp.kernel_id, json.loads(resp.body)
 
 @asyncio.coroutine
+def run_command(kernel_sock, command_str):
+    req = AgentRequest()
+    req.req_type = EXECUTE
+    req.body     = command_str
+    kernel_sock.write([req.SerializeToString()])
+    # TODO: multiplex stdout/stderr streams
+    resp_data = yield from asyncio.wait_for(kernel_sock.read(), timeout=5.0)
+    resp = AgentResponse()
+    resp.ParseFromString(resp_data[0])
+    result = json.loads(resp.body)
+    if len(result.exceptions) > 0:
+        for e in result.exceptions:
+            print(e, file=sys.stderr)
+    else:
+        print(result.eval)
+
+@asyncio.coroutine
 def shell_loop(kernel_sock):
-    while True:
-        try:
-            line = input('>>> ')
-        except EOFError:
-            break
-        if not line:
-            break
-
-        req = AgentRequest()
-        req.req_type = EXECUTE
-        req.body     = line
-        kernel_sock.write([req.SerializeToString()])
-
-        # TODO: multiplex stdout/stderr streams
-        resp_data = yield from kernel_sock.read()
-        resp = AgentResponse()
-        resp.ParseFromString(resp_data[0])
-        print(resp.body)
+    c = 'a = 123\nprint(a)'
+    yield from run_command(kernel_sock, c)
+    c = 'a += 1\nprint(a)'
+    yield from run_command(kernel_sock, c)
+    c = 'def sum(a,b):\n  return a+b\n'
+    yield from run_command(kernel_sock, c)
+    c = 'sum(a, 456)'
+    yield from run_command(kernel_sock, c)
 
 def handle_exit():
     loop.stop()
@@ -69,8 +77,8 @@ if __name__ == '__main__':
     print(kernel_id, kernel_info)
     print('The kernel is created. Trying to connect to it...')
     kernel_sock = loop.run_until_complete(aiozmq.create_zmq_stream(zmq.REQ, connect=kernel_info['agent_socket'], loop=loop))
+    loop.add_signal_handler(signal.SIGTERM, handle_exit)
     try:
-        loop.add_signal_handler(signal.SIGTERM, handle_exit)
         loop.run_until_complete(shell_loop(kernel_sock))
     except KeyboardInterrupt:
         print()
