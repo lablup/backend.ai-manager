@@ -146,13 +146,15 @@ def handle_exit():
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--kernel-id', default=None)
+    argparser.add_argument('--agent-port', type=int, default=5002)
     args = argparser.parse_args()
 
     kernel_id = args.kernel_id if args.kernel_id else str(uuid.uuid4())
     kernel = Kernel('127.0.0.1', kernel_id)  # for testing
+    agent_addr = 'tcp://0.0.0.0:{0}'.format(args.agent_port)
 
     loop = asyncio.get_event_loop()
-    router = loop.run_until_complete(aiozmq.create_zmq_stream(zmq.ROUTER, bind='tcp://0.0.0.0:5002', loop=loop))
+    router = loop.run_until_complete(aiozmq.create_zmq_stream(zmq.ROUTER, bind=agent_addr, loop=loop))
     print('[{0}] Started serving...'.format(kernel_id))
     loop.add_signal_handler(signal.SIGTERM, handle_exit)
     try:

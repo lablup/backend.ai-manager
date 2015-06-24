@@ -9,6 +9,7 @@ from sorna.proto.agent_pb2 import EXECUTE, SOCKET_INFO
 import asyncio, zmq, aiozmq
 import json
 import signal
+import sys
 import uuid
 
 @asyncio.coroutine
@@ -45,16 +46,23 @@ def run_command(kernel_sock, command_str):
     req.req_type = EXECUTE
     req.body     = command_str
     kernel_sock.write([req.SerializeToString()])
+    try:
+        yield from asyncio.wait_for(kernel_sock.drain(), timeout=2.0)
+    except asyncio.TimeoutError:
+        print('Timeout (sending request)!', file=sys.stderr)
     # TODO: multiplex stdout/stderr streams
-    resp_data = yield from asyncio.wait_for(kernel_sock.read(), timeout=5.0)
-    resp = AgentResponse()
-    resp.ParseFromString(resp_data[0])
-    result = json.loads(resp.body)
-    if len(result.exceptions) > 0:
-        for e in result.exceptions:
-            print(e, file=sys.stderr)
-    else:
-        print(result.eval)
+    try:
+        resp_data = yield from asyncio.wait_for(kernel_sock.read(), timeout=2.0)
+        resp = AgentResponse()
+        resp.ParseFromString(resp_data[0])
+        result = json.loads(resp.body)
+        if len(result.exceptions) > 0:
+            for e in result.exceptions:
+                print(e, file=sys.stderr)
+        else:
+            print(result.eval)
+    except asyncio.TimeoutError:
+        print('Timeout (recving response)!!', file=sys.stderr)
 
 @asyncio.coroutine
 def shell_loop(kernel_sock):
@@ -76,7 +84,7 @@ if __name__ == '__main__':
     kernel_id, kernel_info = loop.run_until_complete(create_kernel())
     print(kernel_id, kernel_info)
     print('The kernel is created. Trying to connect to it...')
-    kernel_sock = loop.run_until_complete(aiozmq.create_zmq_stream(zmq.REQ, connect=kernel_info['agent_socket'], loop=loop))
+    kernel_sock = loop.run_until_complete(aiozmq.create_zmq_stream(zmq.REQ, connect=kernel_info['agent_sock'], loop=loop))
     loop.add_signal_handler(signal.SIGTERM, handle_exit)
     try:
         loop.run_until_complete(shell_loop(kernel_sock))

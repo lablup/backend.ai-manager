@@ -22,9 +22,12 @@ from namedlist import namedtuple, namedlist
 import signal
 import struct
 import subprocess
+from urllib.parse import urlparse
 import uuid
 
 KernelDriverTypes = Enum('KernelDriverTypes', 'local docker')
+
+AgentPortRange = tuple(range(5002, 5010))
 
 Instance = namedlist('Instance', [
     ('ip', None),
@@ -32,6 +35,7 @@ Instance = namedlist('Instance', [
     ('tag', ''),
     ('max_kernels', 2),
     ('cur_kernels', 0),
+    ('used_ports', None),
 ])
 # VM instances should run a docker daemon using "-H tcp://0.0.0.0:2375" in DOCKER_OPTS.
 
@@ -85,6 +89,8 @@ class KernelDriver(metaclass=ABCMeta):
             return (resp.body == req_id)
         except asyncio.TimeoutError:
             return False
+        finally:
+            sock.close()
 
 
 class DockerKernelDriver(KernelDriver):
@@ -99,25 +105,42 @@ class DockerKernelDriver(KernelDriver):
 
     @asyncio.coroutine
     def create_kernel(self, instance):
+        if instance.used_ports is None: instance.used_ports = set()
+        agent_port = 0
+        assert instance.max_kernels <= len(AgentPortRange)
+        for p in AgentPortRange:
+            if p not in instance.used_ports:
+                instance.used_ports.add(p)
+                agent_port = p
+                break
+        assert agent_port != 0
+
         cli = docker.Client(
             base_url='tcp://{0}:{1}'.format(instance.ip, instance.docker_port),
             timeout=5, version='auto'
         )
         # TODO: create the container image
         # TODO: change the command to "python3 -m sorna.kernel_agent"
+        # TODO: pass agent_port
         container = cli.create_container(image='lablup-python-kernel:latest',
                                          command='/usr/bin/python3')
         kernel = Kernel(instance=instance, kernel_id=container.id)
         kernel.priv = container.id
         kernel.kernel_id = '{0}:{1}'.format(instance.ip, kernel.priv)
-        kernel.agent_sock = 'tcp://{0}:{1}'.format(instance.ip, 5002)
+        kernel.agent_sock = 'tcp://{0}:{1}'.format(instance.ip, agent_port)
         # TODO: run the container and set the port mappings
         kernel_registry[kernel.kernel_id] = kernel
         return kernel_id
 
     @asyncio.coroutine
     def destroy_kernel(self, kernel_id):
-        del kernel_registry[req.kernel_id]
+        kernel = kernel_registry[kernel_id]
+        kernel.instance.cur_kernels -= 1
+        assert(kernel.instance.cur_kernels >= 0)
+        agent_url = urlparse(kernel.agent_sock)
+        kernel.instance.used_ports.remove(agent_url.port)
+        # TODO: destroy the container
+        del kernel_registry[kernel_id]
         raise NotImplementedError()
 
 
@@ -135,14 +158,24 @@ class LocalKernelDriver(KernelDriver):
 
     @asyncio.coroutine
     def create_kernel(self, instance):
+        if instance.used_ports is None: instance.used_ports = set()
+        agent_port = 0
+        assert instance.max_kernels < len(AgentPortRange)
+        for p in AgentPortRange:
+            if p not in instance.used_ports:
+                instance.used_ports.add(p)
+                agent_port = p
+                break
+        assert agent_port != 0
+
         unique_id = str(uuid.uuid4())
         kernel_id = '127.0.0.1:{0}'.format(unique_id)
         kernel = Kernel(instance=instance, kernel_id=unique_id)
         cmdargs = ('/usr/bin/python3', '-m', 'sorna.kernel_agent',
-                   '--kernel-id', kernel_id)
+                   '--kernel-id', kernel_id, '--agent-port', str(agent_port))
         proc = yield from asyncio.create_subprocess_exec(*cmdargs, loop=loop)
         kernel.kernel_id = kernel_id
-        kernel.agent_sock = 'tcp://{0}:{1}'.format(instance.ip, 5002)
+        kernel.agent_sock = 'tcp://{0}:{1}'.format(instance.ip, agent_port)
         kernel.priv = proc
         kernel_registry[kernel_id] = kernel
         return kernel_id
@@ -154,6 +187,8 @@ class LocalKernelDriver(KernelDriver):
         assert(kernel.instance.cur_kernels >= 0)
         proc = kernel.priv
         proc.terminate()
+        agent_url = urlparse(kernel.agent_sock)
+        kernel.instance.used_ports.remove(agent_url.port)
         del kernel_registry[req.kernel_id]
         yield from proc.wait()
 
@@ -217,10 +252,11 @@ def handle_api(loop, router):
 
             # TODO: restore the user module state?
 
+            kernel = kernel_registry[kernel_id]
             resp.reply     = SUCCESS
             resp.kernel_id = kernel_id
             resp.body      = json.dumps({ # TODO: implement
-                'agent_socket': 'tcp://{0}:{1}'.format(instance.ip, 5002),
+                'agent_sock': kernel.agent_sock,
                 'stdin_sock': '<not-implemented>',
                 'stdout_sock': '<not-implemented>',
                 'stderr_sock': '<not-implemented>',
@@ -256,6 +292,7 @@ if __name__ == '__main__':
     router = loop.run_until_complete(start_coro)
     print('Started serving...')
     loop.add_signal_handler(signal.SIGTERM, handle_exit)
+    # TODO: add a timer loop to check heartbeats and reclaim kernels unused for long time.
     try:
         asyncio.async(handle_api(loop, router), loop=loop)
         loop.run_forever()
