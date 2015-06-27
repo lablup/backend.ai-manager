@@ -2,8 +2,8 @@
 
 # TODO: transform this as a proper test suite
 
-from sorna.proto.api_pb2 import ManagerRequest, ManagerResponse
-from sorna.proto.api_pb2 import PING, PONG, CREATE, DESTROY, SUCCESS, INVALID_INPUT, FAILURE
+from sorna.proto.manager_pb2 import ManagerRequest, ManagerResponse
+from sorna.proto.manager_pb2 import PING, PONG, CREATE, DESTROY, SUCCESS, INVALID_INPUT, FAILURE
 from sorna.proto.agent_pb2 import AgentRequest, AgentResponse
 from sorna.proto.agent_pb2 import EXECUTE, SOCKET_INFO
 import asyncio, zmq, aiozmq

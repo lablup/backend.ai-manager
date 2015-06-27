@@ -75,7 +75,7 @@ class KernelDriver(metaclass=ABCMeta):
     @asyncio.coroutine
     def ping_kernel(self, kernel_id):
         kernel = kernel_registry[kernel_id]
-        sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.agent_sock, loop=loop)
+        sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.agent_sock, loop=self.loop)
         req_id = str(uuid.uuid4())
         req = AgentRequest()
         req.req_type = HEARTBEAT
@@ -94,7 +94,7 @@ class KernelDriver(metaclass=ABCMeta):
     @asyncio.coroutine
     def get_socket_info(self, kernel_id):
         kernel = kernel_registry[kernel_id]
-        sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.agent_sock, loop=loop)
+        sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.agent_sock, loop=self.loop)
         req = AgentRequest()
         req.req_type = SOCKET_INFO
         req.body = ''
@@ -189,7 +189,7 @@ class LocalKernelDriver(KernelDriver):
         kernel = Kernel(instance=instance, kernel_id=unique_id)
         cmdargs = ('/usr/bin/python3', '-m', 'sorna.kernel_agent',
                    '--kernel-id', kernel_id, '--agent-port', str(agent_port))
-        proc = yield from asyncio.create_subprocess_exec(*cmdargs, loop=loop)
+        proc = yield from asyncio.create_subprocess_exec(*cmdargs, loop=self.loop)
         kernel.kernel_id = kernel_id
         kernel.agent_sock = 'tcp://{0}:{1}'.format(instance.ip, agent_port)
         kernel.priv = proc
@@ -302,6 +302,7 @@ def handle_exit():
     loop.stop()
 
 def main():
+    global kernel_driver, instance_registry, kernel_registry
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--kernel-driver', default='docker', choices=('docker', 'local'))
     args = argparser.parse_args()
@@ -311,7 +312,7 @@ def main():
     asyncio.set_event_loop_policy(aiozmq.ZmqEventLoopPolicy())
     loop = asyncio.get_event_loop()
     server = loop.run_until_complete(aiozmq.create_zmq_stream(zmq.REP, bind='tcp://*:5001', loop=loop))
-    print('Started serving...')
+    print('Started serving... (driver: {0})'.format(args.kernel_driver))
     loop.add_signal_handler(signal.SIGTERM, handle_exit)
     # TODO: add a timer loop to check heartbeats and reclaim kernels unused for long time.
     try:
