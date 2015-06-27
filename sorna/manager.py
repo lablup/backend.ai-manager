@@ -6,21 +6,18 @@ The Sorna API Server
 It routes the API requests to kernel agents in VMs and manages the VM instance pool.
 '''
 
-from .proto.manager_pb2 import ManagerRequest, ManagerResponse
-from .proto.manager_pb2 import PING, PONG, CREATE, DESTROY, SUCCESS, INVALID_INPUT, FAILURE
-from .proto.agent_pb2 import AgentRequest, AgentResponse
-from .proto.agent_pb2 import HEARTBEAT, SOCKET_INFO
-from .utils.protobuf import read_message, write_message
+from sorna.proto.manager_pb2 import ManagerRequest, ManagerResponse
+from sorna.proto.manager_pb2 import PING, PONG, CREATE, DESTROY, SUCCESS, INVALID_INPUT, FAILURE
+from sorna.proto.agent_pb2 import AgentRequest, AgentResponse
+from sorna.proto.agent_pb2 import HEARTBEAT, SOCKET_INFO
 import argparse
 import asyncio, aiozmq, zmq
 from abc import ABCMeta, abstractmethod
 import docker
 from enum import Enum
 import json
-from namedlist import namedtuple, namedlist
+from namedlist import namedlist
 import signal
-import struct
-import subprocess
 from urllib.parse import urlparse
 import uuid
 
