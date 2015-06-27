@@ -7,6 +7,7 @@ from sorna.proto.api_pb2 import PING, PONG, CREATE, DESTROY, SUCCESS, INVALID_IN
 from sorna.proto.agent_pb2 import AgentRequest, AgentResponse
 from sorna.proto.agent_pb2 import EXECUTE, SOCKET_INFO
 import asyncio, zmq, aiozmq
+from colorama import init as colorama_init, Fore
 import json
 import signal
 import sys
@@ -46,23 +47,18 @@ def run_command(kernel_sock, command_str):
     req.req_type = EXECUTE
     req.body     = command_str
     kernel_sock.write([req.SerializeToString()])
-    try:
-        yield from asyncio.wait_for(kernel_sock.drain(), timeout=2.0)
-    except asyncio.TimeoutError:
-        print('Timeout (sending request)!', file=sys.stderr)
     # TODO: multiplex stdout/stderr streams
-    try:
-        resp_data = yield from asyncio.wait_for(kernel_sock.read(), timeout=2.0)
-        resp = AgentResponse()
-        resp.ParseFromString(resp_data[0])
-        result = json.loads(resp.body)
-        if len(result.exceptions) > 0:
-            for e in result.exceptions:
-                print(e, file=sys.stderr)
-        else:
-            print(result.eval)
-    except asyncio.TimeoutError:
-        print('Timeout (recving response)!!', file=sys.stderr)
+    resp_data = yield from kernel_sock.read()
+    resp = AgentResponse()
+    resp.ParseFromString(resp_data[0])
+    result = json.loads(resp.body)
+    if len(result['exceptions']) > 0:
+        out = []
+        for e in result['exceptions']:
+            out.append(str(e))
+        print(Fore.RED + '\n'.join(out) + Fore.RESET, file=sys.stderr)
+    else:
+        print(result['eval'])
 
 @asyncio.coroutine
 def shell_loop(kernel_sock):
@@ -79,6 +75,8 @@ def handle_exit():
     loop.stop()
 
 if __name__ == '__main__':
+    colorama_init()
+    asyncio.set_event_loop_policy(aiozmq.ZmqEventLoopPolicy())
     loop = asyncio.get_event_loop()
     print('Contacting the API server...')
     kernel_id, kernel_info = loop.run_until_complete(create_kernel())

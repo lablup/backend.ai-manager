@@ -3,3 +3,4 @@ docker-py
 namedlist
 pyzmq --install-options="--zmq=bundled"
 aiozmq
+colorama

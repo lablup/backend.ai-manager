@@ -97,7 +97,7 @@ class DockerKernelDriver(KernelDriver):
 
     @asyncio.coroutine
     def find_avail_instance(self):
-        for instance in instance_registry:
+        for instance in instance_registry.values():
             if instance.cur_kernels < instance.max_kernels:
                 instance.cur_kernels += 1
                 return instance
@@ -105,6 +105,7 @@ class DockerKernelDriver(KernelDriver):
 
     @asyncio.coroutine
     def create_kernel(self, instance):
+        # TODO: refactor instance as a separate class
         if instance.used_ports is None: instance.used_ports = set()
         agent_port = 0
         assert instance.max_kernels <= len(AgentPortRange)
@@ -126,7 +127,7 @@ class DockerKernelDriver(KernelDriver):
                                          command='/usr/bin/python3')
         kernel = Kernel(instance=instance, kernel_id=container.id)
         kernel.priv = container.id
-        kernel.kernel_id = '{0}:{1}'.format(instance.ip, kernel.priv)
+        kernel.kernel_id = 'docker-{0}/{1}'.format(instance.ip, kernel.priv)
         kernel.agent_sock = 'tcp://{0}:{1}'.format(instance.ip, agent_port)
         # TODO: run the container and set the port mappings
         kernel_registry[kernel.kernel_id] = kernel
@@ -169,7 +170,7 @@ class LocalKernelDriver(KernelDriver):
         assert agent_port != 0
 
         unique_id = str(uuid.uuid4())
-        kernel_id = '127.0.0.1:{0}'.format(unique_id)
+        kernel_id = 'local/{0}'.format(unique_id)
         kernel = Kernel(instance=instance, kernel_id=unique_id)
         cmdargs = ('/usr/bin/python3', '-m', 'sorna.kernel_agent',
                    '--kernel-id', kernel_id, '--agent-port', str(agent_port))
@@ -205,11 +206,11 @@ kernel_registry = dict()
 # Module functions
 
 @asyncio.coroutine
-def handle_api(loop, router):
+def handle_api(loop, server):
     while True:
-        client_id, _, req_data = yield from router.read()
+        req_data = yield from server.read()
         req = ManagerRequest()
-        req.ParseFromString(req_data)
+        req.ParseFromString(req_data[0])
         resp = ManagerResponse()
 
         if kernel_driver == KernelDriverTypes.docker:
@@ -247,7 +248,7 @@ def handle_api(loop, router):
                 resp.reply     = FAILURE
                 resp.kernel_id = ''
                 resp.body      = 'The created kernel did not respond!'
-                router.write([client_id, b'', resp.SerializeToString()])
+                server.write([resp.SerializeToString()])
                 return
 
             # TODO: restore the user module state?
@@ -274,7 +275,7 @@ def handle_api(loop, router):
                 resp.kernel_id = ''
                 resp.body = 'No such kernel.'
 
-        router.write([client_id, b'', resp.SerializeToString()])
+        server.write([resp.SerializeToString()])
 
 def handle_exit():
     loop.stop()
@@ -287,18 +288,18 @@ if __name__ == '__main__':
 
     kernel_driver = KernelDriverTypes[args.kernel_driver]
 
+    asyncio.set_event_loop_policy(aiozmq.ZmqEventLoopPolicy())
     loop = asyncio.get_event_loop()
-    start_coro = aiozmq.create_zmq_stream(zmq.ROUTER, bind='tcp://0.0.0.0:5001', loop=loop)
-    router = loop.run_until_complete(start_coro)
+    server = loop.run_until_complete(aiozmq.create_zmq_stream(zmq.REP, bind='tcp://*:5001', loop=loop))
     print('Started serving...')
     loop.add_signal_handler(signal.SIGTERM, handle_exit)
     # TODO: add a timer loop to check heartbeats and reclaim kernels unused for long time.
     try:
-        asyncio.async(handle_api(loop, router), loop=loop)
+        asyncio.async(handle_api(loop, server), loop=loop)
         loop.run_forever()
     except KeyboardInterrupt:
         print()
         pass
-    router.close()
+    server.close()
     loop.close()
     print('Exit.')
