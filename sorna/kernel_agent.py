@@ -13,6 +13,7 @@ import argparse
 import builtins as builtin_mod
 import code
 from functools import partial
+import io
 import json
 from namedlist import namedlist, namedtuple
 import signal
@@ -28,11 +29,26 @@ ExceptionInfo = namedtuple('ExceptionInfo', [
 
 class SockWriter(object):
     def __init__(self, sock, cell_id):
-        self.cell_id = '{0}'.format(cell_id).encode('ascii')
+        self.cell_id_encoded = '{0}'.format(cell_id).encode('ascii')
         self.sock = sock
+        self.buffer = io.StringIO()
 
     def write(self, s):
-        self.sock.send_multipart([self.cell_id, s.encode('utf8')])
+        if '\n' in s:  # flush on occurrence of a newline.
+            s1, s2 = s.split('\n')
+            s0 = self.buffer.getvalue()
+            self.sock.send_multipart([self.cell_id_encoded, (s0 + s1 + '\n').encode('utf8')])
+            self.buffer.seek(0)
+            self.buffer.truncate(0)
+            self.buffer.write(s2)
+        else:
+            self.buffer.write(s)
+        if self.buffer.tell() > 1024:  # flush if the buffer is too large.
+            s0 = self.buffer.getvalue()
+            self.sock.send_multipart([self.cell_id_encoded, s0.encode('utf8')])
+            self.buffer.seek(0)
+            self.buffer.truncate(0)
+        # TODO: timeout to flush?
 
 class SockReader(object):
     def __init__(self, sock, cell_id):
