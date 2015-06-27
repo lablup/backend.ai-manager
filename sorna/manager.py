@@ -6,10 +6,10 @@ The Sorna API Server
 It routes the API requests to kernel agents in VMs and manages the VM instance pool.
 '''
 
-from .proto.api_pb2 import ManagerRequest, ManagerResponse
-from .proto.api_pb2 import PING, PONG, CREATE, DESTROY, SUCCESS, INVALID_INPUT, FAILURE
-from .proto.agent_pb2 import AgentRequest, AgentResponse
-from .proto.agent_pb2 import HEARTBEAT, SOCKET_INFO
+from sorna.proto.manager_pb2 import ManagerRequest, ManagerResponse
+from sorna.proto.manager_pb2 import PING, PONG, CREATE, DESTROY, SUCCESS, INVALID_INPUT, FAILURE
+from sorna.proto.agent_pb2 import AgentRequest, AgentResponse
+from sorna.proto.agent_pb2 import HEARTBEAT, SOCKET_INFO
 from .utils.protobuf import read_message, write_message
 import argparse
 import asyncio, aiozmq, zmq
@@ -301,8 +301,7 @@ def handle_api(loop, server):
 def handle_exit():
     loop.stop()
 
-
-if __name__ == '__main__':
+def main():
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--kernel-driver', default='docker', choices=('docker', 'local'))
     args = argparser.parse_args()
@@ -324,3 +323,6 @@ if __name__ == '__main__':
     server.close()
     loop.close()
     print('Exit.')
+
+if __name__ == '__main__':
+    main()

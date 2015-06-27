@@ -6,8 +6,8 @@ The Sorna Kernel Agent
 It manages the namespace and hooks for the Python code requested and execute it.
 '''
 
-from .proto.agent_pb2 import AgentRequest, AgentResponse, HEARTBEAT, SOCKET_INFO, EXECUTE
-from .utils.protobuf import read_message, write_message
+from sorna.proto.agent_pb2 import AgentRequest, AgentResponse
+from sorna.proto.agent_pb2 import HEARTBEAT, SOCKET_INFO, EXECUTE
 import asyncio, zmq, aiozmq
 import argparse
 import builtins as builtin_mod
