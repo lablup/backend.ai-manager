@@ -6,10 +6,10 @@ The Sorna API Server
 It routes the API requests to kernel agents in VMs and manages the VM instance pool.
 '''
 
-from sorna.proto.manager_pb2 import ManagerRequest, ManagerResponse
-from sorna.proto.manager_pb2 import PING, PONG, CREATE, DESTROY, SUCCESS, INVALID_INPUT, FAILURE
-from sorna.proto.agent_pb2 import AgentRequest, AgentResponse
-from sorna.proto.agent_pb2 import HEARTBEAT, SOCKET_INFO
+from .proto.manager_pb2 import ManagerRequest, ManagerResponse
+from .proto.manager_pb2 import PING, PONG, CREATE, DESTROY, SUCCESS, INVALID_INPUT, FAILURE
+from .proto.agent_pb2 import AgentRequest, AgentResponse
+from .proto.agent_pb2 import HEARTBEAT, SOCKET_INFO
 from .utils.protobuf import read_message, write_message
 import argparse
 import asyncio, aiozmq, zmq
@@ -187,7 +187,7 @@ class LocalKernelDriver(KernelDriver):
         unique_id = str(uuid.uuid4())
         kernel_id = 'local/{0}'.format(unique_id)
         kernel = Kernel(instance=instance, kernel_id=unique_id)
-        cmdargs = ('/usr/bin/python3', '-m', 'sorna.kernel_agent',
+        cmdargs = ('/usr/bin/python3', '-m', 'sorna.agent',
                    '--kernel-id', kernel_id, '--agent-port', str(agent_port))
         proc = yield from asyncio.create_subprocess_exec(*cmdargs, loop=self.loop)
         kernel.kernel_id = kernel_id
@@ -298,9 +298,6 @@ def handle_api(loop, server):
 
         server.write([resp.SerializeToString()])
 
-def handle_exit():
-    loop.stop()
-
 def main():
     global kernel_driver, instance_registry, kernel_registry
     argparser = argparse.ArgumentParser()
@@ -308,6 +305,10 @@ def main():
     args = argparser.parse_args()
 
     kernel_driver = KernelDriverTypes[args.kernel_driver]
+
+    def handle_exit():
+        nonlocal loop
+        loop.stop()
 
     asyncio.set_event_loop_policy(aiozmq.ZmqEventLoopPolicy())
     loop = asyncio.get_event_loop()
