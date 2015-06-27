@@ -12,6 +12,7 @@ import json
 import signal
 import sys
 import uuid
+from pprint import pprint
 
 @asyncio.coroutine
 def create_kernel():
@@ -42,12 +43,27 @@ def create_kernel():
     return resp.kernel_id, json.loads(resp.body)
 
 @asyncio.coroutine
-def run_command(kernel_sock, command_str):
+def handle_out_stream(sock):
+    while True:
+        try:
+            # TODO: implement line-buffering with b'\n'
+            cell_id, data = yield from sock.read()
+            print(Fore.GREEN + '[{0}]'.format(cell_id.decode('ascii')) + Fore.RESET, data.decode('utf8'))
+        except aiozmq.ZmqStreamClosed:
+            break
+
+@asyncio.coroutine
+def run_command(kernel_sock, stdout_sock, stderr_sock, cell_id, code_str):
+    cell_id_encoded = '{0}'.format(cell_id).encode('ascii')
+    stdout_sock.transport.subscribe(cell_id_encoded)
+    stderr_sock.transport.subscribe(cell_id_encoded)
     req = AgentRequest()
     req.req_type = EXECUTE
-    req.body     = command_str
+    req.body     = json.dumps({
+        'cell_id': cell_id,
+        'code': code_str,
+    })
     kernel_sock.write([req.SerializeToString()])
-    # TODO: multiplex stdout/stderr streams
     resp_data = yield from kernel_sock.read()
     resp = AgentResponse()
     resp.ParseFromString(resp_data[0])
@@ -58,18 +74,36 @@ def run_command(kernel_sock, command_str):
             out.append(str(e))
         print(Fore.RED + '\n'.join(out) + Fore.RESET, file=sys.stderr)
     else:
-        print(result['eval'])
+        if result['eval']:
+            print(result['eval'])
+    # TODO: how to ensure we all received the output?
+    yield from asyncio.sleep(1)
+    stdout_sock.transport.unsubscribe(cell_id_encoded)
+    stderr_sock.transport.unsubscribe(cell_id_encoded)
 
 @asyncio.coroutine
-def shell_loop(kernel_sock):
+def run_tests(kernel_info):
+    # The scope of this method is same to the user's notebook session on the web browser.
+    # kernel_sock should be mapped with AJAX calls.
+    # stdout/stderr_sock should be mapped with WebSockets to asynchronously update cell output blocks.
+    kernel_sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel_info['agent_sock'], loop=loop)
+    stdout_sock = yield from aiozmq.create_zmq_stream(zmq.SUB, connect=kernel_info['stdout_sock'], loop=loop)
+    stderr_sock = yield from aiozmq.create_zmq_stream(zmq.SUB, connect=kernel_info['stderr_sock'], loop=loop)
+    # TODO: currently below coroutines are not waited by anyone and causes warnings.
+    #       how to clean up them "safely"??
+    asyncio.async(handle_out_stream(stdout_sock), loop=loop)
+    asyncio.async(handle_out_stream(stderr_sock), loop=loop)
     c = 'a = 123\nprint(a)'
-    yield from run_command(kernel_sock, c)
+    yield from run_command(kernel_sock, stdout_sock, stderr_sock, 1, c)
     c = 'a += 1\nprint(a)'
-    yield from run_command(kernel_sock, c)
-    c = 'def sum(a,b):\n  return a+b\n'
-    yield from run_command(kernel_sock, c)
-    c = 'sum(a, 456)'
-    yield from run_command(kernel_sock, c)
+    yield from run_command(kernel_sock, stdout_sock, stderr_sock, 2, c)
+    c = 'def sum(a,b):\n  return a+b'
+    yield from run_command(kernel_sock, stdout_sock, stderr_sock, 3, c)
+    c = 'import sys\nprint(sum(a, 456), file=sys.stderr)'
+    yield from run_command(kernel_sock, stdout_sock, stderr_sock, 4, c)
+    stdout_sock.close()
+    stderr_sock.close()
+    kernel_sock.close()
 
 def handle_exit():
     loop.stop()
@@ -78,17 +112,14 @@ if __name__ == '__main__':
     colorama_init()
     asyncio.set_event_loop_policy(aiozmq.ZmqEventLoopPolicy())
     loop = asyncio.get_event_loop()
-    print('Contacting the API server...')
-    kernel_id, kernel_info = loop.run_until_complete(create_kernel())
-    print(kernel_id, kernel_info)
-    print('The kernel is created. Trying to connect to it...')
-    kernel_sock = loop.run_until_complete(aiozmq.create_zmq_stream(zmq.REQ, connect=kernel_info['agent_sock'], loop=loop))
     loop.add_signal_handler(signal.SIGTERM, handle_exit)
+    print('Requesting the API server to create a kernel...')
+    kernel_id, kernel_info = loop.run_until_complete(create_kernel())
+    print('The kernel {0} is created.'.format(kernel_id))
     try:
-        loop.run_until_complete(shell_loop(kernel_sock))
+        loop.run_until_complete(run_tests(kernel_info))
     except KeyboardInterrupt:
         print()
         pass
-    kernel_sock.close()
     loop.close()
     print('Exit.')

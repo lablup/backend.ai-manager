@@ -27,22 +27,19 @@ ExceptionInfo = namedtuple('ExceptionInfo', [
 ])
 
 class SockWriter(object):
-    def __init__(self, sock):
-        self._sock = sock
+    def __init__(self, sock, cell_id):
+        self.cell_id = '{0}'.format(cell_id).encode('ascii')
+        self.sock = sock
 
     def write(self, s):
-        # TODO: wrap each string as a structured message
-        #       (to distinguish which cell sent the output in the frontend)
-        self._sock.send(s)
+        self.sock.send_multipart([self.cell_id, s.encode('utf8')])
 
 class SockReader(object):
-    def __init__(self, sock):
-        self._sock = sock
+    def __init__(self, sock, cell_id):
+        self.sock = sock
 
     def read(self, n):
-        # TODO: derwap string from a structured message
-        #       (the frontend should tag which cell sent this input)
-        return self._sock.read(n)
+        raise NotImplementedError()
 
 class Kernel(object):
     '''
@@ -58,16 +55,12 @@ class Kernel(object):
 
         # Initialize sockets.
         context = zmq.Context.instance()
-        self.stdin_socket  = context.socket(zmq.ROUTER)
-        self.stdin_port = self.stdin_socket.bind_to_random_port('tcp://{0}'.format(self.ip))
+        self.stdin_socket = None  #context.socket(zmq.ROUTER)
+        self.stdin_port = 0  #self.stdin_socket.bind_to_random_port('tcp://{0}'.format(self.ip))
         self.stdout_socket = context.socket(zmq.PUB)
         self.stdout_port = self.stdout_socket.bind_to_random_port('tcp://{0}'.format(self.ip))
         self.stderr_socket = context.socket(zmq.PUB)
         self.stderr_port = self.stderr_socket.bind_to_random_port('tcp://{0}'.format(self.ip))
-
-        self.stdin_reader = SockReader(self.stdin_socket)
-        self.stdout_writer = SockWriter(self.stdout_socket)
-        self.stderr_writer = SockWriter(self.stdout_socket)
 
         # Initialize user module and namespaces.
         user_module = types.ModuleType('__main__',
@@ -79,13 +72,16 @@ class Kernel(object):
         self.user_global_ns.setdefault('__name__', '__main__')
         self.user_ns = user_module.__dict__
 
-    def execute_code(self, src):
+    def execute_code(self, cell_id, src):
 
         # TODO: limit the scope of changed sys.std*
         #       (use a proxy object for sys module?)
+        #self.stdin_reader = SockReader(self.stdin_socket)
+        self.stdout_writer = SockWriter(self.stdout_socket, cell_id)
+        self.stderr_writer = SockWriter(self.stderr_socket, cell_id)
         #sys.stdin, orig_stdin   = self.stdin_reader, sys.stdin
-        #sys.stdout, orig_stdout = self.stdout_writer, sys.stdout
-        #sys.stderr, orig_stderr = self.stderr_writer, sys.stderr
+        sys.stdout, orig_stdout = self.stdout_writer, sys.stdout
+        sys.stderr, orig_stderr = self.stderr_writer, sys.stderr
 
         exec_result = None
         exceptions = []
@@ -98,7 +94,7 @@ class Kernel(object):
         try:
             # TODO: cache the compiled code in the memory
             # TODO: attach traceback in a structured format
-            code_obj = code.compile_command(src, symbol='eval')
+            code_obj = code.compile_command(src, symbol='exec')
         except IndentationError as e:
             exceptions.append(ExceptionInfo(e, before_exec, None))
         except (OverflowError, SyntaxError, ValueError, TypeError, MemoryError) as e:
@@ -114,8 +110,8 @@ class Kernel(object):
         sys.excepthook = sys.__excepthook__
 
         #sys.stdin = orig_stdin
-        #sys.stdout = orig_stdout
-        #sys.stderr = orig_stderr
+        sys.stdout = orig_stdout
+        sys.stderr = orig_stderr
 
         return exec_result, exceptions
 
@@ -140,9 +136,14 @@ def handle_request(loop, server, kernel):
             })
         elif req.req_type == EXECUTE:
             print('[{0}] EXECUTE'.format(kernel.kernel_id))
-            result, exceptions = kernel.execute_code(req.body)
+            request = json.loads(req.body)
+            result, exceptions = kernel.execute_code(request['cell_id'], request['code'])
+            # TODO: make a common serializer for generic types
+            # TODO: allow users to define custom serializer
+            if not (isinstance(result, str) or result is None):
+                result = str(result)
             resp.body = json.dumps({
-                'eval': str(result),
+                'eval': result,
                 'exceptions': ['{0!r}'.format(e) for e in exceptions],
             })
         else:

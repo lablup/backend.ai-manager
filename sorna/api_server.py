@@ -92,6 +92,22 @@ class KernelDriver(metaclass=ABCMeta):
         finally:
             sock.close()
 
+    @asyncio.coroutine
+    def get_socket_info(self, kernel_id):
+        kernel = kernel_registry[kernel_id]
+        sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.agent_sock, loop=loop)
+        req = AgentRequest()
+        req.req_type = SOCKET_INFO
+        req.body = ''
+        sock.write([req.SerializeToString()])
+        resp_data = yield from sock.read()
+        resp = AgentResponse()
+        resp.ParseFromString(resp_data[0])
+        sock_info = json.loads(resp.body)
+        kernel.stdin_sock = sock_info['stdin']
+        kernel.stdout_sock = sock_info['stdout']
+        kernel.stderr_sock = sock_info['stderr']
+        sock.close()
 
 class DockerKernelDriver(KernelDriver):
 
@@ -230,7 +246,11 @@ def handle_api(loop, server):
 
             instance = yield from driver.find_avail_instance()
             if instance is None:
-                raise RuntimeError('No instance is available to launch a new kernel.')
+                resp.reply     = FAILURE
+                resp.kernel_id = ''
+                resp.body      = 'No instance is available to launch a new kernel.'
+                server.write([resp.SerializeToString()])
+                return
             kernel_id = yield from driver.create_kernel(instance)
 
             yield from asyncio.sleep(0.2, loop=loop)
@@ -251,16 +271,18 @@ def handle_api(loop, server):
                 server.write([resp.SerializeToString()])
                 return
 
+            yield from driver.get_socket_info(kernel_id)
+
             # TODO: restore the user module state?
 
             kernel = kernel_registry[kernel_id]
             resp.reply     = SUCCESS
             resp.kernel_id = kernel_id
-            resp.body      = json.dumps({ # TODO: implement
+            resp.body      = json.dumps({
                 'agent_sock': kernel.agent_sock,
-                'stdin_sock': '<not-implemented>',
-                'stdout_sock': '<not-implemented>',
-                'stderr_sock': '<not-implemented>',
+                'stdin_sock': None,
+                'stdout_sock': kernel.stdout_sock,
+                'stderr_sock': kernel.stderr_sock,
             })
 
         elif req.action == DESTROY:
