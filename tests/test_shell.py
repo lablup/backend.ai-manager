@@ -77,15 +77,9 @@ def run_command(kernel_sock, stdout_sock, stderr_sock, cell_id, code_str):
         stderr_sock.transport.unsubscribe(last_cell_id_encoded)
     stdout_sock.transport.subscribe(cell_id_encoded)
     stderr_sock.transport.subscribe(cell_id_encoded)
+    stdout_reader_task.cancel()
+    stderr_reader_task.cancel()
     last_cell_id_encoded = cell_id_encoded
-    if stdout_reader_task is not None:
-        stdout_reader_task.cancel()
-    else:
-        stdout_reader_task = asyncio.async(handle_out_stream(stdout_sock, 'stdout'), loop=loop)
-    if stderr_reader_task is not None:
-        stderr_reader_task.cancel()
-    else:
-        stderr_reader_task = asyncio.async(handle_out_stream(stderr_sock, 'stderr'), loop=loop)
     # Ensure that the readers proceed.
     yield from asyncio.sleep(0.01)
     req = AgentRequest()
@@ -118,6 +112,9 @@ def run_tests(kernel_info):
     stdout_sock = yield from aiozmq.create_zmq_stream(zmq.SUB, connect=kernel_info['stdout_sock'], loop=loop)
     stderr_sock = yield from aiozmq.create_zmq_stream(zmq.SUB, connect=kernel_info['stderr_sock'], loop=loop)
     stop_reading_streams = False
+    stdout_reader_task = asyncio.async(handle_out_stream(stdout_sock, 'stdout'), loop=loop)
+    stderr_reader_task = asyncio.async(handle_out_stream(stderr_sock, 'stderr'), loop=loop)
+    yield from asyncio.sleep(0.01)
     c = 'a = 123\nprint(a)'
     yield from run_command(kernel_sock, stdout_sock, stderr_sock, 1, c)
     c = 'a += 1\nprint(a)'
@@ -145,6 +142,7 @@ def run_tests(kernel_info):
     resp = ManagerResponse()
     resp.ParseFromString(resp_data[0])
     assert resp.reply == SUCCESS
+    api_sock.close()
 
 def handle_exit():
     loop.stop()
