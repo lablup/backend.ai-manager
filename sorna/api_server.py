@@ -10,7 +10,6 @@ from .proto.api_pb2 import ManagerRequest, ManagerResponse
 from .proto.api_pb2 import PING, PONG, CREATE, DESTROY, SUCCESS, INVALID_INPUT, FAILURE
 from .proto.agent_pb2 import AgentRequest, AgentResponse
 from .proto.agent_pb2 import HEARTBEAT, SOCKET_INFO
-from . import kernel_agent
 from .utils.protobuf import read_message, write_message
 import argparse
 import asyncio, aiozmq, zmq
@@ -204,10 +203,10 @@ class LocalKernelDriver(KernelDriver):
         assert(kernel.instance.cur_kernels >= 0)
         proc = kernel.priv
         proc.terminate()
+        yield from proc.wait()
         agent_url = urlparse(kernel.agent_sock)
         kernel.instance.used_ports.remove(agent_url.port)
-        del kernel_registry[req.kernel_id]
-        yield from proc.wait()
+        del kernel_registry[kernel_id]
 
 
 # Module states

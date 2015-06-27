@@ -135,6 +135,17 @@ def run_tests(kernel_info):
     stderr_sock.close()
     kernel_sock.close()
 
+    api_sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect='tcp://127.0.0.1:5001', loop=loop)
+    req = ManagerRequest()
+    req.action = DESTROY
+    req.kernel_id = kernel_info['kernel_id']
+    req.body = ''
+    api_sock.write([req.SerializeToString()])
+    resp_data = yield from api_sock.read()
+    resp = ManagerResponse()
+    resp.ParseFromString(resp_data[0])
+    assert resp.reply == SUCCESS
+
 def handle_exit():
     loop.stop()
 
@@ -145,6 +156,7 @@ if __name__ == '__main__':
     loop.add_signal_handler(signal.SIGTERM, handle_exit)
     print('Requesting the API server to create a kernel...')
     kernel_id, kernel_info = loop.run_until_complete(create_kernel())
+    kernel_info['kernel_id'] = kernel_id
     print('The kernel {0} is created.'.format(kernel_id))
     try:
         loop.run_until_complete(run_tests(kernel_info))
