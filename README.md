@@ -9,13 +9,23 @@ It means that this project is not visible to the users but plays a key role in o
 Components
 ----------
 
-### API Server
+### Sorna Manager
 
 It routes the requests from front-end web servers to the kernel instances.
 It also checks the health of kernels using heartbeats and manages resource allocation of the VM instances (EC2) and container slots on them.
 
-(TODO: For the performance, streaming connections between kernel instances and front-end servers may bypass the API server in future implementation.)
+ * Python package name: `sorna.manager`
 
-### Kernel Agent
+### Sorna Agent
 
 It resides in the container where the kernel process runs.
+
+ * https://github.com/lablup/sorna-agent
+ * Python package name: `sorna.agent`
+
+### Sorna Protocols
+
+It defines the protocols between front-end servers, manager server(s), and kernel instances running agents.
+
+ * https://github.com/lablup/sorna-protocols
+ * Python package name: `sorna.proto`
