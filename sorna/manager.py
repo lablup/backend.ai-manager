@@ -187,7 +187,7 @@ class LocalKernelDriver(KernelDriver):
         unique_id = str(uuid.uuid4())
         kernel_id = 'local/{0}'.format(unique_id)
         kernel = Kernel(instance=instance, kernel_id=unique_id)
-        cmdargs = ('/usr/bin/python3', '-m', 'sorna.agent',
+        cmdargs = ('/usr/bin/env', 'python3', '-m', 'sorna.agent',
                    '--kernel-id', kernel_id, '--agent-port', str(agent_port))
         proc = yield from asyncio.create_subprocess_exec(*cmdargs, loop=self.loop)
         kernel.kernel_id = kernel_id
