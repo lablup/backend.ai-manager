@@ -67,7 +67,7 @@ stderr_reader_task = None
 last_cell_id_encoded = None
 
 @asyncio.coroutine
-def run_command(kernel_sock, stdout_sock, stderr_sock, cell_id, code_str):
+def run_command(kernel_sock, stdout_sock, stderr_sock, cell_id, code_str, redirect_output=False):
     global stdout_reader_task, stderr_reader_task, last_cell_id_encoded
     cell_id_encoded = '{0}'.format(cell_id).encode('ascii')
     # In the web browser session, we may not need to explicitly subscribe/unsubscribe the cells.
@@ -87,6 +87,7 @@ def run_command(kernel_sock, stdout_sock, stderr_sock, cell_id, code_str):
     req.body     = json.dumps({
         'cell_id': cell_id,
         'code': code_str,
+        'redirect_output': redirect_output,
     })
     kernel_sock.write([req.SerializeToString()])
     resp_data = yield from kernel_sock.read()
@@ -101,6 +102,8 @@ def run_command(kernel_sock, stdout_sock, stderr_sock, cell_id, code_str):
     else:
         if result['eval']:
             print(result['eval'])
+        if redirect_output:
+            return result['stdout'], result['stderr']
 
 @asyncio.coroutine
 def run_tests(kernel_info):
@@ -130,6 +133,12 @@ def run_tests(kernel_info):
     stderr_reader_task.cancel()
     stdout_sock.close()
     stderr_sock.close()
+
+    c = 'print(sum(5,6))\nprint(sum(-5,-3), file=sys.stderr)'
+    stdout, stderr = yield from run_command(kernel_sock, stdout_sock, stderr_sock, 6, c, redirect_output=True)
+    print(Fore.GREEN + '[6]' + Fore.RESET, stdout)
+    print(Fore.YELLOW + '[6]' + Fore.RESET, stderr, file=sys.stderr)
+
     kernel_sock.close()
 
     api_sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect='tcp://127.0.0.1:5001', loop=loop)
