@@ -5,6 +5,7 @@ import socket
 import json
 import asyncio
 
+import signal, psutil
 import zmq
 from sorna.proto.manager_pb2 import ManagerRequest, ManagerResponse
 from sorna.proto.manager_pb2 import PING, PONG, CREATE, DESTROY, SUCCESS, INVALID_INPUT, FAILURE
@@ -12,7 +13,6 @@ from sorna.proto.manager_pb2 import PING, PONG, CREATE, DESTROY, SUCCESS, INVALI
 class SornaManagerLocalResponseTest(unittest.TestCase):
     def setUp(self):
         self.kernel_ip = '127.0.0.1'
-        self.kernel_id = 1
         self.kernel_driver = 'local'
         self.manager_port = 5001
         self.manager_addr = 'tcp://{0}:{1}'.format(self.kernel_ip, self.manager_port)
@@ -33,8 +33,11 @@ class SornaManagerLocalResponseTest(unittest.TestCase):
 
     def tearDown(self):
         if self.port_error != 0:  # Kill test server
+            child_pid = psutil.Process(self.server.pid).children(recursive=True)
+            for pid in child_pid:  # Kill all child processes. More graceful way?
+                pid.send_signal(signal.SIGTERM)
             self.server.terminate()
-            call(['kill', str(self.server.pid+1)])
+            print('###' + str(self.server.pid) + ', ' + str(child_pid))
 
     def test_ping_response_with_same_body_as_request(self):
         # Send test HEARTBEAT request
