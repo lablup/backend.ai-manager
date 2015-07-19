@@ -6,16 +6,13 @@ The Sorna API Server
 It routes the API requests to kernel agents in VMs and manages the VM instance pool.
 '''
 
-from sorna.proto.manager_pb2 import ManagerRequest, ManagerResponse
-from sorna.proto.manager_pb2 import PING, PONG, CREATE, DESTROY, SUCCESS, INVALID_INPUT, FAILURE
-from sorna.proto.agent_pb2 import AgentRequest, AgentResponse
-from sorna.proto.agent_pb2 import HEARTBEAT, SOCKET_INFO
+from sorna.proto import Namespace, encode, decode
+from sorna.proto.msgtypes import ManagerRequestTypes, ManagerResponseTypes, AgentRequestTypes
 import argparse
 import asyncio, aiozmq, zmq
 from abc import ABCMeta, abstractmethod
 import docker
 from enum import Enum
-import json
 from namedlist import namedlist
 import signal
 from urllib.parse import urlparse
@@ -74,14 +71,13 @@ class KernelDriver(metaclass=ABCMeta):
         kernel = kernel_registry[kernel_id]
         sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.agent_sock, loop=self.loop)
         req_id = str(uuid.uuid4())
-        req = AgentRequest()
-        req.req_type = HEARTBEAT
+        req = Namespace()
+        req.req_type = AgentRequestTypes.HEARTBEAT
         req.body = req_id
-        sock.write([req.SerializeToString()])
+        sock.write([encode(req)])
         try:
             resp_data = yield from asyncio.wait_for(sock.read(), timeout=2.0, loop=self.loop)
-            resp = AgentResponse()
-            resp.ParseFromString(resp_data[0])
+            resp = decode(resp_data[0])
             return (resp.body == req_id)
         except asyncio.TimeoutError:
             return False
@@ -92,17 +88,15 @@ class KernelDriver(metaclass=ABCMeta):
     def get_socket_info(self, kernel_id):
         kernel = kernel_registry[kernel_id]
         sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.agent_sock, loop=self.loop)
-        req = AgentRequest()
-        req.req_type = SOCKET_INFO
+        req = Namespace()
+        req.req_type = AgentRequestTypes.SOCKET_INFO
         req.body = ''
-        sock.write([req.SerializeToString()])
+        sock.write([encode(req)])
         resp_data = yield from sock.read()
-        resp = AgentResponse()
-        resp.ParseFromString(resp_data[0])
-        sock_info = json.loads(resp.body)
-        kernel.stdin_sock = sock_info['stdin']
-        kernel.stdout_sock = sock_info['stdout']
-        kernel.stderr_sock = sock_info['stderr']
+        resp = decode(resp_data[0])
+        kernel.stdin_sock = resp.body.stdin
+        kernel.stdout_sock = resp.body.stdout
+        kernel.stderr_sock = resp.body.stderr
         sock.close()
 
 class DockerKernelDriver(KernelDriver):
@@ -221,9 +215,8 @@ kernel_registry = dict()
 def handle_api(loop, server):
     while True:
         req_data = yield from server.read()
-        req = ManagerRequest()
-        req.ParseFromString(req_data[0])
-        resp = ManagerResponse()
+        req = decode(req_data[0])
+        resp = Namespace()
 
         if kernel_driver == KernelDriverTypes.docker:
             driver = DockerKernelDriver(loop)
@@ -232,20 +225,20 @@ def handle_api(loop, server):
         else:
             assert False, 'Should not reach here.'
 
-        if req.action == PING:
+        if req.action == ManagerRequestTypes.PING:
 
-            resp.reply     = PONG
+            resp.reply     = ManagerResponseTypes.PONG
             resp.kernel_id = ''
             resp.body      = req.body
 
-        elif req.action == CREATE:
+        elif req.action == ManagerRequestTypes.CREATE:
 
             instance = yield from driver.find_avail_instance()
             if instance is None:
-                resp.reply     = FAILURE
+                resp.reply     = ManagerResponseTypes.FAILURE
                 resp.kernel_id = ''
                 resp.body      = 'No instance is available to launch a new kernel.'
-                server.write([resp.SerializeToString()])
+                server.write([encode(resp)])
                 return
             kernel_id = yield from driver.create_kernel(instance)
 
@@ -261,10 +254,10 @@ def handle_api(loop, server):
                     yield from asyncio.sleep(1, loop=loop)
                     tries += 1
             else:
-                resp.reply     = FAILURE
+                resp.reply     = ManagerResponseTypes.FAILURE
                 resp.kernel_id = ''
                 resp.body      = 'The created kernel did not respond!'
-                server.write([resp.SerializeToString()])
+                server.write([encode(resp)])
                 return
 
             yield from driver.get_socket_info(kernel_id)
@@ -272,28 +265,28 @@ def handle_api(loop, server):
             # TODO: restore the user module state?
 
             kernel = kernel_registry[kernel_id]
-            resp.reply     = SUCCESS
+            resp.reply     = ManagerResponseTypes.SUCCESS
             resp.kernel_id = kernel_id
-            resp.body      = json.dumps({
+            resp.body      = {
                 'agent_sock': kernel.agent_sock,
                 'stdin_sock': None,
                 'stdout_sock': kernel.stdout_sock,
                 'stderr_sock': kernel.stderr_sock,
-            })
+            }
 
-        elif req.action == DESTROY:
+        elif req.action == ManagerRequestTypes.DESTROY:
 
             if req.kernel_id in kernel_registry:
                 yield from driver.destroy_kernel(req.kernel_id)
-                resp.reply = SUCCESS
+                resp.reply = ManagerResponseTypes.SUCCESS
                 resp.kernel_id = req.kernel_id
                 resp.body = ''
             else:
-                resp.reply = INVALID_INPUT
+                resp.reply = ManagerResponseTypes.INVALID_INPUT
                 resp.kernel_id = ''
                 resp.body = 'No such kernel.'
 
-        server.write([resp.SerializeToString()])
+        server.write([encode(resp)])
 
 def main():
     global kernel_driver, instance_registry, kernel_registry
