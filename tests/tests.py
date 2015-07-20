@@ -7,8 +7,11 @@ import asyncio
 
 import signal, psutil
 import zmq
-from sorna.proto.manager_pb2 import ManagerRequest, ManagerResponse
-from sorna.proto.manager_pb2 import PING, PONG, CREATE, DESTROY, SUCCESS, INVALID_INPUT, FAILURE
+# from sorna.proto.manager_pb2 import ManagerRequest, ManagerResponse
+# from sorna.proto.manager_pb2 import PING, PONG, CREATE, DESTROY, SUCCESS, INVALID_INPUT, FAILURE
+from sorna.proto import Namespace, encode, decode
+from sorna.proto.msgtypes import ManagerRequestTypes, ManagerResponseTypes, AgentRequestTypes
+
 
 class SornaManagerLocalResponseTest(unittest.TestCase):
     def setUp(self):
@@ -41,50 +44,45 @@ class SornaManagerLocalResponseTest(unittest.TestCase):
 
     def test_ping_response_with_same_body_as_request(self):
         # Send test HEARTBEAT request
-        request = ManagerRequest()
-        request.action = PING
+        request = Namespace()
+        request.action = ManagerRequestTypes.PING
         request.body = 'test'
-        self.socket.send(request.SerializeToString())
+        self.socket.send(encode(request))
 
         # Receive response
-        response = ManagerResponse()
         response_data = self.socket.recv()
-        response.ParseFromString(response_data)
+        response = decode(response_data)
 
         # Assert PONG and its body is equal to that of request
-        self.assertEqual(response.reply, PONG)
+        self.assertEqual(response.reply, ManagerResponseTypes.PONG)
         self.assertEqual(request.body, response.body)
 
     def test_create_and_destroy_agent(self):
         # Send test CREATE request
-        request = ManagerRequest()
-        request.action = CREATE
+        request = Namespace()
+        request.action = ManagerRequestTypes.CREATE
         request.body = 'test'
-        self.socket.send(request.SerializeToString())
+        self.socket.send(encode(request))
 
         # Receive response
-        response = ManagerResponse()
         response_data = self.socket.recv()
-        response.ParseFromString(response_data)
-        sock = json.loads(response.body)
+        response = decode(response_data)
 
         # Assert the response is SUCCESS
-        self.assertEqual(response.reply, SUCCESS)
-        # self.assertEqual(request.body, response.body)
+        self.assertEqual(response.reply, ManagerResponseTypes.SUCCESS)
 
         # Send DESTROY request
-        request.action = DESTROY
+        request.action = ManagerRequestTypes.DESTROY
         request.kernel_id = response.kernel_id
-        self.socket.send(request.SerializeToString())
+        self.socket.send(encode(request))
 
         # Receive response
-        response = ManagerResponse()
         response_data = self.socket.recv()
-        response.ParseFromString(response_data)
+        response = decode(response_data)
 
         # Assert the response is SUCCESS
-        self.assertEqual(response.reply, SUCCESS)
-        self.assertIn(response.body, 'No such kernel')
+        self.assertEqual(response.reply, ManagerResponseTypes.SUCCESS)
+        print(response)
 
 if __name__ == '__main__':
     unittest.main()
