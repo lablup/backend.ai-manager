@@ -1,5 +1,9 @@
 FROM        ubuntu:14.04
 
+# NOTICE:
+# You need to build sorna-protocols wheel package, and copy the resulting
+# ".whl" file into the project base directory.
+
 ENV         DEBIAN_FRONTEND noninteractive
 RUN         sed 's@archive.ubuntu.com@ftp.jaist.ac.jp@' -i /etc/apt/sources.list
 
