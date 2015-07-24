@@ -1,6 +1,6 @@
-protobuf>=3.0
 docker-py
 namedlist
-pyzmq --install-options="--zmq=bundled"
+pyzmq
 aiozmq
 colorama
+asyncio_redis

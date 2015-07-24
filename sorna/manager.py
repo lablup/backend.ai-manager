@@ -14,9 +14,14 @@ from abc import ABCMeta, abstractmethod
 import docker
 from enum import Enum
 from namedlist import namedlist
+import os
 import signal
 from urllib.parse import urlparse
 import uuid
+
+# Get the address of Redis server from docker links named "redis".
+REDIS_ADDR = os.environ.get('REDIS_PORT_6379_TCP_ADDR', '127.0.0.1')
+REDIS_PORT = int(os.environ.get('REDIS_PORT_6379_TCP_PORT', '6379'))
 
 KernelDriverTypes = Enum('KernelDriverTypes', 'local docker')
 
