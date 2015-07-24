@@ -1,6 +1,6 @@
 docker-py
 namedlist
-pyzmq
+zmq
 aiozmq
 colorama
 asyncio_redis
