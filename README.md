@@ -16,6 +16,12 @@ It also checks the health of kernels using heartbeats and manages resource alloc
 
  * Python package name: `sorna.manager`
 
+#### Required Docker Links
+
+ * redis
+   - `REDIS_PORT_6379_TCP_ADDR` (default: 127.0.0.1)
+   - `REDIS_PORT_6379_TCP_PORT` (default: 6379)
+
 ### Sorna Agent
 
 It resides in the container where the kernel process runs.
