@@ -1,9 +1,7 @@
 #! /usr/bin/env python3
 
 import unittest
-from subprocess import call
-from multiprocessing import Process
-import signal, psutil
+import subprocess, os, signal
 import socket
 import json
 import asyncio, zmq, aiozmq, asyncio_redis
@@ -66,8 +64,7 @@ class SornaManagerLocalResponseTest(unittest.TestCase):
         s.close()
         if self.port_error != 0:  # When the port is available
             cmd = ['python3', '-m', 'sorna.manager', '--kernel-driver', self.kernel_driver]
-            self.server = Process(target=call, args=(cmd,))
-            self.server.start()
+            self.server = subprocess.Popen(cmd, start_new_session=True)
 
         # Connect to the manager server
         self.context = zmq.Context()
@@ -76,11 +73,10 @@ class SornaManagerLocalResponseTest(unittest.TestCase):
 
     def tearDown(self):
         if self.port_error != 0:  # Kill test server
-            child_pid = psutil.Process(self.server.pid).children(recursive=True)
-            for pid in child_pid:  # Kill all child processes. More graceful way?
-                pid.send_signal(signal.SIGTERM)
-            self.server.terminate()
-            print('###' + str(self.server.pid) + ', ' + str(child_pid))
+            sid = os.getsid(self.server.pid)
+            os.killpg(sid, signal.SIGTERM)
+            exitcode = self.server.wait()
+            print('Manager process exited with code {0}'.format(exitcode))
 
     def test_ping_response_with_same_body_as_request(self):
         # Send test HEARTBEAT request
