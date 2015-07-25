@@ -3,7 +3,11 @@
 import asyncio, asyncio_redis
 from datetime import datetime
 from namedlist import namedlist
+import re
 import uuid
+
+class InstanceNotAvailableError(RuntimeError):
+    pass
 
 Instance = namedlist('Instance', [
     ('id', None),
@@ -23,6 +27,7 @@ Kernel = namedlist('Kernel', [
     ('stderr_sock', None),
     ('priv', None),
 ])
+
 
 class InstanceRegistry:
 
@@ -92,4 +97,4 @@ class InstanceRegistry:
             # TODO: create the kernel and fill the Kernel info.
             return Instance(id=inst_id, ip=ip, tag=tag), Kernel()
         else:
-            return None, None
+            raise InstanceNotAvailableError()
