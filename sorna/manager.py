@@ -302,8 +302,7 @@ def main():
     kernel_driver = KernelDriverTypes[args.kernel_driver]
 
     def handle_exit():
-        nonlocal loop
-        loop.stop()
+        raise SystemExit()
 
     asyncio.set_event_loop_policy(aiozmq.ZmqEventLoopPolicy())
     loop = asyncio.get_event_loop()
@@ -314,8 +313,7 @@ def main():
     try:
         asyncio.async(handle_api(loop, server), loop=loop)
         loop.run_forever()
-    except KeyboardInterrupt:
-        print()
+    except (KeyboardInterrupt, SystemExit):
         pass
     server.close()
     loop.close()
