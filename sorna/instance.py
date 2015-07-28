@@ -48,7 +48,7 @@ class InstanceRegistry:
     def terminate(self):
         # TODO: destroy all tracking kernels
         yield from self._conn.srem('instance_registries', [self._id])
-        yield from self._conn.delete('{0}.meta.created'.format(self._id))
+        yield from self._conn.delete(['{0}.meta.created'.format(self._id)])
 
     @asyncio.coroutine
     def add_instance(self, instance_id, addr, port_range, max_kernels, tag=None):

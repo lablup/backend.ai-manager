@@ -316,6 +316,7 @@ def main():
     except (KeyboardInterrupt, SystemExit):
         pass
     server.close()
+    loop.run_until_complete(asyncio.sleep(0))
     loop.close()
     print('Exit.')
 

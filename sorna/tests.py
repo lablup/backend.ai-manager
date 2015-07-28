@@ -24,13 +24,32 @@ class SornaInstanceRegistryTest(unittest.TestCase):
                                                                           auto_reconnect=False),
                                                 timeout=5.0, loop=self.loop))
         self.pool = self.loop.run_until_complete(create_conn_pool_coro())
+        self.pool_for_registry = self.loop.run_until_complete(create_conn_pool_coro())
+        self.inst_registry = InstanceRegistry(self.pool_for_registry, None)
+        @asyncio.coroutine
+        def init_registry_coro():
+            yield from self.inst_registry.init()
+        self.loop.run_until_complete(init_registry_coro())
 
     def tearDown(self):
+        @asyncio.coroutine
+        def terminate_registry_coro():
+            yield from self.inst_registry.terminate()
+        self.loop.run_until_complete(terminate_registry_coro())
+        self.pool_for_registry.close()
         self.pool.close()
         # Progress the event loop so that the pending coroutines have chances to finish.
         # Otherwise, you will see a lot of ResourceWarnings about unclosed sockets.
         self.loop.run_until_complete(asyncio.sleep(0))
         self.loop.close()
+
+    def test_init(self):
+        @asyncio.coroutine
+        def go():
+            cursor = yield from self.pool.sscan('instance_registries')
+            return (yield from cursor.fetchall())
+        stored_ids = self.loop.run_until_complete(go())
+        self.assertIn(self.inst_registry._id, stored_ids)
 
     def test_add_instance(self):
         pass
