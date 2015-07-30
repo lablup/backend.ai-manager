@@ -19,6 +19,7 @@ Contents:
 .. toctree::
    :maxdepth: 2
 
+   manager/structs
    manager/driver
    manager/instance
 

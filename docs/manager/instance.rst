@@ -3,10 +3,6 @@
 Instance
 ========
 
-.. autoclass:: Instance
-
-.. autoclass:: Kernel
-
 .. autoclass:: InstanceRegistry
    :members:
    :undoc-members:

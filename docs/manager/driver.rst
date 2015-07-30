@@ -3,6 +3,8 @@
 Driver
 ======
 
+.. autofunction:: create_driver
+
 .. autoclass:: BaseDriver
    :members:
    :undoc-members:
@@ -13,3 +15,4 @@ Driver
 
 .. autoclass:: LocalDriver
    :show-inheritance:
+

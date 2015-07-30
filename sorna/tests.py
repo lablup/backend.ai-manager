@@ -4,8 +4,10 @@ import unittest
 import subprocess, os, signal
 import socket
 import json
-import asyncio, zmq, aiozmq, asyncio_redis
+import asyncio, zmq, aiozmq, asyncio_redis as aioredis
+import uuid
 from .instance import Instance, Kernel, InstanceRegistry, InstanceNotAvailableError
+from .driver import create_driver
 from .proto import Namespace, encode, decode
 from .proto.msgtypes import ManagerRequestTypes, ManagerResponseTypes, AgentRequestTypes
 
@@ -17,24 +19,25 @@ class SornaInstanceRegistryTest(unittest.TestCase):
         redis_port = int(os.environ.get('REDIS_PORT_6379_TCP_PORT', '6379'))
         @asyncio.coroutine
         def create_conn_pool_coro():
-            return (yield from asyncio.wait_for(asyncio_redis.Pool.create(host=redis_host,
-                                                                          port=redis_port,
-                                                                          poolsize=1,
-                                                                          loop=self.loop,
-                                                                          auto_reconnect=False),
+            return (yield from asyncio.wait_for(aioredis.Pool.create(host=redis_host,
+                                                                     port=redis_port,
+                                                                     poolsize=1,
+                                                                     loop=self.loop,
+                                                                     auto_reconnect=False),
                                                 timeout=5.0, loop=self.loop))
         self.pool = self.loop.run_until_complete(create_conn_pool_coro())
         self.pool_for_registry = self.loop.run_until_complete(create_conn_pool_coro())
-        self.inst_registry = InstanceRegistry(self.pool_for_registry, None)
+        self.driver = create_driver('local')
+        self.registry = InstanceRegistry(self.pool_for_registry, self.driver)
         @asyncio.coroutine
         def init_registry_coro():
-            yield from self.inst_registry.init()
+            yield from self.registry.init()
         self.loop.run_until_complete(init_registry_coro())
 
     def tearDown(self):
         @asyncio.coroutine
         def terminate_registry_coro():
-            yield from self.inst_registry.terminate()
+            yield from self.registry.terminate()
         self.loop.run_until_complete(terminate_registry_coro())
         self.pool_for_registry.close()
         self.pool.close()
@@ -49,10 +52,15 @@ class SornaInstanceRegistryTest(unittest.TestCase):
             cursor = yield from self.pool.sscan('instance_registries')
             return (yield from cursor.fetchall())
         stored_ids = self.loop.run_until_complete(go())
-        self.assertIn(self.inst_registry._id, stored_ids)
+        self.assertIn(self.registry._id, stored_ids)
 
     def test_add_instance(self):
-        pass
+        @asyncio.coroutine
+        def go():
+            return (yield from self.registry.add_instance(spec=None, max_kernels=1, tag='test'))
+        instance = self.loop.run_until_complete(go())
+        self.assertIsNotNone(instance)
+        self.assertEqual(instance.tag, 'test')
 
     def test_delete_instance(self):
         pass
@@ -77,7 +85,7 @@ class SornaInstanceRegistryTest(unittest.TestCase):
     def test_destroy_kernel_race_condition(self):
         pass
 
-
+'''
 class SornaManagerLocalResponseTest(unittest.TestCase):
 
     def setUp(self):
@@ -149,3 +157,4 @@ class SornaManagerLocalResponseTest(unittest.TestCase):
         # Assert the response is SUCCESS
         self.assertEqual(response.reply, ManagerResponseTypes.SUCCESS)
         #print(response)
+'''
