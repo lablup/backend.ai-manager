@@ -8,10 +8,7 @@ It routes the API requests to kernel agents in VMs and manages the VM instance p
 
 import argparse
 import asyncio, aiozmq, zmq, asyncio_redis as aioredis
-from abc import ABCMeta, abstractmethod
-import docker
-from namedlist import namedlist
-import os, signal, sys
+import os, signal
 from .proto import Namespace, encode, decode
 from .proto.msgtypes import ManagerRequestTypes, ManagerResponseTypes
 from .driver import DriverTypes, create_driver
@@ -93,12 +90,19 @@ def handle_api(loop, server, registry):
 
         server.write([encode(resp)])
 
+
 def main():
     global registry
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--kernel-driver', default='docker',
-                           choices=tuple(t.name for t in DriverTypes))
+                           choices=tuple(t.name for t in DriverTypes),
+                           help='Use the given driver to control computing resources.')
+    argparser.add_argument('--reattach', dest='reattach_registry_id', default=None, type=str,
+                           help='Reattach to the existing database using the given registry ID. '
+                                'Use this option when the manager has crashed '
+                                'but there are running instances and kernels.')
     args = argparser.parse_args()
+
     def handle_exit():
         raise SystemExit()
 
@@ -106,11 +110,13 @@ def main():
     loop = asyncio.get_event_loop()
 
     server = loop.run_until_complete(
-            aiozmq.create_zmq_stream(zmq.REP, bind='tcp://*:5001', loop=loop))
+        aiozmq.create_zmq_stream(zmq.REP, bind='tcp://*:5001', loop=loop))
     redis_conn_pool = loop.run_until_complete(
-            aioredis.Pool.create(host=REDIS_HOST, port=REDIS_PORT))
+        aioredis.Pool.create(host=REDIS_HOST, port=REDIS_PORT))
     driver = create_driver(args.kernel_driver)
-    registry = InstanceRegistry(redis_conn_pool, driver, loop=loop)
+    registry = InstanceRegistry(redis_conn_pool, driver,
+                                registry_id=args.reattach_registry_id,
+                                loop=loop)
     loop.run_until_complete(registry.init())
     if args.kernel_driver == 'local':
         inst = loop.run_until_complete(registry.add_instance())

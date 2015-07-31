@@ -3,7 +3,7 @@
 import asyncio, asyncio_redis as aioredis
 import zmq, aiozmq
 from datetime import datetime
-import re
+import functools
 from urllib.parse import urlparse
 import uuid
 from .proto import Namespace, encode, decode
@@ -11,11 +11,36 @@ from .proto.msgtypes import AgentRequestTypes
 from .driver import BaseDriver
 from .structs import Instance, Kernel
 
+
+def _auto_get_kernel(func):
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        if not isinstance(args[0], Kernel):
+            args[0] = yield from self.get_kernel(args[0])
+        func(self, *args, **kwargs)
+    return wrapper
+
+def _auto_get_instance(func):
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        if not isinstance(args[0], Instance):
+            args[0] = yield from self.get_instance(args[0])
+        func(self, *args, **kwargs)
+    return wrapper
+
+
+
 class InstanceNotAvailableError(RuntimeError):
     pass
 
+
+class InstanceNotFoundError(RuntimeError):
+    pass
+
+
 class KernelNotFoundError(RuntimeError):
     pass
+
 
 class InstanceRegistry:
     '''
@@ -44,13 +69,13 @@ class InstanceRegistry:
     redis.call("HINCRBY", inst_key, "num_kernels", 1)
     '''
 
-    def __init__(self, redis_conn, kernel_driver, loop=None):
+    def __init__(self, redis_conn, kernel_driver, registry_id=None, loop=None):
         assert isinstance(redis_conn, aioredis.Pool)
         assert isinstance(kernel_driver, BaseDriver)
         self._loop = loop if loop is not None else asyncio.get_event_loop()
         self._conn = redis_conn
         self._driver = kernel_driver
-        self._id = str(uuid.uuid4())
+        self._id = str(uuid.uuid4()) if registry_id is None else registry_id
 
     @asyncio.coroutine
     def init(self):
@@ -79,6 +104,8 @@ class InstanceRegistry:
     def get_instance(self, inst_id):
         assert isinstance(inst_id, str)
         key = self._mangle_inst_prefix(inst_id)
+        if not (yield from self._conn.exists(key)):
+            raise InstanceNotFoundError(inst_id)
         fields = yield from self._conn.hmget(key, [
             'ip',
             'spec',
@@ -94,6 +121,8 @@ class InstanceRegistry:
     def get_kernel(self, kern_id):
         assert isinstance(kern_id, str)
         key = self._mangle_kernel_prefix(kern_id)
+        if not (yield from self._conn.exists(key)):
+            raise InstanceNotFoundError(inst_id)
         fields = yield from self._conn.hmget(key, [
             'instance',
             'spec',
@@ -127,7 +156,6 @@ class InstanceRegistry:
             ret = all((yield from asyncio.gather(fut, fut2)))
         avail_key = '{0}.avail_instances'.format(self._id)
         yield from self._conn.sadd(avail_key, [inst_id])
-        print('add_instance / avail_key = {}'.format(avail_key))
         return (yield from self.get_instance(inst_id))
 
     @asyncio.coroutine
@@ -139,7 +167,6 @@ class InstanceRegistry:
 
     @asyncio.coroutine
     def create_kernel(self, spec='python34'):
-        found = False
         avail_key = '{0}.avail_instances'.format(self._id)
         inst_id = yield from self._conn.spop(avail_key)
         if inst_id is None:
@@ -168,8 +195,8 @@ class InstanceRegistry:
             return instance, kernel
 
     @asyncio.coroutine
+    @_auto_get_kernel
     def destroy_kernel(self, kernel):
-        if not isinstance(kernel, Kernel): kernel = yield from self.get_kernel(kernel)
         yield from self._driver.destroy_kernel(kernel)
         kern_key = self._mangle_kernel_prefix(kernel.id)
         yield from self._conn.delete([kern_key])
@@ -181,8 +208,8 @@ class InstanceRegistry:
         yield from self._conn.sadd(avail_key, [kernel.instance])
 
     @asyncio.coroutine
+    @_auto_get_kernel
     def ping_kernel(self, kernel):
-        if not isinstance(kernel, Kernel): kernel = yield from self.get_kernel(kernel)
         sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.agent_sock,
                                                    loop=self._loop)
         req_id = str(uuid.uuid4())
@@ -201,8 +228,8 @@ class InstanceRegistry:
             sock.close()
 
     @asyncio.coroutine
+    @_auto_get_kernel
     def get_socket_info(self, kernel):
-        if not isinstance(kernel, Kernel): kernel = yield from self.get_kernel(kernel)
         sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.agent_sock,
                                                    loop=self._loop)
         req = Namespace()

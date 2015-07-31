@@ -3,15 +3,15 @@
 import unittest
 import subprocess, os, signal
 import socket
-import json
-import asyncio, zmq, aiozmq, asyncio_redis as aioredis
-import uuid
-from .instance import Instance, Kernel, InstanceRegistry, InstanceNotAvailableError
+import asyncio, zmq, asyncio_redis as aioredis
+from .instance import InstanceRegistry, InstanceNotFoundError
 from .driver import create_driver
 from .proto import Namespace, encode, decode
-from .proto.msgtypes import ManagerRequestTypes, ManagerResponseTypes, AgentRequestTypes
+from .proto.msgtypes import ManagerRequestTypes, ManagerResponseTypes
+
 
 class SornaInstanceRegistryTest(unittest.TestCase):
+
     def setUp(self):
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
@@ -62,10 +62,39 @@ class SornaInstanceRegistryTest(unittest.TestCase):
         self.assertIsNotNone(instance)
         self.assertEqual(instance.tag, 'test')
 
-    def test_delete_instance(self):
+    def test_add_instance_and_working(self):
+        # TODO: integration test: try to access the instance using the driver!
         pass
 
-    def test_delete_instance_with_running_kernels(self):
+    def test_get_instance(self):
+        @asyncio.coroutine
+        def go():
+            with self.assertRaises(InstanceNotFoundError):
+                yield from self.registry.get_instance('non-existent-instance-id')
+            instance = yield from self.registry.add_instance(spec=None, max_kernels=1, tag='test')
+            instance2 = yield from self.registry.get_instance(instance.id)
+            self.assertEqual(instance, instance2)
+        instance = self.loop.run_until_complete(go())
+
+    def test_reattach_registry(self):
+        @asyncio.coroutine
+        def go():
+            instance = yield from self.registry.add_instance(spec=None, max_kernels=1, tag='test')
+            new_registry = InstanceRegistry(self.pool_for_registry, self.driver, self.registry._id)
+            instance2 = yield from new_registry.get_instance(instance.id)
+            self.assertEqual(instance, instance2)
+        self.loop.run_until_complete(go())
+
+    def test_remove_instance(self):
+        @asyncio.coroutine
+        def go():
+            instance = yield from self.registry.add_instance(spec=None, max_kernels=1, tag='test')
+            yield from self.registry.remove_instance(instance.id)
+            with self.assertRaises(InstanceNotFoundError):
+                yield from self.registry.get_instance(instance.id)
+        self.loop.run_until_complete(go())
+
+    def test_remove_instance_with_running_kernels(self):
         # Running kernels must be destroyed along with the instance.
         pass
 
