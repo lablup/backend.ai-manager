@@ -65,8 +65,8 @@ class InstanceRegistry:
     -- ARGV[1]: registry id
     -- ARGV[2]: instance id
     local inst_key = ARGV[1] .. ".inst." .. ARGV[2]
-    local inst_num = redis.call("HGET", inst_key, "num_kernels")
-    local inst_max = redis.call("HGET", inst_key, "max_kernels")
+    local inst_num = tonumber(redis.call("HGET", inst_key, "num_kernels"))
+    local inst_max = tonumber(redis.call("HGET", inst_key, "max_kernels"))
     if inst_num < inst_max - 1 then
       redis.call("SADD", KEYS[1], ARGV[2])
     end
