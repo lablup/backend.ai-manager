@@ -16,17 +16,23 @@ def _auto_get_kernel(func):
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs):
         if not isinstance(args[0], Kernel):
-            args[0] = yield from self.get_kernel(args[0])
-        func(self, *args, **kwargs)
+            arg0 = yield from self.get_kernel(args[0])
+            return func(self, arg0, *args[1:], **kwargs)
+        return func(self, *args, **kwargs)
     return wrapper
 
 def _auto_get_instance(func):
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs):
         if not isinstance(args[0], Instance):
-            args[0] = yield from self.get_instance(args[0])
-        func(self, *args, **kwargs)
+            arg0 = yield from self.get_instance(args[0])
+            return func(self, arg0, *args[1:], **kwargs)
+        return func(self, *args, **kwargs)
     return wrapper
+
+def _s(obj):
+    if obj is None: return ''
+    return str(obj)
 
 
 
@@ -149,7 +155,7 @@ class InstanceRegistry:
                 'docker_port': '2375',
                 'max_kernels': str(max_kernels),
                 'num_kernels': '0',
-                'tag': tag if tag else '',
+                'tag': _s(tag),
             })
             fut2 = yield from tnx.lpush(key + '.agent_ports', list(map(str, range(6000, 6100))))
             yield from tnx.exec()
@@ -185,11 +191,11 @@ class InstanceRegistry:
             yield from self._conn.hmset(kern_key, {
                 'id': kernel.id,
                 'instance': instance.id,
-                'spec': kernel.spec,
-                'agent_sock': kernel.agent_sock,
-                'stdin_sock': kernel.stdin_sock,
-                'stdout_sock': kernel.stdout_sock,
-                'stderr_sock': kernel.stderr_sock,
+                'spec': _s(kernel.spec),
+                'agent_sock': _s(kernel.agent_sock),
+                'stdin_sock': _s(kernel.stdin_sock),
+                'stdout_sock': _s(kernel.stdout_sock),
+                'stderr_sock': _s(kernel.stderr_sock),
                 'created_at': datetime.now().isoformat(),
             })
             return instance, kernel

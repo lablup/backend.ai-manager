@@ -39,7 +39,7 @@ def handle_api(loop, server, registry):
         elif req.action == ManagerRequestTypes.CREATE:
 
             try:
-                instance, kernel = yield from registry.create_kernel()
+                instance, kernel = yield from registry.create_kernel(spec=req.body.spec)
             except InstanceNotAvailableError:
                 resp.reply     = ManagerResponseTypes.FAILURE
                 resp.kernel_id = ''

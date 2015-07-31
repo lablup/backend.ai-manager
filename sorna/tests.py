@@ -11,6 +11,11 @@ from .proto.msgtypes import ManagerRequestTypes, ManagerResponseTypes
 
 
 class SornaInstanceRegistryTest(unittest.TestCase):
+    '''
+    Test the functionality of :class:`InstanceRegistry <sorna.instance.InstanceRegistry>`.
+    This test suite requires a temporary Redis server and a set of docker link
+    environment variables to it.
+    '''
 
     def setUp(self):
         self.loop = asyncio.new_event_loop()
@@ -114,8 +119,12 @@ class SornaInstanceRegistryTest(unittest.TestCase):
     def test_destroy_kernel_race_condition(self):
         pass
 
-'''
-class SornaManagerLocalResponseTest(unittest.TestCase):
+
+class SornaManagerLocalIntegrationTest(unittest.TestCase):
+    '''
+    Test the manager using the full API interaction steps, including zmq-based communication.
+    This test requires a temporary Redis server like :class:`SornaInstanceRegistryTest`.
+    '''
 
     def setUp(self):
         self.kernel_ip = '127.0.0.1'
@@ -145,36 +154,33 @@ class SornaManagerLocalResponseTest(unittest.TestCase):
             exitcode = self.server.wait()
             #print('Manager process exited with code {0}'.format(exitcode))
 
-    def test_ping_response_with_same_body_as_request(self):
-        # Send test HEARTBEAT request
+    def test_ping(self):
         request = Namespace()
         request.action = ManagerRequestTypes.PING
         request.body = 'test'
         self.socket.send(encode(request))
 
-        # Receive response
         response_data = self.socket.recv()
         response = decode(response_data)
 
-        # Assert PONG and its body is equal to that of request
         self.assertEqual(response.reply, ManagerResponseTypes.PONG)
         self.assertEqual(request.body, response.body)
 
-    def test_create_and_destroy_agent(self):
-        # Send test CREATE request
+    def test_create_and_destroy_kernel(self):
+        # Create the kernel.
         request = Namespace()
         request.action = ManagerRequestTypes.CREATE
-        request.body = 'test'
+        request.body = {
+            'spec': 'python34',
+        }
         self.socket.send(encode(request))
 
-        # Receive response
         response_data = self.socket.recv()
         response = decode(response_data)
 
-        # Assert the response is SUCCESS
         self.assertEqual(response.reply, ManagerResponseTypes.SUCCESS)
 
-        # Send DESTROY request
+        # Destroy the kernel.
         request.action = ManagerRequestTypes.DESTROY
         request.kernel_id = response.kernel_id
         self.socket.send(encode(request))
@@ -186,4 +192,3 @@ class SornaManagerLocalResponseTest(unittest.TestCase):
         # Assert the response is SUCCESS
         self.assertEqual(response.reply, ManagerResponseTypes.SUCCESS)
         #print(response)
-'''
