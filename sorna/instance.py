@@ -67,9 +67,7 @@ class InstanceRegistry:
     local inst_key = ARGV[1] .. ".inst." .. ARGV[2]
     local inst_num = redis.call("HGET", inst_key, "num_kernels")
     local inst_max = redis.call("HGET", inst_key, "max_kernels")
-    if inst_num == inst_max - 1 then
-      redis.call("SREM", KEYS[1], ARGV[2])
-    else
+    if inst_num < inst_max - 1 then
       redis.call("SADD", KEYS[1], ARGV[2])
     end
     redis.call("HINCRBY", inst_key, "num_kernels", 1)
