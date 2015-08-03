@@ -166,12 +166,24 @@ class SornaInstanceRegistryTest(unittest.TestCase):
         @asyncio.coroutine
         def go():
             instance = yield from self.registry.add_instance(spec=None, max_kernels=1, tag='test')
+
+            # Test cleaning immediately (timeout = 0)
             parent_instance, kernel = yield from self.registry.create_kernel()
             self.assertEqual(parent_instance.id, instance.id)
             kernel2 = yield from self.registry.get_kernel(kernel.id)
             self.assertEqual(kernel2, kernel)
-            yield from self.pool_for_registry.save()
             yield from self.registry.clean_old_kernels(timeout=0)
+            with self.assertRaises(KernelNotFoundError):
+                yield from self.registry.get_kernel(kernel.id)
+
+            # Test cleaning on timeout
+            parent_instance, kernel = yield from self.registry.create_kernel()
+            self.assertEqual(parent_instance.id, instance.id)
+            kernel2 = yield from self.registry.get_kernel(kernel.id)
+            self.assertEqual(kernel2, kernel)
+            yield from self.registry.clean_old_kernels(timeout=1.0) # fallback to set last_used
+            yield from asyncio.sleep(1.2)
+            yield from self.registry.clean_old_kernels(timeout=1.0)
             with self.assertRaises(KernelNotFoundError):
                 yield from self.registry.get_kernel(kernel.id)
         self.loop.run_until_complete(go())
