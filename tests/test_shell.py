@@ -17,7 +17,7 @@ def create_kernel():
     api_sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect='tcp://127.0.0.1:5001', loop=loop)
 
     # Test if ping works.
-    req_id = str(uuid.uuid4())
+    req_id = uuid.uuid4().hex
     req = Namespace()
     req.action    = ManagerRequestTypes.PING
     req.kernel_id = ''

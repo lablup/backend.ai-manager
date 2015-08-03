@@ -10,7 +10,10 @@ such as Docker containers on top of AWS or the local machine.
 from abc import ABCMeta, abstractmethod
 import asyncio, aiozmq
 from enum import Enum
+from datetime import datetime
 import uuid
+import socket
+import subprocess
 from .structs import Kernel
 
 __all__ = ['DriverTypes', 'BaseDriver', 'AWSDockerDriver', 'LocalDriver', 'create_driver']
@@ -106,7 +109,7 @@ class AWSDockerDriver(BaseDriver):
                                          command='/usr/bin/python3')
         kernel = Kernel(instance=instance, id=container.id)
         kernel.priv = container.id
-        kernel.id = 'docker-{0}/{1}'.format(instance.ip, kernel.priv)
+        kernel.id = 'docker:{0}'.format(kernel.priv)
         kernel.agent_sock = 'tcp://{0}:{1}'.format(instance.ip, agent_port)
         # TODO: run the container and set the port mappings
         return kernel
@@ -130,7 +133,7 @@ class LocalDriver(BaseDriver):
     @asyncio.coroutine
     def launch_instance(self, spec=None):
         # As this is the local machine, we do nothing!
-        inst_id = str(uuid.uuid4())
+        inst_id = uuid.uuid4().hex
         return inst_id, '127.0.0.1'
 
     @asyncio.coroutine
@@ -139,12 +142,27 @@ class LocalDriver(BaseDriver):
 
     @asyncio.coroutine
     def create_kernel(self, instance, agent_port):
-        kernel_id = 'local/{0}'.format(uuid.uuid4())
-        kernel = Kernel(id=kernel_id, instance=instance)
+        kernel_id = 'local:{0}'.format(uuid.uuid4().hex)
+        kernel = Kernel(id=kernel_id, instance=instance.id)
+        # TODO: Pool the local port numbers in a more general way!
+        #       The validity of this "temp socket" method depends on how the OS
+        #       assigns the port numbers.
+        #       (In particular, the OS must use different port number when
+        #       creating the next socket.)
+        temp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        temp_sock.bind(('', 0))
+        new_port = temp_sock.getsockname()[1]
+        temp_sock.close()
         cmdargs = ('/usr/bin/env', 'python3', '-m', 'sorna.agent',
-                   '--kernel-id', kernel_id, '--agent-port', str(agent_port))
-        proc = yield from asyncio.create_subprocess_exec(*cmdargs, loop=self.loop)
-        kernel.agent_sock = 'tcp://{0}:{1}'.format(instance.ip, agent_port)
+                   '--kernel-id', kernel_id, '--agent-port', str(new_port))
+        proc = yield from asyncio.create_subprocess_exec(*cmdargs, loop=self.loop,
+                                                         stdout=subprocess.DEVNULL,
+                                                         stderr=subprocess.DEVNULL)
+        kernel.agent_sock = 'tcp://{0}:{1}'.format(instance.ip, new_port)
+        kernel.stdin_sock = ''
+        kernel.stdout_sock = ''
+        kernel.stderr_sock = ''
+        kernel.created_at = datetime.now().isoformat()
         self.agents[kernel_id] = proc
         return kernel
 

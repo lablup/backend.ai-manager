@@ -8,7 +8,7 @@ It routes the API requests to kernel agents in VMs and manages the VM instance p
 
 import argparse
 import asyncio, aiozmq, zmq, asyncio_redis as aioredis
-import os, signal
+import os, signal, sys
 from .proto import Namespace, encode, decode
 from .proto.msgtypes import ManagerRequestTypes, ManagerResponseTypes
 from .driver import DriverTypes, create_driver
@@ -20,9 +20,11 @@ REDIS_PORT = int(os.environ.get('REDIS_PORT_6379_TCP_PORT', '6379'))
 
 # VM instances should run a docker daemon using "-H tcp://0.0.0.0:2375" in DOCKER_OPTS.
 
+_terminated = False
+
 @asyncio.coroutine
 def handle_api(loop, server, registry):
-    while True:
+    while not _terminated:
         try:
             req_data = yield from server.read()
         except aiozmq.stream.ZmqStreamClosed:
@@ -40,10 +42,10 @@ def handle_api(loop, server, registry):
 
             try:
                 instance, kernel = yield from registry.create_kernel(spec=req.body.spec)
-            except InstanceNotAvailableError:
+            except InstanceNotAvailableError as e:
                 resp.reply     = ManagerResponseTypes.FAILURE
                 resp.kernel_id = ''
-                resp.body      = 'No instance is available to launch a new kernel.'
+                resp.body      = '\n'.join(map(str, e.args))
                 server.write([encode(resp)])
                 return
 
@@ -90,9 +92,20 @@ def handle_api(loop, server, registry):
 
         server.write([encode(resp)])
 
+@asyncio.coroutine
+def handle_timer(loop, registry, period=10.0):
+    last_tick = loop.time()
+    while not _terminated:
+        yield from asyncio.sleep(1.0)
+        if _terminated: break
+        now = loop.time()
+        if now - last_tick >= period:
+            yield from registry.clean_old_kernels()
+            last_tick = now
+
 
 def main():
-    global registry
+    global _terminated
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--kernel-driver', default='docker',
                            choices=tuple(t.name for t in DriverTypes),
@@ -101,7 +114,15 @@ def main():
                            help='Reattach to the existing database using the given registry ID. '
                                 'Use this option when the manager has crashed '
                                 'but there are running instances and kernels.')
+    argparser.add_argument('--cleanup-interval', default=10, type=int,
+                           help='Interval (seconds) to do clean up operations '
+                                'such as killing idle kernels.')
+    argparser.add_argument('--kernel-timeout', default=600, type=int,
+                           help='Timeout (seconds) for idle kernels before automatic termination. ')
     args = argparser.parse_args()
+
+    assert args.cleanup_interval > 0
+    assert args.kernel_timeout >= 0
 
     def handle_exit():
         raise SystemExit()
@@ -116,6 +137,7 @@ def main():
     driver = create_driver(args.kernel_driver)
     registry = InstanceRegistry(redis_conn_pool, driver,
                                 registry_id=args.reattach_registry_id,
+                                kernel_timeout=args.kernel_timeout,
                                 loop=loop)
     loop.run_until_complete(registry.init())
     if args.kernel_driver == 'local':
@@ -125,17 +147,24 @@ def main():
 
     print('Started serving... (driver: {0})'.format(args.kernel_driver))
     loop.add_signal_handler(signal.SIGTERM, handle_exit)
-    # TODO: add a timer loop to check heartbeats and reclaim kernels unused for long time.
     try:
         asyncio.async(handle_api(loop, server, registry), loop=loop)
+        asyncio.async(handle_timer(loop, registry, args.cleanup_interval), loop=loop)
         loop.run_forever()
     except (KeyboardInterrupt, SystemExit):
-        pass
-    server.close()
-    redis_conn_pool.close()
-    loop.run_until_complete(asyncio.sleep(0))
-    loop.close()
-    print('Exit.')
+        _terminated = True
+        loop.run_until_complete(registry.terminate())
+        server.close()
+        redis_conn_pool.close()
+        pending = asyncio.Task.all_tasks()
+        for t in pending:
+            try:
+                loop.run_until_complete(asyncio.gather(t))
+            except asyncio.CancelledError:
+                pass
+    finally:
+        loop.close()
+        print('Exit.')
 
 if __name__ == '__main__':
     main()

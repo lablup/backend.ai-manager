@@ -2,9 +2,9 @@
 
 import unittest
 import subprocess, os, signal
-import socket
+import socket, time
 import asyncio, zmq, asyncio_redis as aioredis
-from .instance import InstanceRegistry, InstanceNotFoundError
+from .instance import *
 from .driver import create_driver
 from .proto import Namespace, encode, decode
 from .proto.msgtypes import ManagerRequestTypes, ManagerResponseTypes
@@ -33,7 +33,10 @@ class SornaInstanceRegistryTest(unittest.TestCase):
         self.pool = self.loop.run_until_complete(create_conn_pool_coro())
         self.pool_for_registry = self.loop.run_until_complete(create_conn_pool_coro())
         self.driver = create_driver('local')
-        self.registry = InstanceRegistry(self.pool_for_registry, self.driver)
+        self.registry = InstanceRegistry(self.pool_for_registry,
+                                         self.driver,
+                                         kernel_timeout=1.0,
+                                         loop=self.loop)
         @asyncio.coroutine
         def init_registry_coro():
             yield from self.registry.init()
@@ -43,6 +46,7 @@ class SornaInstanceRegistryTest(unittest.TestCase):
         @asyncio.coroutine
         def terminate_registry_coro():
             yield from self.registry.terminate()
+            #yield from self.pool_for_registry.flushdb()
         self.loop.run_until_complete(terminate_registry_coro())
         self.pool_for_registry.close()
         self.pool.close()
@@ -81,6 +85,23 @@ class SornaInstanceRegistryTest(unittest.TestCase):
             self.assertEqual(instance, instance2)
         instance = self.loop.run_until_complete(go())
 
+    def test_get_instance_diver_patterns(self):
+        @asyncio.coroutine
+        def go():
+            instance = yield from self.registry.add_instance(spec=None, max_kernels=1, tag='test')
+            # Only the instance ID
+            instance2 = yield from self.registry.get_instance(instance.id)
+            self.assertEqual(instance, instance2)
+            # The instance ID prefixed by the registry ID
+            instance2 = yield from self.registry.get_instance(
+                self.registry._mangle_inst_prefix(instance.id))
+            self.assertEqual(instance, instance2)
+            # The instance ID prefixed by the registry ID and suffixed by a sub-key name
+            instance2 = yield from self.registry.get_instance(
+                self.registry._mangle_inst_prefix(instance.id) + '.meta')
+            self.assertEqual(instance, instance2)
+        instance = self.loop.run_until_complete(go())
+
     def test_reattach_registry(self):
         @asyncio.coroutine
         def go():
@@ -104,10 +125,32 @@ class SornaInstanceRegistryTest(unittest.TestCase):
         pass
 
     def test_create_kernel(self):
-        # A single front-end server creates a kernel when therne is no instances.
-        # A single front-end server creates a kernel when there are instances but with no capacity.
-        # A single front-end server creates a kernel when there are instance with available capactiy.
-        pass
+        @asyncio.coroutine
+        def go():
+            # A single front-end server creates a kernel when there is no instances.
+            with self.assertRaises(InstanceNotAvailableError):
+                yield from self.registry.create_kernel()
+
+            # An instance has a capacity of a single kernel, and try to create kernel twice.
+            instance = yield from self.registry.add_instance(spec=None, max_kernels=1, tag='test')
+            _, kernel = yield from self.registry.create_kernel()
+            with self.assertRaises(InstanceNotAvailableError):
+                yield from self.registry.create_kernel()
+            yield from self.registry.destroy_kernel(kernel)
+            yield from self.registry.remove_instance(instance)
+
+            # An instance has a capacity of two kernels, and try to fill it.
+            instance = yield from self.registry.add_instance(spec=None, max_kernels=2, tag='test')
+            _, kernel1 = yield from self.registry.create_kernel()
+            _, kernel2 = yield from self.registry.create_kernel()
+            doppelganger1 = yield from self.registry.get_kernel(kernel1.id)
+            doppelganger2 = yield from self.registry.get_kernel(kernel2.id)
+            self.assertEqual(kernel1.id, doppelganger1.id)
+            self.assertEqual(kernel2.id, doppelganger2.id)
+            yield from self.registry.destroy_kernel(kernel1)
+            yield from self.registry.destroy_kernel(kernel2)
+            yield from self.registry.remove_instance(instance)
+        self.loop.run_until_complete(go())
 
     def test_create_kernel_race_condition(self):
         # Two front-end servers create kernels in an interleaved manner.
@@ -118,6 +161,20 @@ class SornaInstanceRegistryTest(unittest.TestCase):
 
     def test_destroy_kernel_race_condition(self):
         pass
+
+    def test_clean_up_kernel(self):
+        @asyncio.coroutine
+        def go():
+            instance = yield from self.registry.add_instance(spec=None, max_kernels=1, tag='test')
+            parent_instance, kernel = yield from self.registry.create_kernel()
+            self.assertEqual(parent_instance.id, instance.id)
+            kernel2 = yield from self.registry.get_kernel(kernel.id)
+            self.assertEqual(kernel2, kernel)
+            yield from self.pool_for_registry.save()
+            yield from self.registry.clean_old_kernels(timeout=0)
+            with self.assertRaises(KernelNotFoundError):
+                yield from self.registry.get_kernel(kernel.id)
+        self.loop.run_until_complete(go())
 
 
 class SornaManagerLocalIntegrationTest(unittest.TestCase):
@@ -170,6 +227,7 @@ class SornaManagerLocalIntegrationTest(unittest.TestCase):
         # Create the kernel.
         request = Namespace()
         request.action = ManagerRequestTypes.CREATE
+        request.user_id = 'test'
         request.body = {
             'spec': 'python34',
         }

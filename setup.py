@@ -23,7 +23,7 @@ setup(
     packages=find_packages(exclude=['contrib', 'docs', 'tests*']),
     namespace_packages=['sorna'],
 
-    install_requires=['pyzmq', 'aiozmq', 'namedlist', 'asyncio_redis'],
+    install_requires=['pyzmq', 'aiozmq', 'namedlist', 'asyncio_redis', 'python-dateutil'],
     extras_require={
         'dev': [],
         'test': [],
