@@ -51,13 +51,11 @@ def handle_api(loop, server, registry):
 
             yield from asyncio.sleep(0.2, loop=loop)
             tries = 0
-            print('Checking if the kernel is up...')
             while tries < 5:
                 success = yield from registry.ping_kernel(kernel.id)
                 if success:
                     break
                 else:
-                    print('  retrying after 1 sec...')
                     yield from asyncio.sleep(1, loop=loop)
                     tries += 1
             else:
@@ -82,6 +80,18 @@ def handle_api(loop, server, registry):
 
             try:
                 yield from registry.destroy_kernel(req.kernel_id)
+                resp.reply = ManagerResponseTypes.SUCCESS
+                resp.kernel_id = req.kernel_id
+                resp.body = ''
+            except KernelNotFoundError:
+                resp.reply = ManagerResponseTypes.INVALID_INPUT
+                resp.kernel_id = ''
+                resp.body = 'No such kernel.'
+
+        elif req.action == ManagerRequestTypes.REFRESH:
+
+            try:
+                yield from registry.refresh_kernel(req.kernel_id)
                 resp.reply = ManagerResponseTypes.SUCCESS
                 resp.kernel_id = req.kernel_id
                 resp.body = ''
@@ -135,9 +145,12 @@ def main():
     redis_conn_pool = loop.run_until_complete(
         aioredis.Pool.create(host=REDIS_HOST, port=REDIS_PORT))
     driver = create_driver(args.kernel_driver)
+    my_ip = loop.run_until_complete(driver.get_internal_ip())
+    manager_addr = 'tcp://{0}:{1}'.format(my_ip, 5001)
     registry = InstanceRegistry(redis_conn_pool, driver,
                                 registry_id=args.reattach_registry_id,
                                 kernel_timeout=args.kernel_timeout,
+                                manager_addr=manager_addr,
                                 loop=loop)
     loop.run_until_complete(registry.init())
     if args.kernel_driver == 'local':

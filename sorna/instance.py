@@ -79,7 +79,7 @@ class InstanceRegistry:
     redis.call("HINCRBY", inst_key, "num_kernels", 1)
     '''
 
-    def __init__(self, redis_conn, kernel_driver, registry_id=None, kernel_timeout=600, loop=None):
+    def __init__(self, redis_conn, kernel_driver, registry_id=None, kernel_timeout=600, manager_addr=None, loop=None):
         assert isinstance(redis_conn, aioredis.Pool)
         assert isinstance(kernel_driver, BaseDriver)
         self._loop = loop if loop is not None else asyncio.get_event_loop()
@@ -87,6 +87,7 @@ class InstanceRegistry:
         self._driver = kernel_driver
         self._id = uuid.uuid4().hex if registry_id is None else registry_id
         self._kernel_timeout = kernel_timeout
+        self._manager_addr = manager_addr
 
     @asyncio.coroutine
     def init(self):
@@ -223,7 +224,9 @@ class InstanceRegistry:
             inst_kp = self._mangle_inst_prefix(inst_id)
             assigned_agent_port = yield from self._conn.lpop(inst_kp + '.agent_ports')
 
-            kernel = yield from self._driver.create_kernel(instance, assigned_agent_port)
+            kernel = yield from self._driver.create_kernel(instance,
+                                                           assigned_agent_port,
+                                                           self._manager_addr)
             kern_kp = self._mangle_kernel_prefix(kernel.id)
             yield from self.fill_socket_info(kernel)
             yield from self._conn.hmset(kern_kp + '.meta', {
@@ -236,9 +239,6 @@ class InstanceRegistry:
                 'stderr_sock': _s(kernel.stderr_sock),
                 'created_at': kernel.created_at,
             })
-            if not hasattr(self, '_debug_kernels'):
-                self._debug_kernels = []
-            self._debug_kernels.append(kernel)
             return instance, kernel
 
     @asyncio.coroutine
@@ -275,12 +275,12 @@ class InstanceRegistry:
             sock.close()
 
     @asyncio.coroutine
-    @_auto_get_kernel
     def fill_socket_info(self, kernel):
         sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.agent_sock,
                                                    loop=self._loop)
         req = Namespace()
         req.req_type = AgentRequestTypes.SOCKET_INFO
+        req.kernel_id = kernel.id
         req.body = ''
         sock.write([encode(req)])
         resp_data = yield from sock.read()
@@ -289,6 +289,12 @@ class InstanceRegistry:
         kernel.stdout_sock = resp.body.stdout
         kernel.stderr_sock = resp.body.stderr
         sock.close()
+
+    @asyncio.coroutine
+    @_auto_get_kernel
+    def refresh_kernel(self, kernel):
+        kern_kp = self._mangle_kernel_prefix(kernel.id)
+        yield from self._conn.hset(kern_kp + '.meta', 'last_used', datetime.now().isoformat())
 
     @asyncio.coroutine
     def clean_old_kernels(self, inst_id=None, timeout=None):

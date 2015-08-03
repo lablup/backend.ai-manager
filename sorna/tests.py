@@ -33,9 +33,12 @@ class SornaInstanceRegistryTest(unittest.TestCase):
         self.pool = self.loop.run_until_complete(create_conn_pool_coro())
         self.pool_for_registry = self.loop.run_until_complete(create_conn_pool_coro())
         self.driver = create_driver('local')
+        my_ip = self.loop.run_until_complete(self.driver.get_internal_ip())
+        manager_addr = 'tcp://{0}:{1}'.format(my_ip, 5001)
         self.registry = InstanceRegistry(self.pool_for_registry,
                                          self.driver,
                                          kernel_timeout=1.0,
+                                         manager_addr=manager_addr,
                                          loop=self.loop)
         @asyncio.coroutine
         def init_registry_coro():
@@ -181,7 +184,7 @@ class SornaInstanceRegistryTest(unittest.TestCase):
             self.assertEqual(parent_instance.id, instance.id)
             kernel2 = yield from self.registry.get_kernel(kernel.id)
             self.assertEqual(kernel2, kernel)
-            yield from self.registry.clean_old_kernels(timeout=1.0) # fallback to set last_used
+            yield from self.registry.refresh_kernel(kernel.id)
             yield from asyncio.sleep(1.2)
             yield from self.registry.clean_old_kernels(timeout=1.0)
             with self.assertRaises(KernelNotFoundError):

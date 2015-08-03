@@ -56,12 +56,14 @@ class BaseDriver(metaclass=ABCMeta):
 
     @asyncio.coroutine
     @abstractmethod
-    def create_kernel(self, instance, agent_port):
+    def create_kernel(self, instance, agent_port, manager_addr):
         '''
         Launch the kernel and return its ID.
 
         :param instance: An object containing information of the target instance.
+        :param manager_addr: The address of the manager.
         :type instance: :class:`Instance <sorna.structs.Instance>`
+        :type manager_Addr: :class:`str`
 
         :returns: A :class:`Kernel <sorna.structs.Kernel>` object with kernel details.
         '''
@@ -75,6 +77,15 @@ class BaseDriver(metaclass=ABCMeta):
 
         :param kernel: An object containing information of the target kernel.
         :type kernel: :class:`Kernel <sorna.structs.Kernel>`
+        '''
+        raise NotImplementedError()
+
+    @asyncio.coroutine
+    @abstractmethod
+    def get_internal_ip(self):
+        '''
+        Get the IP address used internally.
+        This address is used to allow kernel agents to connect back to the manager.
         '''
         raise NotImplementedError()
 
@@ -97,7 +108,7 @@ class AWSDockerDriver(BaseDriver):
         raise NotImplementedError()
 
     @asyncio.coroutine
-    def create_kernel(self, instance, agent_port):
+    def create_kernel(self, instance, agent_port, manager_addr):
         cli = docker.Client(
             base_url='tcp://{0}:{1}'.format(instance.ip, instance.docker_port),
             timeout=5, version='auto'
@@ -117,6 +128,11 @@ class AWSDockerDriver(BaseDriver):
     @asyncio.coroutine
     def destroy_kernel(self, kernel):
         # TODO: destroy the container
+        raise NotImplementedError()
+
+    @asyncio.coroutine
+    def get_internal_ip(self):
+        # TODO: read http://instance-data/latest/meta-data/local-ipv4
         raise NotImplementedError()
 
 
@@ -141,7 +157,7 @@ class LocalDriver(BaseDriver):
         pass
 
     @asyncio.coroutine
-    def create_kernel(self, instance, agent_port):
+    def create_kernel(self, instance, agent_port, manager_addr):
         kernel_id = 'local:{0}'.format(uuid.uuid4().hex)
         kernel = Kernel(id=kernel_id, instance=instance.id)
         # TODO: Pool the local port numbers in a more general way!
@@ -154,7 +170,8 @@ class LocalDriver(BaseDriver):
         new_port = temp_sock.getsockname()[1]
         temp_sock.close()
         cmdargs = ('/usr/bin/env', 'python3', '-m', 'sorna.agent',
-                   '--kernel-id', kernel_id, '--agent-port', str(new_port))
+                   '--kernel-id', kernel_id, '--agent-port', str(new_port),
+                   '--manager-addr', manager_addr)
         proc = yield from asyncio.create_subprocess_exec(*cmdargs, loop=self.loop,
                                                          stdout=subprocess.DEVNULL,
                                                          stderr=subprocess.DEVNULL)
@@ -172,6 +189,10 @@ class LocalDriver(BaseDriver):
         proc.terminate()
         yield from proc.wait()
         del self.agents[kernel.id]
+
+    @asyncio.coroutine
+    def get_internal_ip(self):
+        return '127.0.0.1'
 
 
 _driver_type_to_class = {

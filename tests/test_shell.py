@@ -31,7 +31,7 @@ def create_kernel():
     # Create a kernel instance.
     req.action    = ManagerRequestTypes.CREATE
     req.kernel_id = ''
-    req.body      = ''
+    req.body      = {'spec': 'python34'}
     api_sock.write([encode(req)])
     resp_data = yield from api_sock.read()
     resp = decode(resp_data[0])
