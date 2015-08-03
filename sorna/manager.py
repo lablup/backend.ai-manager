@@ -129,6 +129,8 @@ def main():
                                 'such as killing idle kernels.')
     argparser.add_argument('--kernel-timeout', default=600, type=int,
                            help='Timeout (seconds) for idle kernels before automatic termination. ')
+    argparser.add_argument('--max-kernels', default=0, type=int,
+                           help='Set the max# of kernels per instance. Only for the local driver.')
     args = argparser.parse_args()
 
     assert args.cleanup_interval > 0
@@ -154,7 +156,8 @@ def main():
                                 loop=loop)
     loop.run_until_complete(registry.init())
     if args.kernel_driver == 'local':
-        inst = loop.run_until_complete(registry.add_instance())
+        assert args.max_kernels > 0
+        inst = loop.run_until_complete(registry.add_instance(max_kernels=args.max_kernels))
         assert inst is not None
         print('Added a local dummy instance.')
 
