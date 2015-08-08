@@ -169,7 +169,7 @@ class LocalDriver(BaseDriver):
         temp_sock.bind(('', 0))
         new_port = temp_sock.getsockname()[1]
         temp_sock.close()
-        cmdargs = ('/usr/bin/env', 'python3', '-m', 'sorna.agent',
+        cmdargs = ('/usr/bin/env', 'python3', '-m', 'sorna.agent.server',
                    '--kernel-id', kernel_id, '--agent-port', str(new_port),
                    '--manager-addr', manager_addr)
         proc = yield from asyncio.create_subprocess_exec(*cmdargs, loop=self.loop,
