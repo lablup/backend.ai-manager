@@ -209,7 +209,9 @@ class SornaManagerLocalIntegrationTest(unittest.TestCase):
         self.port_error = s.connect_ex((self.kernel_ip, self.manager_port))
         s.close()
         if self.port_error != 0:  # When the port is available
-            cmd = ['python3', '-m', 'sorna.manager', '--kernel-driver', self.kernel_driver]
+            cmd = ['python3', '-m', 'sorna.manager',
+                   '--kernel-driver', self.kernel_driver,
+                   '--max-kernels', '1']
             self.server = subprocess.Popen(cmd, start_new_session=True,
                                            stdout=subprocess.DEVNULL,
                                            stderr=subprocess.DEVNULL)
