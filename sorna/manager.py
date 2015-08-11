@@ -144,8 +144,12 @@ def main():
 
     server = loop.run_until_complete(
         aiozmq.create_zmq_stream(zmq.REP, bind='tcp://*:5001', loop=loop))
-    redis_conn_pool = loop.run_until_complete(
-        aioredis.Pool.create(host=REDIS_HOST, port=REDIS_PORT))
+    try:
+        redis_conn_pool = loop.run_until_complete(asyncio.wait_for(
+            aioredis.Pool.create(host=REDIS_HOST, port=REDIS_PORT), 2))
+    except asyncio.TimeoutError:
+        print('Could not connect to the redis server at tcp://{0}:{1}'.format(REDIS_HOST, REDIS_PORT), file=sys.stderr)
+        return
     driver = create_driver(args.kernel_driver)
     my_ip = loop.run_until_complete(driver.get_internal_ip())
     manager_addr = 'tcp://{0}:{1}'.format(my_ip, 5001)
@@ -172,12 +176,12 @@ def main():
         loop.run_until_complete(registry.terminate())
         server.close()
         redis_conn_pool.close()
-        pending = asyncio.Task.all_tasks()
-        for t in pending:
-            try:
-                loop.run_until_complete(asyncio.gather(t))
-            except asyncio.CancelledError:
-                pass
+        for t in asyncio.Task.all_tasks():
+            t.cancel()
+        try:
+            loop._run_once()
+        except asyncio.CancelledError:
+            pass
     finally:
         loop.close()
         print('Exit.')
