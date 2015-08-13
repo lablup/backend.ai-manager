@@ -35,3 +35,11 @@ It defines the protocols between front-end servers, manager server(s), and kerne
 
  * https://github.com/lablup/sorna-protocols
  * Python package name: `sorna.proto`
+
+Development
+-----------
+
+### git flow
+
+The sorna repositories use [git flow](http://danielkummer.github.io/git-flow-cheatsheet/index.html) to streamline branching during development and deployment.
+We use the default configuration (master -> preparation for release, develop -> main development, feature/ -> features, etc.) as-is.
