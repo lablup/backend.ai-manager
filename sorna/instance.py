@@ -14,7 +14,7 @@ from .driver import BaseDriver
 from .structs import Instance, Kernel
 
 __all__ = ['InstanceRegistry', 'InstanceNotFoundError', 'KernelNotFoundError',
-           'InstanceNotAvailableError']
+           'InstanceNotAvailableError', 'QuotaExceededError']
 
 
 def _auto_get_kernel(func):
@@ -53,6 +53,10 @@ class KernelNotFoundError(RuntimeError):
     pass
 
 
+class QuotaExceededError(RuntimeError):
+    pass
+
+
 class InstanceRegistry:
     '''
     Provide a high-level API to create, destroy, and query the computation
@@ -77,6 +81,14 @@ class InstanceRegistry:
     end
     redis.call("HINCRBY", inst_key, "num_kernels", 1)
     '''
+
+    # TODO: extend asyncio_redis to use context manager
+    #       that holds dbid (and other per-connection states).
+    #       By separating databases, we could reduce the overhead
+    #       of "scan" command used by clean_old_kernels().
+    DB_INSTANCES = 0
+    DB_KERNELS   = 1
+    DB_SESSIONS  = 2
 
     def __init__(self, redis_conn, kernel_driver, registry_id=None, kernel_timeout=600, manager_addr=None, loop=None):
         assert isinstance(redis_conn, aioredis.Pool)
@@ -163,6 +175,19 @@ class InstanceRegistry:
         ])
         fields = map(self.fut2ret, fields)
         return Kernel(m.group('kern_id'), *fields)
+
+    @asyncio.coroutine
+    def get_or_create_kernel(self, user_id, entry_id, spec):
+        sess_key = '{0}.sess.{1}:{2}:{3}'.format(self._id, user_id, entry_id, spec)
+        kern_id = yield from self._conn.get(sess_key)
+        # TODO: check per-user quota and service policy
+        if kern_id is None:
+            # Create a new kernel.
+            _, kern = yield from self.create_kernel(spec)
+            yield from self._conn.set(sess_key, kern.id)
+        else:
+            kern = yield from self.get_kernel(kern_id)
+        return kern
 
     @asyncio.coroutine
     def add_instance(self, spec=None, max_kernels=1, tag=None):

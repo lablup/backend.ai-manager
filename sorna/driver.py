@@ -186,8 +186,11 @@ class LocalDriver(BaseDriver):
     @asyncio.coroutine
     def destroy_kernel(self, kernel):
         proc = self.agents[kernel.id]
-        proc.terminate()
-        yield from proc.wait()
+        try:
+            proc.terminate()
+            yield from proc.wait()
+        except ProcessLookupError:
+            pass  # TODO: log
         del self.agents[kernel.id]
 
     @asyncio.coroutine

@@ -35,7 +35,6 @@ def handle_api(loop, server, registry):
         if req['action'] == ManagerRequestTypes.PING:
 
             resp['reply']     = ManagerResponseTypes.PONG
-            resp['kernel_id'] = ''
             resp['body']      = req['body']
 
         elif req['action'] == ManagerRequestTypes.CREATE:
@@ -44,10 +43,9 @@ def handle_api(loop, server, registry):
                 instance, kernel = yield from registry.create_kernel(spec=req['body']['spec'])
             except InstanceNotAvailableError as e:
                 resp['reply']     = ManagerResponseTypes.FAILURE
-                resp['kernel_id'] = ''
                 resp['body']      = '\n'.join(map(str, e.args))
                 server.write([resp.encode()])
-                return
+                continue
 
             yield from asyncio.sleep(0.2, loop=loop)
             tries = 0
@@ -60,10 +58,9 @@ def handle_api(loop, server, registry):
                     tries += 1
             else:
                 resp['reply']     = ManagerResponseTypes.FAILURE
-                resp['kernel_id'] = ''
                 resp['body']      = 'The created kernel did not respond!'
                 server.write([resp.encode()])
-                return
+                continue
 
             # TODO: restore the user module state?
 
@@ -72,6 +69,31 @@ def handle_api(loop, server, registry):
             resp['body']      = odict(
                 ('agent_sock', kernel.agent_sock),
                 ('stdin_sock', None),
+                ('stdout_sock', kernel.stdout_sock),
+                ('stderr_sock', kernel.stderr_sock),
+            )
+
+        elif req['action'] == ManagerRequestTypes.GET_OR_CREATE:
+
+            try:
+                kernel = yield from registry.get_or_create_kernel(req['user_id'],
+                                                                  req['entry_id'],
+                                                                  req['body']['spec'])
+            except InstanceNotAvailableError:
+                resp['reply']     = ManagerResponseTypes.FAILURE
+                resp['body']      = 'There is no available instance.'
+                server.write([resp.encode()])
+                continue
+            except QuotaExceededError:
+                resp['reply']     = ManagerResponseTypes.FAILURE
+                resp['body']      = 'You cannot create more kernels.'
+                server.write([resp.encode()])
+                continue
+
+            resp['reply'] = ManagerResponseTypes.SUCCESS
+            resp['kernel_id'] = kernel.id
+            resp['body'] = odict(
+                ('agent_sock', kernel.agent_sock),
                 ('stdout_sock', kernel.stdout_sock),
                 ('stderr_sock', kernel.stderr_sock),
             )
@@ -85,7 +107,6 @@ def handle_api(loop, server, registry):
                 resp['body'] = ''
             except KernelNotFoundError:
                 resp['reply'] = ManagerResponseTypes.INVALID_INPUT
-                resp['kernel_id'] = ''
                 resp['body'] = 'No such kernel.'
 
         elif req['action'] == ManagerRequestTypes.REFRESH:
@@ -97,7 +118,6 @@ def handle_api(loop, server, registry):
                 resp['body'] = ''
             except KernelNotFoundError:
                 resp['reply'] = ManagerResponseTypes.INVALID_INPUT
-                resp['kernel_id'] = ''
                 resp['body'] = 'No such kernel.'
 
         server.write([resp.encode()])
