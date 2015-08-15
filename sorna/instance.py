@@ -7,9 +7,8 @@ import dateutil.parser
 import functools
 import re
 from urllib.parse import urlparse
-import uuid
 import time
-from .proto import Namespace, encode, decode
+from .proto import Message, odict, generate_uuid
 from .proto.msgtypes import AgentRequestTypes
 from .driver import BaseDriver
 from .structs import Instance, Kernel
@@ -85,7 +84,7 @@ class InstanceRegistry:
         self._loop = loop if loop is not None else asyncio.get_event_loop()
         self._conn = redis_conn
         self._driver = kernel_driver
-        self._id = uuid.uuid4().hex if registry_id is None else registry_id
+        self._id = generate_uuid() if registry_id is None else registry_id
         self._kernel_timeout = kernel_timeout
         self._manager_addr = manager_addr
 
@@ -120,8 +119,8 @@ class InstanceRegistry:
     def fut2ret(f):
         return f.result() if isinstance(f, asyncio.Future) else f
 
-    _re_inst_id = re.compile(r'^((?P<reg_id>[:\w]+)\.inst\.)?(?P<inst_id>[:\w]+)(\.[-\w]+)?$')
-    _re_kern_id = re.compile(r'^((?P<reg_id>[:\w]+)\.kern\.)?(?P<kern_id>[:\w]+)(\.[-\w]+)?$')
+    _re_inst_id = re.compile(r'^((?P<reg_id>[-_:\w]+)\.inst\.)?(?P<inst_id>[-_:\w]+)(\.[-\w]+)?$')
+    _re_kern_id = re.compile(r'^((?P<reg_id>[-_:\w]+)\.kern\.)?(?P<kern_id>[-_:\w]+)(\.[-\w]+)?$')
 
     @asyncio.coroutine
     def get_instance(self, inst_id):
@@ -259,16 +258,17 @@ class InstanceRegistry:
     def ping_kernel(self, kernel):
         sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.agent_sock,
                                                    loop=self._loop)
-        req_id = uuid.uuid4().hex
-        req = Namespace()
-        req.req_type = AgentRequestTypes.HEARTBEAT
-        req.body = req_id
-        sock.write([encode(req)])
+        req_id = generate_uuid()
+        req = Message(
+            ('req_type', AgentRequestTypes.HEARTBEAT),
+            ('body', req_id),
+        )
+        sock.write([req.encode()])
         try:
             resp_data = yield from asyncio.wait_for(sock.read(), timeout=2.0,
                                                     loop=self._loop)
-            resp = decode(resp_data[0])
-            return (resp.body == req_id)
+            resp = Message.decode(resp_data[0])
+            return (resp['body'] == req_id)
         except asyncio.TimeoutError:
             return False
         finally:
@@ -278,16 +278,17 @@ class InstanceRegistry:
     def fill_socket_info(self, kernel):
         sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.agent_sock,
                                                    loop=self._loop)
-        req = Namespace()
-        req.req_type = AgentRequestTypes.SOCKET_INFO
-        req.kernel_id = kernel.id
-        req.body = ''
-        sock.write([encode(req)])
+        req = Message(
+            ('req_type', AgentRequestTypes.SOCKET_INFO),
+            ('kernel_id', kernel.id),
+            ('body', ''),
+        )
+        sock.write([req.encode()])
         resp_data = yield from sock.read()
-        resp = decode(resp_data[0])
-        kernel.stdin_sock = resp.body.stdin
-        kernel.stdout_sock = resp.body.stdout
-        kernel.stderr_sock = resp.body.stderr
+        resp = Message.decode(resp_data[0])
+        kernel.stdin_sock = resp['body']['stdin']
+        kernel.stdout_sock = resp['body']['stdout']
+        kernel.stderr_sock = resp['body']['stderr']
         sock.close()
 
     @asyncio.coroutine
