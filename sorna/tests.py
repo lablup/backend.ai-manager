@@ -6,7 +6,7 @@ import socket, time
 import asyncio, zmq, asyncio_redis as aioredis
 from .instance import *
 from .driver import create_driver
-from .proto import Namespace, encode, decode
+from .proto import Message, odict
 from .proto.msgtypes import ManagerRequestTypes, ManagerResponseTypes
 
 
@@ -229,41 +229,46 @@ class SornaManagerLocalIntegrationTest(unittest.TestCase):
             #print('Manager process exited with code {0}'.format(exitcode))
 
     def test_ping(self):
-        request = Namespace()
-        request.action = ManagerRequestTypes.PING
-        request.body = 'test'
-        self.socket.send(encode(request))
+        request = Message(
+            ('action', ManagerRequestTypes.PING),
+            ('body', 'test'),
+        )
+        self.socket.send(request.encode())
 
+        self.assertNotEqual(self.socket.poll(1000), 0)
         response_data = self.socket.recv()
-        response = decode(response_data)
+        response = Message.decode(response_data)
 
-        self.assertEqual(response.reply, ManagerResponseTypes.PONG)
-        self.assertEqual(request.body, response.body)
+        self.assertEqual(response['reply'], ManagerResponseTypes.PONG)
+        self.assertEqual(request['body'], response['body'])
 
     def test_create_and_destroy_kernel(self):
         # Create the kernel.
-        request = Namespace()
-        request.action = ManagerRequestTypes.CREATE
-        request.user_id = 'test'
-        request.body = {
-            'spec': 'python34',
-        }
-        self.socket.send(encode(request))
+        request = Message(
+            ('action', ManagerRequestTypes.CREATE),
+            ('user_id', 'test'),
+            ('body', {'spec': 'python34'}),
+        )
+        self.socket.send(request.encode())
 
+        self.assertNotEqual(self.socket.poll(1000), 0)
         response_data = self.socket.recv()
-        response = decode(response_data)
+        response = Message.decode(response_data)
 
-        self.assertEqual(response.reply, ManagerResponseTypes.SUCCESS)
+        self.assertEqual(response['reply'], ManagerResponseTypes.SUCCESS)
 
         # Destroy the kernel.
-        request.action = ManagerRequestTypes.DESTROY
-        request.kernel_id = response.kernel_id
-        self.socket.send(encode(request))
+        request = Message(
+            ('action', ManagerRequestTypes.DESTROY),
+            ('kernel_id', response['kernel_id']),
+        )
+        self.socket.send(request.encode())
 
         # Receive response
+        self.assertNotEqual(self.socket.poll(1000), 0)
         response_data = self.socket.recv()
-        response = decode(response_data)
+        response = Message.decode(response_data)
 
         # Assert the response is SUCCESS
-        self.assertEqual(response.reply, ManagerResponseTypes.SUCCESS)
+        self.assertEqual(response['reply'], ManagerResponseTypes.SUCCESS)
         #print(response)

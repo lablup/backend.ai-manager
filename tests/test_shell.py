@@ -2,14 +2,13 @@
 
 # TODO: transform this as a proper test suite
 
-from sorna.proto import Namespace, encode, decode
+from sorna.proto import Message, odict, generate_uuid
 from sorna.proto.msgtypes import ManagerRequestTypes, ManagerResponseTypes, AgentRequestTypes
 import asyncio, zmq, aiozmq
 from colorama import init as colorama_init, Fore
 import json
 import signal
 import sys
-import uuid
 from pprint import pprint
 
 @asyncio.coroutine
@@ -17,27 +16,30 @@ def create_kernel():
     api_sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect='tcp://127.0.0.1:5001', loop=loop)
 
     # Test if ping works.
-    req_id = uuid.uuid4().hex
-    req = Namespace()
-    req.action    = ManagerRequestTypes.PING
-    req.kernel_id = ''
-    req.body      = req_id
-    api_sock.write([encode(req)])
+    req_id = generate_uuid()
+    req = Message(
+        ('action', ManagerRequestTypes.PING),
+        ('kernel_id', ''),
+        ('body', req_id),
+    )
+    api_sock.write([req.encode()])
     resp_data = yield from api_sock.read()
-    resp = decode(resp_data[0])
-    assert resp.reply == ManagerResponseTypes.PONG
-    assert resp.body == req.body
+    resp = Message.decode(resp_data[0])
+    assert resp['reply'] == ManagerResponseTypes.PONG
+    assert resp['body'] == req['body']
 
     # Create a kernel instance.
-    req.action    = ManagerRequestTypes.CREATE
-    req.kernel_id = ''
-    req.body      = {'spec': 'python34'}
-    api_sock.write([encode(req)])
+    req = Message(
+        ('action', ManagerRequestTypes.CREATE),
+        ('kernel_id', ''),
+        ('body', {'spec': 'python34'}),
+    )
+    api_sock.write([req.encode()])
     resp_data = yield from api_sock.read()
-    resp = decode(resp_data[0])
-    assert resp.reply == ManagerResponseTypes.SUCCESS
+    resp = Message.decode(resp_data[0])
+    assert resp['reply'] == ManagerResponseTypes.SUCCESS
     api_sock.close()
-    return resp.kernel_id, resp.body
+    return resp['kernel_id'], resp['body']
 
 stop_reading_streams = False
 
@@ -79,27 +81,27 @@ def run_command(kernel_sock, stdout_sock, stderr_sock, cell_id, code_str, redire
     last_cell_id_encoded = cell_id_encoded
     # Ensure that the readers proceed.
     yield from asyncio.sleep(0.01)
-    req = Namespace()
-    req.req_type = AgentRequestTypes.EXECUTE
-    req.body     = {
-        'cell_id': cell_id,
-        'code': code_str,
-        'redirect_output': redirect_output,
-    }
-    kernel_sock.write([encode(req)])
+    req = Message()
+    req['req_type'] = AgentRequestTypes.EXECUTE
+    req['body']     = odict(
+        ('cell_id', cell_id),
+        ('code', code_str),
+        ('redirect_output', redirect_output),
+    )
+    kernel_sock.write([req.encode()])
     resp_data = yield from kernel_sock.read()
-    resp = decode(resp_data[0])
-    result = resp.body
-    if len(result.exceptions) > 0:
+    resp = Message.decode(resp_data[0])
+    result = resp['body']
+    if len(result['exceptions']) > 0:
         out = []
-        for e in result.exceptions:
+        for e in result['exceptions']:
             out.append(str(e))
         print(Fore.RED + '\n'.join(out) + Fore.RESET, file=sys.stderr)
     else:
-        if result.eval_result:
-            print(result.eval_result)
+        if result['eval_result']:
+            print(result['eval_result'])
         if redirect_output:
-            return result.stdout, result.stderr
+            return result['stdout'], result['stderr']
 
 @asyncio.coroutine
 def run_tests(kernel_info):
@@ -107,9 +109,9 @@ def run_tests(kernel_info):
     # The scope of this method is same to the user's notebook session on the web browser.
     # kernel_sock should be mapped with AJAX calls.
     # stdout/stderr_sock should be mapped with WebSockets to asynchronously update cell output blocks.
-    kernel_sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel_info.agent_sock, loop=loop)
-    stdout_sock = yield from aiozmq.create_zmq_stream(zmq.SUB, connect=kernel_info.stdout_sock, loop=loop)
-    stderr_sock = yield from aiozmq.create_zmq_stream(zmq.SUB, connect=kernel_info.stderr_sock, loop=loop)
+    kernel_sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel_info['agent_sock'], loop=loop)
+    stdout_sock = yield from aiozmq.create_zmq_stream(zmq.SUB, connect=kernel_info['stdout_sock'], loop=loop)
+    stderr_sock = yield from aiozmq.create_zmq_stream(zmq.SUB, connect=kernel_info['stderr_sock'], loop=loop)
     stop_reading_streams = False
     stdout_reader_task = asyncio.async(handle_out_stream(stdout_sock, 'stdout'), loop=loop)
     stderr_reader_task = asyncio.async(handle_out_stream(stderr_sock, 'stderr'), loop=loop)
@@ -138,14 +140,15 @@ def run_tests(kernel_info):
     kernel_sock.close()
 
     api_sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect='tcp://127.0.0.1:5001', loop=loop)
-    req = Namespace()
-    req.action    = ManagerRequestTypes.DESTROY
-    req.kernel_id = kernel_info.kernel_id
-    req.body      = ''
-    api_sock.write([encode(req)])
+    req = Message(
+        ('action', ManagerRequestTypes.DESTROY),
+        ('kernel_id', kernel_info.kernel_id),
+        ('body', ''),
+    )
+    api_sock.write([req.encode()])
     resp_data = yield from api_sock.read()
-    resp = decode(resp_data[0])
-    assert resp.reply == ManagerResponseTypes.SUCCESS
+    resp = Message.decode(resp_data[0])
+    assert resp['reply'] == ManagerResponseTypes.SUCCESS
     api_sock.close()
 
 def handle_exit():

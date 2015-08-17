@@ -9,10 +9,10 @@ It routes the API requests to kernel agents in VMs and manages the VM instance p
 import argparse
 import asyncio, aiozmq, zmq, asyncio_redis as aioredis
 import os, signal, sys
-from .proto import Namespace, encode, decode
+from .proto import Message, odict
 from .proto.msgtypes import ManagerRequestTypes, ManagerResponseTypes
 from .driver import DriverTypes, create_driver
-from .instance import InstanceRegistry, InstanceNotAvailableError, KernelNotFoundError
+from .instance import InstanceRegistry, InstanceNotAvailableError, KernelNotFoundError, QuotaExceededError
 
 # Get the address of Redis server from docker links named "redis".
 REDIS_HOST = os.environ.get('REDIS_PORT_6379_TCP_ADDR', '127.0.0.1')
@@ -29,25 +29,23 @@ def handle_api(loop, server, registry):
             req_data = yield from server.read()
         except aiozmq.stream.ZmqStreamClosed:
             break
-        req = decode(req_data[0])
-        resp = Namespace()
+        req = Message.decode(req_data[0])
+        resp = Message()
 
-        if req.action == ManagerRequestTypes.PING:
+        if req['action'] == ManagerRequestTypes.PING:
 
-            resp.reply     = ManagerResponseTypes.PONG
-            resp.kernel_id = ''
-            resp.body      = req.body
+            resp['reply']     = ManagerResponseTypes.PONG
+            resp['body']      = req['body']
 
-        elif req.action == ManagerRequestTypes.CREATE:
+        elif req['action'] == ManagerRequestTypes.CREATE:
 
             try:
-                instance, kernel = yield from registry.create_kernel(spec=req.body.spec)
+                instance, kernel = yield from registry.create_kernel(spec=req['body']['spec'])
             except InstanceNotAvailableError as e:
-                resp.reply     = ManagerResponseTypes.FAILURE
-                resp.kernel_id = ''
-                resp.body      = '\n'.join(map(str, e.args))
-                server.write([encode(resp)])
-                return
+                resp['reply']     = ManagerResponseTypes.FAILURE
+                resp['body']      = '\n'.join(map(str, e.args))
+                server.write([resp.encode()])
+                continue
 
             yield from asyncio.sleep(0.2, loop=loop)
             tries = 0
@@ -59,48 +57,70 @@ def handle_api(loop, server, registry):
                     yield from asyncio.sleep(1, loop=loop)
                     tries += 1
             else:
-                resp.reply     = ManagerResponseTypes.FAILURE
-                resp.kernel_id = ''
-                resp.body      = 'The created kernel did not respond!'
-                server.write([encode(resp)])
-                return
+                resp['reply']     = ManagerResponseTypes.FAILURE
+                resp['body']      = 'The created kernel did not respond!'
+                server.write([resp.encode()])
+                continue
 
             # TODO: restore the user module state?
 
-            resp.reply     = ManagerResponseTypes.SUCCESS
-            resp.kernel_id = kernel.id
-            resp.body      = {
-                'agent_sock': kernel.agent_sock,
-                'stdin_sock': None,
-                'stdout_sock': kernel.stdout_sock,
-                'stderr_sock': kernel.stderr_sock,
-            }
+            resp['reply']     = ManagerResponseTypes.SUCCESS
+            resp['kernel_id'] = kernel.id
+            resp['body']      = odict(
+                ('agent_sock', kernel.agent_sock),
+                ('stdin_sock', None),
+                ('stdout_sock', kernel.stdout_sock),
+                ('stderr_sock', kernel.stderr_sock),
+            )
 
-        elif req.action == ManagerRequestTypes.DESTROY:
-
-            try:
-                yield from registry.destroy_kernel(req.kernel_id)
-                resp.reply = ManagerResponseTypes.SUCCESS
-                resp.kernel_id = req.kernel_id
-                resp.body = ''
-            except KernelNotFoundError:
-                resp.reply = ManagerResponseTypes.INVALID_INPUT
-                resp.kernel_id = ''
-                resp.body = 'No such kernel.'
-
-        elif req.action == ManagerRequestTypes.REFRESH:
+        elif req['action'] == ManagerRequestTypes.GET_OR_CREATE:
 
             try:
-                yield from registry.refresh_kernel(req.kernel_id)
-                resp.reply = ManagerResponseTypes.SUCCESS
-                resp.kernel_id = req.kernel_id
-                resp.body = ''
-            except KernelNotFoundError:
-                resp.reply = ManagerResponseTypes.INVALID_INPUT
-                resp.kernel_id = ''
-                resp.body = 'No such kernel.'
+                kernel = yield from registry.get_or_create_kernel(req['user_id'],
+                                                                  req['entry_id'],
+                                                                  req['body']['spec'])
+            except InstanceNotAvailableError:
+                resp['reply']     = ManagerResponseTypes.FAILURE
+                resp['body']      = 'There is no available instance.'
+                server.write([resp.encode()])
+                continue
+            except QuotaExceededError:
+                resp['reply']     = ManagerResponseTypes.FAILURE
+                resp['body']      = 'You cannot create more kernels.'
+                server.write([resp.encode()])
+                continue
 
-        server.write([encode(resp)])
+            resp['reply'] = ManagerResponseTypes.SUCCESS
+            resp['kernel_id'] = kernel.id
+            resp['body'] = odict(
+                ('agent_sock', kernel.agent_sock),
+                ('stdout_sock', kernel.stdout_sock),
+                ('stderr_sock', kernel.stderr_sock),
+            )
+
+        elif req['action'] == ManagerRequestTypes.DESTROY:
+
+            try:
+                yield from registry.destroy_kernel(req['kernel_id'])
+                resp['reply'] = ManagerResponseTypes.SUCCESS
+                resp['kernel_id'] = req['kernel_id']
+                resp['body'] = ''
+            except KernelNotFoundError:
+                resp['reply'] = ManagerResponseTypes.INVALID_INPUT
+                resp['body'] = 'No such kernel.'
+
+        elif req['action'] == ManagerRequestTypes.REFRESH:
+
+            try:
+                yield from registry.refresh_kernel(req['kernel_id'])
+                resp['reply'] = ManagerResponseTypes.SUCCESS
+                resp['kernel_id'] = req['kernel_id']
+                resp['body'] = ''
+            except KernelNotFoundError:
+                resp['reply'] = ManagerResponseTypes.INVALID_INPUT
+                resp['body'] = 'No such kernel.'
+
+        server.write([resp.encode()])
 
 @asyncio.coroutine
 def handle_timer(loop, registry, period=10.0):
