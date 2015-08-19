@@ -186,7 +186,13 @@ class InstanceRegistry:
             _, kern = yield from self.create_kernel(spec)
             yield from self._conn.set(sess_key, kern.id)
         else:
-            kern = yield from self.get_kernel(kern_id)
+            try:
+                kern = yield from self.get_kernel(kern_id)
+            except KernelNotFoundError:
+                # The tracked kernel may be terminated due to timeout.
+                # Create a new kernel.
+                _, kern = yield from self.create_kernel(spec)
+                yield from self._conn.set(sess_key, kern.id)
         return kern
 
     @asyncio.coroutine
