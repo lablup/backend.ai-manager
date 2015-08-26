@@ -90,7 +90,8 @@ class InstanceRegistry:
     DB_KERNELS   = 1
     DB_SESSIONS  = 2
 
-    def __init__(self, redis_conn, kernel_driver, registry_id=None, kernel_timeout=600, manager_addr=None, loop=None):
+    def __init__(self, redis_conn: aioredis.Pool, kernel_driver: BaseDriver,
+                 registry_id=None, kernel_timeout=600, manager_addr=None, loop=None):
         assert isinstance(redis_conn, aioredis.Pool)
         assert isinstance(kernel_driver, BaseDriver)
         self._loop = loop if loop is not None else asyncio.get_event_loop()
