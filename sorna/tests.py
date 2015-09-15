@@ -247,7 +247,6 @@ class SornaManagerLocalIntegrationTest(unittest.TestCase):
         request = Message(
             ('action', ManagerRequestTypes.CREATE),
             ('user_id', 'test'),
-            ('body', {'spec': 'python34'}),
         )
         self.socket.send(request.encode())
 

@@ -165,7 +165,6 @@ class InstanceRegistry:
             raise KernelNotFoundError(kern_id)
         fields = yield from self._conn.hmget(kern_key, [
             'instance',
-            'spec',
             'agent_sock',
             'stdin_sock',
             'stdout_sock',
@@ -177,13 +176,26 @@ class InstanceRegistry:
         return Kernel(m.group('kern_id'), *fields)
 
     @asyncio.coroutine
-    def get_or_create_kernel(self, user_id, entry_id, spec):
-        sess_key = '{0}.sess.{1}:{2}:{3}'.format(self._id, user_id, entry_id, spec)
+    def get_kernel_from_session(self, user_id, entry_id):
+        sess_key = '{0}.sess.{1}:{2}'.format(self._id, user_id, entry_id)
+        kern_id = yield from self._conn.get(sess_key)
+        if kern_id is None:
+            return None
+        else:
+            try:
+                kern = yield from self.get_kernel(kern_id)
+            except KernelNotFoundError:
+                return None
+        return kern
+
+    @asyncio.coroutine
+    def get_or_create_kernel(self, user_id, entry_id):
+        sess_key = '{0}.sess.{1}:{2}'.format(self._id, user_id, entry_id)
         kern_id = yield from self._conn.get(sess_key)
         # TODO: check per-user quota and service policy
         if kern_id is None:
             # Create a new kernel.
-            _, kern = yield from self.create_kernel(spec)
+            _, kern = yield from self.create_kernel()
             yield from self._conn.set(sess_key, kern.id)
         else:
             try:
@@ -191,7 +203,7 @@ class InstanceRegistry:
             except KernelNotFoundError:
                 # The tracked kernel may be terminated due to timeout.
                 # Create a new kernel.
-                _, kern = yield from self.create_kernel(spec)
+                _, kern = yield from self.create_kernel()
                 yield from self._conn.set(sess_key, kern.id)
         return kern
 
@@ -233,7 +245,7 @@ class InstanceRegistry:
         yield from self._driver.destroy_instance(instance.id)
 
     @asyncio.coroutine
-    def create_kernel(self, spec='python34'):
+    def create_kernel(self):
         avail_key = '{0}.avail_instances'.format(self._id)
         avail_count = yield from self._conn.scard(avail_key)
         if avail_count == 0:
@@ -262,7 +274,6 @@ class InstanceRegistry:
             yield from self._conn.hmset(kern_kp + '.meta', {
                 'id': kernel.id,
                 'instance': instance.id,
-                'spec': _s(kernel.spec),
                 'agent_sock': _s(kernel.agent_sock),
                 'stdin_sock': _s(kernel.stdin_sock),
                 'stdout_sock': _s(kernel.stdout_sock),
