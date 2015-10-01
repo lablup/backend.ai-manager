@@ -8,7 +8,7 @@ such as Docker containers on top of AWS or the local machine.
 '''
 
 from abc import ABCMeta, abstractmethod
-import asyncio, aiozmq
+import asyncio, aiozmq, aiohttp
 from enum import Enum
 from datetime import datetime
 import uuid
@@ -132,8 +132,12 @@ class AWSDockerDriver(BaseDriver):
 
     @asyncio.coroutine
     def get_internal_ip(self):
-        # TODO: read http://instance-data/latest/meta-data/local-ipv4
-        raise NotImplementedError()
+        resp = yield from aiohttp.get('http://instance-data/latest/meta-data/local-ipv4')
+        if resp.status == 200:
+            body = yield from resp.text()
+            return body.strip()
+        else:
+            return '127.0.0.1'
 
 
 class LocalDriver(BaseDriver):
@@ -150,7 +154,8 @@ class LocalDriver(BaseDriver):
     def launch_instance(self, spec=None):
         # As this is the local machine, we do nothing!
         inst_id = uuid.uuid4().hex
-        return inst_id, '127.0.0.1'
+        inst_ip = yield from self.get_internal_ip()
+        return inst_id, inst_ip
 
     @asyncio.coroutine
     def destroy_instance(self, inst_id):
@@ -195,7 +200,12 @@ class LocalDriver(BaseDriver):
 
     @asyncio.coroutine
     def get_internal_ip(self):
-        return '127.0.0.1'
+        resp = yield from aiohttp.get('http://instance-data/latest/meta-data/local-ipv4')
+        if resp.status == 200:
+            body = yield from resp.text()
+            return body.strip()
+        else:
+            return '127.0.0.1'
 
 
 _driver_type_to_class = {
