@@ -132,7 +132,10 @@ class AWSDockerDriver(BaseDriver):
 
     @asyncio.coroutine
     def get_internal_ip(self):
-        resp = yield from asyncio.wait_for(aiohttp.get('http://instance-data/latest/meta-data/local-ipv4'), 0.2)
+        try:
+            resp = yield from asyncio.wait_for(aiohttp.get('http://instance-data/latest/meta-data/local-ipv4'), 0.2)
+        except aiohttp.errors.ClientOSError:
+            return '127.0.0.1'
         if resp.status == 200:
             body = yield from resp.text()
             return body.strip()
@@ -200,7 +203,10 @@ class LocalDriver(BaseDriver):
 
     @asyncio.coroutine
     def get_internal_ip(self):
-        resp = yield from asyncio.wait_for(aiohttp.get('http://instance-data/latest/meta-data/local-ipv4'), 0.2)
+        try:
+            resp = yield from asyncio.wait_for(aiohttp.get('http://instance-data/latest/meta-data/local-ipv4'), 0.2)
+        except aiohttp.errors.ClientOSError:
+            return '127.0.0.1'
         if resp.status == 200:
             body = yield from resp.text()
             return body.strip()
