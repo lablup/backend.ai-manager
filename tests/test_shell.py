@@ -32,7 +32,6 @@ def create_kernel():
     req = Message(
         ('action', ManagerRequestTypes.CREATE),
         ('kernel_id', ''),
-        ('body', {'spec': 'python34'}),
     )
     api_sock.write([req.encode()])
     resp_data = yield from api_sock.read()
@@ -86,6 +85,7 @@ def run_command(kernel_sock, stdout_sock, stderr_sock, cell_id, code_str, redire
     req['body']     = odict(
         ('cell_id', cell_id),
         ('code', code_str),
+        ('lang', 'python34'),
         ('redirect_output', redirect_output),
     )
     kernel_sock.write([req.encode()])

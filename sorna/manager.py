@@ -34,16 +34,16 @@ def handle_api(loop, server, registry):
 
         if req['action'] == ManagerRequestTypes.PING:
 
-            resp['reply']     = ManagerResponseTypes.PONG
-            resp['body']      = req['body']
+            resp['reply'] = ManagerResponseTypes.PONG
+            resp['body']  = req['body']
 
         elif req['action'] == ManagerRequestTypes.CREATE:
 
             try:
-                instance, kernel = yield from registry.create_kernel(spec=req['body']['spec'])
+                instance, kernel = yield from registry.create_kernel()
             except InstanceNotAvailableError as e:
-                resp['reply']     = ManagerResponseTypes.FAILURE
-                resp['body']      = '\n'.join(map(str, e.args))
+                resp['reply'] = ManagerResponseTypes.FAILURE
+                resp['body']  = '\n'.join(map(str, e.args))
                 server.write([resp.encode()])
                 continue
 
@@ -57,8 +57,8 @@ def handle_api(loop, server, registry):
                     yield from asyncio.sleep(1, loop=loop)
                     tries += 1
             else:
-                resp['reply']     = ManagerResponseTypes.FAILURE
-                resp['body']      = 'The created kernel did not respond!'
+                resp['reply'] = ManagerResponseTypes.FAILURE
+                resp['body']  = 'The created kernel did not respond!'
                 server.write([resp.encode()])
                 continue
 
@@ -77,16 +77,15 @@ def handle_api(loop, server, registry):
 
             try:
                 kernel = yield from registry.get_or_create_kernel(req['user_id'],
-                                                                  req['entry_id'],
-                                                                  req['body']['spec'])
+                                                                  req['entry_id'])
             except InstanceNotAvailableError:
-                resp['reply']     = ManagerResponseTypes.FAILURE
-                resp['body']      = 'There is no available instance.'
+                resp['reply'] = ManagerResponseTypes.FAILURE
+                resp['body']  = 'There is no available instance.'
                 server.write([resp.encode()])
                 continue
             except QuotaExceededError:
-                resp['reply']     = ManagerResponseTypes.FAILURE
-                resp['body']      = 'You cannot create more kernels.'
+                resp['reply'] = ManagerResponseTypes.FAILURE
+                resp['body']  = 'You cannot create more kernels.'
                 server.write([resp.encode()])
                 continue
 
@@ -100,14 +99,17 @@ def handle_api(loop, server, registry):
 
         elif req['action'] == ManagerRequestTypes.DESTROY:
 
+            if 'kernel_id' not in req:
+                req['kernel_id'] = yield from registry.get_kernel_from_session(req['user_id'],
+                                                                               req['entry_id'])
             try:
                 yield from registry.destroy_kernel(req['kernel_id'])
-                resp['reply'] = ManagerResponseTypes.SUCCESS
+                resp['reply']     = ManagerResponseTypes.SUCCESS
                 resp['kernel_id'] = req['kernel_id']
-                resp['body'] = ''
+                resp['body']      = ''
             except KernelNotFoundError:
                 resp['reply'] = ManagerResponseTypes.INVALID_INPUT
-                resp['body'] = 'No such kernel.'
+                resp['body']  = 'No such kernel.'
 
         elif req['action'] == ManagerRequestTypes.REFRESH:
 
