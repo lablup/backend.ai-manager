@@ -3,7 +3,7 @@
 from collections import OrderedDict
 from datetime import datetime
 import logging
-import urllib
+import urllib.request, urllib.error
 import zmq
 
 _logging_ctx = zmq.Context()
