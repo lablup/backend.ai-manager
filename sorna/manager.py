@@ -13,7 +13,7 @@ import logging, logging.config
 from .proto import Message, odict
 from .proto.msgtypes import ManagerRequestTypes, ManagerResponseTypes
 from .driver import DriverTypes, create_driver
-from .instance import InstanceRegistry, InstanceNotAvailableError, KernelNotFoundError, QuotaExceededError
+from .registry import InstanceRegistry, InstanceNotAvailableError, KernelNotFoundError, QuotaExceededError
 
 # Get the address of Redis server from docker links named "redis".
 REDIS_HOST = os.environ.get('REDIS_PORT_6379_TCP_ADDR', '127.0.0.1')

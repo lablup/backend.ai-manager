@@ -4,7 +4,7 @@ import unittest
 import subprocess, os, signal
 import socket, time
 import asyncio, zmq, asyncio_redis as aioredis
-from .instance import *
+from .registry import *
 from .driver import create_driver
 from .proto import Message, odict
 from .proto.msgtypes import ManagerRequestTypes, ManagerResponseTypes
