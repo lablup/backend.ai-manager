@@ -5,6 +5,7 @@ import zmq, aiozmq
 from datetime import datetime, timedelta
 import dateutil.parser
 import functools
+import logging
 import re
 from urllib.parse import urlparse
 import time
@@ -16,6 +17,11 @@ from .structs import Instance, Kernel
 __all__ = ['InstanceRegistry', 'InstanceNotFoundError', 'KernelNotFoundError',
            'InstanceNotAvailableError', 'QuotaExceededError']
 
+# A shortcut for str.format
+__ = lambda fmt, *args, **kwargs: fmt.format(*args, **kwargs)
+__r = lambda fmt, reg_id, *args, **kwargs: 'registry[{}]: '.format(reg_id) + fmt.format(*args, **kwargs)
+
+log = logging.getLogger(__name__)
 
 def _auto_get_kernel(func):
     @functools.wraps(func)
@@ -106,6 +112,7 @@ class InstanceRegistry:
         yield from self._conn.sadd('instance_registries', [self._id])
         yield from self._conn.set('{0}.meta.created'.format(self._id), datetime.now().isoformat())
         self.fetch_avail_inst_script = yield from self._conn.register_script(self.fetch_avail_inst_luafunc)
+        log.info(__r('added to the Redis server.', self._id))
 
     @asyncio.coroutine
     def terminate(self):
@@ -121,6 +128,7 @@ class InstanceRegistry:
         yield from self._conn.delete(['{0}.avail_instances'.format(self._id)])
         yield from self._conn.srem('instance_registries', [self._id])
         yield from self._conn.delete(['{0}.meta.created'.format(self._id)])
+        log.info(__r('removed from the Redis server.', self._id))
 
     def _mangle_inst_prefix(self, inst_id):
         return '{0}.inst.{1}'.format(self._id, inst_id)
@@ -234,6 +242,7 @@ class InstanceRegistry:
     @asyncio.coroutine
     @_auto_get_instance
     def remove_instance(self, instance, destroy=True):
+        log.info(__r('remove_instance ({})', self._id, instance.id))
         inst_kp = self._mangle_inst_prefix(instance.id)
         yield from self.clean_old_kernels(inst_id=instance.id, timeout=0)
 
@@ -247,13 +256,16 @@ class InstanceRegistry:
 
     @asyncio.coroutine
     def create_kernel(self):
+        log.info(__r('create_kernel', self._id))
         avail_key = '{0}.avail_instances'.format(self._id)
         avail_count = yield from self._conn.scard(avail_key)
         if avail_count == 0:
+            log.error(__r('instance not available.', self._id))
             raise InstanceNotAvailableError('Could not find available instance.')
         inst_id = yield from self._conn.spop(avail_key)
         if inst_id is None:
             # TODO: automatically add instances to some extent
+            log.error(__r('instance not available.', self._id))
             raise InstanceNotAvailableError('Could not find available instance.')
         else:
             try:
@@ -263,6 +275,7 @@ class InstanceRegistry:
                 print(e.message)
                 raise InstanceNotAvailableError('Failed to fetch available instance.') from e
 
+            log.info(__r('grabbed instance {}', self._id, inst_id))
             instance = yield from self.get_instance(inst_id)
             inst_kp = self._mangle_inst_prefix(inst_id)
             assigned_agent_port = yield from self._conn.lpop(inst_kp + '.agent_ports')
@@ -271,6 +284,7 @@ class InstanceRegistry:
                                                            assigned_agent_port,
                                                            self._manager_addr)
             kern_kp = self._mangle_kernel_prefix(kernel.id)
+            log.info(__r('created kernel {} on instance {}', self._id, kernel.id, inst_id))
             yield from self.fill_socket_info(kernel)
             yield from self._conn.hmset(kern_kp + '.meta', {
                 'id': kernel.id,
@@ -286,6 +300,7 @@ class InstanceRegistry:
     @asyncio.coroutine
     @_auto_get_kernel
     def destroy_kernel(self, kernel):
+        log.info(__r('destroy_kernel ({})', self._id, kernel.id))
         yield from self._driver.destroy_kernel(kernel)
         kern_kp = self._mangle_kernel_prefix(kernel.id)
         yield from self._conn.delete([kern_kp + '.meta'])
@@ -299,6 +314,8 @@ class InstanceRegistry:
     @asyncio.coroutine
     @_auto_get_kernel
     def ping_kernel(self, kernel):
+        log.info(__r('ping_kernel ({}, agent_sock: {})', self._id,
+                 kernel.id, kernel.agent_sock))
         sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.agent_sock,
                                                    loop=self._loop)
         req_id = generate_uuid()
@@ -319,6 +336,8 @@ class InstanceRegistry:
 
     @asyncio.coroutine
     def fill_socket_info(self, kernel):
+        log.info(__r('fill_socket_info ({}, agent_sock: {})', self._id,
+                     kernel.id, kernel.agent_sock))
         sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.agent_sock,
                                                    loop=self._loop)
         req = Message(
@@ -337,6 +356,7 @@ class InstanceRegistry:
     @asyncio.coroutine
     @_auto_get_kernel
     def refresh_kernel(self, kernel):
+        log.info(__r('refresh_kernel ({})', self._id, kernel.id))
         kern_kp = self._mangle_kernel_prefix(kernel.id)
         yield from self._conn.hset(kern_kp + '.meta', 'last_used', datetime.now().isoformat())
 
@@ -345,9 +365,10 @@ class InstanceRegistry:
         if timeout is None:
             timeout = self._kernel_timeout
 
+        log.info(__r('clean_old_kernels (timeout: {})', self._id, timeout))
         cursor = yield from self._conn.scan('{0}.kern.*.meta'.format(self._id))
+        cursor.count = 100
         while True:
-            cursor.count = 100
             kern_key = yield from cursor.fetchone()
 
             if kern_key is None:
@@ -360,14 +381,21 @@ class InstanceRegistry:
             last_used = yield from self._conn.hget(kern_key, 'last_used')
             # NOTE: last_used field is set by neumann.
             if last_used is None:
+                log.info(__r('detected kernel without no last used info.', self._id))
                 # If not set, just assume it is just used now.
-                # TODO: log this situation
                 if timeout == 0:
+                    log.info(__r('kernel {} is assumed to be old enough.', self._id,
+                                 kern_key))
                     yield from self.destroy_kernel(kern_key)
                 else:
-                    yield from self._conn.hset(kern_key, 'last_used', datetime.now().isoformat())
+                    now = datetime.now().isoformat()
+                    log.info(__r('set last_used of kernel {} to {}.', self._id, kern_key, now))
+                    yield from self._conn.hset(kern_key, 'last_used', now)
             else:
                 last_used = dateutil.parser.parse(last_used)
                 now = datetime.now()
                 if timeout == 0 or now - last_used > timedelta(seconds=timeout):
+                    log.info(__r('kernel {} is old enough.', self._id, kern_key))
                     yield from self.destroy_kernel(kern_key)
+
+        log.info(__r('cleaning done.', self._id))

@@ -11,6 +11,7 @@ from abc import ABCMeta, abstractmethod
 import asyncio, aiozmq, aiohttp
 from enum import Enum
 from datetime import datetime
+import logging
 import uuid
 import socket
 import subprocess
@@ -20,6 +21,8 @@ __all__ = ['DriverTypes', 'BaseDriver', 'AWSDockerDriver', 'LocalDriver', 'creat
 
 DriverTypes = Enum('DriverTypes', 'local aws_docker')
 AgentPortRange = tuple(range(5002, 5010))
+
+log = logging.getLogger(__name__)
 
 
 class BaseDriver(metaclass=ABCMeta):
