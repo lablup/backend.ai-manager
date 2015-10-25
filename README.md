@@ -11,8 +11,8 @@ Components
 
 ### Sorna Manager
 
-It routes the requests from front-end web servers to the kernel instances.
-It also checks the health of kernels using heartbeats and manages resource allocation of the VM instances (EC2) and container slots on them.
+It routes initial kernel creation requests from the front-end services to agent instances with available capacity.
+It also monitors the overall resource capacity in the cluster.
 
  * Python package name: `sorna.manager`
 
@@ -24,17 +24,26 @@ It also checks the health of kernels using heartbeats and manages resource alloc
 
 ### Sorna Agent
 
-It resides in the container where the kernel process runs.
+It manages individual EC2 instances and launches/destroyes Docker containers where REPL daemons run.
+Each agent on a new EC2 instance self-registers itself to the manager via heartbeats.
+Once a kernel is set up, front-end services interact with agents directly.
 
  * https://github.com/lablup/sorna-agent
  * Python package name: `sorna.agent`
 
-### Sorna Protocols
+### Sorna REPL
+
+It is a set of small ZMQ-based REPL daemons in various programming languages.
+
+ * https://github.com/lablup/sorna-repl
+ * Each daemon is a separate program, usually named "run.{lang-specific-extension}".
+
+### Sorna Common
 
 It defines the protocols between front-end servers, manager server(s), and kernel instances running agents.
 
- * https://github.com/lablup/sorna-protocols
- * Python package name: `sorna.proto`
+ * https://github.com/lablup/sorna-common
+ * Python package name: `sorna.proto`, `sorna.logging` (maybe added more)
 
 Development
 -----------

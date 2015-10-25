@@ -15,7 +15,7 @@ setup(
     version='0.2.0',
     description='Sorna Manager',
     long_description='',
-    url='https://github.com/lablup/sorna',
+    url='https://github.com/lablup/sorna-manager',
     author='Lablup Inc.',
     author_email='joongi@lablup.com',
     license='Private',
