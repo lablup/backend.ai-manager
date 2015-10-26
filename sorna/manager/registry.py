@@ -11,7 +11,6 @@ from urllib.parse import urlparse
 import time
 from .proto import Message, odict, generate_uuid
 from .proto.msgtypes import AgentRequestTypes
-from .driver import BaseDriver
 from .structs import Instance, Kernel
 
 __all__ = ['InstanceRegistry', 'InstanceNotFoundError', 'KernelNotFoundError',
@@ -66,8 +65,7 @@ class QuotaExceededError(RuntimeError):
 class InstanceRegistry:
     '''
     Provide a high-level API to create, destroy, and query the computation
-    kernels.  It uses :class:`BaseDriver <sorna.driver.BaseDriver>` subclasses to control low-level
-    details of resource management and sorna agents.
+    kernels.
 
     The registry is also responsible to implement our resource management
     policy, such as the limitation of maximum number of kernels per instance.
@@ -96,13 +94,12 @@ class InstanceRegistry:
     DB_KERNELS   = 1
     DB_SESSIONS  = 2
 
-    def __init__(self, redis_conn: aioredis.Pool, kernel_driver: BaseDriver,
+    def __init__(self, redis_conn: aioredis.Pool,
                  registry_id=None, kernel_timeout=600, manager_addr=None, loop=None):
         assert isinstance(redis_conn, aioredis.Pool)
-        assert isinstance(kernel_driver, BaseDriver)
         self._loop = loop if loop is not None else asyncio.get_event_loop()
         self._conn = redis_conn
-        self._driver = kernel_driver
+        self._driver = kernel_driver  # TODO: change this to send commands to agents
         self._id = generate_uuid() if registry_id is None else registry_id
         self._kernel_timeout = kernel_timeout
         self._manager_addr = manager_addr

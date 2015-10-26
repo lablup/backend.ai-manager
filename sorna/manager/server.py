@@ -10,9 +10,9 @@ import argparse
 import asyncio, aiozmq, zmq, asyncio_redis as aioredis
 import os, signal, sys
 import logging, logging.config
-from .proto import Message, odict
-from .proto.msgtypes import ManagerRequestTypes, ManagerResponseTypes
-from .driver import DriverTypes, create_driver
+from sorna.proto import Message, odict
+from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
+from sorna import utils
 from .registry import InstanceRegistry, InstanceNotAvailableError, KernelNotFoundError, QuotaExceededError
 
 # Get the address of Redis server from docker links named "redis".
@@ -28,13 +28,14 @@ __ = lambda fmt, *args, **kwargs: fmt.format(*args, **kwargs)
 _r = lambda fmt, req_id, *args, **kwargs: 'request[{}]: '.format(req_id) + fmt.format(*args, **kwargs)
 
 log = logging.getLogger(__name__)
+log.setLevel(logging.DEBUG)
 
-@asyncio.coroutine
-def handle_api(loop, server, registry):
+
+async def handle_api(loop, server, registry):
     request_id = 0
     while not _terminated:
         try:
-            req_data = yield from server.read()
+            req_data = await server.read()
         except aiozmq.stream.ZmqStreamClosed:
             break
         req = Message.decode(req_data[0])
@@ -44,34 +45,34 @@ def handle_api(loop, server, registry):
         if req['action'] == ManagerRequestTypes.PING:
 
             log.info(_r('PING', request_id))
-            resp['reply'] = ManagerResponseTypes.PONG
+            resp['reply'] = SornaResponseTypes.PONG
             resp['body']  = req['body']
 
         elif req['action'] == ManagerRequestTypes.CREATE:
 
             log.info(_r('CREATE', request_id))
             try:
-                instance, kernel = yield from registry.create_kernel()
+                instance, kernel = await registry.create_kernel()
             except InstanceNotAvailableError as e:
-                resp['reply'] = ManagerResponseTypes.FAILURE
+                resp['reply'] = SornaResponseTypes.FAILURE
                 resp['body']  = '\n'.join(map(str, e.args))
                 server.write([resp.encode()])
                 continue
 
-            yield from asyncio.sleep(0.2, loop=loop)
+            await asyncio.sleep(0.2, loop=loop)
             tries = 0
             while tries < 5:
                 log.info(_r('pinging kernel {} (trial {}) ...', request_id,
                              kernel.id, tries + 1))
-                success = yield from registry.ping_kernel(kernel.id)
+                success = await registry.ping_kernel(kernel.id)
                 if success:
                     break
                 else:
-                    yield from asyncio.sleep(1, loop=loop)
+                    await asyncio.sleep(1, loop=loop)
                     tries += 1
             else:
                 log.error(_r('created kernel {} did not respond.', request_id, kernel.id))
-                resp['reply'] = ManagerResponseTypes.FAILURE
+                resp['reply'] = SornaResponseTypes.FAILURE
                 resp['body']  = 'The created kernel did not respond!'
                 server.write([resp.encode()])
                 continue
@@ -79,7 +80,7 @@ def handle_api(loop, server, registry):
             # TODO: restore the user module state?
 
             log.info(_r('created kernel {} successfully.', request_id, kernel.id))
-            resp['reply']     = ManagerResponseTypes.SUCCESS
+            resp['reply']     = SornaResponseTypes.SUCCESS
             resp['kernel_id'] = kernel.id
             resp['body']      = odict(
                 ('agent_sock', kernel.agent_sock),
@@ -93,23 +94,23 @@ def handle_api(loop, server, registry):
             log.info(_r('GET_OR_CREATE (user_id: {}, entry_id: {})', request_id,
                      req['user_id'], req['entry_id']))
             try:
-                kernel = yield from registry.get_or_create_kernel(req['user_id'],
+                kernel = await registry.get_or_create_kernel(req['user_id'],
                                                                   req['entry_id'])
             except InstanceNotAvailableError:
                 log.error(_r('instance not available', request_id))
-                resp['reply'] = ManagerResponseTypes.FAILURE
+                resp['reply'] = SornaResponseTypes.FAILURE
                 resp['body']  = 'There is no available instance.'
                 server.write([resp.encode()])
                 continue
             except QuotaExceededError:
                 log.error(_r('quota exceeded', request_id))
-                resp['reply'] = ManagerResponseTypes.FAILURE
+                resp['reply'] = SornaResponseTypes.FAILURE
                 resp['body']  = 'You cannot create more kernels.'
                 server.write([resp.encode()])
                 continue
 
             log.info(_r('got/created kernel {} successfully.', request_id, kernel.id))
-            resp['reply'] = ManagerResponseTypes.SUCCESS
+            resp['reply'] = SornaResponseTypes.SUCCESS
             resp['kernel_id'] = kernel.id
             resp['body'] = odict(
                 ('agent_sock', kernel.agent_sock),
@@ -121,49 +122,48 @@ def handle_api(loop, server, registry):
 
             log.info(_r('DESTROY (kernel_id: {})', request_id, req['kernel_id']))
             if 'kernel_id' not in req:
-                req['kernel_id'] = yield from registry.get_kernel_from_session(req['user_id'],
+                req['kernel_id'] = await registry.get_kernel_from_session(req['user_id'],
                                                                                req['entry_id'])
             try:
-                yield from registry.destroy_kernel(req['kernel_id'])
+                await registry.destroy_kernel(req['kernel_id'])
                 log.info(_r('destroyed successfully.', request_id))
-                resp['reply']     = ManagerResponseTypes.SUCCESS
+                resp['reply']     = SornaResponseTypes.SUCCESS
                 resp['kernel_id'] = req['kernel_id']
                 resp['body']      = ''
             except KernelNotFoundError:
                 log.error(_r('kernel not found.', request_id))
-                resp['reply'] = ManagerResponseTypes.INVALID_INPUT
+                resp['reply'] = SornaResponseTypes.INVALID_INPUT
                 resp['body']  = 'No such kernel.'
 
         elif req['action'] == ManagerRequestTypes.REFRESH:
 
             log.info(_r('REFRESH (kernel_id: {})', request_id, req['kernel_id']))
             try:
-                yield from registry.refresh_kernel(req['kernel_id'])
+                await registry.refresh_kernel(req['kernel_id'])
                 log.info(_r('refreshed successfully.', request_id))
-                resp['reply'] = ManagerResponseTypes.SUCCESS
+                resp['reply'] = SornaResponseTypes.SUCCESS
                 resp['kernel_id'] = req['kernel_id']
                 resp['body'] = ''
             except KernelNotFoundError:
                 log.error(_r('kernel not found.', request_id))
-                resp['reply'] = ManagerResponseTypes.INVALID_INPUT
+                resp['reply'] = SornaResponseTypes.INVALID_INPUT
                 resp['body'] = 'No such kernel.'
 
         server.write([resp.encode()])
 
-@asyncio.coroutine
-def handle_timer(loop, registry, period=10.0):
+async def handle_timer(loop, registry, period=10.0):
     while True:
-        yield from asyncio.sleep(period)
+        await asyncio.sleep(period)
         log.info(__('TIMER (loop_time: {})', loop.time()))
-        yield from registry.clean_old_kernels()
+        await registry.clean_old_kernels()
 
 
 def main():
     global _terminated
     argparser = argparse.ArgumentParser()
-    argparser.add_argument('--kernel-driver', default='docker',
-                           choices=tuple(t.name for t in DriverTypes),
-                           help='Use the given driver to control computing resources.')
+    #argparser.add_argument('--kernel-driver', default='docker',
+    #                       choices=tuple(t.name for t in DriverTypes),
+    #                       help='Use the given driver to control computing resources.')
     argparser.add_argument('--reattach', dest='reattach_registry_id', default=None, type=str,
                            help='Reattach to the existing database using the given registry ID. '
                                 'Use this option when the manager has crashed '
@@ -173,15 +173,12 @@ def main():
                                 'such as killing idle kernels.')
     argparser.add_argument('--kernel-timeout', default=600, type=int,
                            help='Timeout (seconds) for idle kernels before automatic termination. ')
-    argparser.add_argument('--max-kernels', default=0, type=int,
-                           help='Set the max# of kernels per instance. Only for the local driver.')
+    #argparser.add_argument('--max-kernels', default=0, type=int,
+    #                       help='Set the max# of kernels per instance. Only for the local driver.')
     args = argparser.parse_args()
 
     assert args.cleanup_interval > 0
     assert args.kernel_timeout >= 0
-
-    def handle_exit():
-        raise SystemExit()
 
     logging.config.dictConfig({
         'version': 1,
@@ -222,11 +219,10 @@ def main():
         log.error('could not connect to the redis server at tcp://{0}:{1}'.format(REDIS_HOST, REDIS_PORT))
         return
 
-    log.info(__('creating {} driver...', args.kernel_driver))
-    driver = create_driver(args.kernel_driver)
-    my_ip = loop.run_until_complete(driver.get_internal_ip())
+    my_ip = loop.run_until_complete(utils.get_internal_ip())
     manager_addr = 'tcp://{0}:{1}'.format(my_ip, 5001)
     log.info(__('manager address: {}', manager_addr))
+
     registry = InstanceRegistry(redis_conn_pool, driver,
                                 registry_id=args.reattach_registry_id,
                                 kernel_timeout=args.kernel_timeout,
@@ -234,18 +230,11 @@ def main():
                                 loop=loop)
     loop.run_until_complete(registry.init())
     log.info('registry initialized.')
-    if args.kernel_driver == 'local':
-        assert args.max_kernels > 0
-        inst = loop.run_until_complete(registry.add_instance(max_kernels=args.max_kernels))
-        assert inst is not None
-        log.info(__('local: added a local dummy instance with max_kernels={}.',
-                    args.max_kernels))
 
-    log.info('started.')
-    loop.add_signal_handler(signal.SIGTERM, handle_exit)
     try:
         asyncio.async(handle_api(loop, server, registry), loop=loop)
         asyncio.async(handle_timer(loop, registry, args.cleanup_interval), loop=loop)
+        log.info('started.')
         loop.run_forever()
     except (KeyboardInterrupt, SystemExit):
         _terminated = True
