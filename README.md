@@ -11,7 +11,7 @@ Components
 
 ### Sorna Manager
 
-It routes initial kernel creation requests from the front-end services to agent instances with available capacity.
+It routes initial kernel creation requests from front-end services to agent instances with available capacity.
 It also monitors the overall resource capacity in the cluster.
 
  * Python package name: `sorna.manager`
@@ -24,7 +24,7 @@ It also monitors the overall resource capacity in the cluster.
 
 ### Sorna Agent
 
-It manages individual EC2 instances and launches/destroyes Docker containers where REPL daemons run.
+It manages individual EC2 instances and launches/destroyes Docker containers where REPL daemons (kernels) run.
 Each agent on a new EC2 instance self-registers itself to the manager via heartbeats.
 Once a kernel is set up, front-end services interact with agents directly.
 
@@ -40,7 +40,7 @@ It is a set of small ZMQ-based REPL daemons in various programming languages.
 
 ### Sorna Common
 
-It defines the protocols between front-end servers, manager server(s), and kernel instances running agents.
+It is a collection of utility modules used throughout Sorna services, such as logging and messaging protocols.
 
  * https://github.com/lablup/sorna-common
  * Python package name: `sorna.proto`, `sorna.logging` (maybe added more)
