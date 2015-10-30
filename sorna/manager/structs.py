@@ -4,13 +4,14 @@ from namedlist import namedlist
 
 
 Instance = namedlist('Instance', [
+    ('status', None),
     ('id', None),
-    ('ip', None),
-    ('spec', None),
-    ('docker_port', 2375), # standard docker daemon port
-    ('max_kernels', 1),
+    ('addr', None),
+    ('type', None),
+    ('used_cpu', None),
     ('num_kernels', 0),
-    ('tag', ''),
+    ('max_kernels', 1),
+    ('tag', None),
 ])
 Instance.__doc__ = '''\
 A compound data structure to represent instance information.
@@ -22,10 +23,7 @@ Redis), but just a metadata container passed around the sorna system.
 Kernel = namedlist('Kernel', [
     ('id', None),
     ('instance', None),
-    ('agent_sock', None),
-    ('stdin_sock', None),
-    ('stdout_sock', None),
-    ('stderr_sock', None),
+    ('addr', None),
     ('created_at', None),
     ('tag', None),
 ])

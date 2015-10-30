@@ -1,8 +1,8 @@
 docker-py
 namedlist
-zmq
+pyzmq
 aiozmq
 colorama
-asyncio_redis
+aioredis
 aiohttp
 python-dateutil

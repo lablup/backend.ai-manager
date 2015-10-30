@@ -7,33 +7,30 @@ It routes the API requests to kernel agents in VMs and manages the VM instance p
 '''
 
 import argparse
-import asyncio, aiozmq, zmq, asyncio_redis as aioredis
+import asyncio, aiozmq, zmq, aioredis
 import os, signal, sys
 import logging, logging.config
+from sorna import utils, defs
+from sorna.exceptions import InstanceNotAvailableError, KernelNotFoundError, QuotaExceededError
 from sorna.proto import Message, odict
 from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
-from sorna import utils
-from .registry import InstanceRegistry, InstanceNotAvailableError, KernelNotFoundError, QuotaExceededError
+from .registry import InstanceRegistry
 
 # Get the address of Redis server from docker links named "redis".
 REDIS_HOST = os.environ.get('REDIS_PORT_6379_TCP_ADDR', '127.0.0.1')
 REDIS_PORT = int(os.environ.get('REDIS_PORT_6379_TCP_PORT', '6379'))
 
-# VM instances should run a docker daemon using "-H tcp://0.0.0.0:2375" in DOCKER_OPTS.
-
-_terminated = False
-
 # Shortcuts for str.format
-__ = lambda fmt, *args, **kwargs: fmt.format(*args, **kwargs)
+_f = lambda fmt, *args, **kwargs: fmt.format(*args, **kwargs)
 _r = lambda fmt, req_id, *args, **kwargs: 'request[{}]: '.format(req_id) + fmt.format(*args, **kwargs)
 
-log = logging.getLogger(__name__)
+log = logging.getLogger('sorna.manager.server')
 log.setLevel(logging.DEBUG)
 
 
 async def handle_api(loop, server, registry):
     request_id = 0
-    while not _terminated:
+    while True:
         try:
             req_data = await server.read()
         except aiozmq.stream.ZmqStreamClosed:
@@ -47,47 +44,6 @@ async def handle_api(loop, server, registry):
             log.info(_r('PING', request_id))
             resp['reply'] = SornaResponseTypes.PONG
             resp['body']  = req['body']
-
-        elif req['action'] == ManagerRequestTypes.CREATE:
-
-            log.info(_r('CREATE', request_id))
-            try:
-                instance, kernel = await registry.create_kernel()
-            except InstanceNotAvailableError as e:
-                resp['reply'] = SornaResponseTypes.FAILURE
-                resp['body']  = '\n'.join(map(str, e.args))
-                server.write([resp.encode()])
-                continue
-
-            await asyncio.sleep(0.2, loop=loop)
-            tries = 0
-            while tries < 5:
-                log.info(_r('pinging kernel {} (trial {}) ...', request_id,
-                             kernel.id, tries + 1))
-                success = await registry.ping_kernel(kernel.id)
-                if success:
-                    break
-                else:
-                    await asyncio.sleep(1, loop=loop)
-                    tries += 1
-            else:
-                log.error(_r('created kernel {} did not respond.', request_id, kernel.id))
-                resp['reply'] = SornaResponseTypes.FAILURE
-                resp['body']  = 'The created kernel did not respond!'
-                server.write([resp.encode()])
-                continue
-
-            # TODO: restore the user module state?
-
-            log.info(_r('created kernel {} successfully.', request_id, kernel.id))
-            resp['reply']     = SornaResponseTypes.SUCCESS
-            resp['kernel_id'] = kernel.id
-            resp['body']      = odict(
-                ('agent_sock', kernel.agent_sock),
-                ('stdin_sock', None),
-                ('stdout_sock', kernel.stdout_sock),
-                ('stderr_sock', kernel.stderr_sock),
-            )
 
         elif req['action'] == ManagerRequestTypes.GET_OR_CREATE:
 
@@ -135,35 +91,35 @@ async def handle_api(loop, server, registry):
                 resp['reply'] = SornaResponseTypes.INVALID_INPUT
                 resp['body']  = 'No such kernel.'
 
-        elif req['action'] == ManagerRequestTypes.REFRESH:
-
-            log.info(_r('REFRESH (kernel_id: {})', request_id, req['kernel_id']))
-            try:
-                await registry.refresh_kernel(req['kernel_id'])
-                log.info(_r('refreshed successfully.', request_id))
-                resp['reply'] = SornaResponseTypes.SUCCESS
-                resp['kernel_id'] = req['kernel_id']
-                resp['body'] = ''
-            except KernelNotFoundError:
-                log.error(_r('kernel not found.', request_id))
-                resp['reply'] = SornaResponseTypes.INVALID_INPUT
-                resp['body'] = 'No such kernel.'
-
         server.write([resp.encode()])
 
 async def handle_timer(loop, registry, period=10.0):
     while True:
         await asyncio.sleep(period)
-        log.info(__('TIMER (loop_time: {})', loop.time()))
+        log.info(_f('TIMER (loop_time: {})', loop.time()))
         await registry.clean_old_kernels()
 
+async def handle_notifications(loop, registry):
+    redis_sub = await aioredis.create_redis(registry.redis_addr,
+                                            encoding='utf8',
+                                            loop=loop)
+    # Enable "expired" event notification
+    # See more details at: http://redis.io/topics/notifications
+    await redis_sub.config_set('notify-keyspace-events', 'Ehx')
+    chprefix = '__keyevent@{}__*'.format(defs.SORNA_INSTANCE_DB)
+    channels = await redis_sub.psubscribe(chprefix)
+    log.info('subscribed redis notifications.')
+    while (await channels[0].wait_message()):
+        msg = await channels[0].get(encoding='utf8')
+        if msg is None: break
+        evname = msg[0].decode('ascii').split(':')[1]
+        evkey  = msg[1]
+        if evname == 'expired':
+            log.info('instance {} has expired (terminated).'.format(evkey))
+    await redis_sub.quit()
 
 def main():
-    global _terminated
     argparser = argparse.ArgumentParser()
-    #argparser.add_argument('--kernel-driver', default='docker',
-    #                       choices=tuple(t.name for t in DriverTypes),
-    #                       help='Use the given driver to control computing resources.')
     argparser.add_argument('--reattach', dest='reattach_registry_id', default=None, type=str,
                            help='Reattach to the existing database using the given registry ID. '
                                 'Use this option when the manager has crashed '
@@ -173,8 +129,6 @@ def main():
                                 'such as killing idle kernels.')
     argparser.add_argument('--kernel-timeout', default=600, type=int,
                            help='Timeout (seconds) for idle kernels before automatic termination. ')
-    #argparser.add_argument('--max-kernels', default=0, type=int,
-    #                       help='Set the max# of kernels per instance. Only for the local driver.')
     args = argparser.parse_args()
 
     assert args.cleanup_interval > 0
@@ -186,7 +140,8 @@ def main():
         'handlers': {
             'console': {
                 'class': 'logging.StreamHandler',
-                'level': 'INFO',
+                'level': 'DEBUG',
+                'stream': 'ext://sys.stdout',
             },
             'null': {
                 'class': 'logging.NullHandler',
@@ -204,7 +159,6 @@ def main():
             },
         },
     })
-    log = logging.getLogger(__name__)
 
     asyncio.set_event_loop_policy(aiozmq.ZmqEventLoopPolicy())
     loop = asyncio.get_event_loop()
@@ -212,19 +166,12 @@ def main():
     log.info('starting manager on port 5001...')
     server = loop.run_until_complete(
         aiozmq.create_zmq_stream(zmq.REP, bind='tcp://*:5001', loop=loop))
-    try:
-        redis_conn_pool = loop.run_until_complete(asyncio.wait_for(
-            aioredis.Pool.create(host=REDIS_HOST, port=REDIS_PORT), 2))
-    except asyncio.TimeoutError:
-        log.error('could not connect to the redis server at tcp://{0}:{1}'.format(REDIS_HOST, REDIS_PORT))
-        return
 
-    my_ip = loop.run_until_complete(utils.get_internal_ip())
+    my_ip = loop.run_until_complete(utils.get_instance_ip())
     manager_addr = 'tcp://{0}:{1}'.format(my_ip, 5001)
-    log.info(__('manager address: {}', manager_addr))
+    log.info(_f('manager address: {}', manager_addr))
 
-    registry = InstanceRegistry(redis_conn_pool, driver,
-                                registry_id=args.reattach_registry_id,
+    registry = InstanceRegistry((REDIS_HOST, REDIS_PORT),
                                 kernel_timeout=args.kernel_timeout,
                                 manager_addr=manager_addr,
                                 loop=loop)
@@ -232,19 +179,19 @@ def main():
     log.info('registry initialized.')
 
     try:
-        asyncio.async(handle_api(loop, server, registry), loop=loop)
-        asyncio.async(handle_timer(loop, registry, args.cleanup_interval), loop=loop)
+        asyncio.ensure_future(handle_api(loop, server, registry), loop=loop)
+        asyncio.ensure_future(handle_notifications(loop, registry), loop=loop)
+        #asyncio.ensure_future(handle_timer(loop, registry, args.cleanup_interval), loop=loop)
         log.info('started.')
         loop.run_forever()
     except (KeyboardInterrupt, SystemExit):
-        _terminated = True
         loop.run_until_complete(registry.terminate())
         server.close()
-        redis_conn_pool.close()
         for t in asyncio.Task.all_tasks():
-            t.cancel()
+            if not t.done():
+                t.cancel()
         try:
-            loop.run_until_complete(asyncio.sleep(0))
+            loop.run_until_complete(asyncio.sleep(0, loop=loop))
         except asyncio.CancelledError:
             pass
     finally:

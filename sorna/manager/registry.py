@@ -1,65 +1,51 @@
 #! /usr/bin/env python3
 
-import asyncio, asyncio_redis as aioredis
+import asyncio
 import zmq, aiozmq
+import aioredis
 from datetime import datetime, timedelta
 import dateutil.parser
+from dateutil.tz import tzutc
 import functools
 import logging
 import re
 from urllib.parse import urlparse
 import time
-from .proto import Message, odict, generate_uuid
-from .proto.msgtypes import AgentRequestTypes
+from sorna import utils, defs
+from sorna.exceptions import *
+from sorna.proto import Message, odict, generate_uuid
+from sorna.proto.msgtypes import AgentRequestTypes
 from .structs import Instance, Kernel
 
-__all__ = ['InstanceRegistry', 'InstanceNotFoundError', 'KernelNotFoundError',
-           'InstanceNotAvailableError', 'QuotaExceededError']
+__all__ = ['InstanceRegistry', 'InstanceNotFoundError']
 
 # A shortcut for str.format
-__ = lambda fmt, *args, **kwargs: fmt.format(*args, **kwargs)
+_f = lambda fmt, *args, **kwargs: fmt.format(*args, **kwargs)
 _r = lambda fmt, reg_id, *args, **kwargs: 'registry[{}]: '.format(reg_id) + fmt.format(*args, **kwargs)
 
 log = logging.getLogger(__name__)
 
-def _auto_get_kernel(func):
+def auto_get_kernel(func):
     @functools.wraps(func)
-    def wrapper(self, *args, **kwargs):
+    async def wrapper(self, *args, **kwargs):
         if not isinstance(args[0], Kernel):
-            arg0 = yield from self.get_kernel(args[0])
-            yield from func(self, arg0, *args[1:], **kwargs)
+            arg0 = await self.get_kernel(args[0])
+            await func(self, arg0, *args[1:], **kwargs)
         return func(self, *args, **kwargs)
     return wrapper
 
-def _auto_get_instance(func):
+def auto_get_instance(func):
     @functools.wraps(func)
-    def wrapper(self, *args, **kwargs):
+    async def wrapper(self, *args, **kwargs):
         if not isinstance(args[0], Instance):
-            arg0 = yield from self.get_instance(args[0])
-            yield from func(self, arg0, *args[1:], **kwargs)
+            arg0 = await self.get_instance(args[0])
+            await func(self, arg0, *args[1:], **kwargs)
         return func(self, *args, **kwargs)
     return wrapper
 
 def _s(obj):
     if obj is None: return ''
     return str(obj)
-
-
-
-class InstanceNotAvailableError(RuntimeError):
-    pass
-
-
-class InstanceNotFoundError(RuntimeError):
-    pass
-
-
-class KernelNotFoundError(RuntimeError):
-    pass
-
-
-class QuotaExceededError(RuntimeError):
-    pass
 
 
 class InstanceRegistry:
@@ -71,328 +57,203 @@ class InstanceRegistry:
     policy, such as the limitation of maximum number of kernels per instance.
     '''
 
-    # To atomically check and get an available instance,
-    # we wrap that operation as a Redis script.
-    fetch_avail_inst_luafunc = '''
-    -- KEYS[1]: the key name of available instance set
-    -- ARGV[1]: registry id
-    -- ARGV[2]: instance id
-    local inst_key = ARGV[1] .. ".inst." .. ARGV[2] .. ".meta"
-    local inst_num = tonumber(redis.call("HGET", inst_key, "num_kernels"))
-    local inst_max = tonumber(redis.call("HGET", inst_key, "max_kernels"))
-    if inst_num < inst_max - 1 then
-      redis.call("SADD", KEYS[1], ARGV[2])
-    end
-    redis.call("HINCRBY", inst_key, "num_kernels", 1)
-    '''
+    def __init__(self, redis_addr, kernel_timeout=600, manager_addr=None, loop=None):
+        self.loop = loop if loop is not None else asyncio.get_event_loop()
+        self.redis_addr = redis_addr
+        self.kernel_timeout = kernel_timeout
+        self.manager_addr = manager_addr
+        self.redis_inst = None
+        self.create_lock = asyncio.Lock()
 
-    # TODO: extend asyncio_redis to use context manager
-    #       that holds dbid (and other per-connection states).
-    #       By separating databases, we could reduce the overhead
-    #       of "scan" command used by clean_old_kernels().
-    DB_INSTANCES = 0
-    DB_KERNELS   = 1
-    DB_SESSIONS  = 2
+    async def init(self):
+        self.redis_kern = await aioredis.create_pool(self.redis_addr,
+                                                     encoding='utf8',
+                                                     db=defs.SORNA_KERNEL_DB,
+                                                     loop=self.loop)
+        self.redis_inst = await aioredis.create_pool(self.redis_addr,
+                                                     encoding='utf8',
+                                                     db=defs.SORNA_INSTANCE_DB,
+                                                     loop=self.loop)
+        self.redis_sess = await aioredis.create_pool(self.redis_addr,
+                                                     encoding='utf8',
+                                                     db=defs.SORNA_SESSION_DB,
+                                                     loop=self.loop)
+        log.info('connected to the redis server.')
 
-    def __init__(self, redis_conn: aioredis.Pool,
-                 registry_id=None, kernel_timeout=600, manager_addr=None, loop=None):
-        assert isinstance(redis_conn, aioredis.Pool)
-        self._loop = loop if loop is not None else asyncio.get_event_loop()
-        self._conn = redis_conn
-        self._driver = kernel_driver  # TODO: change this to send commands to agents
-        self._id = generate_uuid() if registry_id is None else registry_id
-        self._kernel_timeout = kernel_timeout
-        self._manager_addr = manager_addr
-
-    @asyncio.coroutine
-    def init(self):
-        yield from self._conn.sadd('instance_registries', [self._id])
-        yield from self._conn.set('{0}.meta.created'.format(self._id), datetime.now().isoformat())
-        self.fetch_avail_inst_script = yield from self._conn.register_script(self.fetch_avail_inst_luafunc)
-        log.info(_r('added to the Redis server.', self._id))
-
-    @asyncio.coroutine
-    def terminate(self):
+    async def terminate(self):
+        # Clean up all sessions.
+        async with self.redis_sess.get() as r:
+            await r.flushdb()
         # Remove all instances. (This will also terminate running kernels on them.)
-        cursor = yield from self._conn.scan('{0}.inst.*.meta'.format(self._id))
-        while True:
-            cursor.count = 100
-            inst_key = yield from cursor.fetchone()
-            if inst_key is None: break
-            yield from self.remove_instance(inst_key)
+        async with self.redis_inst.get() as r:
+            async for inst_key in r.iscan(match='*'):
+                await self.remove_instance(inst_key)
+        log.info('disconnected from the redis server.')
 
-        # Clean up registry information.
-        yield from self._conn.delete(['{0}.avail_instances'.format(self._id)])
-        yield from self._conn.srem('instance_registries', [self._id])
-        yield from self._conn.delete(['{0}.meta.created'.format(self._id)])
-        log.info(_r('removed from the Redis server.', self._id))
+    async def get_instance(self, inst_id):
+        async with self.redis_inst.get() as r:
+            fields = await r.hgetall(inst_id)
+            if not fields:
+                raise InstanceNotFoundError(inst_id)
+            return Instance(**fields)
 
-    def _mangle_inst_prefix(self, inst_id):
-        return '{0}.inst.{1}'.format(self._id, inst_id)
+    async def get_kernel(self, kern_id):
+        async with self.redis_kern.get() as r:
+            fields = await r.hgetall(kern_id)
+            if not fields:
+                raise KernelNotFoundError(kern_id)
+            return Kernel(**fields)
 
-    def _mangle_kernel_prefix(self, kern_id):
-        return '{0}.kern.{1}'.format(self._id, kern_id)
-
-    @staticmethod
-    def fut2ret(f):
-        return f.result() if isinstance(f, asyncio.Future) else f
-
-    _re_inst_id = re.compile(r'^((?P<reg_id>[-_:\w]+)\.inst\.)?(?P<inst_id>[-_:\w]+)(\.[-\w]+)?$')
-    _re_kern_id = re.compile(r'^((?P<reg_id>[-_:\w]+)\.kern\.)?(?P<kern_id>[-_:\w]+)(\.[-\w]+)?$')
-
-    @asyncio.coroutine
-    def get_instance(self, inst_id):
-        assert isinstance(inst_id, str)
-        m = self._re_inst_id.search(inst_id)
-        if m is None:
-            raise InstanceNotFoundError(inst_id)
-        inst_key = self._mangle_inst_prefix(m.group('inst_id')) + '.meta'
-        if not (yield from self._conn.exists(inst_key)):
-            raise InstanceNotFoundError(inst_id)
-        fields = yield from self._conn.hmget(inst_key, [
-            'ip',
-            'spec',
-            'docker_port',
-            'max_kernels',
-            'num_kernels',
-            'tag',
-        ])
-        fields = map(self.fut2ret, fields)
-        return Instance(m.group('inst_id'), *fields)
-
-    @asyncio.coroutine
-    def get_kernel(self, kern_id):
-        assert isinstance(kern_id, str)
-        m = self._re_kern_id.search(kern_id)
-        if m is None:
-            raise KernelNotFoundError(kern_id)
-        kern_key = self._mangle_kernel_prefix(m.group('kern_id')) + '.meta'
-        if not (yield from self._conn.exists(kern_key)):
-            raise KernelNotFoundError(kern_id)
-        fields = yield from self._conn.hmget(kern_key, [
-            'instance',
-            'agent_sock',
-            'stdin_sock',
-            'stdout_sock',
-            'stderr_sock',
-            'created_at',
-            'tag',
-        ])
-        fields = map(self.fut2ret, fields)
-        return Kernel(m.group('kern_id'), *fields)
-
-    @asyncio.coroutine
-    def get_kernel_from_session(self, user_id, entry_id):
-        sess_key = '{0}.sess.{1}:{2}'.format(self._id, user_id, entry_id)
-        kern_id = yield from self._conn.get(sess_key)
-        if kern_id is None:
-            return None
-        else:
-            try:
-                kern = yield from self.get_kernel(kern_id)
-            except KernelNotFoundError:
+    async def get_kernel_from_session(self, user_id, entry_id):
+        async with self.redis_sess.get() as r:
+            sess_key = '{0}:{1}'.format(user_id, entry_id)
+            kern_id = r.get(sess_key)
+            if kern_id:
+                return (await self.get_kernel(kern_id))
+            else:
                 return None
-        return kern
 
-    @asyncio.coroutine
-    def get_or_create_kernel(self, user_id, entry_id):
-        sess_key = '{0}.sess.{1}:{2}'.format(self._id, user_id, entry_id)
-        kern_id = yield from self._conn.get(sess_key)
-        # TODO: check per-user quota and service policy
-        if kern_id is None:
+    async def get_or_create_kernel(self, user_id, entry_id):
+        kern = await self.get_kernel_from_session(user_id, entry_id)
+        if kern is None:
             # Create a new kernel.
-            _, kern = yield from self.create_kernel()
-            yield from self._conn.set(sess_key, kern.id)
-        else:
-            try:
-                kern = yield from self.get_kernel(kern_id)
-            except KernelNotFoundError:
-                # The tracked kernel may be terminated due to timeout.
-                # Create a new kernel.
-                _, kern = yield from self.create_kernel()
-                yield from self._conn.set(sess_key, kern.id)
+            async with self.redis_sess.get() as r:
+                _, kern = await self.create_kernel()
+                sess_key = '{0}:{1}'.format(user_id, entry_id)
+                await r.set(sess_key, kern.id)
+        assert kern is not None
         return kern
 
-    @asyncio.coroutine
-    def add_instance(self, spec=None, max_kernels=1, tag=None):
-        assert max_kernels < 100 and max_kernels > 0
-        inst_id, inst_ip = yield from self._driver.launch_instance(spec)
-        inst_kp = self._mangle_inst_prefix(inst_id)
-        ret = False
-        while not ret:
-            tnx = yield from self._conn.multi(watch=[inst_kp + '.meta'])
-            fut = yield from tnx.hmset(inst_kp + '.meta', {
-                'ip': inst_ip,
-                'docker_port': '2375',
-                'max_kernels': str(max_kernels),
-                'num_kernels': '0',
-                'tag': _s(tag),
-            })
-            fut2 = yield from tnx.lpush(inst_kp + '.agent_ports', list(map(str, range(6000, 6100))))
-            yield from tnx.exec()
-            ret = all((yield from asyncio.gather(fut, fut2)))
-        avail_key = '{0}.avail_instances'.format(self._id)
-        if max_kernels > 0:
-            yield from self._conn.sadd(avail_key, [inst_id])
-        return (yield from self.get_instance(inst_id))
+    async def create_kernel(self, lang, spec=None):
+        _spec = {
+            'lang': 'python34',
+            'cpu_shares': 1024,
+        }
+        _spec.update(spec)
+        with (await self.create_lock):
+            log.info('create_kernel with spec: {!r}'.format(_spec))
 
-    @asyncio.coroutine
-    @_auto_get_instance
-    def remove_instance(self, instance, destroy=True):
-        log.info(_r('remove_instance ({})', self._id, instance.id))
-        inst_kp = self._mangle_inst_prefix(instance.id)
-        yield from self.clean_old_kernels(inst_id=instance.id, timeout=0)
+            # Find available instance.
+            inst_id = None
+            async with self.redis_inst.get() as r:
+                async for inst_id in r.iscan(match='*'):
+                    max_kernels = await r.hget(inst_id, 'max_kernels')
+                    num_kernels = await r.hget(inst_id, 'num_kernels')
+                    if num_kernels < max_kernels:
+                        await r.hincrby(inst_id, 'num_kernels', 1)
+                        # This will temporarily increase num_kernels,
+                        # and it will be "fixed" by the agent when it sends
+                        # the next heartbeat.
+                        break
+                else:
+                    # TODO: automatically add instances to some extent
+                    log.error('instance not available.')
+                    raise InstanceNotAvailableError('Could not find available instance.')
+            assert inst_id is not None
 
-        # Remove from available instances and delete Redis tracking keys
-        avail_key = '{0}.avail_instances'.format(self._id)
-        yield from self._conn.srem(avail_key, [instance.id])
-        yield from self._conn.delete([inst_kp + '.meta', inst_kp + '.agent_ports'])
+            # Create kernel by invoking the agent on the instance.
+            log.info('grabbed instance {}', inst_id)
+            kern_id = None
+            instance = await self.get_instance(inst_id)
+            conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=instance.addr,
+                                                  loop=self.loop)
+            conn.transport.setsockopt(zmq.SNDHWM, 50)
+            with conn:
+                request = Message()
+                request['req_type'] = AgentRequestTypes.CREATE_KERNEL
+                request['lang'] = _spec['lang']
+                conn.write([request.encode()])
+                try:
+                    resp_data = await asyncio.wait_for(conn.read(), timeout=3)
+                except asyncio.TimeoutError:
+                    log.error('failed to create kernel; TIMEOUT: agent did not respond.')
+                    raise KernelCreationFailedError('TIMEOUT', 'agent did not respond')
+                else:
+                    response = Message.decode(resp_data[0])
+                    if response['reply'] == SornaResponseTypes.SUCCESS:
+                        kern_id = response['kernel_id']
+                    else:
+                        err_name = SornaResponseTypes(response['reply']).name
+                        err_cause = response['body']
+                        log.error('failed to create kernel; {}: {}'
+                                  .format(err_name, err_cause))
+                        raise KernelCreationFailedError(err_name, err_cause)
+            assert kern_id is not None
 
-        # Destroy the instance
-        yield from self._driver.destroy_instance(instance.id)
-
-    @asyncio.coroutine
-    def create_kernel(self):
-        log.info(_r('create_kernel', self._id))
-        avail_key = '{0}.avail_instances'.format(self._id)
-        avail_count = yield from self._conn.scard(avail_key)
-        if avail_count == 0:
-            log.error(_r('instance not available.', self._id))
-            raise InstanceNotAvailableError('Could not find available instance.')
-        inst_id = yield from self._conn.spop(avail_key)
-        if inst_id is None:
-            # TODO: automatically add instances to some extent
-            log.error(_r('instance not available.', self._id))
-            raise InstanceNotAvailableError('Could not find available instance.')
-        else:
-            try:
-                yield from self.fetch_avail_inst_script.run(keys=[avail_key],
-                                                            args=[self._id, inst_id])
-            except aioredis.exceptions.ScriptKilledError as e:
-                print(e.message)
-                raise InstanceNotAvailableError('Failed to fetch available instance.') from e
-
-            log.info(_r('grabbed instance {}', self._id, inst_id))
-            instance = yield from self.get_instance(inst_id)
-            inst_kp = self._mangle_inst_prefix(inst_id)
-            assigned_agent_port = yield from self._conn.lpop(inst_kp + '.agent_ports')
-
-            kernel = yield from self._driver.create_kernel(instance,
-                                                           assigned_agent_port,
-                                                           self._manager_addr)
-            kern_kp = self._mangle_kernel_prefix(kernel.id)
-            log.info(_r('created kernel {} on instance {}', self._id, kernel.id, inst_id))
-            yield from self.fill_socket_info(kernel)
-            yield from self._conn.hmset(kern_kp + '.meta', {
-                'id': kernel.id,
+        log.info('created kernel {} on instance {}', kernel.id, inst_id)
+        async with self.redis_kern.get() as r:
+            kernel_info = {
+                'id': kernel_id,
                 'instance': instance.id,
-                'agent_sock': _s(kernel.agent_sock),
-                'stdin_sock': _s(kernel.stdin_sock),
-                'stdout_sock': _s(kernel.stdout_sock),
-                'stderr_sock': _s(kernel.stderr_sock),
-                'created_at': kernel.created_at,
-            })
-            return instance, kernel
+                # all kernels in an agent shares the same agent address
+                # (the agent multiplexes requests to different kernels)
+                'addr': instance.addr,
+                'created_at': datetime.now(tzutc()).isoformat(),
+            }
+            await r.hmset(kernel.id, *chain.from_iterable((k, v) for k, v
+                                                          in kernel_info.items()))
+            kernel = Kernel(**kernel_info)
+        return instance, kernel
 
-    @asyncio.coroutine
-    @_auto_get_kernel
-    def destroy_kernel(self, kernel):
-        log.info(_r('destroy_kernel ({})', self._id, kernel.id))
-        yield from self._driver.destroy_kernel(kernel)
-        kern_kp = self._mangle_kernel_prefix(kernel.id)
-        yield from self._conn.delete([kern_kp + '.meta'])
-        inst_kp = self._mangle_inst_prefix(kernel.instance)
-        yield from self._conn.hincrby(inst_kp + '.meta', 'num_kernels', -1)
-        p = urlparse(kernel.agent_sock)
-        yield from self._conn.lpush(inst_kp + '.agent_ports', list(map(str, [p.port])))
-        avail_key = '{0}.avail_instances'.format(self._id)
-        yield from self._conn.sadd(avail_key, [kernel.instance])
+    @auto_get_kernel
+    async def destroy_kernel(self, kernel):
+        log.info('destroy_kernel ({})', kernel.id)
+        with (await self.create_lock):
+            conn = await aiozmq.create_zmq_stream(zmq.REQ, kernel.addr, loop=self.loop)
+            conn.transport.setsockopt(zmq.SNDHWM, 50)
+            with conn:
+                request = Message()
+                request['req_type'] = AgentRequestTypes.DESTROY_KERNEL
+                request['kernel_id'] = kernel.id
+                conn.write([request.encode()])
+                try:
+                    resp_data = await asyncio.wait_for(conn.read(), timeout=3)
+                except asyncio.TimeoutError:
+                    log.error('failed to destroy kernel; TIMEOUT: agent did not respond.')
+                    raise KernelDestructionFailedError('TIMEOUT', 'agent did not respond')
+                else:
+                    response = Message.decode(resp_data[0])
+                    if response['reply'] != SornaResponseTypes.SUCCESS:
+                        err_name = SornaResponseTypes(response['reply']).name
+                        err_cause = response['body']
+                        log.error('failed to destroy kernel; {}: {}'
+                                  .format(err_name, err_cause))
+                        raise KernelDestructionFailedError(err_name, err_cause)
+            assert response['reply'] == SornaResponseTypes.SUCCESS
+            async with self.redis_kern.get() as r:
+                await r.delete(kernel.id)
+            async with self.redis_inst.get() as r:
+                await r.hincrby(inst_id, 'num_kernels', -1)
 
-    @asyncio.coroutine
-    @_auto_get_kernel
-    def ping_kernel(self, kernel):
-        log.info(_r('ping_kernel ({}, agent_sock: {})', self._id,
-                 kernel.id, kernel.agent_sock))
-        sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.agent_sock,
-                                                   loop=self._loop)
-        req_id = generate_uuid()
-        req = Message(
-            ('req_type', AgentRequestTypes.HEARTBEAT),
-            ('body', req_id),
-        )
-        sock.write([req.encode()])
-        try:
-            resp_data = yield from asyncio.wait_for(sock.read(), timeout=2.0,
-                                                    loop=self._loop)
-            resp = Message.decode(resp_data[0])
-            return (resp['body'] == req_id)
-        except asyncio.TimeoutError:
-            return False
-        finally:
-            sock.close()
-
-    @asyncio.coroutine
-    def fill_socket_info(self, kernel):
-        log.info(_r('fill_socket_info ({}, agent_sock: {})', self._id,
-                     kernel.id, kernel.agent_sock))
-        sock = yield from aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.agent_sock,
-                                                   loop=self._loop)
-        req = Message(
-            ('req_type', AgentRequestTypes.SOCKET_INFO),
-            ('kernel_id', kernel.id),
-            ('body', ''),
-        )
-        sock.write([req.encode()])
-        resp_data = yield from sock.read()
-        resp = Message.decode(resp_data[0])
-        kernel.stdin_sock = resp['body']['stdin']
-        kernel.stdout_sock = resp['body']['stdout']
-        kernel.stderr_sock = resp['body']['stderr']
-        sock.close()
-
-    @asyncio.coroutine
-    @_auto_get_kernel
-    def refresh_kernel(self, kernel):
-        log.info(_r('refresh_kernel ({})', self._id, kernel.id))
-        kern_kp = self._mangle_kernel_prefix(kernel.id)
-        yield from self._conn.hset(kern_kp + '.meta', 'last_used', datetime.now().isoformat())
-
-    @asyncio.coroutine
-    def clean_old_kernels(self, inst_id=None, timeout=None):
+    async def clean_old_kernels(self, inst_id=None, timeout=None):
         if timeout is None:
-            timeout = self._kernel_timeout
-
-        log.info(_r('clean_old_kernels (timeout: {})', self._id, timeout))
-        cursor = yield from self._conn.scan('{0}.kern.*.meta'.format(self._id))
-        cursor.count = 100
-        while True:
-            kern_key = yield from cursor.fetchone()
-
-            if kern_key is None:
-                break
-            if inst_id is not None:
-                parent_inst_id = yield from self._conn.hget(kern_key, 'instance')
-                if parent_inst_id != inst_id:
-                    continue
+            timeout = self.kernel_timeout
+        '''
+        log.info('clean_old_kernels (timeout: {})', timeout))
+        async with self.redis_kern.get() as r:
+            async for kern_id in r.iscan(match='*'):
+                if inst_id is not None:
+                    parent_inst_id = await self._conn.hget(kern_key, 'instance')
+                    if parent_inst_id != inst_id:
+                        continue
 
             last_used = yield from self._conn.hget(kern_key, 'last_used')
             # NOTE: last_used field is set by neumann.
             if last_used is None:
-                log.info(_r('detected kernel without no last used info.', self._id))
+                log.info('detected kernel without no last used info.')
                 # If not set, just assume it is just used now.
                 if timeout == 0:
-                    log.info(_r('kernel {} is assumed to be old enough.', self._id,
-                                 kern_key))
+                    log.info('kernel {} is assumed to be old enough.', kern_key)
                     yield from self.destroy_kernel(kern_key)
                 else:
                     now = datetime.now().isoformat()
-                    log.info(_r('set last_used of kernel {} to {}.', self._id, kern_key, now))
+                    log.info('set last_used of kernel {} to {}.', kern_key, now)
                     yield from self._conn.hset(kern_key, 'last_used', now)
             else:
                 last_used = dateutil.parser.parse(last_used)
                 now = datetime.now()
                 if timeout == 0 or now - last_used > timedelta(seconds=timeout):
-                    log.info(_r('kernel {} is old enough.', self._id, kern_key))
+                    log.info('kernel {} is old enough.', kern_key)
                     yield from self.destroy_kernel(kern_key)
-
-        log.info(_r('cleaning done.', self._id))
+        '''
+        log.info('cleaning done.')
