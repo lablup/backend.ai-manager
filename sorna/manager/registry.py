@@ -4,7 +4,6 @@ import asyncio
 import zmq, aiozmq
 import aioredis
 from datetime import datetime, timedelta
-import dateutil.parser
 from dateutil.tz import tzutc
 import functools
 import logging
@@ -100,9 +99,10 @@ class InstanceRegistry:
     async def get_kernel(self, kern_id):
         async with self.redis_kern.get() as r:
             fields = await r.hgetall(kern_id)
-            if not fields:
+            if fields:
+                return Kernel(**fields)
+            else:
                 raise KernelNotFoundError(kern_id)
-            return Kernel(**fields)
 
     async def get_kernel_from_session(self, user_id, entry_id):
         async with self.redis_sess.get() as r:
@@ -111,11 +111,12 @@ class InstanceRegistry:
             if kern_id:
                 return (await self.get_kernel(kern_id))
             else:
-                return None
+                raise KernelNotFoundError()
 
     async def get_or_create_kernel(self, user_id, entry_id):
-        kern = await self.get_kernel_from_session(user_id, entry_id)
-        if kern is None:
+        try:
+            kern = await self.get_kernel_from_session(user_id, entry_id)
+        except KernelNotFoundError:
             # Create a new kernel.
             async with self.redis_sess.get() as r:
                 _, kern = await self.create_kernel()
@@ -225,35 +226,3 @@ class InstanceRegistry:
             async with self.redis_inst.get() as r:
                 await r.hincrby(inst_id, 'num_kernels', -1)
 
-    async def clean_old_kernels(self, inst_id=None, timeout=None):
-        if timeout is None:
-            timeout = self.kernel_timeout
-        '''
-        log.info('clean_old_kernels (timeout: {})', timeout))
-        async with self.redis_kern.get() as r:
-            async for kern_id in r.iscan(match='*'):
-                if inst_id is not None:
-                    parent_inst_id = await self._conn.hget(kern_key, 'instance')
-                    if parent_inst_id != inst_id:
-                        continue
-
-            last_used = yield from self._conn.hget(kern_key, 'last_used')
-            # NOTE: last_used field is set by neumann.
-            if last_used is None:
-                log.info('detected kernel without no last used info.')
-                # If not set, just assume it is just used now.
-                if timeout == 0:
-                    log.info('kernel {} is assumed to be old enough.', kern_key)
-                    yield from self.destroy_kernel(kern_key)
-                else:
-                    now = datetime.now().isoformat()
-                    log.info('set last_used of kernel {} to {}.', kern_key, now)
-                    yield from self._conn.hset(kern_key, 'last_used', now)
-            else:
-                last_used = dateutil.parser.parse(last_used)
-                now = datetime.now()
-                if timeout == 0 or now - last_used > timedelta(seconds=timeout):
-                    log.info('kernel {} is old enough.', kern_key)
-                    yield from self.destroy_kernel(kern_key)
-        '''
-        log.info('cleaning done.')

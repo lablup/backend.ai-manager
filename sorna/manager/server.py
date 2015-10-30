@@ -93,12 +93,6 @@ async def handle_api(loop, server, registry):
 
         server.write([resp.encode()])
 
-async def handle_timer(loop, registry, period=10.0):
-    while True:
-        await asyncio.sleep(period)
-        log.info(_f('TIMER (loop_time: {})', loop.time()))
-        await registry.clean_old_kernels()
-
 async def handle_notifications(loop, registry):
     redis_sub = await aioredis.create_redis(registry.redis_addr,
                                             encoding='utf8',
@@ -115,24 +109,26 @@ async def handle_notifications(loop, registry):
         evname = msg[0].decode('ascii').split(':')[1]
         evkey  = msg[1]
         if evname == 'expired':
-            log.info('instance {} has expired (terminated).'.format(evkey))
+            if evkey.startswith('shadow:'):
+                inst_id = evkey.split(':', 1)[1]
+                log.info('instance {} has expired (terminated).'.format(inst_id))
+                # Let's actually delete the original key.
+                await redis_sub.select(defs.SORNA_INSTANCE_DB)
+                kern_ids = await redis_sub.smembers(inst_id + '.kernels')
+                pipe = redis_sub.pipeline()
+                pipe.delete(inst_id)
+                pipe.delete(inst_id + '.kernels')
+                await pipe.execute()
+                await redis_sub.select(defs.SORNA_KERNEL_DB)
+                await redis_sub.delete(*kern_ids)
+                # Session entries will become stale, but accessing it will raise
+                # KernelNotFoundError and the registry will create a new kernel
+                # afterwards via get_or_create_kernel().
     await redis_sub.quit()
 
 def main():
-    argparser = argparse.ArgumentParser()
-    argparser.add_argument('--reattach', dest='reattach_registry_id', default=None, type=str,
-                           help='Reattach to the existing database using the given registry ID. '
-                                'Use this option when the manager has crashed '
-                                'but there are running instances and kernels.')
-    argparser.add_argument('--cleanup-interval', default=10, type=int,
-                           help='Interval (seconds) to do clean up operations '
-                                'such as killing idle kernels.')
-    argparser.add_argument('--kernel-timeout', default=600, type=int,
-                           help='Timeout (seconds) for idle kernels before automatic termination. ')
-    args = argparser.parse_args()
-
-    assert args.cleanup_interval > 0
-    assert args.kernel_timeout >= 0
+    #argparser = argparse.ArgumentParser()
+    #args = argparser.parse_args()
 
     logging.config.dictConfig({
         'version': 1,
@@ -172,7 +168,6 @@ def main():
     log.info(_f('manager address: {}', manager_addr))
 
     registry = InstanceRegistry((REDIS_HOST, REDIS_PORT),
-                                kernel_timeout=args.kernel_timeout,
                                 manager_addr=manager_addr,
                                 loop=loop)
     loop.run_until_complete(registry.init())
@@ -181,7 +176,6 @@ def main():
     try:
         asyncio.ensure_future(handle_api(loop, server, registry), loop=loop)
         asyncio.ensure_future(handle_notifications(loop, registry), loop=loop)
-        #asyncio.ensure_future(handle_timer(loop, registry, args.cleanup_interval), loop=loop)
         log.info('started.')
         loop.run_forever()
     except (KeyboardInterrupt, SystemExit):
