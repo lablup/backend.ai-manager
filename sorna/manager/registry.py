@@ -175,7 +175,7 @@ class InstanceRegistry:
                         kern_id = response['kernel_id']
                     else:
                         err_name = SornaResponseTypes(response['reply']).name
-                        err_cause = response['body']
+                        err_cause = response['cause']
                         log.error('failed to create kernel; {}: {}'
                                   .format(err_name, err_cause))
                         raise KernelCreationFailedError(err_name, err_cause)
@@ -216,7 +216,7 @@ class InstanceRegistry:
                     response = Message.decode(resp_data[0])
                     if response['reply'] != SornaResponseTypes.SUCCESS:
                         err_name = SornaResponseTypes(response['reply']).name
-                        err_cause = response['body']
+                        err_cause = response['cause']
                         log.error('failed to destroy kernel; {}: {}'
                                   .format(err_name, err_cause))
                         raise KernelDestructionFailedError(err_name, err_cause)

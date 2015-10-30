@@ -55,24 +55,20 @@ async def handle_api(loop, server, registry):
             except InstanceNotAvailableError:
                 log.error(_r('instance not available', request_id))
                 resp['reply'] = SornaResponseTypes.FAILURE
-                resp['body']  = 'There is no available instance.'
+                resp['cause']  = 'There is no available instance.'
                 server.write([resp.encode()])
                 continue
             except QuotaExceededError:
                 log.error(_r('quota exceeded', request_id))
                 resp['reply'] = SornaResponseTypes.FAILURE
-                resp['body']  = 'You cannot create more kernels.'
+                resp['cause']  = 'You cannot create more kernels.'
                 server.write([resp.encode()])
                 continue
 
             log.info(_r('got/created kernel {} successfully.', request_id, kernel.id))
             resp['reply'] = SornaResponseTypes.SUCCESS
             resp['kernel_id'] = kernel.id
-            resp['body'] = odict(
-                ('agent_sock', kernel.agent_sock),
-                ('stdout_sock', kernel.stdout_sock),
-                ('stderr_sock', kernel.stderr_sock),
-            )
+            resp['kernel_addr'] = kernel.addr
 
         elif req['action'] == ManagerRequestTypes.DESTROY:
 
@@ -84,12 +80,10 @@ async def handle_api(loop, server, registry):
                 await registry.destroy_kernel(req['kernel_id'])
                 log.info(_r('destroyed successfully.', request_id))
                 resp['reply']     = SornaResponseTypes.SUCCESS
-                resp['kernel_id'] = req['kernel_id']
-                resp['body']      = ''
             except KernelNotFoundError:
                 log.error(_r('kernel not found.', request_id))
                 resp['reply'] = SornaResponseTypes.INVALID_INPUT
-                resp['body']  = 'No such kernel.'
+                resp['cause']  = 'No such kernel.'
 
         server.write([resp.encode()])
 
