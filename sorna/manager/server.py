@@ -8,7 +8,7 @@ It routes the API requests to kernel agents in VMs and manages the VM instance p
 
 import argparse
 import asyncio, aiozmq, zmq, aioredis
-import os, signal, sys
+import os, signal, sys, re
 import logging, logging.config
 from sorna import utils, defs
 from sorna.exceptions import InstanceNotAvailableError, KernelNotFoundError, QuotaExceededError
@@ -96,7 +96,7 @@ async def handle_notifications(loop, registry):
                                         loop=loop)
     # Enable "expired" event notification
     # See more details at: http://redis.io/topics/notifications
-    await redis_sub.config_set('notify-keyspace-events', 'Ehx')
+    await redis_sub.config_set('notify-keyspace-events', 'Ex')
     chprefix = '__keyevent@{}__*'.format(defs.SORNA_INSTANCE_DB)
     channels = await redis_sub.psubscribe(chprefix)
     log.info('subscribed redis notifications.')
@@ -123,6 +123,7 @@ async def handle_notifications(loop, registry):
                 # KernelNotFoundError and the registry will create a new kernel
                 # afterwards via get_or_create_kernel().
     await redis_sub.quit()
+    await redis.quit()
 
 def main():
     #argparser = argparse.ArgumentParser()
