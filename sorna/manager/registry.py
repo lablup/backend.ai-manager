@@ -30,8 +30,8 @@ def auto_get_kernel(func):
     async def wrapper(self, *args, **kwargs):
         if not isinstance(args[0], Kernel):
             arg0 = await self.get_kernel(args[0])
-            await func(self, arg0, *args[1:], **kwargs)
-        return func(self, *args, **kwargs)
+            return await func(self, arg0, *args[1:], **kwargs)
+        return await func(self, *args, **kwargs)
     return wrapper
 
 def auto_get_instance(func):
@@ -39,8 +39,8 @@ def auto_get_instance(func):
     async def wrapper(self, *args, **kwargs):
         if not isinstance(args[0], Instance):
             arg0 = await self.get_instance(args[0])
-            await func(self, arg0, *args[1:], **kwargs)
-        return func(self, *args, **kwargs)
+            return await func(self, arg0, *args[1:], **kwargs)
+        return await func(self, *args, **kwargs)
     return wrapper
 
 def _s(obj):
@@ -203,7 +203,8 @@ class InstanceRegistry:
     async def destroy_kernel(self, kernel):
         log.info('destroy_kernel ({})', kernel.id)
         with (await self.create_lock):
-            conn = await aiozmq.create_zmq_stream(zmq.REQ, kernel.addr, loop=self.loop)
+            conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.addr,
+                                                  loop=self.loop)
             conn.transport.setsockopt(zmq.SNDHWM, 50)
             request = Message()
             request['action'] = AgentRequestTypes.DESTROY_KERNEL
@@ -226,6 +227,7 @@ class InstanceRegistry:
                 conn.close()
             assert response['reply'] == SornaResponseTypes.SUCCESS
             async with self.redis_kern.get() as r:
+                inst_id = await r.hget(kernel.id, 'instance')
                 await r.delete(kernel.id)
             async with self.redis_inst.get() as r:
                 await r.hincrby(inst_id, 'num_kernels', -1)
