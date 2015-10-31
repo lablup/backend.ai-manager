@@ -130,7 +130,8 @@ class InstanceRegistry:
             'lang': 'python34',
             'cpu_shares': 1024,
         }
-        _spec.update(spec)
+        if spec:
+            _spec.update(spec)
         with (await self.create_lock):
             log.info('create_kernel with spec: {!r}'.format(_spec))
 

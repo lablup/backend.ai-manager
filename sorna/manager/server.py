@@ -91,6 +91,9 @@ async def handle_notifications(loop, registry):
     redis_sub = await aioredis.create_redis(registry.redis_addr,
                                             encoding='utf8',
                                             loop=loop)
+    redis = await aioredis.create_redis(registry.redis_addr,
+                                        encoding='utf8',
+                                        loop=loop)
     # Enable "expired" event notification
     # See more details at: http://redis.io/topics/notifications
     await redis_sub.config_set('notify-keyspace-events', 'Ehx')
@@ -107,14 +110,15 @@ async def handle_notifications(loop, registry):
                 inst_id = evkey.split(':', 1)[1]
                 log.info('instance {} has expired (terminated).'.format(inst_id))
                 # Let's actually delete the original key.
-                await redis_sub.select(defs.SORNA_INSTANCE_DB)
-                kern_ids = await redis_sub.smembers(inst_id + '.kernels')
-                pipe = redis_sub.pipeline()
+                await redis.select(defs.SORNA_INSTANCE_DB)
+                kern_ids = await redis.smembers(inst_id + '.kernels')
+                pipe = redis.multi_exec()
                 pipe.delete(inst_id)
                 pipe.delete(inst_id + '.kernels')
                 await pipe.execute()
-                await redis_sub.select(defs.SORNA_KERNEL_DB)
-                await redis_sub.delete(*kern_ids)
+                await redis.select(defs.SORNA_KERNEL_DB)
+                if kern_ids:
+                    await redis.delete(*kern_ids)
                 # Session entries will become stale, but accessing it will raise
                 # KernelNotFoundError and the registry will create a new kernel
                 # afterwards via get_or_create_kernel().
