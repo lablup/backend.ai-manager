@@ -1,16 +1,56 @@
 #! /usr/bin/env python3
 
 import unittest
+import logging
 import subprocess, os, signal
 import socket, time
 import asyncio, zmq, aioredis
 from sorna import defs, utils
 from sorna.proto import Message, odict
 from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
+from sorna.exceptions import *
 from .registry import *
 
 
-class SornaInstanceRegistryTest(unittest.TestCase):
+class SornaProcessManagerMixin:
+
+    @staticmethod
+    def run_agent(max_kernels=1):
+        # Run a local agent
+        cmd = ['python3', '-m', 'sorna.agent.server',
+               '--manager-addr', 'tcp://127.0.0.1:5001',
+               '--max-kernels', str(max_kernels)]
+        agent_proc = subprocess.Popen(cmd, start_new_session=True,
+                                      stdout=subprocess.DEVNULL,
+                                      stderr=subprocess.DEVNULL)
+        return agent_proc
+
+    @staticmethod
+    def kill_proc(proc):
+        sid = os.getsid(proc.pid)
+        os.killpg(sid, signal.SIGTERM)
+        exitcode = proc.wait()
+
+    @staticmethod
+    def run_manager():
+        # Run a local server
+        cmd = ['python3', '-m', 'sorna.manager.server']
+        manager_proc = subprocess.Popen(cmd, start_new_session=True,
+                                        stdout=subprocess.DEVNULL,
+                                        stderr=subprocess.DEVNULL)
+        return manager_proc
+
+    def zmq_connect(self, addr):
+        if not hasattr(self, 'zmq_ctx'):
+            self.zmq_ctx = zmq.Context()
+        sock = self.zmq_ctx.socket(zmq.REQ)
+        sock.setsockopt(zmq.SNDHWM, 50)
+        sock.setsockopt(zmq.RCVHWM, 50)
+        sock.connect(addr)
+        return sock
+
+
+class SornaRegistryTest(unittest.TestCase, SornaProcessManagerMixin):
     '''
     Test the functionality of :class:`InstanceRegistry <sorna.instance.InstanceRegistry>`.
     This test suite requires a temporary Redis server and a set of docker link
@@ -22,15 +62,12 @@ class SornaInstanceRegistryTest(unittest.TestCase):
         asyncio.set_event_loop(self.loop)
         redis_host = os.environ.get('REDIS_PORT_6379_TCP_ADDR', '127.0.0.1')
         redis_port = int(os.environ.get('REDIS_PORT_6379_TCP_PORT', '6379'))
-        async def create_redis_pool(dbid):
-            return await asyncio.wait_for(aioredis.create_pool((redis_host, redis_port),
+        async def create_redis():
+            return await asyncio.wait_for(aioredis.create_redis((redis_host, redis_port),
                                                                encoding='utf8',
-                                                               db=dbid,
                                                                loop=self.loop),
                                           timeout=1.0, loop=self.loop)
-        self.redis_kern = self.loop.run_until_complete(create_redis_pool(defs.SORNA_KERNEL_DB))
-        self.redis_inst = self.loop.run_until_complete(create_redis_pool(defs.SORNA_INSTANCE_DB))
-        self.redis_sess = self.loop.run_until_complete(create_redis_pool(defs.SORNA_SESSION_DB))
+        self.redis = self.loop.run_until_complete(create_redis())
         my_ip = self.loop.run_until_complete(utils.get_instance_ip())
         manager_addr = 'tcp://{0}:{1}'.format(my_ip, 5001)
         self.registry = InstanceRegistry((redis_host, redis_port),
@@ -43,101 +80,134 @@ class SornaInstanceRegistryTest(unittest.TestCase):
     def tearDown(self):
         async def clean_up():
             await self.registry.terminate()
-            await self.redis_kern.clear()
-            await self.redis_inst.clear()
-            await self.redis_sess.clear()
+            await self.redis.flushall()
+            await self.redis.quit()
         self.loop.run_until_complete(clean_up())
         # Progress the event loop so that the pending coroutines have chances to finish.
         # Otherwise, you will see a lot of ResourceWarnings about unclosed sockets.
         self.loop.run_until_complete(asyncio.sleep(0))
         self.loop.close()
 
-    def test_create_kernel(self):
+    def test_01_create_kernel_with_no_instance(self):
         async def go():
-            # An instance has a capacity of a single kernel, and try to create kernel twice.
-            instance, kernel = await self.registry.create_kernel(lang='python34')
-            #print(instance, kernel)
-            await self.registry.destroy_kernel(kernel)
-
+            with self.assertRaises(InstanceNotAvailableError):
+                instance, kernel = await self.registry.create_kernel(lang='python34')
         self.loop.run_until_complete(go())
 
+    def test_02_create_kernel(self):
+        async def go():
+            instance, kernel = await self.registry.create_kernel(lang='python34')
+            assert kernel.instance == instance.id
+            assert kernel.addr == instance.addr
+            await self.registry.destroy_kernel(kernel)
+        p = self.run_agent()
+        time.sleep(1)
+        self.loop.run_until_complete(go())
+        time.sleep(1)
+        self.kill_proc(p)
+        time.sleep(1)
 
-class SornaManagerLocalIntegrationTest(unittest.TestCase):
+
+class SornaIntegrationTest(unittest.TestCase, SornaProcessManagerMixin):
     '''
     Test the manager using the full API interaction steps, including zmq-based communication.
     This test requires a temporary Redis server like :class:`SornaInstanceRegistryTest`.
     '''
 
     def setUp(self):
-        self.kernel_ip = '127.0.0.1'
-        self.kernel_driver = 'local'
-        self.manager_port = 5001
-        self.manager_addr = 'tcp://{0}:{1}'.format(self.kernel_ip, self.manager_port)
-
-        # Establish a manager server in a separate process
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.port_error = s.connect_ex((self.kernel_ip, self.manager_port))
-        s.close()
-        if self.port_error != 0:  # When the port is available
-            cmd = ['python3', '-m', 'sorna.manager',
-                   '--kernel-driver', self.kernel_driver,
-                   '--max-kernels', '1']
-            self.server = subprocess.Popen(cmd, start_new_session=True,
-                                           stdout=subprocess.DEVNULL,
-                                           stderr=subprocess.DEVNULL)
-
-        # Connect to the manager server
-        self.context = zmq.Context()
-        self.socket = self.context.socket(zmq.REQ)
-        self.socket.connect(self.manager_addr)
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        redis_host = os.environ.get('REDIS_PORT_6379_TCP_ADDR', '127.0.0.1')
+        redis_port = int(os.environ.get('REDIS_PORT_6379_TCP_PORT', '6379'))
+        async def create_redis():
+            return await asyncio.wait_for(aioredis.create_redis((redis_host, redis_port),
+                                                               encoding='utf8',
+                                                               loop=self.loop),
+                                          timeout=1.0, loop=self.loop)
+        self.redis = self.loop.run_until_complete(create_redis())
 
     def tearDown(self):
-        if self.port_error != 0:  # Kill test server
-            sid = os.getsid(self.server.pid)
-            os.killpg(sid, signal.SIGTERM)
-            exitcode = self.server.wait()
-            #print('Manager process exited with code {0}'.format(exitcode))
+        async def clean_up():
+            await self.redis.flushall()
+            await self.redis.quit()
+        self.loop.run_until_complete(clean_up())
+        # Progress the event loop so that the pending coroutines have chances to finish.
+        # Otherwise, you will see a lot of ResourceWarnings about unclosed sockets.
+        self.loop.run_until_complete(asyncio.sleep(0))
+        self.loop.close()
 
-    def test_ping(self):
-        request = Message(
-            ('action', ManagerRequestTypes.PING),
-            ('body', 'test'),
-        )
-        self.socket.send(request.encode())
+    def test_session_based_kernel_mgmt(self):
+        mgr = self.run_manager()
+        time.sleep(1)
+        agent = self.run_agent(max_kernels=2)
+        time.sleep(1)
+        # Connect to the manager
+        sock = self.zmq_connect('tcp://127.0.0.1:5001')
 
-        self.assertNotEqual(self.socket.poll(1000), 0)
-        response_data = self.socket.recv()
-        response = Message.decode(response_data)
-
-        self.assertEqual(response['reply'], SornaResponseTypes.PONG)
-        self.assertEqual(request['body'], response['body'])
-
-    def test_create_and_destroy_kernel(self):
         # Create the kernel.
         request = Message(
-            ('action', ManagerRequestTypes.CREATE),
+            ('action', ManagerRequestTypes.GET_OR_CREATE),
             ('user_id', 'test'),
+            ('entry_id', 'abcdef'),
+            ('lang', 'python34'),
         )
-        self.socket.send(request.encode())
-
-        self.assertNotEqual(self.socket.poll(1000), 0)
-        response_data = self.socket.recv()
+        sock.send(request.encode())
+        self.assertNotEqual(sock.poll(1000), 0)
+        response_data = sock.recv()
         response = Message.decode(response_data)
-
         self.assertEqual(response['reply'], SornaResponseTypes.SUCCESS)
+        kernel_id = response['kernel_id']
 
-        # Destroy the kernel.
+        # Get the kernel (the kernel should be same!)
+        request = Message(
+            ('action', ManagerRequestTypes.GET_OR_CREATE),
+            ('user_id', 'test'),
+            ('entry_id', 'abcdef'),
+            ('lang', 'python34'),
+        )
+        sock.send(request.encode())
+        self.assertNotEqual(sock.poll(1000), 0)
+        response_data = sock.recv()
+        response = Message.decode(response_data)
+        self.assertEqual(kernel_id, response['kernel_id'])
+
+        # Create another kernel
+        request = Message(
+            ('action', ManagerRequestTypes.GET_OR_CREATE),
+            ('user_id', 'test'),
+            ('entry_id', 'abcdeg'),
+            ('lang', 'python34'),
+        )
+        sock.send(request.encode())
+        self.assertNotEqual(sock.poll(1000), 0)
+        response_data = sock.recv()
+        response = Message.decode(response_data)
+        self.assertNotEqual(kernel_id, response['kernel_id'])
+        kernel2_id = response['kernel_id']
+
+        # Destroy all kernels.
         request = Message(
             ('action', ManagerRequestTypes.DESTROY),
-            ('kernel_id', response['kernel_id']),
+            ('kernel_id', kernel_id),
         )
-        self.socket.send(request.encode())
-
-        # Receive response
-        self.assertNotEqual(self.socket.poll(1000), 0)
-        response_data = self.socket.recv()
+        sock.send(request.encode())
+        self.assertNotEqual(sock.poll(1000), 0)
+        response_data = sock.recv()
         response = Message.decode(response_data)
-
-        # Assert the response is SUCCESS
         self.assertEqual(response['reply'], SornaResponseTypes.SUCCESS)
-        #print(response)
+
+        request = Message(
+            ('action', ManagerRequestTypes.DESTROY),
+            ('kernel_id', kernel2_id),
+        )
+        sock.send(request.encode())
+        self.assertNotEqual(sock.poll(1000), 0)
+        response_data = sock.recv()
+        response = Message.decode(response_data)
+        self.assertEqual(response['reply'], SornaResponseTypes.SUCCESS)
+
+        sock.close()
+        self.kill_proc(mgr)
+        time.sleep(1)
+        self.kill_proc(agent)
+        time.sleep(1)

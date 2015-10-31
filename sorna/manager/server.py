@@ -47,11 +47,12 @@ async def handle_api(loop, server, registry):
 
         elif req['action'] == ManagerRequestTypes.GET_OR_CREATE:
 
-            log.info(_r('GET_OR_CREATE (user_id: {}, entry_id: {})', request_id,
-                     req['user_id'], req['entry_id']))
+            log.info(_r('GET_OR_CREATE (u:{}, e:{}, l:{})', request_id,
+                     req['user_id'], req['entry_id'], req['lang']))
             try:
                 kernel = await registry.get_or_create_kernel(req['user_id'],
-                                                                  req['entry_id'])
+                                                             req['entry_id'],
+                                                             req['lang'])
             except InstanceNotAvailableError:
                 log.error(_r('instance not available', request_id))
                 resp['reply'] = SornaResponseTypes.FAILURE
@@ -73,9 +74,7 @@ async def handle_api(loop, server, registry):
         elif req['action'] == ManagerRequestTypes.DESTROY:
 
             log.info(_r('DESTROY (kernel_id: {})', request_id, req['kernel_id']))
-            if 'kernel_id' not in req:
-                req['kernel_id'] = await registry.get_kernel_from_session(req['user_id'],
-                                                                               req['entry_id'])
+            # TODO: assert if session matches with the kernel id?
             try:
                 await registry.destroy_kernel(req['kernel_id'])
                 log.info(_r('destroyed successfully.', request_id))

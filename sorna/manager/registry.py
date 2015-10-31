@@ -104,23 +104,24 @@ class InstanceRegistry:
             else:
                 raise KernelNotFoundError(kern_id)
 
-    async def get_kernel_from_session(self, user_id, entry_id):
+    async def get_kernel_from_session(self, user_id, entry_id, lang):
         async with self.redis_sess.get() as r:
-            sess_key = '{0}:{1}'.format(user_id, entry_id)
-            kern_id = r.get(sess_key)
+            sess_key = '{0}:{1}:{2}'.format(user_id, entry_id, lang)
+            kern_id = await r.get(sess_key)
             if kern_id:
                 return (await self.get_kernel(kern_id))
             else:
                 raise KernelNotFoundError()
 
-    async def get_or_create_kernel(self, user_id, entry_id):
+    async def get_or_create_kernel(self, user_id, entry_id,
+                                   lang, spec=None):
         try:
-            kern = await self.get_kernel_from_session(user_id, entry_id)
+            kern = await self.get_kernel_from_session(user_id, entry_id, lang)
         except KernelNotFoundError:
             # Create a new kernel.
             async with self.redis_sess.get() as r:
-                _, kern = await self.create_kernel()
-                sess_key = '{0}:{1}'.format(user_id, entry_id)
+                _, kern = await self.create_kernel(lang, spec)
+                sess_key = '{0}:{1}:{2}'.format(user_id, entry_id, lang)
                 await r.set(sess_key, kern.id)
         assert kern is not None
         return kern
@@ -133,7 +134,7 @@ class InstanceRegistry:
         if spec:
             _spec.update(spec)
         with (await self.create_lock):
-            log.info('create_kernel with spec: {!r}'.format(_spec))
+            log.info(_f('create_kernel with spec: {!r}', _spec))
 
             # Find available instance.
             inst_id = None
@@ -155,7 +156,7 @@ class InstanceRegistry:
             assert inst_id is not None
 
             # Create kernel by invoking the agent on the instance.
-            log.info('grabbed instance {}', inst_id)
+            log.info(_f('grabbed instance {}', inst_id))
             kern_id = None
             instance = await self.get_instance(inst_id)
             conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=instance.addr,
@@ -177,14 +178,14 @@ class InstanceRegistry:
                 else:
                     err_name = SornaResponseTypes(response['reply']).name
                     err_cause = response['cause']
-                    log.error('failed to create kernel; {}: {}'
-                              .format(err_name, err_cause))
+                    log.error(_f('failed to create kernel; {}: {}',
+                                 err_name, err_cause))
                     raise KernelCreationFailedError(err_name, err_cause)
             finally:
                 conn.close()
             assert kern_id is not None
 
-        log.info('created kernel {} on instance {}', kern_id, inst_id)
+        log.info(_f('created kernel {} on instance {}', kern_id, inst_id))
         async with self.redis_kern.get() as r:
             kernel_info = {
                 'id': kern_id,
@@ -201,7 +202,7 @@ class InstanceRegistry:
 
     @auto_get_kernel
     async def destroy_kernel(self, kernel):
-        log.info('destroy_kernel ({})', kernel.id)
+        log.info(_f('destroy_kernel ({})', kernel.id))
         with (await self.create_lock):
             conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.addr,
                                                   loop=self.loop)
@@ -220,8 +221,8 @@ class InstanceRegistry:
                 if response['reply'] != SornaResponseTypes.SUCCESS:
                     err_name = SornaResponseTypes(response['reply']).name
                     err_cause = response['cause']
-                    log.error('failed to destroy kernel; {}: {}'
-                              .format(err_name, err_cause))
+                    log.error(_f('failed to destroy kernel; {}: {}',
+                                 err_name, err_cause))
                     raise KernelDestructionFailedError(err_name, err_cause)
             finally:
                 conn.close()
