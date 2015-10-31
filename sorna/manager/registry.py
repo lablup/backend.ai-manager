@@ -100,7 +100,13 @@ class InstanceRegistry:
         async with self.redis_kern.get() as r:
             fields = await r.hgetall(kern_id)
             if fields:
-                return Kernel(**fields)
+                # Check if stale.
+                async with self.redis_inst.get() as ri:
+                    if (await ri.exists(fields['instance'])):
+                        return Kernel(**fields)
+                    else:
+                        await r.delete(kern_id)
+                        raise KernelNotFoundError(kern_id)
             else:
                 raise KernelNotFoundError(kern_id)
 
