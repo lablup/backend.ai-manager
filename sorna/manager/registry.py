@@ -147,8 +147,8 @@ class InstanceRegistry:
             async with self.redis_inst.get() as r:
                 async for inst_id in r.iscan(match='i-*'):
                     if inst_id.endswith(b'.kernels'): continue
-                    max_kernels = await r.hget(inst_id, 'max_kernels')
-                    num_kernels = await r.hget(inst_id, 'num_kernels')
+                    max_kernels = int(await r.hget(inst_id, 'max_kernels'))
+                    num_kernels = int(await r.hget(inst_id, 'num_kernels'))
                     if num_kernels < max_kernels:
                         await r.hincrby(inst_id, 'num_kernels', 1)
                         # This will temporarily increase num_kernels,
