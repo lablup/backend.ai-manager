@@ -11,7 +11,7 @@ import asyncio, aiozmq, zmq, aioredis
 import os, signal, sys, re
 import logging, logging.config
 from sorna import utils, defs
-from sorna.exceptions import InstanceNotAvailableError, KernelNotFoundError, QuotaExceededError
+from sorna.exceptions import *
 from sorna.proto import Message, odict
 from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
 from .registry import InstanceRegistry
@@ -53,33 +53,37 @@ async def handle_api(loop, server, registry):
                 kernel = await registry.get_or_create_kernel(req['user_id'],
                                                              req['entry_id'],
                                                              req['lang'])
+                log.info(_r('got/created kernel {} successfully.', request_id, kernel.id))
+                resp['reply'] = SornaResponseTypes.SUCCESS
+                resp['kernel_id'] = kernel.id
+                resp['kernel_addr'] = kernel.addr
             except InstanceNotAvailableError:
                 log.error(_r('instance not available', request_id))
                 resp['reply'] = SornaResponseTypes.FAILURE
                 resp['cause']  = 'There is no available instance.'
-                server.write([resp.encode()])
-                continue
+            except KernelCreationFailedError:
+                log.error(_r('kernel creation failed', request_id))
+                resp['reply'] = SornaResponseTypes.FAILURE
+                resp['cause']  = 'Kernel creation failed. Try again later.'
             except QuotaExceededError:
+                # currently unused. reserved for future per-user quota impl.
                 log.error(_r('quota exceeded', request_id))
                 resp['reply'] = SornaResponseTypes.FAILURE
                 resp['cause']  = 'You cannot create more kernels.'
-                server.write([resp.encode()])
-                continue
-
-            log.info(_r('got/created kernel {} successfully.', request_id, kernel.id))
-            resp['reply'] = SornaResponseTypes.SUCCESS
-            resp['kernel_id'] = kernel.id
-            resp['kernel_addr'] = kernel.addr
 
         elif req['action'] == ManagerRequestTypes.DESTROY:
 
-            log.info(_r('DESTROY (kernel_id: {})', request_id, req['kernel_id']))
+            log.info(_r('DESTROY (k:{})', request_id, req['kernel_id']))
             # TODO: assert if session matches with the kernel id?
             try:
                 await registry.destroy_kernel(req['kernel_id'])
                 log.info(_r('destroyed successfully.', request_id))
                 resp['reply']     = SornaResponseTypes.SUCCESS
             except KernelNotFoundError:
+                log.error(_r('kernel not found.', request_id))
+                resp['reply'] = SornaResponseTypes.INVALID_INPUT
+                resp['cause']  = 'No such kernel.'
+            except KernelDestructionFailedError:
                 log.error(_r('kernel not found.', request_id))
                 resp['reply'] = SornaResponseTypes.INVALID_INPUT
                 resp['cause']  = 'No such kernel.'
