@@ -134,7 +134,6 @@ class InstanceRegistry:
 
     async def create_kernel(self, lang, spec=None):
         _spec = {
-            'lang': 'python34',
             'cpu_shares': 1024,
         }
         if spec:
@@ -170,7 +169,7 @@ class InstanceRegistry:
             conn.transport.setsockopt(zmq.SNDHWM, 50)
             request = Message()
             request['action'] = AgentRequestTypes.CREATE_KERNEL
-            request['lang'] = _spec['lang']
+            request['lang'] = lang
             conn.write([request.encode()])
             try:
                 resp_data = await asyncio.wait_for(conn.read(), timeout=3)

@@ -38,17 +38,33 @@ async def handle_api(loop, server, registry):
         req = Message.decode(req_data[0])
         resp = Message()
         request_id += 1
+        if 'action' not in req:
 
-        if req['action'] == ManagerRequestTypes.PING:
+            log.warn(_r('Malformed API request!', request_id))
+            resp['reply'] = SornaResponseTypes.INVALID_INPUT
+            resp['cause'] = 'Malformed API request.'
 
-            log.info(_r('PING', request_id))
-            resp['reply'] = SornaResponseTypes.PONG
-            resp['body']  = req['body']
+        elif req['action'] == ManagerRequestTypes.PING:
+
+            try:
+                log.info(_r('PING (body:{})', request_id, req['body']))
+            except KeyError:
+                log.warn(_r('PING: invalid parameters', request_id))
+                resp['reply'] = SornaResponseTypes.INVALID_INPUT
+                resp['cause'] = 'Missing API parameters.'
+            else:
+                resp['reply'] = SornaResponseTypes.PONG
+                resp['body']  = req['body']
 
         elif req['action'] == ManagerRequestTypes.GET_OR_CREATE:
 
-            log.info(_r('GET_OR_CREATE (u:{}, e:{}, l:{})', request_id,
-                     req['user_id'], req['entry_id'], req['lang']))
+            try:
+                log.info(_r('GET_OR_CREATE (u:{}, e:{}, l:{})', request_id,
+                         req['user_id'], req['entry_id'], req['lang']))
+            except KeyError:
+                log.warn(_r('GET_OR_CREATE: invalid parameters', request_id))
+                resp['reply'] = SornaResponseTypes.INVALID_INPUT
+                resp['cause'] = 'Missing API parameters.'
             try:
                 kernel = await registry.get_or_create_kernel(req['user_id'],
                                                              req['entry_id'],
@@ -60,29 +76,34 @@ async def handle_api(loop, server, registry):
             except InstanceNotAvailableError:
                 log.error(_r('instance not available', request_id))
                 resp['reply'] = SornaResponseTypes.FAILURE
-                resp['cause']  = 'There is no available instance.'
+                resp['cause'] = 'There is no available instance.'
             except KernelCreationFailedError:
                 log.error(_r('kernel creation failed', request_id))
                 resp['reply'] = SornaResponseTypes.FAILURE
-                resp['cause']  = 'Kernel creation failed. Try again later.'
+                resp['cause'] = 'Kernel creation failed. Try again later.'
             except QuotaExceededError:
                 # currently unused. reserved for future per-user quota impl.
                 log.error(_r('quota exceeded', request_id))
                 resp['reply'] = SornaResponseTypes.FAILURE
-                resp['cause']  = 'You cannot create more kernels.'
+                resp['cause'] = 'You cannot create more kernels.'
 
         elif req['action'] == ManagerRequestTypes.DESTROY:
 
-            log.info(_r('DESTROY (k:{})', request_id, req['kernel_id']))
+            try:
+                log.info(_r('DESTROY (k:{})', request_id, req['kernel_id']))
+            except KeyError:
+                log.warn(_r('DESTROY: invalid parameters', request_id))
+                resp['reply'] = SornaResponseTypes.INVALID_INPUT
+                resp['cause'] = 'Missing API parameters.'
             # TODO: assert if session matches with the kernel id?
             try:
                 await registry.destroy_kernel(req['kernel_id'])
                 log.info(_r('destroyed successfully.', request_id))
-                resp['reply']     = SornaResponseTypes.SUCCESS
+                resp['reply'] = SornaResponseTypes.SUCCESS
             except KernelNotFoundError:
                 log.error(_r('kernel not found.', request_id))
                 resp['reply'] = SornaResponseTypes.INVALID_INPUT
-                resp['cause']  = 'No such kernel.'
+                resp['cause'] = 'No such kernel.'
             except KernelDestructionFailedError:
                 log.error(_r('kernel not found.', request_id))
                 resp['reply'] = SornaResponseTypes.INVALID_INPUT
