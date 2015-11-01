@@ -135,10 +135,16 @@ def main():
     logging.config.dictConfig({
         'version': 1,
         'disable_existing_loggers': False,
+        'formatters': { 'precise': {
+                'format': '%(asctime)s %(levelname)-8s %(name)-15s %(message)s',
+                'datefmt': '%Y-%m-%d %H:%M:%S',
+            },
+        },
         'handlers': {
             'console': {
                 'class': 'logging.StreamHandler',
                 'level': 'DEBUG',
+                'formatter': 'precise',
                 'stream': 'ext://sys.stdout',
             },
             'null': {
