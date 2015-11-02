@@ -188,6 +188,9 @@ def main():
     asyncio.set_event_loop_policy(aiozmq.ZmqEventLoopPolicy())
     loop = asyncio.get_event_loop()
 
+    def sigterm_handler():
+        raise SystemExit
+
     log.info('starting manager on port 5001...')
     server = loop.run_until_complete(
         aiozmq.create_zmq_stream(zmq.REP, bind='tcp://*:5001', loop=loop))
@@ -201,6 +204,8 @@ def main():
                                 loop=loop)
     loop.run_until_complete(registry.init())
     log.info('registry initialized.')
+
+    loop.add_signal_handler(signal.SIGTERM, sigterm_handler)
 
     try:
         asyncio.ensure_future(handle_api(loop, server, registry), loop=loop)
