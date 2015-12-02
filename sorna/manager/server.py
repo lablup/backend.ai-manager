@@ -11,6 +11,7 @@ import asyncio, aiozmq, zmq, aioredis
 import os, signal, sys, re
 import logging, logging.config
 from sorna import utils, defs
+from sorna.argparse import port_no, host_port_pair
 from sorna.exceptions import *
 from sorna.proto import Message, odict
 from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
@@ -150,8 +151,10 @@ async def handle_notifications(loop, registry):
     await redis.quit()
 
 def main():
-    #argparser = argparse.ArgumentParser()
-    #args = argparser.parse_args()
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument('--manager-port', type=port_no, default=5001)
+    argparser.add_argument('--redis-addr', type=host_port_pair, default=(REDIS_HOST, REDIS_PORT))
+    args = argparser.parse_args()
 
     logging.config.dictConfig({
         'version': 1,
@@ -191,15 +194,17 @@ def main():
     def sigterm_handler():
         raise SystemExit
 
-    log.info('starting manager on port 5001...')
+    log.info('starting manager on port {0}...'.format(args.manager_port))
     server = loop.run_until_complete(
-        aiozmq.create_zmq_stream(zmq.REP, bind='tcp://*:5001', loop=loop))
+        aiozmq.create_zmq_stream(zmq.REP, bind='tcp://*:{0}'.format(args.manager_port),
+                                 loop=loop))
 
     my_ip = loop.run_until_complete(utils.get_instance_ip())
-    manager_addr = 'tcp://{0}:{1}'.format(my_ip, 5001)
+    manager_addr = 'tcp://{0}:{1}'.format(my_ip, args.manager_port)
     log.info(_f('manager address: {}', manager_addr))
+    log.info(_f('redis address: {}', args.redis_addr))
 
-    registry = InstanceRegistry((REDIS_HOST, REDIS_PORT),
+    registry = InstanceRegistry(args.redis_addr,
                                 manager_addr=manager_addr,
                                 loop=loop)
     loop.run_until_complete(registry.init())
