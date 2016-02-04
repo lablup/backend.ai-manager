@@ -23,7 +23,8 @@ setup(
     packages=find_packages(exclude=['contrib', 'docs', 'tests*']),
     namespace_packages=['sorna'],
 
-    install_requires=['pyzmq', 'aiozmq', 'aiohttp', 'namedlist', 'aioredis', 'python-dateutil'],
+    install_requires=['pyzmq', 'aiozmq', 'aiohttp', 'namedlist', 'aioredis',
+                      'python-dateutil', 'simplejson'],
     extras_require={
         'dev': [],
         'test': [],
