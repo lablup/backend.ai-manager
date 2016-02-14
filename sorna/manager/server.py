@@ -17,6 +17,7 @@ from sorna.proto import Message, odict
 from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
 from .registry import InstanceRegistry
 
+
 # Get the address of Redis server from docker links named "redis".
 REDIS_HOST = os.environ.get('REDIS_PORT_6379_TCP_ADDR', '127.0.0.1')
 REDIS_PORT = int(os.environ.get('REDIS_PORT_6379_TCP_PORT', '6379'))
@@ -29,9 +30,9 @@ log = logging.getLogger('sorna.manager.server')
 log.setLevel(logging.DEBUG)
 
 
-async def handle_api(loop, server, registry):
+async def handle_api(loop, term_ev, term_barrier, server, registry):
     request_id = 0
-    while True:
+    while not term_ev.is_set():
         try:
             req_data = await server.read()
         except aiozmq.stream.ZmqStreamClosed:
@@ -112,7 +113,11 @@ async def handle_api(loop, server, registry):
 
         server.write([resp.encode()])
 
-async def handle_notifications(loop, registry):
+    await registry.terminate()
+    await term_barrier.wait()
+
+
+async def handle_notifications(loop, term_ev, term_barrier, registry):
     redis_sub = await aioredis.create_redis(registry.redis_addr,
                                             encoding='utf8',
                                             loop=loop)
@@ -125,9 +130,16 @@ async def handle_notifications(loop, registry):
     chprefix = '__keyevent@{}__*'.format(defs.SORNA_INSTANCE_DB)
     channels = await redis_sub.psubscribe(chprefix)
     log.info('subscribed redis notifications.')
-    while (await channels[0].wait_message()):
-        msg = await channels[0].get(encoding='utf8')
-        if msg is None: break
+    g = None
+    while not term_ev.is_set():
+        msg = None
+        try:
+            g = asyncio.Task(channels[0].get(encoding='utf8'))
+            has_msg = await asyncio.wait_for(g, 0.5, loop=loop)
+        except asyncio.TimeoutError:
+            continue
+        if msg is None:
+            break
         evname = msg[0].decode('ascii').split(':')[1]
         evkey  = msg[1]
         if evname == 'expired':
@@ -147,8 +159,25 @@ async def handle_notifications(loop, registry):
                 # Session entries will become stale, but accessing it will raise
                 # KernelNotFoundError and the registry will create a new kernel
                 # afterwards via get_or_create_kernel().
-    await redis_sub.quit()
-    await redis.quit()
+    await redis_sub.unsubscribe(chprefix)
+    redis_sub.close()
+    await redis_sub.wait_closed()
+    redis.close()
+    await redis.wait_closed()
+    await term_barrier.wait()
+
+
+def handle_signal(loop, term_ev, server):
+    term_ev.set()
+    server.close()
+    loop.stop()
+
+
+async def graceful_shutdown(loop, term_barrier):
+    asyncio.ensure_future(asyncio.gather(*asyncio.Task.all_tasks(),
+                                         loop=loop, return_exceptions=True))
+    await term_barrier.wait()
+
 
 def main():
     argparser = argparse.ArgumentParser()
@@ -188,12 +217,7 @@ def main():
         },
     })
 
-    asyncio.set_event_loop_policy(aiozmq.ZmqEventLoopPolicy())
     loop = asyncio.get_event_loop()
-
-    def sigterm_handler():
-        raise SystemExit
-
     log.info('starting manager on port {0}...'.format(args.manager_port))
     server = loop.run_until_complete(
         aiozmq.create_zmq_stream(zmq.REP, bind='tcp://*:{0}'.format(args.manager_port),
@@ -210,23 +234,16 @@ def main():
     loop.run_until_complete(registry.init())
     log.info('registry initialized.')
 
-    loop.add_signal_handler(signal.SIGTERM, sigterm_handler)
-
+    term_ev = asyncio.Event()
+    term_barrier = utils.AsyncBarrier(3)
+    loop.add_signal_handler(signal.SIGINT, handle_signal, loop, term_ev, server)
+    loop.add_signal_handler(signal.SIGTERM, handle_signal, loop, term_ev, server)
+    loop.create_task(handle_api(loop, term_ev, term_barrier, server, registry))
+    loop.create_task(handle_notifications(loop, term_ev, term_barrier, registry))
     try:
-        asyncio.ensure_future(handle_api(loop, server, registry), loop=loop)
-        asyncio.ensure_future(handle_notifications(loop, registry), loop=loop)
         log.info('started.')
         loop.run_forever()
-    except (KeyboardInterrupt, SystemExit):
-        loop.run_until_complete(registry.terminate())
-        server.close()
-        for t in asyncio.Task.all_tasks():
-            if not t.done():
-                t.cancel()
-        try:
-            loop.run_until_complete(asyncio.sleep(0, loop=loop))
-        except asyncio.CancelledError:
-            pass
+        loop.run_until_complete(graceful_shutdown(loop, term_barrier))
     finally:
         loop.close()
         log.info('exit.')
