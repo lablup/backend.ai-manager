@@ -1,9 +1,8 @@
-docker-py
-namedlist
 pyzmq
 aiozmq
-colorama
-aioredis
 aiohttp
-simplejson
+aioredis
+namedlist
 python-dateutil
+simplejson
+uvloop

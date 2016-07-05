@@ -7,7 +7,7 @@ It routes the API requests to kernel agents in VMs and manages the VM instance p
 '''
 
 import argparse
-import asyncio, aiozmq, zmq, aioredis
+import asyncio, aiozmq, zmq, aioredis, uvloop
 import os, signal, sys, re
 import logging, logging.config
 from sorna import utils, defs
@@ -219,6 +219,7 @@ def main():
         },
     })
 
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     loop = asyncio.get_event_loop()
     log.info('starting manager on port {0}...'.format(args.manager_port))
     server = loop.run_until_complete(

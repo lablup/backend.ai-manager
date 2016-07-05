@@ -20,11 +20,11 @@ setup(
     author_email='joongi@lablup.com',
     license='Private',
 
-    packages=find_packages(exclude=['contrib', 'docs', 'tests*']),
+    packages=['sorna.manager', 'sorna.monitor'],
     namespace_packages=['sorna'],
 
-    install_requires=['pyzmq', 'aiozmq', 'aiohttp', 'namedlist', 'aioredis',
-                      'python-dateutil', 'simplejson'],
+    install_requires=['pyzmq', 'aiozmq', 'aiohttp', 'aioredis', 'namedlist',
+                      'python-dateutil', 'simplejson', 'uvloop'],
     extras_require={
         'dev': [],
         'test': [],
