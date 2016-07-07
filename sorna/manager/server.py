@@ -10,8 +10,10 @@ import argparse
 import asyncio, aiozmq, zmq, aioredis, uvloop
 import os, signal, sys, re
 import logging, logging.config
+import ipaddress
+from urllib.parse import urlsplit
 from sorna import utils, defs
-from sorna.argparse import port_no, host_port_pair
+from sorna.argparse import port_no, host_port_pair, ipaddr
 from sorna.exceptions import *
 from sorna.proto import Message, odict
 from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
@@ -21,6 +23,9 @@ from .registry import InstanceRegistry
 # Get the address of Redis server from docker links named "redis".
 REDIS_HOST = os.environ.get('REDIS_PORT_6379_TCP_ADDR', '127.0.0.1')
 REDIS_PORT = int(os.environ.get('REDIS_PORT_6379_TCP_PORT', '6379'))
+
+# Kernel IP overrides
+kernel_ip_override = None
 
 # Shortcuts for str.format
 _f = lambda fmt, *args, **kwargs: fmt.format(*args, **kwargs)
@@ -75,7 +80,17 @@ async def handle_api(loop, term_ev, term_barrier, server, registry):
                     log.info(_r('got/created kernel {} successfully.', request_id, kernel.id))
                     resp['reply'] = SornaResponseTypes.SUCCESS
                     resp['kernel_id'] = kernel.id
-                    resp['kernel_addr'] = kernel.addr
+                    if kernel_ip_override:
+                        p = urlsplit(kernel.addr)
+                        try:
+                            addr = ipaddress.ip_address(p.hostname)
+                            assert addr.is_loopback  # 127.0.0.0/8
+                        except ValueError:
+                            assert p.hostname == 'localhost'
+                        p = p._replace(netloc='{0}:{1}'.format(kernel_ip_override, p.port))
+                        resp['kernel_addr'] = p.geturl()
+                    else:
+                        resp['kernel_addr'] = kernel.addr
                 except InstanceNotAvailableError:
                     log.error(_r('instance not available', request_id))
                     resp['reply'] = SornaResponseTypes.FAILURE
@@ -182,9 +197,14 @@ async def graceful_shutdown(loop, term_barrier):
 
 
 def main():
+    global kernel_ip_override
+
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--manager-port', type=port_no, default=5001)
     argparser.add_argument('--redis-addr', type=host_port_pair, default=(REDIS_HOST, REDIS_PORT))
+    argparser.add_argument('--kernel-ip-override', type=ipaddr, default=None,
+                           help='Overrides the kernel IP address when responding kernel creation requests. '
+                                'Only allowed for localhost.')
     args = argparser.parse_args()
 
     logging.config.dictConfig({
@@ -230,6 +250,7 @@ def main():
     manager_addr = 'tcp://{0}:{1}'.format(my_ip, args.manager_port)
     log.info(_f('manager address: {}', manager_addr))
     log.info(_f('redis address: {}', args.redis_addr))
+    kernel_ip_override = args.kernel_ip_override
 
     registry = InstanceRegistry(args.redis_addr,
                                 manager_addr=manager_addr,
