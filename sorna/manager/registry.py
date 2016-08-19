@@ -84,9 +84,12 @@ class InstanceRegistry:
         # Clean up all sessions.
         async with self.redis_sess.get() as r:
             await r.flushdb()
-        await self.redis_kern.clear()
-        await self.redis_inst.clear()
-        await self.redis_sess.clear()
+        self.redis_kern.close()
+        self.redis_inst.close()
+        self.redis_sess.close()
+        await self.redis_kern.wait_closed()
+        await self.redis_inst.wait_closed()
+        await self.redis_sess.wait_closed()
         log.info('disconnected from the redis server.')
 
     async def get_instance(self, inst_id):

@@ -1,7 +1,7 @@
 pyzmq
 aiozmq
 aiohttp
-aioredis
+aioredis>=0.2.8
 namedlist
 python-dateutil
 simplejson
