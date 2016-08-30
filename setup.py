@@ -23,15 +23,11 @@ setup(
     packages=['sorna.manager', 'sorna.monitor'],
     namespace_packages=['sorna'],
 
-    install_requires=['pyzmq', 'aiozmq', 'aiohttp', 'aioredis', 'namedlist',
-                      'python-dateutil', 'simplejson', 'uvloop'],
+    install_requires=['pyzmq', 'aiozmq', 'aiohttp', 'aioredis', 'asyncpg',
+                      'namedlist', 'python-dateutil', 'simplejson', 'uvloop'],
     extras_require={
         'dev': [],
         'test': [],
     },
     data_files=[],
-
-    entry_points={
-        'console_scripts': ['sorna_manager=sorna.manager:main'],
-    },
 )
