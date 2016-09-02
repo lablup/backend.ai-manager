@@ -27,7 +27,7 @@ setup(
                       'namedlist', 'python-dateutil', 'simplejson', 'uvloop'],
     extras_require={
         'dev': [],
-        'test': [],
+        'test': ['pytest', 'pytest-mock'],
     },
     data_files=[],
 )

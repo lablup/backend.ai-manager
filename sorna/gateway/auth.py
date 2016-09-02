@@ -54,8 +54,8 @@ def check_date(request) -> bool:
     try:
         dt = dtparse(date)
         now = datetime.now(tzutc())
-        min_time = now - timedelta(min=15)
-        max_time = now + timedelta(min=15)
+        min_time = now - timedelta(minutes=15)
+        max_time = now + timedelta(minutes=15)
         if dt < min_time or dt > max_time:
             return False
     except ValueError:
