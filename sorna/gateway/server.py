@@ -11,16 +11,21 @@ import uvloop
 from .auth import init as auth_init
 from .kernel import init as kernel_init
 
+LATEST_API_VERSION = 'v1.20160915'
 
-async def hello(request):
+
+async def hello(request) -> web.Response:
     '''
     Returns the API version number.
     '''
-    return web.Response(body=b'OK')
+    return web.json_response({'version': LATEST_API_VERSION})
 
+async def on_prepare(request, response):
+    response.headers['Server'] = 'Sorna-API/' + LATEST_API_VERSION
 
 async def init(app):
-    app.router.add_route('GET', '/1.0', hello)
+    app.on_response_prepare.append(on_prepare)
+    app.router.add_route('GET', '/v1', hello)
     app['dbpool'] = await asyncpg.create_pool(
         host='localhost',
         database='sorna',

@@ -8,6 +8,8 @@ from aiohttp import web
 import pytest
 import uvloop
 
+from ..server import init as server_init
+
 
 @contextlib.contextmanager
 def loop_context(loop=None):
@@ -102,6 +104,7 @@ def create_server(loop, unused_port):
     async def create(debug=False):
         nonlocal app, handler, server
         app = web.Application(loop=loop)
+        await server_init(app)
         port = unused_port
         handler = app.make_handler(debug=debug, keep_alive_on=False)
         server = await loop.create_server(handler, '127.0.0.1', port)

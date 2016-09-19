@@ -13,23 +13,25 @@ from aiohttp import web
 import asyncpg
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
+import simplejson as json
 
 
 log = logging.getLogger('sorna.gateway.auth')
 
-TEST_ACCOUNTS = {
-    'AKIAIOSFODNN7EXAMPLE': {
+TEST_ACCOUNTS = [
+    {
+        'access_key': 'AKIAIOSFODNN7EXAMPLE',
         'userid': 'test-user',
         'name': 'Testion1',
         'secret_key': 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
-    }
-}
+    },
+]
 
 
 def _extract_auth_params(request):
     """
     HTTP Authorization header must be formatted as:
-    "Authorization: Sorna <ACCESS_KEY>:<SIGNATURE>"
+    "Authorization: Sorna signMethod=HMAC-SHA256, credential=<ACCESS_KEY>:<SIGNATURE>"
     """
     auth_hdr = request.headers.get('Authorization')
     if not auth_hdr:
@@ -40,10 +42,19 @@ def _extract_auth_params(request):
     auth_type, auth_str = pieces
     if auth_type != 'Sorna':
         return None
-    pieces = auth_str.split(':', 1)
-    if len(pieces) != 2:
+
+    raw_params = map(lambda s: s.strip(), auth_str.split(','))
+    params = {}
+    for param in raw_params:
+        key, value = param.split('=', 1)
+        params[key.strip()] = value.strip()
+
+    try:
+        access_key, signature = params['credential'].split(':', 1)
+        ret = params['signMethod'], access_key, signature
+        return ret
+    except (KeyError, ValueError):
         return None
-    return pieces
 
 def check_date(request) -> bool:
     date = request.headers.get('Date')
@@ -53,6 +64,7 @@ def check_date(request) -> bool:
         return False
     try:
         dt = dtparse(date)
+        request.date = dt
         now = datetime.now(tzutc())
         min_time = now - timedelta(minutes=15)
         max_time = now + timedelta(minutes=15)
@@ -62,17 +74,26 @@ def check_date(request) -> bool:
         return False
     return True
 
-async def sign_request(request, secret) -> str:
+async def sign_request(sign_method, request, secret) -> str:
     assert hasattr(request, 'date')
-    str_to_sign = request.method + '\n' \
-                  + request.content_type + '\n' \
-                  + request.path_qs + '\n' \
-                  + dt.isoformat() + '\n' \
-                  + (await request.text())
-    hashed = hmac.new(secret.encode('ascii'),
-                      str_to_sign.encode('utf8'),
-                      hashlib.sha1)
-    return base64.b64encode(hashed.digest())
+    mac_type, hash_type = sign_method.split('-')
+    hash_type = hash_type.lower()
+    assert mac_type.lower() == 'hmac'
+    assert hash_type in hashlib.algorithms_guaranteed
+
+    req_hash = hashlib.new(hash_type, await request.read()).hexdigest()
+    sign_bytes = request.method.encode() + b'\n' \
+                 + request.path_qs.encode() + b'\n' \
+                 + request.date.isoformat().encode() + b'\n' \
+                 + b'host:' + request.host.encode() + b'\n' \
+                 + b'content-type:' + request.content_type.encode() + b'\n' \
+                 + b'x-sorna-version:' + request.headers['X-Sorna-Version'].encode() + b'\n' \
+                 + req_hash.encode()
+
+    sign_key = hmac.new(secret.encode(),
+                        request.date.strftime('%Y%m%d').encode(), hash_type).digest()
+    sign_key = hmac.new(sign_key, request.host.encode(), hash_type).digest()
+    return str(base64.b64encode(hmac.new(sign_key, sign_bytes, hash_type).digest()))
 
 def auth_required(handler):
     @functools.wraps(handler)
@@ -80,16 +101,20 @@ def auth_required(handler):
         params = _extract_auth_params(request)
         if not params:
             raise web.HTTPBadRequest(text='Missing authentication parameters.')
-        access_key, signature = params
+        sign_method, access_key, signature = params
         if not check_date(request):
             raise web.HTTPBadRequest(text='Missing datetime or datetime mismatch.')
         # TODO: lookup access_key from user database
         try:
-            user = TEST_ACCOUNTS[access_key]
-            request.user = user
+            for user in TEST_ACCOUNTS:
+                if user['access_key'] == access_key:
+                    request.user = user
+                    break
+            else:
+                raise KeyError
         except KeyError:
             raise web.HTTPUnauthorized(text='User not found.')
-        my_signature = await sign_request(request, user['secret_key'])
+        my_signature = await sign_request(sign_method, request, request.user['secret_key'])
         if not my_signature:
             raise web.HTTPBadRequest(text='Missing or invalid signature params.')
         if my_signature == signature:
@@ -99,5 +124,14 @@ def auth_required(handler):
     return wrapped
 
 
+@auth_required
+async def authorize(request) -> web.Response:
+    req_data = json.loads(await request.text())
+    resp_data = { 'authorized': 'yes' }
+    if 'echo' in req_data:
+        resp_data['echo'] = req_data['echo']
+    return web.json_response(resp_data)
+
+
 async def init(app):
-    pass
+    app.router.add_route('GET', '/v1/authorize', authorize)
