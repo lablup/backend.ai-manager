@@ -3,7 +3,6 @@ OAuth 2.0 facilities
 '''
 
 import asyncio
-import base64
 from datetime import datetime, timedelta
 import functools
 import hashlib, hmac
@@ -93,7 +92,7 @@ async def sign_request(sign_method, request, secret) -> str:
     sign_key = hmac.new(secret.encode(),
                         request.date.strftime('%Y%m%d').encode(), hash_type).digest()
     sign_key = hmac.new(sign_key, request.host.encode(), hash_type).digest()
-    return str(base64.b64encode(hmac.new(sign_key, sign_bytes, hash_type).digest()))
+    return hmac.new(sign_key, sign_bytes, hash_type).hexdigest()
 
 def auth_required(handler):
     @functools.wraps(handler)

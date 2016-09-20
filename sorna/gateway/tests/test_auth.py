@@ -1,6 +1,6 @@
-import base64
 from datetime import datetime, timedelta
 import hashlib, hmac
+from pprint import pprint
 from types import SimpleNamespace
 import uuid
 
@@ -45,9 +45,12 @@ async def test_auth(create_app_and_client, unused_port):
         sign_key = hmac.new(TEST_ACCOUNTS[0]['secret_key'].encode(),
                             now.strftime('%Y%m%d').encode(), hash_type).digest()
         sign_key = hmac.new(sign_key, hostname.encode(), hash_type).digest()
-        signature = str(base64.b64encode(hmac.new(sign_key, sign_bytes, hash_type).digest()))
+        signature = hmac.new(sign_key, sign_bytes, hash_type).hexdigest()
         headers['Authorization'] = 'Sorna signMethod=HMAC-{}, '.format(hash_type.upper()) \
                                    + 'credential={}:{}'.format(TEST_ACCOUNTS[0]['access_key'], signature)
+        # Only shown when there are failures in this test case
+        print('Request headers')
+        pprint(headers)
         resp = await client.get('/v1/authorize',
                                 data=req_bytes,
                                 headers=headers,
