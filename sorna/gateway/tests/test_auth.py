@@ -21,39 +21,46 @@ async def test_hello(create_app_and_client):
 async def test_auth(create_app_and_client, unused_port):
     app, client = await create_app_and_client()
     await auth_init(app)
-    now = datetime.now(tzutc())
-    hostname = '127.0.0.1:{}'.format(unused_port)
-    headers = {
-        'Date': now.isoformat(),
-        'Content-Type': 'application/json',
-        'X-Sorna-Version': 'v1.20160915',
-    }
-    req_data = {
-        'echo': str(uuid.uuid4()),
-    }
-    req_bytes = json.dumps(req_data).encode()
-    req_hash = hashlib.sha256(req_bytes).hexdigest()
-    sign_bytes = b'GET\n' \
-                 + b'/v1/authorize\n' \
-                 + now.isoformat().encode() + b'\n' \
-                 + b'host:' + hostname.encode() + b'\n' \
-                 + b'content-type:application/json\n' \
-                 + b'x-sorna-version:v1.20160915\n' \
-                 + req_hash.encode()
-    sign_key = hmac.new(TEST_ACCOUNTS[0]['secret_key'].encode(),
-                        now.strftime('%Y%m%d').encode(), 'sha256').digest()
-    sign_key = hmac.new(sign_key, hostname.encode(), 'sha256').digest()
-    signature = str(base64.b64encode(hmac.new(sign_key, sign_bytes, 'sha256').digest()))
-    headers['Authorization'] = 'Sorna signMethod=HMAC-SHA256, ' \
-                               'credential={}:{}'.format(TEST_ACCOUNTS[0]['access_key'], signature)
-    resp = await client.get('/v1/authorize',
-                            data=req_bytes,
-                            headers=headers,
-                            skip_auto_headers=('User-Agent',))
-    assert resp.status == 200
-    data = json.loads(await resp.text())
-    assert data['authorized'] == 'yes'
-    assert data['echo'] == req_data['echo']
+
+    async def do_authorize(hash_type, api_version):
+        now = datetime.now(tzutc())
+        hostname = '127.0.0.1:{}'.format(unused_port)
+        headers = {
+            'Date': now.isoformat(),
+            'Content-Type': 'application/json',
+            'X-Sorna-Version': api_version,
+        }
+        req_data = {
+            'echo': str(uuid.uuid4()),
+        }
+        req_bytes = json.dumps(req_data).encode()
+        req_hash = hashlib.new(hash_type, req_bytes).hexdigest()
+        sign_bytes = b'GET\n' \
+                     + b'/v1/authorize\n' \
+                     + now.isoformat().encode() + b'\n' \
+                     + b'host:' + hostname.encode() + b'\n' \
+                     + b'content-type:application/json\n' \
+                     + b'x-sorna-version:' + api_version.encode() + b'\n' \
+                     + req_hash.encode()
+        sign_key = hmac.new(TEST_ACCOUNTS[0]['secret_key'].encode(),
+                            now.strftime('%Y%m%d').encode(), hash_type).digest()
+        sign_key = hmac.new(sign_key, hostname.encode(), hash_type).digest()
+        signature = str(base64.b64encode(hmac.new(sign_key, sign_bytes, hash_type).digest()))
+        headers['Authorization'] = 'Sorna signMethod=HMAC-{}, '.format(hash_type.upper()) \
+                                   + 'credential={}:{}'.format(TEST_ACCOUNTS[0]['access_key'], signature)
+        resp = await client.get('/v1/authorize',
+                                data=req_bytes,
+                                headers=headers,
+                                skip_auto_headers=('User-Agent',))
+        assert resp.status == 200
+        data = json.loads(await resp.text())
+        assert data['authorized'] == 'yes'
+        assert data['echo'] == req_data['echo']
+
+    # Try multiple different hashing schemes
+    await do_authorize('sha1', 'v1.20160915')
+    await do_authorize('sha256', 'v1.20160915')
+    await do_authorize('md5', 'v1.20160915')
 
 
 def test_check_date(mocker):
