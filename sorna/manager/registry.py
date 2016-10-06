@@ -13,7 +13,8 @@ from urllib.parse import urlparse
 import time
 from sorna import utils, defs
 from sorna.exceptions import *
-from sorna.proto import Message, odict, generate_uuid
+from sorna.proto import Message
+from sorna.utils import odict, generate_uuid
 from sorna.proto.msgtypes import AgentRequestTypes, SornaResponseTypes
 from .structs import Instance, Kernel
 

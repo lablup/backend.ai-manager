@@ -6,7 +6,8 @@ import subprocess, os, signal
 import socket, time
 import asyncio, zmq, aioredis
 from sorna import defs, utils
-from sorna.proto import Message, odict
+from sorna.proto import Message
+from sorna.utils import odict
 from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
 from sorna.exceptions import *
 from .registry import *

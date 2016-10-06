@@ -15,7 +15,8 @@ from urllib.parse import urlsplit
 from sorna import utils, defs
 from sorna.argparse import port_no, host_port_pair, ipaddr
 from sorna.exceptions import *
-from sorna.proto import Message, odict
+from sorna.proto import Message
+from sorna.utils import odict
 from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
 from .registry import InstanceRegistry
 
