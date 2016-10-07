@@ -11,10 +11,10 @@ Package Structure
 Installation
 ------------
 
-Sorna Manager requires Python 3.5 or higher.
-We highly recommend to use [pyenv](https://github.com/yyuu/pyenv) to use an
-isolated setup with custom Python versions that might not be supported by your
-OS or Linux distributions by default.
+Sorna Manager requires Python 3.5 or higher.  We highly recommend to use
+[pyenv](https://github.com/yyuu/pyenv) for an isolated setup of custom Python
+versions that might be different from default installations managed by your OS
+or Linux distros.
 
 ```sh
 pip install sorna-manager
@@ -29,7 +29,7 @@ You may share a virtual environment with other Sorna projects.
 git clone https://github.com/lablup/sorna-manager.git
 python -m venv venv-sorna
 source venv-sorna/bin/activate
-python setup.py develop --user
+python setup.py develop
 ```
 
 Running and Deployment
