@@ -1,11 +1,10 @@
 pyzmq
 aiozmq
-aiohttp
+aiohttp>=1.0
 aioredis>=0.2.8
 namedlist
-python-dateutil
+python-dateutil>=2.5
 simplejson
-uvloop
-oauthlib
+uvloop>=0.5.4
 pytest
 pytest-mock
