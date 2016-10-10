@@ -45,7 +45,29 @@ Running and Deployment
      - 3: to track session IDs
      - These IDs are defined in [sorna-common](https://github.com/lablup/sorna-common/blob/master/sorna/defs.py)
 
-### Running from a command line:
+### Configuration
+
+All configurations are done using environment variables.
+
+ * `SORNA_SERVICE_IP`: The IP where the API gateway server listens on (default: 0.0.0.0).
+ * `SORNA_SERVICE_PORT`: The TCP port number where the API gateway server listens on (default: 8080, 8443 when SSL is enabled).
+   To run in production, you need the root privilege to use the standard 80/443 ports.
+ * `SORNA_AGENT_PORT`: The TCP port number where the agent instances are listening on (default: 6001).
+ * `SORNA_SSL_CERT`: The path to an SSL certificate file.  It may contain inter/root CA certificates as well (default: None).
+ * `SORNA_SSL_KEY`: The path to the private key used to make requests for the SSL certificate (default: None).
+ * `SORNA_DB_HOST`: The hostname of a database server (default: localhost).
+ * `SORNA_DB_NAME`: The database name (default: sorna).
+ * `SORNA_DB_USER`: The username to authenticate to the database server (default: postgres).
+ * `SORNA_DB_PASSWORD`: The password to authenticate to the database server (default: develove).
+
+### Running the API gateway server from a command line:
+
+```sh
+SORNA_SERVICE_PORT=
+```
+
+
+### Running the legacy server from a command line:
 
 ```sh
 python -m sorna.manager.server

@@ -7,7 +7,8 @@ def load_config():
     c = SimpleNamespace()
 
     c.service_ip = os.environ.get('SORNA_SERVICE_IP', '0.0.0.0')
-    c.service_port = int(os.environ.get('SORNA_SERVICE_PORT', 443))
+    c.service_port = int(os.environ.get('SORNA_SERVICE_PORT', 0))
+    c.agent_port = int(os.environ.get('SORNA_AGENT_PORT', 6001))
 
     c.ssl_cert = os.environ.get('SORNA_SSL_CERT', None)
     c.ssl_key = os.environ.get('SORNA_SSL_KEY', None)

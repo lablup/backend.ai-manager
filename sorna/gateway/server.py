@@ -31,6 +31,8 @@ async def init(app):
         app.sslctx = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
         app.sslctx.load_cert_chain(str(app.config.ssl_cert),
                                    str(app.config.ssl_key))
+    if app.config.service_port == 0:
+        app.config.service_port = 8443 if app.sslctx else 8080
 
     app.on_response_prepare.append(on_prepare)
     app.router.add_route('GET', '/v1', hello)
