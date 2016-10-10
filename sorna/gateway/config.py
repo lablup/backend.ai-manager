@@ -31,7 +31,7 @@ def load_config(argv=None, legacy=False):
         parser.add('--ssl-key', env_var='SORNA_SSL_KEY', type=path, default=None,
                    help='The path to the private key used to make requests for the SSL certificate. '
                         '(default: None)')
-        parser.add('--db-addr', env_var='SORNA_DB_HOST', type=host_port_pair, default=('localhost', 5432),
+        parser.add('--db-addr', env_var='SORNA_DB_ADDR', type=host_port_pair, default=('localhost', 5432),
                    help='The hostname-port pair of a database server. (default: localhost:5432)')
         parser.add('--db-name', env_var='SORNA_DB_NAME', type=str, default='sorna',
                    help='The database name. (default: sorna)')
@@ -39,7 +39,7 @@ def load_config(argv=None, legacy=False):
                    help='The username to authenticate to the database server. (default: postgres)')
         parser.add('--db-password', env_var='SORNA_DB_PASSWORD', type=str, default='develove',
                    help='The password to authenticate to the database server. (default: develove)')
-    parser.add('--redis-addr', env_var='SORNA_REDIS_HOST', type=host_port_pair, default=('localhost', 6379),
+    parser.add('--redis-addr', env_var='SORNA_REDIS_ADDR', type=host_port_pair, default=('localhost', 6379),
                help='The hostname-port pair of a redis server. (default: localhost:6379)')
     parser.add('--kernel-ip-override', env_var='SORNA_KERNEL_IP_OVERRIDE', type=ip_address, default=None,
                help='The IP address that overrides the actual IP address of kernel containers '
