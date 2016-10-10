@@ -58,11 +58,10 @@ class InstanceRegistry:
     policy, such as the limitation of maximum number of kernels per instance.
     '''
 
-    def __init__(self, redis_addr, kernel_timeout=600, manager_addr=None, loop=None):
+    def __init__(self, redis_addr, kernel_timeout=600, loop=None):
         self.loop = loop if loop is not None else asyncio.get_event_loop()
         self.redis_addr = redis_addr
         self.kernel_timeout = kernel_timeout
-        self.manager_addr = manager_addr
         self.redis_inst = None
         self.create_lock = asyncio.Lock()
 

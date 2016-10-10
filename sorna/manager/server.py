@@ -204,30 +204,34 @@ def main():
     logging.config.dictConfig({
         'version': 1,
         'disable_existing_loggers': False,
-        'formatters': { 'precise': {
-                'format': '%(asctime)s %(levelname)-8s %(name)-15s %(message)s',
-                'datefmt': '%Y-%m-%d %H:%M:%S',
+        'formatters': {
+            'colored': {
+                '()': 'coloredlogs.ColoredFormatter',
+                'format': '%(asctime)s %(levelname)s %(name)s %(message)s',
+                'field_styles': {'levelname': {'color':'black', 'bold':True},
+                                 'name': {'color':'black', 'bold':True},
+                                 'asctime': {'color':'black'}},
+                'level_styles': {'info': {'color':'cyan'},
+                                 'debug': {'color':'green'},
+                                 'warning': {'color':'yellow'},
+                                 'error': {'color':'red'},
+                                 'critical': {'color':'red', 'bold':True}},
             },
         },
         'handlers': {
             'console': {
                 'class': 'logging.StreamHandler',
                 'level': 'DEBUG',
-                'formatter': 'precise',
+                'formatter': 'colored',
                 'stream': 'ext://sys.stdout',
             },
             'null': {
                 'class': 'logging.NullHandler',
             },
-            'logstash': {
-                'class': 'sorna.logging.LogstashHandler',
-                'level': 'INFO',
-                'endpoint': 'tcp://logger.lablup:2121',
-            },
         },
         'loggers': {
             'sorna': {
-                'handlers': ['console', 'logstash'],
+                'handlers': ['console'],
                 'level': 'INFO',
             },
         },
@@ -246,9 +250,7 @@ def main():
     log.info(_f('redis address: {}', args.redis_addr))
     kernel_ip_override = args.kernel_ip_override
 
-    registry = InstanceRegistry(args.redis_addr,
-                                manager_addr=manager_addr,
-                                loop=loop)
+    registry = InstanceRegistry(args.redis_addr, loop=loop)
     loop.run_until_complete(registry.init())
     log.info('registry initialized.')
 

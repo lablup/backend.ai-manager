@@ -3,6 +3,7 @@ The main web / websocket server
 '''
 
 import asyncio
+import logging, logging.config
 import ssl
 
 from aiohttp import web
@@ -46,6 +47,43 @@ async def init(app):
 
 
 def main():
+
+    logging.config.dictConfig({
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'colored': {
+                '()': 'coloredlogs.ColoredFormatter',
+                'format': '%(asctime)s %(levelname)s %(name)s %(message)s',
+                'field_styles': {'levelname': {'color':'black', 'bold':True},
+                                 'name': {'color':'black', 'bold':True},
+                                 'asctime': {'color':'black'}},
+                'level_styles': {'info': {'color':'cyan'},
+                                 'debug': {'color':'green'},
+                                 'warning': {'color':'yellow'},
+                                 'error': {'color':'red'},
+                                 'critical': {'color':'red', 'bold':True}},
+            },
+        },
+        'handlers': {
+            'console': {
+                'class': 'logging.StreamHandler',
+                'level': 'DEBUG',
+                'formatter': 'colored',
+                'stream': 'ext://sys.stdout',
+            },
+            'null': {
+                'class': 'logging.NullHandler',
+            },
+        },
+        'loggers': {
+            'sorna': {
+                'handlers': ['console'],
+                'level': 'INFO',
+            },
+        },
+    })
+
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     loop = asyncio.get_event_loop()
 

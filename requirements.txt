@@ -1,4 +1,5 @@
 configargparse
+coloredlogs
 pyzmq
 aiozmq
 aiohttp>=1.0
