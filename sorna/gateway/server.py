@@ -38,7 +38,8 @@ async def init(app):
     app.router.add_route('GET', '/v1', hello)
 
     app['dbpool'] = await asyncpg.create_pool(
-        host=str(app.config.db_host),
+        host=app.config.db_addr[0],
+        port=app.config.db_addr[1],
         database=app.config.db_name,
         user=app.config.db_user,
         password=app.config.db_password)

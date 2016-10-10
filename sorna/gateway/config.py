@@ -6,70 +6,41 @@ import os
 import sys
 from types import SimpleNamespace
 
+from sorna.argparse import host_port_pair, ipaddr, path, port_no
 import configargparse
 
 
-def hostname(val):
-    if val is None:
-        return None
-    # TODO: validation
-    return str(val)
-
-def path(val):
-    if val is None:
-        return None
-    p = pathlib.Path(val)
-    if not p.exists():
-        msg = '{!r} is not a valid file/dir path.'.format(val)
-        raise argparse.ArgumentTypeError(msg)
-    return p
-
-def port_no(val):
-    if val is None:
-        return None
-    try:
-        if not isinstance(val, int):
-            val = int(val)
-        assert val >= 0
-        assert val < 65536
-    except (ValueError, AssertionError):
-        msg = '{!r} is not a valid port number.'.format(val)
-        raise argparse.ArgumentTypeError(msg)
-    return val
-
-def load_config():
+def load_config(legacy=False):
     parser = configargparse.ArgumentParser()
-    parser.add('--service-ip',   env_var='SORNA_SERVICE_IP', type=ip_address, default=ip_address('0.0.0.0'),
-               help='The IP where the API gateway server listens on. (default: 0.0.0.0)')
-    parser.add('--service-port', env_var='SORNA_SERVICE_PORT', type=port_no, default=0,
-               help='The TCP port number where the API gateway server listens on. '
-                    '(default: 8080, 8443 when SSL is enabled) '
+    if not legacy:
+        parser.add('--service-ip', env_var='SORNA_SERVICE_IP', type=ipaddr, default=ip_address('0.0.0.0'),
+                   help='The IP where the API gateway server listens on. (default: 0.0.0.0)')
+        parser.add('--service-port', env_var='SORNA_SERVICE_PORT', type=port_no, default=0,
+                   help='The TCP port number where the API gateway server listens on. '
+                        '(default: 8080, 8443 when SSL is enabled) '
                     'To run in production, you need the root privilege to use the standard 80/443 ports.')
     parser.add('--manager-port', env_var='SORNA_MANAGER_PORT', type=port_no, default=5001,  # for legacy
                help='The TCP port number where the legacy manager listens on. (default: 5001)')
     parser.add('--agent-port',   env_var='SORNA_AGENT_PORT', type=port_no, default=6001,
                help='The TCP port number where the agent instances are listening on. (default: 6001)')
-    parser.add('--ssl-cert', env_var='SORNA_SSL_CERT', type=path, default=None,
-               help='The path to an SSL certificate file. '
-                    'It may contain inter/root CA certificates as well. '
-                    '(default: None)')
-    parser.add('--ssl-key',  env_var='SORNA_SSL_KEY', type=path, default=None,
-               help='The path to the private key used to make requests for the SSL certificate. '
-                    '(default: None)')
-    parser.add('--db-host',     env_var='SORNA_DB_HOST', type=hostname, default='localhost',
-               help='The hostname of a database server. (default: localhost)')
-    parser.add('--db-port',     env_var='SORNA_DB_PORT', type=port_no, default=5432,
-               help='The TCP port number of the database server. (default: 5432)')
-    parser.add('--db-name',     env_var='SORNA_DB_NAME', type=str, default='sorna',
-               help='The database name. (default: sorna)')
-    parser.add('--db-user',     env_var='SORNA_DB_USER', type=str, default='postgres',
-               help='The username to authenticate to the database server. (default: postgres)')
-    parser.add('--db-password', env_var='SORNA_DB_PASSWORD', type=str, default='develove',
-               help='The password to authenticate to the database server. (default: develove)')
-    parser.add('--redis-host', env_var='SORNA_REDIS_HOST', type=hostname, default='localhost',
-               help='The hostname of a redis server. (default: localhost)')
-    parser.add('--redis-port', env_var='SORNA_REDIS_PORT', type=port_no, default=6379,
-               help='The TCP port number for the redis server. (default: 6379)')
+    if not legacy:
+        parser.add('--ssl-cert', env_var='SORNA_SSL_CERT', type=path, default=None,
+                   help='The path to an SSL certificate file. '
+                        'It may contain inter/root CA certificates as well. '
+                        '(default: None)')
+        parser.add('--ssl-key', env_var='SORNA_SSL_KEY', type=path, default=None,
+                   help='The path to the private key used to make requests for the SSL certificate. '
+                        '(default: None)')
+        parser.add('--db-addr', env_var='SORNA_DB_HOST', type=host_port_pair, default=('localhost', 5432),
+                   help='The hostname-port pair of a database server. (default: localhost:5432)')
+        parser.add('--db-name', env_var='SORNA_DB_NAME', type=str, default='sorna',
+                   help='The database name. (default: sorna)')
+        parser.add('--db-user', env_var='SORNA_DB_USER', type=str, default='postgres',
+                   help='The username to authenticate to the database server. (default: postgres)')
+        parser.add('--db-password', env_var='SORNA_DB_PASSWORD', type=str, default='develove',
+                   help='The password to authenticate to the database server. (default: develove)')
+    parser.add('--redis-addr', env_var='SORNA_REDIS_HOST', type=host_port_pair, default=('localhost', 6379),
+               help='The hostname-port pair of a redis server. (default: localhost:6379)')
     parser.add('--kernel-ip-override', env_var='SORNA_KERNEL_IP_OVERRIDE', type=ip_address, default=None,
                help='The IP address that overrides the actual IP address of kernel containers '
                     'when responding to our clients. '

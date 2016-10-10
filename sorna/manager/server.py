@@ -12,18 +12,17 @@ import os, signal, sys, re
 import logging, logging.config
 import ipaddress
 from urllib.parse import urlsplit
+
 from sorna import utils, defs
 from sorna.argparse import port_no, host_port_pair, ipaddr
 from sorna.exceptions import *
 from sorna.proto import Message
 from sorna.utils import odict
 from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
+
+from ..gateway.config import load_config
 from .registry import InstanceRegistry
 
-
-# Get the address of Redis server from docker links named "redis".
-REDIS_HOST = os.environ.get('REDIS_PORT_6379_TCP_ADDR', '127.0.0.1')
-REDIS_PORT = int(os.environ.get('REDIS_PORT_6379_TCP_PORT', '6379'))
 
 # Kernel IP overrides
 kernel_ip_override = None
@@ -200,13 +199,7 @@ async def graceful_shutdown(loop, term_barrier):
 def main():
     global kernel_ip_override
 
-    argparser = argparse.ArgumentParser()
-    argparser.add_argument('--manager-port', type=port_no, default=5001)
-    argparser.add_argument('--redis-addr', type=host_port_pair, default=(REDIS_HOST, REDIS_PORT))
-    argparser.add_argument('--kernel-ip-override', type=ipaddr, default=None,
-                           help='Overrides the kernel IP address when responding kernel creation requests. '
-                                'Only allowed for localhost.')
-    args = argparser.parse_args()
+    args = load_config(legacy=True)
 
     logging.config.dictConfig({
         'version': 1,
