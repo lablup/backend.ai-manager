@@ -1,13 +1,16 @@
 import asyncio
 import contextlib
 import gc
+import pathlib
 import socket
+import ssl
 
 import aiohttp
 from aiohttp import web
 import pytest
 import uvloop
 
+from ..config import load_config
 from ..server import init as server_init
 
 
@@ -100,15 +103,26 @@ class Client:
 @pytest.yield_fixture
 def create_server(loop, unused_port):
     app = handler = server = None
+    here = pathlib.Path(__file__).parent
 
     async def create(debug=False):
         nonlocal app, handler, server
         app = web.Application(loop=loop)
+        app.config = load_config()
+
+        # Override default configs for testing setup.
+        app.config.ssl_cert = here / 'sample-ssl-cert' / 'sample.crt'
+        app.config.ssl_key = here / 'sample-ssl-cert' / 'sample.key'
+        app.config.service_ip = '127.0.0.1'
+        app.config.service_port = unused_port
+
         await server_init(app)
-        port = unused_port
         handler = app.make_handler(debug=debug, keep_alive_on=False)
-        server = await loop.create_server(handler, '127.0.0.1', port)
-        return app, port
+        server = await loop.create_server(handler,
+                                          app.config.service_ip,
+                                          app.config.service_port,
+                                          ssl=app.sslctx)
+        return app, app.config.service_port
 
     yield create
 
@@ -129,8 +143,11 @@ def create_app_and_client(loop, create_server):
         server_params = {}
         client_params = {}
         app, port = await create_server(**server_params)
-        # TODO: support https
-        url = 'http://127.0.0.1:{}'.format(port)
+        if app.sslctx:
+            url = 'https://localhost:{}'.format(port)
+            client_params['connector'] = aiohttp.TCPConnector(verify_ssl=False)
+        else:
+            url = 'http://localhost:{}'.format(port)
         client = Client(aiohttp.ClientSession(loop=loop, **client_params), url)
         return app, client
 

@@ -24,7 +24,7 @@ async def test_auth(create_app_and_client, unused_port):
 
     async def do_authorize(hash_type, api_version):
         now = datetime.now(tzutc())
-        hostname = '127.0.0.1:{}'.format(unused_port)
+        hostname = 'localhost:{}'.format(unused_port)
         headers = {
             'Date': now.isoformat(),
             'Content-Type': 'application/json',
