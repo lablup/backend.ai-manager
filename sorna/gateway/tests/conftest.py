@@ -108,7 +108,7 @@ def create_server(loop, unused_port):
     async def create(debug=False):
         nonlocal app, handler, server
         app = web.Application(loop=loop)
-        app.config = load_config()
+        app.config = load_config(argv=[])
 
         # Override default configs for testing setup.
         app.config.ssl_cert = here / 'sample-ssl-cert' / 'sample.crt'

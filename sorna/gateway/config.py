@@ -10,7 +10,7 @@ from sorna.argparse import host_port_pair, ipaddr, path, port_no
 import configargparse
 
 
-def load_config(legacy=False):
+def load_config(argv=None, legacy=False):
     parser = configargparse.ArgumentParser()
     if not legacy:
         parser.add('--service-ip', env_var='SORNA_SERVICE_IP', type=ipaddr, default=ip_address('0.0.0.0'),
@@ -50,5 +50,5 @@ def load_config(legacy=False):
                     '"192.168.65.1" is a special IP that Docker containers '
                     '(e.g., a front-end container) use to access the host-side '
                     'services or ports opened by anonymous kernel containers.')
-    args = parser.parse_args()
+    args = parser.parse_args(args=argv)
     return args
