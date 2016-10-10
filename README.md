@@ -47,42 +47,23 @@ Running and Deployment
 
 ### Configuration
 
-All configurations are done using environment variables.
-
- * `SORNA_SERVICE_IP`: The IP where the API gateway server listens on (default: 0.0.0.0).
- * `SORNA_SERVICE_PORT`: The TCP port number where the API gateway server listens on (default: 8080, 8443 when SSL is enabled).
-   To run in production, you need the root privilege to use the standard 80/443 ports.
- * `SORNA_AGENT_PORT`: The TCP port number where the agent instances are listening on (default: 6001).
- * `SORNA_SSL_CERT`: The path to an SSL certificate file.  It may contain inter/root CA certificates as well (default: None).
- * `SORNA_SSL_KEY`: The path to the private key used to make requests for the SSL certificate (default: None).
- * `SORNA_DB_HOST`: The hostname of a database server (default: localhost).
- * `SORNA_DB_NAME`: The database name (default: sorna).
- * `SORNA_DB_USER`: The username to authenticate to the database server (default: postgres).
- * `SORNA_DB_PASSWORD`: The password to authenticate to the database server (default: develove).
+You need to specify configuration parameters using either CLI arguments or environment
+variables.  The default values are for development settings so you should set most of them
+explicitly in production.
+For details about arguments and their equivalent environment variable names,
+run the server module with `--help`.
 
 ### Running the API gateway server from a command line:
 
 ```sh
-SORNA_SERVICE_PORT=
+python -m sorna.gateway.server
 ```
-
 
 ### Running the legacy server from a command line:
 
 ```sh
 python -m sorna.manager.server
 ```
-
-**NOTE:** If you are using Docker for Mac, you need an extra argument like:
-
-```sh
-python -m sorna.manager.server --kernel-ip-override=192.168.65.1
-```
-
-so that host-side Python processes can connect to the kernel containers.
-
-For details about arguments, run the server with `--help`.
-
 
 ### Example supervisord config:
 
@@ -95,7 +76,7 @@ command = /home/sorna/run-manager.sh
 
 ### TCP Port numbers to open
 
- * 6001 (for legacy ZeroMQ-based interface)
- * 443 (for HTTPS API requests)
- * 80 (optional for HTTP API requests)
+ * 5001 (for legacy ZeroMQ-based interface)
+ * 8080 / 8443 (for local development)
+ * 80 / 443 (for HTTP/HTTPS API requests in production)
 

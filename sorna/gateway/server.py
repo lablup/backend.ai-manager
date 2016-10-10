@@ -37,12 +37,11 @@ async def init(app):
     app.on_response_prepare.append(on_prepare)
     app.router.add_route('GET', '/v1', hello)
 
-    if app.config.database:
-        app['dbpool'] = await asyncpg.create_pool(
-            host=app.config.database['host'],
-            database=app.config.database['dbname'],
-            user=app.config.database['user'],
-            password=app.config.database['password'])
+    app['dbpool'] = await asyncpg.create_pool(
+        host=str(app.config.db_host),
+        database=app.config.db_name,
+        user=app.config.db_user,
+        password=app.config.db_password)
 
 
 def main():
@@ -57,7 +56,7 @@ def main():
     loop.run_until_complete(kernel_init(app))
 
     web.run_app(app,
-                host=app.config.service_ip,
+                host=str(app.config.service_ip),
                 port=app.config.service_port,
                 ssl_context=app.sslctx)
 
