@@ -24,15 +24,14 @@ from ..gateway.config import load_config
 from .registry import InstanceRegistry
 
 
+log = logging.getLogger('sorna.manager.server')
+
 # Kernel IP overrides
 kernel_ip_override = None
 
 # Shortcuts for str.format
 _f = lambda fmt, *args, **kwargs: fmt.format(*args, **kwargs)
 _r = lambda fmt, req_id, *args, **kwargs: 'request[{}]: '.format(req_id) + fmt.format(*args, **kwargs)
-
-log = logging.getLogger('sorna.manager.server')
-log.setLevel(logging.DEBUG)
 
 
 async def handle_api(loop, term_ev, term_barrier, server, registry):
