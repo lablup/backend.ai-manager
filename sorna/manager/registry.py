@@ -166,6 +166,8 @@ class InstanceRegistry:
             # Create kernel by invoking the agent on the instance.
             log.info(_f('grabbed instance {}', inst_id))
             kern_id = None
+            stdin_port = None
+            stdout_port = None
             instance = await self.get_instance(inst_id)
             conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=instance.addr,
                                                   loop=self.loop)
@@ -183,6 +185,8 @@ class InstanceRegistry:
                 response = Message.decode(resp_data[0])
                 if response['reply'] == SornaResponseTypes.SUCCESS:
                     kern_id = response['kernel_id']
+                    stdin_port = response['stdin_port']
+                    stdout_port = response['stdout_port']
                 else:
                     err_name = SornaResponseTypes(response['reply']).name
                     err_cause = response['cause']
@@ -201,6 +205,8 @@ class InstanceRegistry:
                 # all kernels in an agent shares the same agent address
                 # (the agent multiplexes requests to different kernels)
                 'addr': instance.addr,
+                'stdin_port': stdin_port,
+                'stdout_port': stdout_port,
                 'created_at': datetime.now(tzutc()).isoformat(),
             }
             await r.hmset(kern_id, *chain.from_iterable((k, v) for k, v

@@ -88,8 +88,20 @@ async def handle_api(loop, term_ev, term_barrier, server, registry):
                             assert p.hostname == 'localhost'
                         p = p._replace(netloc='{0}:{1}'.format(kernel_ip_override, p.port))
                         resp['kernel_addr'] = p.geturl()
+                        resp['stdin_addr']  = 'tcp://{}:{}' \
+                                              .format(kernel_ip_override,
+                                                      kernel.stdin_port)
+                        resp['stdout_addr'] = 'tcp://{}:{}' \
+                                              .format(kernel_ip_override,
+                                                      kernel.stdout_port)
                     else:
                         resp['kernel_addr'] = kernel.addr
+                        resp['stdin_addr']  = 'tcp://{}:{}' \
+                                              .format(kernel.addr,
+                                                      kernel.stdin_port)
+                        resp['stdout_addr'] = 'tcp://{}:{}' \
+                                              .format(kernel.addr,
+                                                      kernel.stdout_port)
                 except InstanceNotAvailableError:
                     log.error(_r('instance not available', request_id))
                     resp['reply'] = SornaResponseTypes.FAILURE

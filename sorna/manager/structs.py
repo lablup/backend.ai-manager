@@ -6,6 +6,7 @@ from namedlist import namedlist
 Instance = namedlist('Instance', [
     ('status', None),
     ('id', None),
+    ('ip', None),
     ('addr', None),
     ('type', None),
     ('used_cpu', None),
@@ -24,6 +25,8 @@ Kernel = namedlist('Kernel', [
     ('id', None),
     ('instance', None),
     ('addr', None),
+    ('stdin_port', None),
+    ('stdout_port', None),
     ('created_at', None),
     ('tag', None),
 ])
