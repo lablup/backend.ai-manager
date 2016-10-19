@@ -33,7 +33,7 @@ setup(
         'Topic :: Software Development',
     ],
 
-    packages=['sorna.manager', 'sorna.monitor'],
+    packages=['sorna.manager', 'sorna.gateway', 'sorna.monitor'],
     namespace_packages=['sorna'],
 
     install_requires=['ConfigArgParse', 'namedlist', 'coloredlogs',
