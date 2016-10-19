@@ -36,7 +36,7 @@ setup(
     packages=['sorna.manager', 'sorna.monitor'],
     namespace_packages=['sorna'],
 
-    install_requires=['configpargparse', 'namedlist', 'coloredlogs',
+    install_requires=['ConfigArgParse', 'namedlist', 'coloredlogs',
                       'pyzmq', 'aiozmq', 'aiohttp', 'aioredis', 'asyncpg',
                       'python-dateutil', 'simplejson', 'uvloop'],
     extras_require={

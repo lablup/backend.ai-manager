@@ -1,4 +1,4 @@
-configargparse
+ConfigArgParse
 coloredlogs
 pyzmq
 aiozmq
