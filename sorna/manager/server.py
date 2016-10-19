@@ -95,12 +95,14 @@ async def handle_api(loop, term_ev, term_barrier, server, registry):
                                               .format(kernel_ip_override,
                                                       kernel.stdout_port)
                     else:
+                        p = urlsplit(kernel.addr)
+                        kernel_ip = ipaddress.ip_address(p.hostname)
                         resp['kernel_addr'] = kernel.addr
                         resp['stdin_addr']  = 'tcp://{}:{}' \
-                                              .format(kernel.addr,
+                                              .format(kernel_ip,
                                                       kernel.stdin_port)
                         resp['stdout_addr'] = 'tcp://{}:{}' \
-                                              .format(kernel.addr,
+                                              .format(kernel_ip,
                                                       kernel.stdout_port)
                 except InstanceNotAvailableError:
                     log.error(_r('instance not available', request_id))
