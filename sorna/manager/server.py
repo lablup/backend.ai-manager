@@ -197,10 +197,9 @@ async def handle_notifications(loop, term_ev, term_barrier, registry):
     await term_barrier.wait()
 
 
-def handle_signal(loop, term_ev, server):
-    term_ev.set()
-    server.close()
-    loop.stop()
+def handle_signal(loop, term_ev):
+    if not term_ev.is_set():
+        loop.stop()
 
 
 async def graceful_shutdown(loop, term_barrier):
@@ -269,14 +268,17 @@ def main():
 
     term_ev = asyncio.Event()
     term_barrier = utils.AsyncBarrier(3)
-    loop.add_signal_handler(signal.SIGINT, handle_signal, loop, term_ev, server)
-    loop.add_signal_handler(signal.SIGTERM, handle_signal, loop, term_ev, server)
-    loop.create_task(handle_api(loop, term_ev, term_barrier, server, registry))
-    loop.create_task(handle_notifications(loop, term_ev, term_barrier, registry))
+    loop.add_signal_handler(signal.SIGINT, handle_signal, loop, term_ev)
+    loop.add_signal_handler(signal.SIGTERM, handle_signal, loop, term_ev)
+    asyncio.ensure_future(handle_api(loop, term_ev, term_barrier, server, registry))
+    asyncio.ensure_future(handle_notifications(loop, term_ev, term_barrier, registry))
     try:
         log.info('started.')
         loop.run_forever()
+        term_ev.set()
+        server.close()
         loop.run_until_complete(graceful_shutdown(loop, term_barrier))
+        loop.run_until_complete(asyncio.sleep(0.1))
     finally:
         loop.close()
         log.info('exit.')

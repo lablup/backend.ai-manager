@@ -63,7 +63,7 @@ class InstanceRegistry:
         self.redis_addr = redis_addr
         self.kernel_timeout = kernel_timeout
         self.redis_inst = None
-        self.create_lock = asyncio.Lock()
+        self.lifecycle_lock = asyncio.Lock()
 
     async def init(self):
         self.redis_kern = await aioredis.create_pool(self.redis_addr,
@@ -124,14 +124,15 @@ class InstanceRegistry:
 
     async def get_or_create_kernel(self, user_id, entry_id,
                                    lang, spec=None):
-        try:
-            kern = await self.get_kernel_from_session(user_id, entry_id, lang)
-        except KernelNotFoundError:
-            # Create a new kernel.
-            async with self.redis_sess.get() as r:
-                _, kern = await self.create_kernel(lang, spec)
-                sess_key = '{0}:{1}:{2}'.format(user_id, entry_id, lang)
-                await r.set(sess_key, kern.id)
+        async with self.lifecycle_lock:
+            try:
+                kern = await self.get_kernel_from_session(user_id, entry_id, lang)
+            except KernelNotFoundError:
+                # Create a new kernel.
+                async with self.redis_sess.get() as r:
+                    _, kern = await self.create_kernel(lang, spec)
+                    sess_key = '{0}:{1}:{2}'.format(user_id, entry_id, lang)
+                    await r.set(sess_key, kern.id)
         assert kern is not None
         return kern
 
@@ -141,7 +142,9 @@ class InstanceRegistry:
         }
         if spec:
             _spec.update(spec)
-        with (await self.create_lock):
+        if not self.lifecycle_lock.locked:
+            await self.lifecycle_lock
+        else:
             log.info(_f('create_kernel with spec: {!r}', _spec))
 
             # Find available instance.
@@ -217,7 +220,7 @@ class InstanceRegistry:
     @auto_get_kernel
     async def destroy_kernel(self, kernel):
         log.info(_f('destroy_kernel ({})', kernel.id))
-        with (await self.create_lock):
+        async with self.lifecycle_lock:
             conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.addr,
                                                   loop=self.loop)
             conn.transport.setsockopt(zmq.SNDHWM, 50)
