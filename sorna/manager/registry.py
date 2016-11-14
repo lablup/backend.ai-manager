@@ -150,17 +150,29 @@ class InstanceRegistry:
             # Find available instance.
             inst_id = None
             async with self.redis_inst.get() as r:
-                async for inst_id in r.iscan(match='i-*'):
-                    if inst_id.endswith('.kernels'): continue
-                    max_kernels = int(await r.hget(inst_id, 'max_kernels'))
-                    num_kernels = int(await r.hget(inst_id, 'num_kernels'))
-                    if num_kernels < max_kernels:
-                        await r.hincrby(inst_id, 'num_kernels', 1)
-                        # This will temporarily increase num_kernels,
-                        # and it will be "fixed" by the agent when it sends
-                        # the next heartbeat.
-                        break
+                found_available = False
+                # FIXME: monkey-patch for deep-learning support
+                if 'tensorflow' in lang or 'caffe' in lang:
+                    inst_id = 'i-indominus'
+                    if (await r.exists(inst_id)):
+                        max_kernels = int(await r.hget(inst_id, 'max_kernels'))
+                        num_kernels = int(await r.hget(inst_id, 'num_kernels'))
+                        if num_kernels < max_kernels:
+                            await r.hincrby(inst_id, 'num_kernels', 1)
+                            found_available = True
                 else:
+                    async for inst_id in r.iscan(match='i-*'):
+                        if inst_id.endswith('.kernels'): continue
+                        max_kernels = int(await r.hget(inst_id, 'max_kernels'))
+                        num_kernels = int(await r.hget(inst_id, 'num_kernels'))
+                        if num_kernels < max_kernels:
+                            await r.hincrby(inst_id, 'num_kernels', 1)
+                            # This will temporarily increase num_kernels,
+                            # and it will be "fixed" by the agent when it sends
+                            # the next heartbeat.
+                            found_available = True
+                            break
+                if not found_available:
                     # TODO: automatically add instances to some extent
                     log.error('instance not available.')
                     raise InstanceNotAvailableError('Could not find available instance.')
