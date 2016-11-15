@@ -8,7 +8,9 @@ namedlist
 python-dateutil>=2.5
 simplejson
 uvloop>=0.5.4
+-e git+ssh://git@github.com/lablup/sorna-common#egg=sorna-common
 pytest
 pytest-mock
--e git+ssh://git@github.com/lablup/sorna-common#egg=sorna-common
+flake8
+pep8-naming
 -e .
