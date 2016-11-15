@@ -2,11 +2,9 @@
 Kernel session management.
 '''
 
-import asyncio
 import logging
 
 from aiohttp import web
-import asyncpg
 import simplejson as json
 
 from sorna.utils import odict
@@ -47,8 +45,8 @@ async def create(request):
     else:
         try:
             # TODO: handle resourceLimits
-            kernel = await registry.get_or_create_kernel(req['clientSessionToken'],
-                                                         req['lang'])
+            kernel = await request.app.registry.get_or_create_kernel(
+                req['clientSessionToken'], req['lang'])
             log.info(_f('got/created kernel {} successfully.', kernel.id))
             status = 201  # created
             resp['kernelId'] = kernel.id
@@ -80,7 +78,7 @@ async def destroy(request):
     else:
         # TODO: assert if session matches with the kernel id?
         try:
-            await registry.destroy_kernel(kernel_id)
+            await request.app.registry.destroy_kernel(kernel_id)
             log.info(_f('destroyed successfully.'))
             status = 204  # no content
         except SornaError as e:
@@ -97,6 +95,7 @@ async def destroy(request):
 @auth_required
 async def get_info(request):
     raise NotImplementedError
+
 
 @auth_required
 async def restart(request):

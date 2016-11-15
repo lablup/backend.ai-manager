@@ -2,14 +2,12 @@
 OAuth 2.0 facilities
 '''
 
-import asyncio
 from datetime import datetime, timedelta
 import functools
 import hashlib, hmac
 import logging
 
 from aiohttp import web
-import asyncpg
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
 import simplejson as json
@@ -55,6 +53,7 @@ def _extract_auth_params(request):
     except (KeyError, ValueError):
         return None
 
+
 def check_date(request) -> bool:
     date = request.headers.get('Date')
     if not date:
@@ -72,6 +71,7 @@ def check_date(request) -> bool:
     except ValueError:
         return False
     return True
+
 
 async def sign_request(sign_method, request, secret) -> str:
     assert hasattr(request, 'date')
@@ -93,6 +93,7 @@ async def sign_request(sign_method, request, secret) -> str:
                         request.date.strftime('%Y%m%d').encode(), hash_type).digest()
     sign_key = hmac.new(sign_key, request.host.encode(), hash_type).digest()
     return hmac.new(sign_key, sign_bytes, hash_type).hexdigest()
+
 
 def auth_required(handler):
     @functools.wraps(handler)
@@ -126,7 +127,7 @@ def auth_required(handler):
 @auth_required
 async def authorize(request) -> web.Response:
     req_data = json.loads(await request.text())
-    resp_data = { 'authorized': 'yes' }
+    resp_data = {'authorized': 'yes'}
     if 'echo' in req_data:
         resp_data['echo'] = req_data['echo']
     return web.json_response(resp_data)

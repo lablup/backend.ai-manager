@@ -18,6 +18,7 @@ async def test_hello(create_app_and_client):
     data = json.loads(await resp.text())
     assert data['version'] == 'v1.20160915'
 
+
 async def test_auth(create_app_and_client, unused_port):
     app, client = await create_app_and_client()
     await auth_init(app)
@@ -69,34 +70,34 @@ async def test_auth(create_app_and_client, unused_port):
 def test_check_date(mocker):
     request = SimpleNamespace()
 
-    request.headers = { 'X-Nothing': '' }
+    request.headers = {'X-Nothing': ''}
     assert not check_date(request)
 
     now = datetime.now(tzutc())
-    request.headers = { 'Date': now.isoformat() }
+    request.headers = {'Date': now.isoformat()}
     assert check_date(request)
 
-    request.headers = { 'Date': (now - timedelta(minutes=14, seconds=55)).isoformat() }
+    request.headers = {'Date': (now - timedelta(minutes=14, seconds=55)).isoformat()}
     assert check_date(request)
-    request.headers = { 'Date': (now + timedelta(minutes=14, seconds=55)).isoformat() }
+    request.headers = {'Date': (now + timedelta(minutes=14, seconds=55)).isoformat()}
     assert check_date(request)
 
-    request.headers = { 'Date': (now - timedelta(minutes=15, seconds=5)).isoformat() }
+    request.headers = {'Date': (now - timedelta(minutes=15, seconds=5)).isoformat()}
     assert not check_date(request)
-    request.headers = { 'Date': (now + timedelta(minutes=15, seconds=5)).isoformat() }
+    request.headers = {'Date': (now + timedelta(minutes=15, seconds=5)).isoformat()}
     assert not check_date(request)
 
     # RFC822-style date formatting used in plain HTTP
-    request.headers = { 'Date': '{:%a, %d %b %Y %H:%M:%S GMT}'.format(now) }
+    request.headers = {'Date': '{:%a, %d %b %Y %H:%M:%S GMT}'.format(now)}
     assert check_date(request)
 
     # RFC822-style date formatting used in plain HTTP with a non-UTC timezone
     now_kst = now.astimezone(gettz('Asia/Seoul'))
-    request.headers = { 'Date': '{:%a, %d %b %Y %H:%M:%S %Z}'.format(now_kst) }
+    request.headers = {'Date': '{:%a, %d %b %Y %H:%M:%S %Z}'.format(now_kst)}
     assert check_date(request)
 
-    request.headers = { 'Date': 'some-unrecognizable-malformed-date-time' }
+    request.headers = {'Date': 'some-unrecognizable-malformed-date-time'}
     assert not check_date(request)
 
-    request.headers = { 'X-Sorna-Date': now.isoformat() }
+    request.headers = {'X-Sorna-Date': now.isoformat()}
     assert check_date(request)

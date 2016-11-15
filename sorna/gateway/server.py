@@ -23,8 +23,10 @@ async def hello(request) -> web.Response:
     '''
     return web.json_response({'version': LATEST_API_VERSION})
 
+
 async def on_prepare(request, response):
     response.headers['Server'] = 'Sorna-API/' + LATEST_API_VERSION
+
 
 async def init(app):
     app.sslctx = None
@@ -55,14 +57,14 @@ def main():
             'colored': {
                 '()': 'coloredlogs.ColoredFormatter',
                 'format': '%(asctime)s %(levelname)s %(name)s %(message)s',
-                'field_styles': {'levelname': {'color':'black', 'bold':True},
-                                 'name': {'color':'black', 'bold':True},
-                                 'asctime': {'color':'black'}},
-                'level_styles': {'info': {'color':'cyan'},
-                                 'debug': {'color':'green'},
-                                 'warning': {'color':'yellow'},
-                                 'error': {'color':'red'},
-                                 'critical': {'color':'red', 'bold':True}},
+                'field_styles': {'levelname': {'color': 'black', 'bold': True},
+                                 'name': {'color': 'black', 'bold': True},
+                                 'asctime': {'color': 'black'}},
+                'level_styles': {'info': {'color': 'cyan'},
+                                 'debug': {'color': 'green'},
+                                 'warning': {'color': 'yellow'},
+                                 'error': {'color': 'red'},
+                                 'critical': {'color': 'red', 'bold': True}},
             },
         },
         'handlers': {

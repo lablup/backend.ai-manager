@@ -1,7 +1,4 @@
-# Always prefer setuptools over distutils
-from setuptools import setup, find_packages
-# To use a consistent encoding
-from codecs import open
+from setuptools import setup
 from os import path
 
 here = path.abspath(path.dirname(__file__))
@@ -12,7 +9,7 @@ setup(
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see
     # https://packaging.python.org/en/latest/single_source_version.html
-    version='0.5.1',
+    version='0.5.1.dev0',
     description='Sorna Manager',
     long_description='',
     url='https://github.com/lablup/sorna-manager',

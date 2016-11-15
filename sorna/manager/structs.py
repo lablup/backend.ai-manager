@@ -34,4 +34,3 @@ Kernel.__doc__ = '''\
 A compound data structure to represent kernel information.
 The purpose of this object is same to :class:`Instance <sorna.structs.Instance>`.
 '''
-

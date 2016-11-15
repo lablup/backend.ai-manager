@@ -1,16 +1,19 @@
 #! /usr/bin/env python3
 
+import asyncio
+import subprocess
+import os, signal
+import time
 import unittest
-import logging
-import subprocess, os, signal
-import socket, time
-import asyncio, zmq, aioredis
-from sorna import defs, utils
+
+import aioredis
+import zmq
+
 from sorna.proto import Message
-from sorna.utils import odict
 from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
-from sorna.exceptions import *
-from .registry import *
+from sorna.utils import get_instance_ip
+from sorna.exceptions import InstanceNotAvailableError
+from .registry import InstanceRegistry
 
 
 class SornaProcessManagerMixin:
@@ -30,7 +33,7 @@ class SornaProcessManagerMixin:
     def kill_proc(proc):
         sid = os.getsid(proc.pid)
         os.killpg(sid, signal.SIGTERM)
-        exitcode = proc.wait()
+        proc.wait()
 
     @staticmethod
     def run_manager():
@@ -63,19 +66,24 @@ class SornaRegistryTest(unittest.TestCase, SornaProcessManagerMixin):
         asyncio.set_event_loop(self.loop)
         redis_host = os.environ.get('REDIS_PORT_6379_TCP_ADDR', '127.0.0.1')
         redis_port = int(os.environ.get('REDIS_PORT_6379_TCP_PORT', '6379'))
+
         async def create_redis():
-            return await asyncio.wait_for(aioredis.create_redis((redis_host, redis_port),
-                                                               encoding='utf8',
-                                                               loop=self.loop),
-                                          timeout=1.0, loop=self.loop)
+            return await asyncio.wait_for(
+                aioredis.create_redis((redis_host, redis_port),
+                                      encoding='utf8',
+                                      loop=self.loop),
+                timeout=1.0, loop=self.loop)
+
         self.redis = self.loop.run_until_complete(create_redis())
-        my_ip = self.loop.run_until_complete(utils.get_instance_ip())
+        my_ip = self.loop.run_until_complete(get_instance_ip())
         manager_addr = 'tcp://{0}:{1}'.format(my_ip, 5001)
         self.registry = InstanceRegistry((redis_host, redis_port),
                                          manager_addr=manager_addr,
                                          loop=self.loop)
+
         async def init_registry():
             await self.registry.init()
+
         self.loop.run_until_complete(init_registry())
 
     def tearDown(self):
@@ -120,17 +128,21 @@ class SornaIntegrationTest(unittest.TestCase, SornaProcessManagerMixin):
         asyncio.set_event_loop(self.loop)
         redis_host = os.environ.get('REDIS_PORT_6379_TCP_ADDR', '127.0.0.1')
         redis_port = int(os.environ.get('REDIS_PORT_6379_TCP_PORT', '6379'))
+
         async def create_redis():
-            return await asyncio.wait_for(aioredis.create_redis((redis_host, redis_port),
-                                                               encoding='utf8',
-                                                               loop=self.loop),
-                                          timeout=1.0, loop=self.loop)
+            return await asyncio.wait_for(
+                aioredis.create_redis((redis_host, redis_port),
+                                      encoding='utf8',
+                                      loop=self.loop),
+                timeout=1.0, loop=self.loop)
+
         self.redis = self.loop.run_until_complete(create_redis())
 
     def tearDown(self):
         async def clean_up():
             await self.redis.flushall()
             await self.redis.quit()
+
         self.loop.run_until_complete(clean_up())
         # Progress the event loop so that the pending coroutines have chances to finish.
         # Otherwise, you will see a lot of ResourceWarnings about unclosed sockets.

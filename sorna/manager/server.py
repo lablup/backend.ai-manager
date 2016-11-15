@@ -6,18 +6,23 @@ The Sorna API Server
 It routes the API requests to kernel agents in VMs and manages the VM instance pool.
 '''
 
-import argparse
-import asyncio, aiozmq, zmq, aioredis, uvloop
-import os, signal, sys, re
-import logging, logging.config
+import asyncio
 import ipaddress
+import logging, logging.config
+import signal
 from urllib.parse import urlsplit
 
-from sorna import utils, defs
-from sorna.argparse import port_no, host_port_pair, ipaddr
-from sorna.exceptions import *
+import zmq, aiozmq
+import aioredis
+import uvloop
+
+from sorna import defs
+from sorna.exceptions import \
+    InstanceNotAvailableError, \
+    KernelCreationFailedError, KernelDestructionFailedError, \
+    KernelNotFoundError, QuotaExceededError
 from sorna.proto import Message
-from sorna.utils import odict
+from sorna.utils import AsyncBarrier, get_instance_ip
 from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
 
 from ..gateway.config import load_config
@@ -31,7 +36,8 @@ kernel_ip_override = None
 
 # Shortcuts for str.format
 _f = lambda fmt, *args, **kwargs: fmt.format(*args, **kwargs)
-_r = lambda fmt, req_id, *args, **kwargs: 'request[{}]: '.format(req_id) + fmt.format(*args, **kwargs)
+_r = lambda fmt, req_id, *args, **kwargs: \
+    'request[{}]: '.format(req_id) + fmt.format(*args, **kwargs)
 
 
 async def handle_api(loop, term_ev, term_barrier, server, registry):
@@ -165,7 +171,7 @@ async def handle_notifications(loop, term_ev, term_barrier, registry):
         msg = None
         try:
             g = asyncio.Task(channels[0].get(encoding='utf8'))
-            has_msg = await asyncio.wait_for(g, 0.5, loop=loop)
+            await asyncio.wait_for(g, 0.5, loop=loop)
         except asyncio.TimeoutError:
             continue
         if msg is None:
@@ -220,14 +226,14 @@ def main():
             'colored': {
                 '()': 'coloredlogs.ColoredFormatter',
                 'format': '%(asctime)s %(levelname)s %(name)s %(message)s',
-                'field_styles': {'levelname': {'color':'black', 'bold':True},
-                                 'name': {'color':'black', 'bold':True},
-                                 'asctime': {'color':'black'}},
-                'level_styles': {'info': {'color':'cyan'},
-                                 'debug': {'color':'green'},
-                                 'warning': {'color':'yellow'},
-                                 'error': {'color':'red'},
-                                 'critical': {'color':'red', 'bold':True}},
+                'field_styles': {'levelname': {'color': 'black', 'bold': True},
+                                 'name': {'color': 'black', 'bold': True},
+                                 'asctime': {'color': 'black'}},
+                'level_styles': {'info': {'color': 'cyan'},
+                                 'debug': {'color': 'green'},
+                                 'warning': {'color': 'yellow'},
+                                 'error': {'color': 'red'},
+                                 'critical': {'color': 'red', 'bold': True}},
             },
         },
         'handlers': {
@@ -256,7 +262,7 @@ def main():
         aiozmq.create_zmq_stream(zmq.REP, bind='tcp://*:{0}'.format(args.manager_port),
                                  loop=loop))
 
-    my_ip = loop.run_until_complete(utils.get_instance_ip())
+    my_ip = loop.run_until_complete(get_instance_ip())
     manager_addr = 'tcp://{0}:{1}'.format(my_ip, args.manager_port)
     log.info(_f('manager address: {}', manager_addr))
     log.info(_f('redis address: {}', args.redis_addr))
@@ -267,7 +273,7 @@ def main():
     log.info('registry initialized.')
 
     term_ev = asyncio.Event()
-    term_barrier = utils.AsyncBarrier(3)
+    term_barrier = AsyncBarrier(3)
     loop.add_signal_handler(signal.SIGINT, handle_signal, loop, term_ev)
     loop.add_signal_handler(signal.SIGTERM, handle_signal, loop, term_ev)
     asyncio.ensure_future(handle_api(loop, term_ev, term_barrier, server, registry))
@@ -282,6 +288,7 @@ def main():
     finally:
         loop.close()
         log.info('exit.')
+
 
 if __name__ == '__main__':
     main()

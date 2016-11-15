@@ -1,10 +1,4 @@
-import argparse
-from namedlist import namedlist
 from ipaddress import ip_address
-import pathlib
-import os
-import sys
-from types import SimpleNamespace
 
 from sorna.argparse import host_port_pair, ipaddr, path, port_no
 import configargparse
@@ -18,7 +12,7 @@ def load_config(argv=None, legacy=False):
         parser.add('--service-port', env_var='SORNA_SERVICE_PORT', type=port_no, default=0,
                    help='The TCP port number where the API gateway server listens on. '
                         '(default: 8080, 8443 when SSL is enabled) '
-                    'To run in production, you need the root privilege to use the standard 80/443 ports.')
+                        'To run in production, you need the root privilege to use the standard 80/443 ports.')
     parser.add('--manager-port', env_var='SORNA_MANAGER_PORT', type=port_no, default=5001,  # for legacy
                help='The TCP port number where the legacy manager listens on. (default: 5001)')
     parser.add('--agent-port',   env_var='SORNA_AGENT_PORT', type=port_no, default=6001,

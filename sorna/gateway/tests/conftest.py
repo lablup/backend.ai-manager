@@ -3,7 +3,6 @@ import contextlib
 import gc
 import pathlib
 import socket
-import ssl
 
 import aiohttp
 from aiohttp import web
@@ -33,10 +32,12 @@ def loop_context(loop=None):
         gc.collect()
         asyncio.set_event_loop(None)
 
+
 def pytest_pycollect_makeitem(collector, name, obj):
     # Patch pytest for coroutines
     if collector.funcnamefilter(name) and asyncio.iscoroutinefunction(obj):
         return list(collector._genfunctions(name, obj))
+
 
 def pytest_pyfunc_call(pyfuncitem):
     # Patch pytest for coroutines.
@@ -49,16 +50,19 @@ def pytest_pyfunc_call(pyfuncitem):
             loop.run_until_complete(task)
         return True
 
+
 @pytest.fixture
 def unused_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(('127.0.0.1', 0))
         return s.getsockname()[1]
 
+
 @pytest.yield_fixture
 def loop():
     with loop_context() as loop:
         yield loop
+
 
 class Client:
     def __init__(self, session, url):
@@ -100,6 +104,7 @@ class Client:
         url = self._url + path
         return self._session.ws_connect(url, **kwargs)
 
+
 @pytest.yield_fixture
 def create_server(loop, unused_port):
     app = handler = server = None
@@ -133,6 +138,7 @@ def create_server(loop, unused_port):
         await handler.finish_connections()
         await app.cleanup()
     loop.run_until_complete(finish())
+
 
 @pytest.yield_fixture
 def create_app_and_client(loop, create_server):

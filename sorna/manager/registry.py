@@ -1,20 +1,21 @@
 #! /usr/bin/env python3
 
 import asyncio
-import zmq, aiozmq
-import aioredis
-from datetime import datetime, timedelta
+from datetime import datetime
 from dateutil.tz import tzutc
 import functools
 from itertools import chain
 import logging
-import re
-from urllib.parse import urlparse
-import time
-from sorna import utils, defs
-from sorna.exceptions import *
+
+import zmq, aiozmq
+import aioredis
+
+from sorna import defs
+from sorna.exceptions import \
+    InstanceNotAvailableError, \
+    InstanceNotFoundError, KernelNotFoundError, \
+    KernelCreationFailedError, KernelDestructionFailedError
 from sorna.proto import Message
-from sorna.utils import odict, generate_uuid
 from sorna.proto.msgtypes import AgentRequestTypes, SornaResponseTypes
 from .structs import Instance, Kernel
 
@@ -22,9 +23,11 @@ __all__ = ['InstanceRegistry', 'InstanceNotFoundError']
 
 # A shortcut for str.format
 _f = lambda fmt, *args, **kwargs: fmt.format(*args, **kwargs)
-_r = lambda fmt, reg_id, *args, **kwargs: 'registry[{}]: '.format(reg_id) + fmt.format(*args, **kwargs)
+_r = lambda fmt, reg_id, *args, **kwargs: \
+    'registry[{}]: '.format(reg_id) + fmt.format(*args, **kwargs)
 
 log = logging.getLogger(__name__)
+
 
 def auto_get_kernel(func):
     @functools.wraps(func)
@@ -35,6 +38,7 @@ def auto_get_kernel(func):
         return await func(self, *args, **kwargs)
     return wrapper
 
+
 def auto_get_instance(func):
     @functools.wraps(func)
     async def wrapper(self, *args, **kwargs):
@@ -44,8 +48,10 @@ def auto_get_instance(func):
         return await func(self, *args, **kwargs)
     return wrapper
 
+
 def _s(obj):
-    if obj is None: return ''
+    if obj is None:
+        return ''
     return str(obj)
 
 
@@ -167,7 +173,8 @@ class InstanceRegistry:
                             found_available = True
                 else:
                     async for inst_id in ri.iscan(match='i-*'):
-                        if inst_id.endswith('.kernels'): continue
+                        if inst_id.endswith('.kernels'):
+                            continue
                         max_kernels = int(await ri.hget(inst_id, 'max_kernels'))
                         num_kernels = int(await ri.hget(inst_id, 'num_kernels'))
                         if num_kernels < max_kernels:
@@ -261,9 +268,8 @@ class InstanceRegistry:
             finally:
                 conn.close()
             assert response['reply'] == SornaResponseTypes.SUCCESS
-            async with self.redis_kern.get() as r:
-                inst_id = await r.hget(kernel.id, 'instance')
-                await r.delete(kernel.id)
-            async with self.redis_inst.get() as r:
-                await r.hincrby(inst_id, 'num_kernels', -1)
-
+            async with self.redis_kern.get() as rk:
+                inst_id = await rk.hget(kernel.id, 'instance')
+                await rk.delete(kernel.id)
+            async with self.redis_inst.get() as rk:
+                await rk.hincrby(inst_id, 'num_kernels', -1)
