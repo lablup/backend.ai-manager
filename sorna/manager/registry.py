@@ -82,8 +82,8 @@ class InstanceRegistry:
 
     async def terminate(self):
         # Clean up all sessions.
-        async with self.redis_sess.get() as r:
-            await r.flushdb()
+        async with self.redis_sess.get() as rs:
+            await rs.flushdb()
         self.redis_kern.close()
         self.redis_inst.close()
         self.redis_sess.close()
@@ -93,30 +93,35 @@ class InstanceRegistry:
         log.info('disconnected from the redis server.')
 
     async def get_instance(self, inst_id):
-        async with self.redis_inst.get() as r:
-            fields = await r.hgetall(inst_id)
+        async with self.redis_inst.get() as ri:
+            fields = await ri.hgetall(inst_id)
             if not fields:
                 raise InstanceNotFoundError(inst_id)
             return Instance(**fields)
 
     async def get_kernel(self, kern_id):
-        async with self.redis_kern.get() as r:
-            fields = await r.hgetall(kern_id)
+        async with self.redis_kern.get() as rk:
+            fields = await rk.hgetall(kern_id)
             if fields:
                 # Check if stale.
-                async with self.redis_inst.get() as ri:
-                    if (await ri.exists(fields['instance'])):
+                try:
+                    async with self.redis_inst.get() as ri:
+                        kern_set_key = fields['instance'] + '.kernels'
+                        if not (await ri.sismember(kern_set_key, kern_id)):
+                            raise KernelNotFoundError(kern_id)
+                        if not (await ri.exists(fields['instance'])):
+                            raise KernelNotFoundError(kern_id)
                         return Kernel(**fields)
-                    else:
-                        await r.delete(kern_id)
-                        raise KernelNotFoundError(kern_id)
+                except KernelNotFoundError:
+                    await rk.delete(kern_id)
+                    raise
             else:
                 raise KernelNotFoundError(kern_id)
 
     async def get_kernel_from_session(self, user_id, entry_id, lang):
-        async with self.redis_sess.get() as r:
+        async with self.redis_sess.get() as rs:
             sess_key = '{0}:{1}:{2}'.format(user_id, entry_id, lang)
-            kern_id = await r.get(sess_key)
+            kern_id = await rs.get(sess_key)
             if kern_id:
                 return (await self.get_kernel(kern_id))
             else:
@@ -129,10 +134,10 @@ class InstanceRegistry:
                 kern = await self.get_kernel_from_session(user_id, entry_id, lang)
             except KernelNotFoundError:
                 # Create a new kernel.
-                async with self.redis_sess.get() as r:
+                async with self.redis_sess.get() as rs:
                     _, kern = await self.create_kernel(lang, spec)
                     sess_key = '{0}:{1}:{2}'.format(user_id, entry_id, lang)
-                    await r.set(sess_key, kern.id)
+                    await rs.set(sess_key, kern.id)
         assert kern is not None
         return kern
 
@@ -149,24 +154,24 @@ class InstanceRegistry:
 
             # Find available instance.
             inst_id = None
-            async with self.redis_inst.get() as r:
+            async with self.redis_inst.get() as ri:
                 found_available = False
                 # FIXME: monkey-patch for deep-learning support
                 if 'tensorflow' in lang or 'caffe' in lang:
                     inst_id = 'i-indominus'
-                    if (await r.exists(inst_id)):
-                        max_kernels = int(await r.hget(inst_id, 'max_kernels'))
-                        num_kernels = int(await r.hget(inst_id, 'num_kernels'))
+                    if (await ri.exists(inst_id)):
+                        max_kernels = int(await ri.hget(inst_id, 'max_kernels'))
+                        num_kernels = int(await ri.hget(inst_id, 'num_kernels'))
                         if num_kernels < max_kernels:
-                            await r.hincrby(inst_id, 'num_kernels', 1)
+                            await ri.hincrby(inst_id, 'num_kernels', 1)
                             found_available = True
                 else:
-                    async for inst_id in r.iscan(match='i-*'):
+                    async for inst_id in ri.iscan(match='i-*'):
                         if inst_id.endswith('.kernels'): continue
-                        max_kernels = int(await r.hget(inst_id, 'max_kernels'))
-                        num_kernels = int(await r.hget(inst_id, 'num_kernels'))
+                        max_kernels = int(await ri.hget(inst_id, 'max_kernels'))
+                        num_kernels = int(await ri.hget(inst_id, 'num_kernels'))
                         if num_kernels < max_kernels:
-                            await r.hincrby(inst_id, 'num_kernels', 1)
+                            await ri.hincrby(inst_id, 'num_kernels', 1)
                             # This will temporarily increase num_kernels,
                             # and it will be "fixed" by the agent when it sends
                             # the next heartbeat.
@@ -213,7 +218,7 @@ class InstanceRegistry:
             assert kern_id is not None
 
         log.info(_f('created kernel {} on instance {}', kern_id, inst_id))
-        async with self.redis_kern.get() as r:
+        async with self.redis_kern.get() as rk:
             kernel_info = {
                 'id': kern_id,
                 'instance': instance.id,
@@ -224,8 +229,8 @@ class InstanceRegistry:
                 'stdout_port': stdout_port,
                 'created_at': datetime.now(tzutc()).isoformat(),
             }
-            await r.hmset(kern_id, *chain.from_iterable((k, v) for k, v
-                                                        in kernel_info.items()))
+            kv_list = chain.from_iterable((k, v) for k, v in kernel_info.items())
+            await rk.hmset(kern_id, *kv_list)
             kernel = Kernel(**kernel_info)
         return instance, kernel
 
