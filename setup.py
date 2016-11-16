@@ -20,7 +20,7 @@ setup(
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see
     # https://packaging.python.org/en/latest/single_source_version.html
-    version=get_version(),
+    version=_get_version(),
     description='Sorna Manager',
     long_description='',
     url='https://github.com/lablup/sorna-manager',
