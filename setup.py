@@ -1,7 +1,18 @@
 from setuptools import setup
-from os import path
+from pathlib import Path
+import re
 
-here = path.abspath(path.dirname(__file__))
+here = Path(__file__).resolve().parent
+
+
+def _get_version():
+    root_src = (here / 'sorna' / 'manager' / '__init__.py').read_text()
+    try:
+        version = re.findall(r"^__version__ = '([^']+)'\r?$", root_src, re.M)[0]
+    except IndexError:
+        raise RuntimeError('Unable to determine myself version.')
+    return version
+
 
 setup(
     name='sorna-manager',
@@ -9,7 +20,7 @@ setup(
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see
     # https://packaging.python.org/en/latest/single_source_version.html
-    version='0.5.1.dev0',
+    version=get_version(),
     description='Sorna Manager',
     long_description='',
     url='https://github.com/lablup/sorna-manager',

@@ -84,7 +84,7 @@ class InstanceRegistry:
                                                      encoding='utf8',
                                                      db=defs.SORNA_SESSION_DB,
                                                      loop=self.loop)
-        log.info('connected to the redis server.')
+        log.info('ready.')
 
     async def terminate(self):
         # Clean up all sessions.
@@ -96,7 +96,7 @@ class InstanceRegistry:
         await self.redis_kern.wait_closed()
         await self.redis_inst.wait_closed()
         await self.redis_sess.wait_closed()
-        log.info('disconnected from the redis server.')
+        log.info('terminated.')
 
     async def get_instance(self, inst_id):
         async with self.redis_inst.get() as ri:

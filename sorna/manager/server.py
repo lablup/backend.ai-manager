@@ -27,6 +27,7 @@ from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
 
 from ..gateway.config import load_config
 from .registry import InstanceRegistry
+from . import __version__
 
 
 log = logging.getLogger('sorna.manager.server')
@@ -205,6 +206,7 @@ async def handle_notifications(loop, term_ev, term_barrier, registry):
 
 def handle_signal(loop, term_ev):
     if not term_ev.is_set():
+        term_ev.set()
         loop.stop()
 
 
@@ -257,20 +259,20 @@ def main():
 
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     loop = asyncio.get_event_loop()
-    log.info('starting manager on port {0}...'.format(args.manager_port))
+
+    log.info('Sorna Manager {}'.format(__version__))
+
     server = loop.run_until_complete(
         aiozmq.create_zmq_stream(zmq.REP, bind='tcp://*:{0}'.format(args.manager_port),
                                  loop=loop))
 
     my_ip = loop.run_until_complete(get_instance_ip())
-    manager_addr = 'tcp://{0}:{1}'.format(my_ip, args.manager_port)
-    log.info(_f('manager address: {}', manager_addr))
-    log.info(_f('redis address: {}', args.redis_addr))
+    log.info(_f('serving on tcp://{0}:{1}', my_ip, args.manager_port))
+    log.info(_f('using redis on tcp://{0}:{1}', *args.redis_addr))
     kernel_ip_override = args.kernel_ip_override
 
     registry = InstanceRegistry(args.redis_addr, loop=loop)
     loop.run_until_complete(registry.init())
-    log.info('registry initialized.')
 
     term_ev = asyncio.Event()
     term_barrier = AsyncBarrier(3)
@@ -279,9 +281,8 @@ def main():
     asyncio.ensure_future(handle_api(loop, term_ev, term_barrier, server, registry))
     asyncio.ensure_future(handle_notifications(loop, term_ev, term_barrier, registry))
     try:
-        log.info('started.')
         loop.run_forever()
-        term_ev.set()
+        # interrupted
         server.close()
         loop.run_until_complete(graceful_shutdown(loop, term_barrier))
         loop.run_until_complete(asyncio.sleep(0.1))
