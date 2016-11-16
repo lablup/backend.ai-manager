@@ -12,17 +12,7 @@ from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
 import simplejson as json
 
-
 log = logging.getLogger('sorna.gateway.auth')
-
-TEST_ACCOUNTS = [
-    {
-        'access_key': 'AKIAIOSFODNN7EXAMPLE',
-        'userid': 'test-user',
-        'name': 'Testion1',
-        'secret_key': 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
-    },
-]
 
 
 def _extract_auth_params(request):
@@ -106,12 +96,13 @@ def auth_required(handler):
             raise web.HTTPBadRequest(text='Missing datetime or datetime mismatch.')
         # TODO: lookup access_key from user database
         try:
-            for user in TEST_ACCOUNTS:
-                if user['access_key'] == access_key:
-                    request.user = user
-                    break
-            else:
-                raise KeyError
+            raise KeyError
+            # for user in TEST_ACCOUNTS:
+            #     if user['access_key'] == access_key:
+            #         request.user = user
+            #         break
+            # else:
+            #     raise KeyError
         except KeyError:
             raise web.HTTPUnauthorized(text='User not found.')
         my_signature = await sign_request(sign_method, request, request.user['secret_key'])

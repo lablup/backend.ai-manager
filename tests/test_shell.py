@@ -6,10 +6,9 @@ from sorna.proto import Message, odict, generate_uuid
 from sorna.proto.msgtypes import ManagerRequestTypes, ManagerResponseTypes, AgentRequestTypes
 import asyncio, zmq, aiozmq
 from colorama import init as colorama_init, Fore
-import json
 import signal
 import sys
-from pprint import pprint
+
 
 @asyncio.coroutine
 def create_kernel():
@@ -40,7 +39,9 @@ def create_kernel():
     api_sock.close()
     return resp['kernel_id'], resp['body']
 
+
 stop_reading_streams = False
+
 
 @asyncio.coroutine
 def handle_out_stream(sock, stream_type):
@@ -60,9 +61,11 @@ def handle_out_stream(sock, stream_type):
         except aiozmq.ZmqStreamClosed:
             break
 
+
 stdout_reader_task = None
 stderr_reader_task = None
 last_cell_id_encoded = None
+
 
 @asyncio.coroutine
 def run_command(kernel_sock, stdout_sock, stderr_sock, cell_id, code_str, redirect_output=False):
@@ -102,6 +105,7 @@ def run_command(kernel_sock, stdout_sock, stderr_sock, cell_id, code_str, redire
             print(result['eval_result'])
         if redirect_output:
             return result['stdout'], result['stderr']
+
 
 @asyncio.coroutine
 def run_tests(kernel_info):
@@ -151,8 +155,10 @@ def run_tests(kernel_info):
     assert resp['reply'] == ManagerResponseTypes.SUCCESS
     api_sock.close()
 
+
 def handle_exit():
     loop.stop()
+
 
 if __name__ == '__main__':
     colorama_init()

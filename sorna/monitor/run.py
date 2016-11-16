@@ -6,25 +6,27 @@ The Sorna Monitoring Daemon
 It routes the API requests to kernel agents in VMs and manages the VM instance pool.
 '''
 
-import argparse
 import asyncio
-import aiohttp
 from collections import ChainMap
-import simplejson as json
 import os
 import random
 import signal
 import sys, string
-import aiozmq, zmq
-import sorna
-from sorna.proto import Message, odict
+
+import aiohttp
+import simplejson as json
+import zmq, aiozmq
+
+from sorna.proto import Message
 from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
 
 API_URL = os.environ.get('SORNA_WATCHDOG_API_URL', None)
 MGR_ADDR = os.environ.get('SORNA_MANAGER_ADDR', 'tcp://localhost:5001')
 
+
 def randstr(len=10):
     return ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(len))
+
 
 async def send_msg(loop, msg):
     with aiohttp.ClientSession(loop=loop) as sess:
@@ -36,9 +38,11 @@ async def send_msg(loop, msg):
             ret = await resp.text()
             assert ret == 'ok'
 
+
 def handle_signal(loop, term_ev):
     term_ev.set()
     loop.stop()
+
 
 async def monitor_manager(loop, term_ev):
     last_state = 'normal'
@@ -100,6 +104,7 @@ async def monitor_manager(loop, term_ev):
                     }]})
                 last_state = 'normal'
         cli.close()
+
 
 if __name__ == '__main__':
     if not API_URL:

@@ -5,6 +5,8 @@ aiozmq
 aiohttp>=1.0
 aioredis>=0.2.8
 namedlist
+sqlalchemy
+aiopg
 python-dateutil>=2.5
 simplejson
 uvloop>=0.5.4

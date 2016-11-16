@@ -1,10 +1,11 @@
 from ipaddress import ip_address
+import logging, logging.config
 
 from sorna.argparse import host_port_pair, ipaddr, path, port_no
 import configargparse
 
 
-def load_config(argv=None, legacy=False):
+def load_config(argv=None, legacy=False, more_args_generator=None):
     parser = configargparse.ArgumentParser()
     if not legacy:
         parser.add('--service-ip', env_var='SORNA_SERVICE_IP', type=ipaddr, default=ip_address('0.0.0.0'),
@@ -44,5 +45,45 @@ def load_config(argv=None, legacy=False):
                     '"192.168.65.1" is a special IP that Docker containers '
                     '(e.g., a front-end container) use to access the host-side '
                     'services or ports opened by anonymous kernel containers.')
+    if more_args_generator:
+        more_args_generator(parser)
     args = parser.parse_args(args=argv)
     return args
+
+
+def init_logger(config):
+    logging.config.dictConfig({
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'colored': {
+                '()': 'coloredlogs.ColoredFormatter',
+                'format': '%(asctime)s %(levelname)s %(name)s %(message)s',
+                'field_styles': {'levelname': {'color': 'black', 'bold': True},
+                                 'name': {'color': 'black', 'bold': True},
+                                 'asctime': {'color': 'black'}},
+                'level_styles': {'info': {'color': 'cyan'},
+                                 'debug': {'color': 'green'},
+                                 'warning': {'color': 'yellow'},
+                                 'error': {'color': 'red'},
+                                 'critical': {'color': 'red', 'bold': True}},
+            },
+        },
+        'handlers': {
+            'console': {
+                'class': 'logging.StreamHandler',
+                'level': 'DEBUG',
+                'formatter': 'colored',
+                'stream': 'ext://sys.stdout',
+            },
+            'null': {
+                'class': 'logging.NullHandler',
+            },
+        },
+        'loggers': {
+            'sorna': {
+                'handlers': ['console'],
+                'level': 'INFO',
+            },
+        },
+    })
