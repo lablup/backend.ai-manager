@@ -29,6 +29,13 @@ Kernel = namedlist('Kernel', [
     ('stdout_port', None),
     ('created_at', None),
     ('tag', None),
+    # updated by agent heartbeats
+    ('cpu_used', 0),
+    ('mem_max_bytes', 0),
+    ('net_rx_bytes', 0),
+    ('net_tx_bytes', 0),
+    ('io_read_bytes', 0),
+    ('io_write_bytes', 0),
 ])
 Kernel.__doc__ = '''\
 A compound data structure to represent kernel information.

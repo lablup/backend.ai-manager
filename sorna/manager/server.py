@@ -181,11 +181,11 @@ async def handle_notifications(loop, term_ev, term_barrier, registry):
         if evname == 'expired':
             if evkey.startswith('shadow:'):
                 inst_id = evkey.split(':', 1)[1]
-                log.info('instance {} has expired (terminated).'.format(inst_id))
+                log.warning('instance {} has expired (terminated).'.format(inst_id))
                 # Let's actually delete the original key.
                 await redis.select(defs.SORNA_INSTANCE_DB)
                 kern_ids = await redis.smembers(inst_id + '.kernels')
-                pipe = redis.multi_exec()
+                pipe = redis.pipeline()
                 pipe.delete(inst_id)
                 pipe.delete(inst_id + '.kernels')
                 await pipe.execute()
