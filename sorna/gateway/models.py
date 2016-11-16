@@ -121,7 +121,7 @@ Bill = sa.Table(
 
 if __name__ == '__main__':
 
-    def more_args(parser):
+    def model_args(parser):
         parser.add('--drop-tables', action='store_true', default=False,
                    help='Drops all tables.')
         parser.add('--create-tables', action='store_true', default=False,
@@ -129,7 +129,7 @@ if __name__ == '__main__':
         parser.add('--populate-fixtures', action='store_true', default=False,
                    help='Populates initial fixture data.')
 
-    config = load_config(more_args_generator=more_args)
+    config = load_config(extra_args_func=model_args)
     init_logger(config)
 
     def mock_engine():

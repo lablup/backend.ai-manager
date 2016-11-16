@@ -1,7 +1,3 @@
-'''
-OAuth 2.0 facilities
-'''
-
 from datetime import datetime, timedelta
 import functools
 import hashlib, hmac
@@ -126,3 +122,7 @@ async def authorize(request) -> web.Response:
 
 async def init(app):
     app.router.add_route('GET', '/v1/authorize', authorize)
+
+
+async def shutdown(app):
+    pass

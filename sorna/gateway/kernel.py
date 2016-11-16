@@ -110,3 +110,7 @@ async def init(app):
 
     app.registry = InstanceRegistry(app.config.redis_addr)
     await app.registry.init()
+
+
+async def shutdown(app):
+    await app.registry.terminate()

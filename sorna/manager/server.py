@@ -8,7 +8,7 @@ It routes the API requests to kernel agents in VMs and manages the VM instance p
 
 import asyncio
 import ipaddress
-import logging, logging.config
+import logging
 import signal
 from urllib.parse import urlsplit
 
@@ -17,6 +17,7 @@ import aioredis
 import uvloop
 
 from sorna import defs
+from sorna.argparse import port_no
 from sorna.exceptions import \
     InstanceNotAvailableError, \
     KernelCreationFailedError, KernelDestructionFailedError, \
@@ -25,7 +26,7 @@ from sorna.proto import Message
 from sorna.utils import AsyncBarrier, get_instance_ip
 from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
 
-from ..gateway.config import load_config
+from ..gateway.config import init_logger, load_config
 from .registry import InstanceRegistry
 from . import __version__
 
@@ -204,12 +205,6 @@ async def handle_notifications(loop, term_ev, term_barrier, registry):
     await term_barrier.wait()
 
 
-def handle_signal(loop, term_ev):
-    if not term_ev.is_set():
-        term_ev.set()
-        loop.stop()
-
-
 async def graceful_shutdown(loop, term_barrier):
     asyncio.ensure_future(asyncio.gather(*asyncio.Task.all_tasks(),
                                          loop=loop, return_exceptions=True))
@@ -219,43 +214,18 @@ async def graceful_shutdown(loop, term_barrier):
 def main():
     global kernel_ip_override
 
-    args = load_config(legacy=True)
+    def manager_args(parser):
+        parser.add('--manager-port', env_var='SORNA_MANAGER_PORT', type=port_no, default=5001,
+                   help='The TCP port number where the legacy manager listens on. '
+                        '(default: 5001)')
 
-    logging.config.dictConfig({
-        'version': 1,
-        'disable_existing_loggers': False,
-        'formatters': {
-            'colored': {
-                '()': 'coloredlogs.ColoredFormatter',
-                'format': '%(asctime)s %(levelname)s %(name)s %(message)s',
-                'field_styles': {'levelname': {'color': 'black', 'bold': True},
-                                 'name': {'color': 'black', 'bold': True},
-                                 'asctime': {'color': 'black'}},
-                'level_styles': {'info': {'color': 'cyan'},
-                                 'debug': {'color': 'green'},
-                                 'warning': {'color': 'yellow'},
-                                 'error': {'color': 'red'},
-                                 'critical': {'color': 'red', 'bold': True}},
-            },
-        },
-        'handlers': {
-            'console': {
-                'class': 'logging.StreamHandler',
-                'level': 'DEBUG',
-                'formatter': 'colored',
-                'stream': 'ext://sys.stdout',
-            },
-            'null': {
-                'class': 'logging.NullHandler',
-            },
-        },
-        'loggers': {
-            'sorna': {
-                'handlers': ['console'],
-                'level': 'INFO',
-            },
-        },
-    })
+    config = load_config(extra_args_func=manager_args)
+    init_logger(config)
+
+    def handle_signal(loop, term_ev):
+        if not term_ev.is_set():
+            term_ev.set()
+            loop.stop()
 
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     loop = asyncio.get_event_loop()
@@ -263,15 +233,15 @@ def main():
     log.info('Sorna Manager {}'.format(__version__))
 
     server = loop.run_until_complete(
-        aiozmq.create_zmq_stream(zmq.REP, bind='tcp://*:{0}'.format(args.manager_port),
+        aiozmq.create_zmq_stream(zmq.REP, bind='tcp://*:{0}'.format(config.manager_port),
                                  loop=loop))
 
     my_ip = loop.run_until_complete(get_instance_ip())
-    log.info(_f('serving on tcp://{0}:{1}', my_ip, args.manager_port))
-    log.info(_f('using redis on tcp://{0}:{1}', *args.redis_addr))
-    kernel_ip_override = args.kernel_ip_override
+    log.info(_f('serving on tcp://{0}:{1}', my_ip, config.manager_port))
+    log.info(_f('using redis on tcp://{0}:{1}', *config.redis_addr))
+    kernel_ip_override = config.kernel_ip_override
 
-    registry = InstanceRegistry(args.redis_addr, loop=loop)
+    registry = InstanceRegistry(config.redis_addr, loop=loop)
     loop.run_until_complete(registry.init())
 
     term_ev = asyncio.Event()
