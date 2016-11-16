@@ -55,17 +55,20 @@ class GUID(TypeDecorator):
 
 
 def IDColumn(name='id'):
-    return sa.Column('id', GUID, primary_key=True, default=uuid.uuid4)
+    return sa.Column('id', GUID, primary_key=True,
+                     default=uuid.uuid4,
+                     server_default=sa.text("uuid_generate_v4()"))
 
 
 User = sa.Table(
     'users', metadata,
     IDColumn('id'),
-    sa.Column('email', sa.String(length=254), unique=True),
+    sa.Column('email', sa.String(length=254)),
     sa.Column('password', sa.String(length=128)),
     sa.Column('created_at', sa.DateTime),
     sa.Column('last_login', sa.DateTime, nullable=True),
     # TODO: add payment information
+    sa.Index('idx_email', 'email', unique=True),
 )
 
 KeyPair = sa.Table(
@@ -98,6 +101,8 @@ Usage = sa.Table(
     sa.Column('mem_used', sa.Integer, server_default='0'),
     sa.Column('io_used', sa.Integer, server_default='0'),
     sa.Column('net_used', sa.Integer, server_default='0'),
+    sa.Index('idx_ktype', 'kernel_type'),
+    sa.Index('idx_launch', 'launched_at'),
 )
 
 # Bill is regularly calculated by summing Usage records for a given month.
@@ -116,6 +121,7 @@ Bill = sa.Table(
     sa.Column('total_queries', sa.Integer),
     sa.Column('amount', sa.Integer),
     sa.Column('currency', sa.Enum(CurrencyTypes)),
+    sa.Index('idx_monthly_bill', 'user', 'access_key', 'month', unique=True),
 )
 
 
@@ -148,18 +154,18 @@ if __name__ == '__main__':
         sa_callable(engine)
         return buf.getvalue()
 
+    async def drop_tables(config, engine):
+        async with engine.acquire() as conn:
+            log.warning('Dropping tables... (all data is lost!)')
+            await conn.execute(generate_sql(metadata.drop_all))
+
     async def create_tables(config, engine):
         async with engine.acquire() as conn:
-            if config.drop_tables:
-                log.warning('Dropping tables... (all data is lost!)')
-                await conn.execute(generate_sql(metadata.drop_all))
-            if config.create_tables:
-                log.info('Creating tables...')
-                await conn.execute(generate_sql(metadata.create_all))
+            log.info('Creating tables...')
+            await conn.execute('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";')
+            await conn.execute(generate_sql(metadata.create_all))
 
     async def populate_fixtures(config, engine):
-        if not config.populate_fixtures:
-            return
         log.info('Populating fixtures...')
         async with engine.acquire() as conn:
             default_user_cnt = await conn.scalar(
@@ -195,8 +201,12 @@ if __name__ == '__main__':
             password=config.db_password,
             database=config.db_name,
         ) as engine:
-            await create_tables(config, engine)
-            await populate_fixtures(config, engine)
+            if config.drop_tables:
+                await drop_tables(config, engine)
+            if config.create_tables:
+                await create_tables(config, engine)
+            if config.populate_fixtures:
+                await populate_fixtures(config, engine)
 
     loop = asyncio.get_event_loop()
     log.info('NOTICE: If you see psycopg2.ProgrammingError, you may need --recreate-db.')
