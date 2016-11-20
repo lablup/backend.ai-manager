@@ -4,9 +4,8 @@ import enum
 import logging
 import uuid
 
-import aiopg, aiopg.sa
+import asyncpg, asyncpgsa as pg
 import sqlalchemy as sa
-from dateutil.tz import tzutc
 from sqlalchemy.types import TypeDecorator, CHAR
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -24,10 +23,10 @@ class CurrencyTypes(enum.Enum):
 
 
 class GUID(TypeDecorator):
-    """
+    '''
     Platform-independent GUID type.
     Uses PostgreSQL's UUID type, otherwise uses CHAR(16) storing as raw bytes.
-    """
+    '''
     impl = CHAR
 
     def load_dialect_impl(self, dialect):
@@ -125,6 +124,33 @@ Bill = sa.Table(
 )
 
 
+def mock_engine():
+    '''
+    Creates a pair of io.StringIO buffer object and a mock engine that does NOT
+    execute SQL queries but only dumps the compiled statements into the buffer
+    object.
+    '''
+    from sqlalchemy import create_engine as ce
+    from io import StringIO
+    buf = StringIO()
+
+    def dump(sql, *multiparams, **params):
+        buf.write(str(sql.compile(dialect=engine.dialect)) + ';\n')
+
+    engine = ce('postgresql://', echo=True, strategy='mock', executor=dump)
+    return buf, engine
+
+
+def generate_sql(sa_callable):
+    '''
+    Generates a compiled SQL statement as a string from SQLAlchemy methods that
+    accepts engine as the first function argument.
+    '''
+    buf, engine = mock_engine()
+    sa_callable(engine)
+    return buf.getvalue()
+
+
 if __name__ == '__main__':
 
     def model_args(parser):
@@ -138,38 +164,24 @@ if __name__ == '__main__':
     config = load_config(extra_args_func=model_args)
     init_logger(config)
 
-    def mock_engine():
-        from sqlalchemy import create_engine as ce
-        from io import StringIO
-        buf = StringIO()
-
-        def dump(sql, *multiparams, **params):
-            buf.write(str(sql.compile(dialect=engine.dialect)) + ';\n')
-
-        engine = ce('postgresql://', echo=True, strategy='mock', executor=dump)
-        return buf, engine
-
-    def generate_sql(sa_callable):
-        buf, engine = mock_engine()
-        sa_callable(engine)
-        return buf.getvalue()
-
-    async def drop_tables(config, engine):
-        async with engine.acquire() as conn:
+    async def drop_tables(config, pool):
+        async with pool.acquire() as conn:
             log.warning('Dropping tables... (all data is lost!)')
             await conn.execute(generate_sql(metadata.drop_all))
 
-    async def create_tables(config, engine):
-        async with engine.acquire() as conn:
+    async def create_tables(config, pool):
+        async with pool.acquire() as conn:
             log.info('Creating tables...')
+            # Load an extension to use "uuid_generate_v4()" SQL function
             await conn.execute('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";')
             await conn.execute(generate_sql(metadata.create_all))
 
-    async def populate_fixtures(config, engine):
+    async def populate_fixtures(config, pool):
         log.info('Populating fixtures...')
-        async with engine.acquire() as conn:
-            default_user_cnt = await conn.scalar(
-                User.count(User.c.email == default_user_email))
+        async with pool.acquire() as conn:
+            default_user_cnt = await conn.fetchval(
+                User.count(User.c.email == default_user_email),
+                column=0)
             if default_user_cnt == 0:
                 log.info('Creating the default legacy ZMQ API user')
                 uid = uuid.uuid4()
@@ -177,14 +189,14 @@ if __name__ == '__main__':
                     id=uid,
                     email=default_user_email,
                     password='x-unused',
-                    created_at=datetime.now(tzutc()),
+                    created_at=datetime.utcnow(),
                 ))
                 log.info('Creating a default keypair for the ZMQ user')
                 await conn.execute(KeyPair.insert().values(
                     belongs_to=uid,
                     access_key='AKIAIOSFODNN7EXAMPLE',
                     secret_key='wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
-                    created_at=datetime.now(tzutc()),
+                    created_at=datetime.utcnow(),
                     # since this is a locally-served legacy user,
                     # we set all limits infinte.
                     cpu_limit=-1,
@@ -194,23 +206,23 @@ if __name__ == '__main__':
                 ))
 
     async def init_db(config):
-        async with aiopg.sa.create_engine(
+        async with pg.create_pool(
             host=config.db_addr[0],
             port=config.db_addr[1],
             user=config.db_user,
             password=config.db_password,
             database=config.db_name,
-        ) as engine:
+            min_size=1, max_size=3,
+        ) as pool:
             if config.drop_tables:
-                await drop_tables(config, engine)
+                await drop_tables(config, pool)
             if config.create_tables:
-                await create_tables(config, engine)
+                await create_tables(config, pool)
             if config.populate_fixtures:
-                await populate_fixtures(config, engine)
+                await populate_fixtures(config, pool)
 
     loop = asyncio.get_event_loop()
-    log.info('NOTICE: If you see psycopg2.ProgrammingError, you may need --recreate-db.')
-    # NOTE: also you may see the same error when dropping non-existent tables.
+    log.info('NOTICE: If you see SQL errors, you may need to drop and recreate tables.')
     try:
         loop.run_until_complete(init_db(config))
     finally:

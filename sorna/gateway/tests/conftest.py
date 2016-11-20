@@ -6,11 +6,14 @@ import socket
 
 import aiohttp
 from aiohttp import web
+import asyncpgsa
+import sqlalchemy as sa
 import pytest
 import uvloop
 
 from ..config import load_config
-from ..server import init as server_init
+from ..server import gw_init, gw_args
+from ..models import KeyPair
 
 
 @contextlib.contextmanager
@@ -104,6 +107,33 @@ class Client:
         url = self._url + path
         return self._session.ws_connect(url, **kwargs)
 
+@pytest.fixture
+def default_keypair(loop):
+
+    async def _fetch():
+        access_key = 'AKIAIOSFODNN7EXAMPLE'
+        config = load_config(argv=[], extra_args_func=gw_args)
+        pool = await asyncpgsa.create_pool(
+            host=config.db_addr[0],
+            port=config.db_addr[1],
+            database=config.db_name,
+            user=config.db_user,
+            password=config.db_password,
+            min_size=1, max_size=2,
+        )
+        async with pool.acquire() as conn:
+            query = sa.select([KeyPair.c.access_key, KeyPair.c.secret_key]) \
+                      .where(KeyPair.c.access_key == access_key)
+            row = await conn.fetchrow(query)
+            keypair = {
+                'access_key': access_key,
+                'secret_key': row.secret_key,
+            }
+        await pool.close()
+        return keypair
+
+    return loop.run_until_complete(_fetch())
+
 
 @pytest.yield_fixture
 def create_server(loop, unused_port):
@@ -113,7 +143,7 @@ def create_server(loop, unused_port):
     async def create(debug=False):
         nonlocal app, handler, server
         app = web.Application(loop=loop)
-        app.config = load_config(argv=[])
+        app.config = load_config(argv=[], extra_args_func=gw_args)
 
         # Override default configs for testing setup.
         app.config.ssl_cert = here / 'sample-ssl-cert' / 'sample.crt'
@@ -121,7 +151,7 @@ def create_server(loop, unused_port):
         app.config.service_ip = '127.0.0.1'
         app.config.service_port = unused_port
 
-        await server_init(app)
+        await gw_init(app)
         handler = app.make_handler(debug=debug, keep_alive_on=False)
         server = await loop.create_server(handler,
                                           app.config.service_ip,
@@ -132,6 +162,7 @@ def create_server(loop, unused_port):
     yield create
 
     async def finish():
+        nonlocal app, handler, server
         server.close()
         await server.wait_closed()
         await app.shutdown()

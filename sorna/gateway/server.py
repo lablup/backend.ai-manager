@@ -9,7 +9,7 @@ import signal
 import ssl
 
 from aiohttp import web
-import aiopg, aiopg.sa
+import asyncpgsa
 import uvloop
 
 from sorna.argparse import ipaddr, path, port_no
@@ -45,41 +45,42 @@ async def gw_init(app):
     app.on_response_prepare.append(on_prepare)
     app.router.add_route('GET', '/v1', hello)
 
-    app.dbpool = await aiopg.sa.create_engine(
+    app.dbpool = await asyncpgsa.create_pool(
         host=app.config.db_addr[0],
         port=app.config.db_addr[1],
         database=app.config.db_name,
         user=app.config.db_user,
         password=app.config.db_password,
+        min_size=4, max_size=16,
     )
 
 
 async def gw_shutdown(app):
-    app.dbpool.close()
-    await app.dbpool.wait_closed()
+    await app.dbpool.close()
+
+
+def gw_args(parser):
+    parser.add('--service-ip', env_var='SORNA_SERVICE_IP', type=ipaddr, default=ip_address('0.0.0.0'),
+               help='The IP where the API gateway server listens on. (default: 0.0.0.0)')
+    parser.add('--service-port', env_var='SORNA_SERVICE_PORT', type=port_no, default=0,
+               help='The TCP port number where the API gateway server listens on. '
+                    '(default: 8080, 8443 when SSL is enabled) '
+                    'To run in production, you need the root privilege to use the standard 80/443 ports.')
+    parser.add('--ssl-cert', env_var='SORNA_SSL_CERT', type=path, default=None,
+               help='The path to an SSL certificate file. '
+                    'It may contain inter/root CA certificates as well. '
+                    '(default: None)')
+    parser.add('--ssl-key', env_var='SORNA_SSL_KEY', type=path, default=None,
+               help='The path to the private key used to make requests for the SSL certificate. '
+                    '(default: None)')
 
 
 def main():
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     loop = asyncio.get_event_loop()
 
-    def server_args(parser):
-        parser.add('--service-ip', env_var='SORNA_SERVICE_IP', type=ipaddr, default=ip_address('0.0.0.0'),
-                   help='The IP where the API gateway server listens on. (default: 0.0.0.0)')
-        parser.add('--service-port', env_var='SORNA_SERVICE_PORT', type=port_no, default=0,
-                   help='The TCP port number where the API gateway server listens on. '
-                        '(default: 8080, 8443 when SSL is enabled) '
-                        'To run in production, you need the root privilege to use the standard 80/443 ports.')
-        parser.add('--ssl-cert', env_var='SORNA_SSL_CERT', type=path, default=None,
-                   help='The path to an SSL certificate file. '
-                        'It may contain inter/root CA certificates as well. '
-                        '(default: None)')
-        parser.add('--ssl-key', env_var='SORNA_SSL_KEY', type=path, default=None,
-                   help='The path to the private key used to make requests for the SSL certificate. '
-                        '(default: None)')
-
     app = web.Application()
-    app.config = load_config(extra_args_func=server_args)
+    app.config = load_config(extra_args_func=gw_args)
     init_logger(app.config)
 
     term_ev = asyncio.Event(loop=loop)

@@ -8,7 +8,7 @@ from dateutil.tz import tzutc, gettz
 import simplejson as json
 
 from ..auth import init as auth_init
-from ..auth import check_date, sign_request, TEST_ACCOUNTS
+from ..auth import check_date, sign_request
 
 
 async def test_hello(create_app_and_client):
@@ -19,7 +19,7 @@ async def test_hello(create_app_and_client):
     assert data['version'] == 'v1.20160915'
 
 
-async def test_auth(create_app_and_client, unused_port):
+async def test_auth(create_app_and_client, unused_port, default_keypair):
     app, client = await create_app_and_client()
     await auth_init(app)
 
@@ -43,12 +43,12 @@ async def test_auth(create_app_and_client, unused_port):
                      + b'content-type:application/json\n' \
                      + b'x-sorna-version:' + api_version.encode() + b'\n' \
                      + req_hash.encode()
-        sign_key = hmac.new(TEST_ACCOUNTS[0]['secret_key'].encode(),
+        sign_key = hmac.new(default_keypair['secret_key'].encode(),
                             now.strftime('%Y%m%d').encode(), hash_type).digest()
         sign_key = hmac.new(sign_key, hostname.encode(), hash_type).digest()
         signature = hmac.new(sign_key, sign_bytes, hash_type).hexdigest()
         headers['Authorization'] = 'Sorna signMethod=HMAC-{}, '.format(hash_type.upper()) \
-                                   + 'credential={}:{}'.format(TEST_ACCOUNTS[0]['access_key'], signature)
+                                   + 'credential={}:{}'.format(default_keypair['access_key'], signature)
         # Only shown when there are failures in this test case
         print('Request headers')
         pprint(headers)

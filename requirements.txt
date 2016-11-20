@@ -6,7 +6,8 @@ aiohttp>=1.0
 aioredis>=0.2.8
 namedlist
 sqlalchemy
-aiopg
+asyncpg>=0.7
+asyncpgsa>=0.7
 python-dateutil>=2.5
 simplejson
 uvloop>=0.5.4

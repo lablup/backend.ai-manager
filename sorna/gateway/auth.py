@@ -7,6 +7,9 @@ from aiohttp import web
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
 import simplejson as json
+import sqlalchemy as sa
+
+from .models import User, KeyPair
 
 log = logging.getLogger('sorna.gateway.auth')
 
@@ -84,6 +87,7 @@ async def sign_request(sign_method, request, secret) -> str:
 def auth_required(handler):
     @functools.wraps(handler)
     async def wrapped(request):
+        app = request.app
         params = _extract_auth_params(request)
         if not params:
             raise web.HTTPBadRequest(text='Missing authentication parameters.')
@@ -92,16 +96,27 @@ def auth_required(handler):
             raise web.HTTPBadRequest(text='Missing datetime or datetime mismatch.')
         # TODO: lookup access_key from user database
         try:
-            raise KeyError
-            # for user in TEST_ACCOUNTS:
-            #     if user['access_key'] == access_key:
-            #         request.user = user
-            #         break
-            # else:
-            #     raise KeyError
+            async with app.dbpool.acquire() as conn:
+                j = sa.join(KeyPair, User,
+                            KeyPair.c.belongs_to == User.c.id)
+                query = sa.select([KeyPair, User]) \
+                          .select_from(j) \
+                          .where(KeyPair.c.access_key == access_key)
+                row = await conn.fetchrow(query)
+                if row is None:
+                    raise KeyError
+                request.keypair = {
+                    'access_key': access_key,
+                    'secret_key': row.secret_key,
+                    # TODO: add other info from row?
+                }
+                request.user = {
+                    'userid': row.id,
+                    'email': row.email,
+                }
         except KeyError:
             raise web.HTTPUnauthorized(text='User not found.')
-        my_signature = await sign_request(sign_method, request, request.user['secret_key'])
+        my_signature = await sign_request(sign_method, request, request.keypair['secret_key'])
         if not my_signature:
             raise web.HTTPBadRequest(text='Missing or invalid signature params.')
         if my_signature == signature:
