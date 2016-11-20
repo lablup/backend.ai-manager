@@ -5,6 +5,7 @@ Kernel session management.
 import logging
 
 from aiohttp import web
+from dateutil.parser import parse as dtparse
 import simplejson as json
 
 from sorna.utils import odict
@@ -76,7 +77,6 @@ async def destroy(request):
         resp['type'] = 'https://api.sorna.io/probs/missing-params'
         resp['title'] = 'There are missing API request parameters.'
     else:
-        # TODO: assert if session matches with the kernel id?
         try:
             await request.app.registry.destroy_kernel(kernel_id)
             log.info(_f('destroyed successfully.'))
@@ -94,7 +94,46 @@ async def destroy(request):
 
 @auth_required
 async def get_info(request):
-    raise NotImplementedError
+    resp = odict()
+    status = 200
+    content_type = 'application/json'
+    kernel_id = request.match_info['kernel_id']
+
+    try:
+        log.info(_f('GETINFO (k:{})', kernel_id))
+    except KeyError:
+        log.warn(_f('GETINFO: missing parameters'))
+        status = 400
+        resp['type'] = 'https://api.sorna.io/probs/missing-params'
+        resp['title'] = 'There are missing API request parameters.'
+    else:
+        try:
+            kern = await request.app.registry.get_kernel(kernel_id)
+            resp['lang'] = kern.lang
+            age = datetime.now(tzutc()) - dtparse(kern.created_at)
+            resp['age'] = age.total_seconds() * 1000
+            # Resource limits collected from agent heartbeats
+            # TODO: factor out policy/image info as a common repository
+            resp['queryTimeout']  = int(kern.exec_timeout) * 1000
+            resp['idleTimeout']   = int(kern.idle_timeout) * 1000
+            resp['memoryLimit']   = int(kern.mem_limit)
+            resp['maxCpuCredit']  = int(kern.exec_timeout) * 1000
+            # Stats collected from agent heartbeats
+            resp['numQueriesExecuted'] = int(kern.num_queries)
+            resp['idle']          = int(kern.idle) * 1000
+            resp['memoryUsed']    = int(kern.mem_max_bytes) // 1024
+            resp['cpuCreditUsed'] = int(kern.cpu_used)
+            log.info(_f('information retrieved: {!r}', resp))
+            status = 200
+        except SornaError as e:
+            status = e.http_status
+            log.exception(_f('SornaError'))
+            resp.update(e.serialize())
+    if status > 399:
+        content_type = 'application/problem+json'
+    return web.Response(status=status,
+                        content_type=content_type,
+                        text=json.dumps(resp))
 
 
 @auth_required

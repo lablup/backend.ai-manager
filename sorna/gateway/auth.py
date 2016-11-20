@@ -94,7 +94,6 @@ def auth_required(handler):
         sign_method, access_key, signature = params
         if not check_date(request):
             raise web.HTTPBadRequest(text='Missing datetime or datetime mismatch.')
-        # TODO: lookup access_key from user database
         try:
             async with app.dbpool.acquire() as conn:
                 j = sa.join(KeyPair, User,

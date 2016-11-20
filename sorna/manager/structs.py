@@ -24,14 +24,21 @@ Redis), but just a metadata container passed around the sorna system.
 Kernel = namedlist('Kernel', [
     ('id', None),
     ('instance', None),
+    ('lang', None),
     ('addr', None),
     ('stdin_port', None),
     ('stdout_port', None),
     ('created_at', None),
     ('tag', None),
-    # updated by agent heartbeats
-    ('cpu_used', 0),
-    ('mem_max_bytes', 0),
+    # resource limit info (updated by agent heartbeats)
+    ('exec_timeout', 0),  # sec
+    ('idle_timeout', 0),  # sec
+    ('mem_limit', 0),     # kbytes
+    # stats (updated by agent heartbeats)
+    ('num_queries', 0),
+    ('idle', 0),           # sec
+    ('cpu_used', 0),       # msec
+    ('mem_max_bytes', 0),  # bytes
     ('net_rx_bytes', 0),
     ('net_tx_bytes', 0),
     ('io_read_bytes', 0),

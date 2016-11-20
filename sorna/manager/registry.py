@@ -229,6 +229,7 @@ class InstanceRegistry:
             kernel_info = {
                 'id': kern_id,
                 'instance': instance.id,
+                'lang': lang,
                 # all kernels in an agent shares the same agent address
                 # (the agent multiplexes requests to different kernels)
                 'addr': instance.addr,
