@@ -225,7 +225,8 @@ class InstanceRegistry:
             assert kern_id is not None
 
         log.info(_f('created kernel {} on instance {}', kern_id, inst_id))
-        async with self.redis_kern.get() as rk:
+        async with self.redis_kern.get() as rk, \
+                   self.redis_inst.get() as ri:
             kernel_info = {
                 'id': kern_id,
                 'instance': instance.id,
@@ -239,6 +240,7 @@ class InstanceRegistry:
             }
             kv_list = chain.from_iterable((k, v) for k, v in kernel_info.items())
             await rk.hmset(kern_id, *kv_list)
+            await ri.sadd(instance.id + '.kernels', kern_id)
             kernel = Kernel(**kernel_info)
         return instance, kernel
 
@@ -269,8 +271,5 @@ class InstanceRegistry:
             finally:
                 conn.close()
             assert response['reply'] == SornaResponseTypes.SUCCESS
-            async with self.redis_kern.get() as rk:
-                inst_id = await rk.hget(kernel.id, 'instance')
-                await rk.delete(kernel.id)
-            async with self.redis_inst.get() as rk:
-                await rk.hincrby(inst_id, 'num_kernels', -1)
+            # decrementing num_kernels and removing kernel ID from running kernels
+            # are already done by the agent.

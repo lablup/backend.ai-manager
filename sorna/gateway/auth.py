@@ -68,15 +68,16 @@ async def sign_request(sign_method, request, secret) -> str:
     hash_type = hash_type.lower()
     assert mac_type.lower() == 'hmac'
     assert hash_type in hashlib.algorithms_guaranteed
+    body = await request.read()
 
-    req_hash = hashlib.new(hash_type, await request.read()).hexdigest()
+    body_hash = hashlib.new(hash_type, body).hexdigest()
     sign_bytes = request.method.encode() + b'\n' \
                  + request.path_qs.encode() + b'\n' \
                  + request.date.isoformat().encode() + b'\n' \
                  + b'host:' + request.host.encode() + b'\n' \
                  + b'content-type:' + request.content_type.encode() + b'\n' \
                  + b'x-sorna-version:' + request.headers['X-Sorna-Version'].encode() + b'\n' \
-                 + req_hash.encode()
+                 + body_hash.encode()
 
     sign_key = hmac.new(secret.encode(),
                         request.date.strftime('%Y%m%d').encode(), hash_type).digest()
@@ -130,7 +131,7 @@ def auth_required(handler):
     async def wrapped(request):
         if request.is_authorized:
             return (await handler(request))
-        raise web.HTTPUnauthorized('Credential/signature mismatch.')
+        raise web.HTTPUnauthorized(text='Credential/signature mismatch.')
     return wrapped
 
 
