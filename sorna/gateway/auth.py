@@ -84,17 +84,19 @@ async def sign_request(sign_method, request, secret) -> str:
     return hmac.new(sign_key, sign_bytes, hash_type).hexdigest()
 
 
-def auth_required(handler):
-    @functools.wraps(handler)
-    async def wrapped(request):
-        app = request.app
-        params = _extract_auth_params(request)
-        if not params:
-            raise web.HTTPBadRequest(text='Missing authentication parameters.')
-        sign_method, access_key, signature = params
+async def auth_middleware_factory(app, handler):
+    '''
+    Fetches user information and sets up keypair, uesr, and is_authorized attributes.
+    '''
+    async def auth_middleware_handler(request):
+        request.is_authorized = False
+        request.keypair = None
+        request.user = None
         if not check_date(request):
             raise web.HTTPBadRequest(text='Missing datetime or datetime mismatch.')
-        try:
+        params = _extract_auth_params(request)
+        if params:
+            sign_method, access_key, signature = params
             async with app.dbpool.acquire() as conn:
                 j = sa.join(KeyPair, User,
                             KeyPair.c.belongs_to == User.c.id)
@@ -103,7 +105,12 @@ def auth_required(handler):
                           .where(KeyPair.c.access_key == access_key)
                 row = await conn.fetchrow(query)
                 if row is None:
-                    raise KeyError
+                    raise web.HTTPUnauthorized(text='Credential/signature mismatch.')
+            my_signature = await sign_request(sign_method, request, row.secret_key)
+            if not my_signature:
+                raise web.HTTPBadRequest(text='Missing or invalid signature params.')
+            if my_signature == signature:
+                request.is_authorized = True
                 request.keypair = {
                     'access_key': access_key,
                     'secret_key': row.secret_key,
@@ -113,15 +120,17 @@ def auth_required(handler):
                     'userid': row.id,
                     'email': row.email,
                 }
-        except KeyError:
-            raise web.HTTPUnauthorized(text='User not found.')
-        my_signature = await sign_request(sign_method, request, request.keypair['secret_key'])
-        if not my_signature:
-            raise web.HTTPBadRequest(text='Missing or invalid signature params.')
-        if my_signature == signature:
-            # authenticated successfully.
+                return (await handler(request))
+        return await handler(request)
+    return auth_middleware_handler
+
+
+def auth_required(handler):
+    @functools.wraps(handler)
+    async def wrapped(request):
+        if request.is_authorized:
             return (await handler(request))
-        raise web.HTTPUnauthorized(text='Signature mismatch.')
+        raise web.HTTPUnauthorized('Credential/signature mismatch.')
     return wrapped
 
 
@@ -136,6 +145,7 @@ async def authorize(request) -> web.Response:
 
 async def init(app):
     app.router.add_route('GET', '/v1/authorize', authorize)
+    app.middlewares.append(auth_middleware_factory)
 
 
 async def shutdown(app):
