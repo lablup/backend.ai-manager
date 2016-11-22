@@ -4,7 +4,7 @@ import enum
 import logging
 import uuid
 
-import asyncpg, asyncpgsa as pg
+import asyncpgsa as pg
 import sqlalchemy as sa
 from sqlalchemy.types import TypeDecorator, CHAR
 from sqlalchemy.dialects.postgresql import UUID

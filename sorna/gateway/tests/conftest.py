@@ -107,6 +107,7 @@ class Client:
         url = self._url + path
         return self._session.ws_connect(url, **kwargs)
 
+
 @pytest.fixture
 def default_keypair(loop):
 

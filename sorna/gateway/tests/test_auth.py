@@ -8,7 +8,7 @@ from dateutil.tz import tzutc, gettz
 import simplejson as json
 
 from ..auth import init as auth_init
-from ..auth import check_date, sign_request
+from ..auth import check_date
 
 
 async def test_hello(create_app_and_client):
