@@ -8,6 +8,7 @@ import logging
 import signal
 import ssl
 
+import aiohttp
 from aiohttp import web
 import asyncpgsa
 import uvloop
@@ -101,7 +102,10 @@ def main():
     loop.add_signal_handler(signal.SIGTERM, handle_signal, loop, term_ev)
 
     try:
-        web_handler = app.make_handler()
+        web_handler = app.make_handler(
+            logger=aiohttp.log.server_logger if app.config.debug else None,
+            access_log=aiohttp.log.access_logger if app.config.debug else None,
+        )
         server = loop.run_until_complete(loop.create_server(
             web_handler,
             host=str(app.config.service_ip),
