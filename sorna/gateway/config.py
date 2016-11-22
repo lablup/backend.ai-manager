@@ -19,6 +19,8 @@ def load_config(argv=None, extra_args_func=None):
                help='The username to authenticate to the database server. (default: postgres)')
     parser.add('--db-password', env_var='SORNA_DB_PASSWORD', type=str, default='develove',
                help='The password to authenticate to the database server. (default: develove)')
+    parser.add('--debug', env_var='SORNA_DEBUG', action='store_true', default=False,
+               help='Set the debug mode and verbose logging. (default: false)')
     parser.add('--kernel-ip-override', env_var='SORNA_KERNEL_IP_OVERRIDE', type=ip_address, default=None,
                help='The IP address that overrides the actual IP address of kernel containers '
                     'when responding to our clients. '
@@ -64,9 +66,12 @@ def init_logger(config):
             },
         },
         'loggers': {
-            'sorna': {
+            '': {
                 'handlers': ['console'],
-                'level': 'INFO',
+                'level': 'DEBUG' if config.debug else 'INFO',
             },
         },
     })
+
+    log = logging.getLogger('sorna.gateway.config')
+    log.debug('debug mode enabled.')
