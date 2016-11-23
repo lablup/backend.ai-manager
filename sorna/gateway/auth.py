@@ -111,6 +111,12 @@ async def auth_middleware_factory(app, handler):
             if not my_signature:
                 raise web.HTTPBadRequest(text='Missing or invalid signature params.')
             if my_signature == signature:
+                query = KeyPair.update() \
+                               .values(last_used=datetime.utcnow(),
+                                       total_num_queries=KeyPair.c.total_num_queries + 1,
+                                       num_queries=KeyPair.c.num_queries + 1) \
+                               .where(KeyPair.c.access_key == access_key)
+                await conn.fetchval(query)
                 request.is_authorized = True
                 request.keypair = {
                     'access_key': access_key,
