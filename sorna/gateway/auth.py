@@ -127,7 +127,8 @@ async def auth_middleware_factory(app, handler):
                     'userid': row.id,
                     'email': row.email,
                 }
-                return (await handler(request))
+        # No matter if authenticated or not, pass-through to the handler.
+        # (if it's required, auth_required decorator will handle the situation.)
         return await handler(request)
     return auth_middleware_handler
 

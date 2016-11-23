@@ -4,13 +4,13 @@ import asyncio
 from datetime import datetime
 from dateutil.tz import tzutc
 import functools
-from itertools import chain
 import logging
 
 import zmq, aiozmq
 import aioredis
 
-from sorna import defs
+from sorna.defs import SORNA_KERNEL_DB, SORNA_INSTANCE_DB, SORNA_SESSION_DB
+from sorna.utils import dict2kvlist
 from sorna.exceptions import \
     InstanceNotAvailableError, \
     InstanceNotFoundError, KernelNotFoundError, \
@@ -74,15 +74,15 @@ class InstanceRegistry:
     async def init(self):
         self.redis_kern = await aioredis.create_pool(self.redis_addr,
                                                      encoding='utf8',
-                                                     db=defs.SORNA_KERNEL_DB,
+                                                     db=SORNA_KERNEL_DB,
                                                      loop=self.loop)
         self.redis_inst = await aioredis.create_pool(self.redis_addr,
                                                      encoding='utf8',
-                                                     db=defs.SORNA_INSTANCE_DB,
+                                                     db=SORNA_INSTANCE_DB,
                                                      loop=self.loop)
         self.redis_sess = await aioredis.create_pool(self.redis_addr,
                                                      encoding='utf8',
-                                                     db=defs.SORNA_SESSION_DB,
+                                                     db=SORNA_SESSION_DB,
                                                      loop=self.loop)
         log.info('ready.')
 
@@ -237,8 +237,7 @@ class InstanceRegistry:
                 'stdout_port': stdout_port,
                 'created_at': datetime.now(tzutc()).isoformat(),
             }
-            kv_list = chain.from_iterable((k, v) for k, v in kernel_info.items())
-            await rk.hmset(kern_id, *kv_list)
+            await rk.hmset(kern_id, *dict2kvlist(kernel_info))
             await ri.sadd(instance.id + '.kernels', kern_id)
             kernel = Kernel(**kernel_info)
         return instance, kernel
@@ -272,3 +271,9 @@ class InstanceRegistry:
             assert response['reply'] == SornaResponseTypes.SUCCESS
             # decrementing num_kernels and removing kernel ID from running kernels
             # are already done by the agent.
+
+    @auto_get_kernel
+    async def update_kernel(self, kernel, updated_fields):
+        log.info(_f('update_kernel ({})', kernel.id))
+        async with self.redis_kern.get() as rk:
+            await rk.hmset(kernel.id, *dict2kvlist(updated_fields))

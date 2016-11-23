@@ -127,6 +127,9 @@ async def get_info(request):
             resp['memoryUsed']    = int(kern.mem_max_bytes) // 1024
             resp['cpuCreditUsed'] = int(kern.cpu_used)
             log.info(_f('information retrieved: {!r}', resp))
+            await request.app.registry.update_kernel(kern, {
+                'num_queries': int(kern.num_queries) + 1,
+            })
             status = 200
         except SornaError as e:
             status = e.http_status
