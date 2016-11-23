@@ -124,25 +124,24 @@ class InstanceRegistry:
             else:
                 raise KernelNotFoundError(kern_id)
 
-    async def get_kernel_from_session(self, user_id, entry_id, lang):
+    async def get_kernel_from_session(self, client_sess_token, lang):
         async with self.redis_sess.get() as rs:
-            sess_key = '{0}:{1}:{2}'.format(user_id, entry_id, lang)
+            sess_key = '{0}:{1}'.format(client_sess_token, lang)
             kern_id = await rs.get(sess_key)
             if kern_id:
                 return (await self.get_kernel(kern_id))
             else:
                 raise KernelNotFoundError()
 
-    async def get_or_create_kernel(self, user_id, entry_id,
-                                   lang, spec=None):
+    async def get_or_create_kernel(self, client_sess_token, lang, spec=None):
         async with self.lifecycle_lock:
             try:
-                kern = await self.get_kernel_from_session(user_id, entry_id, lang)
+                kern = await self.get_kernel_from_session(client_sess_token, lang)
             except KernelNotFoundError:
                 # Create a new kernel.
                 async with self.redis_sess.get() as rs:
                     _, kern = await self.create_kernel(lang, spec)
-                    sess_key = '{0}:{1}:{2}'.format(user_id, entry_id, lang)
+                    sess_key = '{0}:{1}'.format(client_sess_token, lang)
                     await rs.set(sess_key, kern.id)
         assert kern is not None
         return kern

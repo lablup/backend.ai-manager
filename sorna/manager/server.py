@@ -81,8 +81,9 @@ async def handle_api(loop, term_ev, term_barrier, server, registry):
                 resp['cause'] = 'Missing API parameters.'
             else:
                 try:
-                    kernel = await registry.get_or_create_kernel(req['user_id'],
-                                                                 req['entry_id'],
+                    client_sess_token = '{0}:{1}'.format(req['user_id'],
+                                                         req['entry_id'])
+                    kernel = await registry.get_or_create_kernel(client_sess_token,
                                                                  req['lang'])
                     log.info(_r('got/created kernel {} successfully.', request_id, kernel.id))
                     resp['reply'] = SornaResponseTypes.SUCCESS

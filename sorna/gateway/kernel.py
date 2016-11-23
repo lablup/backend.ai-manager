@@ -48,12 +48,9 @@ async def create(request):
         resp['title'] = 'There are missing API request parameters.'
     else:
         try:
-            # TODO: refactor the front-end to generate token from user/entry IDs
-            pseudo_user_id  = params['clientSessionToken'][:4]
-            pseudo_entry_id = params['clientSessionToken'][4:]
             # TODO: handle resourceLimits
             kernel = await request.app.registry.get_or_create_kernel(
-                pseudo_user_id, pseudo_entry_id, params['lang'])
+                params['clientSessionToken'], params['lang'])
             log.info(_f('got/created kernel {} successfully.', kernel.id))
             status = 201  # created
             resp['kernelId'] = kernel.id
