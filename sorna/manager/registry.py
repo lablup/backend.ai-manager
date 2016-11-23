@@ -8,13 +8,15 @@ import logging
 
 import zmq, aiozmq
 import aioredis
+from async_timeout import timeout as _timeout
 
 from sorna.defs import SORNA_KERNEL_DB, SORNA_INSTANCE_DB, SORNA_SESSION_DB
 from sorna.utils import dict2kvlist
 from sorna.exceptions import \
     InstanceNotAvailableError, \
     InstanceNotFoundError, KernelNotFoundError, \
-    KernelCreationFailedError, KernelDestructionFailedError
+    KernelCreationFailedError, KernelDestructionFailedError, \
+    KernelExecutionFailedError
 from sorna.proto import Message
 from sorna.proto.msgtypes import AgentRequestTypes, SornaResponseTypes
 from .structs import Instance, Kernel
@@ -277,3 +279,35 @@ class InstanceRegistry:
         log.info(_f('update_kernel ({})', kernel.id))
         async with self.redis_kern.get() as rk:
             await rk.hmset(kernel.id, *dict2kvlist(updated_fields))
+
+    @auto_get_kernel
+    async def execute_query(self, kernel, code_id, code):
+        log.info(_f('execute_query ({})', kernel.id))
+        try:
+            conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.addr,
+                                                  loop=self.loop)
+            conn.transport.setsockopt(zmq.SNDHWM, 50)
+            request = Message()
+            request['action'] = AgentRequestTypes.EXECUTE
+            request['entry_id'] = '0'  # no longer used
+            request['kernel_id'] = kernel.id
+            request['cell_id'] = code_id
+            request['code'] = code
+            conn.write([request.encode()])
+            with _timeout(3):
+                resp_data = await asyncio.wait_for(conn.read(), timeout=3)
+        except asyncio.TimeoutError:
+            log.error('failed to execute code; TIMEOUT: agent did not respond.')
+            raise KernelExecutionFailedError('TIMEOUT', 'agent did not respond')
+        else:
+            response = Message.decode(resp_data[0])
+            if response['reply'] != SornaResponseTypes.SUCCESS:
+                err_name = SornaResponseTypes(response['reply']).name
+                err_cause = response['cause']
+                log.error(_f('failed to execute code; {}: {}',
+                             err_name, err_cause))
+                raise KernelExecutionFailedError(err_name, err_cause)
+        finally:
+            conn.close()
+        assert response['reply'] == SornaResponseTypes.SUCCESS
+        return response['result']
