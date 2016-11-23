@@ -35,7 +35,7 @@ async def create(request):
                  params['lang'], params['clientSessionToken']))
         assert 8 <= len(params['clientSessionToken']) <= 40
     except json.decoder.JSONDecodeError:
-        log.warn(_f('EXECUTE_QUERY: invalid request format'))
+        log.warn(_f('GET_OR_CREATE: invalid request format'))
         status = 400
         resp['type'] = 'https://api.sorna.io/probs/invalid-request-format'
         resp['title'] = 'The request body has an invalid format.'
@@ -122,7 +122,7 @@ async def get_info(request):
         resp['numQueriesExecuted'] = int(kern.num_queries)
         resp['idle']          = int(float(kern.idle) * 1000)
         resp['memoryUsed']    = int(kern.mem_max_bytes) // 1024
-        resp['cpuCreditUsed'] = int(kern.cpu_used)
+        resp['cpuCreditUsed'] = int(float(kern.cpu_used))
         log.info(_f('information retrieved: {!r}', resp))
         await request.app.registry.update_kernel(kern, {
             'num_queries': int(kern.num_queries) + 1,

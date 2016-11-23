@@ -197,15 +197,16 @@ class InstanceRegistry:
             stdin_port = None
             stdout_port = None
             instance = await self.get_instance(inst_id)
-            conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=instance.addr,
-                                                  loop=self.loop)
-            conn.transport.setsockopt(zmq.SNDHWM, 50)
-            request = Message()
-            request['action'] = AgentRequestTypes.CREATE_KERNEL
-            request['lang'] = lang
-            conn.write([request.encode()])
             try:
-                resp_data = await asyncio.wait_for(conn.read(), timeout=3)
+                request = Message()
+                request['action'] = AgentRequestTypes.CREATE_KERNEL
+                request['lang'] = lang
+                with _timeout(3):
+                    conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=instance.addr,
+                                                          loop=self.loop)
+                    conn.transport.setsockopt(zmq.SNDHWM, 50)
+                    conn.write([request.encode()])
+                    resp_data = await conn.read()
             except asyncio.TimeoutError:
                 log.error('failed to create kernel; TIMEOUT: agent did not respond.')
                 raise KernelCreationFailedError('TIMEOUT', 'agent did not respond')
@@ -248,15 +249,16 @@ class InstanceRegistry:
     async def destroy_kernel(self, kernel):
         log.info(_f('destroy_kernel ({})', kernel.id))
         async with self.lifecycle_lock:
-            conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.addr,
-                                                  loop=self.loop)
-            conn.transport.setsockopt(zmq.SNDHWM, 50)
-            request = Message()
-            request['action'] = AgentRequestTypes.DESTROY_KERNEL
-            request['kernel_id'] = kernel.id
-            conn.write([request.encode()])
             try:
-                resp_data = await asyncio.wait_for(conn.read(), timeout=3)
+                request = Message()
+                request['action'] = AgentRequestTypes.DESTROY_KERNEL
+                request['kernel_id'] = kernel.id
+                with _timeout(3):
+                    conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.addr,
+                                                          loop=self.loop)
+                    conn.transport.setsockopt(zmq.SNDHWM, 50)
+                    conn.write([request.encode()])
+                    resp_data = await conn.read()
             except asyncio.TimeoutError:
                 log.error('failed to destroy kernel; TIMEOUT: agent did not respond.')
                 raise KernelDestructionFailedError('TIMEOUT', 'agent did not respond')
@@ -284,18 +286,18 @@ class InstanceRegistry:
     async def execute_query(self, kernel, code_id, code):
         log.info(_f('execute_query ({})', kernel.id))
         try:
-            conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.addr,
-                                                  loop=self.loop)
-            conn.transport.setsockopt(zmq.SNDHWM, 50)
             request = Message()
             request['action'] = AgentRequestTypes.EXECUTE
             request['entry_id'] = '0'  # no longer used
             request['kernel_id'] = kernel.id
             request['cell_id'] = code_id
             request['code'] = code
-            conn.write([request.encode()])
             with _timeout(3):
-                resp_data = await asyncio.wait_for(conn.read(), timeout=3)
+                conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.addr,
+                                                      loop=self.loop)
+                conn.transport.setsockopt(zmq.SNDHWM, 50)
+                conn.write([request.encode()])
+                resp_data = await conn.read()
         except asyncio.TimeoutError:
             log.error('failed to execute code; TIMEOUT: agent did not respond.')
             raise KernelExecutionFailedError('TIMEOUT', 'agent did not respond')
