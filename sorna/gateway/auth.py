@@ -62,25 +62,26 @@ def check_date(request) -> bool:
     return True
 
 
-async def sign_request(sign_method, request, secret) -> str:
-    assert hasattr(request, 'date')
-    mac_type, hash_type = sign_method.split('-')
-    hash_type = hash_type.lower()
-    assert mac_type.lower() == 'hmac'
-    assert hash_type in hashlib.algorithms_guaranteed
+async def sign_request(sign_method, request, secret_key) -> str:
+    try:
+        assert hasattr(request, 'date')
+        mac_type, hash_type = map(lambda s: s.lower(), sign_method.split('-'))
+        assert mac_type == 'hmac'
+        assert hash_type in hashlib.algorithms_guaranteed
+    except (ValueError, AssertionError):
+        return None
+
     body = await request.read()
-
     body_hash = hashlib.new(hash_type, body).hexdigest()
-    sign_bytes = request.method.encode() + b'\n' \
-                 + request.path_qs.encode() + b'\n' \
-                 + request.date.isoformat().encode() + b'\n' \
-                 + b'host:' + request.host.encode() + b'\n' \
-                 + b'content-type:' + request.content_type.encode() + b'\n' \
-                 + b'x-sorna-version:' + request.headers['X-Sorna-Version'].encode() + b'\n' \
-                 + body_hash.encode()
+    sign_bytes = '{0}\n{1}\n{2}\nhost:{3}\ncontent-type:{4}\nx-sorna-version:{5}\n{6}'.format(
+        request.method, request.path_qs, request.date.isoformat(),
+        request.host, request.content_type, request.headers['X-Sorna-Version'],
+        body_hash
+    ).encode()
 
-    sign_key = hmac.new(secret.encode(),
-                        request.date.strftime('%Y%m%d').encode(), hash_type).digest()
+    sign_key = hmac.new(secret_key.encode(),
+                        request.date.strftime('%Y%m%d').encode(),
+                        hash_type).digest()
     sign_key = hmac.new(sign_key, request.host.encode(), hash_type).digest()
     return hmac.new(sign_key, sign_bytes, hash_type).hexdigest()
 
@@ -124,12 +125,12 @@ async def auth_middleware_factory(app, handler):
                     # TODO: add other info from row?
                 }
                 request.user = {
-                    'userid': row.id,
+                    'id': row.id,
                     'email': row.email,
                 }
         # No matter if authenticated or not, pass-through to the handler.
         # (if it's required, auth_required decorator will handle the situation.)
-        return await handler(request)
+        return (await handler(request))
     return auth_middleware_handler
 
 
@@ -144,10 +145,13 @@ def auth_required(handler):
 
 @auth_required
 async def authorize(request) -> web.Response:
-    req_data = json.loads(await request.text())
+    try:
+        params = json.loads(await request.text())
+    except json.decoder.JSONDecodeError:
+        raise web.HTTPBadRequest(text='Malformed request body.')
     resp_data = {'authorized': 'yes'}
-    if 'echo' in req_data:
-        resp_data['echo'] = req_data['echo']
+    if 'echo' in params:
+        resp_data['echo'] = params['echo']
     return web.json_response(resp_data)
 
 
