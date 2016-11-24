@@ -44,9 +44,11 @@ setup(
     packages=['sorna.manager', 'sorna.gateway', 'sorna.monitor'],
     namespace_packages=['sorna'],
 
-    install_requires=['ConfigArgParse', 'namedlist', 'coloredlogs',
-                      'pyzmq', 'aiozmq', 'aiohttp', 'aioredis', 'asyncpg',
-                      'python-dateutil', 'simplejson', 'uvloop'],
+    install_requires=['ConfigArgParse', 'coloredlogs',
+                      'pyzmq', 'aiozmq', 'aiohttp', 'aioredis',
+                      'namedlist', 'SQLAlchemy', 'asyncpg', 'asyncpgsa',
+                      'python-dateutil', 'simplejson', 'uvloop',
+                      'sorna-common'],
     extras_require={
         'dev': [],
         'test': ['pytest', 'pytest-mock'],
