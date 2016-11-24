@@ -78,6 +78,7 @@ KeyPair = sa.Table(
     sa.Column('created_at', sa.DateTime),
     sa.Column('last_used', sa.DateTime, nullable=True),
     sa.Column('concurrency_limit', sa.Integer),
+    sa.Column('rate_limit', sa.Integer),
     sa.Column('total_num_queries', sa.Integer, server_default='0'),
     sa.Column('num_queries', sa.Integer, server_default='0'),  # reset every month
     # Below quotas are reset the first day of every month.
@@ -198,6 +199,7 @@ if __name__ == '__main__':
                     secret_key='wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
                     created_at=datetime.utcnow(),
                     concurrency_limit=2,
+                    rate_limit=1000,
                     # Sample free tier: 500 launches per day x 30 days per month
                     remaining_cpu=180000 * 500 * 30,   # msec (180 sec per launch)
                     remaining_mem=1048576 * 500 * 30,  # KBytes (1GB per launch)

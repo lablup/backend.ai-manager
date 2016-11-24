@@ -10,18 +10,19 @@ import zmq, aiozmq
 import aioredis
 from async_timeout import timeout as _timeout
 
-from sorna.defs import SORNA_KERNEL_DB, SORNA_INSTANCE_DB, SORNA_SESSION_DB
+from sorna.defs import SORNA_KERNEL_DB, SORNA_INSTANCE_DB, \
+                       SORNA_SESSION_DB
 from sorna.utils import dict2kvlist
 from sorna.exceptions import \
-    InstanceNotAvailableError, \
-    InstanceNotFoundError, KernelNotFoundError, \
-    KernelCreationFailedError, KernelDestructionFailedError, \
-    KernelExecutionFailedError
+    InstanceNotAvailable, \
+    InstanceNotFound, KernelNotFound, \
+    KernelCreationFailed, KernelDestructionFailed, \
+    KernelExecutionFailed
 from sorna.proto import Message
 from sorna.proto.msgtypes import AgentRequestTypes, SornaResponseTypes
 from .structs import Instance, Kernel
 
-__all__ = ['InstanceRegistry', 'InstanceNotFoundError']
+__all__ = ['InstanceRegistry', 'InstanceNotFound']
 
 # A shortcut for str.format
 _f = lambda fmt, *args, **kwargs: fmt.format(*args, **kwargs)
@@ -66,11 +67,12 @@ class InstanceRegistry:
     policy, such as the limitation of maximum number of kernels per instance.
     '''
 
-    def __init__(self, redis_addr, kernel_timeout=600, loop=None):
+    def __init__(self, redis_addr, loop=None):
         self.loop = loop if loop is not None else asyncio.get_event_loop()
         self.redis_addr = redis_addr
-        self.kernel_timeout = kernel_timeout
+        self.redis_kern = None
         self.redis_inst = None
+        self.redis_sess = None
         self.lifecycle_lock = asyncio.Lock()
 
     async def init(self):
@@ -104,7 +106,7 @@ class InstanceRegistry:
         async with self.redis_inst.get() as ri:
             fields = await ri.hgetall(inst_id)
             if not fields:
-                raise InstanceNotFoundError(inst_id)
+                raise InstanceNotFound(inst_id)
             return Instance(**fields)
 
     async def get_kernel(self, kern_id):
@@ -116,15 +118,15 @@ class InstanceRegistry:
                     async with self.redis_inst.get() as ri:
                         kern_set_key = fields['instance'] + '.kernels'
                         if not (await ri.sismember(kern_set_key, kern_id)):
-                            raise KernelNotFoundError(kern_id)
+                            raise KernelNotFound(kern_id)
                         if not (await ri.exists(fields['instance'])):
-                            raise KernelNotFoundError(kern_id)
+                            raise KernelNotFound(kern_id)
                         return Kernel(**fields)
-                except KernelNotFoundError:
+                except KernelNotFound:
                     await rk.delete(kern_id)
                     raise
             else:
-                raise KernelNotFoundError(kern_id)
+                raise KernelNotFound(kern_id)
 
     async def get_kernel_from_session(self, client_sess_token, lang):
         async with self.redis_sess.get() as rs:
@@ -133,13 +135,13 @@ class InstanceRegistry:
             if kern_id:
                 return (await self.get_kernel(kern_id))
             else:
-                raise KernelNotFoundError()
+                raise KernelNotFound()
 
     async def get_or_create_kernel(self, client_sess_token, lang, spec=None):
         async with self.lifecycle_lock:
             try:
                 kern = await self.get_kernel_from_session(client_sess_token, lang)
-            except KernelNotFoundError:
+            except KernelNotFound:
                 # Create a new kernel.
                 async with self.redis_sess.get() as rs:
                     _, kern = await self.create_kernel(lang, spec)
@@ -188,7 +190,7 @@ class InstanceRegistry:
                 if not found_available:
                     # TODO: automatically add instances to some extent
                     log.error('instance not available.')
-                    raise InstanceNotAvailableError('Could not find available instance.')
+                    raise InstanceNotAvailable('Could not find available instance.')
             assert inst_id is not None
 
             # Create kernel by invoking the agent on the instance.
@@ -209,7 +211,7 @@ class InstanceRegistry:
                     resp_data = await conn.read()
             except asyncio.TimeoutError:
                 log.error('failed to create kernel; TIMEOUT: agent did not respond.')
-                raise KernelCreationFailedError('TIMEOUT', 'agent did not respond')
+                raise KernelCreationFailed('TIMEOUT', 'agent did not respond')
             else:
                 response = Message.decode(resp_data[0])
                 if response['reply'] == SornaResponseTypes.SUCCESS:
@@ -221,7 +223,7 @@ class InstanceRegistry:
                     err_cause = response['cause']
                     log.error(_f('failed to create kernel; {}: {}',
                                  err_name, err_cause))
-                    raise KernelCreationFailedError(err_name, err_cause)
+                    raise KernelCreationFailed(err_name, err_cause)
             finally:
                 conn.close()
             assert kern_id is not None
@@ -261,7 +263,7 @@ class InstanceRegistry:
                     resp_data = await conn.read()
             except asyncio.TimeoutError:
                 log.error('failed to destroy kernel; TIMEOUT: agent did not respond.')
-                raise KernelDestructionFailedError('TIMEOUT', 'agent did not respond')
+                raise KernelDestructionFailed('TIMEOUT', 'agent did not respond')
             else:
                 response = Message.decode(resp_data[0])
                 if response['reply'] != SornaResponseTypes.SUCCESS:
@@ -269,7 +271,7 @@ class InstanceRegistry:
                     err_cause = response['cause']
                     log.error(_f('failed to destroy kernel; {}: {}',
                                  err_name, err_cause))
-                    raise KernelDestructionFailedError(err_name, err_cause)
+                    raise KernelDestructionFailed(err_name, err_cause)
             finally:
                 conn.close()
             assert response['reply'] == SornaResponseTypes.SUCCESS
@@ -300,7 +302,7 @@ class InstanceRegistry:
                 resp_data = await conn.read()
         except asyncio.TimeoutError:
             log.error('failed to execute code; TIMEOUT: agent did not respond.')
-            raise KernelExecutionFailedError('TIMEOUT', 'agent did not respond')
+            raise KernelExecutionFailed('TIMEOUT', 'agent did not respond')
         else:
             response = Message.decode(resp_data[0])
             if response['reply'] != SornaResponseTypes.SUCCESS:
@@ -308,7 +310,7 @@ class InstanceRegistry:
                 err_cause = response['cause']
                 log.error(_f('failed to execute code; {}: {}',
                              err_name, err_cause))
-                raise KernelExecutionFailedError(err_name, err_cause)
+                raise KernelExecutionFailed(err_name, err_cause)
         finally:
             conn.close()
         assert response['reply'] == SornaResponseTypes.SUCCESS

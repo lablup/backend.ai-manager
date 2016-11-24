@@ -9,6 +9,7 @@ from dateutil.parser import parse as dtparse
 import simplejson as json
 import sqlalchemy as sa
 
+from sorna.exceptions import InvalidAuthParameters, AuthorizationFailed
 from .models import User, KeyPair
 
 log = logging.getLogger('sorna.gateway.auth')
@@ -95,7 +96,7 @@ async def auth_middleware_factory(app, handler):
         request.keypair = None
         request.user = None
         if not check_date(request):
-            raise web.HTTPBadRequest(text='Missing datetime or datetime mismatch.')
+            raise InvalidAuthParameters
         params = _extract_auth_params(request)
         if params:
             sign_method, access_key, signature = params
@@ -107,10 +108,10 @@ async def auth_middleware_factory(app, handler):
                           .where(KeyPair.c.access_key == access_key)
                 row = await conn.fetchrow(query)
                 if row is None:
-                    raise web.HTTPUnauthorized(text='Credential/signature mismatch.')
+                    raise AuthorizationFailed
             my_signature = await sign_request(sign_method, request, row.secret_key)
             if not my_signature:
-                raise web.HTTPBadRequest(text='Missing or invalid signature params.')
+                raise InvalidAuthParameters
             if my_signature == signature:
                 query = KeyPair.update() \
                                .values(last_used=datetime.utcnow(),
@@ -123,6 +124,7 @@ async def auth_middleware_factory(app, handler):
                     'access_key': access_key,
                     'secret_key': row.secret_key,
                     'concurrency_limit': row.concurrency_limit,
+                    'rate_limit': row.rate_limit,
                     'remaining_cpu': row.remaining_cpu,
                     'remaining_mem': row.remaining_mem,
                     'remaining_io': row.remaining_io,
@@ -143,7 +145,7 @@ def auth_required(handler):
     async def wrapped(request):
         if request.is_authorized:
             return (await handler(request))
-        raise web.HTTPUnauthorized(text='Credential/signature mismatch.')
+        raise AuthorizationFailed
     return wrapped
 
 
@@ -152,7 +154,7 @@ async def authorize(request) -> web.Response:
     try:
         params = json.loads(await request.text())
     except json.decoder.JSONDecodeError:
-        raise web.HTTPBadRequest(text='Malformed request body.')
+        raise InvalidAuthParameters
     resp_data = {'authorized': 'yes'}
     if 'echo' in params:
         resp_data['echo'] = params['echo']

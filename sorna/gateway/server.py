@@ -18,6 +18,7 @@ from sorna.argparse import ipaddr, path, port_no
 from .auth import init as auth_init, shutdown as auth_shutdown
 from .config import load_config, init_logger
 from .kernel import init as kernel_init, shutdown as kernel_shutdown
+from .ratelimit import init as rlim_init, shutdown as rlim_shutdown
 
 LATEST_API_VERSION = 'v1.20160915'
 
@@ -90,6 +91,7 @@ def main():
     async def init_apps():
         await gw_init(app)
         await auth_init(app)
+        await rlim_init(app)
         await kernel_init(app)
 
     loop.run_until_complete(init_apps())
@@ -125,6 +127,7 @@ def main():
             await server.wait_closed()
 
             await kernel_shutdown(app)
+            await rlim_shutdown(app)
             await auth_shutdown(app)
             await gw_shutdown(app)
 

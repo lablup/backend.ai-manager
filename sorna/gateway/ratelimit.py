@@ -1,0 +1,63 @@
+import logging
+import time
+
+import aioredis
+import simplejson as json
+
+from sorna.defs import SORNA_RLIM_DB
+from sorna.exceptions import RateLimitExceeded
+from sorna.utils import dict2kvlist
+
+log = logging.getLogger('sorna.gateway.ratelimit')
+
+
+async def rlim_middleware_factory(app, handler):
+    async def rlim_middleware_handler(request):
+        # TODO: use a global timer if we scale out the gateway.
+        now = time.monotonic()
+        if request.is_authorized:
+            rate_limit = request.keypair['rate_limit']
+            access_key = request.keypair['access_key']
+            async with app.redis_rlim.get() as rr:
+                tracker = await rr.hgetall(access_key)
+                if not tracker or float(tracker['rlim_reset']) <= now:
+                    # create a new tracker info
+                    tracker = {
+                        'rlim_limit': rate_limit,
+                        'rlim_remaining': rate_limit,
+                        'rlim_reset': now + (60.0 * 15),
+                    }
+                else:
+                    tracker = {
+                        'rlim_limit': rate_limit,
+                        'rlim_remaining': int(tracker['rlim_remaining']) - 1,
+                        'rlim_reset': float(tracker['rlim_reset']),
+                    }
+                await rr.hmset(access_key, *dict2kvlist(tracker))
+                if tracker['rlim_remaining'] <= 0:
+                    raise RateLimitExceeded
+            count_remaining = tracker['rlim_remaining']
+            window_remaining = int((tracker['rlim_reset'] - now) * 1000)
+            response = await handler(request)
+            response.headers['X-RateLimit-Limit'] = str(rate_limit)
+            response.headers['X-RateLimit-Remaining'] = str(count_remaining)
+            response.headers['X-RateLimit-Reset'] = str(window_remaining)
+            return response
+        else:
+            # No checks for rate limiting for non-authorized queries.
+            return (await handler(request))
+    return rlim_middleware_handler
+
+
+async def init(app):
+    app.redis_rlim = await aioredis.create_pool(app.config.redis_addr,
+                                                encoding='utf8',
+                                                db=SORNA_RLIM_DB)
+    app.middlewares.append(rlim_middleware_factory)
+
+
+async def shutdown(app):
+    async with app.redis_rlim.get() as rr:
+        await rr.flushdb()
+    app.redis_rlim.close()
+    await app.redis_rlim.wait_closed()

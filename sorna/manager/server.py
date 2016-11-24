@@ -20,9 +20,9 @@ import uvloop
 from sorna import defs
 from sorna.argparse import port_no
 from sorna.exceptions import \
-    InstanceNotAvailableError, \
-    KernelCreationFailedError, KernelDestructionFailedError, \
-    KernelNotFoundError, QuotaExceededError
+    InstanceNotAvailable, \
+    KernelCreationFailed, KernelDestructionFailed, \
+    KernelNotFound, QuotaExceeded
 from sorna.proto import Message
 from sorna.utils import AsyncBarrier, get_instance_ip
 from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
@@ -114,15 +114,15 @@ async def handle_api(loop, term_ev, term_barrier, server, registry):
                         resp['stdout_addr'] = 'tcp://{}:{}' \
                                               .format(kernel_ip,
                                                       kernel.stdout_port)
-                except InstanceNotAvailableError:
+                except InstanceNotAvailable:
                     log.error(_r('instance not available', request_id))
                     resp['reply'] = SornaResponseTypes.FAILURE
                     resp['cause'] = 'There is no available instance.'
-                except KernelCreationFailedError:
+                except KernelCreationFailed:
                     log.error(_r('kernel creation failed', request_id))
                     resp['reply'] = SornaResponseTypes.FAILURE
                     resp['cause'] = 'Kernel creation failed. Try again later.'
-                except QuotaExceededError:
+                except QuotaExceeded:
                     # currently unused. reserved for future per-user quota impl.
                     log.error(_r('quota exceeded', request_id))
                     resp['reply'] = SornaResponseTypes.FAILURE
@@ -142,11 +142,11 @@ async def handle_api(loop, term_ev, term_barrier, server, registry):
                     await registry.destroy_kernel(req['kernel_id'])
                     log.info(_r('destroyed successfully.', request_id))
                     resp['reply'] = SornaResponseTypes.SUCCESS
-                except KernelNotFoundError:
+                except KernelNotFound:
                     log.error(_r('kernel not found.', request_id))
                     resp['reply'] = SornaResponseTypes.INVALID_INPUT
                     resp['cause'] = 'No such kernel.'
-                except KernelDestructionFailedError:
+                except KernelDestructionFailed:
                     log.error(_r('kernel not found.', request_id))
                     resp['reply'] = SornaResponseTypes.INVALID_INPUT
                     resp['cause']  = 'No such kernel.'
@@ -197,7 +197,7 @@ async def handle_notifications(loop, term_ev, term_barrier, registry):
                 if kern_ids:
                     await redis.delete(*kern_ids)
                 # Session entries will become stale, but accessing it will raise
-                # KernelNotFoundError and the registry will create a new kernel
+                # KernelNotFound and the registry will create a new kernel
                 # afterwards via get_or_create_kernel().
     await redis_sub.unsubscribe(chprefix)
     redis_sub.close()
