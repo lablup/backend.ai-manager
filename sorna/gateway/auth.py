@@ -74,7 +74,7 @@ async def sign_request(sign_method, request, secret_key) -> str:
     body = await request.read()
     body_hash = hashlib.new(hash_type, body).hexdigest()
     sign_bytes = '{0}\n{1}\n{2}\nhost:{3}\ncontent-type:{4}\nx-sorna-version:{5}\n{6}'.format(
-        request.method, request.path_qs, request.date.isoformat(),
+        request.method, str(request.rel_url), request.date.isoformat(),
         request.host, request.content_type, request.headers['X-Sorna-Version'],
         body_hash
     ).encode()
