@@ -17,12 +17,11 @@ from sorna.exceptions import InvalidAPIParameters, QueryNotImplemented, SornaErr
 from .auth import auth_required
 from ..manager.registry import InstanceRegistry
 
-
-log = logging.getLogger('sorna.gateway.server')
-
 # Shortcuts for str.format (TODO: replace with Python 3.6 f-string literals)
 _f = lambda fmt, *args, **kwargs: fmt.format(*args, **kwargs)
 _json_type = 'application/json'
+
+log = logging.getLogger('sorna.gateway.server')
 
 
 @auth_required
@@ -100,8 +99,11 @@ async def restart(request):
     kernel_id = request.match_info['kernel_id']
     log.info(_f('RESTART (k:{})', kernel_id))
     try:
+        kern = await request.app.registry.get_kernel(kernel_id)
         await request.app.registry.restart_kernel(kernel_id)
-        log.info(_f('destroyed successfully.'))
+        await request.app.registry.update_kernel(kernel_id, {
+            'num_queries': int(kern.num_queries) + 1,
+        })
     except SornaError:
         log.exception('RESTART: API Internal Error')
         raise

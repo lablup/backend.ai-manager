@@ -28,7 +28,7 @@ _f = lambda fmt, *args, **kwargs: fmt.format(*args, **kwargs)
 _r = lambda fmt, reg_id, *args, **kwargs: \
     'registry[{}]: '.format(reg_id) + fmt.format(*args, **kwargs)
 
-log = logging.getLogger(__name__)
+log = logging.getLogger('sorna.manager.registry')
 
 
 def auto_get_kernel(func):
