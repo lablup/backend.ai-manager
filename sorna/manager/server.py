@@ -10,6 +10,7 @@ import asyncio
 import ipaddress
 import logging
 import signal
+import sys
 from urllib.parse import urlsplit
 
 import zmq, aiozmq
@@ -224,7 +225,10 @@ def main():
     init_logger(config)
 
     def handle_signal(loop, term_ev):
-        if not term_ev.is_set():
+        if term_ev.is_set():
+            log.warning('Forced shutdown!')
+            sys.exit(1)
+        else:
             term_ev.set()
             loop.stop()
 

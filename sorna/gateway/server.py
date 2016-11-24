@@ -7,6 +7,7 @@ from ipaddress import ip_address
 import logging
 import signal
 import ssl
+import sys
 
 import aiohttp
 from aiohttp import web
@@ -94,7 +95,10 @@ def main():
     loop.run_until_complete(init_apps())
 
     def handle_signal(loop, term_ev):
-        if not term_ev.is_set():
+        if term_ev.is_set():
+            log.warning('Forced shutdown!')
+            sys.exit(1)
+        else:
             term_ev.set()
             loop.stop()
 
