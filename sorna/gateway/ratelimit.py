@@ -1,3 +1,4 @@
+from decimal import Decimal
 import logging
 import time
 
@@ -10,34 +11,41 @@ from sorna.utils import dict2kvlist
 
 log = logging.getLogger('sorna.gateway.ratelimit')
 
+_time_prec = Decimal('1e-3')  # msec
+_rlim_window = 60 * 15        # 15 minutes
+
 
 async def rlim_middleware_factory(app, handler):
     async def rlim_middleware_handler(request):
         # TODO: use a global timer if we scale out the gateway.
-        now = time.monotonic()
+        now = Decimal(time.monotonic()).quantize(_time_prec)
         if request.is_authorized:
             rate_limit = request.keypair['rate_limit']
             access_key = request.keypair['access_key']
+            rlim_next_reset = now + _rlim_window
             async with app.redis_rlim.get() as rr:
                 tracker = await rr.hgetall(access_key)
-                if not tracker or float(tracker['rlim_reset']) <= now:
+                if tracker:
+                    rlim_reset = Decimal(tracker['rlim_reset'])
+                if not tracker or rlim_reset <= now:
                     # create a new tracker info
                     tracker = {
                         'rlim_limit': rate_limit,
                         'rlim_remaining': rate_limit,
-                        'rlim_reset': now + (60.0 * 15),
+                        'rlim_reset': str(rlim_next_reset),
                     }
                 else:
                     tracker = {
                         'rlim_limit': rate_limit,
                         'rlim_remaining': int(tracker['rlim_remaining']) - 1,
-                        'rlim_reset': float(tracker['rlim_reset']),
+                        'rlim_reset': tracker['rlim_reset'],  # copy
                     }
                 await rr.hmset(access_key, *dict2kvlist(tracker))
-                if tracker['rlim_remaining'] <= 0:
-                    raise RateLimitExceeded
+            if tracker['rlim_remaining'] <= 0:
+                raise RateLimitExceeded
+            rlim_reset = Decimal(tracker['rlim_reset'])
             count_remaining = tracker['rlim_remaining']
-            window_remaining = int((tracker['rlim_reset'] - now) * 1000)
+            window_remaining = int((rlim_reset - now) * 1000)
             response = await handler(request)
             response.headers['X-RateLimit-Limit'] = str(rate_limit)
             response.headers['X-RateLimit-Remaining'] = str(count_remaining)
@@ -45,7 +53,11 @@ async def rlim_middleware_factory(app, handler):
             return response
         else:
             # No checks for rate limiting for non-authorized queries.
-            return (await handler(request))
+            response = await handler(request)
+            response.headers['X-RateLimit-Limit'] = '1000'
+            response.headers['X-RateLimit-Remaining'] = '1000'
+            response.headers['X-RateLimit-Reset'] = str(_rlim_window * 1000)
+            return response
     return rlim_middleware_handler
 
 
