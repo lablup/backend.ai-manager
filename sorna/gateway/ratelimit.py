@@ -3,7 +3,6 @@ import logging
 import time
 
 import aioredis
-import simplejson as json
 
 from sorna.defs import SORNA_RLIM_DB
 from sorna.exceptions import RateLimitExceeded
