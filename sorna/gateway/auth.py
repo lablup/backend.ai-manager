@@ -122,7 +122,11 @@ async def auth_middleware_factory(app, handler):
                 request.keypair = {
                     'access_key': access_key,
                     'secret_key': row.secret_key,
-                    # TODO: add other info from row?
+                    'concurrency_limit': row.concurrency_limit,
+                    'remaining_cpu': row.remaining_cpu,
+                    'remaining_mem': row.remaining_mem,
+                    'remaining_io': row.remaining_io,
+                    'remaining_net': row.remaining_net,
                 }
                 request.user = {
                     'id': row.id,

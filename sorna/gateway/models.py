@@ -14,7 +14,7 @@ from .config import load_config, init_logger
 log = logging.getLogger('sorna.gateway.models')
 metadata = sa.MetaData()
 
-default_user_email = 'x-zmq-user@sorna.io'
+test_user_email = 'testion@sorna.io'
 
 
 class CurrencyTypes(enum.Enum):
@@ -77,14 +77,14 @@ KeyPair = sa.Table(
     sa.Column('belongs_to', sa.ForeignKey('users.id')),
     sa.Column('created_at', sa.DateTime),
     sa.Column('last_used', sa.DateTime, nullable=True),
+    sa.Column('concurrency_limit', sa.Integer),
     sa.Column('total_num_queries', sa.Integer, server_default='0'),
     sa.Column('num_queries', sa.Integer, server_default='0'),  # reset every month
-    # Below limits are per-month.
-    # NOTE: per-day calculation upon creation of a new key?
-    sa.Column('cpu_limit', sa.Integer),
-    sa.Column('mem_limit', sa.Integer),
-    sa.Column('io_limit', sa.Integer),
-    sa.Column('net_limit', sa.Integer),
+    # Below quotas are reset the first day of every month.
+    sa.Column('remaining_cpu', sa.Integer),  # msec
+    sa.Column('remaining_mem', sa.Integer),  # KBytes
+    sa.Column('remaining_io', sa.Integer),   # KBytes
+    sa.Column('remaining_net', sa.Integer),  # KBytes
     # NOTE: API rate-limiting is done using Redis, not DB.
 )
 
@@ -180,14 +180,14 @@ if __name__ == '__main__':
         log.info('Populating fixtures...')
         async with pool.acquire() as conn:
             default_user_cnt = await conn.fetchval(
-                User.count(User.c.email == default_user_email),
+                User.count(User.c.email == test_user_email),
                 column=0)
             if default_user_cnt == 0:
                 log.info('Creating the default legacy ZMQ API user')
                 uid = uuid.uuid4()
                 await conn.execute(User.insert().values(
                     id=uid,
-                    email=default_user_email,
+                    email=test_user_email,
                     password='x-unused',
                     created_at=datetime.utcnow(),
                 ))
@@ -197,12 +197,12 @@ if __name__ == '__main__':
                     access_key='AKIAIOSFODNN7EXAMPLE',
                     secret_key='wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
                     created_at=datetime.utcnow(),
-                    # since this is a locally-served legacy user,
-                    # we set all limits infinte.
-                    cpu_limit=-1,
-                    mem_limit=-1,
-                    io_limit=-1,
-                    net_limit=-1,
+                    concurrency_limit=2,
+                    # Sample free tier: 500 launches per day x 30 days per month
+                    remaining_cpu=180000 * 500 * 30,   # msec (180 sec per launch)
+                    remaining_mem=1048576 * 500 * 30,  # KBytes (1GB per launch)
+                    remaining_io=102400 * 500 * 30,    # KBytes (100MB per launch)
+                    remaining_net=102400 * 500 * 30,   # KBytes (100MB per launch)
                 ))
 
     async def init_db(config):
