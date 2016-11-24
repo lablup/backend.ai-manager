@@ -11,4 +11,4 @@ asyncpgsa>=0.7
 python-dateutil>=2.5
 simplejson
 uvloop>=0.5.4
-sorna-common>=0.5
+sorna-common>=0.7,<0.8
