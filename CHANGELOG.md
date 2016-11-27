@@ -1,6 +1,14 @@
 Changes
 =======
 
+0.7.2 (2016-11-27)
+-----------------
+
+**CHANGES**
+
+ - When launching a new kernel, it now chooses the least loaded agent instead of
+   the first-found agent with free kernel slots.
+
 0.7.0 (2016-11-25)
 ------------------
 
