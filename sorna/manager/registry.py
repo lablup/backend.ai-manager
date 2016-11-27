@@ -1,10 +1,9 @@
-#! /usr/bin/env python3
-
 import asyncio
 from datetime import datetime
 from dateutil.tz import tzutc
 import functools
 import logging
+import operator
 
 import zmq, aiozmq
 import aioredis
@@ -174,21 +173,23 @@ class InstanceRegistry:
                             await ri.hincrby(inst_id, 'num_kernels', 1)
                             found_available = True
                 else:
+                    # Scan all agent instances with free kernel slots.
+                    inst_loads = []
                     async for inst_id in ri.iscan(match='i-*'):
                         if inst_id.endswith('.kernels'):
                             continue
                         max_kernels = int(await ri.hget(inst_id, 'max_kernels'))
                         num_kernels = int(await ri.hget(inst_id, 'num_kernels'))
                         if num_kernels < max_kernels:
-                            await ri.hincrby(inst_id, 'num_kernels', 1)
-                            # This will temporarily increase num_kernels,
-                            # and it will be "fixed" by the agent when it sends
-                            # the next heartbeat.
-                            found_available = True
-                            break
-                if not found_available:
-                    # TODO: automatically add instances to some extent
-                    raise InstanceNotAvailable
+                            inst_loads.append((inst_id, num_kernels))
+                    if inst_loads:
+                        # Choose a least-loaded agent instance.
+                        inst_id = min(inst_loads, key=operator.itemgetter(1))[0]
+                        await ri.hincrby(inst_id, 'num_kernels', 1)
+                        found_available = True
+
+            if not found_available:
+                raise InstanceNotAvailable
             assert inst_id is not None
 
             # Create kernel by invoking the agent on the instance.
