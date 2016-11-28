@@ -174,8 +174,11 @@ class InstanceRegistry:
                             found_available = True
                 else:
                     # Scan all agent instances with free kernel slots.
+                    # We scan shadow keys first to check only alive instances,
+                    # and then fetch details from normal keys.
                     inst_loads = []
-                    async for inst_id in ri.iscan(match='i-*'):
+                    async for shadow_id in ri.iscan(match='shadow:i-*'):
+                        inst_id = shadow_id[7:]  # strip "shadow:" prefix
                         if inst_id.endswith('.kernels'):
                             continue
                         max_kernels = int(await ri.hget(inst_id, 'max_kernels'))
