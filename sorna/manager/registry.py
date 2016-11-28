@@ -114,10 +114,10 @@ class InstanceRegistry:
                 # Check if stale.
                 try:
                     async with self.redis_inst.get() as ri:
+                        if not (await ri.exists('shadow:' + fields['instance'])):
+                            raise KernelNotFound
                         kern_set_key = fields['instance'] + '.kernels'
                         if not (await ri.sismember(kern_set_key, kern_id)):
-                            raise KernelNotFound
-                        if not (await ri.exists(fields['instance'])):
                             raise KernelNotFound
                         return Kernel(**fields)
                 except KernelNotFound:
