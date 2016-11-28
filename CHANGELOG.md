@@ -9,6 +9,11 @@ Changes
  - When launching a new kernel, it now chooses the least loaded agent instead of
    the first-found agent with free kernel slots.
 
+0.7.1 (2016-11-25)
+------------------
+
+Hot-fix to add missing dependencies in requirements.txt and setup.py
+
 0.7.0 (2016-11-25)
 ------------------
 
