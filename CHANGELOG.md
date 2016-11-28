@@ -1,6 +1,15 @@
 Changes
 =======
 
+0.7.3 (2016-11-28)
+------------------
+
+**CHANGES**
+
+ - When launching a new kernel and accessing to an existing kernel, it scans
+   only "currently alive" instances by checking shadow keys that automatically
+   expires.  This makes the Sorna service sustainable with abrupt agent failures.
+
 0.7.2 (2016-11-27)
 -----------------
 
