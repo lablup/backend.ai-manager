@@ -191,7 +191,7 @@ class InstanceRegistry:
                     inst_loads = []
                     async for shadow_id in ri.iscan(match='shadow:i-*'):
                         inst_id = shadow_id[7:]  # strip "shadow:" prefix
-                        if inst_id.endswith('.kernels'):
+                        if inst_id.endswith('.kernels') or inst_id == 'i-indominus':
                             continue
                         max_kernels = int(await ri.hget(inst_id, 'max_kernels'))
                         num_kernels = int(await ri.hget(inst_id, 'num_kernels'))
