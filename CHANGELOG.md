@@ -1,6 +1,23 @@
 Changes
 =======
 
+0.7.4 (2016-11-29)
+------------------
+
+**FIXES**
+
+ - Legacy ZMQ interface: Revived a missing language parameter in legacy
+   client-side session token generation.
+   This has broken CodeOnWeb's PRACTICE page.
+
+ - Gateway: Increased timeouts when interacting with agents.
+   In particular, code execution timeouts must be longer than kernel execution
+   timeouts.
+
+ - Gateway: Added a missing transaction context during authorization.
+   This has caused "another operation in progress" errors with concurrent API
+   requests within a very short period of time (under a few tens of msec).
+
 0.7.3 (2016-11-28)
 ------------------
 
