@@ -56,6 +56,17 @@ def _s(obj):
     return str(obj)
 
 
+class DummyLock:
+
+    locked = True
+
+    async def __aenter__(self):
+        pass
+
+    async def __aexit__(self, exc_type, exc_val, tb):
+        pass
+
+
 class InstanceRegistry:
     '''
     Provide a high-level API to create, destroy, and query the computation
@@ -71,7 +82,8 @@ class InstanceRegistry:
         self.redis_kern = None
         self.redis_inst = None
         self.redis_sess = None
-        self.lifecycle_lock = asyncio.Lock()
+        #self.lifecycle_lock = asyncio.Lock()
+        self.lifecycle_lock = DummyLock()
 
     async def init(self):
         self.redis_kern = await aioredis.create_pool(self.redis_addr,
@@ -205,7 +217,7 @@ class InstanceRegistry:
                 request = Message()
                 request['action'] = AgentRequestTypes.CREATE_KERNEL
                 request['lang'] = lang
-                with _timeout(3):
+                with _timeout(10):
                     conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=instance.addr,
                                                           loop=self.loop)
                     conn.transport.setsockopt(zmq.SNDHWM, 50)
@@ -256,7 +268,7 @@ class InstanceRegistry:
                 request = Message()
                 request['action'] = AgentRequestTypes.DESTROY_KERNEL
                 request['kernel_id'] = kernel.id
-                with _timeout(3):
+                with _timeout(10):
                     conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.addr,
                                                           loop=self.loop)
                     conn.transport.setsockopt(zmq.SNDHWM, 50)
@@ -286,7 +298,7 @@ class InstanceRegistry:
                 request = Message()
                 request['action'] = AgentRequestTypes.RESTART_KERNEL
                 request['kernel_id'] = kernel.id
-                with _timeout(3):
+                with _timeout(10):
                     conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.addr,
                                                           loop=self.loop)
                     conn.transport.setsockopt(zmq.SNDHWM, 50)
@@ -322,7 +334,7 @@ class InstanceRegistry:
             request['kernel_id'] = kernel.id
             request['cell_id'] = code_id
             request['code'] = code
-            with _timeout(3):
+            with _timeout(200):  # must be longer than kernel exec_timeout
                 conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.addr,
                                                       loop=self.loop)
                 conn.transport.setsockopt(zmq.SNDHWM, 50)
