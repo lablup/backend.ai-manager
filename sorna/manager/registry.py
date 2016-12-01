@@ -5,7 +5,7 @@ import functools
 import logging
 import operator
 
-import zmq, aiozmq
+import aiozmq, aiozmq.rpc
 import aioredis
 from async_timeout import timeout as _timeout
 
@@ -16,8 +16,6 @@ from sorna.exceptions import \
     InstanceNotAvailable, InstanceNotFound, KernelNotFound, \
     KernelCreationFailed, KernelDestructionFailed, \
     KernelExecutionFailed, KernelRestartFailed
-from sorna.proto import Message
-from sorna.proto.msgtypes import AgentRequestTypes, SornaResponseTypes
 from .structs import Instance, Kernel
 
 __all__ = ['InstanceRegistry', 'InstanceNotFound']
@@ -82,8 +80,7 @@ class InstanceRegistry:
         self.redis_kern = None
         self.redis_inst = None
         self.redis_sess = None
-        #self.lifecycle_lock = asyncio.Lock()
-        self.lifecycle_lock = DummyLock()
+        self.lifecycle_lock = asyncio.Lock()
 
     async def init(self):
         self.redis_kern = await aioredis.create_pool(self.redis_addr,
@@ -126,10 +123,15 @@ class InstanceRegistry:
                 # Check if stale.
                 try:
                     async with self.redis_inst.get() as ri:
+                        if 'instance' not in fields:
+                            # Received last heartbeats but the agent has restarted meanwhile.
+                            raise KernelNotFound
                         if not (await ri.exists('shadow:' + fields['instance'])):
+                            # The agent heartbeat is timed out.
                             raise KernelNotFound
                         kern_set_key = fields['instance'] + '.kernels'
                         if not (await ri.sismember(kern_set_key, kern_id)):
+                            # The agent is running but it has no such kernel.
                             raise KernelNotFound
                         return Kernel(**fields)
                 except KernelNotFound:
@@ -148,15 +150,14 @@ class InstanceRegistry:
                 raise KernelNotFound
 
     async def get_or_create_kernel(self, client_sess_token, lang, spec=None):
-        async with self.lifecycle_lock:
-            try:
-                kern = await self.get_kernel_from_session(client_sess_token, lang)
-            except KernelNotFound:
-                # Create a new kernel.
-                async with self.redis_sess.get() as rs:
-                    _, kern = await self.create_kernel(lang, spec)
-                    sess_key = '{0}:{1}'.format(client_sess_token, lang)
-                    await rs.set(sess_key, kern.id)
+        try:
+            kern = await self.get_kernel_from_session(client_sess_token, lang)
+        except KernelNotFound:
+            # Create a new kernel.
+            async with self.redis_sess.get() as rs:
+                _, kern = await self.create_kernel(lang, spec)
+                sess_key = '{0}:{1}'.format(client_sess_token, lang)
+                await rs.set(sess_key, kern.id)
         assert kern is not None
         return kern
 
@@ -166,11 +167,9 @@ class InstanceRegistry:
         }
         if spec:
             _spec.update(spec)
-        if not self.lifecycle_lock.locked:
-            await self.lifecycle_lock
-        else:
             log.info(_f('create_kernel with spec: {!r}', _spec))
 
+        async with self.lifecycle_lock:
             # Find available instance.
             inst_id = None
             async with self.redis_inst.get() as ri:
@@ -182,7 +181,6 @@ class InstanceRegistry:
                         max_kernels = int(await ri.hget(inst_id, 'max_kernels'))
                         num_kernels = int(await ri.hget(inst_id, 'num_kernels'))
                         if num_kernels < max_kernels:
-                            await ri.hincrby(inst_id, 'num_kernels', 1)
                             found_available = True
                 else:
                     # Scan all agent instances with free kernel slots.
@@ -200,46 +198,33 @@ class InstanceRegistry:
                     if inst_loads:
                         # Choose a least-loaded agent instance.
                         inst_id = min(inst_loads, key=operator.itemgetter(1))[0]
-                        await ri.hincrby(inst_id, 'num_kernels', 1)
                         found_available = True
 
-            if not found_available:
-                raise InstanceNotAvailable
-            assert inst_id is not None
+        if not found_available:
+            raise InstanceNotAvailable
+        assert inst_id is not None
 
-            # Create kernel by invoking the agent on the instance.
-            log.info(_f('grabbed instance {}', inst_id))
-            kern_id = None
-            stdin_port = None
-            stdout_port = None
-            instance = await self.get_instance(inst_id)
-            try:
-                request = Message()
-                request['action'] = AgentRequestTypes.CREATE_KERNEL
-                request['lang'] = lang
-                with _timeout(10):
-                    conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=instance.addr,
-                                                          loop=self.loop)
-                    conn.transport.setsockopt(zmq.SNDHWM, 50)
-                    conn.write([request.encode()])
-                    resp_data = await conn.read()
-            except asyncio.TimeoutError:
-                raise KernelCreationFailed('TIMEOUT')
-            else:
-                response = Message.decode(resp_data[0])
-                if response['reply'] == SornaResponseTypes.SUCCESS:
-                    kern_id = response['kernel_id']
-                    stdin_port = response['stdin_port']
-                    stdout_port = response['stdout_port']
-                else:
-                    err_name = SornaResponseTypes(response['reply']).name
-                    err_cause = response['cause']
-                    log.error(_f('failed to create kernel; {}: {}',
-                                 err_name, err_cause))
-                    raise KernelCreationFailed(err_name, err_cause)
-            finally:
-                conn.close()
-            assert kern_id is not None
+        # Create kernel by invoking the agent on the instance.
+        log.info(_f('grabbed instance {}', inst_id))
+        kern_id = None
+        stdin_port = None
+        stdout_port = None
+        instance = await self.get_instance(inst_id)
+
+        client = await aiozmq.rpc.connect_rpc(connect=instance.addr)
+        try:
+            with _timeout(10):
+                kern_id, stdin_port, stdout_port = \
+                    await client.call.create_kernel(lang, {})
+        except asyncio.TimeoutError:
+            raise KernelCreationFailed('TIMEOUT')
+        except Exception as e:
+            log.exception('create_kernel')
+            msg = ', '.join(map(str, e.args))
+            raise KernelCreationFailed('FAILURE', msg)
+        finally:
+            client.close()
+        assert kern_id is not None
 
         log.info(_f('created kernel {} on instance {}', kern_id, inst_id))
         async with self.redis_kern.get() as rk, \
@@ -263,60 +248,34 @@ class InstanceRegistry:
     @auto_get_kernel
     async def destroy_kernel(self, kernel):
         log.info(_f('destroy_kernel ({})', kernel.id))
-        async with self.lifecycle_lock:
-            try:
-                request = Message()
-                request['action'] = AgentRequestTypes.DESTROY_KERNEL
-                request['kernel_id'] = kernel.id
-                with _timeout(10):
-                    conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.addr,
-                                                          loop=self.loop)
-                    conn.transport.setsockopt(zmq.SNDHWM, 50)
-                    conn.write([request.encode()])
-                    resp_data = await conn.read()
-            except asyncio.TimeoutError:
-                raise KernelDestructionFailed('TIMEOUT')
-            else:
-                response = Message.decode(resp_data[0])
-                if response['reply'] != SornaResponseTypes.SUCCESS:
-                    err_name = SornaResponseTypes(response['reply']).name
-                    err_cause = response['cause']
-                    log.error(_f('failed to destroy kernel; {}: {}',
-                                 err_name, err_cause))
-                    raise KernelDestructionFailed(err_name, err_cause)
-            finally:
-                conn.close()
-            assert response['reply'] == SornaResponseTypes.SUCCESS
-            # decrementing num_kernels and removing kernel ID from running kernels
-            # are already done by the agent.
+        client = await aiozmq.rpc.connect_rpc(connect=kernel.addr)
+        try:
+            with _timeout(10):
+                await client.call.destroy_kernel(kernel.id)
+        except asyncio.TimeoutError:
+            raise KernelDestructionFailed('TIMEOUT')
+        except Exception as e:
+            log.exception('destroy_kernel')
+            msg = ', '.join(map(str, e.args))
+            raise KernelDestructionFailed('FAILURE', msg)
+        finally:
+            client.close()
 
     @auto_get_kernel
     async def restart_kernel(self, kernel):
         log.info(_f('restart_kernel ({})', kernel.id))
-        async with self.lifecycle_lock:
-            try:
-                request = Message()
-                request['action'] = AgentRequestTypes.RESTART_KERNEL
-                request['kernel_id'] = kernel.id
-                with _timeout(10):
-                    conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.addr,
-                                                          loop=self.loop)
-                    conn.transport.setsockopt(zmq.SNDHWM, 50)
-                    conn.write([request.encode()])
-                    resp_data = await conn.read()
-            except asyncio.TimeoutError:
-                raise KernelRestartFailed('TIMEOUT')
-            else:
-                response = Message.decode(resp_data[0])
-                if response['reply'] != SornaResponseTypes.SUCCESS:
-                    err_name = SornaResponseTypes(response['reply']).name
-                    err_cause = response['cause']
-                    log.error(_f('failed to restart kernel; {}: {}',
-                                 err_name, err_cause))
-                    raise KernelRestartFailed(err_name, err_cause)
-            finally:
-                conn.close()
-            assert response['reply'] == SornaResponseTypes.SUCCESS
+        client = await aiozmq.rpc.connect_rpc(connect=kernel.addr)
+        try:
+            with _timeout(10):
+                await client.call.restart_kernel(kernel.id)
+        except asyncio.TimeoutError:
+            raise KernelRestartFailed('TIMEOUT')
+        except Exception as e:
+            log.exception('restart_kernel')
+            msg = ', '.join(map(str, e.args))
+            raise KernelRestartFailed('FAILURE', msg)
+        finally:
+            client.close()
 
     @auto_get_kernel
     async def update_kernel(self, kernel, updated_fields):
@@ -327,30 +286,17 @@ class InstanceRegistry:
     @auto_get_kernel
     async def execute_snippet(self, kernel, code_id, code):
         log.info(_f('execute_snippet({})', kernel.id))
+        client = await aiozmq.rpc.connect_rpc(connect=kernel.addr)
         try:
-            request = Message()
-            request['action'] = AgentRequestTypes.EXECUTE
-            request['entry_id'] = '0'  # no longer used
-            request['kernel_id'] = kernel.id
-            request['cell_id'] = code_id
-            request['code'] = code
             with _timeout(200):  # must be longer than kernel exec_timeout
-                conn = await aiozmq.create_zmq_stream(zmq.REQ, connect=kernel.addr,
-                                                      loop=self.loop)
-                conn.transport.setsockopt(zmq.SNDHWM, 50)
-                conn.write([request.encode()])
-                resp_data = await conn.read()
+                result = await client.call.execute_code('0', kernel.id,
+                                                        code_id, code, {})
         except asyncio.TimeoutError:
             raise KernelExecutionFailed('TIMEOUT')
-        else:
-            response = Message.decode(resp_data[0])
-            if response['reply'] != SornaResponseTypes.SUCCESS:
-                err_name = SornaResponseTypes(response['reply']).name
-                err_cause = response['cause']
-                log.error(_f('failed to execute code; {}: {}',
-                             err_name, err_cause))
-                raise KernelExecutionFailed(err_name, err_cause)
+        except Exception as e:
+            log.exception('execute_code')
+            msg = ', '.join(map(str, e.args))
+            raise KernelExecutionFailed('FAILURE', msg)
         finally:
-            conn.close()
-        assert response['reply'] == SornaResponseTypes.SUCCESS
-        return response['result']
+            client.close()
+        return result

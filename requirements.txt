@@ -4,11 +4,12 @@ pyzmq
 aiozmq
 aiohttp>=1.1
 aioredis>=0.2.8
+msgpack-python
 namedlist
 SQLAlchemy
 asyncpg>=0.7
 asyncpgsa>=0.7
 python-dateutil>=2.5
 simplejson
-uvloop>=0.5.4
-sorna-common>=0.7,<0.8
+uvloop>=0.6
+sorna-common>=0.8,<0.9
