@@ -100,41 +100,40 @@ async def auth_middleware_factory(app, handler):
         params = _extract_auth_params(request)
         if params:
             sign_method, access_key, signature = params
-            async with app.dbpool.acquire() as conn:
-                async with conn.transaction():
-                    j = sa.join(KeyPair, User,
-                                KeyPair.c.belongs_to == User.c.id)
-                    query = sa.select([KeyPair, User]) \
-                              .select_from(j) \
-                              .where(KeyPair.c.access_key == access_key)
-                    row = await conn.fetchrow(query)
-                    if row is None:
-                        raise AuthorizationFailed
-                    my_signature = await sign_request(sign_method, request, row.secret_key)
-                    if not my_signature:
-                        raise InvalidAuthParameters
-                    if my_signature == signature:
-                        query = KeyPair.update() \
-                                       .values(last_used=datetime.utcnow(),
-                                               total_num_queries=KeyPair.c.total_num_queries + 1,
-                                               num_queries=KeyPair.c.num_queries + 1) \
-                                       .where(KeyPair.c.access_key == access_key)
-                        await conn.fetchval(query)
-                        request.is_authorized = True
-                        request.keypair = {
-                            'access_key': access_key,
-                            'secret_key': row.secret_key,
-                            'concurrency_limit': row.concurrency_limit,
-                            'rate_limit': row.rate_limit,
-                            'remaining_cpu': row.remaining_cpu,
-                            'remaining_mem': row.remaining_mem,
-                            'remaining_io': row.remaining_io,
-                            'remaining_net': row.remaining_net,
-                        }
-                        request.user = {
-                            'id': row.id,
-                            'email': row.email,
-                        }
+            async with app.dbpool.acquire() as conn, conn.transaction():
+                j = sa.join(KeyPair, User,
+                            KeyPair.c.belongs_to == User.c.id)
+                query = sa.select([KeyPair, User]) \
+                          .select_from(j) \
+                          .where(KeyPair.c.access_key == access_key)
+                row = await conn.fetchrow(query)
+                if row is None:
+                    raise AuthorizationFailed
+                my_signature = await sign_request(sign_method, request, row.secret_key)
+                if not my_signature:
+                    raise InvalidAuthParameters
+                if my_signature == signature:
+                    query = KeyPair.update() \
+                                   .values(last_used=datetime.utcnow(),
+                                           total_num_queries=KeyPair.c.total_num_queries + 1,
+                                           num_queries=KeyPair.c.num_queries + 1) \
+                                   .where(KeyPair.c.access_key == access_key)
+                    await conn.fetchval(query)
+                    request.is_authorized = True
+                    request.keypair = {
+                        'access_key': access_key,
+                        'secret_key': row.secret_key,
+                        'concurrency_limit': row.concurrency_limit,
+                        'rate_limit': row.rate_limit,
+                        'remaining_cpu': row.remaining_cpu,
+                        'remaining_mem': row.remaining_mem,
+                        'remaining_io': row.remaining_io,
+                        'remaining_net': row.remaining_net,
+                    }
+                    request.user = {
+                        'id': row.id,
+                        'email': row.email,
+                    }
         # No matter if authenticated or not, pass-through to the handler.
         # (if it's required, auth_required decorator will handle the situation.)
         return (await handler(request))

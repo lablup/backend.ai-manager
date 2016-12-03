@@ -11,23 +11,25 @@ from async_timeout import timeout as _timeout
 from dateutil.parser import parse as dtparse
 from dateutil.tz import tzutc
 import simplejson as json
+import asyncpgsa as pg
+import sqlalchemy as sa
 
 from sorna.utils import odict
-from sorna.exceptions import InvalidAPIParameters, QueryNotImplemented, SornaError
+from sorna.exceptions import InvalidAPIParameters, QuotaExceeded, \
+                             QueryNotImplemented, SornaError
 from .auth import auth_required
+from .models import KeyPair
 from ..manager.registry import InstanceRegistry
 
 # Shortcuts for str.format (TODO: replace with Python 3.6 f-string literals)
 _f = lambda fmt, *args, **kwargs: fmt.format(*args, **kwargs)
 _json_type = 'application/json'
 
-log = logging.getLogger('sorna.gateway.server')
+log = logging.getLogger('sorna.gateway.kernel')
 
 
 @auth_required
 async def create(request):
-    resp = odict()
-    # TODO: quota check using user-db
     try:
         with _timeout(2):
             params = await request.json()
@@ -38,8 +40,20 @@ async def create(request):
             KeyError, json.decoder.JSONDecodeError):
         log.warn('GET_OR_CREATE: invalid/missing parameters')
         raise InvalidAPIParameters
+    resp = odict()
     try:
-        # TODO: handle resourceLimits
+        async with request.app.dbpool.acquire() as conn, conn.transaction():
+            query = sa.select([KeyPair.c.concurrency_used]) \
+                      .select_from(KeyPair) \
+                      .where(KeyPair.c.access_key == request.keypair['access_key'])
+            concurrency_used = await conn.fetchval(query)
+            if concurrency_used < request.keypair['concurrency_limit']:
+                query = sa.update(KeyPair) \
+                          .values(concurrency_used=KeyPair.c.concurrency_used + 1) \
+                          .where(KeyPair.c.access_key == request.keypair['access_key'])
+                await conn.fetchval(query)
+            else:
+                raise QuotaExceeded
         kernel = await request.app.registry.get_or_create_kernel(
             params['clientSessionToken'], params['lang'])
         resp['kernelId'] = kernel.id
@@ -56,6 +70,11 @@ async def destroy(request):
     log.info(_f('DESTROY (k:{})', kernel_id))
     try:
         await request.app.registry.destroy_kernel(kernel_id)
+        async with request.app.dbpool.acquire() as conn, conn.transaction():
+            query = sa.update(KeyPair) \
+                      .values(concurrency_used=KeyPair.c.concurrency_used - 1) \
+                      .where(KeyPair.c.access_key == request.keypair['access_key'])
+            await conn.fetchval(query)
     except SornaError:
         log.exception('DESTROY: API Internal Error')
         raise

@@ -115,10 +115,13 @@ def main():
     loop.add_signal_handler(signal.SIGTERM, handle_signal, loop, term_ev)
 
     try:
-        web_handler = app.make_handler(
-            logger=aiohttp.log.server_logger if app.config.debug else None,
-            access_log=aiohttp.log.access_logger if app.config.debug else None,
-        )
+        web_handler = app.make_handler()
+        if app.config.debug:
+            aiohttp.log.server_logger.setLevel('DEBUG')
+            aiohttp.log.access_logger.setLevel('DEBUG')
+        else:
+            aiohttp.log.server_logger.setLevel('WARNING')
+            aiohttp.log.access_logger.setLevel('WARNING')
         server = loop.run_until_complete(loop.create_server(
             web_handler,
             host=str(app.config.service_ip),
