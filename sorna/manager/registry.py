@@ -54,17 +54,6 @@ def _s(obj):
     return str(obj)
 
 
-class DummyLock:
-
-    locked = True
-
-    async def __aenter__(self):
-        pass
-
-    async def __aexit__(self, exc_type, exc_val, tb):
-        pass
-
-
 class InstanceRegistry:
     '''
     Provide a high-level API to create, destroy, and query the computation
@@ -95,7 +84,7 @@ class InstanceRegistry:
                                                      encoding='utf8',
                                                      db=SORNA_SESSION_DB,
                                                      loop=self.loop)
-        log.info('ready.')
+        log.debug('ready.')
 
     async def terminate(self):
         # Clean up all sessions.
@@ -107,7 +96,7 @@ class InstanceRegistry:
         await self.redis_kern.wait_closed()
         await self.redis_inst.wait_closed()
         await self.redis_sess.wait_closed()
-        log.info('terminated.')
+        log.debug('terminated.')
 
     async def get_instance(self, inst_id):
         async with self.redis_inst.get() as ri:
@@ -162,13 +151,6 @@ class InstanceRegistry:
         return kern
 
     async def create_kernel(self, lang, spec=None):
-        _spec = {
-            'cpu_shares': 1024,
-        }
-        if spec:
-            _spec.update(spec)
-            log.info(_f('create_kernel with spec: {!r}', _spec))
-
         async with self.lifecycle_lock:
             # Find available instance.
             inst_id = None
@@ -205,7 +187,6 @@ class InstanceRegistry:
         assert inst_id is not None
 
         # Create kernel by invoking the agent on the instance.
-        log.info(_f('grabbed instance {}', inst_id))
         kern_id = None
         stdin_port = None
         stdout_port = None
@@ -226,7 +207,7 @@ class InstanceRegistry:
             client.close()
         assert kern_id is not None
 
-        log.info(_f('created kernel {} on instance {}', kern_id, inst_id))
+        log.debug(_f('create_kernel() -> {} on {}', kern_id, inst_id))
         async with self.redis_kern.get() as rk, \
                    self.redis_inst.get() as ri:
             kernel_info = {
@@ -247,7 +228,7 @@ class InstanceRegistry:
 
     @auto_get_kernel
     async def destroy_kernel(self, kernel):
-        log.info(_f('destroy_kernel ({})', kernel.id))
+        log.debug(_f('destroy_kernel({})', kernel.id))
         client = await aiozmq.rpc.connect_rpc(connect=kernel.addr)
         try:
             with _timeout(10):
@@ -263,7 +244,7 @@ class InstanceRegistry:
 
     @auto_get_kernel
     async def restart_kernel(self, kernel):
-        log.info(_f('restart_kernel ({})', kernel.id))
+        log.debug(_f('restart_kernel({})', kernel.id))
         client = await aiozmq.rpc.connect_rpc(connect=kernel.addr)
         try:
             with _timeout(10):
@@ -279,13 +260,13 @@ class InstanceRegistry:
 
     @auto_get_kernel
     async def update_kernel(self, kernel, updated_fields):
-        log.info(_f('update_kernel ({})', kernel.id))
+        log.debug(_f('update_kernel({})', kernel.id))
         async with self.redis_kern.get() as rk:
             await rk.hmset(kernel.id, *dict2kvlist(updated_fields))
 
     @auto_get_kernel
     async def execute_snippet(self, kernel, code_id, code):
-        log.info(_f('execute_snippet({})', kernel.id))
+        log.debug(_f('execute_snippet({}, ...)', kernel.id))
         client = await aiozmq.rpc.connect_rpc(connect=kernel.addr)
         try:
             with _timeout(200):  # must be longer than kernel exec_timeout

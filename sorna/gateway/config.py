@@ -72,6 +72,3 @@ def init_logger(config):
             },
         },
     })
-
-    log = logging.getLogger('sorna.gateway.config')
-    log.debug('debug mode enabled.')

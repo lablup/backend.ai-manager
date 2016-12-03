@@ -15,6 +15,7 @@ import asyncpgsa
 import uvloop
 
 from sorna.argparse import ipaddr, path, port_no
+from ..manager import __version__
 from .auth import init as auth_init, shutdown as auth_shutdown
 from .config import load_config, init_logger
 from .kernel import init as kernel_init, shutdown as kernel_shutdown
@@ -79,12 +80,18 @@ def gw_args(parser):
 
 
 def main():
+
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     loop = asyncio.get_event_loop()
 
     app = web.Application()
     app.config = load_config(extra_args_func=gw_args)
     init_logger(app.config)
+
+    log.info('Sorna Gateway {}'.format(__version__))
+
+    log_config = logging.getLogger('sorna.gateway.config')
+    log_config.debug('debug mode enabled.')
 
     term_ev = asyncio.Event(loop=loop)
 
