@@ -27,6 +27,8 @@ _json_type = 'application/json'
 
 log = logging.getLogger('sorna.gateway.kernel')
 
+kernel_owners = {}
+
 
 @auth_required
 async def create(request):
@@ -57,11 +59,37 @@ async def create(request):
         kernel = await request.app.registry.get_or_create_kernel(
             params['clientSessionToken'], params['lang'])
         resp['kernelId'] = kernel.id
+        kernel_owners[kernel.id] = request.keypair['access_key']
     except SornaError:
         log.exception('GET_OR_CREATE: API Internal Error')
         raise
     return web.Response(status=201, content_type=_json_type,
                         text=json.dumps(resp))
+
+
+async def dec_conc_kernel(app, reason, kern_id):
+    affected_key = kernel_owners.get(kern_id, None)
+    if affected_key is None:
+        return
+    async with app.dbpool.acquire() as conn, conn.transaction():
+        query = sa.update(KeyPair) \
+                  .values(concurrency_used=KeyPair.c.concurrency_used - 1) \
+                  .where(KeyPair.c.access_key == affected_key)
+        await conn.fetchval(query)
+        del kernel_owners[kern_id]
+
+
+async def dec_conc_instance(app, reason, inst_id):
+    num_kernels_terminated = 0
+    # TODO: implement
+    affected_keys = []
+    async with app.dbpool.acquire() as conn, conn.transaction():
+        for access_key in affected_keys:
+            query = sa.update(KeyPair) \
+                      .values(concurrency_used=KeyPair.c.concurrency_used
+                                               - num_kernels_terminated) \
+                      .where(KeyPair.c.access_key == access_key)
+            await conn.fetchval(query)
 
 
 @auth_required
@@ -70,11 +98,6 @@ async def destroy(request):
     log.info(_f('DESTROY (k:{})', kernel_id))
     try:
         await request.app.registry.destroy_kernel(kernel_id)
-        async with request.app.dbpool.acquire() as conn, conn.transaction():
-            query = sa.update(KeyPair) \
-                      .values(concurrency_used=KeyPair.c.concurrency_used - 1) \
-                      .where(KeyPair.c.access_key == request.keypair['access_key'])
-            await conn.fetchval(query)
     except SornaError:
         log.exception('DESTROY: API Internal Error')
         raise
@@ -171,6 +194,9 @@ async def init(app):
     app.router.add_route('POST', '/v1/kernel/{kernel_id}', execute_snippet)
     app.router.add_route('POST', '/v1/stream/kernel/{kernel_id}/pty', stream_pty)
     app.router.add_route('POST', '/v1/stream/kernel/{kernel_id}/events', stream_events)
+
+    app['event_server'].add_handler('kernel_terminated', dec_conc_kernel)
+    app['event_server'].add_handler('instance_terminated', dec_conc_instance)
 
     app.registry = InstanceRegistry(app.config.redis_addr)
     await app.registry.init()
