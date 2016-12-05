@@ -12,12 +12,11 @@ from async_timeout import timeout as _timeout
 from dateutil.parser import parse as dtparse
 from dateutil.tz import tzutc
 import simplejson as json
-import asyncpgsa as pg
 import sqlalchemy as sa
 
 from sorna.utils import odict
 from sorna.exceptions import InvalidAPIParameters, QuotaExceeded, \
-                             QueryNotImplemented, SornaError
+                             QueryNotImplemented, KernelNotFound, SornaError
 from .auth import auth_required
 from .models import KeyPair
 from ..manager.registry import InstanceRegistry
@@ -47,10 +46,14 @@ async def create(request):
     resp = odict()
     try:
         async with request.app.dbpool.acquire() as conn, conn.transaction():
-            query = sa.select([KeyPair.c.concurrency_used]) \
+            query = sa.select([KeyPair.c.concurrency_used], for_update=True) \
                       .select_from(KeyPair) \
                       .where(KeyPair.c.access_key == request.keypair['access_key'])
             concurrency_used = await conn.fetchval(query)
+            log.debug('access_key {} concurrency: {} / {}'.format(
+                      request.keypair['access_key'],
+                      concurrency_used,
+                      request.keypair['concurrency_limit']))
             if concurrency_used < request.keypair['concurrency_limit']:
                 query = sa.update(KeyPair) \
                           .values(concurrency_used=KeyPair.c.concurrency_used + 1) \
@@ -59,7 +62,7 @@ async def create(request):
             else:
                 raise QuotaExceeded
         kernel = await request.app.registry.get_or_create_kernel(
-            params['clientSessionToken'], params['lang'])
+            params['clientSessionToken'], params['lang'], request.keypair['access_key'])
         resp['kernelId'] = kernel.id
         kernel_owners[kernel.id] = request.keypair['access_key']
     except SornaError:
@@ -77,8 +80,12 @@ async def kernel_terminated(app, reason, kern_id):
     # TODO: record usage & trigger billing update task (celery?)
 
     if affected_key is None:
-        log.warning('kernel {} owner access key is missing!'.format(kern_id))
-        return
+        try:
+            kern = await app.registry.get_kernel(kern_id)
+            affected_key = kern.access_key
+        except KernelNotFound:
+            log.warning('kernel {} owner access key is missing!'.format(kern_id))
+            return
 
     await app.registry.clean_kernel(kern_id)
     async with app.dbpool.acquire() as conn, conn.transaction():
@@ -86,8 +93,8 @@ async def kernel_terminated(app, reason, kern_id):
                   .values(concurrency_used=KeyPair.c.concurrency_used - 1) \
                   .where(KeyPair.c.access_key == affected_key)
         await conn.fetchval(query)
-
-        del kernel_owners[kern_id]
+        if kern_id in kernel_owners:
+            del kernel_owners[kern_id]
 
 
 async def instance_started(app, inst_id):

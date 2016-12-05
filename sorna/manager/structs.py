@@ -24,6 +24,7 @@ Redis), but just a metadata container passed around the sorna system.
 Kernel = namedlist('Kernel', [
     ('id', None),
     ('instance', None),
+    ('access_key', None),
     ('lang', None),
     ('addr', None),
     ('stdin_port', None),

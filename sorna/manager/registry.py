@@ -139,19 +139,19 @@ class InstanceRegistry:
             else:
                 raise KernelNotFound
 
-    async def get_or_create_kernel(self, client_sess_token, lang, spec=None):
+    async def get_or_create_kernel(self, client_sess_token, lang, owner_access_key, spec=None):
         try:
             kern = await self.get_kernel_from_session(client_sess_token, lang)
         except KernelNotFound:
             # Create a new kernel.
             async with self.redis_sess.get() as rs:
-                _, kern = await self.create_kernel(lang, spec)
+                _, kern = await self.create_kernel(lang, owner_access_key, spec)
                 sess_key = '{0}:{1}'.format(client_sess_token, lang)
                 await rs.set(sess_key, kern.id)
         assert kern is not None
         return kern
 
-    async def create_kernel(self, lang, spec=None):
+    async def create_kernel(self, lang, owner_access_key, spec=None):
         inst_id = None
         async with self.lifecycle_lock, \
                    self.redis_inst.get() as ri:
@@ -217,6 +217,7 @@ class InstanceRegistry:
             kernel_info = {
                 'id': kern_id,
                 'instance': instance.id,
+                'access_key': owner_access_key,
                 'lang': lang,
                 # all kernels in an agent shares the same agent address
                 # (the agent multiplexes requests to different kernels)
