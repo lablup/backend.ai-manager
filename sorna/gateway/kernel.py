@@ -3,6 +3,7 @@ Kernel session management.
 '''
 
 import asyncio
+from collections import defaultdict
 from datetime import datetime
 import logging
 
@@ -28,6 +29,7 @@ _json_type = 'application/json'
 log = logging.getLogger('sorna.gateway.kernel')
 
 kernel_owners = {}
+last_instance_states = {}
 
 
 @auth_required
@@ -67,29 +69,74 @@ async def create(request):
                         text=json.dumps(resp))
 
 
-async def dec_conc_kernel(app, reason, kern_id):
+async def kernel_terminated(app, reason, kern_id):
     affected_key = kernel_owners.get(kern_id, None)
+
+    # TODO: enqueue termination event to streaming response queue
+
+    # TODO: record usage & trigger billing update task (celery?)
+
     if affected_key is None:
+        log.warning('kernel {} owner access key is missing!'.format(kern_id))
         return
+
+    await app.registry.clean_kernel(kern_id)
     async with app.dbpool.acquire() as conn, conn.transaction():
         query = sa.update(KeyPair) \
                   .values(concurrency_used=KeyPair.c.concurrency_used - 1) \
                   .where(KeyPair.c.access_key == affected_key)
         await conn.fetchval(query)
+
         del kernel_owners[kern_id]
 
 
-async def dec_conc_instance(app, reason, inst_id):
-    num_kernels_terminated = 0
-    # TODO: implement
-    affected_keys = []
-    async with app.dbpool.acquire() as conn, conn.transaction():
-        for access_key in affected_keys:
-            query = sa.update(KeyPair) \
-                      .values(concurrency_used=KeyPair.c.concurrency_used
-                                               - num_kernels_terminated) \
-                      .where(KeyPair.c.access_key == access_key)
-            await conn.fetchval(query)
+async def instance_started(app, inst_id):
+    await app.registry.reset_instance(inst_id)
+    last_instance_states[inst_id] = 'running'
+
+
+async def instance_terminated(app, reason, inst_id):
+    if reason == 'agent-lost':
+        log.warning('agent@{} heartbeat timeout detected.'.format(inst_id))
+        kern_ids = await app.registry.clean_instance(inst_id)
+
+        # TODO: enqueue termination event to streaming response queue
+
+        # TODO: record usage & trigger billing update task (celery?)
+
+        kern_counts = defaultdict(int)
+        for kid in kern_ids:
+            try:
+                kern_counts[kernel_owners[kid]] += 1
+                del kernel_owners[kid]
+            except KeyError:
+                pass
+        affected_keys = (ak for ak, cnt in kern_counts.items() if cnt > 0)
+        async with app.dbpool.acquire() as conn, conn.transaction():
+            for access_key in affected_keys:
+                query = sa.update(KeyPair) \
+                          .values(concurrency_used=KeyPair.c.concurrency_used
+                                                   - kern_counts[access_key]) \
+                          .where(KeyPair.c.access_key == access_key)
+                await conn.fetchval(query)
+        last_instance_states[inst_id] = 'lost'
+    else:
+        # In other cases, kernel termination will be triggered by the agent.
+        # We don't have to clear them manually.
+        if inst_id in last_instance_states:
+            del last_instance_states[inst_id]
+
+
+async def instance_heartbeat(app, inst_id, inst_info, kern_stats, interval):
+    if inst_id not in last_instance_states:
+        app['event_server'].local_dispatch('instance_started', inst_id)
+    if inst_id in last_instance_states and last_instance_states[inst_id] == 'lost':
+        log.warning('agent@{} revived.'.format(inst_id))
+        # As we have cleared all kernel information on this instance,
+        # the instance should destroy all existing kernels if any.
+        await app.registry.revive_instance(inst_id, inst_info['addr'])
+        last_instance_states[inst_id] = 'running'
+    await app.registry.handle_heartbeat(inst_id, inst_info, kern_stats, interval)
 
 
 @auth_required
@@ -178,11 +225,14 @@ async def execute_snippet(request):
 
 
 async def stream_pty(request):
+    kernel_id = request.match_info['kernel_id']
     # TODO: migrate pub/sub part of webterm proxy from neumann
     raise QueryNotImplemented
 
 
 async def stream_events(request):
+    kernel_id = request.match_info['kernel_id']
+    # TODO: dequeue the streaming response queue for the given kernel id
     raise QueryNotImplemented
 
 
@@ -195,8 +245,10 @@ async def init(app):
     app.router.add_route('POST', '/v1/stream/kernel/{kernel_id}/pty', stream_pty)
     app.router.add_route('POST', '/v1/stream/kernel/{kernel_id}/events', stream_events)
 
-    app['event_server'].add_handler('kernel_terminated', dec_conc_kernel)
-    app['event_server'].add_handler('instance_terminated', dec_conc_instance)
+    app['event_server'].add_handler('kernel_terminated', kernel_terminated)
+    app['event_server'].add_handler('instance_started', instance_started)
+    app['event_server'].add_handler('instance_terminated', instance_terminated)
+    app['event_server'].add_handler('instance_heartbeat', instance_heartbeat)
 
     app.registry = InstanceRegistry(app.config.redis_addr)
     await app.registry.init()
