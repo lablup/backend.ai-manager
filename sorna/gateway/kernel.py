@@ -105,7 +105,10 @@ async def instance_started(app, inst_id):
 async def instance_terminated(app, reason, inst_id):
     if reason == 'agent-lost':
         log.warning('agent@{} heartbeat timeout detected.'.format(inst_id))
-        kern_ids = await app.registry.clean_instance(inst_id)
+
+        # In heartbeat timeouts, we do NOT clear Redis keys because
+        # the timeout may be a transient one.
+        kern_ids = await app.registry.get_kernels_in_instance(inst_id)
 
         # TODO: enqueue termination event to streaming response queue
 

@@ -290,6 +290,12 @@ class InstanceRegistry:
             agent.close()
         return result
 
+    async def get_kernels_in_instance(self, inst_id):
+        async with self.lifecycle_lock, \
+                   self.redis_inst.get() as ri:  # noqa
+            kern_ids = await ri.smembers(inst_id + '.kernels')
+            return kern_ids
+
     async def handle_heartbeat(self, inst_id, inst_info, kern_stats, interval):
         async with self.lifecycle_lock, \
                    self.redis_inst.get() as ri, \
