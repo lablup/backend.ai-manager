@@ -11,7 +11,7 @@ from async_timeout import timeout as _timeout
 import zmq
 
 from sorna.defs import SORNA_KERNEL_DB, SORNA_INSTANCE_DB, \
-                       SORNA_SESSION_DB
+                       SORNA_SESSION_DB  # noqa
 from sorna.utils import dict2kvlist
 from sorna.exceptions import \
     InstanceNotAvailable, InstanceNotFound, KernelNotFound, \
@@ -154,7 +154,7 @@ class InstanceRegistry:
     async def create_kernel(self, lang, owner_access_key, spec=None):
         inst_id = None
         async with self.lifecycle_lock, \
-                   self.redis_inst.get() as ri:
+                   self.redis_inst.get() as ri:  # noqa
             # Find available instance.
             # FIXME: monkey-patch for deep-learning support
             if 'tensorflow' in lang or 'caffe' in lang:
@@ -213,7 +213,7 @@ class InstanceRegistry:
 
         log.debug(_f('create_kernel() -> {} on {}', kern_id, inst_id))
         async with self.redis_kern.get() as rk, \
-                   self.redis_inst.get() as ri:
+                   self.redis_inst.get() as ri:  # noqa
             kernel_info = {
                 'id': kern_id,
                 'instance': instance.id,
@@ -279,7 +279,7 @@ class InstanceRegistry:
         try:
             with _timeout(200):  # must be longer than kernel exec_timeout
                 result = await agent.call.execute_code('0', kernel.id,
-                                                        code_id, code, {})
+                                                       code_id, code, {})
         except asyncio.TimeoutError:
             raise KernelExecutionFailed('TIMEOUT')
         except Exception as e:
@@ -293,7 +293,7 @@ class InstanceRegistry:
     async def handle_heartbeat(self, inst_id, inst_info, kern_stats, interval):
         async with self.lifecycle_lock, \
                    self.redis_inst.get() as ri, \
-                   self.redis_kern.get() as rk:
+                   self.redis_kern.get() as rk:  # noqa
             ri_pipe = ri.pipeline()
             rk_pipe = rk.pipeline()
             ri_pipe.hmset(inst_id, *dict2kvlist(inst_info))
@@ -328,7 +328,7 @@ class InstanceRegistry:
 
     async def reset_instance(self, inst_id):
         async with self.lifecycle_lock, \
-                   self.redis_inst.get() as ri:
+                   self.redis_inst.get() as ri:  # noqa
             # Clear the running kernels set.
             await ri.hset(inst_id, 'num_kernels', 0)
             await ri.delete(inst_id + '.kernels')
@@ -336,7 +336,7 @@ class InstanceRegistry:
     async def clean_kernel(self, kern_id):
         async with self.lifecycle_lock, \
                    self.redis_inst.get() as ri, \
-                   self.redis_kern.get() as rk:
+                   self.redis_kern.get() as rk:  # noqa
             inst_id = await rk.hget(kern_id, 'instance')
             await ri.hincrby(inst_id, 'num_kernels', -1)
             await ri.srem(inst_id + '.kernels', kern_id)
@@ -345,7 +345,7 @@ class InstanceRegistry:
     async def clean_instance(self, inst_id):
         async with self.lifecycle_lock, \
                    self.redis_inst.get() as ri, \
-                   self.redis_kern.get() as rk:
+                   self.redis_kern.get() as rk:  # noqa
             kern_ids = await ri.smembers(inst_id + '.kernels')
             pipe = ri.pipeline()
             pipe.delete(inst_id)

@@ -16,7 +16,7 @@ import sqlalchemy as sa
 
 from sorna.utils import odict
 from sorna.exceptions import InvalidAPIParameters, QuotaExceeded, \
-                             QueryNotImplemented, KernelNotFound, SornaError
+                             QueryNotImplemented, KernelNotFound, SornaError  # noqa
 from .auth import auth_required
 from .models import KeyPair
 from ..manager.registry import InstanceRegistry
@@ -48,7 +48,7 @@ async def create(request):
         async with request.app.dbpool.acquire() as conn, conn.transaction():
             query = sa.select([KeyPair.c.concurrency_used], for_update=True) \
                       .select_from(KeyPair) \
-                      .where(KeyPair.c.access_key == request.keypair['access_key'])
+                      .where(KeyPair.c.access_key == request.keypair['access_key'])  # noqa
             concurrency_used = await conn.fetchval(query)
             log.debug('access_key {} concurrency: {} / {}'.format(
                       request.keypair['access_key'],
@@ -57,7 +57,7 @@ async def create(request):
             if concurrency_used < request.keypair['concurrency_limit']:
                 query = sa.update(KeyPair) \
                           .values(concurrency_used=KeyPair.c.concurrency_used + 1) \
-                          .where(KeyPair.c.access_key == request.keypair['access_key'])
+                          .where(KeyPair.c.access_key == request.keypair['access_key'])  # noqa
                 await conn.fetchval(query)
             else:
                 raise QuotaExceeded
@@ -91,7 +91,7 @@ async def kernel_terminated(app, reason, kern_id):
     async with app.dbpool.acquire() as conn, conn.transaction():
         query = sa.update(KeyPair) \
                   .values(concurrency_used=KeyPair.c.concurrency_used - 1) \
-                  .where(KeyPair.c.access_key == affected_key)
+                  .where(KeyPair.c.access_key == affected_key)  # noqa
         await conn.fetchval(query)
         if kern_id in kernel_owners:
             del kernel_owners[kern_id]
@@ -124,7 +124,7 @@ async def instance_terminated(app, reason, inst_id):
                 query = sa.update(KeyPair) \
                           .values(concurrency_used=KeyPair.c.concurrency_used
                                                    - kern_counts[access_key]) \
-                          .where(KeyPair.c.access_key == access_key)
+                          .where(KeyPair.c.access_key == access_key)  # noqa
                 await conn.fetchval(query)
         last_instance_states[inst_id] = 'lost'
     else:
