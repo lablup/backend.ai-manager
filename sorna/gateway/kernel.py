@@ -73,19 +73,19 @@ async def create(request):
 
 
 async def kernel_terminated(app, reason, kern_id):
-    affected_key = kernel_owners.get(kern_id, None)
 
     # TODO: enqueue termination event to streaming response queue
 
-    # TODO: record usage & trigger billing update task (celery?)
-
+    affected_key = kernel_owners.get(kern_id, None)
     if affected_key is None:
         try:
             kern = await app.registry.get_kernel(kern_id)
             affected_key = kern.access_key
         except KernelNotFound:
-            log.warning('kernel {} owner access key is missing!'.format(kern_id))
+            log.warning('kernel_terminated: owner access key of {} is missing!'.format(kern_id))
             return
+
+    # TODO: record usage & trigger billing update task (celery?)
 
     await app.registry.clean_kernel(kern_id)
     async with app.dbpool.acquire() as conn, conn.transaction():
@@ -105,14 +105,13 @@ async def instance_started(app, inst_id):
 async def instance_terminated(app, reason, inst_id):
     if reason == 'agent-lost':
         log.warning('agent@{} heartbeat timeout detected.'.format(inst_id))
+        last_instance_states[inst_id] = 'lost'
 
         # In heartbeat timeouts, we do NOT clear Redis keys because
         # the timeout may be a transient one.
         kern_ids = await app.registry.get_kernels_in_instance(inst_id)
 
         # TODO: enqueue termination event to streaming response queue
-
-        # TODO: record usage & trigger billing update task (celery?)
 
         kern_counts = defaultdict(int)
         for kid in kern_ids:
@@ -121,15 +120,21 @@ async def instance_terminated(app, reason, inst_id):
                 del kernel_owners[kid]
             except KeyError:
                 pass
-        affected_keys = (ak for ak, cnt in kern_counts.items() if cnt > 0)
-        async with app.dbpool.acquire() as conn, conn.transaction():
-            for access_key in affected_keys:
-                query = sa.update(KeyPair) \
-                          .values(concurrency_used=KeyPair.c.concurrency_used
-                                                   - kern_counts[access_key]) \
-                          .where(KeyPair.c.access_key == access_key)  # noqa
-                await conn.fetchval(query)
-        last_instance_states[inst_id] = 'lost'
+        affected_keys = [ak for ak, cnt in kern_counts.items() if cnt > 0]
+        log.warning('instance_terminated: {!r} {!r}'.format(kern_ids, kern_counts))
+
+        if affected_keys:
+
+            # TODO: record usage & trigger billing update task (celery?)
+
+            async with app.dbpool.acquire() as conn, conn.transaction():
+                for access_key in affected_keys:
+                    query = sa.update(KeyPair) \
+                              .values(concurrency_used=KeyPair.c.concurrency_used
+                                                       - kern_counts[access_key]) \
+                              .where(KeyPair.c.access_key == access_key)  # noqa
+                    await conn.fetchval(query)
+
     else:
         # In other cases, kernel termination will be triggered by the agent.
         # We don't have to clear them manually.
@@ -137,7 +142,7 @@ async def instance_terminated(app, reason, inst_id):
             del last_instance_states[inst_id]
 
 
-async def instance_heartbeat(app, inst_id, inst_info, kern_stats, interval):
+async def instance_heartbeat(app, inst_id, inst_info, running_kernels, interval):
     if inst_id not in last_instance_states:
         app['event_server'].local_dispatch('instance_started', inst_id)
     if inst_id in last_instance_states and last_instance_states[inst_id] == 'lost':
@@ -146,7 +151,11 @@ async def instance_heartbeat(app, inst_id, inst_info, kern_stats, interval):
         # the instance should destroy all existing kernels if any.
         await app.registry.revive_instance(inst_id, inst_info['addr'])
         last_instance_states[inst_id] = 'running'
-    await app.registry.handle_heartbeat(inst_id, inst_info, kern_stats, interval)
+    await app.registry.handle_heartbeat(inst_id, inst_info, running_kernels, interval)
+
+
+async def instance_stats(app, inst_id, kern_stats, interval):
+    await app.registry.handle_stats(inst_id, kern_stats, interval)
 
 
 @auth_required
@@ -259,6 +268,7 @@ async def init(app):
     app['event_server'].add_handler('instance_started', instance_started)
     app['event_server'].add_handler('instance_terminated', instance_terminated)
     app['event_server'].add_handler('instance_heartbeat', instance_heartbeat)
+    app['event_server'].add_handler('instance_stats', instance_stats)
 
     app.registry = InstanceRegistry(app.config.redis_addr)
     await app.registry.init()

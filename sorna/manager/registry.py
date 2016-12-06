@@ -254,7 +254,7 @@ class InstanceRegistry:
         agent = await aiozmq.rpc.connect_rpc(connect=kernel.addr)
         agent.transport.setsockopt(zmq.LINGER, 50)
         try:
-            with _timeout(10):
+            with _timeout(30):
                 await agent.call.restart_kernel(kernel.id)
         except asyncio.TimeoutError:
             raise KernelRestartFailed('TIMEOUT')
@@ -296,7 +296,25 @@ class InstanceRegistry:
             kern_ids = await ri.smembers(inst_id + '.kernels')
             return kern_ids
 
-    async def handle_heartbeat(self, inst_id, inst_info, kern_stats, interval):
+    async def handle_stats(self, inst_id, kern_stats, interval):
+        async with self.lifecycle_lock, \
+                   self.redis_inst.get() as ri, \
+                   self.redis_kern.get() as rk:  # noqa
+            ri_pipe = ri.pipeline()
+            rk_pipe = rk.pipeline()
+            my_kernels_key = '{}.kernels'.format(inst_id)
+            for kern_id, stats in kern_stats.items():
+                ri_pipe.sadd(my_kernels_key, kern_id)
+                rk_pipe.hmset(kern_id, *dict2kvlist(stats))
+            try:
+                await ri_pipe.execute()
+                await rk_pipe.execute()
+            except asyncio.CancelledError:
+                pass
+            except:
+                log.exception('handle_stats error')
+
+    async def handle_heartbeat(self, inst_id, inst_info, running_kernels, interval):
         async with self.lifecycle_lock, \
                    self.redis_inst.get() as ri, \
                    self.redis_kern.get() as rk:  # noqa
@@ -304,9 +322,8 @@ class InstanceRegistry:
             rk_pipe = rk.pipeline()
             ri_pipe.hmset(inst_id, *dict2kvlist(inst_info))
             my_kernels_key = '{}.kernels'.format(inst_id)
-            for kern_id, stats in kern_stats.items():
+            for kern_id in running_kernels:
                 ri_pipe.sadd(my_kernels_key, kern_id)
-                rk_pipe.hmset(kern_id, *dict2kvlist(stats))
 
             # Create a "shadow" key that actually expires.
             # This allows access to agent information upon expiration events.
@@ -318,7 +335,7 @@ class InstanceRegistry:
             except asyncio.CancelledError:
                 pass
             except:
-                log.exception('heartbeat error')
+                log.exception('handle_heartbeat error')
 
     async def revive_instance(self, inst_id, inst_addr):
         agent = await aiozmq.rpc.connect_rpc(connect=inst_addr)
