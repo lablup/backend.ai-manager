@@ -83,7 +83,7 @@ def main():
     app.config = load_config(extra_args_func=gw_args)
     init_logger(app.config)
 
-    log.info('Sorna Gateway {}'.format(__version__))
+    log.info(f'Sorna Gateway {__version__}')
 
     log_config = logging.getLogger('sorna.gateway.config')
     log_config.debug('debug mode enabled.')

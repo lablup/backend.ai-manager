@@ -14,15 +14,12 @@ from dateutil.tz import tzutc
 import simplejson as json
 import sqlalchemy as sa
 
-from sorna.utils import odict
 from sorna.exceptions import InvalidAPIParameters, QuotaExceeded, \
                              QueryNotImplemented, KernelNotFound, SornaError  # noqa
 from .auth import auth_required
 from .models import KeyPair
 from ..manager.registry import InstanceRegistry
 
-# Shortcuts for str.format (TODO: replace with Python 3.6 f-string literals)
-_f = lambda fmt, *args, **kwargs: fmt.format(*args, **kwargs)
 _json_type = 'application/json'
 
 log = logging.getLogger('sorna.gateway.kernel')
@@ -36,35 +33,33 @@ async def create(request):
     try:
         with _timeout(2):
             params = await request.json()
-        log.info(_f('GET_OR_CREATE (lang:{}, token:{})',
-                 params['lang'], params['clientSessionToken']))
+        log.info(f"GET_OR_CREATE (lang:{params['lang']}, token:{params['clientSessionToken']})")
         assert 8 <= len(params['clientSessionToken']) <= 40
     except (asyncio.TimeoutError, AssertionError,
             KeyError, json.decoder.JSONDecodeError):
         log.warn('GET_OR_CREATE: invalid/missing parameters')
         raise InvalidAPIParameters
-    resp = odict()
+    resp = {}
     try:
+        access_key = request.keypair['access_key']
+        concurrency_limit = request.keypair['concurrency_limit']
         async with request.app.dbpool.acquire() as conn, conn.transaction():
             query = sa.select([KeyPair.c.concurrency_used], for_update=True) \
                       .select_from(KeyPair) \
-                      .where(KeyPair.c.access_key == request.keypair['access_key'])  # noqa
+                      .where(KeyPair.c.access_key == access_key)  # noqa
             concurrency_used = await conn.fetchval(query)
-            log.debug('access_key {} concurrency: {} / {}'.format(
-                      request.keypair['access_key'],
-                      concurrency_used,
-                      request.keypair['concurrency_limit']))
-            if concurrency_used < request.keypair['concurrency_limit']:
+            log.debug(f'access_key: {access_key} ({concurrency_used} / {concurrency_limit})')
+            if concurrency_used < concurrency_limit:
                 query = sa.update(KeyPair) \
                           .values(concurrency_used=KeyPair.c.concurrency_used + 1) \
-                          .where(KeyPair.c.access_key == request.keypair['access_key'])  # noqa
+                          .where(KeyPair.c.access_key == access_key)  # noqa
                 await conn.fetchval(query)
             else:
                 raise QuotaExceeded
         kernel = await request.app.registry.get_or_create_kernel(
-            params['clientSessionToken'], params['lang'], request.keypair['access_key'])
+            params['clientSessionToken'], params['lang'], access_key)
         resp['kernelId'] = kernel.id
-        kernel_owners[kernel.id] = request.keypair['access_key']
+        kernel_owners[kernel.id] = access_key
     except SornaError:
         log.exception('GET_OR_CREATE: API Internal Error')
         raise
@@ -82,7 +77,7 @@ async def kernel_terminated(app, reason, kern_id):
             kern = await app.registry.get_kernel(kern_id)
             affected_key = kern.access_key
         except KernelNotFound:
-            log.warning('kernel_terminated: owner access key of {} is missing!'.format(kern_id))
+            log.warning(f'kernel_terminated: owner access key of {kern_id} is missing!')
             return
 
     # TODO: record usage & trigger billing update task (celery?)
@@ -104,7 +99,7 @@ async def instance_started(app, inst_id):
 
 async def instance_terminated(app, reason, inst_id):
     if reason == 'agent-lost':
-        log.warning('agent@{} heartbeat timeout detected.'.format(inst_id))
+        log.warning(f'agent@{inst_id} heartbeat timeout detected.')
         last_instance_states[inst_id] = 'lost'
 
         # In heartbeat timeouts, we do NOT clear Redis keys because
@@ -121,7 +116,7 @@ async def instance_terminated(app, reason, inst_id):
             except KeyError:
                 pass
         affected_keys = [ak for ak, cnt in kern_counts.items() if cnt > 0]
-        log.warning('instance_terminated: {!r} {!r}'.format(kern_ids, kern_counts))
+        log.warning(f'instance_terminated: {kern_ids!r} {kern_counts}')
 
         if affected_keys:
 
@@ -160,10 +155,10 @@ async def instance_stats(app, inst_id, kern_stats, interval):
 
 @auth_required
 async def destroy(request):
-    kernel_id = request.match_info['kernel_id']
-    log.info(_f('DESTROY (k:{})', kernel_id))
+    kern_id = request.match_info['kernel_id']
+    log.info(f'DESTROY (k:{kern_id})')
     try:
-        await request.app.registry.destroy_kernel(kernel_id)
+        await request.app.registry.destroy_kernel(kern_id)
     except SornaError:
         log.exception('DESTROY: API Internal Error')
         raise
@@ -172,11 +167,11 @@ async def destroy(request):
 
 @auth_required
 async def get_info(request):
-    resp = odict()
-    kernel_id = request.match_info['kernel_id']
-    log.info(_f('GETINFO (k:{})', kernel_id))
+    resp = {}
+    kern_id = request.match_info['kernel_id']
+    log.info(f'GETINFO (k:{kern_id})')
     try:
-        kern = await request.app.registry.get_kernel(kernel_id)
+        kern = await request.app.registry.get_kernel(kern_id)
         resp['lang'] = kern.lang
         age = datetime.now(tzutc()) - dtparse(kern.created_at)
         resp['age'] = age.total_seconds() * 1000
@@ -191,7 +186,7 @@ async def get_info(request):
         resp['idle']          = int(float(kern.idle) * 1000)
         resp['memoryUsed']    = int(kern.mem_max_bytes) // 1024
         resp['cpuCreditUsed'] = int(float(kern.cpu_used))
-        log.info(_f('information retrieved: {!r}', resp))
+        log.info(f'information retrieved: {resp!r}')
         await request.app.registry.update_kernel(kern, {
             'num_queries': int(kern.num_queries) + 1,
         })
@@ -204,12 +199,12 @@ async def get_info(request):
 
 @auth_required
 async def restart(request):
-    kernel_id = request.match_info['kernel_id']
-    log.info(_f('RESTART (k:{})', kernel_id))
+    kern_id = request.match_info['kernel_id']
+    log.info(f'RESTART (k:{kern_id})')
     try:
-        kern = await request.app.registry.get_kernel(kernel_id)
-        await request.app.registry.restart_kernel(kernel_id)
-        await request.app.registry.update_kernel(kernel_id, {
+        kern = await request.app.registry.get_kernel(kern_id)
+        await request.app.registry.restart_kernel(kern_id)
+        await request.app.registry.update_kernel(kern_id, {
             'num_queries': int(kern.num_queries) + 1,
         })
     except SornaError:
@@ -220,20 +215,20 @@ async def restart(request):
 
 @auth_required
 async def execute_snippet(request):
-    resp = odict()
-    kernel_id = request.match_info['kernel_id']
+    resp = {}
+    kern_id = request.match_info['kernel_id']
     try:
         with _timeout(2):
             params = await request.json()
-        log.info(_f('EXECUTE_SNIPPET (k:{})', kernel_id))
+        log.info(f'EXECUTE_SNIPPET (k:{kern_id})')
     except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
         log.warn('EXECUTE_SNIPPET: invalid/missing parameters')
         raise InvalidAPIParameters
     try:
-        kern = await request.app.registry.get_kernel(kernel_id)
+        kern = await request.app.registry.get_kernel(kern_id)
         resp['result'] = await request.app.registry.execute_snippet(
-            kernel_id, params['codeId'], params['code'])
-        await request.app.registry.update_kernel(kernel_id, {
+            kern_id, params['codeId'], params['code'])
+        await request.app.registry.update_kernel(kern_id, {
             'num_queries': int(kern.num_queries) + 1,
         })
     except SornaError:
@@ -244,13 +239,13 @@ async def execute_snippet(request):
 
 
 async def stream_pty(request):
-    kernel_id = request.match_info['kernel_id']
+    kern_id = request.match_info['kernel_id']
     # TODO: migrate pub/sub part of webterm proxy from neumann
     raise QueryNotImplemented
 
 
 async def stream_events(request):
-    kernel_id = request.match_info['kernel_id']
+    kern_id = request.match_info['kernel_id']
     # TODO: dequeue the streaming response queue for the given kernel id
     raise QueryNotImplemented
 

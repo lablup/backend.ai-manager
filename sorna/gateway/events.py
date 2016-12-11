@@ -23,7 +23,7 @@ class EventServer(aiozmq.rpc.AttrHandler):
         self.handlers[event_name].append(callback)
 
     def local_dispatch(self, event_name, *args, **kwargs):
-        log.debug('DISPATCH({} {})'.format(event_name, str(args[0]) if args else ''))
+        log.debug(f"DISPATCH({event_name}, {str(args[0]) if args else ''})")
         for handler in self.handlers[event_name]:
             if asyncio.iscoroutine(handler) or asyncio.iscoroutinefunction(handler):
                 asyncio.ensure_future(handler(self.app, *args, **kwargs))
@@ -41,7 +41,7 @@ async def monitor_redis_events(app):
     # Enable "expired" event notification
     # See more details at: http://redis.io/topics/notifications
     await redis_sub.config_set('notify-keyspace-events', 'Ex')
-    chprefix = '__keyevent@{}__*'.format(defs.SORNA_INSTANCE_DB)
+    chprefix = f'__keyevent@{defs.SORNA_INSTANCE_DB}__*'
     channels = await redis_sub.psubscribe(chprefix)
     log.debug('monitor_redis_events: subscribed notifications.')
     try:
@@ -66,7 +66,7 @@ async def init(app):
     app['event_server'] = EventServer(app)
     app['event_sock'] = await aiozmq.rpc.serve_rpc(
         app['event_server'],
-        bind='tcp://*:{}'.format(app.config.events_port))
+        bind=f'tcp://*:{app.config.events_port}')
     app['event_redis_monitor_task'] = asyncio.ensure_future(monitor_redis_events(app))
 
 

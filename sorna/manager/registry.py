@@ -21,11 +21,6 @@ from .structs import Instance, Kernel
 
 __all__ = ['InstanceRegistry', 'InstanceNotFound']
 
-# A shortcut for str.format
-_f = lambda fmt, *args, **kwargs: fmt.format(*args, **kwargs)
-_r = lambda fmt, reg_id, *args, **kwargs: \
-    'registry[{}]: '.format(reg_id) + fmt.format(*args, **kwargs)
-
 log = logging.getLogger('sorna.manager.registry')
 
 
@@ -47,12 +42,6 @@ def auto_get_instance(func):
             return await func(self, arg0, *args[1:], **kwargs)
         return await func(self, *args, **kwargs)
     return wrapper
-
-
-def _s(obj):
-    if obj is None:
-        return ''
-    return str(obj)
 
 
 class InstanceRegistry:
@@ -211,7 +200,7 @@ class InstanceRegistry:
             agent.close()
         assert kern_id is not None
 
-        log.debug(_f('create_kernel() -> {} on {}', kern_id, inst_id))
+        log.debug(f'create_kernel() -> {kern_id} on {inst_id}')
         async with self.redis_kern.get() as rk, \
                    self.redis_inst.get() as ri:  # noqa
             kernel_info = {
@@ -233,7 +222,7 @@ class InstanceRegistry:
 
     @auto_get_kernel
     async def destroy_kernel(self, kernel):
-        log.debug(_f('destroy_kernel({})', kernel.id))
+        log.debug(f'destroy_kernel({kernel.id})')
         agent = await aiozmq.rpc.connect_rpc(connect=kernel.addr)
         agent.transport.setsockopt(zmq.LINGER, 50)
         try:
@@ -250,7 +239,7 @@ class InstanceRegistry:
 
     @auto_get_kernel
     async def restart_kernel(self, kernel):
-        log.debug(_f('restart_kernel({})', kernel.id))
+        log.debug(f'restart_kernel({kernel.id})')
         agent = await aiozmq.rpc.connect_rpc(connect=kernel.addr)
         agent.transport.setsockopt(zmq.LINGER, 50)
         try:
@@ -267,13 +256,13 @@ class InstanceRegistry:
 
     @auto_get_kernel
     async def update_kernel(self, kernel, updated_fields):
-        log.debug(_f('update_kernel({})', kernel.id))
+        log.debug(f'update_kernel({kernel.id})')
         async with self.redis_kern.get() as rk:
             await rk.hmset(kernel.id, *dict2kvlist(updated_fields))
 
     @auto_get_kernel
     async def execute_snippet(self, kernel, code_id, code):
-        log.debug(_f('execute_snippet({}, ...)', kernel.id))
+        log.debug(f'execute_snippet({kernel.id}, ...)')
         agent = await aiozmq.rpc.connect_rpc(connect=kernel.addr)
         agent.transport.setsockopt(zmq.LINGER, 50)
         try:
