@@ -34,10 +34,10 @@ async def create(request):
         with _timeout(2):
             params = await request.json()
         log.info(f"GET_OR_CREATE (lang:{params['lang']}, token:{params['clientSessionToken']})")
-        assert 8 <= len(params['clientSessionToken']) <= 40
+        assert 8 <= len(params['clientSessionToken']) <= 80
     except (asyncio.TimeoutError, AssertionError,
-            KeyError, json.decoder.JSONDecodeError):
-        log.warn('GET_OR_CREATE: invalid/missing parameters')
+            KeyError, json.decoder.JSONDecodeError) as e:
+        log.warn(f'GET_OR_CREATE: invalid/missing parameters, {e!r}')
         raise InvalidAPIParameters
     resp = {}
     try:
