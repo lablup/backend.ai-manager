@@ -78,8 +78,11 @@ class InstanceRegistry:
 
     async def terminate(self):
         # Clean up all sessions.
-        async with self.redis_sess.get() as rs:
-            await rs.flushdb()
+        try:
+            async with self.redis_sess.get() as rs:
+                await rs.flushdb()
+        except ConnectionRefusedError:
+            pass
         self.redis_kern.close()
         self.redis_inst.close()
         self.redis_sess.close()

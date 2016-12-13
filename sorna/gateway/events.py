@@ -57,7 +57,10 @@ async def monitor_redis_events(app):
     except asyncio.CancelledError:
         pass
     finally:
-        await redis_sub.unsubscribe(chprefix)
+        try:
+            await redis_sub.unsubscribe(chprefix)
+        except aioredis.errors.ConnectionClosedError:
+            pass
         redis_sub.close()
         await redis_sub.wait_closed()
 

@@ -68,7 +68,10 @@ async def init(app):
 
 
 async def shutdown(app):
-    async with app.redis_rlim.get() as rr:
-        await rr.flushdb()
+    try:
+        async with app.redis_rlim.get() as rr:
+            await rr.flushdb()
+    except ConnectionRefusedError:
+        pass
     app.redis_rlim.close()
     await app.redis_rlim.wait_closed()
