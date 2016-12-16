@@ -53,7 +53,7 @@ async def monitor_redis_events(app):
             evkey  = msg[1]
             if evname == 'expired' and evkey.startswith('shadow:'):
                 inst_id = evkey.split(':', 1)[1]
-                app['event_server'].local_dispatch('instance_terminated', 'agent-lost', inst_id)
+                app['event_server'].local_dispatch('instance_terminated', inst_id, 'agent-lost')
     except asyncio.CancelledError:
         pass
     finally:

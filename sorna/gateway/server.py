@@ -16,6 +16,7 @@ import uvloop
 
 from sorna.argparse import ipaddr, path, port_no
 from ..manager import __version__
+from . import GatewayStatus
 from .auth import init as auth_init, shutdown as auth_shutdown
 from .config import load_config, init_logger
 from .events import init as event_init, shutdown as event_shutdown
@@ -41,6 +42,7 @@ async def on_prepare(request, response):
 async def gw_init(app):
     app.on_response_prepare.append(on_prepare)
     app.router.add_route('GET', '/v1', hello)
+    app['status'] = GatewayStatus.STARTING
 
     app.dbpool = await asyncpgsa.create_pool(
         host=app.config.db_addr[0],

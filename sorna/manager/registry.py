@@ -91,17 +91,56 @@ class InstanceRegistry:
         await self.redis_sess.wait_closed()
         log.debug('terminated.')
 
-    async def get_instance(self, inst_id):
+    async def get_instance(self, inst_id, field=None):
         async with self.redis_inst.get() as ri:
-            fields = await ri.hgetall(inst_id)
-            if not fields:
-                raise InstanceNotFound(inst_id)
-            return Instance(**fields)
+            if field:
+                value = await ri.hget(inst_id, field)
+                if not value:
+                    raise InstanceNotFound(inst_id)
+                return value
+            else:
+                fields = await ri.hgetall(inst_id)
+                if not fields:
+                    raise InstanceNotFound(inst_id)
+                return Instance(**fields)
 
-    async def get_kernel(self, kern_id):
+    async def enumerate_instances(self, check_shadow=False):
+        async with self.redis_inst.get() as ri:
+            if check_shadow:
+                # check only "active" shadow instances.
+                async for shadow_id in ri.iscan(match='shadow:i-*'):
+                    inst_id = shadow_id[7:]  # strip "shadow:" prefix
+                    if inst_id.endswith('.kernels'):
+                        continue
+                    yield inst_id
+            else:
+                async for inst_id in ri.iscan(match='i-*'):
+                    if inst_id.endswith('.kernels'):
+                        continue
+                    yield inst_id
+
+    @auto_get_instance
+    async def update_instance(self, inst, updated_fields):
+        async with self.redis_inst.get() as ri:
+            await ri.hmset(inst.id, *dict2kvlist(updated_fields))
+
+    async def get_kernel(self, kern_id, field=None):
+        '''
+        Retreive the kernel information as Kernel object.
+        If ``field`` is given, it extracts only the raw value of the given field, without
+        wrapping it as Kernel object.
+        '''
         async with self.redis_kern.get() as rk:
-            fields = await rk.hgetall(kern_id)
-            if fields:
+            if field:
+                value = await rk.hget(kern_id, field)
+                # TODO: stale check?
+                if value is None:
+                    raise KernelNotFound
+                return value
+            else:
+                fields = await rk.hgetall(kern_id)
+                if fields is None:
+                    raise KernelNotFound
                 # Check if stale.
                 try:
                     async with self.redis_inst.get() as ri:
@@ -119,8 +158,49 @@ class InstanceRegistry:
                 except KernelNotFound:
                     await rk.delete(kern_id)
                     raise
+
+    async def get_kernels(self, kern_ids, field=None):
+        '''
+        Batched version of :meth:`get_kernel() <InstanceRegistry.get_kernel>`.
+        The order of the returend array is same to the order of ``kern_ids``.
+        For non-existent or missing kernel IDs, it fills None in their
+        positions without raising KernelNotFound exception.
+        '''
+        async with self.redis_kern.get() as rk:
+            pipe = rk.pipeline()
+            if field:
+                for kern_id in kern_ids:
+                    pipe.hget(kern_id, field)
+                values = await pipe.execute()
+                return values
             else:
-                raise KernelNotFound
+                for kern_id in kern_ids:
+                    pipe.hgetall(kern_id)
+                results = await pipe.execute()
+                final_results = []
+                async with self.redis_inst.get() as ri:
+                    for result in results:
+                        if result is None:
+                            final_results.append(None)
+                            continue
+                        # Check if stale.
+                        try:
+                            if 'instance' not in fields:
+                                # Received last heartbeats but the agent has restarted meanwhile.
+                                raise KernelNotFound
+                            if not (await ri.exists('shadow:' + fields['instance'])):
+                                # The agent heartbeat is timed out.
+                                raise KernelNotFound
+                            kern_set_key = fields['instance'] + '.kernels'
+                            if not (await ri.sismember(kern_set_key, kern_id)):
+                                # The agent is running but it has no such kernel.
+                                raise KernelNotFound
+                            final_results.append(Kernel(**fields))
+                        except KernelNotFound:
+                            await rk.delete(kern_id)
+                            final_results.append(None)
+                return final_results
+
 
     async def get_kernel_from_session(self, client_sess_token, lang):
         async with self.redis_sess.get() as rs:
@@ -161,9 +241,8 @@ class InstanceRegistry:
                 # We scan shadow keys first to check only alive instances,
                 # and then fetch details from normal keys.
                 inst_loads = []
-                async for shadow_id in ri.iscan(match='shadow:i-*'):
-                    inst_id = shadow_id[7:]  # strip "shadow:" prefix
-                    if inst_id.endswith('.kernels') or inst_id == 'i-indominus':
+                async for inst_id in self.enumerate_instances(check_shadow=True):
+                    if inst_id == 'i-indominus':
                         continue
                     max_kernels = int(await ri.hget(inst_id, 'max_kernels'))
                     num_kernels = int(await ri.hget(inst_id, 'num_kernels'))
@@ -345,6 +424,7 @@ class InstanceRegistry:
         async with self.lifecycle_lock, \
                    self.redis_inst.get() as ri:  # noqa
             # Clear the running kernels set.
+            await ri.hset(inst_id, 'status', 'running')
             await ri.hset(inst_id, 'num_kernels', 0)
             await ri.delete(inst_id + '.kernels')
 

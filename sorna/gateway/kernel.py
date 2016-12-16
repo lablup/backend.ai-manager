@@ -5,7 +5,9 @@ Kernel session management.
 import asyncio
 from collections import defaultdict
 from datetime import datetime
+import functools
 import logging
+import time
 
 from aiohttp import web
 from async_timeout import timeout as _timeout
@@ -14,8 +16,9 @@ from dateutil.tz import tzutc
 import simplejson as json
 import sqlalchemy as sa
 
-from sorna.exceptions import InvalidAPIParameters, QuotaExceeded, \
-                             QueryNotImplemented, KernelNotFound, SornaError  # noqa
+from sorna.exceptions import ServiceUnavailable, InvalidAPIParameters, QuotaExceeded, \
+                             QueryNotImplemented, InstanceNotFound, KernelNotFound, SornaError  # noqa
+from . import GatewayStatus
 from .auth import auth_required
 from .models import KeyPair
 from ..manager.registry import InstanceRegistry
@@ -24,12 +27,13 @@ _json_type = 'application/json'
 
 log = logging.getLogger('sorna.gateway.kernel')
 
-kernel_owners = {}
-last_instance_states = {}
+grace_events = []
 
 
 @auth_required
 async def create(request):
+    if request.app['status'] != GatewayStatus.RUNNING:
+        raise ServiceUnavailable('Server is initializing...')
     try:
         with _timeout(2):
             params = await request.json()
@@ -59,7 +63,6 @@ async def create(request):
         kernel = await request.app.registry.get_or_create_kernel(
             params['clientSessionToken'], params['lang'], access_key)
         resp['kernelId'] = kernel.id
-        kernel_owners[kernel.id] = access_key
     except SornaError:
         log.exception('GET_OR_CREATE: API Internal Error')
         raise
@@ -67,18 +70,37 @@ async def create(request):
                         text=json.dumps(resp))
 
 
+def grace_event_catcher(func):
+    '''
+    Catches events during grace periods and prevent event handlers from running.
+    '''
+    @functools.wraps(func)
+    async def wrapped(*args, **kwargs):
+        app = args[0]
+        if app['status'] == GatewayStatus.STARTING:
+            evinfo = {
+                '_type': func.__name__,
+                '_handler': func,
+                '_when': time.monotonic(),
+                '_args': args[1:],
+                '_kwargs': kwargs,
+            }
+            grace_events.append(evinfo)
+        else:
+            return (await func(*args, **kwargs))
+    return wrapped
+
+
+@grace_event_catcher
 async def kernel_terminated(app, reason, kern_id):
 
     # TODO: enqueue termination event to streaming response queue
 
-    affected_key = kernel_owners.get(kern_id, None)
-    if affected_key is None:
-        try:
-            kern = await app.registry.get_kernel(kern_id)
-            affected_key = kern.access_key
-        except KernelNotFound:
-            log.warning(f'kernel_terminated: owner access key of {kern_id} is missing!')
-            return
+    try:
+        affected_key = await app.registry.get_kernel(kern_id, field='access_key')
+    except KernelNotFound:
+        log.warning(f'kernel_terminated: owner access key of {kern_id} is missing!')
+        return
 
     # TODO: record usage & trigger billing update task (celery?)
 
@@ -88,73 +110,124 @@ async def kernel_terminated(app, reason, kern_id):
                   .values(concurrency_used=KeyPair.c.concurrency_used - 1) \
                   .where(KeyPair.c.access_key == affected_key)  # noqa
         await conn.fetchval(query)
-        if kern_id in kernel_owners:
-            del kernel_owners[kern_id]
 
 
+@grace_event_catcher
 async def instance_started(app, inst_id):
     await app.registry.reset_instance(inst_id)
-    last_instance_states[inst_id] = 'running'
 
 
-async def instance_terminated(app, reason, inst_id):
+@grace_event_catcher
+async def instance_terminated(app, inst_id, reason):
     if reason == 'agent-lost':
         log.warning(f'agent@{inst_id} heartbeat timeout detected.')
-        last_instance_states[inst_id] = 'lost'
 
         # In heartbeat timeouts, we do NOT clear Redis keys because
         # the timeout may be a transient one.
         kern_ids = await app.registry.get_kernels_in_instance(inst_id)
+        affected_keys = await app.registry.get_kernels(kern_ids, 'access_key')
+        await app.registry.update_instance(inst_id, {'status': 'lost'})
 
         # TODO: enqueue termination event to streaming response queue
 
-        kern_counts = defaultdict(int)
-        for kid in kern_ids:
-            try:
-                kern_counts[kernel_owners[kid]] += 1
-                del kernel_owners[kid]
-            except KeyError:
-                pass
-        affected_keys = [ak for ak, cnt in kern_counts.items() if cnt > 0]
-        log.warning(f'instance_terminated: {kern_ids!r} {kern_counts}')
+        per_key_counts = defaultdict(int)
+        for ak in filter(lambda ak: ak is not None, affected_keys):
+            per_key_counts[ak] += 1
+        log.warning(f'instance_terminated: {kern_ids!r} {per_key_counts}')
 
-        if affected_keys:
+        if not affected_keys:
+            return
 
-            # TODO: record usage & trigger billing update task (celery?)
+        # TODO: record usage & trigger billing update task (celery?)
 
-            async with app.dbpool.acquire() as conn, conn.transaction():
-                for access_key in affected_keys:
-                    query = sa.update(KeyPair) \
-                              .values(concurrency_used=KeyPair.c.concurrency_used
-                                                       - kern_counts[access_key]) \
-                              .where(KeyPair.c.access_key == access_key)  # noqa
-                    await conn.fetchval(query)
+        async with app.dbpool.acquire() as conn, conn.transaction():
+            for access_key in affected_keys:
+                query = sa.update(KeyPair) \
+                          .values(concurrency_used=KeyPair.c.concurrency_used
+                                                   - per_key_counts[access_key]) \
+                          .where(KeyPair.c.access_key == access_key)  # noqa
+                await conn.fetchval(query)
 
     else:
         # In other cases, kernel termination will be triggered by the agent.
         # We don't have to clear them manually.
-        if inst_id in last_instance_states:
-            del last_instance_states[inst_id]
+        pass
 
 
+@grace_event_catcher
 async def instance_heartbeat(app, inst_id, inst_info, running_kernels, interval):
-    if inst_id not in last_instance_states:
-        app['event_server'].local_dispatch('instance_started', inst_id)
-    if inst_id in last_instance_states and last_instance_states[inst_id] == 'lost':
-        log.warning('agent@{} revived.'.format(inst_id))
-        # As we have cleared all kernel information on this instance,
-        # the instance should destroy all existing kernels if any.
+    revived = False
+    try:
+        inst_status = await app.registry.get_instance(inst_id, 'status')
+        if inst_status == 'lost':
+            revived = True
+    except InstanceNotFound:
+        revived = True
+
+    if revived:
+        log.warning(f'agent@{inst_id} revived.')
         await app.registry.revive_instance(inst_id, inst_info['addr'])
-        last_instance_states[inst_id] = 'running'
-    await app.registry.handle_heartbeat(inst_id, inst_info, running_kernels, interval)
+    else:
+        await app.registry.handle_heartbeat(inst_id, inst_info, running_kernels, interval)
 
 
+@grace_event_catcher
 async def instance_stats(app, inst_id, kern_stats, interval):
-    await app.registry.handle_stats(inst_id, kern_stats, interval)
+    if app['status'] == GatewayStatus.RUNNING:
+        await app.registry.handle_stats(inst_id, kern_stats, interval)
+
+
+async def collect_agent_events(app, heartbeat_interval):
+    '''
+    Collects agent-generated events for a while (via :func:`grace_event_catcher`).
+    This allows synchronization of Redis/DB with the current cluster status
+    upon (re)starts of the gateway.
+    '''
+
+    log.info('running a grace period to detect live agents...')
+    app['status'] = GatewayStatus.STARTING
+    grace_events.clear()
+
+    await asyncio.sleep(heartbeat_interval * 2.1)
+
+    per_inst_events = defaultdict(list)
+    processed_events = []
+
+    for ev in grace_events:
+        if ev['_type'] in ('instance_started', 'instance_terminated', 'instance_heartbeat'):
+            per_inst_events[ev['_args'][0]].append(ev)
+
+    # Keep only the latest event for each instance.
+    for inst_id, events in per_inst_events.items():
+        last_event = max(events, key=lambda v: v['_when'])
+        processed_events.append(last_event)
+        # TODO: sometimes the restarted gateway receives duplicate "instance_terminated" events...
+
+    # Mark instances not detected during event collection to be cleared.
+    valid_inst_ids = set(ev['_args'][0] for ev in processed_events)
+    terminated_inst_ids = [
+        inst_id async for inst_id in app.registry.enumerate_instances(check_shadow=False)
+        if inst_id not in valid_inst_ids
+    ]
+
+    log.info('bulk-dispatching latest events...')
+    app['status'] = GatewayStatus.SYNCING
+
+    for inst_id in terminated_inst_ids:
+        log.warning(f'instance {inst_id} is not running!')
+        # TODO: clear instance information completely (with access_key updates)
+
+    for ev in processed_events:
+        await ev['_handler'](app, *ev['_args'], **ev['_kwargs'])
+
+    log.info('entering normal operation mode...')
+    app['status'] = GatewayStatus.RUNNING
 
 
 @auth_required
 async def destroy(request):
+    if request.app['status'] != GatewayStatus.RUNNING:
+        raise ServiceUnavailable('Server is initializing...')
     kern_id = request.match_info['kernel_id']
     log.info(f'DESTROY (k:{kern_id})')
     try:
@@ -167,6 +240,8 @@ async def destroy(request):
 
 @auth_required
 async def get_info(request):
+    if request.app['status'] != GatewayStatus.RUNNING:
+        raise ServiceUnavailable('Server is initializing...')
     resp = {}
     kern_id = request.match_info['kernel_id']
     log.info(f'GETINFO (k:{kern_id})')
@@ -199,6 +274,8 @@ async def get_info(request):
 
 @auth_required
 async def restart(request):
+    if request.app['status'] != GatewayStatus.RUNNING:
+        raise ServiceUnavailable('Server is initializing...')
     kern_id = request.match_info['kernel_id']
     log.info(f'RESTART (k:{kern_id})')
     try:
@@ -215,6 +292,8 @@ async def restart(request):
 
 @auth_required
 async def execute_snippet(request):
+    if request.app['status'] != GatewayStatus.RUNNING:
+        raise ServiceUnavailable('Server is initializing...')
     resp = {}
     kern_id = request.match_info['kernel_id']
     try:
@@ -267,6 +346,9 @@ async def init(app):
 
     app.registry = InstanceRegistry(app.config.redis_addr)
     await app.registry.init()
+
+    heartbeat_interval = 3.0
+    asyncio.ensure_future(collect_agent_events(app, heartbeat_interval))
 
 
 async def shutdown(app):
