@@ -10,13 +10,13 @@ import aioredis
 from async_timeout import timeout as _timeout
 import zmq
 
-from sorna.defs import SORNA_KERNEL_DB, SORNA_INSTANCE_DB, \
-                       SORNA_SESSION_DB  # noqa
 from sorna.utils import dict2kvlist
 from sorna.exceptions import \
     InstanceNotAvailable, InstanceNotFound, KernelNotFound, \
     KernelCreationFailed, KernelDestructionFailed, \
     KernelExecutionFailed, KernelRestartFailed
+from ..gateway.defs import SORNA_KERNEL_DB, SORNA_INSTANCE_DB, \
+                           SORNA_SESSION_DB  # noqa
 from .structs import Instance, Kernel
 
 __all__ = ['InstanceRegistry', 'InstanceNotFound']

@@ -6,7 +6,7 @@ import logging
 import aioredis
 import aiozmq, aiozmq.rpc
 
-from sorna import defs
+from . import defs
 
 log = logging.getLogger('sorna.gateway.events')
 

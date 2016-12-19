@@ -4,9 +4,9 @@ import time
 
 import aioredis
 
-from sorna.defs import SORNA_RLIM_DB
 from sorna.exceptions import RateLimitExceeded
 from sorna.utils import dict2kvlist
+from .defs import SORNA_RLIM_DB
 
 log = logging.getLogger('sorna.gateway.ratelimit')
 
