@@ -153,6 +153,8 @@ async def instance_terminated(app, inst_id, reason):
         # We don't have to clear them manually.
         pass
 
+    await app.registry.clean_instance(inst_id)
+
 
 @grace_event_catcher
 async def instance_heartbeat(app, inst_id, inst_info, running_kernels, interval):

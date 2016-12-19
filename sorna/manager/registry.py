@@ -62,15 +62,15 @@ class InstanceRegistry:
         self.lifecycle_lock = asyncio.Lock()
 
     async def init(self):
-        self.redis_kern = await aioredis.create_pool(self.redis_addr,
+        self.redis_kern = await aioredis.create_pool(self.redis_addr.as_sockaddr(),
                                                      encoding='utf8',
                                                      db=SORNA_KERNEL_DB,
                                                      loop=self.loop)
-        self.redis_inst = await aioredis.create_pool(self.redis_addr,
+        self.redis_inst = await aioredis.create_pool(self.redis_addr.as_sockaddr(),
                                                      encoding='utf8',
                                                      db=SORNA_INSTANCE_DB,
                                                      loop=self.loop)
-        self.redis_sess = await aioredis.create_pool(self.redis_addr,
+        self.redis_sess = await aioredis.create_pool(self.redis_addr.as_sockaddr(),
                                                      encoding='utf8',
                                                      db=SORNA_SESSION_DB,
                                                      loop=self.loop)
@@ -443,6 +443,7 @@ class InstanceRegistry:
                    self.redis_kern.get() as rk:  # noqa
             kern_ids = await ri.smembers(inst_id + '.kernels')
             pipe = ri.pipeline()
+            pipe.delete('shadow:' + inst_id)
             pipe.delete(inst_id)
             pipe.delete(inst_id + '.kernels')
             await pipe.execute()

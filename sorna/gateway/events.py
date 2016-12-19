@@ -37,7 +37,7 @@ class EventServer(aiozmq.rpc.AttrHandler):
 
 
 async def monitor_redis_events(app):
-    redis_sub = await aioredis.create_redis(app.config.redis_addr, encoding='utf8')
+    redis_sub = await aioredis.create_redis(app.config.redis_addr.as_sockaddr(), encoding='utf8')
     # Enable "expired" event notification
     # See more details at: http://redis.io/topics/notifications
     await redis_sub.config_set('notify-keyspace-events', 'Ex')

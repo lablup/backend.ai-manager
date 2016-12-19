@@ -46,7 +46,7 @@ async def gw_init(app):
     app['status'] = GatewayStatus.STARTING
 
     app.dbpool = await asyncpgsa.create_pool(
-        host=app.config.db_addr[0],
+        host=str(app.config.db_addr[0]),
         port=app.config.db_addr[1],
         database=app.config.db_name,
         user=app.config.db_user,
