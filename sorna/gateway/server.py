@@ -15,6 +15,7 @@ import asyncpgsa
 import uvloop
 
 from sorna.argparse import ipaddr, path, port_no
+from sorna.utils import env_info
 from ..manager import __version__
 from . import GatewayStatus
 from .auth import init as auth_init, shutdown as auth_shutdown
@@ -86,6 +87,7 @@ def main():
     init_logger(app.config)
 
     log.info(f'Sorna Gateway {__version__}')
+    log.info(f'runtime: {env_info()}')
 
     log_config = logging.getLogger('sorna.gateway.config')
     log_config.debug('debug mode enabled.')
