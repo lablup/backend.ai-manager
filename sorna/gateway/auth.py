@@ -1,7 +1,9 @@
+import base64
 from datetime import datetime, timedelta
 import functools
 import hashlib, hmac
 import logging
+import secrets
 
 from aiohttp import web
 from dateutil.tz import tzutc
@@ -10,6 +12,7 @@ import simplejson as json
 import sqlalchemy as sa
 
 from sorna.exceptions import InvalidAuthParameters, AuthorizationFailed
+from .config import load_config, init_logger
 from .models import User, KeyPair
 
 log = logging.getLogger('sorna.gateway.auth')
@@ -161,6 +164,15 @@ async def authorize(request) -> web.Response:
     return web.json_response(resp_data)
 
 
+def generate_keypair():
+    '''
+    AWS-like access key and secret key generation.
+    '''
+    ak = 'AKIA' + base64.b32encode(secrets.token_bytes(10)).decode('ascii')
+    sk = secrets.token_urlsafe(30)
+    return ak, sk
+
+
 async def init(app):
     app.router.add_route('GET', '/v1/authorize', authorize)
     app.middlewares.append(auth_middleware_factory)
@@ -168,3 +180,19 @@ async def init(app):
 
 async def shutdown(app):
     pass
+
+
+if __name__ == '__main__':
+
+    def auth_args(parser):
+        parser.add('--generate-keypair', action='store_true', default=False,
+                   help='Generate a pair of access key and secret key.')
+
+    config = load_config(extra_args_func=auth_args)
+    init_logger(config)
+
+    if config.generate_keypair:
+        ak, sk = generate_keypair()
+        print(f'Access Key: {ak} ({len(ak)} bytes)')
+        print(f'Secret Key: {sk} ({len(sk)} bytes)')
+
