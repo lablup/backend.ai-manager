@@ -33,7 +33,7 @@ grace_events = []
 @auth_required
 async def create(request):
     if request.app['status'] != GatewayStatus.RUNNING:
-        raise ServiceUnavailable('Server is initializing...')
+        raise ServiceUnavailable('Server not ready.')
     try:
         with _timeout(2):
             params = await request.json()
@@ -91,8 +91,35 @@ def grace_event_catcher(func):
     return wrapped
 
 
-@grace_event_catcher
-async def kernel_terminated(app, reason, kern_id):
+async def clean_instance_usage(app, inst_id):
+    # In heartbeat timeouts, we do NOT clear Redis keys because
+    # the timeout may be a transient one.
+    kern_ids = await app.registry.get_kernels_in_instance(inst_id)
+    affected_keys = await app.registry.get_kernels(kern_ids, 'access_key')
+    await app.registry.update_instance(inst_id, {'status': 'lost'})
+
+    # TODO: enqueue termination event to streaming response queue
+
+    per_key_counts = defaultdict(int)
+    for ak in filter(lambda ak: ak is not None, affected_keys):
+        per_key_counts[ak] += 1
+    log.warning(f' -> cleaning {kern_ids!r} {per_key_counts}')
+
+    if not affected_keys:
+        return
+
+    # TODO: record usage & trigger billing update task (celery?)
+
+    async with app.dbpool.acquire() as conn, conn.transaction():
+        for access_key in affected_keys:
+            query = sa.update(KeyPair) \
+                      .values(concurrency_used=KeyPair.c.concurrency_used
+                                               - per_key_counts[access_key]) \
+                      .where(KeyPair.c.access_key == access_key)  # noqa
+            await conn.fetchval(query)
+
+
+async def clean_kernel_usage(app, kern_id):
 
     # TODO: enqueue termination event to streaming response queue
 
@@ -104,12 +131,17 @@ async def kernel_terminated(app, reason, kern_id):
 
     # TODO: record usage & trigger billing update task (celery?)
 
-    await app.registry.clean_kernel(kern_id)
     async with app.dbpool.acquire() as conn, conn.transaction():
         query = sa.update(KeyPair) \
                   .values(concurrency_used=KeyPair.c.concurrency_used - 1) \
                   .where(KeyPair.c.access_key == affected_key)  # noqa
         await conn.fetchval(query)
+
+
+@grace_event_catcher
+async def kernel_terminated(app, kern_id, reason):
+    await clean_kernel_usage(app, kern_id)
+    await app.registry.forget_kernel(kern_id)
 
 
 @grace_event_catcher
@@ -121,39 +153,12 @@ async def instance_started(app, inst_id):
 async def instance_terminated(app, inst_id, reason):
     if reason == 'agent-lost':
         log.warning(f'agent@{inst_id} heartbeat timeout detected.')
-
-        # In heartbeat timeouts, we do NOT clear Redis keys because
-        # the timeout may be a transient one.
-        kern_ids = await app.registry.get_kernels_in_instance(inst_id)
-        affected_keys = await app.registry.get_kernels(kern_ids, 'access_key')
-        await app.registry.update_instance(inst_id, {'status': 'lost'})
-
-        # TODO: enqueue termination event to streaming response queue
-
-        per_key_counts = defaultdict(int)
-        for ak in filter(lambda ak: ak is not None, affected_keys):
-            per_key_counts[ak] += 1
-        log.warning(f'instance_terminated: {kern_ids!r} {per_key_counts}')
-
-        if not affected_keys:
-            return
-
-        # TODO: record usage & trigger billing update task (celery?)
-
-        async with app.dbpool.acquire() as conn, conn.transaction():
-            for access_key in affected_keys:
-                query = sa.update(KeyPair) \
-                          .values(concurrency_used=KeyPair.c.concurrency_used
-                                                   - per_key_counts[access_key]) \
-                          .where(KeyPair.c.access_key == access_key)  # noqa
-                await conn.fetchval(query)
-
+        await clean_instance_usage(app, inst_id)
     else:
         # In other cases, kernel termination will be triggered by the agent.
         # We don't have to clear them manually.
         pass
-
-    await app.registry.clean_instance(inst_id)
+    await app.registry.forget_instance(inst_id)
 
 
 @grace_event_catcher
@@ -217,10 +222,12 @@ async def collect_agent_events(app, heartbeat_interval):
 
     for inst_id in terminated_inst_ids:
         log.warning(f'instance {inst_id} is not running!')
-        # TODO: clear instance information completely (with access_key updates)
+        await clean_instance_usage(app, inst_id)
+        await app.registry.forget_instance(app, inst_id)
 
     for ev in processed_events:
         await ev['_handler'](app, *ev['_args'], **ev['_kwargs'])
+        # TODO: calculate & update diff on kernel list and usage
 
     log.info('entering normal operation mode...')
     app['status'] = GatewayStatus.RUNNING
@@ -229,7 +236,7 @@ async def collect_agent_events(app, heartbeat_interval):
 @auth_required
 async def destroy(request):
     if request.app['status'] != GatewayStatus.RUNNING:
-        raise ServiceUnavailable('Server is initializing...')
+        raise ServiceUnavailable('Server not ready.')
     kern_id = request.match_info['kernel_id']
     log.info(f'DESTROY (k:{kern_id})')
     try:
@@ -243,7 +250,7 @@ async def destroy(request):
 @auth_required
 async def get_info(request):
     if request.app['status'] != GatewayStatus.RUNNING:
-        raise ServiceUnavailable('Server is initializing...')
+        raise ServiceUnavailable('Server not ready.')
     resp = {}
     kern_id = request.match_info['kernel_id']
     log.info(f'GETINFO (k:{kern_id})')
@@ -277,7 +284,7 @@ async def get_info(request):
 @auth_required
 async def restart(request):
     if request.app['status'] != GatewayStatus.RUNNING:
-        raise ServiceUnavailable('Server is initializing...')
+        raise ServiceUnavailable('Server not ready.')
     kern_id = request.match_info['kernel_id']
     log.info(f'RESTART (k:{kern_id})')
     try:
@@ -295,7 +302,7 @@ async def restart(request):
 @auth_required
 async def execute_snippet(request):
     if request.app['status'] != GatewayStatus.RUNNING:
-        raise ServiceUnavailable('Server is initializing...')
+        raise ServiceUnavailable('Server not ready.')
     resp = {}
     kern_id = request.match_info['kernel_id']
     try:

@@ -424,11 +424,13 @@ class InstanceRegistry:
         async with self.lifecycle_lock, \
                    self.redis_inst.get() as ri:  # noqa
             # Clear the running kernels set.
-            await ri.hset(inst_id, 'status', 'running')
-            await ri.hset(inst_id, 'num_kernels', 0)
-            await ri.delete(inst_id + '.kernels')
+            pipe = ri.pipeline()
+            pipe.hset(inst_id, 'status', 'running')
+            pipe.hset(inst_id, 'num_kernels', 0)
+            pipe.delete(inst_id + '.kernels')
+            await pipe.execute()
 
-    async def clean_kernel(self, kern_id):
+    async def forget_kernel(self, kern_id):
         async with self.lifecycle_lock, \
                    self.redis_inst.get() as ri, \
                    self.redis_kern.get() as rk:  # noqa
@@ -437,12 +439,13 @@ class InstanceRegistry:
             await ri.srem(inst_id + '.kernels', kern_id)
             await rk.delete(kern_id)
 
-    async def clean_instance(self, inst_id):
+    async def forget_instance(self, inst_id):
         async with self.lifecycle_lock, \
                    self.redis_inst.get() as ri, \
                    self.redis_kern.get() as rk:  # noqa
             kern_ids = await ri.smembers(inst_id + '.kernels')
             pipe = ri.pipeline()
+            # Delete shadow key immediately to prevent bogus agent-lost events.
             pipe.delete('shadow:' + inst_id)
             pipe.delete(inst_id)
             pipe.delete(inst_id + '.kernels')
