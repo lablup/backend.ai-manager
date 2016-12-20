@@ -115,7 +115,7 @@ async def auth_middleware_factory(app, handler):
                 my_signature = await sign_request(sign_method, request, row.secret_key)
                 if not my_signature:
                     raise InvalidAuthParameters
-                if my_signature == signature:
+                if secrets.compare_digest(my_signature, signature):
                     query = KeyPair.update() \
                                    .values(last_used=datetime.utcnow(),
                                            total_num_queries=KeyPair.c.total_num_queries + 1,
