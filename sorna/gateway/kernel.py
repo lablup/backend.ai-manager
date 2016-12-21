@@ -91,7 +91,7 @@ def grace_event_catcher(func):
     return wrapped
 
 
-async def clean_instance_usage(app, inst_id):
+async def update_instance_usage(app, inst_id):
     # In heartbeat timeouts, we do NOT clear Redis keys because
     # the timeout may be a transient one.
     kern_ids = await app.registry.get_kernels_in_instance(inst_id)
@@ -119,7 +119,7 @@ async def clean_instance_usage(app, inst_id):
             await conn.fetchval(query)
 
 
-async def clean_kernel_usage(app, kern_id):
+async def update_kernel_usage(app, kern_id):
 
     # TODO: enqueue termination event to streaming response queue
 
@@ -140,7 +140,7 @@ async def clean_kernel_usage(app, kern_id):
 
 @grace_event_catcher
 async def kernel_terminated(app, kern_id, reason):
-    await clean_kernel_usage(app, kern_id)
+    await update_kernel_usage(app, kern_id)
     await app.registry.forget_kernel(kern_id)
 
 
@@ -153,7 +153,7 @@ async def instance_started(app, inst_id):
 async def instance_terminated(app, inst_id, reason):
     if reason == 'agent-lost':
         log.warning(f'agent@{inst_id} heartbeat timeout detected.')
-        await clean_instance_usage(app, inst_id)
+        await update_instance_usage(app, inst_id)
     else:
         # On normal instance termination, kernel_terminated events were already
         # triggered by the agent.
@@ -169,7 +169,8 @@ async def instance_heartbeat(app, inst_id, inst_info, running_kernels, interval)
         if inst_status == 'lost':
             revived = True
     except InstanceNotFound:
-        revived = True
+        # may have started during the grace period.
+        app['event_server'].local_dispatch('instance_started', inst_id)
 
     if revived:
         log.warning(f'agent@{inst_id} revived.')
@@ -178,7 +179,7 @@ async def instance_heartbeat(app, inst_id, inst_info, running_kernels, interval)
         await app.registry.handle_heartbeat(inst_id, inst_info, running_kernels, interval)
 
 
-@grace_event_catcher
+# NOTE: This event is ignored during the grace period.
 async def instance_stats(app, inst_id, kern_stats, interval):
     if app['status'] == GatewayStatus.RUNNING:
         await app.registry.handle_stats(inst_id, kern_stats, interval)
@@ -222,12 +223,36 @@ async def collect_agent_events(app, heartbeat_interval):
 
     for inst_id in terminated_inst_ids:
         log.warning(f'instance {inst_id} is not running!')
-        await clean_instance_usage(app, inst_id)
+        await update_instance_usage(app, inst_id)
         await app.registry.forget_instance(app, inst_id)
 
     for ev in processed_events:
+        # calculate & update diff on kernel list and usage
+        if ev['_type'] == 'instance_heartbeat':
+            inst_id = ev['_args'][0]
+            inst_info = ev['_args'][1]
+            running_kernels = set(ev['_args'][2])
+            tracked_kernels = set(await app.registry.get_kernels_in_instance(inst_id))
+            new_kernels = running_kernels - tracked_kernels
+            old_kernels = tracked_kernels - running_kernels
+            if new_kernels:
+                log.warning(f'bulk-sync: new untracked kernels on {inst_id}: {new_kernels}')
+            if old_kernels:
+                log.warning(f'bulk-sync: deleted tracked kernels on {inst_id}: {old_kernels}')
+            for kern_id in old_kernels:
+                await update_kernel_usage(app, kern_id)
+                await app.registry.forget_kernel(app, kern_id)
+            async with app.dbpool.acquire() as conn, conn.transaction():
+                # This case should be very very rare.
+                for kern_id in new_kernels:
+                    access_key = await app.registry.get_kernel(kern_id, 'access_key')
+                    query = sa.update(KeyPair) \
+                              .values(concurrency_used=KeyPair.c.concurrency_used + 1) \
+                              .where(KeyPair.c.access_key == access_key)  # noqa
+                    await conn.fetchval(query)
+
+        # invoke original event handler
         await ev['_handler'](app, *ev['_args'], **ev['_kwargs'])
-        # TODO: calculate & update diff on kernel list and usage
 
     log.info('entering normal operation mode...')
     app['status'] = GatewayStatus.RUNNING
