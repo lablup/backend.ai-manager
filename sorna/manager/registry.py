@@ -424,32 +424,38 @@ class InstanceRegistry:
         async with self.lifecycle_lock, \
                    self.redis_inst.get() as ri:  # noqa
             # Clear the running kernels set.
-            pipe = ri.pipeline()
-            pipe.hset(inst_id, 'status', 'running')
-            pipe.hset(inst_id, 'num_kernels', 0)
-            pipe.delete(inst_id + '.kernels')
-            await pipe.execute()
+            ri_pipe = ri.pipeline()
+            ri_pipe.hset(inst_id, 'status', 'running')
+            ri_pipe.hset(inst_id, 'num_kernels', 0)
+            ri_pipe.delete(inst_id + '.kernels')
+            await ri_pipe.execute()
 
     async def forget_kernel(self, kern_id):
         async with self.lifecycle_lock, \
                    self.redis_inst.get() as ri, \
                    self.redis_kern.get() as rk:  # noqa
-            inst_id = await rk.hget(kern_id, 'instance')
-            await ri.hincrby(inst_id, 'num_kernels', -1)
-            await ri.srem(inst_id + '.kernels', kern_id)
-            await rk.delete(kern_id)
+            rk_pipe = rk.pipeline()
+            rk_pipe.hget(kern_id, 'instance')
+            rk_pipe.delete(kern_id)
+            results = await rk_pipe.execute()
+            inst_id = results[0]
+            ri_pipe = ri.pipeline()
+            ri_pipe.hincrby(inst_id, 'num_kernels', -1)
+            ri_pipe.srem(inst_id + '.kernels', kern_id)
+            await ri_pipe.execute()
 
     async def forget_instance(self, inst_id):
         async with self.lifecycle_lock, \
                    self.redis_inst.get() as ri, \
                    self.redis_kern.get() as rk:  # noqa
-            kern_ids = await ri.smembers(inst_id + '.kernels')
-            pipe = ri.pipeline()
+            ri_pipe = ri.pipeline()
+            ri_pipe.smembers(inst_id + '.kernels')
             # Delete shadow key immediately to prevent bogus agent-lost events.
-            pipe.delete('shadow:' + inst_id)
-            pipe.delete(inst_id)
-            pipe.delete(inst_id + '.kernels')
-            await pipe.execute()
+            ri_pipe.delete('shadow:' + inst_id)
+            ri_pipe.delete(inst_id)
+            ri_pipe.delete(inst_id + '.kernels')
+            results = await ri_pipe.execute()
+            kern_ids = results[0]
             if kern_ids:
                 await rk.delete(*kern_ids)
             return kern_ids

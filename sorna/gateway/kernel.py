@@ -155,8 +155,8 @@ async def instance_terminated(app, inst_id, reason):
         log.warning(f'agent@{inst_id} heartbeat timeout detected.')
         await clean_instance_usage(app, inst_id)
     else:
-        # In other cases, kernel termination will be triggered by the agent.
-        # We don't have to clear them manually.
+        # On normal instance termination, kernel_terminated events were already
+        # triggered by the agent.
         pass
     await app.registry.forget_instance(inst_id)
 
