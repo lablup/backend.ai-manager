@@ -118,7 +118,6 @@ async def auth_middleware_factory(app, handler):
                 if secrets.compare_digest(my_signature, signature):
                     query = KeyPair.update() \
                                    .values(last_used=datetime.utcnow(),
-                                           total_num_queries=KeyPair.c.total_num_queries + 1,
                                            num_queries=KeyPair.c.num_queries + 1) \
                                    .where(KeyPair.c.access_key == access_key)
                     await conn.fetchval(query)
@@ -128,10 +127,6 @@ async def auth_middleware_factory(app, handler):
                         'secret_key': row.secret_key,
                         'concurrency_limit': row.concurrency_limit,
                         'rate_limit': row.rate_limit,
-                        'remaining_cpu': row.remaining_cpu,
-                        'remaining_mem': row.remaining_mem,
-                        'remaining_io': row.remaining_io,
-                        'remaining_net': row.remaining_net,
                     }
                     request.user = {
                         'id': row.id,

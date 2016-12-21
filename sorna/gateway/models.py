@@ -66,27 +66,22 @@ User = sa.Table(
     sa.Column('password', sa.String(length=128)),
     sa.Column('created_at', sa.DateTime),
     sa.Column('last_login', sa.DateTime, nullable=True),
-    # TODO: add payment information
     sa.Index('idx_email', 'email', unique=True),
 )
 
 KeyPair = sa.Table(
     'keypairs', metadata,
-    sa.Column('access_key', sa.String, primary_key=True),
-    sa.Column('secret_key', sa.String),
+    sa.Column('access_key', sa.String(length=20), primary_key=True),
+    sa.Column('secret_key', sa.String(length=40)),
+    sa.Column('is_active', sa.Boolean),
+    sa.Column('billing_plan', sa.String, nullable=True),
     sa.Column('belongs_to', sa.ForeignKey('users.id')),
     sa.Column('created_at', sa.DateTime),
     sa.Column('last_used', sa.DateTime, nullable=True),
     sa.Column('concurrency_limit', sa.Integer),
     sa.Column('concurrency_used', sa.Integer),
     sa.Column('rate_limit', sa.Integer),
-    sa.Column('total_num_queries', sa.Integer, server_default='0'),
-    sa.Column('num_queries', sa.Integer, server_default='0'),  # reset every month
-    # Below quotas are reset the first day of every month.
-    sa.Column('remaining_cpu', sa.Integer),  # msec
-    sa.Column('remaining_mem', sa.Integer),  # KBytes
-    sa.Column('remaining_io', sa.Integer),   # KBytes
-    sa.Column('remaining_net', sa.Integer),  # KBytes
+    sa.Column('num_queries', sa.Integer, server_default='0'),
     # NOTE: API rate-limiting is done using Redis, not DB.
 )
 
@@ -96,14 +91,13 @@ Usage = sa.Table(
     sa.Column('access_key', sa.ForeignKey('keypairs.access_key')),
     sa.Column('kernel_type', sa.String),
     sa.Column('kernel_id', sa.String),
-    sa.Column('launched_at', sa.DateTime),
+    sa.Column('started_at', sa.DateTime),
     sa.Column('terminated_at', sa.DateTime),
     sa.Column('cpu_used', sa.Integer, server_default='0'),
     sa.Column('mem_used', sa.Integer, server_default='0'),
     sa.Column('io_used', sa.Integer, server_default='0'),
     sa.Column('net_used', sa.Integer, server_default='0'),
-    sa.Index('idx_ktype', 'kernel_type'),
-    sa.Index('idx_launch', 'launched_at'),
+    sa.Index('idx_launch', 'access_key', 'terminated_at'),
 )
 
 # Bill is regularly calculated by summing Usage records for a given month.
@@ -185,33 +179,33 @@ if __name__ == '__main__':
                 User.count(User.c.email == test_user_email),
                 column=0)
             if default_user_cnt == 0:
-                log.info('Creating the default legacy ZMQ API user')
+                log.info('Creating a test user')
                 uid = uuid.uuid4()
-                await conn.execute(User.insert().values(
-                    id=uid,
-                    email=test_user_email,
-                    password='x-unused',
-                    created_at=datetime.utcnow(),
-                ))
-                log.info('Creating a default keypair for the ZMQ user')
-                await conn.execute(KeyPair.insert().values(
-                    belongs_to=uid,
-                    access_key='AKIAIOSFODNN7EXAMPLE',
-                    secret_key='wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
-                    created_at=datetime.utcnow(),
-                    concurrency_limit=30,
-                    concurrency_used=0,
-                    rate_limit=1000,
+                await conn.execute(User.insert().values(**{
+                    'id': uid,
+                    'email': test_user_email,
+                    'password': 'x-unused',
+                    'created_at': datetime.utcnow(),
+                }))
+                log.info('Creating the default keypair for the test user')
+                await conn.execute(KeyPair.insert().values(**{
+                    'belongs_to': uid,
+                    'access_key': 'AKIAIOSFODNN7EXAMPLE',
+                    'secret_key': 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+                    'created_at': datetime.utcnow(),
+                    'concurrency_limit': 30,
+                    'concurrency_used': 0,
+                    'rate_limit': 1000,
                     # Sample free tier: 500 launches per day x 30 days per month
-                    remaining_cpu=180000 * 500 * 30,   # msec (180 sec per launch)
-                    remaining_mem=1048576 * 500 * 30,  # KBytes (1GB per launch)
-                    remaining_io=102400 * 500 * 30,    # KBytes (100MB per launch)
-                    remaining_net=102400 * 500 * 30,   # KBytes (100MB per launch)
-                ))
+                    # 'remaining_cpu': 180000 * 500 * 30,   # msec (180 sec per launch)
+                    # 'remaining_mem': 1048576 * 500 * 30,  # KBytes (1GB per launch)
+                    # 'remaining_io': 102400 * 500 * 30,    # KBytes (100MB per launch)
+                    # 'remaining_net': 102400 * 500 * 30,   # KBytes (100MB per launch)
+                }))
 
     async def init_db(config):
         async with pg.create_pool(
-            host=config.db_addr[0],
+            host=str(config.db_addr[0]),
             port=config.db_addr[1],
             user=config.db_user,
             password=config.db_password,

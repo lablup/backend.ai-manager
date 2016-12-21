@@ -8,10 +8,10 @@ from datetime import datetime
 import functools
 import logging
 import time
+import uuid
 
 from aiohttp import web
 from async_timeout import timeout as _timeout
-from dateutil.parser import parse as dtparse
 from dateutil.tz import tzutc
 import simplejson as json
 import sqlalchemy as sa
@@ -20,7 +20,7 @@ from sorna.exceptions import ServiceUnavailable, InvalidAPIParameters, QuotaExce
                              QueryNotImplemented, InstanceNotFound, KernelNotFound, SornaError  # noqa
 from . import GatewayStatus
 from .auth import auth_required
-from .models import KeyPair
+from .models import KeyPair, Usage
 from ..manager.registry import InstanceRegistry
 
 _json_type = 'application/json'
@@ -95,7 +95,8 @@ async def update_instance_usage(app, inst_id):
     # In heartbeat timeouts, we do NOT clear Redis keys because
     # the timeout may be a transient one.
     kern_ids = await app.registry.get_kernels_in_instance(inst_id)
-    affected_keys = await app.registry.get_kernels(kern_ids, 'access_key')
+    kernels = await app.registry.get_kernels(kern_ids)
+    affected_keys = [kern.access_key for kern in kernels if kern is not None]
     await app.registry.update_instance(inst_id, {'status': 'lost'})
 
     # TODO: enqueue termination event to streaming response queue
@@ -108,14 +109,28 @@ async def update_instance_usage(app, inst_id):
     if not affected_keys:
         return
 
-    # TODO: record usage & trigger billing update task (celery?)
-
     async with app.dbpool.acquire() as conn, conn.transaction():
-        for access_key in affected_keys:
+        log.debug(f'update_instance_usage({inst_id})')
+        for kern in kernels:
+            if kern is None:
+                continue
+            query = Usage.insert().values(**{
+                'id': uuid.uuid4(),
+                'access_key': kern.access_key,
+                'kernel_type': kern.lang,
+                'kernel_id': kern.id,
+                'started_at': kern.created_at.replace(tzinfo=None),
+                'terminated_at': datetime.utcnow(),
+                'cpu_used': kern.cpu_used,
+                'mem_used': kern.mem_max_bytes // 1024,
+                'io_used': (kern.io_read_bytes + kern.io_write_bytes) // 1024,
+                'net_used': (kern.net_rx_bytes + kern.net_tx_bytes) // 1024,
+            })
+            await conn.execute(query)
             query = sa.update(KeyPair) \
                       .values(concurrency_used=KeyPair.c.concurrency_used
-                                               - per_key_counts[access_key]) \
-                      .where(KeyPair.c.access_key == access_key)  # noqa
+                                               - per_key_counts[kern.access_key]) \
+                      .where(KeyPair.c.access_key == kern.access_key)  # noqa
             await conn.fetchval(query)
 
 
@@ -124,17 +139,29 @@ async def update_kernel_usage(app, kern_id):
     # TODO: enqueue termination event to streaming response queue
 
     try:
-        affected_key = await app.registry.get_kernel(kern_id, field='access_key')
+        kern = await app.registry.get_kernel(kern_id)
     except KernelNotFound:
         log.warning(f'kernel_terminated: owner access key of {kern_id} is missing!')
         return
 
-    # TODO: record usage & trigger billing update task (celery?)
-
     async with app.dbpool.acquire() as conn, conn.transaction():
+        log.debug(f'update_kernel_usage({kern_id})')
+        query = Usage.insert().values(**{
+            'id': uuid.uuid4(),
+            'access_key': kern.access_key,
+            'kernel_type': kern.lang,
+            'kernel_id': kern.id,
+            'started_at': kern.created_at.replace(tzinfo=None),
+            'terminated_at': datetime.utcnow(),
+            'cpu_used': kern.cpu_used,
+            'mem_used': kern.mem_max_bytes // 1024,
+            'io_used': (kern.io_read_bytes + kern.io_write_bytes) // 1024,
+            'net_used': (kern.net_rx_bytes + kern.net_tx_bytes) // 1024,
+        })
+        await conn.execute(query)
         query = sa.update(KeyPair) \
                   .values(concurrency_used=KeyPair.c.concurrency_used - 1) \
-                  .where(KeyPair.c.access_key == affected_key)  # noqa
+                  .where(KeyPair.c.access_key == kern.access_key)  # noqa
         await conn.fetchval(query)
 
 
@@ -215,7 +242,7 @@ async def collect_agent_events(app, heartbeat_interval):
     valid_inst_ids = set(ev['_args'][0] for ev in processed_events)
     terminated_inst_ids = [
         inst_id async for inst_id in app.registry.enumerate_instances(check_shadow=False)
-        if inst_id not in valid_inst_ids
+        if inst_id not in valid_inst_ids and inst_id is not None
     ]
 
     log.info('bulk-dispatching latest events...')
@@ -224,7 +251,7 @@ async def collect_agent_events(app, heartbeat_interval):
     for inst_id in terminated_inst_ids:
         log.warning(f'instance {inst_id} is not running!')
         await update_instance_usage(app, inst_id)
-        await app.registry.forget_instance(app, inst_id)
+        await app.registry.forget_instance(inst_id)
 
     for ev in processed_events:
         # calculate & update diff on kernel list and usage
@@ -235,13 +262,13 @@ async def collect_agent_events(app, heartbeat_interval):
             tracked_kernels = set(await app.registry.get_kernels_in_instance(inst_id))
             new_kernels = running_kernels - tracked_kernels
             old_kernels = tracked_kernels - running_kernels
-            if new_kernels:
-                log.warning(f'bulk-sync: new untracked kernels on {inst_id}: {new_kernels}')
-            if old_kernels:
-                log.warning(f'bulk-sync: deleted tracked kernels on {inst_id}: {old_kernels}')
+            #if new_kernels:
+            log.warning(f'bulk-sync: new untracked kernels on {inst_id}: {new_kernels}')
+            #if old_kernels:
+            log.warning(f'bulk-sync: deleted tracked kernels on {inst_id}: {old_kernels}')
             for kern_id in old_kernels:
                 await update_kernel_usage(app, kern_id)
-                await app.registry.forget_kernel(app, kern_id)
+                await app.registry.forget_kernel(kern_id)
             async with app.dbpool.acquire() as conn, conn.transaction():
                 # This case should be very very rare.
                 for kern_id in new_kernels:
@@ -282,19 +309,19 @@ async def get_info(request):
     try:
         kern = await request.app.registry.get_kernel(kern_id)
         resp['lang'] = kern.lang
-        age = datetime.now(tzutc()) - dtparse(kern.created_at)
+        age = datetime.now(tzutc()) - kern.created_at
         resp['age'] = age.total_seconds() * 1000
         # Resource limits collected from agent heartbeats
         # TODO: factor out policy/image info as a common repository
-        resp['queryTimeout']  = int(float(kern.exec_timeout) * 1000)
-        resp['idleTimeout']   = int(float(kern.idle_timeout) * 1000)
-        resp['memoryLimit']   = int(kern.mem_limit)
-        resp['maxCpuCredit']  = int(float(kern.exec_timeout) * 1000)
+        resp['queryTimeout']  = int(kern.exec_timeout * 1000)
+        resp['idleTimeout']   = int(kern.idle_timeout * 1000)
+        resp['memoryLimit']   = kern.mem_limit
+        resp['maxCpuCredit']  = int(kern.exec_timeout * 1000)
         # Stats collected from agent heartbeats
-        resp['numQueriesExecuted'] = int(kern.num_queries)
-        resp['idle']          = int(float(kern.idle) * 1000)
-        resp['memoryUsed']    = int(kern.mem_max_bytes) // 1024
-        resp['cpuCreditUsed'] = int(float(kern.cpu_used))
+        resp['numQueriesExecuted'] = kern.num_queries
+        resp['idle']          = int(kern.idle * 1000)
+        resp['memoryUsed']    = kern.mem_max_bytes // 1024
+        resp['cpuCreditUsed'] = kern.cpu_used
         log.info(f'information retrieved: {resp!r}')
         await request.app.registry.update_kernel(kern, {
             'num_queries': int(kern.num_queries) + 1,

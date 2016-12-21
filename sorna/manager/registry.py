@@ -154,7 +154,9 @@ class InstanceRegistry:
                         if not (await ri.sismember(kern_set_key, kern_id)):
                             # The agent is running but it has no such kernel.
                             raise KernelNotFound
-                        return Kernel(**fields)
+                        kern = Kernel(**fields)
+                        kern.apply_type()
+                        return kern
                 except KernelNotFound:
                     await rk.delete(kern_id)
                     raise
@@ -185,17 +187,19 @@ class InstanceRegistry:
                             continue
                         # Check if stale.
                         try:
-                            if 'instance' not in fields:
+                            if 'instance' not in result:
                                 # Received last heartbeats but the agent has restarted meanwhile.
                                 raise KernelNotFound
-                            if not (await ri.exists('shadow:' + fields['instance'])):
+                            if not (await ri.exists('shadow:' + result['instance'])):
                                 # The agent heartbeat is timed out.
                                 raise KernelNotFound
-                            kern_set_key = fields['instance'] + '.kernels'
+                            kern_set_key = result['instance'] + '.kernels'
                             if not (await ri.sismember(kern_set_key, kern_id)):
                                 # The agent is running but it has no such kernel.
                                 raise KernelNotFound
-                            final_results.append(Kernel(**fields))
+                            kern = Kernel(**result)
+                            kern.apply_type()
+                            final_results.append(kern)
                         except KernelNotFound:
                             await rk.delete(kern_id)
                             final_results.append(None)
@@ -365,6 +369,8 @@ class InstanceRegistry:
         async with self.lifecycle_lock, \
                    self.redis_inst.get() as ri:  # noqa
             kern_ids = await ri.smembers(inst_id + '.kernels')
+            if kern_ids is None:
+                return []
             return kern_ids
 
     async def handle_stats(self, inst_id, kern_stats, interval):
