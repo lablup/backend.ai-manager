@@ -134,30 +134,48 @@ async def update_instance_usage(app, inst_id):
             await conn.fetchval(query)
 
 
-async def update_kernel_usage(app, kern_id):
+async def update_kernel_usage(app, kern_id, kern_stat=None):
 
     # TODO: enqueue termination event to streaming response queue
 
     try:
         kern = await app.registry.get_kernel(kern_id)
     except KernelNotFound:
-        log.warning(f'kernel_terminated: owner access key of {kern_id} is missing!')
+        log.warning(f'update_kernel_usage({kern_id}): kernel is missing!')
         return
 
     async with app.dbpool.acquire() as conn, conn.transaction():
         log.debug(f'update_kernel_usage({kern_id})')
-        query = Usage.insert().values(**{
-            'id': uuid.uuid4(),
-            'access_key': kern.access_key,
-            'kernel_type': kern.lang,
-            'kernel_id': kern.id,
-            'started_at': kern.created_at.replace(tzinfo=None),
-            'terminated_at': datetime.utcnow(),
-            'cpu_used': kern.cpu_used,
-            'mem_used': kern.mem_max_bytes // 1024,
-            'io_used': (kern.io_read_bytes + kern.io_write_bytes) // 1024,
-            'net_used': (kern.net_rx_bytes + kern.net_tx_bytes) // 1024,
-        })
+        if kern_stat:
+            # if last stats available, use it.
+            log.warning(f'update_kernel_usage: last-stat: {kern_stat}')
+            query = Usage.insert().values(**{
+                'id': uuid.uuid4(),
+                'access_key': kern.access_key,
+                'kernel_type': kern.lang,
+                'kernel_id': kern.id,
+                'started_at': kern.created_at.replace(tzinfo=None),
+                'terminated_at': datetime.utcnow(),
+                'cpu_used': kern_stat['cpu_used'],
+                'mem_used': kern_stat['mem_max_bytes'] // 1024,
+                'io_used': (kern_stat['io_read_bytes'] + kern_stat['io_write_bytes']) // 1024,
+                'net_used': (kern_stat['net_rx_bytes'] + kern_stat['net_tx_bytes']) // 1024,
+            })
+        else:
+            # otherwise, get the latest stats from the registry.
+            log.warning(f'update_kernel_usage: registry-stat')
+            query = Usage.insert().values(**{
+                'id': uuid.uuid4(),
+                'access_key': kern.access_key,
+                'kernel_type': kern.lang,
+                'kernel_id': kern.id,
+                'started_at': kern.created_at.replace(tzinfo=None),
+                'terminated_at': datetime.utcnow(),
+                'cpu_used': kern.cpu_used,
+                'mem_used': kern.mem_max_bytes // 1024,
+                'io_used': (kern.io_read_bytes + kern.io_write_bytes) // 1024,
+                'net_used': (kern.net_rx_bytes + kern.net_tx_bytes) // 1024,
+            })
         await conn.execute(query)
         query = sa.update(KeyPair) \
                   .values(concurrency_used=KeyPair.c.concurrency_used - 1) \
@@ -166,8 +184,8 @@ async def update_kernel_usage(app, kern_id):
 
 
 @grace_event_catcher
-async def kernel_terminated(app, kern_id, reason):
-    await update_kernel_usage(app, kern_id)
+async def kernel_terminated(app, kern_id, reason, kern_stat):
+    await update_kernel_usage(app, kern_id, kern_stat)
     await app.registry.forget_kernel(kern_id)
 
 
@@ -263,10 +281,10 @@ async def collect_agent_events(app, heartbeat_interval):
             tracked_kernels = set(await app.registry.get_kernels_in_instance(inst_id))
             new_kernels = running_kernels - tracked_kernels
             old_kernels = tracked_kernels - running_kernels
-            #if new_kernels:
-            log.warning(f'bulk-sync: new untracked kernels on {inst_id}: {new_kernels}')
-            #if old_kernels:
-            log.warning(f'bulk-sync: deleted tracked kernels on {inst_id}: {old_kernels}')
+            if new_kernels:
+                log.warning(f'bulk-sync: new untracked kernels on {inst_id}: {new_kernels}')
+            if old_kernels:
+                log.warning(f'bulk-sync: deleted tracked kernels on {inst_id}: {old_kernels}')
             for kern_id in old_kernels:
                 await update_kernel_usage(app, kern_id)
                 await app.registry.forget_kernel(kern_id)
