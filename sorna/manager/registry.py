@@ -405,7 +405,7 @@ class InstanceRegistry:
             # Create a "shadow" key that actually expires.
             # This allows access to agent information upon expiration events.
             ri_pipe.set('shadow:' + inst_id, '')
-            ri_pipe.expire('shadow:' + inst_id, float(interval * 2))
+            ri_pipe.expire('shadow:' + inst_id, float(interval * 3.3))
             try:
                 await ri_pipe.execute()
                 await rk_pipe.execute()
@@ -449,6 +449,22 @@ class InstanceRegistry:
             ri_pipe.hincrby(inst_id, 'num_kernels', -1)
             ri_pipe.srem(inst_id + '.kernels', kern_id)
             await ri_pipe.execute()
+
+    async def forget_all_kernels_in_instance(self, inst_id):
+        async with self.lifecycle_lock, \
+                   self.redis_inst.get() as ri, \
+                   self.redis_kern.get() as rk:  # noqa
+            ri_pipe = ri.pipeline()
+            ri_pipe.smembers(inst_id + '.kernels')
+            ri_pipe.hset(inst_id, 'num_kernels', 0)
+            ri_pipe.delete(inst_id + '.kernels')
+            results = await ri_pipe.execute()
+            kern_ids = results[0]
+            rk_pipe = rk.pipeline()
+            if kern_ids:
+                for kern_id in kern_ids:
+                    rk_pipe.delete(kern_id)
+            await rk_pipe.execute()
 
     async def forget_instance(self, inst_id):
         async with self.lifecycle_lock, \
