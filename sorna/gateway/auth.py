@@ -98,6 +98,9 @@ async def auth_middleware_factory(app, handler):
         request.is_authorized = False
         request.keypair = None
         request.user = None
+        # TODO: apply auth with websockets
+        if request.rel_url.path.startswith('/v1/stream/'):
+            return (await handler(request))
         if not check_date(request):
             raise InvalidAuthParameters
         params = _extract_auth_params(request)

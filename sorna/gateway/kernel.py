@@ -3,18 +3,24 @@ Kernel session management.
 '''
 
 import asyncio
+import base64
 from collections import defaultdict
 from datetime import datetime
 import functools
 import logging
 import time
 import uuid
+from urllib.parse import urlparse
 
+import aiohttp
 from aiohttp import web
+import aiozmq
+from aiozmq import create_zmq_stream as aiozmq_sock
 from async_timeout import timeout as _timeout
 from dateutil.tz import tzutc
 import simplejson as json
 import sqlalchemy as sa
+import zmq
 
 from sorna.exceptions import ServiceUnavailable, InvalidAPIParameters, QuotaExceeded, \
                              QueryNotImplemented, InstanceNotFound, KernelNotFound, SornaError  # noqa
@@ -397,12 +403,93 @@ async def execute_snippet(request):
                         text=json.dumps(resp))
 
 
+# TODO: @auth_required
 async def stream_pty(request):
+    app = request.app
     kern_id = request.match_info['kernel_id']
-    # TODO: migrate pub/sub part of webterm proxy from neumann
-    raise QueryNotImplemented
+    try:
+        kernel = await app.registry.get_kernel(kern_id)
+    except KernelNotFound:
+        raise
+
+    # Upgrade connection to WebSocket.
+    ws = web.WebSocketResponse()
+    if not ws.can_prepare(request):
+        raise web.HTTPUpgradeRequired
+    await ws.prepare(request)
+
+    # Connect with kernel pty.
+    kernel_ip = urlparse(kernel.addr).hostname
+    stdin_addr = f'tcp://{kernel_ip}:{kernel.stdin_port}'
+    stdin_sock = await aiozmq_sock(zmq.PUB, connect=stdin_addr)
+    stdin_sock.transport.setsockopt(zmq.LINGER, 100)
+    stdout_addr = f'tcp://{kernel_ip}:{kernel.stdout_port}'
+    stdout_sock = await aiozmq_sock(zmq.SUB, connect=stdout_addr)
+    stdout_sock.transport.setsockopt(zmq.LINGER, 100)
+    stdout_sock.transport.subscribe(b'')
+
+    async def stream_stdin():
+        async for msg in ws:
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                data = json.loads(msg.data)
+                log.debug(f'stream_stdin({kern_id}): data {data!r}')
+                try:
+                    if data['type'] == 'stdin':
+                        raw_data = base64.b64decode(data['chars'].encode('ascii'))
+                        try:
+                            stdin_sock.write([raw_data])
+                        except aiozmq.ZmqStreamClosed:
+                            # TODO: retry connection?
+                            break
+                    elif data['type'] == 'resize':
+                        await app.registry.execute_snippet(kern_id, '', f"%resize {data['rows']} {data['cols']}")
+                    elif data['type'] == 'ping':
+                        await app.registry.execute_snippet(kern_id, '', '%ping')
+                    elif data['type'] == 'restart':
+                        await app.registry.restart_kernel(kern_id)
+                #except SornaError:
+                except:
+                    log.exception(f'stream_stdin({kern_id}): exception occurred')
+            elif msg.type == aiohttp.WSMsgType.ERROR:
+                log.warning(f'stream_stdin({kern_id}): connection closed ({ws.exception()})')
+        log.debug(f'stream_stdin({kern_id}): terminated')
+        stdin_sock.close()
+
+    async def stream_stdout():
+        log.debug(f'stream_stdout({kern_id}): started')
+        while True:
+            try:
+                data = await stdout_sock.read()
+            except (aiozmq.ZmqStreamClosed, asyncio.CancelledError):
+                break
+            except:
+                log.exception(f'stream_stdout({kern_id}): read: unexpected error')
+            log.debug(f'stream_stdout({kern_id}): data {data[0]!r}')
+            if ws.closed:
+                break
+            try:
+                ws.send_str(json.dumps({
+                    'type': 'out',
+                    'data': base64.b64encode(data[0]).decode('ascii'),
+                }, ensure_ascii=False))
+            except:
+                log.exception(f'stream_stdout({kern_id}): send: unexpected error')
+        log.debug(f'stream_stdout({kern_id}): terminated')
+        stdout_sock.close()
+
+    # According to aiohttp docs, reading ws must be done inside this task.
+    # We parallelize stdout handler using another task.
+    stdout_task = asyncio.ensure_future(stream_stdout())
+    try:
+        await stream_stdin()
+    except:
+        log.exception(f'stream_pty({kern_id}): unexpected error')
+    finally:
+        stdout_task.cancel()
+    return ws
 
 
+@auth_required
 async def stream_events(request):
     kern_id = request.match_info['kernel_id']
     # TODO: dequeue the streaming response queue for the given kernel id
@@ -415,8 +502,8 @@ async def init(app):
     app.router.add_route('PATCH', '/v1/kernel/{kernel_id}', restart)
     app.router.add_route('DELETE', '/v1/kernel/{kernel_id}', destroy)
     app.router.add_route('POST', '/v1/kernel/{kernel_id}', execute_snippet)
-    app.router.add_route('POST', '/v1/stream/kernel/{kernel_id}/pty', stream_pty)
-    app.router.add_route('POST', '/v1/stream/kernel/{kernel_id}/events', stream_events)
+    app.router.add_route('GET', '/v1/stream/kernel/{kernel_id}/pty', stream_pty)
+    app.router.add_route('GET', '/v1/stream/kernel/{kernel_id}/events', stream_events)
 
     app['event_server'].add_handler('kernel_terminated', kernel_terminated)
     app['event_server'].add_handler('instance_started', instance_started)

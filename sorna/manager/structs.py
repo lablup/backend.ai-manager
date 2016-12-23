@@ -1,5 +1,3 @@
-#! /usr/bin/env python3
-
 from dateutil.parser import parse as dtparse
 from namedlist import namedlist
 
@@ -8,7 +6,7 @@ Instance = namedlist('Instance', [
     ('status', None),
     ('id', None),
     ('ip', None),
-    ('addr', None),
+    ('addr', None),      # tcp://{ip}:{port}
     ('type', None),
     ('used_cpu', None),
     ('num_kernels', 0),
@@ -27,7 +25,7 @@ class Kernel(namedlist('_Kernel', [
     ('instance', None),
     ('access_key', None),
     ('lang', None),
-    ('addr', None),
+    ('addr', None),        # tcp://{ip}:{port}
     ('stdin_port', None),
     ('stdout_port', None),
     ('created_at', None),
@@ -53,7 +51,7 @@ class Kernel(namedlist('_Kernel', [
 
     def apply_type(self):
         self._update({
-            'created_at': dtparse(self.created_at),
+            'created_at': dtparse(self.created_at) if self.created_at is not None else None,
             'num_queries': int(self.num_queries),
             'cpu_used': float(self.cpu_used),
             'exec_timeout': float(self.exec_timeout),
