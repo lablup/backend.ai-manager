@@ -61,7 +61,7 @@ def init_logger(config):
                 'class': 'logging.StreamHandler',
                 'level': 'DEBUG',
                 'formatter': 'colored',
-                'stream': 'ext://sys.stdout',
+                'stream': 'ext://sys.stderr',
             },
             'null': {
                 'class': 'logging.NullHandler',

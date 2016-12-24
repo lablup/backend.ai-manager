@@ -449,7 +449,9 @@ async def stream_pty(request):
                         await app.registry.restart_kernel(kern_id)
                 #except SornaError:
                 except:
+                    # Agent/Kernel may have terminated.
                     log.exception(f'stream_stdin({kern_id}): exception occurred')
+                    break
             elif msg.type == aiohttp.WSMsgType.ERROR:
                 log.warning(f'stream_stdin({kern_id}): connection closed ({ws.exception()})')
         log.debug(f'stream_stdin({kern_id}): terminated')
@@ -464,6 +466,7 @@ async def stream_pty(request):
                 break
             except:
                 log.exception(f'stream_stdout({kern_id}): read: unexpected error')
+                break
             log.debug(f'stream_stdout({kern_id}): data {data[0]!r}')
             if ws.closed:
                 break
@@ -474,6 +477,7 @@ async def stream_pty(request):
                 }, ensure_ascii=False))
             except:
                 log.exception(f'stream_stdout({kern_id}): send: unexpected error')
+                break
         log.debug(f'stream_stdout({kern_id}): terminated')
         stdout_sock.close()
 
