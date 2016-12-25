@@ -11,7 +11,7 @@ asyncpg>=0.7
 asyncpgsa>=0.7
 python-dateutil>=2.5
 simplejson
-uvloop>=0.6
+uvloop>=0.7
 -e git+ssh://git@github.com/lablup/sorna-common#egg=sorna-common
 pytest
 pytest-mock

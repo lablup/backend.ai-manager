@@ -156,6 +156,8 @@ def main():
         await web_handler.finish_connections(60.0)
         await app.cleanup()
 
+        await loop.shutdown_asyncgens()
+
     try:
         loop.run_until_complete(initialize())
         loop.run_forever()

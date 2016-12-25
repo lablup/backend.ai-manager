@@ -59,7 +59,7 @@ setup(
         'asyncpgsa>=0.7',
         'python-dateutil>=2.5',
         'simplejson',
-        'uvloop>=0.6',
+        'uvloop>=0.7',
         'sorna-common>=0.8,<0.9'],
     extras_require={
         'dev': [],
