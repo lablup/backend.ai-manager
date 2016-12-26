@@ -490,6 +490,7 @@ async def stream_pty(request):
         log.exception(f'stream_pty({kern_id}): unexpected error')
     finally:
         stdout_task.cancel()
+        await asyncio.sleep(0.01)
     return ws
 
 
