@@ -218,14 +218,16 @@ class InstanceRegistry:
     async def get_or_create_kernel(self, client_sess_token, lang, owner_access_key, spec=None):
         try:
             kern = await self.get_kernel_from_session(client_sess_token, lang)
+            created = False
         except KernelNotFound:
             # Create a new kernel.
             async with self.redis_sess.get() as rs:
                 _, kern = await self.create_kernel(lang, owner_access_key, spec)
                 sess_key = '{0}:{1}'.format(client_sess_token, lang)
                 await rs.set(sess_key, kern.id)
+                created = True
         assert kern is not None
-        return kern
+        return kern, created
 
     async def create_kernel(self, lang, owner_access_key, spec=None):
         inst_id = None

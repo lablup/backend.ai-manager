@@ -61,13 +61,14 @@ async def create(request):
             log.debug(f'access_key: {access_key} ({concurrency_used} / {concurrency_limit})')
             if concurrency_used >= concurrency_limit:
                 raise QuotaExceeded
-            kernel = await request.app.registry.get_or_create_kernel(
+            kernel, created = await request.app.registry.get_or_create_kernel(
                 params['clientSessionToken'], params['lang'], access_key)
             resp['kernelId'] = kernel.id
-            query = sa.update(KeyPair) \
-                      .values(concurrency_used=KeyPair.c.concurrency_used + 1) \
-                      .where(KeyPair.c.access_key == access_key)  # noqa
-            await conn.fetchval(query)
+            if created:
+                query = sa.update(KeyPair) \
+                          .values(concurrency_used=KeyPair.c.concurrency_used + 1) \
+                          .where(KeyPair.c.access_key == access_key)  # noqa
+                await conn.fetchval(query)
     except SornaError:
         log.exception('GET_OR_CREATE: API Internal Error')
         raise
