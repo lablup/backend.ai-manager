@@ -191,6 +191,8 @@ async def update_kernel_usage(app, kern_id, kern_stat=None):
 
 @grace_event_catcher
 async def kernel_terminated(app, kern_id, reason, kern_stat):
+    for handler in app['stream_pty_handlers'][kern_id]:
+        handler.cancel()
     await update_kernel_usage(app, kern_id, kern_stat)
     await app.registry.forget_kernel(kern_id)
 
@@ -418,6 +420,8 @@ async def stream_pty(request):
         raise web.HTTPUpgradeRequired
     await ws.prepare(request)
 
+    app['stream_pty_handlers'][kern_id].add(asyncio.Task.current_task())
+
     # Connect with kernel pty.
     kernel_ip = urlparse(kernel.addr).hostname
     stdin_addr = f'tcp://{kernel_ip}:{kernel.stdin_port}'
@@ -447,10 +451,11 @@ async def stream_pty(request):
                         await app.registry.execute_snippet(kern_id, '', '%ping')
                     elif data['type'] == 'restart':
                         await app.registry.restart_kernel(kern_id)
-                #except SornaError:
+                except asyncio.CancelledError:
+                    # Agent or kernel is terminated.
+                    break
                 except:
-                    # Agent/Kernel may have terminated.
-                    log.exception(f'stream_stdin({kern_id}): exception occurred')
+                    log.exception(f'stream_stdin({kern_id}): unexpected error')
                     break
             elif msg.type == aiohttp.WSMsgType.ERROR:
                 log.warning(f'stream_stdin({kern_id}): connection closed ({ws.exception()})')
@@ -489,6 +494,7 @@ async def stream_pty(request):
     except:
         log.exception(f'stream_pty({kern_id}): unexpected error')
     finally:
+        app['stream_pty_handlers'][kern_id].remove(asyncio.Task.current_task())
         stdout_task.cancel()
         await asyncio.sleep(0.01)
     return ws
@@ -516,6 +522,8 @@ async def init(app):
     app['event_server'].add_handler('instance_heartbeat', instance_heartbeat)
     app['event_server'].add_handler('instance_stats', instance_stats)
 
+    app['stream_pty_handlers'] = defaultdict(set)
+
     app.registry = InstanceRegistry(app.config.redis_addr)
     await app.registry.init()
 
@@ -524,4 +532,7 @@ async def init(app):
 
 
 async def shutdown(app):
+    for per_kernel_handlers in app['stream_pty_handlers'].values():
+        for handler in per_kernel_handlers:
+            handler.cancel()
     await app.registry.terminate()
