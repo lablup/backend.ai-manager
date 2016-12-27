@@ -207,6 +207,9 @@ async def instance_terminated(app, inst_id, reason):
     if reason == 'agent-lost':
         log.warning(f'agent@{inst_id} heartbeat timeout detected.')
         await update_instance_usage(app, inst_id)
+        for kern_id in (await app.registry.get_kernels_in_instance(inst_id)):
+            for handler in app['stream_pty_handlers'][kern_id]:
+                handler.cancel()
         await app.registry.forget_all_kernels_in_instance(inst_id)
     else:
         # On normal instance termination, kernel_terminated events were already
