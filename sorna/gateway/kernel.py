@@ -433,17 +433,15 @@ async def stream_pty(request):
     stdout_sock.transport.subscribe(b'')
 
     async def stream_stdin():
-        async for msg in ws:
-            if msg.type == aiohttp.WSMsgType.TEXT:
-                data = json.loads(msg.data)
-                log.debug(f'stream_stdin({kern_id}): data {data!r}')
-                try:
+        try:
+            async for msg in ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    data = json.loads(msg.data)
                     if data['type'] == 'stdin':
                         raw_data = base64.b64decode(data['chars'].encode('ascii'))
                         try:
                             stdin_sock.write([raw_data])
                         except aiozmq.ZmqStreamClosed:
-                            # TODO: retry connection?
                             break
                     elif data['type'] == 'resize':
                         await app.registry.execute_snippet(kern_id, '', f"%resize {data['rows']} {data['cols']}")
@@ -451,45 +449,43 @@ async def stream_pty(request):
                         await app.registry.execute_snippet(kern_id, '', '%ping')
                     elif data['type'] == 'restart':
                         await app.registry.restart_kernel(kern_id)
-                except asyncio.CancelledError:
-                    # Agent or kernel is terminated.
-                    break
-                except:
-                    log.exception(f'stream_stdin({kern_id}): unexpected error')
-                    break
-            elif msg.type == aiohttp.WSMsgType.ERROR:
-                log.warning(f'stream_stdin({kern_id}): connection closed ({ws.exception()})')
-        log.debug(f'stream_stdin({kern_id}): terminated')
-        stdin_sock.close()
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    log.warning(f'stream_stdin({kern_id}): connection closed ({ws.exception()})')
+        except asyncio.CancelledError:
+            # Agent or kernel is terminated.
+            pass
+        except:
+            log.exception(f'stream_stdin({kern_id}): unexpected error')
+        finally:
+            log.debug(f'stream_stdin({kern_id}): terminated')
+            stdin_sock.close()
 
     async def stream_stdout():
         log.debug(f'stream_stdout({kern_id}): started')
-        while True:
-            try:
-                data = await stdout_sock.read()
-            except (aiozmq.ZmqStreamClosed, asyncio.CancelledError):
-                break
-            except:
-                log.exception(f'stream_stdout({kern_id}): read: unexpected error')
-                break
-            log.debug(f'stream_stdout({kern_id}): data {data[0]!r}')
-            if ws.closed:
-                break
-            try:
+        try:
+            while True:
+                try:
+                    data = await stdout_sock.read()
+                except aiozmq.ZmqStreamClosed:
+                    break
+                if ws.closed:
+                    break
                 ws.send_str(json.dumps({
                     'type': 'out',
                     'data': base64.b64encode(data[0]).decode('ascii'),
                 }, ensure_ascii=False))
-            except:
-                log.exception(f'stream_stdout({kern_id}): send: unexpected error')
-                break
-        log.debug(f'stream_stdout({kern_id}): terminated')
-        stdout_sock.close()
+        except asyncio.CancelledError:
+            pass
+        except:
+            log.exception(f'stream_stdout({kern_id}): unexpected error')
+        finally:
+            log.debug(f'stream_stdout({kern_id}): terminated')
+            stdout_sock.close()
 
     # According to aiohttp docs, reading ws must be done inside this task.
     # We parallelize stdout handler using another task.
-    stdout_task = asyncio.ensure_future(stream_stdout())
     try:
+        stdout_task = asyncio.ensure_future(stream_stdout())
         await stream_stdin()
     except:
         log.exception(f'stream_pty({kern_id}): unexpected error')
