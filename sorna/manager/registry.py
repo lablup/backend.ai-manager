@@ -311,13 +311,15 @@ class InstanceRegistry:
     @auto_get_kernel
     async def destroy_kernel(self, kernel):
         log.debug(f'destroy_kernel({kernel.id})')
-        agent = await aiozmq.rpc.connect_rpc(connect=kernel.addr)
-        agent.transport.setsockopt(zmq.LINGER, 50)
         try:
+            agent = await aiozmq.rpc.connect_rpc(connect=kernel.addr)
+            agent.transport.setsockopt(zmq.LINGER, 50)
             with _timeout(10):
                 await agent.call.destroy_kernel(kernel.id)
         except asyncio.TimeoutError:
             raise KernelDestructionFailed('TIMEOUT')
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             log.exception('destroy_kernel')
             msg = ', '.join(map(str, e.args))
@@ -328,13 +330,15 @@ class InstanceRegistry:
     @auto_get_kernel
     async def restart_kernel(self, kernel):
         log.debug(f'restart_kernel({kernel.id})')
-        agent = await aiozmq.rpc.connect_rpc(connect=kernel.addr)
-        agent.transport.setsockopt(zmq.LINGER, 50)
         try:
+            agent = await aiozmq.rpc.connect_rpc(connect=kernel.addr)
+            agent.transport.setsockopt(zmq.LINGER, 50)
             with _timeout(30):
                 await agent.call.restart_kernel(kernel.id)
         except asyncio.TimeoutError:
             raise KernelRestartFailed('TIMEOUT')
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             log.exception('restart_kernel')
             msg = ', '.join(map(str, e.args))
@@ -351,14 +355,16 @@ class InstanceRegistry:
     @auto_get_kernel
     async def execute_snippet(self, kernel, code_id, code):
         log.debug(f'execute_snippet({kernel.id}, ...)')
-        agent = await aiozmq.rpc.connect_rpc(connect=kernel.addr)
-        agent.transport.setsockopt(zmq.LINGER, 50)
         try:
+            agent = await aiozmq.rpc.connect_rpc(connect=kernel.addr)
+            agent.transport.setsockopt(zmq.LINGER, 50)
             with _timeout(200):  # must be longer than kernel exec_timeout
                 result = await agent.call.execute_code('0', kernel.id,
                                                        code_id, code, {})
         except asyncio.TimeoutError:
             raise KernelExecutionFailed('TIMEOUT')
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             log.exception('execute_code')
             msg = ', '.join(map(str, e.args))
