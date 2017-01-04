@@ -455,7 +455,6 @@ async def stream_pty(request):
                     data = json.loads(msg.data)
                     if data['type'] == 'stdin':
                         raw_data = base64.b64decode(data['chars'].encode('ascii'))
-                        log.debug(f'stream_stdin({kern_id}): data {data}')
                         try:
                             socks[0].write([raw_data])
                         except (AttributeError, aiozmq.ZmqStreamClosed):
@@ -463,14 +462,13 @@ async def stream_pty(request):
                             # because it's already closed somewhere else.
                             app['stream_stdin_socks'][kern_id].remove(socks[0])
                             socks[1].close()
-                            log.debug(f'stream_stdin({kern_id}): zmq stream reset reconnect')
                             kernel = await app['registry'].get_kernel(kern_id)
                             stdin_sock, stdout_sock = await connect_streams(kernel)
                             socks[0] = stdin_sock
                             socks[1] = stdout_sock
-                            log.debug(f'stream_stdin({kern_id}): zmq stream reset done')
                             app['stream_stdin_socks'][kern_id].add(socks[0])
                             socks[0].write([raw_data])
+                            log.debug(f'stream_stdin({kern_id}): zmq stream reset')
                             stream_sync.set()
                             continue
                     else:
@@ -510,14 +508,11 @@ async def stream_pty(request):
         try:
             while True:
                 try:
-                    log.debug(f'stream_stdout({kern_id}): await read')
                     data = await socks[1].read()
-                    log.debug(f'stream_stdout({kern_id}): data {data}')
                 except aiozmq.ZmqStreamClosed:
-                    log.debug(f'stream_stdout({kern_id}): zmq stream reset wait')
                     await stream_sync.wait()
                     stream_sync.clear()
-                    log.debug(f'stream_stdout({kern_id}): zmq stream reset done')
+                    log.debug(f'stream_stdout({kern_id}): zmq stream reset')
                     continue
                 if ws.closed:
                     break
