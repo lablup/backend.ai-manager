@@ -50,20 +50,23 @@ class Kernel(namedlist('_Kernel', [
     '''
 
     def apply_type(self):
+        nullable_int   = lambda v: int(v) if v is not None else None
+        nullable_float = lambda v: float(v) if v is not None else None
+        nullable_dt    = lambda v: dtparse(v) if v is not None else None
         self._update({
-            'created_at': dtparse(self.created_at) if self.created_at is not None else None,
-            'num_queries': int(self.num_queries),
-            'cpu_used': float(self.cpu_used),
-            'exec_timeout': float(self.exec_timeout),
-            'idle_timeout': float(self.idle_timeout),
-            'mem_limit': int(self.mem_limit),
-            'mem_max_bytes': int(self.mem_max_bytes),
-            'io_read_bytes': int(self.io_read_bytes),
-            'io_write_bytes': int(self.io_write_bytes),
-            'net_rx_bytes': int(self.net_rx_bytes),
-            'net_tx_bytes': int(self.net_tx_bytes),
-            'idle': float(self.idle),
-            'stdin_port': int(self.stdin_port),
-            'stdout_port': int(self.stdout_port),
+            'created_at': nullable_dt(self.created_at),
+            'num_queries': nullable_int(self.num_queries),
+            'cpu_used': nullable_float(self.cpu_used),
+            'exec_timeout': nullable_float(self.exec_timeout),
+            'idle_timeout': nullable_float(self.idle_timeout),
+            'mem_limit': nullable_int(self.mem_limit),
+            'mem_max_bytes': nullable_int(self.mem_max_bytes),
+            'io_read_bytes': nullable_int(self.io_read_bytes),
+            'io_write_bytes': nullable_int(self.io_write_bytes),
+            'net_rx_bytes': nullable_int(self.net_rx_bytes),
+            'net_tx_bytes': nullable_int(self.net_tx_bytes),
+            'idle': nullable_float(self.idle),
+            'stdin_port': nullable_int(self.stdin_port),
+            'stdout_port': nullable_int(self.stdout_port),
         })
 

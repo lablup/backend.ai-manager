@@ -1,3 +1,4 @@
+import asyncio
 import base64
 from datetime import datetime, timedelta
 import functools
@@ -108,11 +109,14 @@ async def auth_middleware_factory(app, handler):
             sign_method, access_key, signature = params
             async with app.dbpool.acquire() as conn, conn.transaction():
                 j = sa.join(KeyPair, User,
-                            KeyPair.c.belongs_to == User.c.id)
+                            KeyPair.c.belongs_to == User.c.id)  # noqa
                 query = sa.select([KeyPair, User]) \
                           .select_from(j) \
-                          .where(KeyPair.c.access_key == access_key)
-                row = await conn.fetchrow(query)
+                          .where(KeyPair.c.access_key == access_key)  # noqa
+                try:
+                    row = await conn.fetchrow(query)
+                except asyncio.CancelledError:
+                    row = None
                 if row is None:
                     raise AuthorizationFailed
                 my_signature = await sign_request(sign_method, request, row.secret_key)
@@ -122,8 +126,11 @@ async def auth_middleware_factory(app, handler):
                     query = KeyPair.update() \
                                    .values(last_used=datetime.utcnow(),
                                            num_queries=KeyPair.c.num_queries + 1) \
-                                   .where(KeyPair.c.access_key == access_key)
-                    await conn.fetchval(query)
+                                   .where(KeyPair.c.access_key == access_key)  # noqa
+                    try:
+                        await conn.fetchval(query)
+                    except asyncio.CancelledError:
+                        pass
                     request.is_authorized = True
                     request.keypair = {
                         'access_key': access_key,

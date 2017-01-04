@@ -334,7 +334,12 @@ class InstanceRegistry:
             agent = await aiozmq.rpc.connect_rpc(connect=kernel.addr)
             agent.transport.setsockopt(zmq.LINGER, 50)
             with _timeout(30):
-                await agent.call.restart_kernel(kernel.id)
+                stdin_port, stdout_port = await agent.call.restart_kernel(kernel.id)
+                async with self.redis_kern.get() as rk:
+                    rk_pipe = rk.pipeline()
+                    rk_pipe.hset(kernel.id, 'stdin_port', stdin_port)
+                    rk_pipe.hset(kernel.id, 'stdout_port', stdout_port)
+                    await rk_pipe.execute()
         except asyncio.TimeoutError:
             raise KernelRestartFailed('TIMEOUT')
         except asyncio.CancelledError:
