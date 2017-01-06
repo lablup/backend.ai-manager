@@ -121,7 +121,7 @@ async def auth_middleware_factory(app, handler):
                     raise InvalidAuthParameters
                 if secrets.compare_digest(my_signature, signature):
                     query = (KeyPair.update()
-                                    .values(last_used=datetime.utcnow(),
+                                    .values(last_used=datetime.now(tzutc()),
                                             num_queries=KeyPair.c.num_queries + 1)
                                     .where(KeyPair.c.access_key == access_key))
                     try:
