@@ -10,10 +10,10 @@ def load_config(argv=None, extra_args_func=None):
     parser.add('--agent-port',   env_var='SORNA_AGENT_PORT', type=port_no, default=6001,
                help='The TCP port number where the agent instances are listening on. (default: 6001)')
     parser.add('--redis-addr', env_var='SORNA_REDIS_ADDR', type=host_port_pair,
-               default=HostPortPair(ip_address('127.0.0.1'), 6379),
+               default=HostPortPair(ip_address('127.0.0.1'), 6389),
                help='The hostname-port pair of a redis server. (default: localhost:6379)')
     parser.add('--db-addr', env_var='SORNA_DB_ADDR', type=host_port_pair,
-               default=HostPortPair(ip_address('127.0.0.1'), 5432),
+               default=HostPortPair(ip_address('127.0.0.1'), 5442),
                help='The hostname-port pair of a database server. (default: localhost:5432)')
     parser.add('--db-name', env_var='SORNA_DB_NAME', type=str, default='sorna',
                help='The database name. (default: sorna)')

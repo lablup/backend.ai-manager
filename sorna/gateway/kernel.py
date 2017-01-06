@@ -125,8 +125,8 @@ async def update_instance_usage(app, inst_id):
                 'access_key': kern.access_key,
                 'kernel_type': kern.lang,
                 'kernel_id': kern.id,
-                'started_at': kern.created_at.replace(tzinfo=None),
-                'terminated_at': datetime.utcnow(),
+                'started_at': kern.created_at,
+                'terminated_at': datetime.now(tzutc()),
                 'cpu_used': kern.cpu_used,
                 'mem_used': kern.mem_max_bytes // 1024,
                 'io_used': (kern.io_read_bytes + kern.io_write_bytes) // 1024,
@@ -151,16 +151,19 @@ async def update_kernel_usage(app, kern_id, kern_stat=None):
         return
 
     async with app.dbpool.acquire() as conn, conn.transaction():
+        query = sa.update(KeyPair) \
+                  .values(concurrency_used=KeyPair.c.concurrency_used - 1) \
+                  .where(KeyPair.c.access_key == kern.access_key)  # noqa
+        await conn.fetchval(query)
         if kern_stat:
             # if last stats available, use it.
             log.info(f'update_kernel_usage: last-stat: {kern_stat}')
             query = Usage.insert().values(**{
-                'id': uuid.uuid4(),
-                'access_key': kern.access_key,
+                'access_key_id': kern.access_key,
                 'kernel_type': kern.lang,
                 'kernel_id': kern.id,
-                'started_at': kern.created_at.replace(tzinfo=None),
-                'terminated_at': datetime.utcnow(),
+                'started_at': kern.created_at,
+                'terminated_at': datetime.now(tzutc()),
                 'cpu_used': kern_stat['cpu_used'],
                 'mem_used': kern_stat['mem_max_bytes'] // 1024,
                 'io_used': (kern_stat['io_read_bytes'] + kern_stat['io_write_bytes']) // 1024,
@@ -170,22 +173,17 @@ async def update_kernel_usage(app, kern_id, kern_stat=None):
             # otherwise, get the latest stats from the registry.
             log.info(f'update_kernel_usage: registry-stat')
             query = Usage.insert().values(**{
-                'id': uuid.uuid4(),
-                'access_key': kern.access_key,
+                'access_key_id': kern.access_key,
                 'kernel_type': kern.lang,
                 'kernel_id': kern.id,
-                'started_at': kern.created_at.replace(tzinfo=None),
-                'terminated_at': datetime.utcnow(),
+                'started_at': kern.created_at,
+                'terminated_at': datetime.now(tzutc()),
                 'cpu_used': kern.cpu_used,
                 'mem_used': kern.mem_max_bytes // 1024,
                 'io_used': (kern.io_read_bytes + kern.io_write_bytes) // 1024,
                 'net_used': (kern.net_rx_bytes + kern.net_tx_bytes) // 1024,
             })
         await conn.execute(query)
-        query = sa.update(KeyPair) \
-                  .values(concurrency_used=KeyPair.c.concurrency_used - 1) \
-                  .where(KeyPair.c.access_key == kern.access_key)  # noqa
-        await conn.fetchval(query)
 
 
 @grace_event_catcher
@@ -336,10 +334,10 @@ async def get_info(request):
     kern_id = request.match_info['kernel_id']
     log.info(f'GETINFO (k:{kern_id})')
     try:
+        kern = await request.app['registry'].get_kernel(kern_id)
         await request.app['registry'].update_kernel(kern, {
             'num_queries': int(kern.num_queries) + 1,
         })
-        kern = await request.app['registry'].get_kernel(kern_id)
         resp['lang'] = kern.lang
         age = datetime.now(tzutc()) - kern.created_at
         resp['age'] = age.total_seconds() * 1000
@@ -369,10 +367,10 @@ async def restart(request):
     kern_id = request.match_info['kernel_id']
     log.info(f'RESTART (k:{kern_id})')
     try:
+        kern = await request.app['registry'].get_kernel(kern_id)
         await request.app['registry'].update_kernel(kern_id, {
             'num_queries': int(kern.num_queries) + 1,
         })
-        kern = await request.app['registry'].get_kernel(kern_id)
         await request.app['registry'].restart_kernel(kern_id)
         for sock in app['stream_stdin_socks'][kern_id]:
             sock.close()
@@ -399,10 +397,10 @@ async def execute_snippet(request):
         log.warn('EXECUTE_SNIPPET: invalid/missing parameters')
         raise InvalidAPIParameters
     try:
+        kern = await request.app['registry'].get_kernel(kern_id)
         await request.app['registry'].update_kernel(kern_id, {
             'num_queries': int(kern.num_queries) + 1,
         })
-        kern = await request.app['registry'].get_kernel(kern_id)
         resp['result'] = await request.app['registry'].execute_snippet(
             kern_id, params['codeId'], params['code'])
     except SornaError:

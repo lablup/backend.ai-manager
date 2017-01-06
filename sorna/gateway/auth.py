@@ -14,7 +14,7 @@ import sqlalchemy as sa
 
 from sorna.exceptions import InvalidAuthParameters, AuthorizationFailed
 from .config import load_config, init_logger
-from .models import User, KeyPair
+from .models import KeyPair
 
 log = logging.getLogger('sorna.gateway.auth')
 
@@ -108,11 +108,8 @@ async def auth_middleware_factory(app, handler):
         if params:
             sign_method, access_key, signature = params
             async with app.dbpool.acquire() as conn, conn.transaction():
-                j = sa.join(KeyPair, User,
-                            KeyPair.c.belongs_to == User.c.id)  # noqa
-                query = sa.select([KeyPair, User]) \
-                          .select_from(j) \
-                          .where(KeyPair.c.access_key == access_key)  # noqa
+                query = (KeyPair.select()
+                                .where(KeyPair.c.access_key == access_key))
                 try:
                     row = await conn.fetchrow(query)
                 except asyncio.CancelledError:
@@ -123,10 +120,10 @@ async def auth_middleware_factory(app, handler):
                 if not my_signature:
                     raise InvalidAuthParameters
                 if secrets.compare_digest(my_signature, signature):
-                    query = KeyPair.update() \
-                                   .values(last_used=datetime.utcnow(),
-                                           num_queries=KeyPair.c.num_queries + 1) \
-                                   .where(KeyPair.c.access_key == access_key)  # noqa
+                    query = (KeyPair.update()
+                                    .values(last_used=datetime.utcnow(),
+                                            num_queries=KeyPair.c.num_queries + 1)
+                                    .where(KeyPair.c.access_key == access_key))
                     try:
                         await conn.fetchval(query)
                     except asyncio.CancelledError:
@@ -139,8 +136,7 @@ async def auth_middleware_factory(app, handler):
                         'rate_limit': row.rate_limit,
                     }
                     request.user = {
-                        'id': row.id,
-                        'email': row.email,
+                        'id': row.user_id,
                     }
         # No matter if authenticated or not, pass-through to the handler.
         # (if it's required, auth_required decorator will handle the situation.)

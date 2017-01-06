@@ -59,25 +59,15 @@ def IDColumn(name='id'):
                      server_default=sa.text("uuid_generate_v4()"))
 
 
-User = sa.Table(
-    'users', metadata,
-    IDColumn('id'),
-    sa.Column('email', sa.String(length=254)),
-    sa.Column('password', sa.String(length=128)),
-    sa.Column('created_at', sa.DateTime),
-    sa.Column('last_login', sa.DateTime, nullable=True),
-    sa.Index('idx_email', 'email', unique=True),
-)
-
 KeyPair = sa.Table(
-    'keypairs', metadata,
+    'sorna_cloud_api_keypair', metadata,
+    sa.Column('user_id', sa.Integer()),  # foreign key
     sa.Column('access_key', sa.String(length=20), primary_key=True),
     sa.Column('secret_key', sa.String(length=40)),
     sa.Column('is_active', sa.Boolean),
     sa.Column('billing_plan', sa.String, nullable=True),
-    sa.Column('belongs_to', sa.ForeignKey('users.id')),
-    sa.Column('created_at', sa.DateTime),
-    sa.Column('last_used', sa.DateTime, nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
+    sa.Column('last_used', sa.DateTime(timezone=True), nullable=True),
     sa.Column('concurrency_limit', sa.Integer),
     sa.Column('concurrency_used', sa.Integer),
     sa.Column('rate_limit', sa.Integer),
@@ -86,37 +76,17 @@ KeyPair = sa.Table(
 )
 
 Usage = sa.Table(
-    'usage', metadata,
-    IDColumn('id'),
-    sa.Column('access_key', sa.ForeignKey('keypairs.access_key')),
+    'sorna_cloud_api_usage', metadata,
+    #IDColumn('id'),
+    sa.Column('access_key_id', sa.ForeignKey('keypairs.access_key')),
     sa.Column('kernel_type', sa.String),
     sa.Column('kernel_id', sa.String),
-    sa.Column('started_at', sa.DateTime),
-    sa.Column('terminated_at', sa.DateTime),
+    sa.Column('started_at', sa.DateTime(timezone=True)),
+    sa.Column('terminated_at', sa.DateTime(timezone=True)),
     sa.Column('cpu_used', sa.Integer, server_default='0'),
     sa.Column('mem_used', sa.Integer, server_default='0'),
     sa.Column('io_used', sa.Integer, server_default='0'),
     sa.Column('net_used', sa.Integer, server_default='0'),
-    sa.Index('idx_launch', 'access_key', 'terminated_at'),
-)
-
-# Bill is regularly calculated by summing Usage records for a given month.
-# Each month is a calendar month.
-
-Bill = sa.Table(
-    'bills', metadata,
-    IDColumn('id'),
-    sa.Column('user', sa.ForeignKey('users.id')),
-    sa.Column('access_key', sa.ForeignKey('keypairs.access_key')),
-    sa.Column('month', sa.Date),  # first day of the billing month
-    sa.Column('total_cpu_used', sa.Integer),
-    sa.Column('total_mem_used', sa.Integer),
-    sa.Column('total_io_used', sa.Integer),
-    sa.Column('total_net_used', sa.Integer),
-    sa.Column('total_queries', sa.Integer),
-    sa.Column('amount', sa.Integer),
-    sa.Column('currency', sa.Enum(CurrencyTypes)),
-    sa.Index('idx_monthly_bill', 'user', 'access_key', 'month', unique=True),
 )
 
 
@@ -175,24 +145,21 @@ if __name__ == '__main__':
     async def populate_fixtures(config, pool):
         log.info('Populating fixtures...')
         async with pool.acquire() as conn:
-            default_user_cnt = await conn.fetchval(
-                User.count(User.c.email == test_user_email),
-                column=0)
-            if default_user_cnt == 0:
-                log.info('Creating a test user')
-                uid = uuid.uuid4()
-                await conn.execute(User.insert().values(**{
-                    'id': uid,
-                    'email': test_user_email,
-                    'password': 'x-unused',
-                    'created_at': datetime.utcnow(),
-                }))
+            example_akey = 'AKIAIOSFODNN7EXAMPLE'
+            example_skey = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
+            query = (sa.select([sa.func.count(KeyPair.c.access_key)])
+                       .select_from(KeyPair)
+                       .where(KeyPair.c.access_key == example_akey))
+            count = await conn.fetchval(query)
+            if count == 0:  # only when not exists
                 log.info('Creating the default keypair for the test user')
                 await conn.execute(KeyPair.insert().values(**{
-                    'belongs_to': uid,
-                    'access_key': 'AKIAIOSFODNN7EXAMPLE',
-                    'secret_key': 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
-                    'created_at': datetime.utcnow(),
+                    'user_id': 2,  # 1: anonymouse user, 2: default super user
+                    'access_key': example_akey,
+                    'secret_key': example_skey,
+                    'is_active': True,
+                    'billing_plan': 'free',
+                    'num_queries': 0,
                     'concurrency_limit': 30,
                     'concurrency_used': 0,
                     'rate_limit': 1000,
