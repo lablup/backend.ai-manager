@@ -335,7 +335,7 @@ async def get_info(request):
     log.info(f'GETINFO (k:{kern_id})')
     try:
         kern = await request.app['registry'].get_kernel(kern_id)
-        await request.app['registry'].update_kernel(kern, {
+        await request.app['registry'].update_kernel(kern_id, {
             'num_queries': int(kern.num_queries) + 1,
         })
         resp['lang'] = kern.lang
