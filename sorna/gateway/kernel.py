@@ -372,7 +372,7 @@ async def restart(request):
             'num_queries': int(kern.num_queries) + 1,
         })
         await request.app['registry'].restart_kernel(kern_id)
-        for sock in app['stream_stdin_socks'][kern_id]:
+        for sock in request.app['stream_stdin_socks'][kern_id]:
             sock.close()
     except SornaError:
         log.exception('RESTART: API Internal Error')
