@@ -45,7 +45,7 @@ async def on_prepare(request, response):
 async def exception_middleware_factory(app, handler):
     async def exception_middleware_handler(request):
         try:
-            resp = (await handler(request))
+            return (await handler(request))
         except SornaError:
             raise
         except web.HTTPException as ex:
