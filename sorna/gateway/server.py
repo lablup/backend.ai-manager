@@ -15,6 +15,8 @@ import asyncpgsa
 import uvloop
 
 from sorna.argparse import ipaddr, path, port_no
+from sorna.exceptions import (SornaError, GenericNotFound,
+                              GenericBadRequest, InternalServerError)
 from sorna.utils import env_info
 from ..manager import __version__
 from . import GatewayStatus
@@ -40,6 +42,23 @@ async def on_prepare(request, response):
     response.headers['Server'] = 'Sorna-API/' + LATEST_API_VERSION
 
 
+async def exception_middleware_factory(app, handler):
+    async def exception_middleware_handler(request):
+        try:
+            resp = (await handler(request))
+        except SornaError:
+            raise
+        except web.HTTPException as ex:
+            if ex.status_code == 404:
+                raise GenericNotFound
+            log.warning(f'Bad request: {ex!r}')
+            raise GenericBadRequest
+        except Exception as ex:
+            log.exception('Uncaught exception in HTTP request handlers')
+            raise InternalServerError
+    return exception_middleware_handler
+
+
 async def gw_init(app):
     app.on_response_prepare.append(on_prepare)
     app.router.add_route('GET', '/v1', hello)
@@ -53,6 +72,7 @@ async def gw_init(app):
         password=app.config.db_password,
         min_size=4, max_size=16,
     )
+    app.middlewares.append(exception_middleware_factory)
 
 
 async def gw_shutdown(app):
