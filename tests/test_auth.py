@@ -7,8 +7,8 @@ import uuid
 from dateutil.tz import tzutc, gettz
 import simplejson as json
 
-from ..auth import init as auth_init
-from ..auth import check_date
+from sorna.gateway.auth import init as auth_init
+from sorna.gateway.auth import check_date
 
 
 async def test_hello(create_app_and_client):
@@ -20,8 +20,7 @@ async def test_hello(create_app_and_client):
 
 
 async def test_auth(create_app_and_client, unused_port, default_keypair):
-    app, client = await create_app_and_client()
-    await auth_init(app)
+    app, client = await create_app_and_client(extra_inits=[auth_init])
 
     async def do_authorize(hash_type, api_version):
         now = datetime.now(tzutc())
@@ -75,6 +74,10 @@ def test_check_date(mocker):
 
     now = datetime.now(tzutc())
     request.headers = {'Date': now.isoformat()}
+    assert check_date(request)
+
+    # Timestamps without timezone info
+    request.headers = {'Date': f'{now:%Y%m%dT%H:%M:%S}'}
     assert check_date(request)
 
     request.headers = {'Date': (now - timedelta(minutes=14, seconds=55)).isoformat()}

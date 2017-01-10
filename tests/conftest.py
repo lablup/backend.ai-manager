@@ -3,6 +3,7 @@ import contextlib
 import gc
 import pathlib
 import socket
+import ssl
 
 import aiohttp
 from aiohttp import web
@@ -11,9 +12,11 @@ import sqlalchemy as sa
 import pytest
 import uvloop
 
-from ..config import load_config
-from ..server import gw_init, gw_args
-from ..models import KeyPair
+from sorna.gateway.config import load_config
+from sorna.gateway.server import gw_init, gw_args
+from sorna.gateway.models import KeyPair
+
+here = pathlib.Path(__file__).parent
 
 
 @contextlib.contextmanager
@@ -115,7 +118,7 @@ def default_keypair(loop):
         access_key = 'AKIAIOSFODNN7EXAMPLE'
         config = load_config(argv=[], extra_args_func=gw_args)
         pool = await asyncpgsa.create_pool(
-            host=config.db_addr[0],
+            host=str(config.db_addr[0]),
             port=config.db_addr[1],
             database=config.db_name,
             user=config.db_user,
@@ -135,52 +138,49 @@ def default_keypair(loop):
 
     return loop.run_until_complete(_fetch())
 
+async def _create_server(loop, unused_port, extra_inits=None, debug=False):
+    app = web.Application(loop=loop)
+    app.config = load_config(argv=[], extra_args_func=gw_args)
 
-@pytest.yield_fixture
-def create_server(loop, unused_port):
-    app = handler = server = None
-    here = pathlib.Path(__file__).parent
+    # Override default configs for testing setup.
+    app.config.ssl_cert = here / 'sample-ssl-cert' / 'sample.crt'
+    app.config.ssl_key = here / 'sample-ssl-cert' / 'sample.key'
+    app.config.service_ip = '127.0.0.1'
+    app.config.service_port = unused_port
+    app.sslctx = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
+    app.sslctx.load_cert_chain(str(app.config.ssl_cert),
+                               str(app.config.ssl_key))
 
-    async def create(debug=False):
-        nonlocal app, handler, server
-        app = web.Application(loop=loop)
-        app.config = load_config(argv=[], extra_args_func=gw_args)
+    await gw_init(app)
+    if extra_inits:
+        for init in extra_inits:
+            await init(app)
+    handler = app.make_handler(debug=debug, keep_alive_on=False)
+    server = await loop.create_server(handler,
+                                      app.config.service_ip,
+                                      app.config.service_port,
+                                      ssl=app.sslctx)
+    return app, app.config.service_port, handler, server
 
-        # Override default configs for testing setup.
-        app.config.ssl_cert = here / 'sample-ssl-cert' / 'sample.crt'
-        app.config.ssl_key = here / 'sample-ssl-cert' / 'sample.key'
-        app.config.service_ip = '127.0.0.1'
-        app.config.service_port = unused_port
-
-        await gw_init(app)
-        handler = app.make_handler(debug=debug, keep_alive_on=False)
-        server = await loop.create_server(handler,
-                                          app.config.service_ip,
-                                          app.config.service_port,
-                                          ssl=app.sslctx)
-        return app, app.config.service_port
-
-    yield create
-
-    async def finish():
-        nonlocal app, handler, server
-        server.close()
-        await server.wait_closed()
-        await app.shutdown()
-        await handler.finish_connections()
-        await app.cleanup()
-    loop.run_until_complete(finish())
+async def _finish_server(app, handler, server):
+    server.close()
+    await server.wait_closed()
+    await app.shutdown()
+    await handler.finish_connections()
+    await app.cleanup()
 
 
 @pytest.yield_fixture
-def create_app_and_client(loop, create_server):
+def create_app_and_client(loop, unused_port):
     client = None
+    app = handler = server = None
 
-    async def maker():
-        nonlocal client
+    async def maker(extra_inits=None):
+        nonlocal client, app, handler, server
         server_params = {}
         client_params = {}
-        app, port = await create_server(**server_params)
+        app, port, handler, server = await _create_server(
+            loop, unused_port, extra_inits=extra_inits, **server_params)
         if app.sslctx:
             url = 'https://localhost:{}'.format(port)
             client_params['connector'] = aiohttp.TCPConnector(verify_ssl=False)
@@ -191,5 +191,6 @@ def create_app_and_client(loop, create_server):
 
     yield maker
 
+    loop.run_until_complete(_finish_server(app, handler, server))
     if client:
         client.close()

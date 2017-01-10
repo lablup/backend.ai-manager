@@ -13,7 +13,7 @@ from sorna.proto import Message
 from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
 from sorna.utils import get_instance_ip
 from sorna.exceptions import InstanceNotAvailableError
-from .registry import InstanceRegistry
+from sorna.manager.registry import InstanceRegistry
 
 
 class SornaProcessManagerMixin:
