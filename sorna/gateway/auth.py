@@ -49,19 +49,22 @@ def _extract_auth_params(request):
 
 
 def check_date(request) -> bool:
-    date = request.headers.get('Date')
-    if not date:
-        date = request.headers.get('X-Sorna-Date')
-    if not date:
+    raw_date = request.headers.get('Date')
+    if not raw_date:
+        raw_date = request.headers.get('X-Sorna-Date')
+    if not raw_date:
         return False
     try:
-        dt = dtparse(date)
-        request.date = dt
+        date = dtparse(raw_date)
+        if date.tzinfo is None:
+            date = date.replace(tzinfo=tzutc())  # assume as UTC
         now = datetime.now(tzutc())
-        min_time = now - timedelta(minutes=15)
-        max_time = now + timedelta(minutes=15)
-        if dt < min_time or dt > max_time:
+        min_date = now - timedelta(minutes=15)
+        max_date = now + timedelta(minutes=15)
+        if date < min_date or date > max_date:
             return False
+        request.date = date
+        request.raw_date = raw_date
     except ValueError:
         return False
     return True
@@ -79,7 +82,7 @@ async def sign_request(sign_method, request, secret_key) -> str:
     body = await request.read()
     body_hash = hashlib.new(hash_type, body).hexdigest()
     sign_bytes = '{0}\n{1}\n{2}\nhost:{3}\ncontent-type:{4}\nx-sorna-version:{5}\n{6}'.format(
-        request.method, str(request.rel_url), request.date.isoformat(),
+        request.method, str(request.rel_url), request.raw_date,
         request.host, request.content_type, request.headers['X-Sorna-Version'],
         body_hash
     ).encode()
