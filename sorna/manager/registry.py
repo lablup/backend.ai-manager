@@ -63,14 +63,17 @@ class InstanceRegistry:
 
     async def init(self):
         self.redis_kern = await aioredis.create_pool(self.redis_addr.as_sockaddr(),
+                                                     minsize=5,
                                                      encoding='utf8',
                                                      db=SORNA_KERNEL_DB,
                                                      loop=self.loop)
         self.redis_inst = await aioredis.create_pool(self.redis_addr.as_sockaddr(),
+                                                     minsize=5,
                                                      encoding='utf8',
                                                      db=SORNA_INSTANCE_DB,
                                                      loop=self.loop)
         self.redis_sess = await aioredis.create_pool(self.redis_addr.as_sockaddr(),
+                                                     minsize=5,
                                                      encoding='utf8',
                                                      db=SORNA_SESSION_DB,
                                                      loop=self.loop)

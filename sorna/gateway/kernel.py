@@ -207,6 +207,7 @@ async def instance_terminated(app, inst_id, reason):
         for kern_id in (await app['registry'].get_kernels_in_instance(inst_id)):
             for handler in app['stream_pty_handlers'][kern_id]:
                 handler.cancel()
+                await handler
         await app['registry'].forget_all_kernels_in_instance(inst_id)
     else:
         # On normal instance termination, kernel_terminated events were already
@@ -537,6 +538,7 @@ async def stream_pty(request):
         app['stream_pty_handlers'][kern_id].remove(asyncio.Task.current_task())
         app['stream_stdin_socks'][kern_id].remove(socks[0])
         stdout_task.cancel()
+        await stdout_task
     return ws
 
 
