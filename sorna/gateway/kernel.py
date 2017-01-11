@@ -22,8 +22,9 @@ import simplejson as json
 import sqlalchemy as sa
 import zmq
 
-from sorna.exceptions import ServiceUnavailable, InvalidAPIParameters, QuotaExceeded, \
-                             QueryNotImplemented, InstanceNotFound, KernelNotFound, SornaError  # noqa
+from sorna.exceptions import (ServiceUnavailable, InvalidAPIParameters, QuotaExceeded,
+                              QueryNotImplemented, InstanceNotFound, KernelNotFound,
+                              SornaError)
 from . import GatewayStatus
 from .auth import auth_required
 from .models import KeyPair, Usage
@@ -54,9 +55,9 @@ async def create(request):
         access_key = request.keypair['access_key']
         concurrency_limit = request.keypair['concurrency_limit']
         async with request.app.dbpool.acquire() as conn, conn.transaction():
-            query = sa.select([KeyPair.c.concurrency_used], for_update=True) \
-                      .select_from(KeyPair) \
-                      .where(KeyPair.c.access_key == access_key)  # noqa
+            query = (sa.select([KeyPair.c.concurrency_used], for_update=True)
+                       .select_from(KeyPair)
+                       .where(KeyPair.c.access_key == access_key))
             concurrency_used = await conn.fetchval(query)
             log.debug(f'access_key: {access_key} ({concurrency_used} / {concurrency_limit})')
             if concurrency_used >= concurrency_limit:
@@ -65,10 +66,10 @@ async def create(request):
                 params['clientSessionToken'], params['lang'], access_key)
             resp['kernelId'] = kernel.id
             if created:
-                query = sa.update(KeyPair) \
-                          .values(concurrency_used=KeyPair.c.concurrency_used + 1) \
-                          .where(KeyPair.c.access_key == access_key)  # noqa
-                await conn.fetchval(query)
+                query = (sa.update(KeyPair)
+                           .values(concurrency_used=KeyPair.c.concurrency_used + 1)
+                           .where(KeyPair.c.access_key == access_key))
+                await conn.execute(query)
     except SornaError:
         log.exception('GET_OR_CREATE: API Internal Error')
         raise
@@ -101,16 +102,17 @@ async def update_instance_usage(app, inst_id):
     # In heartbeat timeouts, we do NOT clear Redis keys because
     # the timeout may be a transient one.
     kern_ids = await app['registry'].get_kernels_in_instance(inst_id)
-    kernels = await app['registry'].get_kernels(kern_ids)
+    kernels = await app['registry'].get_kernels(kern_ids, allow_stale=True)
     affected_keys = [kern.access_key for kern in kernels if kern is not None]
-    await app['registry'].update_instance(inst_id, {'status': 'lost'})
 
     # TODO: enqueue termination event to streaming response queue
 
     per_key_counts = defaultdict(int)
     for ak in filter(lambda ak: ak is not None, affected_keys):
         per_key_counts[ak] += 1
-    log.warning(f' -> cleaning {kern_ids!r} {per_key_counts}')
+    per_key_counts_str = ', '.join(f'{k}:{v}' for k, v in per_key_counts.items())
+    log.info(f'-> cleaning {kern_ids!r}')
+    log.info(f'-> per-key usage: {per_key_counts_str}')
 
     if not affected_keys:
         return
@@ -120,9 +122,8 @@ async def update_instance_usage(app, inst_id):
         for kern in kernels:
             if kern is None:
                 continue
-            query = Usage.insert().values(**{
-                'id': uuid.uuid4(),
-                'access_key': kern.access_key,
+            values = {
+                'access_key_id': kern.access_key,
                 'kernel_type': kern.lang,
                 'kernel_id': kern.id,
                 'started_at': kern.created_at,
@@ -131,13 +132,14 @@ async def update_instance_usage(app, inst_id):
                 'mem_used': kern.mem_max_bytes // 1024,
                 'io_used': (kern.io_read_bytes + kern.io_write_bytes) // 1024,
                 'net_used': (kern.net_rx_bytes + kern.net_tx_bytes) // 1024,
-            })
+            }
+            query = Usage.insert().values(**values)
             await conn.execute(query)
-            query = sa.update(KeyPair) \
-                      .values(concurrency_used=KeyPair.c.concurrency_used
-                                               - per_key_counts[kern.access_key]) \
-                      .where(KeyPair.c.access_key == kern.access_key)  # noqa
-            await conn.fetchval(query)
+            query = (sa.update(KeyPair)
+                       .values(concurrency_used=KeyPair.c.concurrency_used
+                                                - per_key_counts[kern.access_key])
+                       .where(KeyPair.c.access_key == kern.access_key))
+            await conn.execute(query)
 
 
 async def update_kernel_usage(app, kern_id, kern_stat=None):
@@ -145,20 +147,20 @@ async def update_kernel_usage(app, kern_id, kern_stat=None):
     # TODO: enqueue termination event to streaming response queue
 
     try:
-        kern = await app['registry'].get_kernel(kern_id)
+        kern = await app['registry'].get_kernel(kern_id, allow_stale=True)
     except KernelNotFound:
         log.warning(f'update_kernel_usage({kern_id}): kernel is missing!')
         return
 
     async with app.dbpool.acquire() as conn, conn.transaction():
-        query = sa.update(KeyPair) \
-                  .values(concurrency_used=KeyPair.c.concurrency_used - 1) \
-                  .where(KeyPair.c.access_key == kern.access_key)  # noqa
-        await conn.fetchval(query)
+        query = (sa.update(KeyPair)
+                   .values(concurrency_used=KeyPair.c.concurrency_used - 1)
+                   .where(KeyPair.c.access_key == kern.access_key))
+        await conn.execute(query)
         if kern_stat:
             # if last stats available, use it.
-            log.info(f'update_kernel_usage: last-stat: {kern_stat}')
-            query = Usage.insert().values(**{
+            log.info(f'update_kernel_usage: {kern.id}, last-stat: {kern_stat}')
+            values = {
                 'access_key_id': kern.access_key,
                 'kernel_type': kern.lang,
                 'kernel_id': kern.id,
@@ -168,11 +170,12 @@ async def update_kernel_usage(app, kern_id, kern_stat=None):
                 'mem_used': kern_stat['mem_max_bytes'] // 1024,
                 'io_used': (kern_stat['io_read_bytes'] + kern_stat['io_write_bytes']) // 1024,
                 'net_used': (kern_stat['net_rx_bytes'] + kern_stat['net_tx_bytes']) // 1024,
-            })
+            }
+            query = Usage.insert().values(**values)
         else:
             # otherwise, get the latest stats from the registry.
-            log.info(f'update_kernel_usage: registry-stat')
-            query = Usage.insert().values(**{
+            log.info(f'update_kernel_usage: {kern.id}, registry-stat')
+            values = {
                 'access_key_id': kern.access_key,
                 'kernel_type': kern.lang,
                 'kernel_id': kern.id,
@@ -182,14 +185,16 @@ async def update_kernel_usage(app, kern_id, kern_stat=None):
                 'mem_used': kern.mem_max_bytes // 1024,
                 'io_used': (kern.io_read_bytes + kern.io_write_bytes) // 1024,
                 'net_used': (kern.net_rx_bytes + kern.net_tx_bytes) // 1024,
-            })
+            }
+            query = Usage.insert().values(**values)
         await conn.execute(query)
 
 
 @grace_event_catcher
 async def kernel_terminated(app, kern_id, reason, kern_stat):
-    for handler in app['stream_pty_handlers'][kern_id]:
+    for handler in app['stream_pty_handlers'][kern_id].copy():
         handler.cancel()
+        await handler
     await update_kernel_usage(app, kern_id, kern_stat)
     await app['registry'].forget_kernel(kern_id)
 
@@ -203,17 +208,17 @@ async def instance_started(app, inst_id):
 async def instance_terminated(app, inst_id, reason):
     if reason == 'agent-lost':
         log.warning(f'agent@{inst_id} heartbeat timeout detected.')
+        await app['registry'].update_instance(inst_id, {'status': 'lost'})
         await update_instance_usage(app, inst_id)
         for kern_id in (await app['registry'].get_kernels_in_instance(inst_id)):
-            for handler in app['stream_pty_handlers'][kern_id]:
+            for handler in app['stream_pty_handlers'][kern_id].copy():
                 handler.cancel()
                 await handler
         await app['registry'].forget_all_kernels_in_instance(inst_id)
     else:
         # On normal instance termination, kernel_terminated events were already
         # triggered by the agent.
-        pass
-    await app['registry'].forget_instance(inst_id)
+        await app['registry'].forget_instance(inst_id)
 
 
 @grace_event_catcher
@@ -253,17 +258,21 @@ async def collect_agent_events(app, heartbeat_interval):
 
     await asyncio.sleep(heartbeat_interval * 2.1)
 
+    log.info('bulk-dispatching latest events...')
     per_inst_events = defaultdict(list)
     processed_events = []
 
     for ev in grace_events:
-        if ev['_type'] in ('instance_started', 'instance_terminated', 'instance_heartbeat'):
+        if ev['_type'] in {'instance_started',
+                           'instance_terminated',
+                           'instance_heartbeat'}:
             per_inst_events[ev['_args'][0]].append(ev)
 
     # Keep only the latest event for each instance.
     for inst_id, events in per_inst_events.items():
-        last_event = max(events, key=lambda v: v['_when'])
-        processed_events.append(last_event)
+        latest_event = max(events, key=lambda ev: ev['_when'])
+        log.debug(f"{inst_id} -> {latest_event['_type']}")
+        processed_events.append(latest_event)
         # TODO: sometimes the restarted gateway receives duplicate "instance_terminated" events...
 
     # Mark instances not detected during event collection to be cleared.
@@ -273,13 +282,7 @@ async def collect_agent_events(app, heartbeat_interval):
         if inst_id not in valid_inst_ids and inst_id is not None
     ]
 
-    log.info('bulk-dispatching latest events...')
     app['status'] = GatewayStatus.SYNCING
-
-    for inst_id in terminated_inst_ids:
-        log.warning(f'instance {inst_id} is not running!')
-        await update_instance_usage(app, inst_id)
-        await app['registry'].forget_instance(inst_id)
 
     for ev in processed_events:
         # calculate & update diff on kernel list and usage
@@ -301,13 +304,18 @@ async def collect_agent_events(app, heartbeat_interval):
                 # This case should be very very rare.
                 for kern_id in new_kernels:
                     access_key = await app['registry'].get_kernel(kern_id, 'access_key')
-                    query = sa.update(KeyPair) \
-                              .values(concurrency_used=KeyPair.c.concurrency_used + 1) \
-                              .where(KeyPair.c.access_key == access_key)  # noqa
-                    await conn.fetchval(query)
+                    query = (sa.update(KeyPair)
+                               .values(concurrency_used=KeyPair.c.concurrency_used + 1)
+                               .where(KeyPair.c.access_key == access_key))
+                    await conn.execute(query)
 
         # invoke original event handler
         await ev['_handler'](app, *ev['_args'], **ev['_kwargs'])
+
+    for inst_id in terminated_inst_ids:
+        log.warning(f'instance {inst_id} is not running!')
+        await update_instance_usage(app, inst_id)
+        await app['registry'].forget_instance(inst_id)
 
     log.info('entering normal operation mode...')
     app['status'] = GatewayStatus.RUNNING
@@ -576,6 +584,7 @@ async def init(app):
 
 async def shutdown(app):
     for per_kernel_handlers in app['stream_pty_handlers'].values():
-        for handler in per_kernel_handlers:
+        for handler in per_kernel_handlers.copy():
             handler.cancel()
+            await handler
     await app['registry'].terminate()

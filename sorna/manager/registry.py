@@ -98,7 +98,7 @@ class InstanceRegistry:
         async with self.redis_inst.get() as ri:
             if field:
                 value = await ri.hget(inst_id, field)
-                if not value:
+                if value is None:
                     raise InstanceNotFound(inst_id)
                 return value
             else:
@@ -127,86 +127,90 @@ class InstanceRegistry:
         async with self.redis_inst.get() as ri:
             await ri.hmset(inst.id, *dict2kvlist(updated_fields))
 
-    async def get_kernel(self, kern_id, field=None):
+    async def get_kernel(self, kern_id, field=None, allow_stale=False):
         '''
         Retreive the kernel information as Kernel object.
         If ``field`` is given, it extracts only the raw value of the given field, without
         wrapping it as Kernel object.
+        If ``allow_stale`` is true, it skips checking validity of the kernel owner instance.
         '''
-        async with self.redis_kern.get() as rk:
-            if field:
+        if field:
+            async with self.redis_kern.get() as rk:
                 value = await rk.hget(kern_id, field)
                 # TODO: stale check?
                 if value is None:
                     raise KernelNotFound
                 return value
-            else:
+        else:
+            async with self.redis_kern.get() as rk:
                 fields = await rk.hgetall(kern_id)
-                if fields is None:
-                    raise KernelNotFound
-                # Check if stale.
-                try:
+            if not fields:
+                raise KernelNotFound
+            try:
+                if not allow_stale:
+                    if 'instance' not in fields:
+                        # Received last heartbeats but the agent has restarted meanwhile.
+                        raise KernelNotFound
                     async with self.redis_inst.get() as ri:
-                        if 'instance' not in fields:
-                            # Received last heartbeats but the agent has restarted meanwhile.
-                            raise KernelNotFound
-                        if not (await ri.exists('shadow:' + fields['instance'])):
+                        if not (await ri.exists(f"shadow:{fields['instance']}")):
                             # The agent heartbeat is timed out.
                             raise KernelNotFound
-                        kern_set_key = fields['instance'] + '.kernels'
-                        if not (await ri.sismember(kern_set_key, kern_id)):
+                        if not (await ri.sismember(f"{fields['instance']}.kernels", kern_id)):
                             # The agent is running but it has no such kernel.
                             raise KernelNotFound
-                        kern = Kernel(**fields)
-                        kern.apply_type()
-                        return kern
-                except KernelNotFound:
+                kern = Kernel(**fields)
+                kern.apply_type()
+                return kern
+            except KernelNotFound:
+                async with self.redis_kern.get() as rk:
                     await rk.delete(kern_id)
-                    raise
+                raise
 
-    async def get_kernels(self, kern_ids, field=None):
+    async def get_kernels(self, kern_ids, field=None, allow_stale=False):
         '''
         Batched version of :meth:`get_kernel() <InstanceRegistry.get_kernel>`.
         The order of the returend array is same to the order of ``kern_ids``.
         For non-existent or missing kernel IDs, it fills None in their
         positions without raising KernelNotFound exception.
         '''
-        async with self.redis_kern.get() as rk:
-            pipe = rk.pipeline()
-            if field:
+        if field:
+            async with self.redis_kern.get() as rk:
+                pipe = rk.pipeline()
                 for kern_id in kern_ids:
                     pipe.hget(kern_id, field)
                 values = await pipe.execute()
                 return values
-            else:
+        else:
+            async with self.redis_kern.get() as rk:
+                pipe = rk.pipeline()
                 for kern_id in kern_ids:
                     pipe.hgetall(kern_id)
                 results = await pipe.execute()
-                final_results = []
-                async with self.redis_inst.get() as ri:
-                    for result in results:
-                        if result is None:
-                            final_results.append(None)
-                            continue
-                        # Check if stale.
-                        try:
-                            if 'instance' not in result:
-                                # Received last heartbeats but the agent has restarted meanwhile.
-                                raise KernelNotFound
-                            if not (await ri.exists('shadow:' + result['instance'])):
+            final_results = []
+            for result in results:
+                if not result:
+                    final_results.append(None)
+                    continue
+                try:
+                    if not allow_stale:
+                        if 'instance' not in result:
+                            # Received last heartbeats but the agent has restarted meanwhile.
+                            raise KernelNotFound
+                        async with self.redis_inst.get() as ri:
+                            if not (await ri.exists(f"shadow:{result['instance']}")):
                                 # The agent heartbeat is timed out.
                                 raise KernelNotFound
-                            kern_set_key = result['instance'] + '.kernels'
-                            if not (await ri.sismember(kern_set_key, kern_id)):
+                            if not (await ri.sismember(f"{result['instance']}.kernels", kern_id)):
                                 # The agent is running but it has no such kernel.
                                 raise KernelNotFound
-                            kern = Kernel(**result)
-                            kern.apply_type()
-                            final_results.append(kern)
-                        except KernelNotFound:
-                            await rk.delete(kern_id)
-                            final_results.append(None)
-                return final_results
+                    kern = Kernel(**result)
+                    kern.apply_type()
+                    final_results.append(kern)
+                except KernelNotFound:
+                    async with self.redis_kern.get() as rk:
+                        await rk.delete(kern_id)
+                    final_results.append(None)
+            return final_results
 
 
     async def get_kernel_from_session(self, client_sess_token, lang):
@@ -219,6 +223,7 @@ class InstanceRegistry:
                 raise KernelNotFound
 
     async def get_or_create_kernel(self, client_sess_token, lang, owner_access_key, spec=None):
+        assert owner_access_key
         try:
             kern = await self.get_kernel_from_session(client_sess_token, lang)
             created = False
@@ -307,7 +312,7 @@ class InstanceRegistry:
                 'created_at': datetime.now(tzutc()).isoformat(),
             }
             await rk.hmset(kern_id, *dict2kvlist(kernel_info))
-            await ri.sadd(instance.id + '.kernels', kern_id)
+            await ri.sadd(f'{instance.id}.kernels', kern_id)
             kernel = Kernel(**kernel_info)
         return instance, kernel
 
@@ -384,7 +389,7 @@ class InstanceRegistry:
     async def get_kernels_in_instance(self, inst_id):
         async with self.lifecycle_lock, \
                    self.redis_inst.get() as ri:  # noqa
-            kern_ids = await ri.smembers(inst_id + '.kernels')
+            kern_ids = await ri.smembers(f'{inst_id}.kernels')
             if kern_ids is None:
                 return []
             return kern_ids
@@ -393,43 +398,44 @@ class InstanceRegistry:
         async with self.lifecycle_lock, \
                    self.redis_inst.get() as ri, \
                    self.redis_kern.get() as rk:  # noqa
+
+            rk_pipe = rk.pipeline()
+            for kern_id in kern_stats.keys():
+                rk_pipe.exists(kern_id)
+            kernel_existence = await rk_pipe.execute()
+
             ri_pipe = ri.pipeline()
             rk_pipe = rk.pipeline()
-            my_kernels_key = '{}.kernels'.format(inst_id)
-            for kern_id, stats in kern_stats.items():
-                ri_pipe.sadd(my_kernels_key, kern_id)
-                rk_pipe.hmset(kern_id, *dict2kvlist(stats))
-            try:
-                await ri_pipe.execute()
-                await rk_pipe.execute()
-            except asyncio.CancelledError:
-                pass
-            except:
-                log.exception('handle_stats error')
+            for (kern_id, stats), alive in zip(kern_stats.items(), kernel_existence):
+                if alive:
+                    ri_pipe.sadd(f'{inst_id}.kernels', kern_id)
+                    rk_pipe.hmset(kern_id, *dict2kvlist(stats))
+            await ri_pipe.execute()
+            await rk_pipe.execute()
 
     async def handle_heartbeat(self, inst_id, inst_info, running_kernels, interval):
         async with self.lifecycle_lock, \
                    self.redis_inst.get() as ri, \
                    self.redis_kern.get() as rk:  # noqa
+
+            rk_pipe = rk.pipeline()
+            for kern_id in running_kernels:
+                rk_pipe.exists(kern_id)
+            kernel_existence = await rk_pipe.execute()
+
             ri_pipe = ri.pipeline()
             rk_pipe = rk.pipeline()
-            ri_pipe.hmset(inst_id, *dict2kvlist(inst_info))
-            my_kernels_key = '{}.kernels'.format(inst_id)
-            for kern_id in running_kernels:
-                ri_pipe.sadd(my_kernels_key, kern_id)
-                rk_pipe.hset(kern_id, 'instance', inst_id)
-
+            for kern_id, alive in zip(running_kernels, kernel_existence):
+                if alive:
+                    ri_pipe.sadd(f'{inst_id}.kernels', kern_id)
+                    rk_pipe.hset(kern_id, 'instance', inst_id)
             # Create a "shadow" key that actually expires.
             # This allows access to agent information upon expiration events.
-            ri_pipe.set('shadow:' + inst_id, '')
-            ri_pipe.expire('shadow:' + inst_id, float(interval * 3.3))
-            try:
-                await ri_pipe.execute()
-                await rk_pipe.execute()
-            except asyncio.CancelledError:
-                pass
-            except:
-                log.exception('handle_heartbeat error')
+            ri_pipe.hmset(inst_id, *dict2kvlist(inst_info))
+            ri_pipe.set(f'shadow:{inst_id}', '')
+            ri_pipe.expire(f'shadow:{inst_id}', float(interval * 3.3))
+            await ri_pipe.execute()
+            await rk_pipe.execute()
 
     async def revive_instance(self, inst_id, inst_addr):
         agent = await aiozmq.rpc.connect_rpc(connect=inst_addr)
@@ -450,7 +456,7 @@ class InstanceRegistry:
             ri_pipe = ri.pipeline()
             ri_pipe.hset(inst_id, 'status', 'running')
             ri_pipe.hset(inst_id, 'num_kernels', 0)
-            ri_pipe.delete(inst_id + '.kernels')
+            ri_pipe.delete(f'{inst_id}.kernels')
             await ri_pipe.execute()
 
     async def forget_kernel(self, kern_id):
@@ -465,7 +471,7 @@ class InstanceRegistry:
             if inst_id:
                 ri_pipe = ri.pipeline()
                 ri_pipe.hincrby(inst_id, 'num_kernels', -1)
-                ri_pipe.srem(inst_id + '.kernels', kern_id)
+                ri_pipe.srem(f'{inst_id}.kernels', kern_id)
                 await ri_pipe.execute()
 
     async def forget_all_kernels_in_instance(self, inst_id):
@@ -473,9 +479,9 @@ class InstanceRegistry:
                    self.redis_inst.get() as ri, \
                    self.redis_kern.get() as rk:  # noqa
             ri_pipe = ri.pipeline()
-            ri_pipe.smembers(inst_id + '.kernels')
+            ri_pipe.smembers(f'{inst_id}.kernels')
             ri_pipe.hset(inst_id, 'num_kernels', 0)
-            ri_pipe.delete(inst_id + '.kernels')
+            ri_pipe.delete(f'{inst_id}.kernels')
             results = await ri_pipe.execute()
             kern_ids = results[0]
             rk_pipe = rk.pipeline()
@@ -489,11 +495,11 @@ class InstanceRegistry:
                    self.redis_inst.get() as ri, \
                    self.redis_kern.get() as rk:  # noqa
             ri_pipe = ri.pipeline()
-            ri_pipe.smembers(inst_id + '.kernels')
+            ri_pipe.smembers(f'{inst_id}.kernels')
             # Delete shadow key immediately to prevent bogus agent-lost events.
-            ri_pipe.delete('shadow:' + inst_id)
+            ri_pipe.delete(f'shadow:{inst_id}')
             ri_pipe.delete(inst_id)
-            ri_pipe.delete(inst_id + '.kernels')
+            ri_pipe.delete(f'{inst_id}.kernels')
             results = await ri_pipe.execute()
             kern_ids = results[0]
             if kern_ids:

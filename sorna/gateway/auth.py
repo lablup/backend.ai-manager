@@ -124,7 +124,7 @@ async def auth_middleware_factory(app, handler):
                                     .values(last_used=datetime.now(tzutc()),
                                             num_queries=KeyPair.c.num_queries + 1)
                                     .where(KeyPair.c.access_key == access_key))
-                    await conn.fetchval(query)
+                    await conn.execute(query)
                     request.is_authorized = True
                     request.keypair = {
                         'access_key': access_key,
