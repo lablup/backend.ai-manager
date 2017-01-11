@@ -113,11 +113,8 @@ async def auth_middleware_factory(app, handler):
             async with app.dbpool.acquire() as conn, conn.transaction():
                 query = (KeyPair.select()
                                 .where(KeyPair.c.access_key == access_key))
-                try:
-                    row = await conn.fetchrow(query)
-                except asyncio.CancelledError:
-                    row = None
-                if row is None:
+                row = await conn.fetchrow(query)
+                if row is None or row.row is None:
                     raise AuthorizationFailed
                 my_signature = await sign_request(sign_method, request, row.secret_key)
                 if not my_signature:
@@ -127,10 +124,7 @@ async def auth_middleware_factory(app, handler):
                                     .values(last_used=datetime.now(tzutc()),
                                             num_queries=KeyPair.c.num_queries + 1)
                                     .where(KeyPair.c.access_key == access_key))
-                    try:
-                        await conn.fetchval(query)
-                    except asyncio.CancelledError:
-                        pass
+                    await conn.fetchval(query)
                     request.is_authorized = True
                     request.keypair = {
                         'access_key': access_key,
