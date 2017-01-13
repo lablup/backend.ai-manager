@@ -61,10 +61,10 @@ def check_date(request) -> bool:
         now = datetime.now(tzutc())
         min_date = now - timedelta(minutes=15)
         max_date = now + timedelta(minutes=15)
-        if date < min_date or date > max_date:
-            return False
         request.date = date
         request.raw_date = raw_date
+        if date < min_date or date > max_date:
+            return False
     except ValueError:
         return False
     return True
@@ -79,7 +79,7 @@ async def sign_request(sign_method, request, secret_key) -> str:
     except (ValueError, AssertionError):
         return None
 
-    body = await request.read()
+    body = await request.read() if request.has_body else b''
     body_hash = hashlib.new(hash_type, body).hexdigest()
     sign_bytes = '{0}\n{1}\n{2}\nhost:{3}\ncontent-type:{4}\nx-sorna-version:{5}\n{6}'.format(
         request.method, str(request.rel_url), request.raw_date,
@@ -102,9 +102,6 @@ async def auth_middleware_factory(app, handler):
         request.is_authorized = False
         request.keypair = None
         request.user = None
-        # TODO: apply auth with websockets
-        if request.rel_url.path.startswith('/v1/stream/'):
-            return (await handler(request))
         if not check_date(request):
             raise InvalidAuthParameters
         params = _extract_auth_params(request)

@@ -419,7 +419,7 @@ async def execute_snippet(request):
                         text=json.dumps(resp))
 
 
-# TODO: @auth_required
+@auth_required
 async def stream_pty(request):
     app = request.app
     kern_id = request.match_info['kernel_id']
