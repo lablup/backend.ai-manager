@@ -1,6 +1,67 @@
 Changes
 =======
 
+0.8.5 (2017-01-14)
+------------------
+
+**FIXES**
+
+ - It now copes with API requests without bodies at all: use an empty string to
+   generate signatures.
+
+ - Enabled authorization checks to stream-mode APIs, which has been disabled
+   for debugging and tests.
+   (Though the probability of exposing kernels to other users was very low
+   due to randomly generated kernel IDs.)
+
+0.8.4 (2017-01-11)
+------------------
+
+**FIXES**
+
+ - Stabilized sporadic restarts/disconnects of agent instances, and keep the
+   concurrency usage consistent.
+
+ - Increased the minimum size of aioredis connection pools to avoid rare
+   deadlocks due to pool exhaustion.
+
+0.8.3 (2017-01-10)
+------------------
+
+**FIXES**
+
+ - Make sure all errorneous responses to contain RFC 7807-style JSON-formatted
+   error messages using aiohttp middleware.
+
+0.8.1 (2017-01-10)
+------------------
+
+**FIXES**
+
+ - Assume date headers in HTTP request headers without timezone offsets
+   as UTC instead of showing internal server error.
+
+0.8.0 (2017-01-10)
+------------------
+
+**NEW**
+
+ - Deprecated legacy ZMQ interface.  The code is still there, but should
+   not be used.
+
+ - Refined keypair/usage database schema.
+
+ - Implemented the streaming-mode API: web terminal!
+
+ - Restarting the kernel in the middle of web termainl session are transparently
+   handled -- user's browser-side websocket connections are preserved.
+
+ - The codebase now requires Python 3.6.0 or higher.
+
+ - Internally it adopted a simple event bus to handle asynchronous docker events
+   such as abnormal termination of kernels.  Now most interactions with docker
+   are truly asynchronous.
+
 0.7.4 (2016-11-29)
 ------------------
 
