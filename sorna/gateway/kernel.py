@@ -245,6 +245,33 @@ async def instance_stats(app, inst_id, kern_stats, interval):
         await app['registry'].handle_stats(inst_id, kern_stats, interval)
 
 
+async def datadog_update(app):
+    with app['datadog'].statsd as statsd:
+
+        statsd.gauge('sorna.gateway.coroutines', len(asyncio.Task.all_tasks()))
+
+        all_inst_ids = [inst_id async for inst_id in app['registry'].enumerate_instances()]
+        statsd.gauge('sorna.gateway.agent_instances', len(all_inst_ids))
+
+        async with app.dbpool.acquire() as conn, conn.transaction():
+            query = (sa.select([sa.func.sum(KeyPair.c.concurrency_used)])
+                       .select_from(KeyPair))
+            n = await conn.fetchval(query)
+            statsd.gauge('sorna.gateway.active_kernels', n)
+
+async def datadog_update_timer(app):
+    if app['datadog'] is None:
+        return
+    while True:
+        try:
+            await asyncio.sleep(2)
+        except asyncio.CancelledError:
+            break
+        except:
+            log.exception('datadog_update unexpected error')
+        await datadog_update(app)
+
+
 async def collect_agent_events(app, heartbeat_interval):
     '''
     Collects agent-generated events for a while (via :func:`grace_event_catcher`).
@@ -316,6 +343,8 @@ async def collect_agent_events(app, heartbeat_interval):
         log.warning(f'instance {inst_id} is not running!')
         await update_instance_usage(app, inst_id)
         await app['registry'].forget_instance(inst_id)
+
+    app['kernel_ddtimer'] = asyncio.ensure_future(datadog_update_timer(app))
 
     log.info('entering normal operation mode...')
     app['status'] = GatewayStatus.RUNNING
@@ -583,6 +612,9 @@ async def init(app):
 
 
 async def shutdown(app):
+    if 'kernel_ddtimer' in app and not app['kernel_ddtimer'].done():
+        app['kernel_ddtimer'].cancel()
+        await app['kernel_ddtimer']
     for per_kernel_handlers in app['stream_pty_handlers'].values():
         for handler in per_kernel_handlers.copy():
             handler.cancel()

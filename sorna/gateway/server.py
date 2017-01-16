@@ -50,16 +50,28 @@ async def on_prepare(request, response):
 async def exception_middleware_factory(app, handler):
     async def exception_middleware_handler(request):
         try:
+            if app['datadog']:
+                app['datadog'].statsd.increment('sorna.gateway.api.requests')
             return (await handler(request))
-        except SornaError:
+        except SornaError as ex:
+            if app['datadog']:
+                statsd = app['datadog'].statsd
+                statsd.increment('sorna.gateway.api.failures')
+                statsd.increment(f'sorna.gateway.api.status.{ex.status_code}')
             raise
         except web.HTTPException as ex:
+            if app['datadog']:
+                statsd = app['datadog'].statsd
+                statsd.increment('sorna.gateway.api.failures')
+                statsd.increment(f'sorna.gateway.api.status.{ex.status_code}')
             if ex.status_code == 404:
                 raise GenericNotFound
             log.warning(f'Bad request: {ex!r}')
             raise GenericBadRequest
         except Exception as ex:
             log.exception('Uncaught exception in HTTP request handlers')
+            if app['datadog']:
+                app['datadog'].statsd.increment('sorna.gateway.api.errors')
             raise InternalServerError
     return exception_middleware_handler
 
