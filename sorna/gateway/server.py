@@ -13,6 +13,11 @@ import aiohttp
 from aiohttp import web
 import asyncpgsa
 import uvloop
+try:
+    import datadog
+    datadog_available = True
+except ImportError:
+    datadog_available = False
 
 from sorna.argparse import ipaddr, path, port_no
 from sorna.exceptions import (SornaError, GenericNotFound,
@@ -63,6 +68,16 @@ async def gw_init(app):
     app.on_response_prepare.append(on_prepare)
     app.router.add_route('GET', '/v1', hello)
     app['status'] = GatewayStatus.STARTING
+    app['datadog'] = None
+    if datadog_available:
+        if app.config.datadog_api_key is None:
+            log.info('skipping datadog initialization due to missing API key...')
+        else:
+            datadog.initialize(
+                api_key=app.config.datadog_api_key,
+                app_key=app.config.datadog_app_key)
+            app['datadog'] = datadog
+            log.info('datadog logging enabled.')
 
     app.dbpool = await asyncpgsa.create_pool(
         host=str(app.config.db_addr[0]),
@@ -95,6 +110,11 @@ def gw_args(parser):
     parser.add('--ssl-key', env_var='SORNA_SSL_KEY', type=path, default=None,
                help='The path to the private key used to make requests for the SSL certificate. '
                     '(default: None)')
+    if datadog_available:
+        parser.add('--datadog-api-key', env_var='DATADOG_API_KEY', type=str, default=None,
+                   help='The API key for Datadog monitoring agent.')
+        parser.add('--datadog-app-key', env_var='DATADOG_APP_KEY', type=str, default=None,
+                   help='The application key for Datadog monitoring agent.')
 
 
 def main():

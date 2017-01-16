@@ -64,6 +64,7 @@ setup(
     extras_require={
         'dev': [],
         'test': ['pytest', 'pytest-mock'],
+        'datadog': ['datadog'],
     },
     data_files=[],
 )
