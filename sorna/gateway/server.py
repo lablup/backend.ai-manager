@@ -30,6 +30,7 @@ from .config import load_config, init_logger
 from .events import init as event_init, shutdown as event_shutdown
 from .kernel import init as kernel_init, shutdown as kernel_shutdown
 from .ratelimit import init as rlim_init, shutdown as rlim_shutdown
+from .utils import prettify_traceback
 
 LATEST_API_VERSION = 'v1.20160915'
 
@@ -52,7 +53,7 @@ async def exception_middleware_factory(app, handler):
         try:
             if app['datadog']:
                 app['datadog'].statsd.increment('sorna.gateway.api.requests')
-            return (await handler(request))
+            resp = (await handler(request))
         except SornaError as ex:
             if app['datadog']:
                 statsd = app['datadog'].statsd
@@ -70,9 +71,20 @@ async def exception_middleware_factory(app, handler):
             raise GenericBadRequest
         except Exception as ex:
             log.exception('Uncaught exception in HTTP request handlers')
+            title = f'Exception from {request.method} {request.rel_url.path}'
+            tag = f'path:{request.rel_url.path}'
+            text = prettyfiy_traceback(ex)
             if app['datadog']:
-                app['datadog'].statsd.increment('sorna.gateway.api.errors')
+                app['datadog'].statsd.event(
+                    title, text,
+                    tags=['sorna', 'exception'],
+                    aggregation_key=request.rel_url.path,
+                    alert_type='error')
             raise InternalServerError
+        else:
+            if app['datadog']:
+                app['datadog'].statsd.increment(f'sorna.gateway.api.status.{resp.status}')
+            return resp
     return exception_middleware_handler
 
 
