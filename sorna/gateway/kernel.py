@@ -259,17 +259,34 @@ async def datadog_update(app):
             n = await conn.fetchval(query)
             statsd.gauge('sorna.gateway.active_kernels', n)
 
+            subquery = (sa.select([sa.func.count()])
+                          .select_from(KeyPair)
+                          .where(KeyPair.c.is_active == True)
+                          .group_by(KeyPair.c.user_id))
+            query = sa.select([sa.func.count()]).select_from(subquery.alias())
+            n = await conn.fetchval(query)
+            statsd.gauge('sorna.users.has_active_key', n)
+
+            subquery = subquery.where(KeyPair.c.last_used != None)
+            query = sa.select([sa.func.count()]).select_from(subquery.alias())
+            n = await conn.fetchval(query)
+            statsd.gauge('sorna.users.has_used_key', n)
+
+            query = sa.select([sa.func.count()]).select_from(Usage)
+            n = await conn.fetchval(query)
+            statsd.gauge('sorna.gateway.accum_kernels', n)
+
 async def datadog_update_timer(app):
     if app['datadog'] is None:
         return
     while True:
         try:
-            await asyncio.sleep(2)
+            await datadog_update(app)
+            await asyncio.sleep(5)
         except asyncio.CancelledError:
             break
         except:
             log.exception('datadog_update unexpected error')
-        await datadog_update(app)
 
 
 async def collect_agent_events(app, heartbeat_interval):
