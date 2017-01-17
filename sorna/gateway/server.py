@@ -73,7 +73,7 @@ async def exception_middleware_factory(app, handler):
             log.exception('Uncaught exception in HTTP request handlers')
             title = f'Exception from {request.method} {request.rel_url.path}'
             tag = f'path:{request.rel_url.path}'
-            text = prettyfiy_traceback(ex)
+            text = prettify_traceback(ex)
             if app['datadog']:
                 app['datadog'].statsd.event(
                     title, text,
