@@ -20,8 +20,8 @@ except ImportError:
     datadog_available = False
 
 from sorna.argparse import ipaddr, path, port_no
-from sorna.exceptions import (SornaError, GenericNotFound,
-                              GenericBadRequest, InternalServerError)
+from .exceptions import (SornaError, GenericNotFound,
+                         GenericBadRequest, InternalServerError)
 from sorna.utils import env_info
 from ..manager import __version__
 from . import GatewayStatus

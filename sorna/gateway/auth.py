@@ -12,7 +12,7 @@ from dateutil.parser import parse as dtparse
 import simplejson as json
 import sqlalchemy as sa
 
-from sorna.exceptions import InvalidAuthParameters, AuthorizationFailed
+from .exceptions import InvalidAuthParameters, AuthorizationFailed
 from .config import load_config, init_logger
 from .models import KeyPair
 

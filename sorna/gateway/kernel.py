@@ -22,9 +22,9 @@ import simplejson as json
 import sqlalchemy as sa
 import zmq
 
-from sorna.exceptions import (ServiceUnavailable, InvalidAPIParameters, QuotaExceeded,
-                              QueryNotImplemented, InstanceNotFound, KernelNotFound,
-                              SornaError)
+from .exceptions import (ServiceUnavailable, InvalidAPIParameters, QuotaExceeded,
+                         QueryNotImplemented, InstanceNotFound, KernelNotFound,
+                         SornaError)
 from . import GatewayStatus
 from .auth import auth_required
 from .models import KeyPair, Usage

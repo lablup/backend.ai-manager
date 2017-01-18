@@ -1,4 +1,5 @@
 import asyncio
+import builtins
 from datetime import datetime
 from dateutil.tz import tzutc
 import functools
@@ -6,17 +7,19 @@ import logging
 import operator
 
 import aiozmq, aiozmq.rpc
+from aiozmq.rpc.base import GenericError, NotFoundError, ParametersError
 import aioredis
 from async_timeout import timeout as _timeout
 import zmq
 
 from sorna.utils import dict2kvlist
-from sorna.exceptions import \
-    InstanceNotAvailable, InstanceNotFound, KernelNotFound, \
-    KernelCreationFailed, KernelDestructionFailed, \
-    KernelExecutionFailed, KernelRestartFailed
-from ..gateway.defs import SORNA_KERNEL_DB, SORNA_INSTANCE_DB, \
-                           SORNA_SESSION_DB  # noqa
+from ..gateway.exceptions import (
+    InstanceNotAvailable, InstanceNotFound, KernelNotFound,
+    KernelCreationFailed, KernelDestructionFailed,
+    KernelExecutionFailed, KernelRestartFailed,
+    AgentError)
+from ..gateway.defs import (SORNA_KERNEL_DB, SORNA_INSTANCE_DB,
+                            SORNA_SESSION_DB)
 from .structs import Instance, Kernel
 
 __all__ = ['InstanceRegistry', 'InstanceNotFound']
@@ -42,6 +45,47 @@ def auto_get_instance(func):
             return await func(self, arg0, *args[1:], **kwargs)
         return await func(self, *args, **kwargs)
     return wrapper
+
+
+class RPCContext:
+
+    def __init__(self, addr, timeout=10):
+        self.addr = addr
+        self.timeout = timeout
+        self.server = None
+        self.call = None
+
+    async def __aenter__(self):
+        self.server = await aiozmq.rpc.connect_rpc(connect=self.addr)
+        self.server.transport.setsockopt(zmq.LINGER, 50)
+        self.call = self.server.call
+        self.t = _timeout(self.timeout)
+        self.t.__enter__()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        recv_exc = exc_type is not None
+        raise_exc = self.t.__exit__(exc_type, exc, tb)
+        self.server.close()
+        self.server = None
+        self.call = None
+        preserved_exceptions = (
+            NotFoundError,
+            ParametersError,
+            asyncio.TimeoutError,
+            asyncio.CancelledError,
+            asyncio.InvalidStateError,
+        )
+        if recv_exc:
+            if issubclass(exc_type, GenericError):
+                e = AgentError(exc.args[0], exc.args[1])
+                raise e.with_traceback(tb)
+            elif issubclass(exc_type, preserved_exceptions):
+                pass
+            else:
+                e = AgentError(exc_type, exc.args)
+                raise e.with_traceback(tb)
+        return recv_exc and raise_exc
 
 
 class InstanceRegistry:
@@ -280,20 +324,18 @@ class InstanceRegistry:
         stdout_port = None
         instance = await self.get_instance(inst_id)
 
-        agent = await aiozmq.rpc.connect_rpc(connect=instance.addr)
-        agent.transport.setsockopt(zmq.LINGER, 50)
         try:
-            with _timeout(10):
+            async with RPCContext(instance.addr, 10) as rpc:
                 kern_id, stdin_port, stdout_port = \
-                    await agent.call.create_kernel(lang, {})
+                    await rpc.call.create_kernel(lang, {})
         except asyncio.TimeoutError:
             raise KernelCreationFailed('TIMEOUT')
-        except Exception as e:
-            log.exception('create_kernel')
-            msg = ', '.join(map(str, e.args))
-            raise KernelCreationFailed('FAILURE', msg)
-        finally:
-            agent.close()
+        except AgentError as e:
+            log.exception('create_kernel: agent-side error')
+            raise KernelCreationFailed('FAILURE', e)
+        except:
+            log.exception('create_kernel: unexpected error')
+            raise
         assert kern_id is not None
 
         log.debug(f'create_kernel() -> {kern_id} on {inst_id}')
@@ -320,29 +362,25 @@ class InstanceRegistry:
     async def destroy_kernel(self, kernel):
         log.debug(f'destroy_kernel({kernel.id})')
         try:
-            agent = await aiozmq.rpc.connect_rpc(connect=kernel.addr)
-            agent.transport.setsockopt(zmq.LINGER, 50)
-            with _timeout(10):
-                await agent.call.destroy_kernel(kernel.id)
+            async with RPCContext(kernel.addr, 10) as rpc:
+                await rpc.call.destroy_kernel(kernel.id)
         except asyncio.TimeoutError:
             raise KernelDestructionFailed('TIMEOUT')
         except asyncio.CancelledError:
             raise
-        except Exception as e:
-            log.exception('destroy_kernel')
-            msg = ', '.join(map(str, e.args))
-            raise KernelDestructionFailed('FAILURE', msg)
-        finally:
-            agent.close()
+        except AgentError as e:
+            log.exception('destroy_kernel: agent-side error')
+            raise KernelDestructionFailed('FAILURE', e)
+        except:
+            log.exception('destroy_kernel: unexpected error')
+            raise
 
     @auto_get_kernel
     async def restart_kernel(self, kernel):
         log.debug(f'restart_kernel({kernel.id})')
         try:
-            agent = await aiozmq.rpc.connect_rpc(connect=kernel.addr)
-            agent.transport.setsockopt(zmq.LINGER, 50)
-            with _timeout(30):
-                stdin_port, stdout_port = await agent.call.restart_kernel(kernel.id)
+            async with RPCContext(kernel.addr, 30) as rpc:
+                stdin_port, stdout_port = await rpc.call.restart_kernel(kernel.id)
                 async with self.redis_kern.get() as rk:
                     rk_pipe = rk.pipeline()
                     rk_pipe.hset(kernel.id, 'stdin_port', stdin_port)
@@ -352,12 +390,12 @@ class InstanceRegistry:
             raise KernelRestartFailed('TIMEOUT')
         except asyncio.CancelledError:
             raise
-        except Exception as e:
-            log.exception('restart_kernel')
-            msg = ', '.join(map(str, e.args))
-            raise KernelRestartFailed('FAILURE', msg)
-        finally:
-            agent.close()
+        except AgentError as e:
+            log.exception('restart_kernel: agent-side error')
+            raise KernelRestartFailed('FAILURE', e)
+        except:
+            log.exception('restart_kernel: unexpected error')
+            raise
 
     @auto_get_kernel
     async def update_kernel(self, kernel, updated_fields):
@@ -369,21 +407,19 @@ class InstanceRegistry:
     async def execute_snippet(self, kernel, code_id, code):
         log.debug(f'execute_snippet({kernel.id}, ...)')
         try:
-            agent = await aiozmq.rpc.connect_rpc(connect=kernel.addr)
-            agent.transport.setsockopt(zmq.LINGER, 50)
-            with _timeout(200):  # must be longer than kernel exec_timeout
-                result = await agent.call.execute_code('0', kernel.id,
-                                                       code_id, code, {})
+            async with RPCContext(kernel.addr, 200) as rpc:  # must be longer than kernel exec_timeout
+                result = await rpc.call.execute_code('0', kernel.id,
+                                                     code_id, code, {})
         except asyncio.TimeoutError:
             raise KernelExecutionFailed('TIMEOUT')
         except asyncio.CancelledError:
             raise
-        except Exception as e:
-            log.exception('execute_code')
-            msg = ', '.join(map(str, e.args))
-            raise KernelExecutionFailed('FAILURE', msg)
-        finally:
-            agent.close()
+        except AgentError as e:
+            log.exception('execute_code: agent-side error')
+            raise KernelExecutionFailed('FAILURE', e)
+        except:
+            log.exception('execute_code: unexpected error')
+            raise
         return result
 
     async def get_kernels_in_instance(self, inst_id):
@@ -438,15 +474,15 @@ class InstanceRegistry:
             await rk_pipe.execute()
 
     async def revive_instance(self, inst_id, inst_addr):
-        agent = await aiozmq.rpc.connect_rpc(connect=inst_addr)
-        agent.transport.setsockopt(zmq.LINGER, 50)
         try:
-            with _timeout(10):
-                await agent.call.reset()
+            async with RPCContext(inst_addr, 10) as rpc:
+                await rpc.call.reset()
         except asyncio.TimeoutError:
             log.warning('revive_instance timeout')
-        finally:
-            agent.close()
+        except AgentError as e:
+            log.exception('revive_instance: agent-side error')
+        except:
+            log.exception('revive_instance: unexpected error')
         await self.reset_instance(inst_id)
 
     async def reset_instance(self, inst_id):
