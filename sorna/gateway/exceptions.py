@@ -140,7 +140,8 @@ class SornaAgentError(SornaError):
         elif isinstance(exc_info, AgentError):
             if isinstance(exc_info.args[0], Exception):
                 inner_name = type(exc_info.args[0]).__name__
-            elif issubclass(exc_info.args[0], Exception):
+            elif (isinstance(exc_info.args[0], type) and
+                  issubclass(exc_info.args[0], Exception)):
                 inner_name = exc_info.args[0].__name__
             else:
                 inner_name = str(exc_info.args[0])
