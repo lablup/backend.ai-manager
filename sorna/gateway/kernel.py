@@ -44,7 +44,8 @@ async def create(request):
     try:
         with _timeout(2):
             params = await request.json()
-        log.info(f"GET_OR_CREATE (lang:{params['lang']}, token:{params['clientSessionToken']})")
+        log.info(f"GET_OR_CREATE (u:{request.keypair['access_key']}, "
+                 f"lang:{params['lang']}, token:{params['clientSessionToken']})")
         assert 8 <= len(params['clientSessionToken']) <= 80
     except (asyncio.TimeoutError, AssertionError,
             KeyError, json.decoder.JSONDecodeError) as e:
@@ -375,7 +376,7 @@ async def destroy(request):
     if request.app['status'] != GatewayStatus.RUNNING:
         raise ServiceUnavailable('Server not ready.')
     kern_id = request.match_info['kernel_id']
-    log.info(f'DESTROY (k:{kern_id})')
+    log.info(f"DESTROY (u:{request.keypair['access_key']}, k:{kern_id})")
     try:
         await request.app['registry'].destroy_kernel(kern_id)
     except SornaError:
@@ -390,7 +391,7 @@ async def get_info(request):
         raise ServiceUnavailable('Server not ready.')
     resp = {}
     kern_id = request.match_info['kernel_id']
-    log.info(f'GETINFO (k:{kern_id})')
+    log.info(f"GETINFO (u:{request.keypair['access_key']}, k:{kern_id})")
     try:
         kern = await request.app['registry'].get_kernel(kern_id)
         await request.app['registry'].update_kernel(kern_id, {
@@ -423,7 +424,7 @@ async def restart(request):
     if request.app['status'] != GatewayStatus.RUNNING:
         raise ServiceUnavailable('Server not ready.')
     kern_id = request.match_info['kernel_id']
-    log.info(f'RESTART (k:{kern_id})')
+    log.info(f"RESTART (u:{request.keypair['access_key']}, k:{kern_id})")
     try:
         kern = await request.app['registry'].get_kernel(kern_id)
         await request.app['registry'].update_kernel(kern_id, {
@@ -450,7 +451,7 @@ async def execute_snippet(request):
     try:
         with _timeout(2):
             params = await request.json()
-        log.info(f'EXECUTE_SNIPPET (k:{kern_id})')
+        log.info(f"EXECUTE_SNIPPET (u:{request.keypair['access_key']}, k:{kern_id})")
     except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
         log.warning('EXECUTE_SNIPPET: invalid/missing parameters')
         raise InvalidAPIParameters

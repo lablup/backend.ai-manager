@@ -56,7 +56,10 @@ class RPCContext:
         self.call = None
 
     async def __aenter__(self):
-        self.server = await aiozmq.rpc.connect_rpc(connect=self.addr)
+        self.server = await aiozmq.rpc.connect_rpc(
+            connect=self.addr, error_table={
+                'concurrent.futures._base.TimeoutError': asyncio.TimeoutError,
+            })
         self.server.transport.setsockopt(zmq.LINGER, 50)
         self.call = self.server.call
         self.t = _timeout(self.timeout)
@@ -65,7 +68,7 @@ class RPCContext:
 
     async def __aexit__(self, exc_type, exc, tb):
         recv_exc = exc_type is not None
-        raise_exc = self.t.__exit__(exc_type, exc, tb)
+        raise_pending = self.t.__exit__(exc_type, exc, tb)
         self.server.close()
         self.server = None
         self.call = None
@@ -85,7 +88,7 @@ class RPCContext:
             else:
                 e = AgentError(exc_type, exc.args)
                 raise e.with_traceback(tb)
-        return recv_exc and raise_exc
+        return recv_exc and raise_pending
 
 
 class InstanceRegistry:
