@@ -282,11 +282,14 @@ async def datadog_update_timer(app):
     while True:
         try:
             await datadog_update(app)
-            await asyncio.sleep(5)
         except asyncio.CancelledError:
             break
         except:
             log.exception('datadog_update unexpected error')
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            break
 
 
 async def collect_agent_events(app, heartbeat_interval):
