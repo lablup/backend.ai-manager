@@ -1,6 +1,20 @@
 Changes
 =======
 
+0.8.6 (2017-01-19)
+------------------
+
+**FIXES**
+
+ - Prevent potential CPU-hogging infinite loop during Datadog stats updates.
+
+**IMPROVEMENTS**
+
+ - Add statistics reporting via Datadog. (optional feature)
+
+ - Improve exception handling and reporting, particularly for agent-sid errors.
+
+
 0.8.5 (2017-01-14)
 ------------------
 
