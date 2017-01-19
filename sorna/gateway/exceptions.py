@@ -138,7 +138,12 @@ class SornaAgentError(SornaError):
                 'title': agent_error_title,
             }
         elif isinstance(exc_info, AgentError):
-            inner_name = exc_info.args[0].__name__
+            if isinstance(exc_info.args[0], Exception):
+                inner_name = type(exc_info.args[0]).__name__
+            elif issubclass(exc_info.args[0], Exception):
+                inner_name = exc_info.args[0].__name__
+            else:
+                inner_name = str(exc_info.args[0])
             inner_args = ', '.join(repr(a) for a in exc_info.args[1])
             agent_error_title = 'Agent-side exception occurred.'
             agent_details = {
