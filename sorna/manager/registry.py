@@ -154,7 +154,7 @@ class InstanceRegistry:
                     raise InstanceNotFound(inst_id)
                 return Instance(**fields)
 
-    async def enumerate_instances(self, check_shadow=False):
+    async def enumerate_instances(self, check_shadow=True):
         async with self.redis_inst.get() as ri:
             if check_shadow:
                 # check only "active" shadow instances.
@@ -302,7 +302,7 @@ class InstanceRegistry:
                 # We scan shadow keys first to check only alive instances,
                 # and then fetch details from normal keys.
                 inst_loads = []
-                async for inst_id in self.enumerate_instances(check_shadow=True):
+                async for inst_id in self.enumerate_instances():
                     if inst_id == 'i-indominus':
                         continue
                     max_kernels = int(await ri.hget(inst_id, 'max_kernels'))

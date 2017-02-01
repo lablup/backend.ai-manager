@@ -277,6 +277,7 @@ async def datadog_update(app):
             n = await conn.fetchval(query)
             statsd.gauge('sorna.gateway.accum_kernels', n)
 
+
 async def datadog_update_timer(app):
     if app['datadog'] is None:
         return
