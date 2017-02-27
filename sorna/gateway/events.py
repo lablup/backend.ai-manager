@@ -75,6 +75,7 @@ async def init(app):
 
 async def shutdown(app):
     app['event_redis_monitor_task'].cancel()
+    await app['event_redis_monitor_task']
     await asyncio.sleep(0.01)
     app['event_sock'].close()
     await app['event_sock'].wait_closed()
