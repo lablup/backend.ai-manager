@@ -1,6 +1,17 @@
 Changes
 =======
 
+0.9.0 (2017-02-27)
+------------------
+
+**FIXES**
+
+ - Fix task pending error during shutdown due to missing await for redis
+   monitoring task after cancelled.
+
+ - Fix wrong active instance count in Datadog stats due to missing checks for
+   shadow in InstanceRegistry.enumerate_instances()
+
 0.8.6 (2017-01-19)
 ------------------
 
