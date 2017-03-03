@@ -44,7 +44,7 @@ async def create(request):
     try:
         with _timeout(2):
             params = await request.json()
-        log.info(f"GET_OR_CREATE (u:{request.keypair['access_key']}, "
+        log.info(f"GET_OR_CREATE (u:{request['keypair']['access_key']}, "
                  f"lang:{params['lang']}, token:{params['clientSessionToken']})")
         assert 8 <= len(params['clientSessionToken']) <= 80
     except (asyncio.TimeoutError, AssertionError,
@@ -53,8 +53,8 @@ async def create(request):
         raise InvalidAPIParameters
     resp = {}
     try:
-        access_key = request.keypair['access_key']
-        concurrency_limit = request.keypair['concurrency_limit']
+        access_key = request['keypair']['access_key']
+        concurrency_limit = request['keypair']['concurrency_limit']
         async with request.app.dbpool.acquire() as conn, conn.transaction():
             query = (sa.select([KeyPair.c.concurrency_used], for_update=True)
                        .select_from(KeyPair)
@@ -377,7 +377,7 @@ async def destroy(request):
     if request.app['status'] != GatewayStatus.RUNNING:
         raise ServiceUnavailable('Server not ready.')
     kern_id = request.match_info['kernel_id']
-    log.info(f"DESTROY (u:{request.keypair['access_key']}, k:{kern_id})")
+    log.info(f"DESTROY (u:{request['keypair']['access_key']}, k:{kern_id})")
     try:
         await request.app['registry'].destroy_kernel(kern_id)
     except SornaError:
@@ -392,7 +392,7 @@ async def get_info(request):
         raise ServiceUnavailable('Server not ready.')
     resp = {}
     kern_id = request.match_info['kernel_id']
-    log.info(f"GETINFO (u:{request.keypair['access_key']}, k:{kern_id})")
+    log.info(f"GETINFO (u:{request['keypair']['access_key']}, k:{kern_id})")
     try:
         kern = await request.app['registry'].get_kernel(kern_id)
         await request.app['registry'].update_kernel(kern_id, {
@@ -425,7 +425,7 @@ async def restart(request):
     if request.app['status'] != GatewayStatus.RUNNING:
         raise ServiceUnavailable('Server not ready.')
     kern_id = request.match_info['kernel_id']
-    log.info(f"RESTART (u:{request.keypair['access_key']}, k:{kern_id})")
+    log.info(f"RESTART (u:{request['keypair']['access_key']}, k:{kern_id})")
     try:
         kern = await request.app['registry'].get_kernel(kern_id)
         await request.app['registry'].update_kernel(kern_id, {
@@ -452,7 +452,7 @@ async def execute_snippet(request):
     try:
         with _timeout(2):
             params = await request.json()
-        log.info(f"EXECUTE_SNIPPET (u:{request.keypair['access_key']}, k:{kern_id})")
+        log.info(f"EXECUTE_SNIPPET (u:{request['keypair']['access_key']}, k:{kern_id})")
     except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
         log.warning('EXECUTE_SNIPPET: invalid/missing parameters')
         raise InvalidAPIParameters
@@ -602,20 +602,29 @@ async def stream_pty(request):
 
 
 @auth_required
-async def stream_events(request):
-    kern_id = request.match_info['kernel_id']
-    # TODO: dequeue the streaming response queue for the given kernel id
+async def not_impl_stub(request):
     raise QueryNotImplemented
 
 
 async def init(app):
-    app.router.add_route('POST', '/v1/kernel/create', create)
-    app.router.add_route('GET', '/v1/kernel/{kernel_id}', get_info)
-    app.router.add_route('PATCH', '/v1/kernel/{kernel_id}', restart)
+    app.router.add_route('POST',   '/v1/kernel/create', create)
+    app.router.add_route('GET',    '/v1/kernel/{kernel_id}', get_info)
+    app.router.add_route('PATCH',  '/v1/kernel/{kernel_id}', restart)
     app.router.add_route('DELETE', '/v1/kernel/{kernel_id}', destroy)
-    app.router.add_route('POST', '/v1/kernel/{kernel_id}', execute_snippet)
-    app.router.add_route('GET', '/v1/stream/kernel/{kernel_id}/pty', stream_pty)
-    app.router.add_route('GET', '/v1/stream/kernel/{kernel_id}/events', stream_events)
+    app.router.add_route('POST',   '/v1/kernel/{kernel_id}', execute_snippet)
+    app.router.add_route('GET',    '/v1/stream/kernel/{kernel_id}/pty', stream_pty)
+    app.router.add_route('GET',    '/v1/stream/kernel/{kernel_id}/events', not_impl_stub)
+
+    app.router.add_route('POST',   '/v2/kernel/create', create)
+    app.router.add_route('GET',    '/v2/kernel/{kernel_id}', get_info)
+    app.router.add_route('PATCH',  '/v2/kernel/{kernel_id}', restart)
+    app.router.add_route('DELETE', '/v2/kernel/{kernel_id}', destroy)
+    app.router.add_route('POST',   '/v2/kernel/{kernel_id}', execute_snippet)
+    app.router.add_route('GET',    '/v2/stream/kernel/{kernel_id}/pty', stream_pty)
+    app.router.add_route('GET',    '/v2/stream/kernel/{kernel_id}/events', not_impl_stub)
+    app.router.add_route('POST',   '/v2/folder/create', not_impl_stub)
+    app.router.add_route('GET',    '/v2/folder/{folder_id}', not_impl_stub)
+    app.router.add_route('DELETE', '/v2/folder/{folder_id}', not_impl_stub)
 
     app['event_server'].add_handler('kernel_terminated', kernel_terminated)
     app['event_server'].add_handler('instance_started', instance_started)

@@ -99,9 +99,9 @@ async def auth_middleware_factory(app, handler):
     Fetches user information and sets up keypair, uesr, and is_authorized attributes.
     '''
     async def auth_middleware_handler(request):
-        request.is_authorized = False
-        request.keypair = None
-        request.user = None
+        request['is_authorized'] = False
+        request['keypair'] = None
+        request['user'] = None
         if not check_date(request):
             raise InvalidAuthParameters
         params = _extract_auth_params(request)
@@ -122,14 +122,14 @@ async def auth_middleware_factory(app, handler):
                                             num_queries=KeyPair.c.num_queries + 1)
                                     .where(KeyPair.c.access_key == access_key))
                     await conn.execute(query)
-                    request.is_authorized = True
-                    request.keypair = {
+                    request['is_authorized'] = True
+                    request['keypair'] = {
                         'access_key': access_key,
                         'secret_key': row.secret_key,
                         'concurrency_limit': row.concurrency_limit,
                         'rate_limit': row.rate_limit,
                     }
-                    request.user = {
+                    request['user'] = {
                         'id': row.user_id,
                     }
         # No matter if authenticated or not, pass-through to the handler.
@@ -141,7 +141,7 @@ async def auth_middleware_factory(app, handler):
 def auth_required(handler):
     @functools.wraps(handler)
     async def wrapped(request):
-        if request.is_authorized:
+        if request.get('is_authorized', False):
             return (await handler(request))
         raise AuthorizationFailed
     return wrapped
@@ -170,6 +170,7 @@ def generate_keypair():
 
 async def init(app):
     app.router.add_route('GET', '/v1/authorize', authorize)
+    app.router.add_route('GET', '/v2/authorize', authorize)
     app.middlewares.append(auth_middleware_factory)
 
 

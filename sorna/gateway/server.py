@@ -32,7 +32,7 @@ from .kernel import init as kernel_init, shutdown as kernel_shutdown
 from .ratelimit import init as rlim_init, shutdown as rlim_shutdown
 from .utils import prettify_traceback
 
-LATEST_API_VERSION = 'v1.20160915'
+LATEST_API_VERSION = 'v2.20170215'
 
 log = logging.getLogger('sorna.gateway.server')
 
@@ -53,6 +53,10 @@ async def exception_middleware_factory(app, handler):
         try:
             if app['datadog']:
                 app['datadog'].statsd.increment('sorna.gateway.api.requests')
+            if request.rel_url.path.startswith('/v1'):
+                request['api_version'] = 1
+            if request.rel_url.path.startswith('/v2'):
+                request['api_version'] = 2
             resp = (await handler(request))
         except SornaError as ex:
             if app['datadog']:
@@ -91,6 +95,7 @@ async def exception_middleware_factory(app, handler):
 async def gw_init(app):
     app.on_response_prepare.append(on_prepare)
     app.router.add_route('GET', '/v1', hello)
+    app.router.add_route('GET', '/v2', hello)
     app['status'] = GatewayStatus.STARTING
     app['datadog'] = None
     if datadog_available:

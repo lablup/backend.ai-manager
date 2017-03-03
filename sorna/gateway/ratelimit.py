@@ -18,9 +18,9 @@ async def rlim_middleware_factory(app, handler):
     async def rlim_middleware_handler(request):
         # TODO: use a global timer if we scale out the gateway.
         now = Decimal(time.monotonic()).quantize(_time_prec)
-        if request.is_authorized:
-            rate_limit = request.keypair['rate_limit']
-            access_key = request.keypair['access_key']
+        if request['is_authorized']:
+            rate_limit = request['keypair']['rate_limit']
+            access_key = request['keypair']['access_key']
             rlim_next_reset = now + _rlim_window
             async with app.redis_rlim.get() as rr:
                 tracker = await rr.hgetall(access_key)
