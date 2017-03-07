@@ -269,7 +269,8 @@ class InstanceRegistry:
             else:
                 raise KernelNotFound
 
-    async def get_or_create_kernel(self, client_sess_token, lang, owner_access_key, spec=None):
+    async def get_or_create_kernel(self, client_sess_token, lang, owner_access_key,
+                                   limits=None, mounts=None):
         assert owner_access_key
         try:
             kern = await self.get_kernel_from_session(client_sess_token, lang)
@@ -277,15 +278,19 @@ class InstanceRegistry:
         except KernelNotFound:
             # Create a new kernel.
             async with self.redis_sess.get() as rs:
-                _, kern = await self.create_kernel(lang, owner_access_key, spec)
+                _, kern = await self.create_kernel(lang, owner_access_key,
+                                                   limits=limits, mounts=mounts)
                 sess_key = '{0}:{1}'.format(client_sess_token, lang)
                 await rs.set(sess_key, kern.id)
                 created = True
         assert kern is not None
         return kern, created
 
-    async def create_kernel(self, lang, owner_access_key, spec=None):
+    async def create_kernel(self, lang, owner_access_key, limits=None, mounts=None):
         inst_id = None
+        limits = limits or {}
+        mounts = mounts or []
+
         async with self.lifecycle_lock, \
                    self.redis_inst.get() as ri:  # noqa
             # Find available instance.
@@ -330,7 +335,7 @@ class InstanceRegistry:
         try:
             async with RPCContext(instance.addr, 10) as rpc:
                 kern_id, stdin_port, stdout_port = \
-                    await rpc.call.create_kernel(lang, {})
+                    await rpc.call.create_kernel(lang, limits, mounts)
         except asyncio.TimeoutError:
             raise KernelCreationFailed('TIMEOUT')
         except AgentError as e:
@@ -407,12 +412,12 @@ class InstanceRegistry:
             await rk.hmset(kernel.id, *dict2kvlist(updated_fields))
 
     @auto_get_kernel
-    async def execute_snippet(self, kernel, code_id, code):
-        log.debug(f'execute_snippet({kernel.id}, ...)')
+    async def execute_snippet(self, kernel, api_version, mode, code, opts):
+        log.debug(f'execute_snippet:v{api_version}({kernel.id}, {mode}')
         try:
             async with RPCContext(kernel.addr, 200) as rpc:  # must be longer than kernel exec_timeout
-                result = await rpc.call.execute_code('0', kernel.id,
-                                                     code_id, code, {})
+                result = await rpc.call.execute_code(api_version, kernel.id,
+                                                     mode, code, opts)
         except asyncio.TimeoutError:
             raise KernelExecutionFailed('TIMEOUT')
         except asyncio.CancelledError:

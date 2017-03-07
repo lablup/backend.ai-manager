@@ -32,7 +32,11 @@ from .kernel import init as kernel_init, shutdown as kernel_shutdown
 from .ratelimit import init as rlim_init, shutdown as rlim_shutdown
 from .utils import prettify_traceback
 
-LATEST_API_VERSION = 'v2.20170215'
+VALID_VERSIONS = frozenset([
+    'v1.20160915',
+    'v2.20170315',
+])
+LATEST_API_VERSION = 'v2.20170315'
 
 log = logging.getLogger('sorna.gateway.server')
 
@@ -48,15 +52,32 @@ async def on_prepare(request, response):
     response.headers['Server'] = 'Sorna-API/' + LATEST_API_VERSION
 
 
+async def version_middleware_factory(app, handler):
+    async def version_middleware_handler(request):
+        if request.rel_url.path.startswith('/v1'):
+            path_ver = 1
+        elif request.rel_url.path.startswith('/v2'):
+            path_ver = 2
+        else:
+            raise GenericBadRequest('Unsupported API version.')
+        hdr_ver = request.headers.get('X-Sorna-Version', None)
+        if hdr_ver is None:
+            raise GenericBadRequest('API version missing in headers.')
+        if hdr_ver not in VALID_VERSIONS:
+            raise GenericBadRequest('Invalid API version.')
+        if not hdr_ver.startswith(f'v{path_ver}.'):
+            raise GenericBadRequest('Path and header API version mismatch.')
+        request['api_version'] = path_ver
+        resp = (await handler(request))
+        return resp
+    return version_middleware_handler
+
+
 async def exception_middleware_factory(app, handler):
     async def exception_middleware_handler(request):
         try:
             if app['datadog']:
                 app['datadog'].statsd.increment('sorna.gateway.api.requests')
-            if request.rel_url.path.startswith('/v1'):
-                request['api_version'] = 1
-            if request.rel_url.path.startswith('/v2'):
-                request['api_version'] = 2
             resp = (await handler(request))
         except SornaError as ex:
             if app['datadog']:
@@ -117,6 +138,7 @@ async def gw_init(app):
         min_size=4, max_size=16,
     )
     app.middlewares.append(exception_middleware_factory)
+    app.middlewares.append(version_middleware_factory)
 
 
 async def gw_shutdown(app):

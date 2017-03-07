@@ -63,8 +63,16 @@ async def create(request):
             log.debug(f'access_key: {access_key} ({concurrency_used} / {concurrency_limit})')
             if concurrency_used >= concurrency_limit:
                 raise QuotaExceeded
+            if request['api_version'] == 1:
+                limits = params.get('resourceLimits', None)
+                mounts = None
+            elif request['api_version'] == 2:
+                limits = params.get('limits', None)
+                mounts = params.get('mounts', None)
             kernel, created = await request.app['registry'].get_or_create_kernel(
-                params['clientSessionToken'], params['lang'], access_key)
+                params['clientSessionToken'],
+                params['lang'], access_key,
+                limits, mounts)
             resp['kernelId'] = kernel.id
             if created:
                 query = (sa.update(KeyPair)
@@ -461,8 +469,18 @@ async def execute_snippet(request):
         await request.app['registry'].update_kernel(kern_id, {
             'num_queries': int(kern.num_queries) + 1,
         })
+        api_version = request['api_version']
+        if api_version == 1:
+            code = params['code']
+            mode = 'query'
+            opts = {}
+        elif api_version == 2:
+            code = params.get('code', '')
+            mode = params['mode']
+            assert mode in ('query', 'batch')
+            opts = params.get('options', None) or {}
         resp['result'] = await request.app['registry'].execute_snippet(
-            kern_id, params['codeId'], params['code'])
+            kern_id, api_version, mode, code, opts)
     except SornaError:
         log.exception('EXECUTE_SNIPPET: API Internal Error')
         raise
