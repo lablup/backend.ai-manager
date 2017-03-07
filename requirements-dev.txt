@@ -14,6 +14,7 @@ simplejson
 uvloop>=0.7
 -e git+ssh://git@github.com/lablup/sorna-common#egg=sorna-common
 pytest
+pytest-aiohttp
 pytest-mock
 flake8
 pep8-naming
