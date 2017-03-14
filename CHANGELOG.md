@@ -1,6 +1,17 @@
 Changes
 =======
 
+0.9.1 (2017-03-14)
+------------------
+
+**IMPROVEMENTS**
+
+ - Handle v1/v2 API requests separately.
+   Now it preserves old "aggregated" stdout/stderr/media outputs for v1
+   but uses the new streaming outputs for v2.
+   (v1 API users can use streaming as well, but they will loose the
+   ordering information of individual lines of the console output.)
+
 0.9.0 (2017-02-27)
 ------------------
 
