@@ -1,6 +1,11 @@
 Changes
 =======
 
+0.9.3 (2017-03-14)
+------------------
+
+ - Fix internal API mismatch bug in web termainl.
+
 0.9.2 (2017-03-14)
 ------------------
 
