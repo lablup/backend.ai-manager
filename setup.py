@@ -60,7 +60,7 @@ setup(
         'python-dateutil>=2.5',
         'simplejson',
         'uvloop>=0.7',
-        'sorna-common>=0.8,<0.9'],
+        'sorna-common>=0.9,<1.0'],
     extras_require={
         'dev': [],
         'test': ['pytest', 'pytest-mock'],
