@@ -1,6 +1,12 @@
 Changes
 =======
 
+0.9.4 (2017-03-19)
+------------------
+
+ - Improve packaging: auto-converted README.md as long description and unified
+   requirements.txt and setup.py dependencies.
+
 0.9.3 (2017-03-14)
 ------------------
 
