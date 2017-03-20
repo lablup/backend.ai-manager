@@ -1,8 +1,29 @@
 from setuptools import setup
 from pathlib import Path
+import pip
 import re
 
 here = Path(__file__).resolve().parent
+
+
+try:
+    import pypandoc
+    long_description = pypandoc.convert('README.md', 'rst')
+except (IOError, ImportError):
+    long_description = ""
+
+requires = []
+links = []
+requirements = pip.req.parse_requirements(
+    'requirements.txt', session=pip.download.PipSession()
+)
+for item in requirements:
+    if getattr(item, 'url', None):  # older pip has url
+        links.append(str(item.url))
+    if getattr(item, 'link', None):  # newer pip has link
+        links.append(str(item.link))
+    if item.req:
+        requires.append(str(item.req))  # always the package name
 
 
 def _get_version():
@@ -22,7 +43,7 @@ setup(
     # https://packaging.python.org/en/latest/single_source_version.html
     version=_get_version(),
     description='Sorna Manager',
-    long_description='',
+    long_description=long_description,
     url='https://github.com/lablup/sorna-manager',
     author='Lablup Inc.',
     author_email='joongi@lablup.com',
@@ -45,22 +66,8 @@ setup(
     namespace_packages=['sorna'],
 
     python_requires='>=3.6',
-    install_requires=[
-        'ConfigArgParse',
-        'coloredlogs',
-        'pyzmq',
-        'aiozmq',
-        'aiohttp>=1.1',
-        'aioredis>=0.2.8',
-        'msgpack-python',
-        'namedlist',
-        'SQLAlchemy',
-        'asyncpg>=0.7',
-        'asyncpgsa>=0.7',
-        'python-dateutil>=2.5',
-        'simplejson',
-        'uvloop>=0.7',
-        'sorna-common>=0.8,<0.9'],
+    install_requires=requires,
+    dependency_links=links,
     extras_require={
         'dev': [],
         'test': ['pytest', 'pytest-mock'],

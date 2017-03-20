@@ -1,6 +1,33 @@
 Changes
 =======
 
+0.9.4 (2017-03-19)
+------------------
+
+ - Improve packaging: auto-converted README.md as long description and unified
+   requirements.txt and setup.py dependencies.
+
+0.9.3 (2017-03-14)
+------------------
+
+ - Fix internal API mismatch bug in web termainl.
+
+0.9.2 (2017-03-14)
+------------------
+
+ - Fix sorna-common requirement version.
+
+0.9.1 (2017-03-14)
+------------------
+
+**IMPROVEMENTS**
+
+ - Handle v1/v2 API requests separately.
+   Now it preserves old "aggregated" stdout/stderr/media outputs for v1
+   but uses the new streaming outputs for v2.
+   (v1 API users can use streaming as well, but they will loose the
+   ordering information of individual lines of the console output.)
+
 0.9.0 (2017-02-27)
 ------------------
 

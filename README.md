@@ -1,5 +1,5 @@
-Sorna Manager
-=============
+Sorna Manager and API Gateway
+=============================
 
 Package Structure
 -----------------
@@ -29,7 +29,8 @@ You may share a virtual environment with other Sorna projects.
 git clone https://github.com/lablup/sorna-manager.git
 python -m venv venv-sorna
 source venv-sorna/bin/activate
-python setup.py develop
+pip install -U pip setuptools wheel  # ensure latest versions!
+pip install -r requirements-dev.txt
 ```
 
 Running and Deployment
