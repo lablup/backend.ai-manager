@@ -499,8 +499,9 @@ async def stream_pty(request):
 
     # Upgrade connection to WebSocket.
     ws = web.WebSocketResponse()
-    if not ws.can_prepare(request):
-        raise web.HTTPUpgradeRequired
+    # FIXME: https://github.com/aio-libs/aiohttp/issues/1736
+    #if not ws.can_prepare(request):
+    #    raise web.HTTPUpgradeRequired
     await ws.prepare(request)
 
     app['stream_pty_handlers'][kern_id].add(asyncio.Task.current_task())
