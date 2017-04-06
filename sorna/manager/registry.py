@@ -298,9 +298,12 @@ class InstanceRegistry:
             if 'tensorflow' in lang or 'caffe' in lang:
                 inst_id = 'i-indominus'
                 if (await ri.exists(inst_id)):
-                    max_kernels = int(await ri.hget(inst_id, 'max_kernels'))
-                    num_kernels = int(await ri.hget(inst_id, 'num_kernels'))
-                    if not (num_kernels < max_kernels):
+                    try:
+                        max_kernels = int(await ri.hget(inst_id, 'max_kernels'))
+                        num_kernels = int(await ri.hget(inst_id, 'num_kernels'))
+                        if not (num_kernels < max_kernels):
+                            inst_id = None
+                    except (TypeError, ValueError):
                         inst_id = None
             else:
                 # Scan all agent instances with free kernel slots.
