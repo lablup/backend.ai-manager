@@ -1,6 +1,15 @@
 Changes
 =======
 
+0.9.5 (2017-04-07)
+------------------
+
+ - Add support for PyTorch kernels.
+
+ - Fix continuous API failures when faulty agents wrongly reports their status.
+
+ - Upgrade aiohttp to v2.
+
 0.9.4 (2017-03-19)
 ------------------
 
