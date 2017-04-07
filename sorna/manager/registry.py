@@ -295,7 +295,7 @@ class InstanceRegistry:
                    self.redis_inst.get() as ri:  # noqa
             # Find available instance.
             # FIXME: monkey-patch for deep-learning support
-            if 'tensorflow' in lang or 'caffe' in lang:
+            if 'tensorflow' in lang or 'caffe' in lang or 'torch' in lang:
                 inst_id = 'i-indominus'
                 if (await ri.exists(inst_id)):
                     try:
