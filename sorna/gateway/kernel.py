@@ -452,7 +452,7 @@ async def restart(request):
 
 
 @auth_required
-async def execute_snippet(request):
+async def execute(request):
     if request.app['status'] != GatewayStatus.RUNNING:
         raise ServiceUnavailable('Server not ready.')
     resp = {}
@@ -460,9 +460,9 @@ async def execute_snippet(request):
     try:
         with _timeout(2):
             params = await request.json()
-        log.info(f"EXECUTE_SNIPPET (u:{request['keypair']['access_key']}, k:{kern_id})")
+        log.info(f"EXECUTE(u:{request['keypair']['access_key']}, k:{kern_id})")
     except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
-        log.warning('EXECUTE_SNIPPET: invalid/missing parameters')
+        log.warning('EXECUTE: invalid/missing parameters')
         raise InvalidAPIParameters
     try:
         kern = await request.app['registry'].get_kernel(kern_id)
@@ -477,12 +477,15 @@ async def execute_snippet(request):
         elif api_version == 2:
             code = params.get('code', '')
             mode = params['mode']
-            assert mode in ('query', 'batch')
+            assert mode in ('query', 'batch', 'complete')
             opts = params.get('options', None) or {}
-        resp['result'] = await request.app['registry'].execute_snippet(
+        resp['result'] = await request.app['registry'].execute(
             kern_id, api_version, mode, code, opts)
+    except AssertionError:
+        log.warning('EXECUTE: invalid/missing parameters')
+        raise InvalidAPIParameters
     except SornaError:
-        log.exception('EXECUTE_SNIPPET: API Internal Error')
+        log.exception('EXECUTE: API Internal Error')
         raise
     return web.Response(status=200, content_type=_json_type,
                         text=json.dumps(resp))
@@ -631,7 +634,7 @@ async def init(app):
     app.router.add_route('GET',    '/v1/kernel/{kernel_id}', get_info)
     app.router.add_route('PATCH',  '/v1/kernel/{kernel_id}', restart)
     app.router.add_route('DELETE', '/v1/kernel/{kernel_id}', destroy)
-    app.router.add_route('POST',   '/v1/kernel/{kernel_id}', execute_snippet)
+    app.router.add_route('POST',   '/v1/kernel/{kernel_id}', execute)
     app.router.add_route('GET',    '/v1/stream/kernel/{kernel_id}/pty', stream_pty)
     app.router.add_route('GET',    '/v1/stream/kernel/{kernel_id}/events', not_impl_stub)
 
@@ -639,7 +642,7 @@ async def init(app):
     app.router.add_route('GET',    '/v2/kernel/{kernel_id}', get_info)
     app.router.add_route('PATCH',  '/v2/kernel/{kernel_id}', restart)
     app.router.add_route('DELETE', '/v2/kernel/{kernel_id}', destroy)
-    app.router.add_route('POST',   '/v2/kernel/{kernel_id}', execute_snippet)
+    app.router.add_route('POST',   '/v2/kernel/{kernel_id}', execute)
     app.router.add_route('GET',    '/v2/stream/kernel/{kernel_id}/pty', stream_pty)
     app.router.add_route('GET',    '/v2/stream/kernel/{kernel_id}/events', not_impl_stub)
     app.router.add_route('POST',   '/v2/folder/create', not_impl_stub)

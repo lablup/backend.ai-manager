@@ -415,21 +415,21 @@ class InstanceRegistry:
             await rk.hmset(kernel.id, *dict2kvlist(updated_fields))
 
     @auto_get_kernel
-    async def execute_snippet(self, kernel, api_version, mode, code, opts):
-        log.debug(f'execute_snippet:v{api_version}({kernel.id}, {mode}')
+    async def execute(self, kernel, api_version, mode, code, opts):
+        log.debug(f'execute:v{api_version}({kernel.id}, {mode}')
         try:
             async with RPCContext(kernel.addr, 200) as rpc:  # must be longer than kernel exec_timeout
-                result = await rpc.call.execute_code(api_version, kernel.id,
-                                                     mode, code, opts)
+                result = await rpc.call.execute(api_version, kernel.id,
+                                                mode, code, opts)
         except asyncio.TimeoutError:
             raise KernelExecutionFailed('TIMEOUT')
         except asyncio.CancelledError:
             raise
         except AgentError as e:
-            log.exception('execute_code: agent-side error')
+            log.exception('execute: agent-side error')
             raise KernelExecutionFailed('FAILURE', e)
         except:
-            log.exception('execute_code: unexpected error')
+            log.exception('execute: unexpected error')
             raise
         return result
 
