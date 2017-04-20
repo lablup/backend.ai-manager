@@ -559,9 +559,9 @@ async def stream_pty(request):
                         api_version = 2
                         if data['type'] == 'resize':
                             code = f"%resize {data['rows']} {data['cols']}"
-                            await app['registry'].execute_snippet(kern_id, api_version, 'query', code, {})
+                            await app['registry'].execute(kern_id, api_version, 'query', code, {})
                         elif data['type'] == 'ping':
-                            await app['registry'].execute_snippet(kern_id, api_version, 'query', '%ping', {})
+                            await app['registry'].execute(kern_id, api_version, 'query', '%ping', {})
                         elif data['type'] == 'restart':
                             # Close existing zmq sockets and let stream handlers get a new one
                             # with changed stdin/stdout ports.
