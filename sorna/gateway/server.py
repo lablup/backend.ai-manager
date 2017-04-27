@@ -122,13 +122,15 @@ async def gw_init(app):
     app['datadog'] = None
     if datadog_available:
         if app.config.datadog_api_key is None:
-            log.info('skipping datadog initialization due to missing API key...')
+            log.warning('datadog logging disabled (missing API key)')
         else:
             datadog.initialize(
                 api_key=app.config.datadog_api_key,
                 app_key=app.config.datadog_app_key)
             app['datadog'] = datadog
-            log.info('datadog logging enabled.')
+            log.info('datadog logging enabled')
+    else:
+        log.warning('datadog logging disabled (no datadog package)')
 
     app.dbpool = await asyncpgsa.create_pool(
         host=str(app.config.db_addr[0]),
