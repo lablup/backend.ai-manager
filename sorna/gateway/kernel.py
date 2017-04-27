@@ -313,7 +313,10 @@ async def collect_agent_events(app, heartbeat_interval):
     app['status'] = GatewayStatus.STARTING
     grace_events.clear()
 
-    await asyncio.sleep(heartbeat_interval * 2.1)
+    try:
+        await asyncio.sleep(heartbeat_interval * 2.1)
+    except asyncio.CancelledError:
+        return
 
     log.info('bulk-dispatching latest events...')
     per_inst_events = defaultdict(list)
@@ -662,13 +665,16 @@ async def init(app):
     await app['registry'].init()
 
     heartbeat_interval = 3.0
-    asyncio.ensure_future(collect_agent_events(app, heartbeat_interval))
+    app['kernel_agent_event_collector'] = asyncio.ensure_future(collect_agent_events(app, heartbeat_interval))
 
 
 async def shutdown(app):
-    if 'kernel_ddtimer' in app and not app['kernel_ddtimer'].done():
-        app['kernel_ddtimer'].cancel()
-        await app['kernel_ddtimer']
+    checked_tasks = ('kernel_agent_event_collector', 'kernel_ddtimer')
+    for tname in checked_tasks:
+        t = app.get(tname, None)
+        if t and not t.done():
+            t.cancel()
+            await t
     for per_kernel_handlers in app['stream_pty_handlers'].values():
         for handler in per_kernel_handlers.copy():
             handler.cancel()

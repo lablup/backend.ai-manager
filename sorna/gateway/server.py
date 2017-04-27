@@ -11,6 +11,7 @@ import sys
 
 import aiohttp
 from aiohttp import web
+import aiotools
 import asyncpgsa
 import uvloop
 try:
@@ -145,6 +146,52 @@ async def gw_shutdown(app):
     await app.dbpool.close()
 
 
+@aiotools.actxmgr
+async def server_main(loop, pidx, _args):
+
+    app = web.Application()
+    app.config = _args[0]
+    app.sslctx = None
+    if app.config.ssl_cert and app.config.ssl_key:
+        app.sslctx = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
+        app.sslctx.load_cert_chain(str(app.config.ssl_cert),
+                                   str(app.config.ssl_key))
+    if app.config.service_port == 0:
+        app.config.service_port = 8443 if app.sslctx else 8080
+
+    await event_init(app)
+    await gw_init(app)
+    await auth_init(app)
+    await rlim_init(app)
+    await kernel_init(app)
+
+    web_handler = app.make_handler()
+    server = await loop.create_server(
+        web_handler,
+        host=str(app.config.service_ip),
+        port=app.config.service_port,
+        reuse_port=True,
+        ssl=app.sslctx,
+    )
+    log.info('started.')
+
+    yield
+
+    log.info('shutting down...')
+    server.close()
+    await server.wait_closed()
+
+    await kernel_shutdown(app)
+    await rlim_shutdown(app)
+    await auth_shutdown(app)
+    await gw_shutdown(app)
+    await event_shutdown(app)
+
+    await app.shutdown()
+    await web_handler.finish_connections(60.0)
+    await app.cleanup()
+
+
 def gw_args(parser):
     parser.add('--service-ip', env_var='SORNA_SERVICE_IP', type=ipaddr, default=ip_address('0.0.0.0'),
                help='The IP where the API gateway server listens on. (default: 0.0.0.0)')
@@ -170,12 +217,8 @@ def gw_args(parser):
 
 def main():
 
-    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-    loop = asyncio.get_event_loop()
-
-    app = web.Application()
-    app.config = load_config(extra_args_func=gw_args)
-    init_logger(app.config)
+    config = load_config(extra_args_func=gw_args)
+    init_logger(config)
 
     log.info(f'Sorna Gateway {__version__}')
     log.info(f'runtime: {env_info()}')
@@ -183,80 +226,16 @@ def main():
     log_config = logging.getLogger('sorna.gateway.config')
     log_config.debug('debug mode enabled.')
 
-    if app.config.debug:
+    if config.debug:
         aiohttp.log.server_logger.setLevel('DEBUG')
         aiohttp.log.access_logger.setLevel('DEBUG')
     else:
         aiohttp.log.server_logger.setLevel('WARNING')
         aiohttp.log.access_logger.setLevel('WARNING')
 
-    term_ev = asyncio.Event(loop=loop)
-
-    def handle_signal(loop, term_ev):
-        if term_ev.is_set():
-            log.warning('Forced shutdown!')
-            sys.exit(1)
-        else:
-            term_ev.set()
-            loop.stop()
-
-    loop.add_signal_handler(signal.SIGINT, handle_signal, loop, term_ev)
-    loop.add_signal_handler(signal.SIGTERM, handle_signal, loop, term_ev)
-
-    server = None
-    web_handler = None
-
-    async def initialize():
-        nonlocal server, web_handler
-
-        app.sslctx = None
-        if app.config.ssl_cert and app.config.ssl_key:
-            app.sslctx = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
-            app.sslctx.load_cert_chain(str(app.config.ssl_cert),
-                                       str(app.config.ssl_key))
-        if app.config.service_port == 0:
-            app.config.service_port = 8443 if app.sslctx else 8080
-
-        await event_init(app)
-        await gw_init(app)
-        await auth_init(app)
-        await rlim_init(app)
-        await kernel_init(app)
-
-        web_handler = app.make_handler()
-        server = await loop.create_server(
-            web_handler,
-            host=str(app.config.service_ip),
-            port=app.config.service_port,
-            ssl=app.sslctx,
-        )
-        log.info('started.')
-
-    async def shutdown():
-        log.info('shutting down...')
-        server.close()
-        await server.wait_closed()
-
-        await kernel_shutdown(app)
-        await rlim_shutdown(app)
-        await auth_shutdown(app)
-        await gw_shutdown(app)
-        await event_shutdown(app)
-
-        await app.shutdown()
-        await web_handler.finish_connections(60.0)
-        await app.cleanup()
-
-        await loop.shutdown_asyncgens()
-
-    try:
-        loop.run_until_complete(initialize())
-        loop.run_forever()
-        # interrupted
-        loop.run_until_complete(shutdown())
-    finally:
-        loop.close()
-        log.info('terminated.')
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+    aiotools.start_server(server_main, num_proc=1, args=(config,))
+    log.info('terminated.')
 
 
 if __name__ == '__main__':

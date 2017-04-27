@@ -3,6 +3,7 @@ coloredlogs
 pyzmq
 aiozmq
 aiohttp~=2.0.0
+aiotools~=0.3.0
 aioredis~=0.2.8
 msgpack-python
 namedlist
