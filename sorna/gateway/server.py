@@ -13,6 +13,7 @@ import aiohttp
 from aiohttp import web
 import aiotools
 import asyncpgsa
+import etcd3
 import uvloop
 try:
     import datadog
@@ -20,7 +21,7 @@ try:
 except ImportError:
     datadog_available = False
 
-from sorna.argparse import ipaddr, path, port_no
+from sorna.argparse import ipaddr, path, port_no, host_port_pair, HostPortPair
 from .exceptions import (SornaError, GenericNotFound,
                          GenericBadRequest, InternalServerError)
 from sorna.utils import env_info
@@ -161,6 +162,12 @@ async def server_main(loop, pidx, _args):
     if app.config.service_port == 0:
         app.config.service_port = 8443 if app.sslctx else 8080
 
+    app['etcd'] = etcd3.client(host=app.config.etcd_addr.ip,
+                               port=app.config.etcd_addr.port)
+    log.info(f'using etcd cluster from {app.config.etcd_addr}')
+    app['etcd'].put('/sorna/mq/addr', f'{app.config.mq_addr}')
+    log.info(f'set mq addr: {app.config.mq_addr}')
+
     await event_init(app)
     await gw_init(app)
     await auth_init(app)
@@ -195,14 +202,21 @@ async def server_main(loop, pidx, _args):
 
 
 def gw_args(parser):
+    parser.add('--etcd-addr', type=host_port_pair,
+               env_var='SORNA_ETCD_ADDR',
+               default=HostPortPair(ip_address('127.0.0.1'), 2379),
+               help='The host:port pair of the etcd cluster or its proxy.')
+    parser.add('--mq-addr', type=host_port_pair,
+               env_var='SORNA_MQ_ADDR',
+               default=HostPortPair(ip_address('127.0.0.1'), 5672),
+               help='The host:port pair of the RabbitMQ or its proxy.')
+
     parser.add('--service-ip', env_var='SORNA_SERVICE_IP', type=ipaddr, default=ip_address('0.0.0.0'),
                help='The IP where the API gateway server listens on. (default: 0.0.0.0)')
     parser.add('--service-port', env_var='SORNA_SERVICE_PORT', type=port_no, default=0,
                help='The TCP port number where the API gateway server listens on. '
                     '(default: 8080, 8443 when SSL is enabled) '
                     'To run in production, you need the root privilege to use the standard 80/443 ports.')
-    parser.add('--events-port', env_var='SORNA_EVENTS_PORT', type=port_no, default=5002,
-               help='The TCP port number where the event server listens on.')
     parser.add('--ssl-cert', env_var='SORNA_SSL_CERT', type=path, default=None,
                help='The path to an SSL certificate file. '
                     'It may contain inter/root CA certificates as well. '
@@ -215,6 +229,10 @@ def gw_args(parser):
                    help='The API key for Datadog monitoring agent.')
         parser.add('--datadog-app-key', env_var='DATADOG_APP_KEY', type=str, default=None,
                    help='The application key for Datadog monitoring agent.')
+
+    # to deprecate
+    parser.add('--events-port', env_var='SORNA_EVENTS_PORT', type=port_no, default=5002,
+               help='The TCP port number where the event server listens on.')
 
 
 def main():
