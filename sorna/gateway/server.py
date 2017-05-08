@@ -161,6 +161,8 @@ def gw_args(parser):
     parser.add('--ssl-key', env_var='SORNA_SSL_KEY', type=path, default=None,
                help='The path to the private key used to make requests for the SSL certificate. '
                     '(default: None)')
+    parser.add('--gpu-instances', env_var='SORNA_GPU_INSTANCES', type=str, default=None,
+               help='Manually set list of GPU-enabled agent instance IDs.')
     if datadog_available:
         parser.add('--datadog-api-key', env_var='DATADOG_API_KEY', type=str, default=None,
                    help='The API key for Datadog monitoring agent.')
@@ -216,6 +218,10 @@ def main():
                                        str(app.config.ssl_key))
         if app.config.service_port == 0:
             app.config.service_port = 8443 if app.sslctx else 8080
+
+        if app.config.gpu_instances:
+            assert isinstance(app.config.gpu_instances, str)
+            app.config.gpu_instances = app.config.gpu_instances.split(',')
 
         await event_init(app)
         await gw_init(app)

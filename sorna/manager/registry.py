@@ -100,13 +100,15 @@ class InstanceRegistry:
     policy, such as the limitation of maximum number of kernels per instance.
     '''
 
-    def __init__(self, redis_addr, loop=None):
+    def __init__(self, redis_addr, gpu_instances=None, loop=None):
         self.loop = loop if loop is not None else asyncio.get_event_loop()
         self.redis_addr = redis_addr
         self.redis_kern = None
         self.redis_inst = None
         self.redis_sess = None
         self.lifecycle_lock = asyncio.Lock()
+        # FIXME: money-patched
+        self.gpu_instances = gpu_instances if gpu_instances else set()
 
     async def init(self):
         self.redis_kern = await aioredis.create_pool(self.redis_addr.as_sockaddr(),
@@ -291,37 +293,34 @@ class InstanceRegistry:
         limits = limits or {}
         mounts = mounts or []
 
+        # FIXME: monkey-patch for deep-learning support
+        # Let it choose a GPU instance if the requested kernel session is a deep-learning type.
+        gpu_requested = 'tensorflow' in lang or 'caffe' in lang or 'torch' in lang
+
         async with self.lifecycle_lock, \
                    self.redis_inst.get() as ri:  # noqa
-            # Find available instance.
-            # FIXME: monkey-patch for deep-learning support
-            if 'tensorflow' in lang or 'caffe' in lang or 'torch' in lang:
-                inst_id = 'i-indominus'
-                if (await ri.exists(inst_id)):
-                    try:
-                        max_kernels = int(await ri.hget(inst_id, 'max_kernels'))
-                        num_kernels = int(await ri.hget(inst_id, 'num_kernels'))
-                        if not (num_kernels < max_kernels):
-                            inst_id = None
-                    except (TypeError, ValueError):
-                        inst_id = None
-            else:
-                # Scan all agent instances with free kernel slots.
-                # We scan shadow keys first to check only alive instances,
-                # and then fetch details from normal keys.
-                inst_loads = []
-                async for inst_id in self.enumerate_instances():
-                    if inst_id == 'i-indominus':
-                        continue
+
+            inst_loads = []
+
+            # Find an agent instance having free kernel slots and least occupied slots.
+            async for inst_id in self.enumerate_instances():
+                if ((gpu_requested and inst_id not in self.gpu_instances)
+                    or (not gpu_requested and inst_id in self.gpu_instances)):
+                    # Skip if not desired type of instances.
+                    continue
+                try:
                     max_kernels = int(await ri.hget(inst_id, 'max_kernels'))
                     num_kernels = int(await ri.hget(inst_id, 'num_kernels'))
                     if num_kernels < max_kernels:
                         inst_loads.append((inst_id, num_kernels))
-                if inst_loads:
-                    # Choose a least-loaded agent instance.
-                    inst_id = min(inst_loads, key=operator.itemgetter(1))[0]
-                else:
+                except (TypeError, ValueError):
                     inst_id = None
+
+            if inst_loads:
+                # Choose a least-loaded agent instance.
+                inst_id = min(inst_loads, key=operator.itemgetter(1))[0]
+            else:
+                inst_id = None
 
             if inst_id is not None:
                 await ri.hincrby(inst_id, 'num_kernels', 1)
