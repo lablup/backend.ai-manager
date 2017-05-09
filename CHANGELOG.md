@@ -1,6 +1,12 @@
 Changes
 =======
 
+0.9.6 (2017-05-09)
+------------------
+
+ - Make the list of GPU instances configurable.
+   (Later, this will be automatically detected without explicit configurations)
+
 0.9.5 (2017-04-07)
 ------------------
 

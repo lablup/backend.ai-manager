@@ -7,8 +7,7 @@ aioredis>=0.2.8
 msgpack-python
 namedlist
 SQLAlchemy
-asyncpg>=0.7
-asyncpgsa>=0.7
+asyncpgsa~=0.10.0
 python-dateutil>=2.5
 simplejson
 uvloop>=0.7
