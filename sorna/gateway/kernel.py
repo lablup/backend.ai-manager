@@ -661,7 +661,8 @@ async def init(app):
     app['stream_pty_handlers'] = defaultdict(set)
     app['stream_stdin_socks'] = defaultdict(set)
 
-    app['registry'] = InstanceRegistry(app.config.redis_addr)
+    app['registry'] = InstanceRegistry(app.config.redis_addr,
+                                       gpu_instances=app.config.gpu_instances)
     await app['registry'].init()
 
     heartbeat_interval = 3.0
