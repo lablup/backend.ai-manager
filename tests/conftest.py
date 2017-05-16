@@ -19,55 +19,11 @@ from sorna.gateway.models import KeyPair
 here = pathlib.Path(__file__).parent
 
 
-@contextlib.contextmanager
-def loop_context(loop=None):
-    current_scope = False
-    if not loop:
-        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        current_scope = True
-
-    yield loop
-
-    if current_scope:
-        if not loop.is_closed():
-            loop.call_soon(loop.stop)
-            loop.run_forever()
-            loop.close()
-        gc.collect()
-        asyncio.set_event_loop(None)
-
-
-def pytest_pycollect_makeitem(collector, name, obj):
-    # Patch pytest for coroutines
-    if collector.funcnamefilter(name) and asyncio.iscoroutinefunction(obj):
-        return list(collector._genfunctions(name, obj))
-
-
-def pytest_pyfunc_call(pyfuncitem):
-    # Patch pytest for coroutines.
-    if asyncio.iscoroutinefunction(pyfuncitem.function):
-        existing_loop = pyfuncitem.funcargs.get('loop', None)
-        with loop_context(existing_loop) as loop:
-            testargs = {arg: pyfuncitem.funcargs[arg]
-                        for arg in pyfuncitem._fixtureinfo.argnames}
-            task = loop.create_task(pyfuncitem.obj(**testargs))
-            loop.run_until_complete(task)
-        return True
-
-
 @pytest.fixture
 def unused_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(('127.0.0.1', 0))
         return s.getsockname()[1]
-
-
-@pytest.yield_fixture
-def loop():
-    with loop_context() as loop:
-        yield loop
 
 
 class Client:
@@ -170,7 +126,7 @@ async def _finish_server(app, handler, server):
     await app.cleanup()
 
 
-@pytest.yield_fixture
+@pytest.fixture
 def create_app_and_client(loop, unused_port):
     client = None
     app = handler = server = None

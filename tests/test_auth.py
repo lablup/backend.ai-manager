@@ -11,6 +11,7 @@ from sorna.gateway.auth import init as auth_init
 from sorna.gateway.auth import check_date
 
 
+@pytest.mark.asyncio
 async def test_hello(create_app_and_client):
     app, client = await create_app_and_client()
     resp = await client.get('/v1')
@@ -19,6 +20,7 @@ async def test_hello(create_app_and_client):
     assert data['version'] == 'v1.20160915'
 
 
+@pytest.mark.asyncio
 async def test_auth(create_app_and_client, unused_port, default_keypair):
     app, client = await create_app_and_client(extra_inits=[auth_init])
 

@@ -54,8 +54,11 @@ async def on_prepare(request, response):
     response.headers['Server'] = 'Sorna-API/' + LATEST_API_VERSION
 
 
-async def version_middleware_factory(app, handler):
-    async def version_middleware_handler(request):
+async def api_middleware_factory(app, handler):
+    async def api_middleware_handler(request):
+        method_override = request.headers.get('X-Method-Override', None)
+        if method_override:
+            request = request.clone(method=method_override)
         if request.rel_url.path.startswith('/v1'):
             path_ver = 1
         elif request.rel_url.path.startswith('/v2'):
@@ -72,7 +75,7 @@ async def version_middleware_factory(app, handler):
         request['api_version'] = path_ver
         resp = (await handler(request))
         return resp
-    return version_middleware_handler
+    return api_middleware_handler
 
 
 async def exception_middleware_factory(app, handler):
@@ -142,7 +145,7 @@ async def gw_init(app):
         min_size=4, max_size=16,
     )
     app.middlewares.append(exception_middleware_factory)
-    app.middlewares.append(version_middleware_factory)
+    app.middlewares.append(api_middleware_factory)
 
 
 async def gw_shutdown(app):
