@@ -13,4 +13,4 @@ asyncpgsa~=0.10.0
 python-dateutil>=2.5
 simplejson
 uvloop>=0.8
-sorna-common>=0.9,<1.0
+deps-local/sorna_common-1.0.0a1-py36-none-any.whl
