@@ -13,7 +13,6 @@ import aiohttp
 from aiohttp import web
 import aiotools
 import asyncpgsa
-import etcd3
 import uvloop
 try:
     import datadog
@@ -29,6 +28,7 @@ from ..manager import __version__
 from . import GatewayStatus
 from .auth import init as auth_init, shutdown as auth_shutdown
 from .config import load_config, init_logger
+from .etcd import init as etcd_init, shutdown as etcd_shutdown
 from .events import init as event_init, shutdown as event_shutdown
 from .kernel import init as kernel_init, shutdown as kernel_shutdown
 from .ratelimit import init as rlim_init, shutdown as rlim_shutdown
@@ -165,12 +165,7 @@ async def server_main(loop, pidx, _args):
     if app.config.service_port == 0:
         app.config.service_port = 8443 if app.sslctx else 8080
 
-    app['etcd'] = etcd3.client(host=app.config.etcd_addr.ip,
-                               port=app.config.etcd_addr.port)
-    log.info(f'using etcd cluster from {app.config.etcd_addr}')
-    app['etcd'].put('/sorna/mq/addr', f'{app.config.mq_addr}')
-    log.info(f'set mq addr: {app.config.mq_addr}')
-
+    await etcd_init(app)
     await event_init(app)
     await gw_init(app)
     await auth_init(app)
@@ -198,6 +193,7 @@ async def server_main(loop, pidx, _args):
     await auth_shutdown(app)
     await gw_shutdown(app)
     await event_shutdown(app)
+    await etcd_shutdown(app)
 
     await app.shutdown()
     await web_handler.finish_connections(60.0)
@@ -205,6 +201,8 @@ async def server_main(loop, pidx, _args):
 
 
 def gw_args(parser):
+    parser.add('--namespace', type=str, default='local',
+               help='The namespace of this Sorna cluster. (default: local)')
     parser.add('--etcd-addr', type=host_port_pair,
                env_var='SORNA_ETCD_ADDR',
                default=HostPortPair(ip_address('127.0.0.1'), 2379),
