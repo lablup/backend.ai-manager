@@ -1,7 +1,7 @@
 ConfigArgParse
 coloredlogs>=5.2
-pyzmq>=16.0
-aiozmq>=0.7
+pyzmq
+aiozmq
 aiohttp~=2.0.7
 aiotools~=0.3.0
 aioredis>=0.2.8
@@ -13,7 +13,7 @@ asyncpgsa~=0.10.1
 python-dateutil>=2.5
 simplejson
 uvloop>=0.8
--e git+https://github.com/lablup/sorna-common#egg=sorna-common
+-e git+https://github.com/lablup/sorna-common@{BRANCH}#egg=sorna-common
 pypandoc
 pytest
 pytest-asyncio

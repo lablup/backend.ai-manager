@@ -1,0 +1,54 @@
+sudo: required
+
+language: python
+python:
+  - "3.6"
+cache: pip
+
+services:
+  - docker
+  - rabbitmq
+
+env:
+  global:
+    - SORNA_ETCD_ADDR=localhost:2379
+    - SORNA_MQ_ADDR=localhost:5672
+    - SORNA_MQ_LOGIN=guest
+    - SORNA_MQ_PASS=guest
+    - SORNA_NAMESPACE=local
+
+install:
+  - pip install -U pip
+  - pip install -U wheel setuptools
+  - sed -i'' -e "s/{BRANCH}/$TRAVIS_BRANCH/g" requirements-ci.txt
+  - pip install -U -r requirements-ci.txt
+
+before_script:
+  - mkdir -p /tmp/etcd
+  - sudo rabbitmqctl add_vhost "$SORNA_NAMESPACE"
+  - sudo rabbitmqctl set_permissions -p "$SORNA_NAMESPACE" "$SORNA_MQ_LOGIN" '.*' '.*' '.*'
+  - docker run -d -p 2379:2379 -p 2380:2380
+     -v /tmp/etcd:/etcd-data
+     --name sorna-etcd
+     quay.io/coreos/etcd:v3.1.8
+     /usr/local/bin/etcd
+     -name sorna-etcd
+     -data-dir /etcd-data
+     -listen-client-urls http://0.0.0.0:2379
+     -advertise-client-urls http://0.0.0.0:2379
+     -listen-peer-urls http://0.0.0.0:2380
+     -initial-advertise-peer-urls http://0.0.0.0:2380
+     -initial-cluster sorna-etcd=http://0.0.0.0:2380
+     -initial-cluster-token sorna-etcd-token
+     -initial-cluster-state new
+     -auto-compaction-retention 1
+
+script:
+  - python -m pytest -m "not integration" --cov=sorna.gateway --cov=sorna.manager
+
+after_success:
+  - codecov
+
+notifications:
+  webhooks:
+    secure: "q/cRHikmt2PkdzP5Q9MoZ5gE0qIo/bn6fqSLvWoEbEljUS6QxM2jCgHxA3Yb+TH9yS0KW8LsgxvQBeGgnCMv1pdV0qTtVY9Wq9A4klccufkMKOTr3c/YscmekWeWgsjE9rdiGgMDcET2R6GzLN0mT7YS6sO8pfsPwPB+mx92SmsTrOab+e5sYZMMa5rE82wsSxnXCgf+Nk73Euda4GUno0OtoypyfPsQXjVyf3nhdlHnYgcER4QwjVxbACEJiUkCqA43qrI+oiLsGwlWzIVOMilWW9upgDN6yCm3z6yynPZMaaqAy08HilYYoZFGnUSC9BI6UH1lsk39EumBPnS9q6nMbMGXTbcayyjy6wi3pkxJVvwIBcIVMewRfJHS4gkMPx0WPUvp3YdlWjZ8DH8C5NYmpVSFhBHb8rO9FzMwttk2xk/sEUOM/+aAbI3kQDLzYQC2wdCP6AvxVbCo8h7l+oF+HibdSucr2lW+821KL2tzS8lpvjMHV2yj4Rmsa/lGoTT6WPHBzwA7WIJvj7LskL4bzUl6Y59w6l0fEbtiqAS+8a7Ji3U/WhBU6cerw4CMqg6H9MXjkifHFVD8Oxb1KidKSX339xeALWXATXHxTvMIj51sEe23GGaMCk2G7UxZ9IIdYoEoargbH6vvBhmLZcTL1LCueDnImWIepgGb7pg="
