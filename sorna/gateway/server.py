@@ -37,8 +37,9 @@ from .utils import prettify_traceback
 VALID_VERSIONS = frozenset([
     'v1.20160915',
     'v2.20170315',
+    'v3.20170615',
 ])
-LATEST_API_VERSION = 'v2.20170315'
+LATEST_API_VERSION = 'v3.20170615'
 
 log = logging.getLogger('sorna.gateway.server')
 
@@ -201,16 +202,18 @@ async def server_main(loop, pidx, _args):
 
 
 def gw_args(parser):
-    parser.add('--namespace', type=str, default='local',
+    parser.add('--namespace', env_var='SORNA_NAMESPACE', type=str, default='local',
                help='The namespace of this Sorna cluster. (default: local)')
-    parser.add('--etcd-addr', type=host_port_pair,
-               env_var='SORNA_ETCD_ADDR',
+    parser.add('--etcd-addr', env_var='SORNA_ETCD_ADDR', type=host_port_pair,
                default=HostPortPair(ip_address('127.0.0.1'), 2379),
                help='The host:port pair of the etcd cluster or its proxy.')
-    parser.add('--mq-addr', type=host_port_pair,
-               env_var='SORNA_MQ_ADDR',
+    parser.add('--mq-addr', env_var='SORNA_MQ_ADDR', type=host_port_pair,
                default=HostPortPair(ip_address('127.0.0.1'), 5672),
                help='The host:port pair of the RabbitMQ or its proxy.')
+    parser.add('--mq-user', env_var='SORNA_MQ_USER', type=str, default='sorna',
+               help='The username to log into the AMQP service. (default: sorna)')
+    parser.add('--mq-password', env_var='SORNA_MQ_PASSWORD', type=str, default='develove',
+               help='The password to log into the AMQP service. (default: develove)')
 
     parser.add('--service-ip', env_var='SORNA_SERVICE_IP', type=ipaddr, default=ip_address('0.0.0.0'),
                help='The IP where the API gateway server listens on. (default: 0.0.0.0)')
