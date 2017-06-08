@@ -14,7 +14,7 @@ import sqlalchemy as sa
 
 from .exceptions import InvalidAuthParameters, AuthorizationFailed
 from .config import load_config, init_logger
-from .models import KeyPair
+from ..manager.models import keypairs
 
 log = logging.getLogger('sorna.gateway.auth')
 
@@ -108,8 +108,8 @@ async def auth_middleware_factory(app, handler):
         if params:
             sign_method, access_key, signature = params
             async with app.dbpool.acquire() as conn, conn.transaction():
-                query = (KeyPair.select()
-                                .where(KeyPair.c.access_key == access_key))
+                query = (keypairs.select()
+                                .where(keypairs.c.access_key == access_key))
                 row = await conn.fetchrow(query)
                 if row is None or row.row is None:
                     raise AuthorizationFailed
@@ -117,10 +117,10 @@ async def auth_middleware_factory(app, handler):
                 if not my_signature:
                     raise InvalidAuthParameters
                 if secrets.compare_digest(my_signature, signature):
-                    query = (KeyPair.update()
+                    query = (keypairs.update()
                                     .values(last_used=datetime.now(tzutc()),
-                                            num_queries=KeyPair.c.num_queries + 1)
-                                    .where(KeyPair.c.access_key == access_key))
+                                            num_queries=keypairs.c.num_queries + 1)
+                                    .where(keypairs.c.access_key == access_key))
                     await conn.execute(query)
                     request['is_authorized'] = True
                     request['keypair'] = {

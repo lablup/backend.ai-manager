@@ -14,7 +14,7 @@ import uvloop
 
 from sorna.gateway.config import load_config
 from sorna.gateway.server import gw_init, gw_args
-from sorna.gateway.models import KeyPair
+from sorna.manager.models import keypairs
 
 here = pathlib.Path(__file__).parent
 
@@ -82,8 +82,8 @@ def default_keypair(loop):
             min_size=1, max_size=2,
         )
         async with pool.acquire() as conn:
-            query = sa.select([KeyPair.c.access_key, KeyPair.c.secret_key]) \
-                      .where(KeyPair.c.access_key == access_key)
+            query = sa.select([keypairs.c.access_key, keypairs.c.secret_key]) \
+                      .where(keypairs.c.access_key == access_key)
             row = await conn.fetchrow(query)
             keypair = {
                 'access_key': access_key,

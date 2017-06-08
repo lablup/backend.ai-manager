@@ -61,3 +61,6 @@ target/
 .env
 .*.swp
 venv/
+
+# Alembic configs
+alembic.ini

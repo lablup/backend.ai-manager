@@ -27,7 +27,7 @@ from .exceptions import (ServiceUnavailable, InvalidAPIParameters, QuotaExceeded
                          SornaError)
 from . import GatewayStatus
 from .auth import auth_required
-from .models import KeyPair, Usage
+from ..manager.models import keypairs, usage
 from ..manager.registry import InstanceRegistry
 
 _json_type = 'application/json'
@@ -56,9 +56,9 @@ async def create(request):
         access_key = request['keypair']['access_key']
         concurrency_limit = request['keypair']['concurrency_limit']
         async with request.app.dbpool.acquire() as conn, conn.transaction():
-            query = (sa.select([KeyPair.c.concurrency_used], for_update=True)
-                       .select_from(KeyPair)
-                       .where(KeyPair.c.access_key == access_key))
+            query = (sa.select([keypairs.c.concurrency_used], for_update=True)
+                       .select_from(keypairs)
+                       .where(keypairs.c.access_key == access_key))
             concurrency_used = await conn.fetchval(query)
             log.debug(f'access_key: {access_key} ({concurrency_used} / {concurrency_limit})')
             if concurrency_used >= concurrency_limit:
@@ -75,9 +75,9 @@ async def create(request):
                 limits, mounts)
             resp['kernelId'] = kernel.id
             if created:
-                query = (sa.update(KeyPair)
-                           .values(concurrency_used=KeyPair.c.concurrency_used + 1)
-                           .where(KeyPair.c.access_key == access_key))
+                query = (sa.update(keypairs)
+                           .values(concurrency_used=keypairs.c.concurrency_used + 1)
+                           .where(keypairs.c.access_key == access_key))
                 await conn.execute(query)
     except SornaError:
         log.exception('GET_OR_CREATE: API Internal Error')
@@ -144,10 +144,10 @@ async def update_instance_usage(app, inst_id):
             }
             query = Usage.insert().values(**values)
             await conn.execute(query)
-            query = (sa.update(KeyPair)
-                       .values(concurrency_used=KeyPair.c.concurrency_used
+            query = (sa.update(keypairs)
+                       .values(concurrency_used=keypairs.c.concurrency_used
                                                 - per_key_counts[kern.access_key])
-                       .where(KeyPair.c.access_key == kern.access_key))
+                       .where(keypairs.c.access_key == kern.access_key))
             await conn.execute(query)
 
 
@@ -162,9 +162,9 @@ async def update_kernel_usage(app, kern_id, kern_stat=None):
         return
 
     async with app.dbpool.acquire() as conn, conn.transaction():
-        query = (sa.update(KeyPair)
-                   .values(concurrency_used=KeyPair.c.concurrency_used - 1)
-                   .where(KeyPair.c.access_key == kern.access_key))
+        query = (sa.update(keypairs)
+                   .values(concurrency_used=keypairs.c.concurrency_used - 1)
+                   .where(keypairs.c.access_key == kern.access_key))
         await conn.execute(query)
         if kern_stat:
             # if last stats available, use it.
@@ -263,20 +263,20 @@ async def datadog_update(app):
         statsd.gauge('sorna.gateway.agent_instances', len(all_inst_ids))
 
         async with app.dbpool.acquire() as conn, conn.transaction():
-            query = (sa.select([sa.func.sum(KeyPair.c.concurrency_used)])
-                       .select_from(KeyPair))
+            query = (sa.select([sa.func.sum(keypairs.c.concurrency_used)])
+                       .select_from(keypairs))
             n = await conn.fetchval(query)
             statsd.gauge('sorna.gateway.active_kernels', n)
 
             subquery = (sa.select([sa.func.count()])
-                          .select_from(KeyPair)
-                          .where(KeyPair.c.is_active == True)
-                          .group_by(KeyPair.c.user_id))
+                          .select_from(keypairs)
+                          .where(keypairs.c.is_active == True)
+                          .group_by(keypairs.c.user_id))
             query = sa.select([sa.func.count()]).select_from(subquery.alias())
             n = await conn.fetchval(query)
             statsd.gauge('sorna.users.has_active_key', n)
 
-            subquery = subquery.where(KeyPair.c.last_used != None)
+            subquery = subquery.where(keypairs.c.last_used != None)
             query = sa.select([sa.func.count()]).select_from(subquery.alias())
             n = await conn.fetchval(query)
             statsd.gauge('sorna.users.has_used_key', n)
@@ -364,9 +364,9 @@ async def collect_agent_events(app, heartbeat_interval):
                 # This case should be very very rare.
                 for kern_id in new_kernels:
                     access_key = await app['registry'].get_kernel(kern_id, 'access_key')
-                    query = (sa.update(KeyPair)
-                               .values(concurrency_used=KeyPair.c.concurrency_used + 1)
-                               .where(KeyPair.c.access_key == access_key))
+                    query = (sa.update(keypairs)
+                               .values(concurrency_used=keypairs.c.concurrency_used + 1)
+                               .where(keypairs.c.access_key == access_key))
                     await conn.execute(query)
 
         # invoke original event handler
