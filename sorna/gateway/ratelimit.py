@@ -4,7 +4,7 @@ import time
 
 import aioredis
 
-from sorna.utils import dict2kvlist
+from sorna.common.utils import dict2kvlist
 from .defs import SORNA_RLIM_DB
 from .exceptions import RateLimitExceeded
 

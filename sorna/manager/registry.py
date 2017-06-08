@@ -12,7 +12,7 @@ import aioredis
 from async_timeout import timeout as _timeout
 import zmq
 
-from sorna.utils import dict2kvlist
+from sorna.common.utils import dict2kvlist
 from ..gateway.exceptions import (
     InstanceNotAvailable, InstanceNotFound, KernelNotFound,
     KernelCreationFailed, KernelDestructionFailed,

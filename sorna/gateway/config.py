@@ -1,7 +1,7 @@
 from ipaddress import ip_address
 import logging, logging.config
 
-from sorna.argparse import HostPortPair, host_port_pair, ipaddr, port_no
+from sorna.common.argparse import HostPortPair, host_port_pair, ipaddr, port_no
 import configargparse
 
 

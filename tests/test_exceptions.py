@@ -2,7 +2,7 @@ import pytest
 import simplejson as json
 
 from sorna.gateway.exceptions import SornaError, SornaAgentError
-from sorna.utils import odict
+from sorna.common.utils import odict
 
 
 def test_sorna_error_obj():

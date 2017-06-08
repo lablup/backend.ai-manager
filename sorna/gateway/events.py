@@ -4,7 +4,7 @@ from collections import defaultdict
 
 import umsgpack
 
-from ..msgbus import ExchangeTypes, Subscriber
+from sorna.common.msgbus import ExchangeTypes, Subscriber
 
 log = logging.getLogger('sorna.gateway.events')
 

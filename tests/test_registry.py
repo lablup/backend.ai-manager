@@ -9,10 +9,8 @@ import unittest
 import aioredis
 import zmq
 
-from sorna.proto import Message
-from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
-from sorna.utils import get_instance_ip
-from sorna.exceptions import InstanceNotAvailableError
+from sorna.common.utils import get_instance_ip
+from sorna.gateway.exceptions import InstanceNotAvailableError
 from sorna.manager.registry import InstanceRegistry
 
 

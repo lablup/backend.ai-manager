@@ -20,12 +20,12 @@ try:
 except ImportError:
     datadog_available = False
 
-from sorna.argparse import ipaddr, path, port_no, host_port_pair, HostPortPair
-from .exceptions import (SornaError, GenericNotFound,
-                         GenericBadRequest, InternalServerError)
-from sorna.utils import env_info
+from sorna.common.argparse import ipaddr, path, port_no, host_port_pair, HostPortPair
+from sorna.common.utils import env_info
 from ..manager import __version__
 from . import GatewayStatus
+from .exceptions import (SornaError, GenericNotFound,
+                         GenericBadRequest, InternalServerError)
 from .auth import init as auth_init, shutdown as auth_shutdown
 from .config import load_config, init_logger
 from .etcd import init as etcd_init, shutdown as etcd_shutdown

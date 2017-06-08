@@ -1,7 +1,7 @@
 import logging
 
-from sorna.etcd import AsyncEtcd
-from sorna.utils import get_instance_id
+from sorna.common.etcd import AsyncEtcd
+from sorna.common.identity import get_instance_id
 
 log = logging.getLogger('sorna.gateway.etcd')
 
