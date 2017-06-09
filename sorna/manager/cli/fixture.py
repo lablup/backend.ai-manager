@@ -41,11 +41,13 @@ class FixtureCommand(BaseCommand):
 
         engine = sa.create_engine(f"postgres://{args.db_user}:{args.db_password}@{args.db_addr}/{args.db_name}")
         conn = engine.connect()
-        table = getattr(models, fixture[0])
-        conn.execute(table.insert(), fixture[1])
+        for rowset in fixture:
+            table = getattr(models, rowset[0])
+            conn.execute(table.insert(), rowset[1])
         conn.close()
 
     def list(self, args):
         for fixture_name in fixtures.__all__:
             f = getattr(fixtures, fixture_name)
-            print(f"{fixture_name} ({len(f[1])} records)")
+            stat = map(lambda rowset: f"{rowset[0]}:{len(rowset[1])}", f)
+            print(f"{fixture_name} ({', '.join(stat)})")
