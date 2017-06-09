@@ -1,5 +1,6 @@
 import argparse
 import importlib
+import logging
 import sys
 
 from sorna.gateway.config import load_config, init_logger
@@ -23,6 +24,11 @@ def init_app_args(parser):
 
 config = load_config(extra_args_func=init_app_args)
 init_logger(config)
+log = logging.getLogger('sorna.manager.cli')
+
+if config.command is None:
+    log.error('You should specify the command. Use "--help" to see the usage.')
+    sys.exit(1)
 
 app = resolved_command_classes[config.command]()
 app.execute(config)
