@@ -25,7 +25,8 @@ def populate(args):
         log.error('No such fixture.')
         return
 
-    engine = sa.create_engine(f"postgres://{args.db_user}:{args.db_password}@{args.db_addr}/{args.db_name}")
+    engine = sa.create_engine(f"postgres://{args.db_user}:{args.db_password}"
+                              f"@{args.db_addr}/{args.db_name}")
     conn = engine.connect()
     for rowset in fixture:
         table = getattr(models, rowset[0])

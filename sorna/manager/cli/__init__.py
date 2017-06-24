@@ -27,9 +27,10 @@ def register_command(handler: Callable[[argparse.Namespace], None],
     def wrapped(args):
         handler(args)
 
+    doc_summary = handler.__doc__.split('\n\n')[0]
     inner_parser = subparsers.add_parser(handler.__name__,
                                          description=handler.__doc__,
-                                         help=handler.__doc__)
+                                         help=doc_summary)
     inner_parser.set_defaults(function=wrapped)
     wrapped.register_command = functools.partial(register_command,
                                                  main_parser=inner_parser)
