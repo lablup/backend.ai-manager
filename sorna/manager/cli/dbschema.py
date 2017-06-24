@@ -30,7 +30,7 @@ def dbshell(args):
     subprocess.call(cmd)
 
 
-dbshell.add_argument('--dockerize', action='store_true', default=False,
+dbshell.add_argument('-d', '--dockerize', action='store_true', default=False,
                      help='Assume dockerized db instance. It creates a '
                           'temporary pgsql shell container. [default: false]')
 dbshell.add_argument('--docker-network', default='sorna_default',
