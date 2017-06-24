@@ -61,15 +61,17 @@ def oneshot(args):
 
     Reference: http://alembic.zzzcomputing.com/en/latest/cookbook.html#building-an-up-to-date-database-from-scratch
     '''
+    from alembic.config import Config
+    from alembic import command
 
     log.info('Creating tables...')
     engine = sa.create_engine(f"postgres://{args.db_user}:{args.db_password}"
                               f"@{args.db_addr}/{args.db_name}")
-    metadata.create_all(engine)
+    # it will raise error if tables already exist.
+    metadata.create_all(engine, checkfirst=False)
+
     log.info(f'Stamping alembic version to {args.schema_version}...')
-    from alembic.config import Config
-    from alembic import command
-    alembic_cfg = Config("alembic.ini")
+    alembic_cfg = Config(args.config)
     command.stamp(alembic_cfg, args.schema_version)
     log.info("If you don't need old migrations, delete them and set "
              "\"down_revision\" value in the earliest migration to \"None\".")
@@ -77,3 +79,6 @@ def oneshot(args):
 
 oneshot.add_argument('schema_version',
                      help='The schema version hash. (example: head)')
+oneshot.add_argument('-f', '--config', default='alembic.ini', metavar='PATH',
+                     help='The path to Alembic config file. '
+                          '[default: alembic.ini]')
