@@ -12,7 +12,7 @@ log = logging.getLogger(__name__)
 @register_command
 def fixture(args):
     '''Manages database fixtures for testing.'''
-    log.error('Please use -h/--help to see the usage.')
+    print('Please use -h/--help to see the usage.')
 
 
 @fixture.register_command
