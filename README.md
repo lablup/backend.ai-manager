@@ -80,7 +80,7 @@ run the server module with `--help`.
 ```console
 $ cp alembic.ini.sample alembic.ini
 $ edit alembic.ini
-$ python -m sorna.manager.cli schema oneshot  # init database
+$ python -m sorna.manager.cli schema oneshot head
 Creating tables...
 Stamping alembic version to ...
 ```
