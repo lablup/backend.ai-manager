@@ -25,13 +25,36 @@ pip install sorna-manager
 We recommend to use virtual environments in Python.
 You may share a virtual environment with other Sorna projects.
 
-```sh
-git clone https://github.com/lablup/sorna-manager.git
-python -m venv venv-sorna
-source venv-sorna/bin/activate
-pip install -U pip setuptools wheel  # ensure latest versions!
-pip install -r requirements-dev.txt
+```console
+$ pip install sorna-manager
 ```
+
+### For development:
+
+We recommend to use virtual environments in Python.
+You may share a virtual environment with other Sorna projects.
+
+```console
+$ git clone https://github.com/lablup/sorna-manager.git
+Cloning into 'sorna-manager'...
+Receiving objects ...
+Resolving deltas ...
+Checking connectivity... done.
+$ python -m venv venv-sorna
+$ source venv-sorna/bin/activate
+$ pip install -U pip setuptools wheel  # ensure latest versions!
+Collecting ...
+  Downloading ...
+Succesfully installed ...
+$ pip install -r requirements-dev.txt
+Collecting ...
+  Downloading ...
+Succesfully installed ...
+```
+
+The above example is only for sorna-manager, but normally you would want to install
+all depedencies like agents and databases for integration tests. Check out
+[README on the meta-repo](https://github.com/lablup/sorna) for details.
 
 Running and Deployment
 ----------------------
@@ -54,16 +77,27 @@ explicitly in production.
 For details about arguments and their equivalent environment variable names,
 run the server module with `--help`.
 
-### Running the API gateway server from a command line:
-
-```sh
-python -m sorna.gateway.server
+```console
+$ cp alembic.ini.sample alembic.ini
+$ edit alembic.ini
+$ python -m sorna.manager.cli schema oneshot  # init database
+Creating tables...
+Stamping alembic version to ...
 ```
 
-### Running the legacy server from a command line:
+Optionally you can populate pre-defined fixtures.
+You may add your own ones in fixtures directory for deployment.
+`example_keypair` fixture is required to run the test suite.
 
-```sh
-python -m sorna.manager.server
+```console
+$ python -m sorna.manager.cli fixture populate example_keypair
+populating fixture 'example_keypair'
+```
+
+### Running the API gateway server from a command line:
+
+```console
+$ python -m sorna.gateway.server
 ```
 
 ### Example supervisord config:
