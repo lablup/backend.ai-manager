@@ -37,10 +37,18 @@ log = logging.getLogger('sorna.gateway.kernel')
 grace_events = []
 
 
+def server_ready_required(handler):
+    @functools.wraps(handler)
+    async def wrapped(request):
+        if request.app['status'] != GatewayStatus.RUNNING:
+            raise ServiceUnavailable('Server not ready.')
+        return (await handler(request))
+    return wrapped
+
+
 @auth_required
+@server_ready_required
 async def create(request):
-    if request.app['status'] != GatewayStatus.RUNNING:
-        raise ServiceUnavailable('Server not ready.')
     try:
         with _timeout(2):
             params = await request.json()
@@ -381,9 +389,8 @@ async def collect_agent_events(app, heartbeat_interval):
 
 
 @auth_required
+@server_ready_required
 async def destroy(request):
-    if request.app['status'] != GatewayStatus.RUNNING:
-        raise ServiceUnavailable('Server not ready.')
     kern_id = request.match_info['kernel_id']
     log.info(f"DESTROY (u:{request['keypair']['access_key']}, k:{kern_id})")
     try:
@@ -395,9 +402,8 @@ async def destroy(request):
 
 
 @auth_required
+@server_ready_required
 async def get_info(request):
-    if request.app['status'] != GatewayStatus.RUNNING:
-        raise ServiceUnavailable('Server not ready.')
     resp = {}
     kern_id = request.match_info['kernel_id']
     log.info(f"GETINFO (u:{request['keypair']['access_key']}, k:{kern_id})")
@@ -429,9 +435,8 @@ async def get_info(request):
 
 
 @auth_required
+@server_ready_required
 async def restart(request):
-    if request.app['status'] != GatewayStatus.RUNNING:
-        raise ServiceUnavailable('Server not ready.')
     kern_id = request.match_info['kernel_id']
     log.info(f"RESTART (u:{request['keypair']['access_key']}, k:{kern_id})")
     try:
@@ -452,17 +457,16 @@ async def restart(request):
 
 
 @auth_required
+@server_ready_required
 async def execute_snippet(request):
-    if request.app['status'] != GatewayStatus.RUNNING:
-        raise ServiceUnavailable('Server not ready.')
     resp = {}
     kern_id = request.match_info['kernel_id']
     try:
         with _timeout(2):
             params = await request.json()
-        log.info(f"EXECUTE_SNIPPET (u:{request['keypair']['access_key']}, k:{kern_id})")
+        log.info(f"UPLOAD_FILES(u:{request['keypair']['access_key']}, k:{kern_id})")
     except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
-        log.warning('EXECUTE_SNIPPET: invalid/missing parameters')
+        log.warning('UPLOAD_FILES: invalid/missing parameters')
         raise InvalidAPIParameters
     try:
         kern = await request.app['registry'].get_kernel(kern_id)
@@ -489,6 +493,39 @@ async def execute_snippet(request):
 
 
 @auth_required
+@server_ready_required
+async def upload_files(request):
+    reader = await request.multipart()
+    kern_id = request.match_info['kernel_id']
+    try:
+        kern = await request.app['registry'].get_kernel(kern_id)
+        await request.app['registry'].update_kernel(kern_id, {
+            'num_queries': int(kern.num_queries) + 1,
+        })
+        file_count = 0
+        while True:
+            if file_count == 20:
+                raise InvalidAPIParameters  # too many files
+            file = await reader.next()
+            if file is None:
+                break
+            file_count += 1
+            # This API handles only small files, so let's read it at once.
+            chunk = await file.read_chunk(size=1048576)
+            if not file.at_eof():
+                raise InvalidAPIParameters  # too large file
+            # TODO: get file.filename
+            data = file.decode(chunk)
+            log.debug(f'received file: {file.filename} ({len(data):,} bytes)')
+            # TODO: send the file chunk to kernel
+    except SornaError:
+        log.exception('UPLOAD_FILES: API Internal Error')
+        raise
+    return web.Response(status=204)
+
+
+@auth_required
+@server_ready_required
 async def stream_pty(request):
     app = request.app
     kern_id = request.match_info['kernel_id']
@@ -640,6 +677,7 @@ async def init(app):
     app.router.add_route('PATCH',  '/v2/kernel/{kernel_id}', restart)
     app.router.add_route('DELETE', '/v2/kernel/{kernel_id}', destroy)
     app.router.add_route('POST',   '/v2/kernel/{kernel_id}', execute_snippet)
+    app.router.add_route('POST',   '/v2/kernel/{kernel_id}/upload', upload_files)
     app.router.add_route('GET',    '/v2/stream/kernel/{kernel_id}/pty', stream_pty)
     app.router.add_route('GET',    '/v2/stream/kernel/{kernel_id}/events', not_impl_stub)
     app.router.add_route('POST',   '/v2/folder/create', not_impl_stub)

@@ -79,7 +79,10 @@ async def sign_request(sign_method, request, secret_key) -> str:
     except (ValueError, AssertionError):
         return None
 
-    body = await request.read() if request.has_body else b''
+    if request.has_body and not request.content_type == 'multipart/form-data':
+        body = await request.read()
+    else:
+        body = b''
     body_hash = hashlib.new(hash_type, body).hexdigest()
     sign_bytes = '{0}\n{1}\n{2}\nhost:{3}\ncontent-type:{4}\nx-sorna-version:{5}\n{6}'.format(
         request.method, str(request.rel_url), request.raw_date,
