@@ -16,7 +16,7 @@ class AgentEventSubscriber(Subscriber):
 
     def __init__(self, *args, app=None, **kwargs):
         kwargs['decoder'] = umsgpack.unpackb
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, topic='events', **kwargs)
         self.handlers = defaultdict(list)
         self.app = app
 
