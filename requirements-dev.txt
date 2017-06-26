@@ -1,8 +1,8 @@
 ConfigArgParse
-coloredlogs
-pyzmq
-aiozmq
-aiohttp>=2.0
+coloredlogs>=5.2
+pyzmq>=16.0
+aiozmq>=0.7
+aiohttp~=2.2.0
 aioredis>=0.2.8
 msgpack-python
 namedlist
