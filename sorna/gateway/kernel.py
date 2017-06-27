@@ -495,6 +495,7 @@ async def execute_snippet(request):
 @auth_required
 @server_ready_required
 async def upload_files(request):
+    loop = asyncio.get_event_loop()
     reader = await request.multipart()
     kern_id = request.match_info['kernel_id']
     try:
@@ -503,6 +504,7 @@ async def upload_files(request):
             'num_queries': int(kern.num_queries) + 1,
         })
         file_count = 0
+        upload_tasks = []
         while True:
             if file_count == 20:
                 raise InvalidAPIParameters  # too many files
@@ -514,10 +516,11 @@ async def upload_files(request):
             chunk = await file.read_chunk(size=1048576)
             if not file.at_eof():
                 raise InvalidAPIParameters  # too large file
-            # TODO: get file.filename
             data = file.decode(chunk)
             log.debug(f'received file: {file.filename} ({len(data):,} bytes)')
-            # TODO: send the file chunk to kernel
+            t = loop.create_task(request.app['registry'].upload_file(kern_id, file.filename, data))
+            upload_tasks.append(t)
+        await asyncio.gather(*upload_tasks)
     except SornaError:
         log.exception('UPLOAD_FILES: API Internal Error')
         raise

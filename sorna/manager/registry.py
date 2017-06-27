@@ -432,6 +432,30 @@ class InstanceRegistry:
             raise
         return result
 
+    @auto_get_kernel
+    async def upload_file(self, kernel, filename, filedata):
+        log.debug(f'upload_file({kernel.id}, {filename})')
+        try:
+            async with RPCContext(kernel.addr, 10000) as rpc:
+                result = await rpc.call.upload_file(kernel.id, filename, filedata)
+        except asyncio.TimeoutError:
+            raise KernelExecutionFailed('TIMEOUT')
+        except asyncio.CancelledError:
+            raise
+        except AgentError as e:
+            log.exception('execute_code: agent-side error')
+            raise KernelExecutionFailed('FAILURE', e)
+        except:
+            log.exception('execute_code: unexpected error')
+            raise
+        return result
+
+    @auto_get_kernel
+    async def increment_kernel_usage(self, kernel):
+        log.debug(f'increment_kernel_usage({kernel.id})')
+        async with self.redis_kern.get() as rk:
+            await rk.hincrby(kernel.id, 'num_queries', 1)
+
     async def get_kernels_in_instance(self, inst_id):
         async with self.lifecycle_lock, \
                    self.redis_inst.get() as ri:  # noqa
