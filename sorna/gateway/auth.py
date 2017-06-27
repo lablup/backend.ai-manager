@@ -106,7 +106,7 @@ async def auth_middleware_factory(app, handler):
         request['keypair'] = None
         request['user'] = None
         if not check_date(request):
-            raise InvalidAuthParameters
+            raise InvalidAuthParameters('Time sync error')
         params = _extract_auth_params(request)
         if params:
             sign_method, access_key, signature = params
@@ -115,10 +115,10 @@ async def auth_middleware_factory(app, handler):
                                 .where(KeyPair.c.access_key == access_key))
                 row = await conn.fetchrow(query)
                 if row is None or row.row is None:
-                    raise AuthorizationFailed
+                    raise AuthorizationFailed('Access key not found')
                 my_signature = await sign_request(sign_method, request, row.secret_key)
                 if not my_signature:
-                    raise InvalidAuthParameters
+                    raise AuthorizationFailed('Signature mismatch')
                 if secrets.compare_digest(my_signature, signature):
                     query = (KeyPair.update()
                                     .values(last_used=datetime.now(tzutc()),
@@ -155,7 +155,7 @@ async def authorize(request) -> web.Response:
     try:
         params = json.loads(await request.text())
     except json.decoder.JSONDecodeError:
-        raise InvalidAuthParameters
+        raise InvalidAuthParameters('Malformed body')
     resp_data = {'authorized': 'yes'}
     if 'echo' in params:
         resp_data['echo'] = params['echo']

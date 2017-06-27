@@ -49,6 +49,14 @@ def auto_get_instance(func):
 
 class RPCContext:
 
+    preserved_exceptions = (
+        NotFoundError,
+        ParametersError,
+        asyncio.TimeoutError,
+        asyncio.CancelledError,
+        asyncio.InvalidStateError,
+    )
+
     def __init__(self, addr, timeout=10):
         self.addr = addr
         self.timeout = timeout
@@ -72,18 +80,11 @@ class RPCContext:
         self.server.close()
         self.server = None
         self.call = None
-        preserved_exceptions = (
-            NotFoundError,
-            ParametersError,
-            asyncio.TimeoutError,
-            asyncio.CancelledError,
-            asyncio.InvalidStateError,
-        )
         if recv_exc:
             if issubclass(exc_type, GenericError):
                 e = AgentError(exc.args[0], exc.args[1])
                 raise e.with_traceback(tb)
-            elif issubclass(exc_type, preserved_exceptions):
+            elif issubclass(exc_type, self.preserved_exceptions):
                 pass
             else:
                 e = AgentError(exc_type, exc.args)

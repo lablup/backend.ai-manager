@@ -408,10 +408,7 @@ async def get_info(request):
     kern_id = request.match_info['kernel_id']
     log.info(f"GETINFO (u:{request['keypair']['access_key']}, k:{kern_id})")
     try:
-        kern = await request.app['registry'].get_kernel(kern_id)
-        await request.app['registry'].update_kernel(kern_id, {
-            'num_queries': int(kern.num_queries) + 1,
-        })
+        await request.app['registry'].increment_kernel_usage(kern_id)
         resp['lang'] = kern.lang
         age = datetime.now(tzutc()) - kern.created_at
         resp['age'] = age.total_seconds() * 1000
@@ -440,10 +437,7 @@ async def restart(request):
     kern_id = request.match_info['kernel_id']
     log.info(f"RESTART (u:{request['keypair']['access_key']}, k:{kern_id})")
     try:
-        kern = await request.app['registry'].get_kernel(kern_id)
-        await request.app['registry'].update_kernel(kern_id, {
-            'num_queries': int(kern.num_queries) + 1,
-        })
+        await request.app['registry'].increment_kernel_usage(kern_id)
         await request.app['registry'].restart_kernel(kern_id)
         for sock in request.app['stream_stdin_socks'][kern_id]:
             sock.close()
@@ -469,10 +463,7 @@ async def execute_snippet(request):
         log.warning('UPLOAD_FILES: invalid/missing parameters')
         raise InvalidAPIParameters
     try:
-        kern = await request.app['registry'].get_kernel(kern_id)
-        await request.app['registry'].update_kernel(kern_id, {
-            'num_queries': int(kern.num_queries) + 1,
-        })
+        await request.app['registry'].increment_kernel_usage(kern_id)
         api_version = request['api_version']
         if api_version == 1:
             code = params['code']
@@ -499,15 +490,12 @@ async def upload_files(request):
     reader = await request.multipart()
     kern_id = request.match_info['kernel_id']
     try:
-        kern = await request.app['registry'].get_kernel(kern_id)
-        await request.app['registry'].update_kernel(kern_id, {
-            'num_queries': int(kern.num_queries) + 1,
-        })
+        await request.app['registry'].increment_kernel_usage(kern_id)
         file_count = 0
         upload_tasks = []
         while True:
             if file_count == 20:
-                raise InvalidAPIParameters  # too many files
+                raise InvalidAPIParameters('Too many files')
             file = await reader.next()
             if file is None:
                 break
@@ -515,7 +503,7 @@ async def upload_files(request):
             # This API handles only small files, so let's read it at once.
             chunk = await file.read_chunk(size=1048576)
             if not file.at_eof():
-                raise InvalidAPIParameters  # too large file
+                raise InvalidAPIParameters('Too large file')
             data = file.decode(chunk)
             log.debug(f'received file: {file.filename} ({len(data):,} bytes)')
             t = loop.create_task(request.app['registry'].upload_file(kern_id, file.filename, data))
@@ -536,6 +524,8 @@ async def stream_pty(request):
         kernel = await app['registry'].get_kernel(kern_id)
     except KernelNotFound:
         raise
+
+    await app['registry'].increment_kernel_usage(kern_id)
 
     # Upgrade connection to WebSocket.
     ws = web.WebSocketResponse()
