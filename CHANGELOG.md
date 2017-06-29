@@ -1,6 +1,21 @@
 Changes
 =======
 
+0.9.7 (2017-06-29)
+------------------
+
+**NEW**
+
+ - Add support for the batch-mode API with compiled languages such as
+   C/C++/Java/Rust.
+
+ - Add support for the file upload API for use with the batch-mode API.
+   (up to 20 files per request and 1 MiB per each file)
+
+**IMPROVEMENTS**
+
+ - Upgrade aiohttp to v2.2.0.
+
 0.9.6 (2017-05-09)
 ------------------
 
