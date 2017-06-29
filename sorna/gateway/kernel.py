@@ -458,9 +458,9 @@ async def execute_snippet(request):
     try:
         with _timeout(2):
             params = await request.json()
-        log.info(f"UPLOAD_FILES(u:{request['keypair']['access_key']}, k:{kern_id})")
+        log.info(f"EXECUTE(u:{request['keypair']['access_key']}, k:{kern_id})")
     except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
-        log.warning('UPLOAD_FILES: invalid/missing parameters')
+        log.warning('EXECUTE: invalid/missing parameters')
         raise InvalidAPIParameters
     try:
         await request.app['registry'].increment_kernel_usage(kern_id)
