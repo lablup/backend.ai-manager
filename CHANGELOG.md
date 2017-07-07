@@ -1,6 +1,13 @@
 Changes
 =======
 
+0.9.8 (2017-07-07)
+------------------
+
+**FIX**
+
+ - Revert authorization in terminal pty streaming due to regression.
+
 0.9.7 (2017-06-29)
 ------------------
 
