@@ -466,12 +466,12 @@ async def execute_snippet(request):
         await request.app['registry'].increment_kernel_usage(kern_id)
         api_version = request['api_version']
         if api_version == 1:
-            code = params['code']
             mode = 'query'
+            code = params['code']
             opts = {}
         elif api_version == 2:
-            code = params.get('code', '')
             mode = params['mode']
+            code = params.get('code', '')
             assert mode in ('query', 'batch')
             opts = params.get('options', None) or {}
         resp['result'] = await request.app['registry'].execute_snippet(
@@ -515,7 +515,6 @@ async def upload_files(request):
     return web.Response(status=204)
 
 
-@auth_required
 @server_ready_required
 async def stream_pty(request):
     app = request.app
