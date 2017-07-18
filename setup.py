@@ -1,12 +1,11 @@
 from setuptools import setup
 import sys
-
-
 try:
     import pypandoc
     long_description = pypandoc.convert('README.md', 'rst')
 except (IOError, ImportError):
     long_description = ""
+
 
 requires = [
     'ConfigArgParse',
@@ -49,10 +48,6 @@ import sorna.manager
 
 setup(
     name='sorna-manager',
-
-    # Versions should comply with PEP440.  For a discussion on single-sourcing
-    # the version across setup.py and the project code, see
-    # https://packaging.python.org/en/latest/single_source_version.html
     version=sorna.manager.__version__,
     description='Sorna Manager',
     long_description=long_description,

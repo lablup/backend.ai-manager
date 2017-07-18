@@ -1,2 +1,2 @@
--e git+ssh://git@github.com/lablup/sorna-common#egg=sorna-common
+-e git+https://github.com/lablup/sorna-common#egg=sorna-common
 -e .[build,test,ci]
