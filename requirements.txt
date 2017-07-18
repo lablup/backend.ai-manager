@@ -1,14 +1,1 @@
-ConfigArgParse
-coloredlogs>=5.2
-pyzmq>=16.0
-aiozmq>=0.7
-aiohttp~=2.2.0
-aioredis~=0.2.8
-msgpack-python
-namedlist
-SQLAlchemy
-asyncpgsa~=0.10.0
-python-dateutil>=2.5
-simplejson
-uvloop>=0.8
-sorna-common>=0.9,<1.0
+-e .
