@@ -1,5 +1,4 @@
 import asyncio
-import builtins
 from datetime import datetime
 from dateutil.tz import tzutc
 import functools
@@ -262,7 +261,6 @@ class InstanceRegistry:
                     final_results.append(None)
             return final_results
 
-
     async def get_kernel_from_session(self, client_sess_token, lang):
         async with self.redis_sess.get() as rs:
             sess_key = '{0}:{1}'.format(client_sess_token, lang)
@@ -305,8 +303,8 @@ class InstanceRegistry:
 
             # Find an agent instance having free kernel slots and least occupied slots.
             async for inst_id in self.enumerate_instances():
-                if ((gpu_requested and inst_id not in self.gpu_instances)
-                    or (not gpu_requested and inst_id in self.gpu_instances)):
+                if ((gpu_requested and inst_id not in self.gpu_instances) or
+                    (not gpu_requested and inst_id in self.gpu_instances)):
                     # Skip if not desired type of instances.
                     continue
                 try:

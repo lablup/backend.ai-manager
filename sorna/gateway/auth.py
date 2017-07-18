@@ -1,4 +1,3 @@
-import asyncio
 import base64
 from datetime import datetime, timedelta
 import functools
@@ -10,7 +9,6 @@ from aiohttp import web
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
 import simplejson as json
-import sqlalchemy as sa
 
 from .exceptions import InvalidAuthParameters, AuthorizationFailed
 from .config import load_config, init_logger
@@ -194,4 +192,3 @@ if __name__ == '__main__':
         ak, sk = generate_keypair()
         print(f'Access Key: {ak} ({len(ak)} bytes)')
         print(f'Secret Key: {sk} ({len(sk)} bytes)')
-

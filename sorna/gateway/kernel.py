@@ -9,7 +9,6 @@ from datetime import datetime
 import functools
 import logging
 import time
-import uuid
 from urllib.parse import urlparse
 
 import aiohttp
@@ -20,6 +19,7 @@ from async_timeout import timeout as _timeout
 from dateutil.tz import tzutc
 import simplejson as json
 import sqlalchemy as sa
+from sqlalchemy.sql.expression import true, null
 import zmq
 
 from .exceptions import (ServiceUnavailable, InvalidAPIParameters, QuotaExceeded,
@@ -153,8 +153,8 @@ async def update_instance_usage(app, inst_id):
             query = Usage.insert().values(**values)
             await conn.execute(query)
             query = (sa.update(KeyPair)
-                       .values(concurrency_used=KeyPair.c.concurrency_used
-                                                - per_key_counts[kern.access_key])
+                       .values(concurrency_used=KeyPair.c.concurrency_used -
+                                                per_key_counts[kern.access_key])
                        .where(KeyPair.c.access_key == kern.access_key))
             await conn.execute(query)
 
@@ -278,13 +278,13 @@ async def datadog_update(app):
 
             subquery = (sa.select([sa.func.count()])
                           .select_from(KeyPair)
-                          .where(KeyPair.c.is_active == True)
+                          .where(KeyPair.c.is_active == true())
                           .group_by(KeyPair.c.user_id))
             query = sa.select([sa.func.count()]).select_from(subquery.alias())
             n = await conn.fetchval(query)
             statsd.gauge('sorna.users.has_active_key', n)
 
-            subquery = subquery.where(KeyPair.c.last_used != None)
+            subquery = subquery.where(KeyPair.c.last_used != null())
             query = sa.select([sa.func.count()]).select_from(subquery.alias())
             n = await conn.fetchval(query)
             statsd.gauge('sorna.users.has_used_key', n)
@@ -354,7 +354,6 @@ async def collect_agent_events(app, heartbeat_interval):
         # calculate & update diff on kernel list and usage
         if ev['_type'] == 'instance_heartbeat':
             inst_id = ev['_args'][0]
-            inst_info = ev['_args'][1]
             running_kernels = set(ev['_args'][2])
             tracked_kernels = set(await app['registry'].get_kernels_in_instance(inst_id))
             new_kernels = running_kernels - tracked_kernels
@@ -410,6 +409,7 @@ async def get_info(request):
     log.info(f"GETINFO (u:{request['keypair']['access_key']}, k:{kern_id})")
     try:
         await request.app['registry'].increment_kernel_usage(kern_id)
+        kern = await request.app['registry'].get_kernel(kern_id)
         resp['lang'] = kern.lang
         age = datetime.now(tzutc()) - kern.created_at
         resp['age'] = age.total_seconds() * 1000
@@ -530,9 +530,6 @@ async def stream_pty(request):
 
     # Upgrade connection to WebSocket.
     ws = web.WebSocketResponse()
-    # FIXME: https://github.com/aio-libs/aiohttp/issues/1736
-    #if not ws.can_prepare(request):
-    #    raise web.HTTPUpgradeRequired
     await ws.prepare(request)
 
     app['stream_pty_handlers'][kern_id].add(asyncio.Task.current_task())
