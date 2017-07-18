@@ -1,6 +1,17 @@
 Changes
 =======
 
+0.9.9 (2017-07-18)
+------------------
+
+**IMPROVEMENTS**
+
+ * Improve packaging so that setup.py has the source list of dependencies
+   whereas requirements.txt has additional/local versions from exotic
+   sources.
+
+ * Support exception/event logging with Sentry.
+
 0.9.8 (2017-07-07)
 ------------------
 
