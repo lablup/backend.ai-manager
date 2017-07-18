@@ -25,6 +25,23 @@ for item in requirements:
     if item.req:
         requires.append(str(item.req))  # always the package name
 
+build_requires = [
+    'pypandoc',
+    'wheel',
+    'twine',
+]
+test_requires = [
+    'pytest',
+    'pytest-mock',
+    'pytest-aiohttp',
+    'pytest-sugar',
+]
+ci_requires = []
+monitor_requires = [
+    'datadog>=5.2',
+    'raven>=6.1',
+]
+
 
 def _get_version():
     root_src = (here / 'sorna' / 'manager' / '__init__.py').read_text()
@@ -69,9 +86,10 @@ setup(
     install_requires=requires,
     dependency_links=links,
     extras_require={
-        'dev': [],
-        'test': ['pytest', 'pytest-mock', 'pytest-aiohttp', 'pytest-sugar'],
-        'monitoring': ['datadog', 'raven>=6.1'],
+        'build': build_requires,
+        'test': test_requires,
+        'ci': ci_requires,
+        'monitor': monitor_requires,
     },
     data_files=[],
 )

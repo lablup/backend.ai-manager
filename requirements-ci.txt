@@ -19,4 +19,4 @@ pytest-mock
 pytest-sugar
 flake8
 pep8-naming
--e .[build,test]
+-e .[build,test,ci]
