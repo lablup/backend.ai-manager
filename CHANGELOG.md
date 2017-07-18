@@ -1,6 +1,13 @@
 Changes
 =======
 
+0.9.10 (2017-07-18)
+-------------------
+
+**FIX**
+
+ * Fix the wrong version range of an optional depedency package "datadog"
+
 0.9.9 (2017-07-18)
 ------------------
 

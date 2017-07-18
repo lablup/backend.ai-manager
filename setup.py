@@ -38,7 +38,7 @@ dev_requires = build_requires + test_requires + [
 ]
 ci_requires = []
 monitor_requires = [
-    'datadog>=5.2',
+    'datadog>=0.16.0',
     'raven>=6.1',
 ]
 
