@@ -18,6 +18,11 @@ try:
     datadog_available = True
 except ImportError:
     datadog_available = False
+try:
+    import raven
+    raven_available = True
+except ImportError:
+    raven_available = False
 
 from sorna.argparse import ipaddr, path, port_no
 from .exceptions import (SornaError, GenericNotFound,
@@ -76,39 +81,36 @@ async def version_middleware_factory(app, handler):
 async def exception_middleware_factory(app, handler):
     async def exception_middleware_handler(request):
         try:
-            if app['datadog']:
-                app['datadog'].statsd.increment('sorna.gateway.api.requests')
+            app['datadog'].statsd.increment('sorna.gateway.api.requests')
             resp = (await handler(request))
         except SornaError as ex:
-            if app['datadog']:
-                statsd = app['datadog'].statsd
-                statsd.increment('sorna.gateway.api.failures')
-                statsd.increment(f'sorna.gateway.api.status.{ex.status_code}')
+            app['sentry'].captureException()
+            statsd = app['datadog'].statsd
+            statsd.increment('sorna.gateway.api.failures')
+            statsd.increment(f'sorna.gateway.api.status.{ex.status_code}')
             raise
         except web.HTTPException as ex:
-            if app['datadog']:
-                statsd = app['datadog'].statsd
-                statsd.increment('sorna.gateway.api.failures')
-                statsd.increment(f'sorna.gateway.api.status.{ex.status_code}')
+            statsd = app['datadog'].statsd
+            statsd.increment('sorna.gateway.api.failures')
+            statsd.increment(f'sorna.gateway.api.status.{ex.status_code}')
             if ex.status_code == 404:
                 raise GenericNotFound
             log.warning(f'Bad request: {ex!r}')
             raise GenericBadRequest
         except Exception as ex:
+            app['sentry'].captureException()
             log.exception('Uncaught exception in HTTP request handlers')
             title = f'Exception from {request.method} {request.rel_url.path}'
             tag = f'path:{request.rel_url.path}'
             text = prettify_traceback(ex)
-            if app['datadog']:
-                app['datadog'].statsd.event(
-                    title, text,
-                    tags=['sorna', 'exception'],
-                    aggregation_key=request.rel_url.path,
-                    alert_type='error')
+            app['datadog'].statsd.event(
+                title, text,
+                tags=['sorna', 'exception'],
+                aggregation_key=request.rel_url.path,
+                alert_type='error')
             raise InternalServerError
         else:
-            if app['datadog']:
-                app['datadog'].statsd.increment(f'sorna.gateway.api.status.{resp.status}')
+            app['datadog'].statsd.increment(f'sorna.gateway.api.status.{resp.status}')
             return resp
     return exception_middleware_handler
 
@@ -118,7 +120,27 @@ async def gw_init(app):
     app.router.add_route('GET', '/v1', hello)
     app.router.add_route('GET', '/v2', hello)
     app['status'] = GatewayStatus.STARTING
-    app['datadog'] = None
+
+    class DummyStatsd:
+        def increment(self, *args, **kwargs): pass  # noqa
+        def event(self, *args, **kwargs): pass      # noqa
+        def gauge(self, *args, **kwargs): pass      # noqa
+        def __enter__(self): return self                     # noqa
+        def __exit__(self, exc_type, exc_val, exc_tb): pass  # noqa
+
+    class DummyDatadog:
+        statsd = DummyStatsd()
+
+    app['datadog'] = DummyDatadog()
+
+    class DummySentry:
+        def captureException(self, *args, **kwargs): pass  # noqa
+        def captureMessage(self, *args, **kwargs): pass    # noqa
+        def __enter__(self): return self                     # noqa
+        def __exit__(self, exc_type, exc_val, exc_tb): pass  # noqa
+
+    app['sentry'] = DummySentry()
+
     if datadog_available:
         if app.config.datadog_api_key is None:
             log.info('skipping datadog initialization due to missing API key...')
@@ -128,6 +150,11 @@ async def gw_init(app):
                 app_key=app.config.datadog_app_key)
             app['datadog'] = datadog
             log.info('datadog logging enabled.')
+    if raven_available:
+        if app.config.raven_uri is None:
+            log.info('skipping sentry initialization due to missing DSN URI...')
+        else:
+            app['sentry'] = raven.Client(app.config.raven_uri)
 
     app.dbpool = await asyncpgsa.create_pool(
         host=str(app.config.db_addr[0]),
@@ -168,6 +195,9 @@ def gw_args(parser):
                    help='The API key for Datadog monitoring agent.')
         parser.add('--datadog-app-key', env_var='DATADOG_APP_KEY', type=str, default=None,
                    help='The application key for Datadog monitoring agent.')
+    if raven_available:
+        parser.add('--raven-uri', env_var='RAVEN_URI', type=str, default=None,
+                   help='The sentry.io event report URL with DSN.')
 
 
 def main():

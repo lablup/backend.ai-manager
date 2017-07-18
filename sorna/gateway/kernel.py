@@ -303,6 +303,7 @@ async def datadog_update_timer(app):
         except asyncio.CancelledError:
             break
         except:
+            app['sentry'].captureException()
             log.exception('datadog_update unexpected error')
         try:
             await asyncio.sleep(5)
@@ -445,6 +446,7 @@ async def restart(request):
         log.exception('RESTART: API Internal Error')
         raise
     except:
+        request.app['sentry'].captureException()
         log.exception('RESTART: unexpected error')
         raise web.HTTPInternalServerError
     return web.Response(status=204)
@@ -603,6 +605,7 @@ async def stream_pty(request):
             # Agent or kernel is terminated.
             pass
         except:
+            app['sentry'].captureException()
             log.exception(f'stream_stdin({kern_id}): unexpected error')
         finally:
             log.debug(f'stream_stdin({kern_id}): terminated')
@@ -630,6 +633,7 @@ async def stream_pty(request):
         except asyncio.CancelledError:
             pass
         except:
+            app['sentry'].captureException()
             log.exception(f'stream_stdout({kern_id}): unexpected error')
         finally:
             log.debug(f'stream_stdout({kern_id}): terminated')
@@ -641,6 +645,7 @@ async def stream_pty(request):
         stdout_task = asyncio.ensure_future(stream_stdout())
         await stream_stdin()
     except:
+        app['sentry'].captureException()
         log.exception(f'stream_pty({kern_id}): unexpected error')
     finally:
         app['stream_pty_handlers'][kern_id].remove(asyncio.Task.current_task())

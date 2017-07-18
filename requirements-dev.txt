@@ -16,6 +16,7 @@ pypandoc
 pytest
 pytest-aiohttp
 pytest-mock
+pytest-sugar
 flake8
 pep8-naming
 -e .

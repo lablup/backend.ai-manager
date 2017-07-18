@@ -70,8 +70,8 @@ setup(
     dependency_links=links,
     extras_require={
         'dev': [],
-        'test': ['pytest', 'pytest-mock'],
-        'datadog': ['datadog'],
+        'test': ['pytest', 'pytest-mock', 'pytest-aiohttp', 'pytest-sugar'],
+        'monitoring': ['datadog', 'raven>=6.1'],
     },
     data_files=[],
 )
