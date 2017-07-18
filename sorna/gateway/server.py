@@ -35,7 +35,6 @@ from .config import load_config, init_logger
 from .events import init as event_init, shutdown as event_shutdown
 from .kernel import init as kernel_init, shutdown as kernel_shutdown
 from .ratelimit import init as rlim_init, shutdown as rlim_shutdown
-from .utils import prettify_traceback
 
 VALID_VERSIONS = frozenset([
     'v1.20160915',
@@ -100,14 +99,6 @@ async def exception_middleware_factory(app, handler):
         except Exception as ex:
             app['sentry'].captureException()
             log.exception('Uncaught exception in HTTP request handlers')
-            title = f'Exception from {request.method} {request.rel_url.path}'
-            tag = f'path:{request.rel_url.path}'
-            text = prettify_traceback(ex)
-            app['datadog'].statsd.event(
-                title, text,
-                tags=['sorna', 'exception'],
-                aggregation_key=request.rel_url.path,
-                alert_type='error')
             raise InternalServerError
         else:
             app['datadog'].statsd.increment(f'sorna.gateway.api.status.{resp.status}')
