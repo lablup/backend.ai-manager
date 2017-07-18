@@ -5,19 +5,19 @@ Package Structure
 -----------------
 
  * sorna
-   * manager: instance registry manager and an old ZMQ-based interface (to be deprecated)
+   * manager: Abstraction of agents and computation kernels
    * gateway: RESTful API gateway based on aiohttp
 
 Installation
 ------------
 
-Sorna Manager requires Python 3.5 or higher.  We highly recommend to use
+Sorna Manager requires Python 3.6 or higher.  We highly recommend to use
 [pyenv](https://github.com/yyuu/pyenv) for an isolated setup of custom Python
 versions that might be different from default installations managed by your OS
 or Linux distros.
 
-```sh
-pip install sorna-manager
+```console
+$ pip install sorna-manager
 ```
 
 ### For development:
@@ -25,12 +25,12 @@ pip install sorna-manager
 We recommend to use virtual environments in Python.
 You may share a virtual environment with other Sorna projects.
 
-```sh
-git clone https://github.com/lablup/sorna-manager.git
-python -m venv venv-sorna
-source venv-sorna/bin/activate
-pip install -U pip setuptools wheel  # ensure latest versions!
-pip install -r requirements-dev.txt
+```console
+$ git clone https://github.com/lablup/sorna-manager.git
+$ python -m venv venv-sorna
+$ source venv-sorna/bin/activate
+$ pip install -U pip setuptools  # ensure latest versions!
+$ pip install -r requirements-dev.txt
 ```
 
 Running and Deployment
@@ -56,14 +56,8 @@ run the server module with `--help`.
 
 ### Running the API gateway server from a command line:
 
-```sh
-python -m sorna.gateway.server
-```
-
-### Running the legacy server from a command line:
-
-```sh
-python -m sorna.manager.server
+```console
+$ python -m sorna.gateway.server
 ```
 
 ### Example supervisord config:
