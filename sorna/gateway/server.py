@@ -28,6 +28,7 @@ from sorna.argparse import ipaddr, path, port_no
 from .exceptions import (SornaError, GenericNotFound,
                          GenericBadRequest, InternalServerError)
 from sorna.utils import env_info
+from sorna.monitor import DummyDatadog, DummySentry
 from ..manager import __version__
 from . import GatewayStatus
 from .auth import init as auth_init, shutdown as auth_shutdown
@@ -111,30 +112,11 @@ async def gw_init(app):
     app.router.add_route('GET', '/v1', hello)
     app.router.add_route('GET', '/v2', hello)
     app['status'] = GatewayStatus.STARTING
-
-    class DummyStatsd:
-        def increment(self, *args, **kwargs): pass  # noqa
-        def event(self, *args, **kwargs): pass      # noqa
-        def gauge(self, *args, **kwargs): pass      # noqa
-        def __enter__(self): return self                     # noqa
-        def __exit__(self, exc_type, exc_val, exc_tb): pass  # noqa
-
-    class DummyDatadog:
-        statsd = DummyStatsd()
-
     app['datadog'] = DummyDatadog()
-
-    class DummySentry:
-        def captureException(self, *args, **kwargs): pass  # noqa
-        def captureMessage(self, *args, **kwargs): pass    # noqa
-        def __enter__(self): return self                     # noqa
-        def __exit__(self, exc_type, exc_val, exc_tb): pass  # noqa
-
     app['sentry'] = DummySentry()
-
     if datadog_available:
         if app.config.datadog_api_key is None:
-            log.info('skipping datadog initialization due to missing API key...')
+            log.info('skipping Datadog initialization due to missing API key...')
         else:
             datadog.initialize(
                 api_key=app.config.datadog_api_key,
@@ -143,7 +125,7 @@ async def gw_init(app):
             log.info('datadog logging enabled.')
     if raven_available:
         if app.config.raven_uri is None:
-            log.info('skipping sentry initialization due to missing DSN URI...')
+            log.info('skipping Sentry initialization due to missing DSN URI...')
         else:
             app['sentry'] = raven.Client(app.config.raven_uri)
 
