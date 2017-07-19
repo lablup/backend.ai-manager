@@ -14,7 +14,6 @@ requires = [
     'aiozmq>=0.7',
     'aiohttp~=2.2.0',
     'aioredis~=0.2.8',
-    'msgpack-python',
     'namedlist',
     'SQLAlchemy',
     'asyncpgsa~=0.10.0',
@@ -32,6 +31,7 @@ test_requires = [
     'pytest>=3.1',
     'pytest-mock',
     'pytest-aiohttp',
+    'flake8',
 ]
 dev_requires = build_requires + test_requires + [
     'pytest-sugar',
