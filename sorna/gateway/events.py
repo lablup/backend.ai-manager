@@ -2,7 +2,7 @@ import asyncio
 import logging
 from collections import defaultdict
 
-import umsgpack
+import msgpack
 
 from sorna.common.msgbus import ExchangeTypes, Subscriber
 
@@ -15,7 +15,7 @@ class AgentEventSubscriber(Subscriber):
     queue_name = 'events'
 
     def __init__(self, *args, app=None, **kwargs):
-        kwargs['decoder'] = umsgpack.unpackb
+        kwargs['decoder'] = msgpack.unpackb
         super().__init__(*args, topic='events', **kwargs)
         self.handlers = defaultdict(list)
         self.app = app
