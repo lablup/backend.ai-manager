@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import uuid
 
 from dateutil.tz import tzutc, gettz
+import pytest
 import simplejson as json
 
 from sorna.gateway.auth import init as auth_init

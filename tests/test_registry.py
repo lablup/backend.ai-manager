@@ -9,8 +9,8 @@ import unittest
 import aioredis
 import zmq
 
-from sorna.common.utils import get_instance_ip
-from sorna.gateway.exceptions import InstanceNotAvailableError
+from sorna.common.identity import get_instance_ip
+from sorna.gateway.exceptions import InstanceNotAvailable
 from sorna.manager.registry import InstanceRegistry
 
 
@@ -97,7 +97,7 @@ class SornaRegistryTest(unittest.TestCase, SornaProcessManagerMixin):
 
     def test_01_create_kernel_with_no_instance(self):
         async def go():
-            with self.assertRaises(InstanceNotAvailableError):
+            with self.assertRaises(InstanceNotAvailable):
                 instance, kernel = await self.registry.create_kernel(lang='python34')
         self.loop.run_until_complete(go())
 

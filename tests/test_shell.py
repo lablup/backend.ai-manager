@@ -1,13 +1,10 @@
-#! /usr/bin/env python3
+# TODO: REWRITE!!!
 
-# TODO: transform this as a proper test suite
-
-from sorna.proto import Message, odict, generate_uuid
-from sorna.proto.msgtypes import ManagerRequestTypes, ManagerResponseTypes, AgentRequestTypes
-import asyncio, zmq, aiozmq
-from colorama import init as colorama_init, Fore
+import asyncio
 import signal
 import sys
+
+import zmq, aiozmq
 
 
 @asyncio.coroutine
@@ -161,7 +158,6 @@ def handle_exit():
 
 
 if __name__ == '__main__':
-    colorama_init()
     asyncio.set_event_loop_policy(aiozmq.ZmqEventLoopPolicy())
     loop = asyncio.get_event_loop()
     loop.add_signal_handler(signal.SIGTERM, handle_exit)
