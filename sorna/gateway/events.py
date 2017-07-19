@@ -2,8 +2,7 @@ import asyncio
 import logging
 from collections import defaultdict
 
-import msgpack
-
+from sorna.common import msgpack
 from sorna.common.msgbus import ExchangeTypes, Subscriber
 
 log = logging.getLogger('sorna.gateway.events')

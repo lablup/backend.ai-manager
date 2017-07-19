@@ -16,7 +16,6 @@ requires = [
     'aiotools>=0.3.0',
     'aioredis~=0.2.8',
     'etcd3~=0.5.2',
-    'msgpack-python',
     'namedlist',
     'alembic~=0.9.2',
     'psycopg2~=2.7.0',
