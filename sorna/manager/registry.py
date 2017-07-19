@@ -1,5 +1,4 @@
 import asyncio
-import builtins
 from datetime import datetime
 from dateutil.tz import tzutc
 import functools
@@ -49,6 +48,14 @@ def auto_get_instance(func):
 
 class RPCContext:
 
+    preserved_exceptions = (
+        NotFoundError,
+        ParametersError,
+        asyncio.TimeoutError,
+        asyncio.CancelledError,
+        asyncio.InvalidStateError,
+    )
+
     def __init__(self, addr, timeout=10):
         self.addr = addr
         self.timeout = timeout
@@ -72,18 +79,11 @@ class RPCContext:
         self.server.close()
         self.server = None
         self.call = None
-        preserved_exceptions = (
-            NotFoundError,
-            ParametersError,
-            asyncio.TimeoutError,
-            asyncio.CancelledError,
-            asyncio.InvalidStateError,
-        )
         if recv_exc:
             if issubclass(exc_type, GenericError):
                 e = AgentError(exc.args[0], exc.args[1])
                 raise e.with_traceback(tb)
-            elif issubclass(exc_type, preserved_exceptions):
+            elif issubclass(exc_type, self.preserved_exceptions):
                 pass
             else:
                 e = AgentError(exc_type, exc.args)
@@ -261,7 +261,6 @@ class InstanceRegistry:
                     final_results.append(None)
             return final_results
 
-
     async def get_kernel_from_session(self, client_sess_token, lang):
         async with self.redis_sess.get() as rs:
             sess_key = '{0}:{1}'.format(client_sess_token, lang)
@@ -304,8 +303,8 @@ class InstanceRegistry:
 
             # Find an agent instance having free kernel slots and least occupied slots.
             async for inst_id in self.enumerate_instances():
-                if ((gpu_requested and inst_id not in self.gpu_instances)
-                    or (not gpu_requested and inst_id in self.gpu_instances)):
+                if ((gpu_requested and inst_id not in self.gpu_instances) or
+                    (not gpu_requested and inst_id in self.gpu_instances)):
                     # Skip if not desired type of instances.
                     continue
                 try:
@@ -431,6 +430,30 @@ class InstanceRegistry:
             log.exception('execute: unexpected error')
             raise
         return result
+
+    @auto_get_kernel
+    async def upload_file(self, kernel, filename, filedata):
+        log.debug(f'upload_file({kernel.id}, {filename})')
+        try:
+            async with RPCContext(kernel.addr, 10000) as rpc:
+                result = await rpc.call.upload_file(kernel.id, filename, filedata)
+        except asyncio.TimeoutError:
+            raise KernelExecutionFailed('TIMEOUT')
+        except asyncio.CancelledError:
+            raise
+        except AgentError as e:
+            log.exception('execute_code: agent-side error')
+            raise KernelExecutionFailed('FAILURE', e)
+        except:
+            log.exception('execute_code: unexpected error')
+            raise
+        return result
+
+    @auto_get_kernel
+    async def increment_kernel_usage(self, kernel):
+        log.debug(f'increment_kernel_usage({kernel.id})')
+        async with self.redis_kern.get() as rk:
+            await rk.hincrby(kernel.id, 'num_queries', 1)
 
     async def get_kernels_in_instance(self, inst_id):
         async with self.lifecycle_lock, \

@@ -9,7 +9,6 @@ from datetime import datetime
 import functools
 import logging
 import time
-import uuid
 from urllib.parse import urlparse
 
 import aiohttp
@@ -20,6 +19,7 @@ from async_timeout import timeout as _timeout
 from dateutil.tz import tzutc
 import simplejson as json
 import sqlalchemy as sa
+from sqlalchemy.sql.expression import true, null
 import zmq
 
 from .exceptions import (ServiceUnavailable, InvalidAPIParameters, QuotaExceeded,
@@ -37,10 +37,18 @@ log = logging.getLogger('sorna.gateway.kernel')
 grace_events = []
 
 
+def server_ready_required(handler):
+    @functools.wraps(handler)
+    async def wrapped(request):
+        if request.app['status'] != GatewayStatus.RUNNING:
+            raise ServiceUnavailable('Server not ready.')
+        return (await handler(request))
+    return wrapped
+
+
 @auth_required
+@server_ready_required
 async def create(request):
-    if request.app['status'] != GatewayStatus.RUNNING:
-        raise ServiceUnavailable('Server not ready.')
     try:
         with _timeout(2):
             params = await request.json()
@@ -144,10 +152,10 @@ async def update_instance_usage(app, inst_id):
             }
             query = Usage.insert().values(**values)
             await conn.execute(query)
-            query = (sa.update(keypairs)
-                       .values(concurrency_used=keypairs.c.concurrency_used
-                                                - per_key_counts[kern.access_key])
-                       .where(keypairs.c.access_key == kern.access_key))
+            query = (sa.update(KeyPair)
+                       .values(concurrency_used=KeyPair.c.concurrency_used -
+                                                per_key_counts[kern.access_key])
+                       .where(KeyPair.c.access_key == kern.access_key))
             await conn.execute(query)
 
 
@@ -269,14 +277,14 @@ async def datadog_update(app):
             statsd.gauge('sorna.gateway.active_kernels', n)
 
             subquery = (sa.select([sa.func.count()])
-                          .select_from(keypairs)
-                          .where(keypairs.c.is_active == True)
-                          .group_by(keypairs.c.user_id))
+                          .select_from(KeyPair)
+                          .where(KeyPair.c.is_active == true())
+                          .group_by(KeyPair.c.user_id))
             query = sa.select([sa.func.count()]).select_from(subquery.alias())
             n = await conn.fetchval(query)
             statsd.gauge('sorna.users.has_active_key', n)
 
-            subquery = subquery.where(keypairs.c.last_used != None)
+            subquery = subquery.where(KeyPair.c.last_used != null())
             query = sa.select([sa.func.count()]).select_from(subquery.alias())
             n = await conn.fetchval(query)
             statsd.gauge('sorna.users.has_used_key', n)
@@ -295,6 +303,7 @@ async def datadog_update_timer(app):
         except asyncio.CancelledError:
             break
         except:
+            app['sentry'].captureException()
             log.exception('datadog_update unexpected error')
         try:
             await asyncio.sleep(5)
@@ -348,7 +357,6 @@ async def collect_agent_events(app, heartbeat_interval):
         # calculate & update diff on kernel list and usage
         if ev['_type'] == 'instance_heartbeat':
             inst_id = ev['_args'][0]
-            inst_info = ev['_args'][1]
             running_kernels = set(ev['_args'][2])
             tracked_kernels = set(await app['registry'].get_kernels_in_instance(inst_id))
             new_kernels = running_kernels - tracked_kernels
@@ -384,9 +392,8 @@ async def collect_agent_events(app, heartbeat_interval):
 
 
 @auth_required
+@server_ready_required
 async def destroy(request):
-    if request.app['status'] != GatewayStatus.RUNNING:
-        raise ServiceUnavailable('Server not ready.')
     kern_id = request.match_info['kernel_id']
     log.info(f"DESTROY (u:{request['keypair']['access_key']}, k:{kern_id})")
     try:
@@ -398,17 +405,14 @@ async def destroy(request):
 
 
 @auth_required
+@server_ready_required
 async def get_info(request):
-    if request.app['status'] != GatewayStatus.RUNNING:
-        raise ServiceUnavailable('Server not ready.')
     resp = {}
     kern_id = request.match_info['kernel_id']
     log.info(f"GETINFO (u:{request['keypair']['access_key']}, k:{kern_id})")
     try:
+        await request.app['registry'].increment_kernel_usage(kern_id)
         kern = await request.app['registry'].get_kernel(kern_id)
-        await request.app['registry'].update_kernel(kern_id, {
-            'num_queries': int(kern.num_queries) + 1,
-        })
         resp['lang'] = kern.lang
         age = datetime.now(tzutc()) - kern.created_at
         resp['age'] = age.total_seconds() * 1000
@@ -432,16 +436,12 @@ async def get_info(request):
 
 
 @auth_required
+@server_ready_required
 async def restart(request):
-    if request.app['status'] != GatewayStatus.RUNNING:
-        raise ServiceUnavailable('Server not ready.')
     kern_id = request.match_info['kernel_id']
     log.info(f"RESTART (u:{request['keypair']['access_key']}, k:{kern_id})")
     try:
-        kern = await request.app['registry'].get_kernel(kern_id)
-        await request.app['registry'].update_kernel(kern_id, {
-            'num_queries': int(kern.num_queries) + 1,
-        })
+        await request.app['registry'].increment_kernel_usage(kern_id)
         await request.app['registry'].restart_kernel(kern_id)
         for sock in request.app['stream_stdin_socks'][kern_id]:
             sock.close()
@@ -449,15 +449,15 @@ async def restart(request):
         log.exception('RESTART: API Internal Error')
         raise
     except:
+        request.app['sentry'].captureException()
         log.exception('RESTART: unexpected error')
         raise web.HTTPInternalServerError
     return web.Response(status=204)
 
 
 @auth_required
+@server_ready_required
 async def execute(request):
-    if request.app['status'] != GatewayStatus.RUNNING:
-        raise ServiceUnavailable('Server not ready.')
     resp = {}
     kern_id = request.match_info['kernel_id']
     try:
@@ -468,16 +468,14 @@ async def execute(request):
         log.warning('EXECUTE: invalid/missing parameters')
         raise InvalidAPIParameters
     try:
-        kern = await request.app['registry'].get_kernel(kern_id)
-        await request.app['registry'].update_kernel(kern_id, {
-            'num_queries': int(kern.num_queries) + 1,
-        })
+        await request.app['registry'].increment_kernel_usage(kern_id)
         api_version = request['api_version']
         if api_version == 1:
-            code = params['code']
             mode = 'query'
+            code = params['code']
             opts = {}
         elif api_version == 2:
+            mode = params['mode']
             code = params.get('code', '')
             mode = params['mode']
             assert mode in ('query', 'batch', 'complete')
@@ -495,6 +493,38 @@ async def execute(request):
 
 
 @auth_required
+@server_ready_required
+async def upload_files(request):
+    loop = asyncio.get_event_loop()
+    reader = await request.multipart()
+    kern_id = request.match_info['kernel_id']
+    try:
+        await request.app['registry'].increment_kernel_usage(kern_id)
+        file_count = 0
+        upload_tasks = []
+        while True:
+            if file_count == 20:
+                raise InvalidAPIParameters('Too many files')
+            file = await reader.next()
+            if file is None:
+                break
+            file_count += 1
+            # This API handles only small files, so let's read it at once.
+            chunk = await file.read_chunk(size=1048576)
+            if not file.at_eof():
+                raise InvalidAPIParameters('Too large file')
+            data = file.decode(chunk)
+            log.debug(f'received file: {file.filename} ({len(data):,} bytes)')
+            t = loop.create_task(request.app['registry'].upload_file(kern_id, file.filename, data))
+            upload_tasks.append(t)
+        await asyncio.gather(*upload_tasks)
+    except SornaError:
+        log.exception('UPLOAD_FILES: API Internal Error')
+        raise
+    return web.Response(status=204)
+
+
+@server_ready_required
 async def stream_pty(request):
     app = request.app
     kern_id = request.match_info['kernel_id']
@@ -503,11 +533,10 @@ async def stream_pty(request):
     except KernelNotFound:
         raise
 
+    await app['registry'].increment_kernel_usage(kern_id)
+
     # Upgrade connection to WebSocket.
     ws = web.WebSocketResponse()
-    # FIXME: https://github.com/aio-libs/aiohttp/issues/1736
-    #if not ws.can_prepare(request):
-    #    raise web.HTTPUpgradeRequired
     await ws.prepare(request)
 
     app['stream_pty_handlers'][kern_id].add(asyncio.Task.current_task())
@@ -580,6 +609,7 @@ async def stream_pty(request):
             # Agent or kernel is terminated.
             pass
         except:
+            app['sentry'].captureException()
             log.exception(f'stream_stdin({kern_id}): unexpected error')
         finally:
             log.debug(f'stream_stdin({kern_id}): terminated')
@@ -607,6 +637,7 @@ async def stream_pty(request):
         except asyncio.CancelledError:
             pass
         except:
+            app['sentry'].captureException()
             log.exception(f'stream_stdout({kern_id}): unexpected error')
         finally:
             log.debug(f'stream_stdout({kern_id}): terminated')
@@ -618,6 +649,7 @@ async def stream_pty(request):
         stdout_task = asyncio.ensure_future(stream_stdout())
         await stream_stdin()
     except:
+        app['sentry'].captureException()
         log.exception(f'stream_pty({kern_id}): unexpected error')
     finally:
         app['stream_pty_handlers'][kern_id].remove(asyncio.Task.current_task())
@@ -646,6 +678,7 @@ async def init(app):
     app.router.add_route('PATCH',  '/v2/kernel/{kernel_id}', restart)
     app.router.add_route('DELETE', '/v2/kernel/{kernel_id}', destroy)
     app.router.add_route('POST',   '/v2/kernel/{kernel_id}', execute)
+    app.router.add_route('POST',   '/v2/kernel/{kernel_id}/upload', upload_files)
     app.router.add_route('GET',    '/v2/stream/kernel/{kernel_id}/pty', stream_pty)
     app.router.add_route('GET',    '/v2/stream/kernel/{kernel_id}/events', not_impl_stub)
     app.router.add_route('POST',   '/v2/folder/create', not_impl_stub)

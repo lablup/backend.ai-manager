@@ -1,6 +1,46 @@
 Changes
 =======
 
+0.9.10 (2017-07-18)
+-------------------
+
+**FIX**
+
+ * Fix the wrong version range of an optional depedency package "datadog"
+
+0.9.9 (2017-07-18)
+------------------
+
+**IMPROVEMENTS**
+
+ * Improve packaging so that setup.py has the source list of dependencies
+   whereas requirements.txt has additional/local versions from exotic
+   sources.
+
+ * Support exception/event logging with Sentry.
+
+0.9.8 (2017-07-07)
+------------------
+
+**FIX**
+
+ - Revert authorization in terminal pty streaming due to regression.
+
+0.9.7 (2017-06-29)
+------------------
+
+**NEW**
+
+ - Add support for the batch-mode API with compiled languages such as
+   C/C++/Java/Rust.
+
+ - Add support for the file upload API for use with the batch-mode API.
+   (up to 20 files per request and 1 MiB per each file)
+
+**IMPROVEMENTS**
+
+ - Upgrade aiohttp to v2.2.0.
+
 0.9.6 (2017-05-09)
 ------------------
 

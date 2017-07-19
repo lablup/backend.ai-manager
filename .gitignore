@@ -42,7 +42,7 @@ htmlcov/
 nosetests.xml
 coverage.xml
 *,cover
-.mypy_cache/
+.mypy-cache/
 
 # Translations
 *.mo
@@ -61,7 +61,7 @@ target/
 .idea/
 .env
 .*.swp
-venv/
+venv*/
 
-# Alembic configs
+# User configuratinos
 alembic.ini

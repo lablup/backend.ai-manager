@@ -1,4 +1,3 @@
-import asyncio
 import base64
 from datetime import datetime, timedelta
 import functools
@@ -10,7 +9,6 @@ from aiohttp import web
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
 import simplejson as json
-import sqlalchemy as sa
 
 from .exceptions import InvalidAuthParameters, AuthorizationFailed
 from .config import load_config, init_logger
@@ -79,7 +77,10 @@ async def sign_request(sign_method, request, secret_key) -> str:
     except (ValueError, AssertionError):
         return None
 
-    body = await request.read() if request.has_body else b''
+    if request.has_body and not request.content_type == 'multipart/form-data':
+        body = await request.read()
+    else:
+        body = b''
     body_hash = hashlib.new(hash_type, body).hexdigest()
     sign_bytes = '{0}\n{1}\n{2}\nhost:{3}\ncontent-type:{4}\nx-sorna-version:{5}\n{6}'.format(
         request.method, str(request.rel_url), request.raw_date,
@@ -103,7 +104,7 @@ async def auth_middleware_factory(app, handler):
         request['keypair'] = None
         request['user'] = None
         if not check_date(request):
-            raise InvalidAuthParameters
+            raise InvalidAuthParameters('Time sync error')
         params = _extract_auth_params(request)
         if params:
             sign_method, access_key, signature = params
@@ -112,10 +113,10 @@ async def auth_middleware_factory(app, handler):
                                 .where(keypairs.c.access_key == access_key))
                 row = await conn.fetchrow(query)
                 if row is None or row.row is None:
-                    raise AuthorizationFailed
+                    raise AuthorizationFailed('Access key not found')
                 my_signature = await sign_request(sign_method, request, row.secret_key)
                 if not my_signature:
-                    raise InvalidAuthParameters
+                    raise AuthorizationFailed('Signature mismatch')
                 if secrets.compare_digest(my_signature, signature):
                     query = (keypairs.update()
                                     .values(last_used=datetime.now(tzutc()),
@@ -152,7 +153,7 @@ async def authorize(request) -> web.Response:
     try:
         params = json.loads(await request.text())
     except json.decoder.JSONDecodeError:
-        raise InvalidAuthParameters
+        raise InvalidAuthParameters('Malformed body')
     resp_data = {'authorized': 'yes'}
     if 'echo' in params:
         resp_data['echo'] = params['echo']
@@ -191,4 +192,3 @@ if __name__ == '__main__':
         ak, sk = generate_keypair()
         print(f'Access Key: {ak} ({len(ak)} bytes)')
         print(f'Secret Key: {sk} ({len(sk)} bytes)')
-

@@ -20,6 +20,7 @@ Redis), but just a metadata container passed around the sorna system.
 '''
 # VM instances should run a docker daemon using "-H tcp://0.0.0.0:2375" in DOCKER_OPTS.
 
+
 class Kernel(namedlist('_Kernel', [
     ('id', None),
     ('instance', None),
@@ -69,4 +70,3 @@ class Kernel(namedlist('_Kernel', [
             'stdin_port': nullable_int(self.stdin_port),
             'stdout_port': nullable_int(self.stdout_port),
         })
-

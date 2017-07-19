@@ -10,8 +10,6 @@ canonical error types beacuse "title" field may change due to localization and
 future UX improvements.
 '''
 
-import sys
-
 from aiohttp import web
 import simplejson as json
 
@@ -44,7 +42,7 @@ class GenericNotFound(web.HTTPNotFound, SornaError):
     error_title = 'Unknown URL path.'
 
 
-class GenericBadRequest(web.HTTPNotFound, SornaError):
+class GenericBadRequest(web.HTTPBadRequest, SornaError):
     error_type  = 'https://api.sorna.io/probs/generic-bad-request'
     error_title = 'Bad request.'
 

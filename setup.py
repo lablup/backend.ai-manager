@@ -1,47 +1,62 @@
 from setuptools import setup
-from pathlib import Path
-import pip
-import re
-
-here = Path(__file__).resolve().parent
-
-
+import sys
 try:
     import pypandoc
     long_description = pypandoc.convert('README.md', 'rst')
 except (IOError, ImportError):
     long_description = ""
 
-requires = []
-links = []
-requirements = pip.req.parse_requirements(
-    'requirements.txt', session=pip.download.PipSession()
-)
-for item in requirements:
-    if getattr(item, 'url', None):  # older pip has url
-        links.append(str(item.url))
-    if getattr(item, 'link', None):  # newer pip has link
-        links.append(str(item.link))
-    if item.req:
-        requires.append(str(item.req))  # always the package name
 
+requires = [
+    'ConfigArgParse',
+    'coloredlogs>=5.2',
+    'pyzmq>=16.0',
+    'aiozmq>=0.7',
+    'aiohttp~=2.2.0',
+    'aiotools>=0.3.0',
+    'aioredis~=0.2.8',
+    'etcd3~=0.5.2',
+    'msgpack-python',
+    'namedlist',
+    'alembic~=0.9.2',
+    'psycopg2~=2.7.0',
+    'SQLAlchemy',
+    'asyncpgsa~=0.10.0',
+    'python-dateutil>=2.5',
+    'simplejson',
+    'uvloop>=0.8',
+    'sorna-common~=1.0.0',
+]
+build_requires = [
+    'pypandoc',
+    'wheel',
+    'twine',
+]
+test_requires = [
+    'pytest>=3.1',
+    'pytest-asyncio',
+    'pytest-aiohttp',
+    'pytest-cov',
+    'pytest-mock',
+    'codecov',
+    'flake8',
+]
+dev_requires = build_requires + test_requires + [
+    'pytest-sugar',
+]
+ci_requires = []
+monitor_requires = [
+    'datadog>=0.16.0',
+    'raven>=6.1',
+]
 
-def _get_version():
-    root_src = (here / 'sorna' / 'manager' / '__init__.py').read_text()
-    try:
-        version = re.findall(r"^__version__ = '([^']+)'\r?$", root_src, re.M)[0]
-    except IndexError:
-        raise RuntimeError('Unable to determine myself version.')
-    return version
+sys.path.insert(0, '.')
+import sorna.manager
 
 
 setup(
     name='sorna-manager',
-
-    # Versions should comply with PEP440.  For a discussion on single-sourcing
-    # the version across setup.py and the project code, see
-    # https://packaging.python.org/en/latest/single_source_version.html
-    version=_get_version(),
+    version=sorna.manager.__version__,
     description='Sorna Manager',
     long_description=long_description,
     url='https://github.com/lablup/sorna-manager',
@@ -67,11 +82,12 @@ setup(
 
     python_requires='>=3.6',
     install_requires=requires,
-    dependency_links=links,
     extras_require={
-        'dev': [],
-        'test': ['pytest', 'pytest-mock'],
-        'datadog': ['datadog'],
+        'build': build_requires,
+        'test': test_requires,
+        'dev': dev_requires,
+        'ci': ci_requires,
+        'monitor': monitor_requires,
     },
     data_files=[],
 )

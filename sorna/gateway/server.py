@@ -19,9 +19,15 @@ try:
     datadog_available = True
 except ImportError:
     datadog_available = False
+try:
+    import raven
+    raven_available = True
+except ImportError:
+    raven_available = False
 
 from sorna.common.argparse import ipaddr, path, port_no, host_port_pair, HostPortPair
 from sorna.common.utils import env_info
+from sorna.common.monitor import DummyDatadog, DummySentry
 from ..manager import __version__
 from . import GatewayStatus
 from .exceptions import (SornaError, GenericNotFound,
@@ -32,7 +38,6 @@ from .etcd import init as etcd_init, shutdown as etcd_shutdown
 from .events import init as event_init, shutdown as event_shutdown
 from .kernel import init as kernel_init, shutdown as kernel_shutdown
 from .ratelimit import init as rlim_init, shutdown as rlim_shutdown
-from .utils import prettify_traceback
 
 VALID_VERSIONS = frozenset([
     'v1.20160915',
@@ -82,39 +87,28 @@ async def api_middleware_factory(app, handler):
 async def exception_middleware_factory(app, handler):
     async def exception_middleware_handler(request):
         try:
-            if app['datadog']:
-                app['datadog'].statsd.increment('sorna.gateway.api.requests')
+            app['datadog'].statsd.increment('sorna.gateway.api.requests')
             resp = (await handler(request))
         except SornaError as ex:
-            if app['datadog']:
-                statsd = app['datadog'].statsd
-                statsd.increment('sorna.gateway.api.failures')
-                statsd.increment(f'sorna.gateway.api.status.{ex.status_code}')
+            app['sentry'].captureException()
+            statsd = app['datadog'].statsd
+            statsd.increment('sorna.gateway.api.failures')
+            statsd.increment(f'sorna.gateway.api.status.{ex.status_code}')
             raise
         except web.HTTPException as ex:
-            if app['datadog']:
-                statsd = app['datadog'].statsd
-                statsd.increment('sorna.gateway.api.failures')
-                statsd.increment(f'sorna.gateway.api.status.{ex.status_code}')
+            statsd = app['datadog'].statsd
+            statsd.increment('sorna.gateway.api.failures')
+            statsd.increment(f'sorna.gateway.api.status.{ex.status_code}')
             if ex.status_code == 404:
                 raise GenericNotFound
             log.warning(f'Bad request: {ex!r}')
             raise GenericBadRequest
         except Exception as ex:
+            app['sentry'].captureException()
             log.exception('Uncaught exception in HTTP request handlers')
-            title = f'Exception from {request.method} {request.rel_url.path}'
-            tag = f'path:{request.rel_url.path}'
-            text = prettify_traceback(ex)
-            if app['datadog']:
-                app['datadog'].statsd.event(
-                    title, text,
-                    tags=['sorna', 'exception'],
-                    aggregation_key=request.rel_url.path,
-                    alert_type='error')
             raise InternalServerError
         else:
-            if app['datadog']:
-                app['datadog'].statsd.increment(f'sorna.gateway.api.status.{resp.status}')
+            app['datadog'].statsd.increment(f'sorna.gateway.api.status.{resp.status}')
             return resp
     return exception_middleware_handler
 
@@ -124,7 +118,8 @@ async def gw_init(app):
     app.router.add_route('GET', '/v1', hello)
     app.router.add_route('GET', '/v2', hello)
     app['status'] = GatewayStatus.STARTING
-    app['datadog'] = None
+    app['datadog'] = DummyDatadog()
+    app['sentry'] = DummySentry()
     if datadog_available:
         if app.config.datadog_api_key is None:
             log.warning('datadog logging disabled (missing API key)')
@@ -134,8 +129,12 @@ async def gw_init(app):
                 app_key=app.config.datadog_app_key)
             app['datadog'] = datadog
             log.info('datadog logging enabled')
-    else:
-        log.warning('datadog logging disabled (no datadog package)')
+    if raven_available:
+        if app.config.raven_uri is None:
+            log.info('skipping Sentry initialization due to missing DSN URI...')
+        else:
+            app['sentry'] = raven.Client(app.config.raven_uri)
+            log.info('sentry logging enabled')
 
     app.dbpool = await asyncpgsa.create_pool(
         host=str(app.config.db_addr[0]),
@@ -235,6 +234,9 @@ def gw_args(parser):
                    help='The API key for Datadog monitoring agent.')
         parser.add('--datadog-app-key', env_var='DATADOG_APP_KEY', type=str, default=None,
                    help='The application key for Datadog monitoring agent.')
+    if raven_available:
+        parser.add('--raven-uri', env_var='RAVEN_URI', type=str, default=None,
+                   help='The sentry.io event report URL with DSN.')
 
     # to deprecate
     parser.add('--events-port', env_var='SORNA_EVENTS_PORT', type=port_no, default=5002,

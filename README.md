@@ -5,19 +5,19 @@ Package Structure
 -----------------
 
  * sorna
-   * manager: instance registry manager and an old ZMQ-based interface (to be deprecated)
+   * manager: Abstraction of agents and computation kernels
    * gateway: RESTful API gateway based on aiohttp
 
 Installation
 ------------
 
-Sorna Manager requires Python 3.5 or higher.  We highly recommend to use
+Sorna Manager requires Python 3.6 or higher.  We highly recommend to use
 [pyenv](https://github.com/yyuu/pyenv) for an isolated setup of custom Python
 versions that might be different from default installations managed by your OS
 or Linux distros.
 
-```sh
-pip install sorna-manager
+```console
+$ pip install sorna-manager
 ```
 
 ### For development:
