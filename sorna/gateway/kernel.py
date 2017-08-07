@@ -150,12 +150,12 @@ async def update_instance_usage(app, inst_id):
                 'io_used': (kern.io_read_bytes + kern.io_write_bytes) // 1024,
                 'net_used': (kern.net_rx_bytes + kern.net_tx_bytes) // 1024,
             }
-            query = Usage.insert().values(**values)
+            query = usage.insert().values(**values)
             await conn.execute(query)
-            query = (sa.update(KeyPair)
-                       .values(concurrency_used=KeyPair.c.concurrency_used -
+            query = (sa.update(keypairs)
+                       .values(concurrency_used=keypairs.c.concurrency_used -
                                                 per_key_counts[kern.access_key])
-                       .where(KeyPair.c.access_key == kern.access_key))
+                       .where(keypairs.c.access_key == kern.access_key))
             await conn.execute(query)
 
 
@@ -188,7 +188,7 @@ async def update_kernel_usage(app, kern_id, kern_stat=None):
                 'io_used': (kern_stat['io_read_bytes'] + kern_stat['io_write_bytes']) // 1024,
                 'net_used': (kern_stat['net_rx_bytes'] + kern_stat['net_tx_bytes']) // 1024,
             }
-            query = Usage.insert().values(**values)
+            query = usage.insert().values(**values)
         else:
             # otherwise, get the latest stats from the registry.
             log.info(f'update_kernel_usage: {kern.id}, registry-stat')
@@ -203,7 +203,7 @@ async def update_kernel_usage(app, kern_id, kern_stat=None):
                 'io_used': (kern.io_read_bytes + kern.io_write_bytes) // 1024,
                 'net_used': (kern.net_rx_bytes + kern.net_tx_bytes) // 1024,
             }
-            query = Usage.insert().values(**values)
+            query = usage.insert().values(**values)
         await conn.execute(query)
 
 
@@ -277,19 +277,19 @@ async def datadog_update(app):
             statsd.gauge('sorna.gateway.active_kernels', n)
 
             subquery = (sa.select([sa.func.count()])
-                          .select_from(KeyPair)
-                          .where(KeyPair.c.is_active == true())
-                          .group_by(KeyPair.c.user_id))
+                          .select_from(keypairs)
+                          .where(keypairs.c.is_active == true())
+                          .group_by(keypairs.c.user_id))
             query = sa.select([sa.func.count()]).select_from(subquery.alias())
             n = await conn.fetchval(query)
             statsd.gauge('sorna.users.has_active_key', n)
 
-            subquery = subquery.where(KeyPair.c.last_used != null())
+            subquery = subquery.where(keypairs.c.last_used != null())
             query = sa.select([sa.func.count()]).select_from(subquery.alias())
             n = await conn.fetchval(query)
             statsd.gauge('sorna.users.has_used_key', n)
 
-            query = sa.select([sa.func.count()]).select_from(Usage)
+            query = sa.select([sa.func.count()]).select_from(usage)
             n = await conn.fetchval(query)
             statsd.gauge('sorna.gateway.accum_kernels', n)
 
