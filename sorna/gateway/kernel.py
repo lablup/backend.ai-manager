@@ -247,7 +247,7 @@ async def instance_heartbeat(app, inst_id, inst_info, running_kernels, interval)
             revived = True
     except InstanceNotFound:
         # may have started during the grace period.
-        app['event_dispatcher'].local_dispatch('instance_started', inst_id)
+        app['event_dispatcher'].dispatch('instance_started', inst_id)
 
     if revived:
         log.warning(f'agent@{inst_id} revived.')
