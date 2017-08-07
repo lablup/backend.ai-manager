@@ -60,6 +60,7 @@ target/
 # IDE stuffs
 .idea/
 .env
+.envrc
 .*.swp
 venv*/
 
