@@ -247,7 +247,7 @@ async def instance_heartbeat(app, inst_id, inst_info, running_kernels, interval)
             revived = True
     except InstanceNotFound:
         # may have started during the grace period.
-        app['event_subscriber'].local_dispatch('instance_started', inst_id)
+        app['event_dispatcher'].local_dispatch('instance_started', inst_id)
 
     if revived:
         log.warning(f'agent@{inst_id} revived.')
@@ -685,11 +685,11 @@ async def init(app):
     app.router.add_route('GET',    '/v2/folder/{folder_id}', not_impl_stub)
     app.router.add_route('DELETE', '/v2/folder/{folder_id}', not_impl_stub)
 
-    app['event_subscriber'].add_handler('kernel_terminated', kernel_terminated)
-    app['event_subscriber'].add_handler('instance_started', instance_started)
-    app['event_subscriber'].add_handler('instance_terminated', instance_terminated)
-    app['event_subscriber'].add_handler('instance_heartbeat', instance_heartbeat)
-    app['event_subscriber'].add_handler('instance_stats', instance_stats)
+    app['event_dispatcher'].add_handler('kernel_terminated', kernel_terminated)
+    app['event_dispatcher'].add_handler('instance_started', instance_started)
+    app['event_dispatcher'].add_handler('instance_terminated', instance_terminated)
+    app['event_dispatcher'].add_handler('instance_heartbeat', instance_heartbeat)
+    app['event_dispatcher'].add_handler('instance_stats', instance_stats)
 
     app['stream_pty_handlers'] = defaultdict(set)
     app['stream_stdin_socks'] = defaultdict(set)
