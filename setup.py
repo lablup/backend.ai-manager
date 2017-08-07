@@ -13,7 +13,7 @@ requires = [
     'pyzmq>=16.0',
     'aiozmq>=0.7',
     'aiohttp~=2.2.0',
-    'aiotools>=0.3.0',
+    'aiotools>=0.4.3',
     'aioredis~=0.2.8',
     'etcd3~=0.5.2',
     'namedlist',

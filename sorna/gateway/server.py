@@ -36,6 +36,7 @@ from .auth import init as auth_init, shutdown as auth_shutdown
 from .config import load_config, init_logger
 from .etcd import init as etcd_init, shutdown as etcd_shutdown
 from .events import init as event_init, shutdown as event_shutdown
+from .events import agent_event_router
 from .kernel import init as kernel_init, shutdown as kernel_shutdown
 from .ratelimit import init as rlim_init, shutdown as rlim_shutdown
 
@@ -182,22 +183,24 @@ async def server_main(loop, pidx, _args):
     )
     log.info('started.')
 
-    yield
+    try:
+        yield
+    finally:
 
-    log.info('shutting down...')
-    server.close()
-    await server.wait_closed()
+        log.info('shutting down...')
+        server.close()
+        await server.wait_closed()
 
-    await kernel_shutdown(app)
-    await rlim_shutdown(app)
-    await auth_shutdown(app)
-    await gw_shutdown(app)
-    await event_shutdown(app)
-    await etcd_shutdown(app)
+        await kernel_shutdown(app)
+        await rlim_shutdown(app)
+        await auth_shutdown(app)
+        await gw_shutdown(app)
+        await event_shutdown(app)
+        await etcd_shutdown(app)
 
-    await app.shutdown()
-    await web_handler.finish_connections(60.0)
-    await app.cleanup()
+        await app.shutdown()
+        await web_handler.finish_connections(60.0)
+        await app.cleanup()
 
 
 def gw_args(parser):
@@ -262,7 +265,9 @@ def main():
         aiohttp.log.access_logger.setLevel('WARNING')
 
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-    aiotools.start_server(server_main, num_proc=1, args=(config,))
+    aiotools.start_server(server_main, num_workers=2,
+                          extra_procs=[agent_event_router],
+                          args=(config, ))
     log.info('terminated.')
 
 
