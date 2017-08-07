@@ -71,6 +71,8 @@ async def api_middleware_factory(app, handler):
             path_ver = 1
         elif request.rel_url.path.startswith('/v2'):
             path_ver = 2
+        elif request.rel_url.path.startswith('/v3'):
+            path_ver = 3
         else:
             raise GenericBadRequest('Unsupported API version.')
         hdr_ver = request.headers.get('X-Sorna-Version', None)
