@@ -14,16 +14,12 @@ log = logging.getLogger('sorna.gateway.events')
 
 def event_router(_, pidx, args):
     # run as extra_procs by aiotools
-
     ctx = zmq.Context()
-    ctx.linger = 0
-
+    ctx.linger = 50
     in_sock = ctx.socket(zmq.PULL)
     in_sock.bind(f'tcp://*:{args[0].events_port}')
-
     out_sock = ctx.socket(zmq.PUSH)
     out_sock.bind('ipc://sorna.agent-events')
-
     try:
         zmq.proxy(in_sock, out_sock)
     except KeyboardInterrupt:
@@ -43,7 +39,7 @@ class EventDispatcher:
         self.app = app
         self.loop = loop if loop else asyncio.get_event_loop()
         self.handlers = defaultdict(list)
-        self.heartbeat_timeout = 5.0
+        self.heartbeat_timeout = app.config.heartbeat_timeout
         # TODO: optimize?
         self.last_seen = app['shared_states']['agent_last_seen']
 
@@ -56,9 +52,9 @@ class EventDispatcher:
         self.last_seen[agent_id] = time.monotonic()
         for handler in self.handlers[event_name]:
             if asyncio.iscoroutine(handler) or asyncio.iscoroutinefunction(handler):
-                asyncio.ensure_future(handler(self.app, *args))
+                asyncio.ensure_future(handler(self.app, agent_id, *args))
             else:
-                cb = functools.partial(handler, self.app, *args)
+                cb = functools.partial(handler, self.app, agent_id, *args)
                 self.loop.call_soon(cb)
 
     async def check_lost(self, interval):
