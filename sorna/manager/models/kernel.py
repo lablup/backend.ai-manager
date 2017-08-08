@@ -23,7 +23,7 @@ class kernel_status(enum.Enum):
 kernels = sa.Table(
     'kernels', metadata,
     IDColumn('sess_id'),
-    sa.Column('agent', sa.String(length=64), ForeignKey('agents.id')),
+    sa.Column('agent', sa.String(length=64), sa.ForeignKey('agents.id')),
     sa.Column('access_key', sa.String(length=20),
               sa.ForeignKey('keypairs.access_key')),
     sa.Column('lang', sa.String(length=64)),
@@ -40,12 +40,12 @@ kernels = sa.Table(
     sa.Column('status_info', sa.Unicode(), nullable=True),
 
     # Live stats
-    sa.Column('num_queries', sa.BigInteger(default=0)),
-    sa.Column('cpu_used', sa.BigInteger(default=0)),       # msec
-    sa.Column('max_mem_bytes', sa.BigInteger(default=0)),  # bytes
-    sa.Column('cur_mem_bytes', sa.BigInteger(default=0)),  # bytes
-    sa.Column('net_rx_bytes', sa.BigInteger(default=0)),
-    sa.Column('net_tx_bytes', sa.BigInteger(default=0)),
-    sa.Column('io_read_bytes', sa.BigInteger(default=0)),
-    sa.Column('io_write_bytes', sa.BigInteger(default=0)),
+    sa.Column('num_queries', sa.BigInteger(), default=0),
+    sa.Column('cpu_used', sa.BigInteger(), default=0),       # msec
+    sa.Column('max_mem_bytes', sa.BigInteger(), default=0),  # bytes
+    sa.Column('cur_mem_bytes', sa.BigInteger(), default=0),  # bytes
+    sa.Column('net_rx_bytes', sa.BigInteger(), default=0),
+    sa.Column('net_tx_bytes', sa.BigInteger(), default=0),
+    sa.Column('io_read_bytes', sa.BigInteger(), default=0),
+    sa.Column('io_write_bytes', sa.BigInteger(), default=0),
 )

@@ -1,5 +1,5 @@
 import sqlalchemy as sa
-from .base import metadata, IDColumn
+from .base import metadata
 
 __all__ = ('keypairs', )
 

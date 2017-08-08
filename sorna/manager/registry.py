@@ -19,6 +19,7 @@ from ..gateway.exceptions import (
     AgentError)
 from ..gateway.defs import (SORNA_KERNEL_DB, SORNA_INSTANCE_DB,
                             SORNA_SESSION_DB)
+from .models import kernels
 from .structs import Instance, Kernel
 
 __all__ = ['InstanceRegistry', 'InstanceNotFound']

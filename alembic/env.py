@@ -15,9 +15,10 @@ fileConfig(config.config_file_name)
 # (We need to explicilty import models because model modules
 # should be executed to add table definitions to the metadata.)
 from sorna.manager.models.base import metadata
-import sorna.manager.models.billing
+import sorna.manager.models.agent
 import sorna.manager.models.keypair
 import sorna.manager.models.kernel
+import sorna.manager.models.vfolder
 
 target_metadata = metadata
 
