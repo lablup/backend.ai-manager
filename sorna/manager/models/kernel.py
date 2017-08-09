@@ -1,29 +1,30 @@
 import enum
 import sqlalchemy as sa
-from .base import metadata, IDColumn
+from .base import metadata
 
-__all__ = ('kernels', 'kernel_status')
+__all__ = ('kernels', 'KernelStatus')
 
 
-class kernel_status(enum.Enum):
-    preparing = 10
+class KernelStatus(enum.Enum):
+    PREPARING = 10
     # ---
-    building = 20
+    BUILDING = 20
     # ---
-    running = 30
-    restarting = 31
-    resizing = 32
-    suspended = 33
+    RUNNING = 30
+    RESTARTING = 31
+    RESIZING = 32
+    SUSPENDED = 33
     # ---
-    terminating = 40
-    success = 41
-    error = 42
+    TERMINATING = 40
+    SUCCESS = 41
+    ERROR = 42
 
 
 kernels = sa.Table(
     'kernels', metadata,
-    IDColumn('sess_id'),
+    sa.Column('sess_id', sa.String(length=64), primary_key=True),
     sa.Column('agent', sa.String(length=64), sa.ForeignKey('agents.id')),
+    sa.Column('agent_addr', sa.String(length=128), nullable=False),
     sa.Column('access_key', sa.String(length=20),
               sa.ForeignKey('keypairs.access_key')),
     sa.Column('lang', sa.String(length=64)),
@@ -35,8 +36,8 @@ kernels = sa.Table(
               server_default=sa.func.now(), index=True),
     sa.Column('terminated_at', sa.DateTime(timezone=True),
               nullable=True, index=True),
-    sa.Column('status', sa.Enum(kernel_status),
-              default=kernel_status.preparing, index=True),
+    sa.Column('status', sa.Enum(KernelStatus),
+              default=KernelStatus.PREPARING, index=True),
     sa.Column('status_info', sa.Unicode(), nullable=True),
 
     # Live stats

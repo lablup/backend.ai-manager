@@ -27,7 +27,7 @@ from .exceptions import (ServiceUnavailable, InvalidAPIParameters, QuotaExceeded
                          SornaError)
 from . import GatewayStatus
 from .auth import auth_required
-from ..manager.models import keypairs, usage
+from ..manager.models import keypairs, kernels
 from ..manager.registry import InstanceRegistry
 
 _json_type = 'application/json'
@@ -74,7 +74,7 @@ async def create(request):
             if request['api_version'] == 1:
                 limits = params.get('resourceLimits', None)
                 mounts = None
-            elif request['api_version'] == 2:
+            elif request['api_version'] in (2, 3):
                 limits = params.get('limits', None)
                 mounts = params.get('mounts', None)
             kernel, created = await request.app['registry'].get_or_create_kernel(
@@ -139,6 +139,7 @@ async def update_instance_usage(app, inst_id):
         for kern in kernels:
             if kern is None:
                 continue
+            '''
             values = {
                 'access_key_id': kern.access_key,
                 'kernel_type': kern.lang,
@@ -152,6 +153,7 @@ async def update_instance_usage(app, inst_id):
             }
             query = usage.insert().values(**values)
             await conn.execute(query)
+            '''
             query = (sa.update(keypairs)
                        .values(concurrency_used=keypairs.c.concurrency_used -
                                                 per_key_counts[kern.access_key])
@@ -174,6 +176,7 @@ async def update_kernel_usage(app, kern_id, kern_stat=None):
                    .values(concurrency_used=keypairs.c.concurrency_used - 1)
                    .where(keypairs.c.access_key == kern.access_key))
         await conn.execute(query)
+        '''
         if kern_stat:
             # if last stats available, use it.
             log.info(f'update_kernel_usage: {kern.id}, last-stat: {kern_stat}')
@@ -205,6 +208,7 @@ async def update_kernel_usage(app, kern_id, kern_stat=None):
             }
             query = usage.insert().values(**values)
         await conn.execute(query)
+        '''
 
 
 @grace_event_catcher
@@ -289,9 +293,11 @@ async def datadog_update(app):
             n = await conn.fetchval(query)
             statsd.gauge('sorna.users.has_used_key', n)
 
+            '''
             query = sa.select([sa.func.count()]).select_from(usage)
             n = await conn.fetchval(query)
             statsd.gauge('sorna.gateway.accum_kernels', n)
+            '''
 
 
 async def datadog_update_timer(app):
