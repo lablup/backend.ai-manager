@@ -14,6 +14,7 @@ def init_app_args(parser):
 
     import sorna.manager.cli.fixture
     import sorna.manager.cli.dbschema
+    import sorna.manager.cli.shell
 
 
 config = load_config(extra_args_func=init_app_args)

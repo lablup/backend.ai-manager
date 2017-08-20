@@ -24,6 +24,7 @@ requires = [
     'python-dateutil>=2.5',
     'simplejson',
     'uvloop>=0.8',
+    'aioconsole>=0.1.3',
     'sorna-common~=1.0.0',
 ]
 build_requires = [
