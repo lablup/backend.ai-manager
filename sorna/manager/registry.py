@@ -22,7 +22,7 @@ from ..gateway.exceptions import (
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
     AgentError)
-from .models import agents, kernels, ResourceSlot, AgentStatus, KernelStatus
+from .models import agents, kernels, keypairs, ResourceSlot, AgentStatus, KernelStatus
 from .structs import Instance, Kernel
 from ..gateway.utils import catch_unexpected
 
@@ -170,14 +170,17 @@ class InstanceRegistry:
         wrapping it as Kernel object.
         If ``allow_stale`` is true, it skips checking validity of the kernel owner instance.
         '''
+        cols = [kernels.c.id, kernels.c.sess_id, kernels.c.agent_addr, kernels.c.access_key]
+        if field is not None:
+            cols.append(field)
         async with self.dbpool.acquire() as conn:
             if allow_stale:
-                query = (sa.select([kernels.c.id, kernels.c.sess_id, kernels.c.agent_addr])
+                query = (sa.select(cols)
                            .select_from(kernels)
                            .where(kernels.c.id == kern_id)
                            .limit(1).offset(0))
             else:
-                query = (sa.select([kernels.c.id, kernels.c.sess_id, kernels.c.agent_addr])
+                query = (sa.select(cols)
                            .select_from(kernels.join(agents))
                            .where(kernels.c.id == kern_id and
                                   agents.c.status == AgentStatus.ALIVE and
@@ -199,15 +202,18 @@ class InstanceRegistry:
         wrapping it as Kernel object.
         If ``allow_stale`` is true, it skips checking validity of the kernel owner instance.
         '''
+        cols = [kernels.c.id, kernels.c.sess_id, kernels.c.agent_addr, kernels.c.access_key]
+        if field is not None:
+            cols.append(field)
         async with self.dbpool.acquire() as conn:
             if allow_stale:
-                query = (sa.select([kernels.c.id, kernels.c.sess_id, kernels.c.agent_addr])
+                query = (sa.select(cols)
                            .select_from(kernels)
                            .where(kernels.c.sess_id == sess_id  and
                                   kernels.c.role == 'master')
                            .limit(1).offset(0))
             else:
-                query = (sa.select([kernels.c.id, kernels.c.sess_id, kernels.c.agent_addr])
+                query = (sa.select(cols)
                            .select_from(kernels.join(agents))
                            .where(kernels.c.sess_id == sess_id and
                                   kernels.c.role == 'master' and
@@ -228,14 +234,17 @@ class InstanceRegistry:
         positions without raising KernelNotFound exception.
         '''
 
+        cols = [kernels.c.id, kernels.c.sess_id, kernels.c.agent_addr, kernels.c.access_key]
+        if field is not None:
+            cols.append(field)
         async with self.dbpool.acquire() as conn:
             if allow_stale:
-                query = (sa.select(kernels)
+                query = (sa.select(cols)
                            .select_from(kernels)
                            .where(kernels.c.sess_id in kern_ids and
                                   kernels.c.role == 'master'))
             else:
-                query = (sa.select(kernels)
+                query = (sa.select(cols)
                            .select_from(kernels.join(agents))
                            .where(kernels.c.sess_id in kern_ids and
                                   kernels.c.role == 'master' and
@@ -433,9 +442,9 @@ class InstanceRegistry:
                               kernels.c.role == 'master'))
             await conn.execute(query)
 
-    async def increment_kernel_usage(self, sess_id):
-        log.debug(f'increment_kernel_usage({sess_id})')
-        async with self.dbpool.acquire() as conn:
+    async def increment_session_usage(self, sess_id, conn=None):
+        log.debug(f'increment_session_usage({sess_id})')
+        async with reenter_txn(self.dbpool, conn) as conn:
             query = (sa.update(kernels)
                        .values(num_queries=kernels.c.num_queries + 1)
                        .where(kernels.c.sess_id == sess_id and
@@ -475,6 +484,7 @@ class InstanceRegistry:
 
     async def handle_heartbeat(self, agent_id, agent_info):
         async with self.dbpool.acquire() as conn:
+            # TODO: check why sa.column('status') does not work
             query = (sa.select([agents.c.status], for_update=True)
                        .select_from(agents)
                        .where(agents.c.id == agent_id))
@@ -511,35 +521,95 @@ class InstanceRegistry:
             else:
                 log.error(f'should not reach here! {type(prev_status)}')
 
-    async def forget_kernel(self, sess_id):
-        # release the reserved slots
+    async def mark_kernel_terminated(self, kernel_id):
         async with self.dbpool.acquire() as conn:
-            query = (sa.select().select_from(kernels)
-                       .where(kernels.c.sess_id == sess_id))
-            result = await conn.execute(query)
-            kernel = await result.first()
-            if not kernel:
-                return
-
-            # NOTE: we do NOT delete kernel row for billing and logging;
-            #       only change its status to TERMINATED
+            # change the status to TERMINATED
+            # (we don't delete the row for later logging and billing)
             query = (sa.update(kernels)
                        .values({
                            'status': KernelStatus.TERMINATED,
                            'terminated_at': datetime.now(tzutc()),
                        })
-                       .where(kernels.c.sess_id == sess_id))
+                       .where(kernels.c.id == kernel_id))
             await conn.execute(query)
 
+            # release resource slots
+            query = (sa.select([sa.column('agent'),
+                                sa.column('mem_slot'),
+                                sa.column('cpu_slot'),
+                                sa.column('gpu_slot')])
+                       .select_from(kernels)
+                       .where(kernels.c.id == kernel_id))
+            result = await conn.execute(query)
+            kernel = await result.first()
+            if kernel is None:
+                return
             mem_col = agents.c.used_mem_slots
             cpu_col = agents.c.used_cpu_slots
             gpu_col = agents.c.used_gpu_slots
             query = (sa.update(agents)
-                       .values(used_mem_slots=mem_col + kernel['mem_slot'],
-                               used_cpu_slots=cpu_col + kernel['cpu_slot'],
-                               used_gpu_slots=gpu_col + kernel['gpu_slot'])
-                       .where(agents.c.id == kernel['agent_id']))
+                       .values({
+                           'used_mem_slots': mem_col - kernel['mem_slot'],
+                           'used_cpu_slots': cpu_col - kernel['cpu_slot'],
+                           'used_gpu_slots': gpu_col - kernel['gpu_slot'],
+                       })
+                       .where(agents.c.id == kernel['agent']))
             await conn.execute(query)
+
+            '''
+            if kern_stat:
+                # if last stats available, use it.
+                log.info(f'update_session_usage: {kern.id}, last-stat: {kern_stat}')
+                values = {
+                    'access_key_id': kern.access_key,
+                    'kernel_type': kern.lang,
+                    'kernel_id': kern.id,
+                    'started_at': kern.created_at,
+                    'terminated_at': datetime.now(tzutc()),
+                    'cpu_used': kern_stat['cpu_used'],
+                    'mem_used': kern_stat['mem_max_bytes'] // 1024,
+                    'io_used': (kern_stat['io_read_bytes'] + kern_stat['io_write_bytes']) // 1024,
+                    'net_used': (kern_stat['net_rx_bytes'] + kern_stat['net_tx_bytes']) // 1024,
+                }
+                query = usage.insert().values(**values)
+            else:
+                # otherwise, get the latest stats from the registry.
+                log.info(f'update_session_usage: {kern.id}, registry-stat')
+                values = {
+                    'access_key_id': kern.access_key,
+                    'kernel_type': kern.lang,
+                    'kernel_id': kern.id,
+                    'started_at': kern.created_at,
+                    'terminated_at': datetime.now(tzutc()),
+                    'cpu_used': kern.cpu_used,
+                    'mem_used': kern.mem_max_bytes // 1024,
+                    'io_used': (kern.io_read_bytes + kern.io_write_bytes) // 1024,
+                    'net_used': (kern.net_rx_bytes + kern.net_tx_bytes) // 1024,
+                }
+                query = usage.insert().values(**values)
+            await conn.execute(query)
+            '''
+
+    async def mark_session_terminated(self, sess_id):
+        async with self.dbpool.acquire() as conn:
+
+            # restore concurrency usage of the owner access-key
+            query = (sa.select([sa.column('id'),
+                                sa.column('access_key')])
+                       .select_from(kernels)
+                       .where(kernels.c.sess_id == sess_id))
+            result = await conn.execute(query)
+            all_kernels = await result.fetchall()
+            num_kernels = len(all_kernels)
+            if num_kernels > 0:
+                access_key = all_kernels[0]['access_key']
+                query = (sa.update(keypairs)
+                           .values({
+                               'concurrency_used': (keypairs.c.concurrency_used -
+                                                    num_kernels),
+                           })
+                           .where(keypairs.c.access_key == access_key))
+                await conn.execute(query)
 
     async def forget_instance(self, inst_id):
         async with self.dbpool.acquire() as conn:

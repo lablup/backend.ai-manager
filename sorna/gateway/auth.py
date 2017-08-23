@@ -108,7 +108,7 @@ async def auth_middleware_factory(app, handler):
         params = _extract_auth_params(request)
         if params:
             sign_method, access_key, signature = params
-            async with app.dbpool.acquire() as conn:
+            async with app['dbpool'].acquire() as conn:
                 query = (keypairs.select()
                                 .where(keypairs.c.access_key == access_key))
                 result = await conn.execute(query)

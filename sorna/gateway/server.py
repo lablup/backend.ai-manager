@@ -140,7 +140,7 @@ async def gw_init(app):
             app['sentry'] = raven.Client(app.config.raven_uri)
             log.info('sentry logging enabled')
 
-    app.dbpool = await create_engine(
+    app['dbpool'] = await create_engine(
         dsn=f'host={app.config.db_addr[0]} port={app.config.db_addr[1]} '
             f'user={app.config.db_user} password={app.config.db_password} '
             f'dbname={app.config.db_name}',
@@ -151,8 +151,8 @@ async def gw_init(app):
 
 
 async def gw_shutdown(app):
-    app.dbpool.close()
-    await app.dbpool.wait_closed()
+    app['dbpool'].close()
+    await app['dbpool'].wait_closed()
 
 
 @aiotools.actxmgr

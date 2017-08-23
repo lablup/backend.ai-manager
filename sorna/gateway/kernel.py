@@ -64,7 +64,7 @@ async def create(request):
     try:
         access_key = request['keypair']['access_key']
         concurrency_limit = request['keypair']['concurrency_limit']
-        async with request.app.dbpool.acquire() as conn, conn.begin():
+        async with request.app['dbpool'].acquire() as conn, conn.begin():
             query = (sa.select([keypairs.c.concurrency_used], for_update=True)
                        .select_from(keypairs)
                        .where(keypairs.c.access_key == access_key))
@@ -116,7 +116,7 @@ async def update_instance_usage(app, inst_id):
     if not affected_keys:
         return
 
-    async with app.dbpool.acquire() as conn:
+    async with app['dbpool'].acquire() as conn:
         log.debug(f'update_instance_usage({inst_id})')
         for kern in kernels:
             if kern is None:
@@ -144,63 +144,15 @@ async def update_instance_usage(app, inst_id):
 
 
 @catch_unexpected(log)
-async def update_kernel_usage(app, sess_id, kern_stat=None):
-
-    # TODO: enqueue termination event to streaming response queue
-
-    try:
-        kern = await app['registry'].get_kernel_session(sess_id, allow_stale=True)
-    except KernelNotFound:
-        log.warning(f'update_kernel_usage({sess_id}): kernel is missing!')
-        return
-
-    async with app.dbpool.acquire() as conn:
-        query = (sa.update(keypairs)
-                   .values(concurrency_used=keypairs.c.concurrency_used - 1)
-                   .where(keypairs.c.access_key == kern.access_key))
-        await conn.execute(query)
-        '''
-        if kern_stat:
-            # if last stats available, use it.
-            log.info(f'update_kernel_usage: {kern.id}, last-stat: {kern_stat}')
-            values = {
-                'access_key_id': kern.access_key,
-                'kernel_type': kern.lang,
-                'kernel_id': kern.id,
-                'started_at': kern.created_at,
-                'terminated_at': datetime.now(tzutc()),
-                'cpu_used': kern_stat['cpu_used'],
-                'mem_used': kern_stat['mem_max_bytes'] // 1024,
-                'io_used': (kern_stat['io_read_bytes'] + kern_stat['io_write_bytes']) // 1024,
-                'net_used': (kern_stat['net_rx_bytes'] + kern_stat['net_tx_bytes']) // 1024,
-            }
-            query = usage.insert().values(**values)
-        else:
-            # otherwise, get the latest stats from the registry.
-            log.info(f'update_kernel_usage: {kern.id}, registry-stat')
-            values = {
-                'access_key_id': kern.access_key,
-                'kernel_type': kern.lang,
-                'kernel_id': kern.id,
-                'started_at': kern.created_at,
-                'terminated_at': datetime.now(tzutc()),
-                'cpu_used': kern.cpu_used,
-                'mem_used': kern.mem_max_bytes // 1024,
-                'io_used': (kern.io_read_bytes + kern.io_write_bytes) // 1024,
-                'net_used': (kern.net_rx_bytes + kern.net_tx_bytes) // 1024,
-            }
-            query = usage.insert().values(**values)
-        await conn.execute(query)
-        '''
-
-
-@catch_unexpected(log)
-async def kernel_terminated(app, agent_id, sess_id, reason, kern_stat):
-    for handler in app['stream_pty_handlers'][sess_id].copy():
-        handler.cancel()
-        await handler
-    await update_kernel_usage(app, sess_id, kern_stat)
-    await app['registry'].forget_kernel(sess_id)
+async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
+    kernel = await app['registry'].get_kernel(kernel_id, kernels.c.role)
+    await app['registry'].mark_kernel_terminated(kernel_id)
+    if kernel['role'] == 'master':
+        sess_id = kernel['sess_id']
+        for handler in app['stream_pty_handlers'][sess_id].copy():
+            handler.cancel()
+            await handler
+        await app['registry'].mark_session_terminated(sess_id)
 
 
 @catch_unexpected(log)
@@ -259,7 +211,7 @@ async def datadog_update(app):
         all_inst_ids = [inst_id async for inst_id in app['registry'].enumerate_instances()]
         statsd.gauge('sorna.gateway.agent_instances', len(all_inst_ids))
 
-        async with app.dbpool.acquire() as conn:
+        async with app['dbpool'].acquire() as conn:
             query = (sa.select([sa.func.sum(keypairs.c.concurrency_used)])
                        .select_from(keypairs))
             n = await conn.scalar(query)
@@ -322,7 +274,7 @@ async def get_info(request):
     sess_id = request.match_info['sess_id']
     log.info(f"GETINFO (u:{request['keypair']['access_key']}, k:{sess_id})")
     try:
-        await request.app['registry'].increment_kernel_usage(sess_id)
+        await request.app['registry'].increment_session_usage(sess_id)
         kern = await request.app['registry'].get_kernel(sess_id)
         resp['lang'] = kern.lang
         age = datetime.now(tzutc()) - kern.created_at
@@ -352,7 +304,7 @@ async def restart(request):
     sess_id = request.match_info['sess_id']
     log.info(f"RESTART (u:{request['keypair']['access_key']}, k:{sess_id})")
     try:
-        await request.app['registry'].increment_kernel_usage(sess_id)
+        await request.app['registry'].increment_session_usage(sess_id)
         await request.app['registry'].restart_kernel(sess_id)
         for sock in request.app['stream_stdin_socks'][sess_id]:
             sock.close()
@@ -379,7 +331,7 @@ async def execute(request):
         log.warning('EXECUTE: invalid/missing parameters')
         raise InvalidAPIParameters
     try:
-        await request.app['registry'].increment_kernel_usage(sess_id)
+        await request.app['registry'].increment_session_usage(sess_id)
         api_version = request['api_version']
         if api_version == 1:
             mode = 'query'
@@ -410,7 +362,7 @@ async def upload_files(request):
     reader = await request.multipart()
     sess_id = request.match_info['sess_id']
     try:
-        await request.app['registry'].increment_kernel_usage(sess_id)
+        await request.app['registry'].increment_session_usage(sess_id)
         file_count = 0
         upload_tasks = []
         while True:
@@ -444,7 +396,7 @@ async def stream_pty(request):
     except KernelNotFound:
         raise
 
-    await app['registry'].increment_kernel_usage(sess_id)
+    await app['registry'].increment_session_usage(sess_id)
 
     # Upgrade connection to WebSocket.
     ws = web.WebSocketResponse()
@@ -605,7 +557,7 @@ async def init(app):
     app['stream_pty_handlers'] = defaultdict(set)
     app['stream_stdin_socks'] = defaultdict(set)
 
-    app['registry'] = InstanceRegistry(app.dbpool)
+    app['registry'] = InstanceRegistry(app['dbpool'])
     await app['registry'].init()
     app['status'] = GatewayStatus.RUNNING
 
