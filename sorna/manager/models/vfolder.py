@@ -22,7 +22,11 @@ vfolders = sa.Table(
 
 vfolder_attachment = sa.Table(
     'vfolder_attachment', metadata,
-    sa.Column('vfolder', GUID, sa.ForeignKey('vfolders.id'), nullable=False),
-    sa.Column('kernel', GUID, sa.ForeignKey('kernels.sess_id'), nullable=False),
+    sa.Column('vfolder', GUID,
+              sa.ForeignKey('vfolders.id', onupdate='CASCADE', ondelete='CASCADE'),
+              nullable=False),
+    sa.Column('kernel', GUID,
+              sa.ForeignKey('kernels.id', onupdate='CASCADE', ondelete='CASCADE'),
+              nullable=False),
     sa.PrimaryKeyConstraint('vfolder', 'kernel'),
 )

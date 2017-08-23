@@ -5,10 +5,12 @@ from dateutil.tz import tzutc
 import functools
 import logging
 import operator
+import sys
+from typing import Union
+import uuid
 
 import aiozmq, aiozmq.rpc
 from aiozmq.rpc.base import GenericError, NotFoundError, ParametersError
-import aioredis
 import aiotools
 from async_timeout import timeout as _timeout
 import sqlalchemy as sa
@@ -20,38 +22,17 @@ from ..gateway.exceptions import (
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
     AgentError)
-from ..gateway.defs import (SORNA_KERNEL_DB, SORNA_INSTANCE_DB,
-                            SORNA_SESSION_DB)
 from .models import agents, kernels, ResourceSlot, AgentStatus, KernelStatus
 from .structs import Instance, Kernel
+from ..gateway.utils import catch_unexpected
 
 __all__ = ['InstanceRegistry', 'InstanceNotFound']
 
 log = logging.getLogger('sorna.manager.registry')
 
 
-def auto_get_kernel(func):
-    @functools.wraps(func)
-    async def wrapper(self, *args, **kwargs):
-        if not isinstance(args[0], Kernel):
-            arg0 = await self.get_kernel(args[0])
-            return await func(self, arg0, *args[1:], **kwargs)
-        return await func(self, *args, **kwargs)
-    return wrapper
-
-
-def auto_get_instance(func):
-    @functools.wraps(func)
-    async def wrapper(self, *args, **kwargs):
-        if not isinstance(args[0], Instance):
-            arg0 = await self.get_instance(args[0])
-            return await func(self, arg0, *args[1:], **kwargs)
-        return await func(self, *args, **kwargs)
-    return wrapper
-
-
-class RPCContext:
-
+@aiotools.actxmgr
+async def RPCContext(addr, timeout=10):
     preserved_exceptions = (
         NotFoundError,
         ParametersError,
@@ -59,40 +40,37 @@ class RPCContext:
         asyncio.CancelledError,
         asyncio.InvalidStateError,
     )
-
-    def __init__(self, addr, timeout=10):
-        self.addr = addr
-        self.timeout = timeout
-        self.server = None
-        self.call = None
-
-    async def __aenter__(self):
-        self.server = await aiozmq.rpc.connect_rpc(
-            connect=self.addr, error_table={
+    server = None
+    try:
+        server = await aiozmq.rpc.connect_rpc(
+            connect=addr, error_table={
                 'concurrent.futures._base.TimeoutError': asyncio.TimeoutError,
             })
-        self.server.transport.setsockopt(zmq.LINGER, 50)
-        self.call = self.server.call
-        self.t = _timeout(self.timeout)
-        self.t.__enter__()
-        return self
+        server.transport.setsockopt(zmq.LINGER, 50)
+        with _timeout(timeout):
+            yield server
+    except:
+        exc_type, exc, tb = sys.exc_info()
+        if issubclass(exc_type, GenericError):
+            e = AgentError(exc.args[0], exc.args[1])
+            raise e.with_traceback(tb)
+        elif issubclass(exc_type, preserved_exceptions):
+            raise
+        else:
+            e = AgentError(exc_type, exc.args)
+            raise e.with_traceback(tb)
+    finally:
+        if server:
+            server.close()
 
-    async def __aexit__(self, exc_type, exc, tb):
-        recv_exc = exc_type is not None
-        raise_pending = self.t.__exit__(exc_type, exc, tb)
-        self.server.close()
-        self.server = None
-        self.call = None
-        if recv_exc:
-            if issubclass(exc_type, GenericError):
-                e = AgentError(exc.args[0], exc.args[1])
-                raise e.with_traceback(tb)
-            elif issubclass(exc_type, self.preserved_exceptions):
-                pass
-            else:
-                e = AgentError(exc_type, exc.args)
-                raise e.with_traceback(tb)
-        return recv_exc and raise_pending
+
+@aiotools.actxmgr
+async def reenter_txn(pool, conn):
+    if conn is None:
+        async with pool.acquire() as conn, conn.begin():
+            yield conn
+    else:
+        yield conn
 
 
 # TODO: rename to AgentRegistry
@@ -116,61 +94,34 @@ class InstanceRegistry:
         pass
 
     async def get_instance(self, inst_id, field=None):
-        async with self.dbpool.acquire() as conn, conn.transaction():
+        async with self.dbpool.acquire() as conn:
             query = (sa.select(['id', field] if field else None)
                        .select_from(agents)
                        .where(agents.c.id == inst_id))
-            row = await conn.fetchrow(query)
+            result = await conn.execute(query)
+            row = await result.first()
             if not row:
                 raise InstanceNotFound(inst_id)
             return row
 
-        #async with self.redis_inst.get() as ri:
-        #    if field:
-        #        value = await ri.hget(inst_id, field)
-        #        if value is None:
-        #            raise InstanceNotFound(inst_id)
-        #        return value
-        #    else:
-        #        fields = await ri.hgetall(inst_id)
-        #        if not fields:
-        #            raise InstanceNotFound(inst_id)
-        #        return Instance(**fields)
-
     async def enumerate_instances(self, check_shadow=True):
-        async with self.dbpool.acquire() as conn, conn.transaction():
+        async with self.dbpool.acquire() as conn:
             query = (sa.select_from(agents))
-            for row in await conn.fetch(query):
+            async for row in conn.execute(query):
                 yield row
 
-        #async with self.redis_inst.get() as ri:
-        #    if check_shadow:
-        #        # check only "active" shadow instances.
-        #        async for shadow_id in ri.iscan(match='shadow:i-*'):
-        #            inst_id = shadow_id[7:]  # strip "shadow:" prefix
-        #            if inst_id.endswith('.kernels'):
-        #                continue
-        #            yield inst_id
-        #    else:
-        #        async for inst_id in ri.iscan(match='i-*'):
-        #            if inst_id.endswith('.kernels'):
-        #                continue
-        #            yield inst_id
-
     async def update_instance(self, inst_id, updated_fields):
-        async with self.dbpool.acquire() as conn, conn.transaction():
+        async with self.dbpool.acquire() as conn:
             query = (sa.update(agents)
                        .values(**updated_fields)
-                       .where(agents.c.id == inst.instance_id))
+                       .where(agents.c.id == inst_id))
             await conn.execute(query)
-
-        # async with self.redis_inst.get() as ri:
-        #     await ri.hmset(inst.id, *dict2kvlist(updated_fields))
 
     @aiotools.actxmgr
     async def handle_kernel_exception(self, op, sess_id,
                                 error_callback=None,
-                                cancellation_callback=None):
+                                cancellation_callback=None,
+                                set_error=False):
         op_exc = {
             'create_kernel': KernelCreationFailed,
             'restart_kernel': KernelRestartFailed,
@@ -182,8 +133,9 @@ class InstanceRegistry:
         try:
             yield
         except asyncio.TimeoutError:
-            await self.set_kernel_status(sess_id, KernlStatus.ERROR,
-                                         status_info=f'Operation timeout ({op})')
+            if set_error:
+                await self.set_kernel_status(sess_id, KernelStatus.ERROR,
+                                             status_info=f'Operation timeout ({op})')
             if error_callback:
                 await error_callback()
             raise exc_class('TIMEOUT')
@@ -193,35 +145,78 @@ class InstanceRegistry:
             raise
         except AgentError as e:
             log.exception(f'{op}: agent-side error')
-            await self.set_kernel_status(sess_id, KernlStatus.ERROR,
-                                         status_info='Agent error')
+            if set_error:
+                await self.set_kernel_status(sess_id, KernelStatus.ERROR,
+                                             status_info='Agent error')
             if error_callback:
                 await error_callback()
             raise exc_class('FAILURE', e)
         except:
             log.exception(f'{op}: unexpected error')
             # TODO: raven.captureException()
-            await self.set_kernel_status(sess_id, KernlStatus.ERROR,
-                                         status_info='Unexpected error')
+            if set_error:
+                await self.set_kernel_status(sess_id, KernelStatus.ERROR,
+                                             status_info='Unexpected error')
             if error_callback:
                 await error_callback()
             raise
 
-    async def get_kernel(self, sess_id, field=None, allow_stale=False):
+    async def get_kernel(self, kern_id: uuid.UUID, field=None, allow_stale=False):
         '''
-        Retreive the kernel information as Kernel object.
+        Retreive the kernel information from the given kernel ID.
+        This ID is unique for all individual agent-spawned containers.
+
         If ``field`` is given, it extracts only the raw value of the given field, without
         wrapping it as Kernel object.
         If ``allow_stale`` is true, it skips checking validity of the kernel owner instance.
         '''
-        async with self.dbpool.acquire() as conn, conn.transaction():
-            query = (sa.select(['sess_id', field] if field else None)
-                       .select_from(kernels)
-                       .where(kernels.c.sess_id == sess_id))
-            if not allow_stale:
-                query = query.where(kernels.c.agent.status == AgentStatus.ALIVE)
-            row = await conn.fetchrow(query)
-            if not row:
+        async with self.dbpool.acquire() as conn:
+            if allow_stale:
+                query = (sa.select([kernels.c.id, kernels.c.sess_id, kernels.c.agent_addr])
+                           .select_from(kernels)
+                           .where(kernels.c.id == kern_id)
+                           .limit(1).offset(0))
+            else:
+                query = (sa.select([kernels.c.id, kernels.c.sess_id, kernels.c.agent_addr])
+                           .select_from(kernels.join(agents))
+                           .where(kernels.c.id == kern_id and
+                                  agents.c.status == AgentStatus.ALIVE and
+                                  agents.c.id == kernels.c.agent)
+                           .limit(1).offset(0))
+            result = await conn.execute(query)
+            row = await result.first()
+            if row is None:
+                raise KernelNotFound
+            return row
+
+    async def get_kernel_session(self, sess_id: str, field=None, allow_stale=False):
+        '''
+        Retreive the kernel information from the session ID (client-side session token).
+        If the kernel is composed of multiple containers, it returns the address of the master
+        container.
+
+        If ``field`` is given, it extracts only the raw value of the given field, without
+        wrapping it as Kernel object.
+        If ``allow_stale`` is true, it skips checking validity of the kernel owner instance.
+        '''
+        async with self.dbpool.acquire() as conn:
+            if allow_stale:
+                query = (sa.select([kernels.c.id, kernels.c.sess_id, kernels.c.agent_addr])
+                           .select_from(kernels)
+                           .where(kernels.c.sess_id == sess_id  and
+                                  kernels.c.role == 'master')
+                           .limit(1).offset(0))
+            else:
+                query = (sa.select([kernels.c.id, kernels.c.sess_id, kernels.c.agent_addr])
+                           .select_from(kernels.join(agents))
+                           .where(kernels.c.sess_id == sess_id and
+                                  kernels.c.role == 'master' and
+                                  agents.c.status == AgentStatus.ALIVE and
+                                  agents.c.id == kernels.c.agent)
+                           .limit(1).offset(0))
+            result = await conn.execute(query)
+            row = await result.first()
+            if row is None:
                 raise KernelNotFound
             return row
 
@@ -233,33 +228,44 @@ class InstanceRegistry:
         positions without raising KernelNotFound exception.
         '''
 
-        async with self.dbpool.acquire() as conn, conn.transaction():
-            query = (sa.select(kernels)
-                       .where(kernel.c.sess_id in kern_ids))
-            if not allow_stale:
-                query = query.where(kernels.c.agent.status == AgentStatus.ALIVE)
-            for row in await conn.fetch(query):
-                yield row
+        async with self.dbpool.acquire() as conn:
+            if allow_stale:
+                query = (sa.select(kernels)
+                           .select_from(kernels)
+                           .where(kernels.c.sess_id in kern_ids and
+                                  kernels.c.role == 'master'))
+            else:
+                query = (sa.select(kernels)
+                           .select_from(kernels.join(agents))
+                           .where(kernels.c.sess_id in kern_ids and
+                                  kernels.c.role == 'master' and
+                                  agents.c.status == AgentStatus.ALIVE and
+                                  agents.c.id == kernels.c.agent))
+            kernels = [row async for row in conn.execute(query)]
+            return kernels
 
     async def set_kernel_status(self, sess_id, status, **extra_fields):
         data = {
             'status': status,
         }
         data.update(extra_fields)
-        async with self.dbpool.acquire() as conn, conn.transaction():
+        async with self.dbpool.acquire() as conn:
             query = (sa.update(kernels)
                        .values(data)
                        .where(kernels.c.sess_id == sess_id))
+            result = await conn.execute(query)
+            assert result.rowcount >= 1
 
+    @catch_unexpected(log)
     async def get_or_create_kernel(self, client_sess_token, lang, owner_access_key,
-                                   limits=None, mounts=None):
+                                   limits=None, mounts=None, conn=None):
         assert owner_access_key
         try:
-            kern = await self.get_kernel(client_sess_token)
+            kern = await self.get_kernel_session(client_sess_token)
             created = False
         except KernelNotFound:
             kern = await self.create_kernel(client_sess_token, lang, owner_access_key,
-                                            limits=limits, mounts=mounts)
+                                            limits=limits, mounts=mounts, conn=conn)
             created = True
         assert kern is not None
         return kern, created
@@ -267,247 +273,278 @@ class InstanceRegistry:
     def get_kernel_slot(self, lang):
         # TODO: implement
         return ResourceSlot(
-            None, 1, 1, 1
+            None, 1, 1, 0
         )
 
-    async def create_kernel(self, sess_id, lang, owner_access_key, limits=None, mounts=None):
-        inst_id = None
+    async def create_kernel(self, sess_id, lang, owner_access_key, limits=None, mounts=None, conn=None):
+        agent_id = None
         limits = limits or {}
         mounts = mounts or []
-
         required_slot = self.get_kernel_slot(lang)
+        created_info = None
 
-        async with self.dbpool.acquire() as conn, conn.transaction():
+        async with reenter_txn(self.dbpool, conn) as conn:
 
+            # scan available slots from alive agents
             avail_slots = []
-            query = (sa.select([agents], for_update=True))
-            for row in await conn.fetch(query):
+            query = (sa.select([agents], for_update=True)
+                       .where(agents.c.status == AgentStatus.ALIVE))
+            async for row in conn.execute(query):
                 sdiff = ResourceSlot(
                     row['id'],
-                    row['mem_slots'] - row['used_mem_slots'] - required_slot.mem,
-                    row['cpu_slots'] - row['used_cpu_slots'] - required_slot.cpu,
-                    row['gpu_slots'] - row['used_gpu_slots'] - required_slot.gpu
+                    row['mem_slots'] - row['used_mem_slots'],
+                    row['cpu_slots'] - row['used_cpu_slots'],
+                    row['gpu_slots'] - row['used_gpu_slots'],
                 )
                 avail_slots.append(sdiff)
 
             # check minimum requirement
             avail_slots = [s for s in avail_slots
-                           if s.mem > 0 and s.cpu > 0 and s.gpu > 0]
+                           if s.mem >= required_slot.mem and
+                              s.cpu >= required_slot.cpu and
+                              s.gpu >= required_slot.gpu]
 
             # load-balance
             if avail_slots:
-                inst_id = (max(avail_slots, key=lambda s: s.mem + s.cpu + s.gpu)).id
+                agent_id = (max(avail_slots, key=lambda s: s.mem + s.cpu + s.gpu)).id
             else:
                 raise InstanceNotAvailable
 
             # reserve slots
+            mem_col = agents.c.used_mem_slots
+            cpu_col = agents.c.used_cpu_slots
+            gpu_col = agents.c.used_gpu_slots
             query = (sa.update(agents)
-                       .values(agents.c.used_mem_slots = agents.c.used_mem_slots + required_slot.mem,
-                               agents.c.used_cpu_slots = agents.c.used_cpu_slots + required_slot.cpu,
-                               agents.c.used_gpu_slots = agents.c.used_gpu_slots + required_slot.gpu)
-                       .where(agents.c.id == inst_id))  # noqa
-            await conn.execute(query)
+                       .values({
+                           'used_mem_slots': mem_col + required_slot.mem,
+                           'used_cpu_slots': cpu_col + required_slot.cpu,
+                           'used_gpu_slots': gpu_col + required_slot.gpu,
+                       })
+                       .where(agents.c.id == agent_id))
+            result = await conn.execute(query)
+            assert result.rowcount == 1
 
-        # Create kernel by invoking the agent on the instance.
-        stdin_port = None
-        stdout_port = None
+            # Create kernel by invoking the agent on the instance.
+            query = (sa.select([agents.c.addr])
+                       .where(agents.c.id == agent_id))
+            agent_addr = await conn.scalar(query)
+            assert agent_addr is not None
 
-        async with self.dbpool.acquire() as conn, conn.transaction():
+            # Prepare kernel.
+            kernel_id = uuid.uuid4()
+            query = kernels.insert().values({
+                'id': kernel_id,
+                'status': KernelStatus.PREPARING,
+                'sess_id': sess_id,
+                'role': 'master',
+                'agent': agent_id,
+                'agent_addr': agent_addr,
+                'access_key': owner_access_key,
+                'lang': lang,
+                'mem_slot': required_slot.mem,
+                'cpu_slot': required_slot.cpu,
+                'gpu_slot': required_slot.gpu,
+                'cpu_set': [],
+                'gpu_set': [],
+                'repl_in_port': 0,
+                'repl_out_port': 0,
+                'stdin_port': 0,
+                'stdout_port': 0,
+            })
+            result = await conn.execute(query)
+            assert result.rowcount == 1
 
-            async def revert_slot_reservation():
-                query = (sa.update(agents)
-                           .values(agents.c.used_mem_slots = agents.c.used_mem_slots - required_slot.mem,
-                                   agents.c.used_cpu_slots = agents.c.used_cpu_slots - required_slot.cpu,
-                                   agents.c.used_gpu_slots = agents.c.used_gpu_slots - required_slot.gpu)
-                           .where(agents.c.id == inst_id))  # noqa
-                await conn.execute(query)
-
-            query = (sa.select([agents.c.addr]).where(agents.c.id == inst_id))
-            agent_addr = await conn.fetchval(query)
-
-            async with self.handle_kernel_exception('create_kernel', sess_id,
-                                                    revert_slot_reservation):
-                async with RPCContext(agent_addr, 10) as rpc:
-                    kernel_info = await rpc.call.create_kernel(lang, limits, mounts)
-
-                # TODO: handle stdin_port, stdout_port
-
-                log.debug(f'create_kernel("{sess_id}") -> created on {inst_id}')
-                kernel = {
+            async with self.handle_kernel_exception('create_kernel', sess_id):
+                async with RPCContext(agent_addr, 3) as rpc:
+                    created_info = await rpc.call.create_kernel(lang, str(kernel_id),
+                                                                limits, mounts)
+                if created_info is None:
+                    raise KernelCreationFailed('ooops')
+                log.debug(f'create_kernel("{sess_id}") -> '
+                          f'created on {agent_id}\n{created_info!r}')
+                assert str(kernel_id) == created_info['id']
+                kernel_access_info = {
+                    'id': kernel_id,
                     'sess_id': sess_id,
-                    'agent': inst_id,
-                    'access_key': owner_access_key,
-                    'lang': lang,
+                    'agent': agent_id,
                     'agent_addr': agent_addr,
-                    'container_id': kernel_info['container_id'],
-                    'allocated_cores': kernel_info['allocated_cores'],
                 }
-                query = (kernels.insert().values(**kernel))
-                await conn.execute(query)
-                return kernel
+                query = (kernels.update()
+                                .values({
+                                    'status': KernelStatus.RUNNING,
+                                    'container_id': created_info['container_id'],
+                                    'cpu_set': list(created_info['cpu_set']),
+                                    'gpu_set': list(created_info['gpu_set']),
+                                    'repl_in_port': created_info['repl_in_port'],
+                                    'repl_out_port': created_info['repl_out_port'],
+                                    'stdin_port': created_info['stdin_port'],
+                                    'stdout_port': created_info['stdout_port'],
+                                })
+                                .where(kernels.c.id == kernel_id))
+                result = await conn.execute(query)
+                assert result.rowcount == 1
+                return kernel_access_info
+
 
     async def destroy_kernel(self, sess_id):
         log.debug(f"destroy_kernel({sess_id})")
-        kernel = await self.get_kernel(sess_id, 'agent_addr')
-        async with self.handle_kernel_exception('destroy_kernel', sess_id):
-            await self.set_kernel_status(sess_id, KernlStatus.TERMINATING)
+        kernel = await self.get_kernel_session(sess_id)
+        async with self.handle_kernel_exception('destroy_kernel', sess_id,
+                                                set_error=True):
+            await self.set_kernel_status(sess_id, KernelStatus.TERMINATING)
             async with RPCContext(kernel['agent_addr'], 10) as rpc:
-                await rpc.call.destroy_kernel(kernel['id'])
+                await rpc.call.destroy_kernel(str(kernel['id']))
 
     async def restart_kernel(self, sess_id):
         log.debug(f'restart_kernel({sess_id})')
-        kernel = await self.get_kernel(sess_id, 'agent_addr')
-
+        kernel = await self.get_kernel_session(sess_id)
         async with self.handle_kernel_exception('restart_kernel', sess_id):
-            await self.set_kernel_status(sess_id, KernlStatus.RESTARTING)
+            await self.set_kernel_status(sess_id, KernelStatus.RESTARTING)
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
-                kernel_info = await rpc.call.restart_kernel(sess_id)
+                kernel_info = await rpc.call.restart_kernel(str(kernel['id']))
             # TODO: what if prev status was "building" or others?
-            await self.set_kernel_status(sess_id, KernlStatus.RUNNING,
+            await self.set_kernel_status(sess_id, KernelStatus.RUNNING,
                                          stdin_port=kernel_info['stdin_port'],
                                          stdout_port=kernel_info['stdout_port'])
 
     async def execute(self, sess_id, api_version, mode, code, opts):
         log.debug(f'execute:v{api_version}({sess_id}, {mode}')
+        kernel = await self.get_kernel_session(sess_id)
         async with self.handle_kernel_exception('execute', sess_id):
-            async with RPCContext(kernel.addr, 200) as rpc:  # must be longer than kernel exec_timeout
-                result = await rpc.call.execute(api_version, kernel.id,
+            async with RPCContext(kernel['agent_addr'], 200) as rpc:  # must be longer than kernel exec_timeout
+                result = await rpc.call.execute(api_version, str(kernel['id']),
                                                 mode, code, opts)
                 return result
 
     async def upload_file(self, sess_id, filename, filedata):
         log.debug(f'upload_file({sess_id}, {filename})')
+        kernel = await self.get_kernel_session(sess_id)
         async with self.handle_kernel_exception('upload_file', sess_id):
-            async with RPCContext(kernel.addr, 10000) as rpc:
-                result = await rpc.call.upload_file(kernel.id, filename, filedata)
+            async with RPCContext(kernel['agent_addr'], 10000) as rpc:
+                result = await rpc.call.upload_file(str(kernel['id']), filename, filedata)
                 return result
 
     async def update_kernel(self, sess_id, updated_fields):
         log.debug(f'update_kernel({sess_id})')
-        async with self.redis_kern.get() as rk:
-            await rk.hmset(kernel.id, *dict2kvlist(updated_fields))
+        async with self.dbpool.acquire() as conn:
+            query = (sa.update(kernels)
+                       .values(updated_fields)
+                       .where(kernels.c.sess_id == sess_id and
+                              kernels.c.role == 'master'))
+            await conn.execute(query)
 
     async def increment_kernel_usage(self, sess_id):
         log.debug(f'increment_kernel_usage({sess_id})')
-        async with self.redis_kern.get() as rk:
-            await rk.hincrby(kernel.id, 'num_queries', 1)
+        async with self.dbpool.acquire() as conn:
+            query = (sa.update(kernels)
+                       .values(num_queries=kernels.c.num_queries + 1)
+                       .where(kernels.c.sess_id == sess_id and
+                              kernels.c.role == 'master'))
+            await conn.execute(query)
 
     async def get_kernels_in_instance(self, inst_id):
-        async with self.lifecycle_lock, \
-                   self.redis_inst.get() as ri:  # noqa
-            kern_ids = await ri.smembers(f'{inst_id}.kernels')
-            if kern_ids is None:
-                return []
-            return kern_ids
+        async with self.dbpool.acquire() as conn:
+            query = (sa.select([kernels.c.sess_id])
+                       .select_from(kernels)
+                       .where(kernels.c.agent == inst_id))
+            result = await conn.execute(query)
+            rows = await result.fetchall()
+            if not rows:
+                return tuple()
+            return rows
 
     async def handle_stats(self, inst_id, kern_stats, interval):
-        async with self.lifecycle_lock, \
-                   self.redis_inst.get() as ri, \
-                   self.redis_kern.get() as rk:  # noqa
+        pass
+        #async with self.lifecycle_lock, \
+        #           self.redis_inst.get() as ri, \
+        #           self.redis_kern.get() as rk:  # noqa
 
-            rk_pipe = rk.pipeline()
-            for kern_id in kern_stats.keys():
-                rk_pipe.exists(kern_id)
-            kernel_existence = await rk_pipe.execute()
+        #    rk_pipe = rk.pipeline()
+        #    for kern_id in kern_stats.keys():
+        #        rk_pipe.exists(kern_id)
+        #    kernel_existence = await rk_pipe.execute()
 
-            ri_pipe = ri.pipeline()
-            rk_pipe = rk.pipeline()
-            for (kern_id, stats), alive in zip(kern_stats.items(), kernel_existence):
-                if alive:
-                    ri_pipe.sadd(f'{inst_id}.kernels', kern_id)
-                    rk_pipe.hmset(kern_id, *dict2kvlist(stats))
-            await ri_pipe.execute()
-            await rk_pipe.execute()
+        #    ri_pipe = ri.pipeline()
+        #    rk_pipe = rk.pipeline()
+        #    for (kern_id, stats), alive in zip(kern_stats.items(), kernel_existence):
+        #        if alive:
+        #            ri_pipe.sadd(f'{inst_id}.kernels', kern_id)
+        #            rk_pipe.hmset(kern_id, *dict2kvlist(stats))
+        #    await ri_pipe.execute()
+        #    await rk_pipe.execute()
 
-    async def handle_heartbeat(self, inst_id, inst_info, running_kernels, interval):
-        async with self.lifecycle_lock, \
-                   self.redis_inst.get() as ri, \
-                   self.redis_kern.get() as rk:  # noqa
+    async def handle_heartbeat(self, agent_id, agent_info):
+        async with self.dbpool.acquire() as conn:
+            query = (sa.select([agents.c.status], for_update=True)
+                       .select_from(agents)
+                       .where(agents.c.id == agent_id))
+            prev_status = await conn.scalar(query)
+            if prev_status is None:
+                # new agent detected!
+                log.info(f'agent {agent_id} joined!')
+                query = agents.insert().values({
+                    'id': agent_id,
+                    'status': AgentStatus.ALIVE,
+                    'mem_slots': agent_info['mem_slots'],
+                    'cpu_slots': agent_info['cpu_slots'],
+                    'gpu_slots': agent_info['gpu_slots'],
+                    'used_mem_slots': 0,
+                    'used_cpu_slots': 0,
+                    'used_gpu_slots': 0,
+                    'addr': agent_info['addr'],
+                    'first_contact': datetime.now(tzutc()),
+                    'lost_at': None,
+                })
+                result = await conn.execute(query)
+                assert result.rowcount == 1
+            elif prev_status == AgentStatus.ALIVE:
+                log.debug(f'agent {agent_id} still alive')
+            elif prev_status in (AgentStatus.LOST, AgentStatus.TERMINATED):
+                log.warning(f'agent {agent_id} revived!')
+                query = (sa.update(agents)
+                           .values({
+                               'status': AgentStatus.ALIVE,
+                               'lost_at': None,
+                           })
+                           .where(agents.c.id == agent_id))
+                await conn.execute(query)
+            else:
+                log.error(f'should not reach here! {type(prev_status)}')
 
-            rk_pipe = rk.pipeline()
-            for kern_id in running_kernels:
-                rk_pipe.exists(kern_id)
-            kernel_existence = await rk_pipe.execute()
+    async def forget_kernel(self, sess_id):
+        # release the reserved slots
+        async with self.dbpool.acquire() as conn:
+            query = (sa.select().select_from(kernels)
+                       .where(kernels.c.sess_id == sess_id))
+            result = await conn.execute(query)
+            kernel = await result.first()
+            if not kernel:
+                return
 
-            ri_pipe = ri.pipeline()
-            rk_pipe = rk.pipeline()
-            for kern_id, alive in zip(running_kernels, kernel_existence):
-                if alive:
-                    ri_pipe.sadd(f'{inst_id}.kernels', kern_id)
-                    rk_pipe.hset(kern_id, 'instance', inst_id)
-            # Create a "shadow" key that actually expires.
-            # This allows access to agent information upon expiration events.
-            ri_pipe.hmset(inst_id, *dict2kvlist(inst_info))
-            ri_pipe.set(f'shadow:{inst_id}', '')
-            ri_pipe.expire(f'shadow:{inst_id}', float(interval * 3.3))
-            await ri_pipe.execute()
-            await rk_pipe.execute()
+            # NOTE: we do NOT delete kernel row for billing and logging;
+            #       only change its status to TERMINATED
+            query = (sa.update(kernels)
+                       .values({
+                           'status': KernelStatus.TERMINATED,
+                           'terminated_at': datetime.now(tzutc()),
+                       })
+                       .where(kernels.c.sess_id == sess_id))
+            await conn.execute(query)
 
-    async def revive_instance(self, inst_id, inst_addr):
-        try:
-            async with RPCContext(inst_addr, 10) as rpc:
-                await rpc.call.reset()
-        except asyncio.TimeoutError:
-            log.warning('revive_instance timeout')
-        except AgentError as e:
-            log.exception('revive_instance: agent-side error')
-        except:
-            log.exception('revive_instance: unexpected error')
-        await self.reset_instance(inst_id)
-
-    async def reset_instance(self, inst_id):
-        async with self.lifecycle_lock, \
-                   self.redis_inst.get() as ri:  # noqa
-            # Clear the running kernels set.
-            ri_pipe = ri.pipeline()
-            ri_pipe.hset(inst_id, 'status', 'running')
-            ri_pipe.hset(inst_id, 'num_kernels', 0)
-            ri_pipe.delete(f'{inst_id}.kernels')
-            await ri_pipe.execute()
-
-    async def forget_kernel(self, kern_id):
-        async with self.lifecycle_lock, \
-                   self.redis_inst.get() as ri, \
-                   self.redis_kern.get() as rk:  # noqa
-            rk_pipe = rk.pipeline()
-            rk_pipe.hget(kern_id, 'instance')
-            rk_pipe.delete(kern_id)
-            results = await rk_pipe.execute()
-            inst_id = results[0]
-            if inst_id:
-                ri_pipe = ri.pipeline()
-                ri_pipe.hincrby(inst_id, 'num_kernels', -1)
-                ri_pipe.srem(f'{inst_id}.kernels', kern_id)
-                await ri_pipe.execute()
-
-    async def forget_all_kernels_in_instance(self, inst_id):
-        async with self.lifecycle_lock, \
-                   self.redis_inst.get() as ri, \
-                   self.redis_kern.get() as rk:  # noqa
-            ri_pipe = ri.pipeline()
-            ri_pipe.smembers(f'{inst_id}.kernels')
-            ri_pipe.hset(inst_id, 'num_kernels', 0)
-            ri_pipe.delete(f'{inst_id}.kernels')
-            results = await ri_pipe.execute()
-            kern_ids = results[0]
-            rk_pipe = rk.pipeline()
-            if kern_ids:
-                for kern_id in kern_ids:
-                    rk_pipe.delete(kern_id)
-            await rk_pipe.execute()
+            mem_col = agents.c.used_mem_slots
+            cpu_col = agents.c.used_cpu_slots
+            gpu_col = agents.c.used_gpu_slots
+            query = (sa.update(agents)
+                       .values(used_mem_slots=mem_col + kernel['mem_slot'],
+                               used_cpu_slots=cpu_col + kernel['cpu_slot'],
+                               used_gpu_slots=gpu_col + kernel['gpu_slot'])
+                       .where(agents.c.id == kernel['agent_id']))
+            await conn.execute(query)
 
     async def forget_instance(self, inst_id):
-        async with self.lifecycle_lock, \
-                   self.redis_inst.get() as ri, \
-                   self.redis_kern.get() as rk:  # noqa
-            ri_pipe = ri.pipeline()
-            ri_pipe.smembers(f'{inst_id}.kernels')
-            # Delete shadow key immediately to prevent bogus agent-lost events.
-            ri_pipe.delete(f'shadow:{inst_id}')
-            ri_pipe.delete(inst_id)
-            ri_pipe.delete(f'{inst_id}.kernels')
-            results = await ri_pipe.execute()
-            kern_ids = results[0]
-            if kern_ids:
-                await rk.delete(*kern_ids)
-            return kern_ids
+        async with self.dbpool.acquire() as conn:
+            query = (sa.update(agents)
+                       .values(status=AgentStatus.TERMINATED,
+                               lost_at=datetime.now(tzutc()))
+                       .where(agents.c.id == inst_id))
+            await conn.execute(query)

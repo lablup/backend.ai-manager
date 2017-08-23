@@ -13,7 +13,7 @@ import sys
 import aiohttp
 from aiohttp import web
 import aiotools
-import asyncpgsa
+from aiopg.sa import create_engine
 import uvloop
 try:
     import datadog
@@ -140,20 +140,19 @@ async def gw_init(app):
             app['sentry'] = raven.Client(app.config.raven_uri)
             log.info('sentry logging enabled')
 
-    app.dbpool = await asyncpgsa.create_pool(
-        host=str(app.config.db_addr[0]),
-        port=app.config.db_addr[1],
-        database=app.config.db_name,
-        user=app.config.db_user,
-        password=app.config.db_password,
-        min_size=4, max_size=16,
+    app.dbpool = await create_engine(
+        dsn=f'host={app.config.db_addr[0]} port={app.config.db_addr[1]} '
+            f'user={app.config.db_user} password={app.config.db_password} '
+            f'dbname={app.config.db_name}',
+        minsize=4, maxsize=16,
     )
     app.middlewares.append(exception_middleware_factory)
     app.middlewares.append(api_middleware_factory)
 
 
 async def gw_shutdown(app):
-    await app.dbpool.close()
+    app.dbpool.close()
+    await app.dbpool.wait_closed()
 
 
 @aiotools.actxmgr
@@ -229,8 +228,6 @@ def gw_args(parser):
     parser.add('--ssl-key', env_var='SORNA_SSL_KEY', type=path, default=None,
                help='The path to the private key used to make requests for the SSL certificate. '
                     '(default: None)')
-    parser.add('--gpu-instances', env_var='SORNA_GPU_INSTANCES', type=str, default=None,
-               help='Manually set list of GPU-enabled agent instance IDs.')
     if datadog_available:
         parser.add('--datadog-api-key', env_var='DATADOG_API_KEY', type=str, default=None,
                    help='The API key for Datadog monitoring agent.')

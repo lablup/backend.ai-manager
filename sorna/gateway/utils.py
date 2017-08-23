@@ -1,3 +1,4 @@
+import functools
 import io
 import re
 import traceback
@@ -18,3 +19,22 @@ def prettify_traceback(exc):
                     print(f'  {short_path}:{frame.lineno} ({frame.name})', file=buf)
             exc = exc.__context__
         return f'Traceback:\n{buf.getvalue()}'
+
+
+def catch_unexpected(log, raven=None):
+
+    def _wrap(func):
+
+        @functools.wraps(func)
+        async def _wrapped(*args, **kwargs):
+            try:
+                return await func(*args, **kwargs)
+            except:
+                if raven:
+                    raven.captureException()
+                log.exception('unexpected error!')
+                raise
+
+        return _wrapped
+
+    return _wrap

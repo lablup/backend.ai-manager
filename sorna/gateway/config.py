@@ -41,8 +41,8 @@ def load_config(argv=None, extra_args_func=None):
 class SQLResetQueryLogFilter(logging.Filter):
 
     def filter(self, record):
-        if record.name == 'asyncpgsa.query':
-            return not record.msg.lower().startswith('select pg_advisory_unlock_all();')
+        #if record.name == 'asyncpgsa.query':
+        #    return not record.msg.lower().startswith('select pg_advisory_unlock_all();')
         return True
 
 
@@ -86,7 +86,7 @@ def init_logger(config):
                 'handlers': ['console'],
                 'level': 'INFO',
             },
-            'asyncpgsa': {
+            'aiopg': {
                 'handlers': ['console'],
                 'propagate': False,
                 'level': 'DEBUG' if config.debug else 'INFO',

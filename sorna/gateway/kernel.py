@@ -27,7 +27,8 @@ from .exceptions import (ServiceUnavailable, InvalidAPIParameters, QuotaExceeded
                          SornaError)
 from . import GatewayStatus
 from .auth import auth_required
-from ..manager.models import keypairs, kernels
+from .utils import catch_unexpected
+from ..manager.models import keypairs, kernels, AgentStatus, KernelStatus
 from ..manager.registry import InstanceRegistry
 
 _json_type = 'application/json'
@@ -63,11 +64,11 @@ async def create(request):
     try:
         access_key = request['keypair']['access_key']
         concurrency_limit = request['keypair']['concurrency_limit']
-        async with request.app.dbpool.acquire() as conn, conn.transaction():
+        async with request.app.dbpool.acquire() as conn, conn.begin():
             query = (sa.select([keypairs.c.concurrency_used], for_update=True)
                        .select_from(keypairs)
                        .where(keypairs.c.access_key == access_key))
-            concurrency_used = await conn.fetchval(query)
+            concurrency_used = await conn.scalar(query)
             log.debug(f'access_key: {access_key} ({concurrency_used} / {concurrency_limit})')
             if concurrency_used >= concurrency_limit:
                 raise QuotaExceeded
@@ -80,8 +81,9 @@ async def create(request):
             kernel, created = await request.app['registry'].get_or_create_kernel(
                 params['clientSessionToken'],
                 params['lang'], access_key,
-                limits, mounts)
-            resp['kernelId'] = kernel.id
+                limits, mounts,
+                conn=conn)
+            resp['kernelId'] = str(kernel['sess_id'])
             if created:
                 query = (sa.update(keypairs)
                            .values(concurrency_used=keypairs.c.concurrency_used + 1)
@@ -94,27 +96,7 @@ async def create(request):
                         text=json.dumps(resp))
 
 
-def grace_event_catcher(func):
-    '''
-    Catches events during grace periods and prevent event handlers from running.
-    '''
-    @functools.wraps(func)
-    async def wrapped(*args, **kwargs):
-        app = args[0]
-        if app['status'] == GatewayStatus.STARTING:
-            evinfo = {
-                '_type': func.__name__,
-                '_handler': func,
-                '_when': time.monotonic(),
-                '_args': args[1:],
-                '_kwargs': kwargs,
-            }
-            grace_events.append(evinfo)
-        else:
-            return (await func(*args, **kwargs))
-    return wrapped
-
-
+@catch_unexpected(log)
 async def update_instance_usage(app, inst_id):
     # In heartbeat timeouts, we do NOT clear Redis keys because
     # the timeout may be a transient one.
@@ -134,7 +116,7 @@ async def update_instance_usage(app, inst_id):
     if not affected_keys:
         return
 
-    async with app.dbpool.acquire() as conn, conn.transaction():
+    async with app.dbpool.acquire() as conn:
         log.debug(f'update_instance_usage({inst_id})')
         for kern in kernels:
             if kern is None:
@@ -161,17 +143,18 @@ async def update_instance_usage(app, inst_id):
             await conn.execute(query)
 
 
-async def update_kernel_usage(app, kern_id, kern_stat=None):
+@catch_unexpected(log)
+async def update_kernel_usage(app, sess_id, kern_stat=None):
 
     # TODO: enqueue termination event to streaming response queue
 
     try:
-        kern = await app['registry'].get_kernel(kern_id, allow_stale=True)
+        kern = await app['registry'].get_kernel_session(sess_id, allow_stale=True)
     except KernelNotFound:
-        log.warning(f'update_kernel_usage({kern_id}): kernel is missing!')
+        log.warning(f'update_kernel_usage({sess_id}): kernel is missing!')
         return
 
-    async with app.dbpool.acquire() as conn, conn.transaction():
+    async with app.dbpool.acquire() as conn:
         query = (sa.update(keypairs)
                    .values(concurrency_used=keypairs.c.concurrency_used - 1)
                    .where(keypairs.c.access_key == kern.access_key))
@@ -211,59 +194,61 @@ async def update_kernel_usage(app, kern_id, kern_stat=None):
         '''
 
 
-@grace_event_catcher
-async def kernel_terminated(app, kern_id, reason, kern_stat):
-    for handler in app['stream_pty_handlers'][kern_id].copy():
+@catch_unexpected(log)
+async def kernel_terminated(app, agent_id, sess_id, reason, kern_stat):
+    for handler in app['stream_pty_handlers'][sess_id].copy():
         handler.cancel()
         await handler
-    await update_kernel_usage(app, kern_id, kern_stat)
-    await app['registry'].forget_kernel(kern_id)
+    await update_kernel_usage(app, sess_id, kern_stat)
+    await app['registry'].forget_kernel(sess_id)
 
 
-@grace_event_catcher
-async def instance_started(app, inst_id):
-    await app['registry'].reset_instance(inst_id)
+@catch_unexpected(log)
+async def instance_started(app, agent_id):
+    # TODO: make feedback to our auto-scaler
+    await app['registry'].update_instance(agent_id, {
+        'status': AgentStatus.ALIVE,
+    })
 
 
-@grace_event_catcher
-async def instance_terminated(app, inst_id, reason):
+@catch_unexpected(log)
+async def instance_terminated(app, agent_id, reason):
     if reason == 'agent-lost':
-        log.warning(f'agent@{inst_id} heartbeat timeout detected.')
-        await app['registry'].update_instance(inst_id, {'status': 'lost'})
-        await update_instance_usage(app, inst_id)
-        for kern_id in (await app['registry'].get_kernels_in_instance(inst_id)):
-            for handler in app['stream_pty_handlers'][kern_id].copy():
-                handler.cancel()
-                await handler
-        await app['registry'].forget_all_kernels_in_instance(inst_id)
+        log.warning(f'agent {agent_id} heartbeat timeout detected.')
+        await app['registry'].update_instance(agent_id, {
+            'status': AgentStatus.LOST,
+            'lost_at': datetime.now(tzutc()),
+        })
+        await update_instance_usage(app, agent_id)
+        # TODO: interpret kern_id to sess_id
+        #for kern_id in (await app['registry'].get_kernels_in_instance(agent_id)):
+        #    for handler in app['stream_pty_handlers'][kern_id].copy():
+        #        handler.cancel()
+        #        await handler
+        # TODO: define behavior when agent reuse running instances upon revive
+        #await app['registry'].forget_all_kernels_in_instance(agent_id)
+    elif reason == 'agent-restart':
+        log.info(f'agent@{agent_id} restarting for maintenance.')
+        await app['registry'].update_instance(agent_id, {
+            'status': AgentStatus.RESTARTING,
+        })
     else:
         # On normal instance termination, kernel_terminated events were already
         # triggered by the agent.
-        await app['registry'].forget_instance(inst_id)
+        await app['registry'].update_instance(agent_id, {
+            'status': AgentStatus.TERMINATED,
+        })
 
 
-@grace_event_catcher
-async def instance_heartbeat(app, inst_id, inst_info, running_kernels, interval):
-    revived = False
-    try:
-        inst_status = await app['registry'].get_instance(inst_id, 'status')
-        if inst_status == 'lost':
-            revived = True
-    except InstanceNotFound:
-        # may have started during the grace period.
-        app['event_dispatcher'].dispatch('instance_started', inst_id)
-
-    if revived:
-        log.warning(f'agent@{inst_id} revived.')
-        await app['registry'].revive_instance(inst_id, inst_info['addr'])
-    else:
-        await app['registry'].handle_heartbeat(inst_id, inst_info, running_kernels, interval)
+@catch_unexpected(log)
+async def instance_heartbeat(app, agent_id, agent_info):
+    await app['registry'].handle_heartbeat(agent_id, agent_info)
 
 
 # NOTE: This event is ignored during the grace period.
-async def instance_stats(app, inst_id, kern_stats, interval):
-    if app['status'] == GatewayStatus.RUNNING:
-        await app['registry'].handle_stats(inst_id, kern_stats, interval)
+@catch_unexpected(log)
+async def instance_stats(app, agent_id, kern_stats):
+    await app['registry'].handle_stats(agent_id, kern_stats)
 
 
 async def datadog_update(app):
@@ -274,10 +259,10 @@ async def datadog_update(app):
         all_inst_ids = [inst_id async for inst_id in app['registry'].enumerate_instances()]
         statsd.gauge('sorna.gateway.agent_instances', len(all_inst_ids))
 
-        async with app.dbpool.acquire() as conn, conn.transaction():
+        async with app.dbpool.acquire() as conn:
             query = (sa.select([sa.func.sum(keypairs.c.concurrency_used)])
                        .select_from(keypairs))
-            n = await conn.fetchval(query)
+            n = await conn.scalar(query)
             statsd.gauge('sorna.gateway.active_kernels', n)
 
             subquery = (sa.select([sa.func.count()])
@@ -285,17 +270,17 @@ async def datadog_update(app):
                           .where(keypairs.c.is_active == true())
                           .group_by(keypairs.c.user_id))
             query = sa.select([sa.func.count()]).select_from(subquery.alias())
-            n = await conn.fetchval(query)
+            n = await conn.scalar(query)
             statsd.gauge('sorna.users.has_active_key', n)
 
             subquery = subquery.where(keypairs.c.last_used != null())
             query = sa.select([sa.func.count()]).select_from(subquery.alias())
-            n = await conn.fetchval(query)
+            n = await conn.scalar(query)
             statsd.gauge('sorna.users.has_used_key', n)
 
             '''
             query = sa.select([sa.func.count()]).select_from(usage)
-            n = await conn.fetchval(query)
+            n = await conn.scalar(query)
             statsd.gauge('sorna.gateway.accum_kernels', n)
             '''
 
@@ -317,93 +302,13 @@ async def datadog_update_timer(app):
             break
 
 
-async def collect_agent_events(app, heartbeat_interval):
-    '''
-    Collects agent-generated events for a while (via :func:`grace_event_catcher`).
-    This allows synchronization of Redis/DB with the current cluster status
-    upon (re)starts of the gateway.
-    '''
-
-    log.info('running a grace period to detect live agents...')
-    app['status'] = GatewayStatus.STARTING
-    grace_events.clear()
-
-    try:
-        await asyncio.sleep(heartbeat_interval * 2.1)
-    except asyncio.CancelledError:
-        return
-
-    log.info('bulk-dispatching latest events...')
-    per_inst_events = defaultdict(list)
-    processed_events = []
-
-    for ev in grace_events:
-        if ev['_type'] in {'instance_started',
-                           'instance_terminated',
-                           'instance_heartbeat'}:
-            per_inst_events[ev['_args'][0]].append(ev)
-
-    # Keep only the latest event for each instance.
-    for inst_id, events in per_inst_events.items():
-        latest_event = max(events, key=lambda ev: ev['_when'])
-        log.debug(f"{inst_id} -> {latest_event['_type']}")
-        processed_events.append(latest_event)
-        # TODO: sometimes the restarted gateway receives duplicate "instance_terminated" events...
-
-    # Mark instances not detected during event collection to be cleared.
-    valid_inst_ids = set(ev['_args'][0] for ev in processed_events)
-    terminated_inst_ids = [
-        inst_id async for inst_id in app['registry'].enumerate_instances(check_shadow=False)
-        if inst_id not in valid_inst_ids and inst_id is not None
-    ]
-
-    app['status'] = GatewayStatus.SYNCING
-
-    for ev in processed_events:
-        # calculate & update diff on kernel list and usage
-        if ev['_type'] == 'instance_heartbeat':
-            inst_id = ev['_args'][0]
-            running_kernels = set(ev['_args'][2])
-            tracked_kernels = set(await app['registry'].get_kernels_in_instance(inst_id))
-            new_kernels = running_kernels - tracked_kernels
-            old_kernels = tracked_kernels - running_kernels
-            if new_kernels:
-                log.warning(f'bulk-sync: new untracked kernels on {inst_id}: {new_kernels}')
-            if old_kernels:
-                log.warning(f'bulk-sync: deleted tracked kernels on {inst_id}: {old_kernels}')
-            for kern_id in old_kernels:
-                await update_kernel_usage(app, kern_id)
-                await app['registry'].forget_kernel(kern_id)
-            async with app.dbpool.acquire() as conn, conn.transaction():
-                # This case should be very very rare.
-                for kern_id in new_kernels:
-                    access_key = await app['registry'].get_kernel(kern_id, 'access_key')
-                    query = (sa.update(keypairs)
-                               .values(concurrency_used=keypairs.c.concurrency_used + 1)
-                               .where(keypairs.c.access_key == access_key))
-                    await conn.execute(query)
-
-        # invoke original event handler
-        await ev['_handler'](app, *ev['_args'], **ev['_kwargs'])
-
-    for inst_id in terminated_inst_ids:
-        log.warning(f'instance {inst_id} is not running!')
-        await update_instance_usage(app, inst_id)
-        await app['registry'].forget_instance(inst_id)
-
-    app['kernel_ddtimer'] = asyncio.ensure_future(datadog_update_timer(app))
-
-    log.info('entering normal operation mode...')
-    app['status'] = GatewayStatus.RUNNING
-
-
 @auth_required
 @server_ready_required
 async def destroy(request):
-    kern_id = request.match_info['kernel_id']
-    log.info(f"DESTROY (u:{request['keypair']['access_key']}, k:{kern_id})")
+    sess_id = request.match_info['sess_id']
+    log.info(f"DESTROY (u:{request['keypair']['access_key']}, k:{sess_id})")
     try:
-        await request.app['registry'].destroy_kernel(kern_id)
+        await request.app['registry'].destroy_kernel(sess_id)
     except SornaError:
         log.exception('DESTROY: API Internal Error')
         raise
@@ -414,11 +319,11 @@ async def destroy(request):
 @server_ready_required
 async def get_info(request):
     resp = {}
-    kern_id = request.match_info['kernel_id']
-    log.info(f"GETINFO (u:{request['keypair']['access_key']}, k:{kern_id})")
+    sess_id = request.match_info['sess_id']
+    log.info(f"GETINFO (u:{request['keypair']['access_key']}, k:{sess_id})")
     try:
-        await request.app['registry'].increment_kernel_usage(kern_id)
-        kern = await request.app['registry'].get_kernel(kern_id)
+        await request.app['registry'].increment_kernel_usage(sess_id)
+        kern = await request.app['registry'].get_kernel(sess_id)
         resp['lang'] = kern.lang
         age = datetime.now(tzutc()) - kern.created_at
         resp['age'] = age.total_seconds() * 1000
@@ -444,12 +349,12 @@ async def get_info(request):
 @auth_required
 @server_ready_required
 async def restart(request):
-    kern_id = request.match_info['kernel_id']
-    log.info(f"RESTART (u:{request['keypair']['access_key']}, k:{kern_id})")
+    sess_id = request.match_info['sess_id']
+    log.info(f"RESTART (u:{request['keypair']['access_key']}, k:{sess_id})")
     try:
-        await request.app['registry'].increment_kernel_usage(kern_id)
-        await request.app['registry'].restart_kernel(kern_id)
-        for sock in request.app['stream_stdin_socks'][kern_id]:
+        await request.app['registry'].increment_kernel_usage(sess_id)
+        await request.app['registry'].restart_kernel(sess_id)
+        for sock in request.app['stream_stdin_socks'][sess_id]:
             sock.close()
     except SornaError:
         log.exception('RESTART: API Internal Error')
@@ -465,29 +370,29 @@ async def restart(request):
 @server_ready_required
 async def execute(request):
     resp = {}
-    kern_id = request.match_info['kernel_id']
+    sess_id = request.match_info['sess_id']
     try:
         with _timeout(2):
             params = await request.json()
-        log.info(f"EXECUTE(u:{request['keypair']['access_key']}, k:{kern_id})")
+        log.info(f"EXECUTE(u:{request['keypair']['access_key']}, k:{sess_id})")
     except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
         log.warning('EXECUTE: invalid/missing parameters')
         raise InvalidAPIParameters
     try:
-        await request.app['registry'].increment_kernel_usage(kern_id)
+        await request.app['registry'].increment_kernel_usage(sess_id)
         api_version = request['api_version']
         if api_version == 1:
             mode = 'query'
             code = params['code']
             opts = {}
-        elif api_version == 2:
+        elif api_version in (2, 3):
             mode = params['mode']
             code = params.get('code', '')
             mode = params['mode']
             assert mode in ('query', 'batch', 'complete')
             opts = params.get('options', None) or {}
         resp['result'] = await request.app['registry'].execute(
-            kern_id, api_version, mode, code, opts)
+            sess_id, api_version, mode, code, opts)
     except AssertionError:
         log.warning('EXECUTE: invalid/missing parameters')
         raise InvalidAPIParameters
@@ -503,9 +408,9 @@ async def execute(request):
 async def upload_files(request):
     loop = asyncio.get_event_loop()
     reader = await request.multipart()
-    kern_id = request.match_info['kernel_id']
+    sess_id = request.match_info['sess_id']
     try:
-        await request.app['registry'].increment_kernel_usage(kern_id)
+        await request.app['registry'].increment_kernel_usage(sess_id)
         file_count = 0
         upload_tasks = []
         while True:
@@ -521,7 +426,7 @@ async def upload_files(request):
                 raise InvalidAPIParameters('Too large file')
             data = file.decode(chunk)
             log.debug(f'received file: {file.filename} ({len(data):,} bytes)')
-            t = loop.create_task(request.app['registry'].upload_file(kern_id, file.filename, data))
+            t = loop.create_task(request.app['registry'].upload_file(sess_id, file.filename, data))
             upload_tasks.append(t)
         await asyncio.gather(*upload_tasks)
     except SornaError:
@@ -533,28 +438,28 @@ async def upload_files(request):
 @server_ready_required
 async def stream_pty(request):
     app = request.app
-    kern_id = request.match_info['kernel_id']
+    sess_id = request.match_info['sess_id']
     try:
-        kernel = await app['registry'].get_kernel(kern_id)
+        kernel = await app['registry'].get_kernel(sess_id)
     except KernelNotFound:
         raise
 
-    await app['registry'].increment_kernel_usage(kern_id)
+    await app['registry'].increment_kernel_usage(sess_id)
 
     # Upgrade connection to WebSocket.
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
-    app['stream_pty_handlers'][kern_id].add(asyncio.Task.current_task())
+    app['stream_pty_handlers'][sess_id].add(asyncio.Task.current_task())
 
     async def connect_streams(kernel):
         kernel_ip = urlparse(kernel.addr).hostname
         stdin_addr = f'tcp://{kernel_ip}:{kernel.stdin_port}'
-        log.debug(f'stream_pty({kern_id}): stdin: {stdin_addr}')
+        log.debug(f'stream_pty({sess_id}): stdin: {stdin_addr}')
         stdin_sock = await aiozmq_sock(zmq.PUB, connect=stdin_addr)
         stdin_sock.transport.setsockopt(zmq.LINGER, 100)
         stdout_addr = f'tcp://{kernel_ip}:{kernel.stdout_port}'
-        log.debug(f'stream_pty({kern_id}): stdout: {stdout_addr}')
+        log.debug(f'stream_pty({sess_id}): stdout: {stdout_addr}')
         stdout_sock = await aiozmq_sock(zmq.SUB, connect=stdout_addr)
         stdout_sock.transport.setsockopt(zmq.LINGER, 100)
         stdout_sock.transport.subscribe(b'')
@@ -562,7 +467,7 @@ async def stream_pty(request):
 
     # Wrap sockets in a list so that below coroutines can share reference changes.
     socks = list(await connect_streams(kernel))
-    app['stream_stdin_socks'][kern_id].add(socks[0])
+    app['stream_stdin_socks'][sess_id].add(socks[0])
     stream_sync = asyncio.Event()
 
     async def stream_stdin():
@@ -578,53 +483,53 @@ async def stream_pty(request):
                         except (AttributeError, aiozmq.ZmqStreamClosed):
                             # AttributeError occurs when stdin_sock._transport is None
                             # because it's already closed somewhere else.
-                            app['stream_stdin_socks'][kern_id].remove(socks[0])
+                            app['stream_stdin_socks'][sess_id].remove(socks[0])
                             socks[1].close()
-                            kernel = await app['registry'].get_kernel(kern_id)
+                            kernel = await app['registry'].get_kernel(sess_id)
                             stdin_sock, stdout_sock = await connect_streams(kernel)
                             socks[0] = stdin_sock
                             socks[1] = stdout_sock
-                            app['stream_stdin_socks'][kern_id].add(socks[0])
+                            app['stream_stdin_socks'][sess_id].add(socks[0])
                             socks[0].write([raw_data])
-                            log.debug(f'stream_stdin({kern_id}): zmq stream reset')
+                            log.debug(f'stream_stdin({sess_id}): zmq stream reset')
                             stream_sync.set()
                             continue
                     else:
-                        kernel = await app['registry'].get_kernel(kern_id)
-                        await request.app['registry'].update_kernel(kern_id, {
+                        kernel = await app['registry'].get_kernel(sess_id)
+                        await request.app['registry'].update_kernel(sess_id, {
                             'num_queries': int(kernel.num_queries) + 1,
                         })
                         api_version = 2
                         if data['type'] == 'resize':
                             code = f"%resize {data['rows']} {data['cols']}"
-                            await app['registry'].execute(kern_id, api_version, 'query', code, {})
+                            await app['registry'].execute(sess_id, api_version, 'query', code, {})
                         elif data['type'] == 'ping':
-                            await app['registry'].execute(kern_id, api_version, 'query', '%ping', {})
+                            await app['registry'].execute(sess_id, api_version, 'query', '%ping', {})
                         elif data['type'] == 'restart':
                             # Close existing zmq sockets and let stream handlers get a new one
                             # with changed stdin/stdout ports.
                             if not socks[0].at_closing():
-                                await app['registry'].restart_kernel(kern_id)
+                                await app['registry'].restart_kernel(sess_id)
                                 socks[0].close()
                             else:
-                                log.warning(f'stream_stdin({kern_id}): duplicate kernel restart request; ignoring it.')
+                                log.warning(f'stream_stdin({sess_id}): duplicate kernel restart request; ignoring it.')
                 elif msg.type == aiohttp.WSMsgType.ERROR:
-                    log.warning(f'stream_stdin({kern_id}): '
+                    log.warning(f'stream_stdin({sess_id}): '
                                 f'connection closed ({ws.exception()})')
         except asyncio.CancelledError:
             # Agent or kernel is terminated.
             pass
         except:
             app['sentry'].captureException()
-            log.exception(f'stream_stdin({kern_id}): unexpected error')
+            log.exception(f'stream_stdin({sess_id}): unexpected error')
         finally:
-            log.debug(f'stream_stdin({kern_id}): terminated')
+            log.debug(f'stream_stdin({sess_id}): terminated')
             if not socks[0].at_closing():
                 socks[0].close()
 
     async def stream_stdout():
         nonlocal socks
-        log.debug(f'stream_stdout({kern_id}): started')
+        log.debug(f'stream_stdout({sess_id}): started')
         try:
             while True:
                 try:
@@ -632,7 +537,7 @@ async def stream_pty(request):
                 except aiozmq.ZmqStreamClosed:
                     await stream_sync.wait()
                     stream_sync.clear()
-                    log.debug(f'stream_stdout({kern_id}): zmq stream reset')
+                    log.debug(f'stream_stdout({sess_id}): zmq stream reset')
                     continue
                 if ws.closed:
                     break
@@ -644,9 +549,9 @@ async def stream_pty(request):
             pass
         except:
             app['sentry'].captureException()
-            log.exception(f'stream_stdout({kern_id}): unexpected error')
+            log.exception(f'stream_stdout({sess_id}): unexpected error')
         finally:
-            log.debug(f'stream_stdout({kern_id}): terminated')
+            log.debug(f'stream_stdout({sess_id}): terminated')
             socks[1].close()
 
     # According to aiohttp docs, reading ws must be done inside this task.
@@ -656,10 +561,10 @@ async def stream_pty(request):
         await stream_stdin()
     except:
         app['sentry'].captureException()
-        log.exception(f'stream_pty({kern_id}): unexpected error')
+        log.exception(f'stream_pty({sess_id}): unexpected error')
     finally:
-        app['stream_pty_handlers'][kern_id].remove(asyncio.Task.current_task())
-        app['stream_stdin_socks'][kern_id].remove(socks[0])
+        app['stream_pty_handlers'][sess_id].remove(asyncio.Task.current_task())
+        app['stream_stdin_socks'][sess_id].remove(socks[0])
         stdout_task.cancel()
         await stdout_task
     return ws
@@ -672,21 +577,21 @@ async def not_impl_stub(request):
 
 async def init(app):
     app.router.add_route('POST',   '/v1/kernel/create', create)
-    app.router.add_route('GET',    '/v1/kernel/{kernel_id}', get_info)
-    app.router.add_route('PATCH',  '/v1/kernel/{kernel_id}', restart)
-    app.router.add_route('DELETE', '/v1/kernel/{kernel_id}', destroy)
-    app.router.add_route('POST',   '/v1/kernel/{kernel_id}', execute)
-    app.router.add_route('GET',    '/v1/stream/kernel/{kernel_id}/pty', stream_pty)
-    app.router.add_route('GET',    '/v1/stream/kernel/{kernel_id}/events', not_impl_stub)
+    app.router.add_route('GET',    '/v1/kernel/{sess_id}', get_info)
+    app.router.add_route('PATCH',  '/v1/kernel/{sess_id}', restart)
+    app.router.add_route('DELETE', '/v1/kernel/{sess_id}', destroy)
+    app.router.add_route('POST',   '/v1/kernel/{sess_id}', execute)
+    app.router.add_route('GET',    '/v1/stream/kernel/{sess_id}/pty', stream_pty)
+    app.router.add_route('GET',    '/v1/stream/kernel/{sess_id}/events', not_impl_stub)
 
     app.router.add_route('POST',   '/v2/kernel/create', create)
-    app.router.add_route('GET',    '/v2/kernel/{kernel_id}', get_info)
-    app.router.add_route('PATCH',  '/v2/kernel/{kernel_id}', restart)
-    app.router.add_route('DELETE', '/v2/kernel/{kernel_id}', destroy)
-    app.router.add_route('POST',   '/v2/kernel/{kernel_id}', execute)
-    app.router.add_route('POST',   '/v2/kernel/{kernel_id}/upload', upload_files)
-    app.router.add_route('GET',    '/v2/stream/kernel/{kernel_id}/pty', stream_pty)
-    app.router.add_route('GET',    '/v2/stream/kernel/{kernel_id}/events', not_impl_stub)
+    app.router.add_route('GET',    '/v2/kernel/{sess_id}', get_info)
+    app.router.add_route('PATCH',  '/v2/kernel/{sess_id}', restart)
+    app.router.add_route('DELETE', '/v2/kernel/{sess_id}', destroy)
+    app.router.add_route('POST',   '/v2/kernel/{sess_id}', execute)
+    app.router.add_route('POST',   '/v2/kernel/{sess_id}/upload', upload_files)
+    app.router.add_route('GET',    '/v2/stream/kernel/{sess_id}/pty', stream_pty)
+    app.router.add_route('GET',    '/v2/stream/kernel/{sess_id}/events', not_impl_stub)
     app.router.add_route('POST',   '/v2/folder/create', not_impl_stub)
     app.router.add_route('GET',    '/v2/folder/{folder_id}', not_impl_stub)
     app.router.add_route('DELETE', '/v2/folder/{folder_id}', not_impl_stub)
@@ -700,12 +605,9 @@ async def init(app):
     app['stream_pty_handlers'] = defaultdict(set)
     app['stream_stdin_socks'] = defaultdict(set)
 
-    app['registry'] = InstanceRegistry(app.config.redis_addr,
-                                       gpu_instances=app.config.gpu_instances)
+    app['registry'] = InstanceRegistry(app.dbpool)
     await app['registry'].init()
-
-    heartbeat_interval = 3.0
-    app['kernel_agent_event_collector'] = asyncio.ensure_future(collect_agent_events(app, heartbeat_interval))
+    app['status'] = GatewayStatus.RUNNING
 
 
 async def shutdown(app):

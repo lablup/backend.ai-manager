@@ -108,11 +108,12 @@ async def auth_middleware_factory(app, handler):
         params = _extract_auth_params(request)
         if params:
             sign_method, access_key, signature = params
-            async with app.dbpool.acquire() as conn, conn.transaction():
+            async with app.dbpool.acquire() as conn:
                 query = (keypairs.select()
                                 .where(keypairs.c.access_key == access_key))
-                row = await conn.fetchrow(query)
-                if row is None or row.row is None:
+                result = await conn.execute(query)
+                row = await result.fetchone()
+                if row is None:
                     raise AuthorizationFailed('Access key not found')
                 my_signature = await sign_request(sign_method, request, row.secret_key)
                 if not my_signature:

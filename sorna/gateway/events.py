@@ -8,6 +8,7 @@ import aiozmq
 import zmq
 
 from sorna.common import msgpack
+from .utils import catch_unexpected
 
 log = logging.getLogger('sorna.gateway.events')
 
@@ -52,17 +53,21 @@ class EventDispatcher:
         self.last_seen[agent_id] = time.monotonic()
         for handler in self.handlers[event_name]:
             if asyncio.iscoroutine(handler) or asyncio.iscoroutinefunction(handler):
-                asyncio.ensure_future(handler(self.app, agent_id, *args))
+                self.loop.create_task(handler(self.app, agent_id, *args))
             else:
                 cb = functools.partial(handler, self.app, agent_id, *args)
                 self.loop.call_soon(cb)
 
+    @catch_unexpected(log)
     async def check_lost(self, interval):
-        now = time.monotonic()
-        for agent_id, prev in self.last_seen.copy().items():
-            if now - prev >= self.heartbeat_timeout:
-                del self.last_seen[agent_id]
-                self.dispatch('instance_terminated', agent_id, ('agent-lost', ))
+        try:
+            now = time.monotonic()
+            for agent_id, prev in self.last_seen.copy().items():
+                if now - prev >= self.heartbeat_timeout:
+                    del self.last_seen[agent_id]
+                    self.dispatch('instance_terminated', agent_id, ('agent-lost', ))
+        except (BrokenPipeError, asyncio.CancelledError):
+            pass
 
 
 async def event_subscriber(dispatcher):

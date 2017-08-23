@@ -7,7 +7,7 @@ import ssl
 
 import aiohttp
 from aiohttp import web
-import asyncpgsa
+from aiopg.sa import create_engine
 import sqlalchemy as sa
 import pytest
 import uvloop
@@ -73,13 +73,11 @@ def default_keypair(loop):
     async def _fetch():
         access_key = 'AKIAIOSFODNN7EXAMPLE'
         config = load_config(argv=[], extra_args_func=gw_args)
-        pool = await asyncpgsa.create_pool(
-            host=str(config.db_addr[0]),
-            port=config.db_addr[1],
-            database=config.db_name,
-            user=config.db_user,
-            password=config.db_password,
-            min_size=1, max_size=2,
+        pool = await create_engine(
+            dsn=f'host={config.db_addr[0]} port={config.db_addr[1]} '
+                f'user={config.db_user} password={cofnig.db_password} '
+                f'dbname={config.db_name}',
+            minsize=1, maxsize=4,
         )
         async with pool.acquire() as conn:
             query = sa.select([keypairs.c.access_key, keypairs.c.secret_key]) \
@@ -89,7 +87,8 @@ def default_keypair(loop):
                 'access_key': access_key,
                 'secret_key': row.secret_key,
             }
-        await pool.close()
+        pool.close()
+        await pool.wait_closed()
         return keypair
 
     return loop.run_until_complete(_fetch())

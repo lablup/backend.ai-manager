@@ -1,7 +1,7 @@
 import logging
 
 from aioconsole.events import run_console
-import asyncpgsa
+from aiopg.sa import create_engine
 
 from . import register_command
 
@@ -18,12 +18,10 @@ def shell(args):
 
 
 async def create_dbpool():
-    p = await asyncpgsa.create_pool(
-        host=str(_args.db_addr[0]),
-        port=_args.db_addr[1],
-        database=_args.db_name,
-        user=_args.db_user,
-        password=_args.db_password,
-        min_size=1, max_size=4,
+    p = await create_engine(
+        dsn=f'host={_args.db_addr[0]} port={_args.db_addr[1]} '
+            f'user={_args.db_user} password={_args.db_password} '
+            f'dbname={_args.db_name}',
+        minsize=1, maxsize=4,
     )
     return p
