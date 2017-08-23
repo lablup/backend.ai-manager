@@ -101,8 +101,8 @@ async def update_instance_usage(app, inst_id):
     # In heartbeat timeouts, we do NOT clear Redis keys because
     # the timeout may be a transient one.
     kern_ids = await app['registry'].get_kernels_in_instance(inst_id)
-    kernels = await app['registry'].get_kernels(kern_ids, allow_stale=True)
-    affected_keys = [kern.access_key for kern in kernels if kern is not None]
+    all_kernels = await app['registry'].get_kernels(kern_ids, allow_stale=True)
+    affected_keys = [kern['access_key'] for kern in all_kernels if kern is not None]
 
     # TODO: enqueue termination event to streaming response queue
 
@@ -118,7 +118,7 @@ async def update_instance_usage(app, inst_id):
 
     async with app['dbpool'].acquire() as conn:
         log.debug(f'update_instance_usage({inst_id})')
-        for kern in kernels:
+        for kern in all_kernels:
             if kern is None:
                 continue
             '''
@@ -137,9 +137,11 @@ async def update_instance_usage(app, inst_id):
             await conn.execute(query)
             '''
             query = (sa.update(keypairs)
-                       .values(concurrency_used=keypairs.c.concurrency_used -
-                                                per_key_counts[kern.access_key])
-                       .where(keypairs.c.access_key == kern.access_key))
+                       .values({
+                           'concurrency_used': keypairs.c.concurrency_used -
+                                               per_key_counts[kern['access_key']],
+                       })
+                       .where(keypairs.c.access_key == kern['access_key']))
             await conn.execute(query)
 
 
@@ -275,7 +277,7 @@ async def get_info(request):
     log.info(f"GETINFO (u:{request['keypair']['access_key']}, k:{sess_id})")
     try:
         await request.app['registry'].increment_session_usage(sess_id)
-        kern = await request.app['registry'].get_kernel(sess_id)
+        kern = await request.app['registry'].get_kernel_session(sess_id)
         resp['lang'] = kern.lang
         age = datetime.now(tzutc()) - kern.created_at
         resp['age'] = age.total_seconds() * 1000
@@ -392,7 +394,7 @@ async def stream_pty(request):
     app = request.app
     sess_id = request.match_info['sess_id']
     try:
-        kernel = await app['registry'].get_kernel(sess_id)
+        kernel = await app['registry'].get_kernel_session(sess_id)
     except KernelNotFound:
         raise
 
@@ -437,7 +439,7 @@ async def stream_pty(request):
                             # because it's already closed somewhere else.
                             app['stream_stdin_socks'][sess_id].remove(socks[0])
                             socks[1].close()
-                            kernel = await app['registry'].get_kernel(sess_id)
+                            kernel = await app['registry'].get_kernel_session(sess_id)
                             stdin_sock, stdout_sock = await connect_streams(kernel)
                             socks[0] = stdin_sock
                             socks[1] = stdout_sock
@@ -447,7 +449,7 @@ async def stream_pty(request):
                             stream_sync.set()
                             continue
                     else:
-                        kernel = await app['registry'].get_kernel(sess_id)
+                        kernel = await app['registry'].get_kernel_session(sess_id)
                         await request.app['registry'].update_kernel(sess_id, {
                             'num_queries': int(kernel.num_queries) + 1,
                         })
