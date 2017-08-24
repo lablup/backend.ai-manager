@@ -46,8 +46,8 @@ def upgrade():
     op.add_column('kernels', sa.Column('stdin_port', sa.Integer(), nullable=False))
     op.add_column('kernels', sa.Column('stdout_port', sa.Integer(), nullable=False))
     op.drop_column('kernels', 'allocated_cores')
-    op.add_column('kernels', sa.Column('cpu_set', sa.ARRAY(sa.Integer)), nullable=True)
-    op.add_column('kernels', sa.Column('gpu_set', sa.ARRAY(sa.Integer)), nullable=True)
+    op.add_column('kernels', sa.Column('cpu_set', sa.ARRAY(sa.Integer), nullable=True))
+    op.add_column('kernels', sa.Column('gpu_set', sa.ARRAY(sa.Integer), nullable=True))
     op.alter_column('kernels', column_name='status', type_=sa.Enum(*kernelstatus_choices, name='kernelstatus'),
                     postgresql_using='status::kernelstatus')
 
@@ -65,7 +65,7 @@ def downgrade():
     op.drop_column('agents', 'status')
     op.drop_column('agents', 'lost_at')
     op.alter_column('kernels', column_name='status', type_=sa.String(length=64))
-    op.add_column('kernels', sa.Column('allocated_cores', sa.ARRAY(sa.Integer)), nullable=True)
+    op.add_column('kernels', sa.Column('allocated_cores', sa.ARRAY(sa.Integer), nullable=True))
     op.drop_column('kernels', 'cpu_set')
     op.drop_column('kernels', 'gpu_set')
     agentstatus.drop(op.get_bind())
