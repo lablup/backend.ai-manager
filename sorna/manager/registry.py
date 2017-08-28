@@ -170,9 +170,15 @@ class InstanceRegistry:
         wrapping it as Kernel object.
         If ``allow_stale`` is true, it skips checking validity of the kernel owner instance.
         '''
-        cols = [kernels.c.id, kernels.c.sess_id, kernels.c.agent_addr, kernels.c.access_key]
-        if field is not None:
+
+        cols = [kernels.c.id, kernels.c.sess_id,
+                kernels.c.agent_addr, kernels.c.access_key]
+        if isinstance(field, (tuple, list)):
+            cols.extend(field)
+        elif isinstance(field, (sa.Column, sa.sql.elements.ColumnClause)):
             cols.append(field)
+        elif isinstance(field, str):
+            cols.append(sa.column(field))
         async with self.dbpool.acquire() as conn:
             if allow_stale:
                 query = (sa.select(cols)
@@ -202,9 +208,15 @@ class InstanceRegistry:
         wrapping it as Kernel object.
         If ``allow_stale`` is true, it skips checking validity of the kernel owner instance.
         '''
-        cols = [kernels.c.id, kernels.c.sess_id, kernels.c.agent_addr, kernels.c.access_key]
-        if field is not None:
+
+        cols = [kernels.c.id, kernels.c.sess_id,
+                kernels.c.agent_addr, kernels.c.access_key]
+        if isinstance(field, (tuple, list)):
+            cols.extend(field)
+        elif isinstance(field, (sa.Column, sa.sql.elements.ColumnClause)):
             cols.append(field)
+        elif isinstance(field, str):
+            cols.append(sa.column(field))
         async with self.dbpool.acquire() as conn:
             if allow_stale:
                 query = (sa.select(cols)
@@ -234,9 +246,14 @@ class InstanceRegistry:
         positions without raising KernelNotFound exception.
         '''
 
-        cols = [kernels.c.id, kernels.c.sess_id, kernels.c.agent_addr, kernels.c.access_key]
-        if field is not None:
+        cols = [kernels.c.id, kernels.c.sess_id,
+                kernels.c.agent_addr, kernels.c.access_key]
+        if isinstance(field, (tuple, list)):
+            cols.extend(field)
+        elif isinstance(field, (sa.Column, sa.sql.elements.ColumnClause)):
             cols.append(field)
+        elif isinstance(field, str):
+            cols.append(sa.column(field))
         async with self.dbpool.acquire() as conn:
             if allow_stale:
                 query = (sa.select(cols)
@@ -250,15 +267,16 @@ class InstanceRegistry:
                                   kernels.c.role == 'master' and
                                   agents.c.status == AgentStatus.ALIVE and
                                   agents.c.id == kernels.c.agent))
-            kernels = [row async for row in conn.execute(query)]
-            return kernels
+            result = await conn.execute(query)
+            rows = await result.fetchall()
+            return rows
 
-    async def set_kernel_status(self, sess_id, status, **extra_fields):
+    async def set_kernel_status(self, sess_id, status, db_connection=None, **extra_fields):
         data = {
             'status': status,
         }
         data.update(extra_fields)
-        async with self.dbpool.acquire() as conn:
+        async with reenter_txn(self.dbpool, db_connection) as conn:
             query = (sa.update(kernels)
                        .values(data)
                        .where(kernels.c.sess_id == sess_id))
