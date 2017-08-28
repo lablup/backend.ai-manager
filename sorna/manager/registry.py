@@ -383,8 +383,11 @@ class InstanceRegistry:
 
             async with self.handle_kernel_exception('create_kernel', sess_id):
                 async with RPCContext(agent_addr, 3) as rpc:
-                    created_info = await rpc.call.create_kernel(lang, str(kernel_id),
-                                                                limits, mounts)
+                    config = {
+                        'lang': lang,
+                        # TODO: apply limits/mounts/vfolders
+                    }
+                    created_info = await rpc.call.create_kernel(str(kernel_id), config)
                 if created_info is None:
                     raise KernelCreationFailed('ooops')
                 log.debug(f'create_kernel("{sess_id}") -> '
@@ -415,29 +418,42 @@ class InstanceRegistry:
 
     async def destroy_kernel(self, sess_id):
         log.debug(f"destroy_kernel({sess_id})")
-        kernel = await self.get_kernel_session(sess_id)
         async with self.handle_kernel_exception('destroy_kernel', sess_id,
                                                 set_error=True):
+            kernel = await self.get_kernel_session(sess_id)
             await self.set_kernel_status(sess_id, KernelStatus.TERMINATING)
             async with RPCContext(kernel['agent_addr'], 10) as rpc:
                 await rpc.call.destroy_kernel(str(kernel['id']))
 
     async def restart_kernel(self, sess_id):
         log.debug(f'restart_kernel({sess_id})')
-        kernel = await self.get_kernel_session(sess_id)
-        async with self.handle_kernel_exception('restart_kernel', sess_id):
+        async with self.handle_kernel_exception('restart_kernel', sess_id,
+                                                set_error=True):
+            extra_cols = (kernels.c.lang, kernels.c.cpu_set, kernels.c.gpu_set)
+            kernel = await self.get_kernel_session(sess_id, extra_cols)
             await self.set_kernel_status(sess_id, KernelStatus.RESTARTING)
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
-                kernel_info = await rpc.call.restart_kernel(str(kernel['id']))
+                prev_config = {
+                    'lang': kernel['lang'],
+                    'cpu_set': kernel['cpu_set'],
+                    'gpu_set': kernel['gpu_set'],
+                }
+                kernel_info = await rpc.call.restart_kernel(str(kernel['id']), prev_config)
             # TODO: what if prev status was "building" or others?
             await self.set_kernel_status(sess_id, KernelStatus.RUNNING,
+                                         container_id=kernel_info['container_id'],
+                                         cpu_set=list(kernel_info['cpu_set']),
+                                         gpu_set=list(kernel_info['gpu_set']),
+                                         repl_in_port=kernel_info['repl_in_port'],
+                                         repl_out_port=kernel_info['repl_out_port'],
                                          stdin_port=kernel_info['stdin_port'],
                                          stdout_port=kernel_info['stdout_port'])
 
     async def execute(self, sess_id, api_version, mode, code, opts):
         log.debug(f'execute:v{api_version}({sess_id}, {mode}')
-        kernel = await self.get_kernel_session(sess_id)
-        async with self.handle_kernel_exception('execute', sess_id):
+        async with self.handle_kernel_exception('execute', sess_id,
+                                                set_error=True):
+            kernel = await self.get_kernel_session(sess_id)
             async with RPCContext(kernel['agent_addr'], 200) as rpc:  # must be longer than kernel exec_timeout
                 result = await rpc.call.execute(api_version, str(kernel['id']),
                                                 mode, code, opts)
@@ -445,15 +461,16 @@ class InstanceRegistry:
 
     async def upload_file(self, sess_id, filename, filedata):
         log.debug(f'upload_file({sess_id}, {filename})')
-        kernel = await self.get_kernel_session(sess_id)
-        async with self.handle_kernel_exception('upload_file', sess_id):
+        async with self.handle_kernel_exception('upload_file', sess_id,
+                                                set_error=True):
+            kernel = await self.get_kernel_session(sess_id)
             async with RPCContext(kernel['agent_addr'], 10000) as rpc:
                 result = await rpc.call.upload_file(str(kernel['id']), filename, filedata)
                 return result
 
     async def update_kernel(self, sess_id, updated_fields):
         log.debug(f'update_kernel({sess_id})')
-        async with self.dbpool.acquire() as conn:
+        async with reenter_txn(self.dbpool, conn) as conn:
             query = (sa.update(kernels)
                        .values(updated_fields)
                        .where(kernels.c.sess_id == sess_id and
