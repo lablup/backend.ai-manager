@@ -556,8 +556,17 @@ class InstanceRegistry:
             else:
                 log.error(f'should not reach here! {type(prev_status)}')
 
-    async def mark_kernel_terminated(self, kernel_id):
-        async with self.dbpool.acquire() as conn:
+    async def mark_kernel_terminated(self, kernel_id, conn=None):
+        async with reenter_txn(self.dbpool, conn) as conn:
+            # check if already terminated
+            query = (sa.select([kernels.c.status])
+                       .select_from(kernels)
+                       .where(kernels.c.id == kernel_id))
+            result = await conn.execute(query)
+            prev_status = await result.scalar()
+            if prev_status in (None, KernelStatus.TERMINATED):
+                return
+
             # change the status to TERMINATED
             # (we don't delete the row for later logging and billing)
             query = (sa.update(kernels)
