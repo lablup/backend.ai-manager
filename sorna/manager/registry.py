@@ -191,9 +191,11 @@ class InstanceRegistry:
             else:
                 query = (sa.select(cols)
                            .select_from(kernels.join(agents))
-                           .where(kernels.c.id == kern_id and
-                                  agents.c.status == AgentStatus.ALIVE and
-                                  agents.c.id == kernels.c.agent)
+                           .where((kernels.c.id == kern_id) &
+                                  (kernels.c.status.in_([KernelStatus.BUILDING,
+                                                         KernelStatus.RUNNING])) &
+                                  (agents.c.status == AgentStatus.ALIVE) &
+                                  (agents.c.id == kernels.c.agent))
                            .limit(1).offset(0))
             result = await conn.execute(query)
             row = await result.first()
@@ -224,16 +226,18 @@ class InstanceRegistry:
             if allow_stale:
                 query = (sa.select(cols)
                            .select_from(kernels)
-                           .where(kernels.c.sess_id == sess_id  and
-                                  kernels.c.role == 'master')
+                           .where((kernels.c.sess_id == sess_id) &
+                                  (kernels.c.role == 'master'))
                            .limit(1).offset(0))
             else:
                 query = (sa.select(cols)
                            .select_from(kernels.join(agents))
-                           .where(kernels.c.sess_id == sess_id and
-                                  kernels.c.role == 'master' and
-                                  agents.c.status == AgentStatus.ALIVE and
-                                  agents.c.id == kernels.c.agent)
+                           .where((kernels.c.sess_id == sess_id) &
+                                  (kernels.c.role == 'master') &
+                                  (kernels.c.status.in_([KernelStatus.BUILDING,
+                                                         KernelStatus.RUNNING])) &
+                                  (agents.c.status == AgentStatus.ALIVE) &
+                                  (agents.c.id == kernels.c.agent))
                            .limit(1).offset(0))
             result = await conn.execute(query)
             row = await result.first()
@@ -283,8 +287,7 @@ class InstanceRegistry:
             query = (sa.update(kernels)
                        .values(data)
                        .where(kernels.c.sess_id == sess_id))
-            result = await conn.execute(query)
-            assert result.rowcount >= 1
+            await conn.execute(query)
 
     @catch_unexpected(log)
     async def get_or_create_kernel(self, client_sess_token, lang, owner_access_key,
