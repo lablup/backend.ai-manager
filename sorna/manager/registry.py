@@ -17,7 +17,7 @@ import sqlalchemy as sa
 import zmq
 
 from sorna.common.utils import dict2kvlist
-from ..gateway.exceptions import (
+from ..gateway.exceptions import (SornaError,
     InstanceNotAvailable, InstanceNotFound, KernelNotFound,
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
@@ -151,12 +151,15 @@ class InstanceRegistry:
             if error_callback:
                 await error_callback()
             raise exc_class('FAILURE', e)
+        except SornaError:
+            # silently re-raise to make them handled by gateway http handlers
+            raise
         except:
-            log.exception(f'{op}: unexpected error')
+            log.exception(f'{op}: other error')
             # TODO: raven.captureException()
             if set_error:
                 await self.set_kernel_status(sess_id, KernelStatus.ERROR,
-                                             status_info='Unexpected error')
+                                             status_info='Other error')
             if error_callback:
                 await error_callback()
             raise

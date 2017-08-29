@@ -91,7 +91,7 @@ async def create(request):
                            .where(keypairs.c.access_key == access_key))
                 await conn.execute(query)
     except SornaError:
-        log.exception('GET_OR_CREATE: API Internal Error')
+        log.exception('GET_OR_CREATE: exception')
         raise
     return web.Response(status=201, content_type=_json_type,
                         text=json.dumps(resp))
@@ -273,7 +273,7 @@ async def destroy(request):
     try:
         await request.app['registry'].destroy_kernel(sess_id)
     except SornaError:
-        log.exception('DESTROY: API Internal Error')
+        log.exception('DESTROY: exception')
         raise
     return web.Response(status=204)
 
@@ -303,7 +303,7 @@ async def get_info(request):
         resp['cpuCreditUsed'] = kern.cpu_used
         log.info(f'information retrieved: {resp!r}')
     except SornaError:
-        log.exception('GETINFO: API Internal Error')
+        log.exception('GETINFO: exception')
         raise
     return web.Response(status=200, content_type=_json_type,
                         text=json.dumps(resp))
@@ -320,7 +320,7 @@ async def restart(request):
         for sock in request.app['stream_stdin_socks'][sess_id]:
             sock.close()
     except SornaError:
-        log.exception('RESTART: API Internal Error')
+        log.exception('RESTART: exception')
         raise
     except:
         request.app['sentry'].captureException()
@@ -360,7 +360,7 @@ async def execute(request):
         log.warning('EXECUTE: invalid/missing parameters')
         raise InvalidAPIParameters
     except SornaError:
-        log.exception('EXECUTE: API Internal Error')
+        log.exception('EXECUTE: exception')
         raise
     return web.Response(status=200, content_type=_json_type,
                         text=json.dumps(resp))
@@ -393,7 +393,7 @@ async def upload_files(request):
             upload_tasks.append(t)
         await asyncio.gather(*upload_tasks)
     except SornaError:
-        log.exception('UPLOAD_FILES: API Internal Error')
+        log.exception('UPLOAD_FILES: exception')
         raise
     return web.Response(status=204)
 
