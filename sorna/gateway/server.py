@@ -6,6 +6,7 @@ import asyncio
 from ipaddress import ip_address
 import logging
 import multiprocessing as mp
+from multiprocessing.managers import SyncManager
 import signal
 import ssl
 import sys
@@ -262,14 +263,19 @@ def main():
 
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
-    manager = mp.Manager()
-    shared_states = manager.dict()
-    shared_states['agent_last_seen'] = manager.dict()
+    manager = SyncManager()
+    manager.start(lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
+    shared_states = manager.Namespace()
+    shared_states.lock = manager.Lock()
+    shared_states.agent_last_seen = manager.dict()
 
-    aiotools.start_server(server_main, num_workers=2,
-                          extra_procs=[event_router],
-                          args=(config, shared_states))
-    log.info('terminated.')
+    try:
+        aiotools.start_server(server_main, num_workers=2,
+                              extra_procs=[event_router],
+                              args=(config, shared_states))
+    finally:
+        manager.shutdown()
+        log.info('terminated.')
 
 
 if __name__ == '__main__':

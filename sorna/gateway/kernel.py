@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 from aiohttp import web
+import aiotools
 import aiozmq
 from aiozmq import create_zmq_stream as aiozmq_sock
 from async_timeout import timeout as _timeout
@@ -167,20 +168,13 @@ async def instance_started(app, agent_id):
 
 @catch_unexpected(log)
 async def instance_terminated(app, agent_id, reason):
+    with app['shared_states'].lock:
+        try:
+            del app['shared_states'].agent_last_seen[agent_id]
+        except KeyError:
+            pass
     if reason == 'agent-lost':
-        log.warning(f'agent {agent_id} heartbeat timeout detected.')
-        await app['registry'].update_instance(agent_id, {
-            'status': AgentStatus.LOST,
-            'lost_at': datetime.now(tzutc()),
-        })
-        await update_instance_usage(app, agent_id)
-        # TODO: interpret kern_id to sess_id
-        #for kern_id in (await app['registry'].get_kernels_in_instance(agent_id)):
-        #    for handler in app['stream_pty_handlers'][kern_id].copy():
-        #        handler.cancel()
-        #        await handler
-        # TODO: define behavior when agent reuse running instances upon revive
-        #await app['registry'].forget_all_kernels_in_instance(agent_id)
+        await app['registry'].mark_agent_terminated(agent_id, AgentStatus.LOST)
     elif reason == 'agent-restart':
         log.info(f'agent@{agent_id} restarting for maintenance.')
         await app['registry'].update_instance(agent_id, {
@@ -189,14 +183,29 @@ async def instance_terminated(app, agent_id, reason):
     else:
         # On normal instance termination, kernel_terminated events were already
         # triggered by the agent.
-        await app['registry'].update_instance(agent_id, {
-            'status': AgentStatus.TERMINATED,
-        })
+        await app['registry'].mark_agent_terminated(agent_id, AgentStatus.TERMINATED)
 
 
 @catch_unexpected(log)
 async def instance_heartbeat(app, agent_id, agent_info):
+    with app['shared_states'].lock:
+        app['shared_states'].agent_last_seen[agent_id] = time.monotonic()
     await app['registry'].handle_heartbeat(agent_id, agent_info)
+
+
+@catch_unexpected(log)
+async def check_agent_lost(app, interval):
+    try:
+        now = time.monotonic()
+        with app['shared_states'].lock:
+            copied = app['shared_states'].agent_last_seen.copy()
+        for agent_id, prev in copied.items():
+            if now - prev >= app.config.heartbeat_timeout:
+                # TODO: change this to "send_event" (actual zeromq push) for non-duplicate events
+                app['event_dispatcher'].dispatch('instance_terminated',
+                                                 agent_id, ('agent-lost', ))
+    except asyncio.CancelledError:
+        pass
 
 
 # NOTE: This event is ignored during the grace period.
@@ -559,12 +568,18 @@ async def init(app):
     app['stream_pty_handlers'] = defaultdict(set)
     app['stream_stdin_socks'] = defaultdict(set)
 
+    app['agent_lost_checker'] = aiotools.create_timer(
+        functools.partial(check_agent_lost, app), 1.0)
+
     app['registry'] = InstanceRegistry(app['dbpool'])
     await app['registry'].init()
     app['status'] = GatewayStatus.RUNNING
 
 
 async def shutdown(app):
+    app['agent_lost_checker'].cancel()
+    await app['agent_lost_checker']
+
     checked_tasks = ('kernel_agent_event_collector', 'kernel_ddtimer')
     for tname in checked_tasks:
         t = app.get(tname, None)

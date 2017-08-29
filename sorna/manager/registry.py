@@ -543,7 +543,7 @@ class InstanceRegistry:
                 result = await conn.execute(query)
                 assert result.rowcount == 1
             elif prev_status == AgentStatus.ALIVE:
-                log.debug(f'agent {agent_id} still alive')
+                pass
             elif prev_status in (AgentStatus.LOST, AgentStatus.TERMINATED):
                 log.warning(f'agent {agent_id} revived!')
                 query = (sa.update(agents)
@@ -555,6 +555,36 @@ class InstanceRegistry:
                 await conn.execute(query)
             else:
                 log.error(f'should not reach here! {type(prev_status)}')
+
+    async def mark_agent_terminated(self, agent_id, status, conn=None):
+        # TODO: interpret kern_id to sess_id
+        #for kern_id in (await app['registry'].get_kernels_in_instance(agent_id)):
+        #    for handler in app['stream_pty_handlers'][kern_id].copy():
+        #        handler.cancel()
+        #        await handler
+        # TODO: define behavior when agent reuse running instances upon revive
+        #await app['registry'].forget_all_kernels_in_instance(agent_id)
+        async with reenter_txn(self.dbpool, conn) as conn:
+
+            query = (sa.select([agents.c.status])
+                       .select_from(agents)
+                       .where(agents.c.id == agent_id))
+            result = await conn.execute(query)
+            prev_status = await result.scalar()
+            if prev_status in (None, AgentStatus.LOST, AgentStatus.TERMINATED):
+                return
+
+            if status == AgentStatus.LOST:
+                log.warning(f'agent {agent_id} heartbeat timeout detected.')
+            elif status == AgentStatus.TERMINATED:
+                log.warning(f'agent {agent_id} has terminated.')
+            query = (sa.update(agents)
+                       .values({
+                           'status': status,
+                           'lost_at': datetime.now(tzutc()),
+                       })
+                       .where(agents.c.id == agent_id))
+            await conn.execute(query)
 
     async def mark_kernel_terminated(self, kernel_id, conn=None):
         async with reenter_txn(self.dbpool, conn) as conn:

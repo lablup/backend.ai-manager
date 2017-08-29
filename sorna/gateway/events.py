@@ -40,34 +40,20 @@ class EventDispatcher:
         self.app = app
         self.loop = loop if loop else asyncio.get_event_loop()
         self.handlers = defaultdict(list)
-        self.heartbeat_timeout = app.config.heartbeat_timeout
-        # TODO: optimize?
-        self.last_seen = app['shared_states']['agent_last_seen']
 
     def add_handler(self, event_name, callback):
         assert callable(callback)
         self.handlers[event_name].append(callback)
 
     def dispatch(self, event_name, agent_id, args=tuple()):
-        log.debug(f"DISPATCH({event_name}/{agent_id}, {str(args[0]) if args else ''})")
-        self.last_seen[agent_id] = time.monotonic()
+        first_arg = f', {args[0]}' if args else ''
+        log.debug(f"DISPATCH({event_name}/{agent_id}{first_arg})")
         for handler in self.handlers[event_name]:
             if asyncio.iscoroutine(handler) or asyncio.iscoroutinefunction(handler):
                 self.loop.create_task(handler(self.app, agent_id, *args))
             else:
                 cb = functools.partial(handler, self.app, agent_id, *args)
                 self.loop.call_soon(cb)
-
-    @catch_unexpected(log)
-    async def check_lost(self, interval):
-        try:
-            now = time.monotonic()
-            for agent_id, prev in self.last_seen.copy().items():
-                if now - prev >= self.heartbeat_timeout:
-                    del self.last_seen[agent_id]
-                    self.dispatch('instance_terminated', agent_id, ('agent-lost', ))
-        except (BrokenPipeError, asyncio.CancelledError):
-            pass
 
 
 async def event_subscriber(dispatcher):
@@ -93,11 +79,8 @@ async def init(app):
     dispatcher = EventDispatcher(app)
     app['event_dispatcher'] = dispatcher
     app['event_subscriber'] = loop.create_task(event_subscriber(dispatcher))
-    app['agent_lost_checker'] = aiotools.create_timer(dispatcher.check_lost, 1.0)
 
 
 async def shutdown(app):
     app['event_subscriber'].cancel()
     await app['event_subscriber']
-    app['agent_lost_checker'].cancel()
-    await app['agent_lost_checker']
