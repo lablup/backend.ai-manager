@@ -456,19 +456,25 @@ class InstanceRegistry:
                                          stdout_port=kernel_info['stdout_port'])
 
     async def execute(self, sess_id, api_version, mode, code, opts):
-        log.debug(f'execute:v{api_version}({sess_id}, {mode}')
-        async with self.handle_kernel_exception('execute', sess_id,
-                                                set_error=True):
+        log.debug(f'execute:v{api_version}({sess_id}, {mode})')
+        async with self.handle_kernel_exception('execute', sess_id):
             kernel = await self.get_kernel_session(sess_id)
-            async with RPCContext(kernel['agent_addr'], 200) as rpc:  # must be longer than kernel exec_timeout
-                result = await rpc.call.execute(api_version, str(kernel['id']),
-                                                mode, code, opts)
-                return result
+            # must be longer than kernel exec_timeout
+            # TODO: cope with agent restarts with save-loaded runner states
+            # TODO: cope with changes of container public ports after agent restarts
+            async with RPCContext(kernel['agent_addr'], 200) as rpc:
+                exec_coro = rpc.call.execute(api_version, str(kernel['id']),
+                                             mode, code, opts)
+                if exec_coro is None:
+                    raise RuntimeError('execute cancelled')
+                try:
+                    return await exec_coro
+                except TypeError as e:
+                    log.exception('typeerror????')
 
     async def upload_file(self, sess_id, filename, filedata):
         log.debug(f'upload_file({sess_id}, {filename})')
-        async with self.handle_kernel_exception('upload_file', sess_id,
-                                                set_error=True):
+        async with self.handle_kernel_exception('upload_file', sess_id):
             kernel = await self.get_kernel_session(sess_id)
             async with RPCContext(kernel['agent_addr'], 10000) as rpc:
                 result = await rpc.call.upload_file(str(kernel['id']), filename, filedata)
