@@ -54,7 +54,7 @@ async def hello(request) -> web.Response:
 
 
 async def on_prepare(request, response):
-    response.headers['Server'] = 'Sorna-API/' + LATEST_API_VERSION
+    response.headers['Server'] = 'BackendAI-API/' + LATEST_API_VERSION
 
 
 async def version_middleware_factory(app, handler):
@@ -65,13 +65,6 @@ async def version_middleware_factory(app, handler):
             path_ver = 2
         else:
             raise GenericBadRequest('Unsupported API version.')
-        hdr_ver = request.headers.get('X-Sorna-Version', None)
-        if hdr_ver is None:
-            raise GenericBadRequest('API version missing in headers.')
-        if hdr_ver not in VALID_VERSIONS:
-            raise GenericBadRequest('Invalid API version.')
-        if not hdr_ver.startswith(f'v{path_ver}.'):
-            raise GenericBadRequest('Path and header API version mismatch.')
         request['api_version'] = path_ver
         resp = (await handler(request))
         return resp

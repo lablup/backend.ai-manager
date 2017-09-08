@@ -1,7 +1,7 @@
+from collections import UserDict
 from datetime import datetime, timedelta
 import hashlib, hmac
 from pprint import pprint
-from types import SimpleNamespace
 import uuid
 
 from dateutil.tz import tzutc, gettz
@@ -9,6 +9,7 @@ import simplejson as json
 
 from sorna.gateway.auth import init as auth_init
 from sorna.gateway.auth import check_date
+from sorna.gateway.server import LATEST_API_VERSION
 
 
 async def test_hello(create_app_and_client):
@@ -16,7 +17,7 @@ async def test_hello(create_app_and_client):
     resp = await client.get('/v1')
     assert resp.status == 200
     data = json.loads(await resp.text())
-    assert data['version'] == 'v1.20160915'
+    assert data['version'] == LATEST_API_VERSION
 
 
 async def test_auth(create_app_and_client, unused_port, default_keypair):
@@ -67,7 +68,10 @@ async def test_auth(create_app_and_client, unused_port, default_keypair):
 
 
 def test_check_date(mocker):
-    request = SimpleNamespace()
+
+    # UserDict allows attribute assignment like types.SimpleNamespace
+    # but also works like a plain dict.
+    request = UserDict()
 
     request.headers = {'X-Nothing': ''}
     assert not check_date(request)
