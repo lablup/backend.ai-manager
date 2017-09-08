@@ -1,6 +1,19 @@
 Changes
 =======
 
+0.9.11 (2017-09-08)
+-------------------
+
+**NOTICE**
+
+ * The package name will be changed to "backend.ai-manager" and the import
+   paths will become "ai.backend.manager.something".
+
+**CHANGES**
+
+ * Let it accept "BackendAI" API requests as well for future compatibility.
+   (#39)
+
 0.9.10 (2017-07-18)
 -------------------
 
