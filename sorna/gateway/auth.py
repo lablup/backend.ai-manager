@@ -24,7 +24,7 @@ def _extract_auth_params(request):
     """
     auth_hdr = request.headers.get('Authorization')
     if not auth_hdr:
-        raise InvalidAuthParameters('Missing authorization header')
+        return None
     pieces = auth_hdr.split(' ', 1)
     if len(pieces) != 2:
         raise InvalidAuthParameters('Malformed authorization header')
@@ -112,31 +112,33 @@ async def auth_middleware_factory(app, handler):
         request['user'] = None
         if not check_date(request):
             raise InvalidAuthParameters('Date/time sync error')
-        sign_method, access_key, signature = _extract_auth_params(request)
-        async with app['dbpool'].acquire() as conn:
-            query = (keypairs.select()
-                            .where(keypairs.c.access_key == access_key))
-            result = await conn.execute(query)
-            row = await result.fetchone()
-            if row is None:
-                raise AuthorizationFailed('Access key not found')
-            my_signature = await sign_request(sign_method, request, row.secret_key)
-            if secrets.compare_digest(my_signature, signature):
-                query = (keypairs.update()
-                                .values(last_used=datetime.now(tzutc()),
-                                        num_queries=keypairs.c.num_queries + 1)
+        params = _extract_auth_params(request)
+        if params:
+            sign_method, access_key, signature = params
+            async with app['dbpool'].acquire() as conn:
+                query = (keypairs.select()
                                 .where(keypairs.c.access_key == access_key))
-                await conn.execute(query)
-                request['is_authorized'] = True
-                request['keypair'] = {
-                    'access_key': access_key,
-                    'secret_key': row.secret_key,
-                    'concurrency_limit': row.concurrency_limit,
-                    'rate_limit': row.rate_limit,
-                }
-                request['user'] = {
-                    'id': row.user_id,
-                }
+                result = await conn.execute(query)
+                row = await result.fetchone()
+                if row is None:
+                    raise AuthorizationFailed('Access key not found')
+                my_signature = await sign_request(sign_method, request, row.secret_key)
+                if secrets.compare_digest(my_signature, signature):
+                    query = (keypairs.update()
+                                    .values(last_used=datetime.now(tzutc()),
+                                            num_queries=keypairs.c.num_queries + 1)
+                                    .where(keypairs.c.access_key == access_key))
+                    await conn.execute(query)
+                    request['is_authorized'] = True
+                    request['keypair'] = {
+                        'access_key': access_key,
+                        'secret_key': row.secret_key,
+                        'concurrency_limit': row.concurrency_limit,
+                        'rate_limit': row.rate_limit,
+                    }
+                    request['user'] = {
+                        'id': row.user_id,
+                    }
         # No matter if authenticated or not, pass-through to the handler.
         # (if it's required, auth_required decorator will handle the situation.)
         return (await handler(request))
