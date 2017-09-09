@@ -117,7 +117,7 @@ async def auth_middleware_factory(app, handler):
             sign_method, access_key, signature = params
             async with app['dbpool'].acquire() as conn:
                 query = (keypairs.select()
-                                .where(keypairs.c.access_key == access_key))
+                                 .where(keypairs.c.access_key == access_key))
                 result = await conn.execute(query)
                 row = await result.fetchone()
                 if row is None:
@@ -125,9 +125,9 @@ async def auth_middleware_factory(app, handler):
                 my_signature = await sign_request(sign_method, request, row.secret_key)
                 if secrets.compare_digest(my_signature, signature):
                     query = (keypairs.update()
-                                    .values(last_used=datetime.now(tzutc()),
-                                            num_queries=keypairs.c.num_queries + 1)
-                                    .where(keypairs.c.access_key == access_key))
+                                     .values(last_used=datetime.now(tzutc()),
+                                             num_queries=keypairs.c.num_queries + 1)
+                                     .where(keypairs.c.access_key == access_key))
                     await conn.execute(query)
                     request['is_authorized'] = True
                     request['keypair'] = {
