@@ -168,6 +168,7 @@ async def server_main(loop, pidx, _args):
     await event_init(app)
     await gw_init(app)
     await auth_init(app)
+    await admin_init(app)
     await rlim_init(app)
     await kernel_init(app)
 
@@ -191,6 +192,7 @@ async def server_main(loop, pidx, _args):
 
         await kernel_shutdown(app)
         await rlim_shutdown(app)
+        await admin_shutdown(app)
         await auth_shutdown(app)
         await gw_shutdown(app)
         await event_shutdown(app)

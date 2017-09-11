@@ -25,6 +25,7 @@ requires = [
     'simplejson',
     'uvloop>=0.8',
     'aioconsole>=0.1.3',
+    'graphene>=2.0.dev',
     'sorna-common~=1.0.0',
 ]
 build_requires = [
@@ -77,7 +78,7 @@ setup(
         'Topic :: Software Development',
     ],
 
-    packages=['sorna.manager', 'sorna.gateway', 'sorna.monitor'],
+    packages=['sorna.manager', 'sorna.gateway'],
     namespace_packages=['sorna'],
 
     python_requires='>=3.6',
