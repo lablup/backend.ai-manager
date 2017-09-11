@@ -32,8 +32,6 @@ from .utils import catch_unexpected
 from ..manager.models import keypairs, kernels, AgentStatus, KernelStatus
 from ..manager.registry import InstanceRegistry
 
-_json_type = 'application/json'
-
 log = logging.getLogger('sorna.gateway.kernel')
 
 grace_events = []
@@ -53,7 +51,7 @@ def server_ready_required(handler):
 async def create(request):
     try:
         with _timeout(2):
-            params = await request.json()
+            params = await request.json(loads=json.loads)
         log.info(f"GET_OR_CREATE (u:{request['keypair']['access_key']}, "
                  f"lang:{params['lang']}, token:{params['clientSessionToken']})")
         assert 8 <= len(params['clientSessionToken']) <= 80
@@ -93,8 +91,7 @@ async def create(request):
     except SornaError:
         log.exception('GET_OR_CREATE: exception')
         raise
-    return web.Response(status=201, content_type=_json_type,
-                        text=json.dumps(resp))
+    return web.json_response(resp, status=201, dumps=json.dumps)
 
 
 @catch_unexpected(log)
@@ -305,8 +302,7 @@ async def get_info(request):
     except SornaError:
         log.exception('GETINFO: exception')
         raise
-    return web.Response(status=200, content_type=_json_type,
-                        text=json.dumps(resp))
+    return web.json_response(resp, status=200, dumps=json.dumps)
 
 
 @auth_required
@@ -336,7 +332,7 @@ async def execute(request):
     sess_id = request.match_info['sess_id']
     try:
         with _timeout(2):
-            params = await request.json()
+            params = await request.json(loads=json.loads)
         log.info(f"EXECUTE(u:{request['keypair']['access_key']}, k:{sess_id})")
     except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
         log.warning('EXECUTE: invalid/missing parameters')
@@ -362,8 +358,7 @@ async def execute(request):
     except SornaError:
         log.exception('EXECUTE: exception')
         raise
-    return web.Response(status=200, content_type=_json_type,
-                        text=json.dumps(resp))
+    return web.json_response(resp, status=200, dumps=json.dumps)
 
 
 @auth_required
@@ -539,25 +534,17 @@ async def not_impl_stub(request):
 
 
 async def init(app):
-    app.router.add_route('POST',   '/v1/kernel/create', create)
-    app.router.add_route('GET',    '/v1/kernel/{sess_id}', get_info)
-    app.router.add_route('PATCH',  '/v1/kernel/{sess_id}', restart)
-    app.router.add_route('DELETE', '/v1/kernel/{sess_id}', destroy)
-    app.router.add_route('POST',   '/v1/kernel/{sess_id}', execute)
-    app.router.add_route('GET',    '/v1/stream/kernel/{sess_id}/pty', stream_pty)
-    app.router.add_route('GET',    '/v1/stream/kernel/{sess_id}/events', not_impl_stub)
-
-    app.router.add_route('POST',   '/v2/kernel/create', create)
-    app.router.add_route('GET',    '/v2/kernel/{sess_id}', get_info)
-    app.router.add_route('PATCH',  '/v2/kernel/{sess_id}', restart)
-    app.router.add_route('DELETE', '/v2/kernel/{sess_id}', destroy)
-    app.router.add_route('POST',   '/v2/kernel/{sess_id}', execute)
-    app.router.add_route('POST',   '/v2/kernel/{sess_id}/upload', upload_files)
-    app.router.add_route('GET',    '/v2/stream/kernel/{sess_id}/pty', stream_pty)
-    app.router.add_route('GET',    '/v2/stream/kernel/{sess_id}/events', not_impl_stub)
-    app.router.add_route('POST',   '/v2/folder/create', not_impl_stub)
-    app.router.add_route('GET',    '/v2/folder/{folder_id}', not_impl_stub)
-    app.router.add_route('DELETE', '/v2/folder/{folder_id}', not_impl_stub)
+    app.router.add_route('POST',   r'/v{version:\d+}/kernel/create', create)
+    app.router.add_route('GET',    r'/v{version:\d+}/kernel/{sess_id}', get_info)
+    app.router.add_route('PATCH',  r'/v{version:\d+}/kernel/{sess_id}', restart)
+    app.router.add_route('DELETE', r'/v{version:\d+}/kernel/{sess_id}', destroy)
+    app.router.add_route('POST',   r'/v{version:\d+}/kernel/{sess_id}', execute)
+    app.router.add_route('GET',    r'/v{version:\d+}/stream/kernel/{sess_id}/pty', stream_pty)
+    app.router.add_route('GET',    r'/v{version:\d+}/stream/kernel/{sess_id}/events', not_impl_stub)
+    app.router.add_route('POST',   r'/v{version:\d+}/kernel/{sess_id}/upload', upload_files)
+    app.router.add_route('POST',   r'/v{version:\d+}/folder/create', not_impl_stub)
+    app.router.add_route('GET',    r'/v{version:\d+}/folder/{folder_id}', not_impl_stub)
+    app.router.add_route('DELETE', r'/v{version:\d+}/folder/{folder_id}', not_impl_stub)
 
     app['event_dispatcher'].add_handler('kernel_terminated', kernel_terminated)
     app['event_dispatcher'].add_handler('instance_started', instance_started)

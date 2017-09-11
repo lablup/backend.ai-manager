@@ -34,6 +34,7 @@ from ..manager import __version__
 from . import GatewayStatus
 from .exceptions import (SornaError, GenericNotFound,
                          GenericBadRequest, InternalServerError)
+from .admin import init as admin_init, shutdown as admin_shutdown
 from .auth import init as auth_init, shutdown as auth_shutdown
 from .config import load_config, init_logger
 from .etcd import init as etcd_init, shutdown as etcd_shutdown
@@ -68,15 +69,20 @@ async def api_middleware_factory(app, handler):
         method_override = request.headers.get('X-Method-Override', None)
         if method_override:
             request = request.clone(method=method_override)
-        if request.rel_url.path.startswith('/v1'):
-            path_ver = 1
-        elif request.rel_url.path.startswith('/v2'):
-            path_ver = 2
-        elif request.rel_url.path.startswith('/v3'):
-            path_ver = 3
-        else:
-            raise GenericBadRequest('Unsupported API version.')
-        request['api_version'] = path_ver
+        if request.match_info.http_exception is not None:
+            raise request.match_info.http_exception
+        try:
+            version = int(request.match_info['version'])
+        except KeyError:
+            version = request.headers.get('X-BackendAI-Version')
+            if not version:
+                version = request.headers.get('X-Sorna-Version')
+            if version not in VALID_VERSIONS:
+                raise GenericBadRequest('Invalid API version.')
+            version = int(version.split('.')[0][1:])
+        if version < 1 or version > 3:
+            raise GenericBadRequest('Unsupported API major version.')
+        request['api_version'] = version
         resp = (await handler(request))
         return resp
     return api_middleware_handler
@@ -113,8 +119,7 @@ async def exception_middleware_factory(app, handler):
 
 async def gw_init(app):
     app.on_response_prepare.append(on_prepare)
-    app.router.add_route('GET', '/v1', hello)
-    app.router.add_route('GET', '/v2', hello)
+    app.router.add_route('GET', r'/v{version}', hello)
     app['status'] = GatewayStatus.STARTING
     app['datadog'] = DummyDatadog()
     app['sentry'] = DummySentry()

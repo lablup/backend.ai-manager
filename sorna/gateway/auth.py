@@ -176,8 +176,7 @@ def generate_keypair():
 
 
 async def init(app):
-    app.router.add_route('GET', '/v1/authorize', authorize)
-    app.router.add_route('GET', '/v2/authorize', authorize)
+    app.router.add_route('GET', r'/v{version:\d+}/authorize', authorize)
     app.middlewares.append(auth_middleware_factory)
 
 
