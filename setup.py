@@ -26,6 +26,7 @@ requires = [
     'uvloop>=0.8',
     'aioconsole>=0.1.3',
     'graphene>=2.0.dev',
+    'iso8601',
     'sorna-common~=1.0.0',
 ]
 build_requires = [
