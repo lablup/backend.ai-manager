@@ -47,10 +47,20 @@ async def handle_gql(request):
     log.debug(f'handle_gql: processing request\n{text}')
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         vfloader = DataLoader(apartial(VirtualFolder.batch_load, conn))
+        # TODO: better way to distinguish differently filtered dataloaders?
+        kploader = DataLoader(apartial(KeyPair.batch_load, conn, is_active=None))
+        kpiloader = DataLoader(apartial(KeyPair.batch_load, conn, is_active=False))
+        kpaloader = DataLoader(apartial(KeyPair.batch_load, conn, is_active=True))
         result = schema.execute(
             body['query'], executor,
             variable_values=body['variables'],
-            context_value={'conn': conn, 'vfloader': vfloader},
+            context_value={
+                'conn': conn,
+                'vfloader': vfloader,
+                'kploader': kploader,
+                'kpiloader': kpiloader,
+                'kpaloader': kpaloader,
+            },
             return_promise=True)
         if inspect.isawaitable(result):
             result = await result
@@ -139,6 +149,21 @@ class KeyPair(graphene.ObjectType):
         vfloader = info.context['vfloader']
         return await vfloader.load(self.access_key)
 
+    @staticmethod
+    async def batch_load(conn, user_ids, is_active=None):
+        query = (sa.select('*')
+                   .select_from(keypairs)
+                   .where(keypairs.c.user_id.in_(user_ids)))
+        if is_active is not None:
+            query = query.where(keypairs.c.is_active == is_active)
+        objs_per_key = OrderedDict()
+        for k in user_ids:
+            objs_per_key[k] = list()
+        async for row in conn.execute(query):
+            o = await KeyPair.to_obj(row)
+            objs_per_key[row.user_id].append(o)
+        return tuple(objs_per_key.values())
+
 
 class VirtualFolder(graphene.ObjectType):
     id = graphene.UUID()
@@ -174,7 +199,7 @@ class VirtualFolder(graphene.ObjectType):
         for k in access_keys:
             objs_per_key[k] = list()
         async for row in conn.execute(query):
-            o = await to_obj(row)
+            o = await VirtualFolder.to_obj(row)
             objs_per_key[row.belongs_to].append(o)
         return tuple(objs_per_key.values())
 
@@ -184,33 +209,26 @@ class Mutation(graphene.ObjectType):
 
 
 class Query(graphene.ObjectType):
-    keypairs = graphene.List(KeyPair, user_id=graphene.Int(required=True))
+    keypairs = graphene.List(KeyPair,
+        user_id=graphene.Int(required=True),
+        is_active=graphene.Boolean())
     vfolders = graphene.List(VirtualFolder,
-                             access_key=graphene.String(required=True))
+        access_key=graphene.String(required=True))
 
     @staticmethod
-    async def resolve_keypairs(executor, info, user_id):
-        conn = info.context['conn']
-        query = (sa.select('*')
-                   .select_from(keypairs)
-                   .where(keypairs.c.user_id == user_id))
-        objects = []
-        async for row in conn.execute(query):
-            o = await KeyPair.to_obj(row)
-            objects.append(o)
-        return objects
+    async def resolve_keypairs(executor, info, user_id, is_active=None):
+        if is_active is None:
+            kploader = info.context['kploader']
+        elif is_active:
+            kploader = info.context['kpaloader']
+        else:
+            kploader = info.context['kpiloader']
+        return kploader.load(user_id)
 
     @staticmethod
     async def resolve_vfolders(executor, info, access_key):
-        conn = info.context['conn']
-        query = (sa.select('*')
-                   .select_from(vfolders)
-                   .where(vfolders.c.belongs_to == access_key))
-        objects = []
-        async for row in conn.execute(query):
-            o = await VirtualFolder.to_obj(row)
-            objects.append(o)
-        return objects
+        vfloader = info.context['vfloader']
+        return vfloader.load(access_key)
 
 
 async def init(app):
