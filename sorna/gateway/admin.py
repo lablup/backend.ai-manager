@@ -135,11 +135,9 @@ class KeyPair(graphene.ObjectType):
         )
 
     async def resolve_vfolders(self, info):
-        conn = info.context['conn']
-        vfloader = info.context['vfloader']
         # Use dataloader for automatic batching
-        result = await vfloader.load(self.access_key)
-        return result
+        vfloader = info.context['vfloader']
+        return await vfloader.load(self.access_key)
 
 
 class VirtualFolder(graphene.ObjectType):
