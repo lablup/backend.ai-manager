@@ -13,6 +13,7 @@ from aiodataloader import DataLoader
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 from graphql.execution.executors.asyncio import AsyncioExecutor
+from graphql.error.located_error import GraphQLLocatedError
 import simplejson as json
 import sqlalchemy as sa
 
@@ -65,9 +66,12 @@ async def handle_gql(request):
         if inspect.isawaitable(result):
             result = await result
     if result.errors:
-        # Here the errors are mostly about validation of types and GraphQL syntaxes.
-        # TODO: There may be "GraphQLLocatedError" which is raised if resolve()
-        # methods raises an arbitrary exception.
+        has_internal_errors = any(
+            isinstance(e, GraphQLLocatedError)
+            for e in result.errors
+        )
+        if has_internal_errors:
+            raise SornaError(result.errors[0].args[0])
         raise InvalidAPIParameters(result.errors[0].args[0])
     else:
         return web.json_response(result.data, status=200, dumps=json.dumps)
