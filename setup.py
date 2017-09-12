@@ -15,7 +15,7 @@ requires = [
     'aiohttp~=2.2.0',
     'aiopg~=0.13.0',
     'aioredis~=0.2.8',
-    'aiotools>=0.4.3',
+    'aiotools>=0.4.4',
     'etcd3~=0.5.2',
     'namedlist',
     'alembic~=0.9.2',
@@ -27,6 +27,7 @@ requires = [
     'aioconsole>=0.1.3',
     'graphene>=2.0.dev',
     'iso8601',
+    'aiodataloader',
     'sorna-common~=1.0.0',
 ]
 build_requires = [

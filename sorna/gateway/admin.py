@@ -1,11 +1,15 @@
 import asyncio
 import base64
+from collections import OrderedDict
+import functools
 import inspect
 import logging
 import secrets
 import typing
 
 from aiohttp import web
+from aiotools import apartial
+from aiodataloader import DataLoader
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 from graphql.execution.executors.asyncio import AsyncioExecutor
@@ -39,17 +43,22 @@ async def handle_gql(request):
             body['variables'] = None
     except AssertionError as e:
         raise InvalidAPIParameters(e.args[0])
+    text = await request.text()
+    log.debug(f'handle_gql: processing request\n{text}')
     async with request.app['dbpool'].acquire() as conn, conn.begin():
+        vfloader = DataLoader(apartial(VirtualFolder.batch_load, conn))
         result = schema.execute(
             body['query'], executor,
             variable_values=body['variables'],
-            context_value={'conn': conn},
+            context_value={'conn': conn, 'vfloader': vfloader},
             return_promise=True)
         if inspect.isawaitable(result):
             result = await result
     if result.errors:
-        log.error(result.errors)
-        raise SornaError(result.errors[0].args[0])
+        # Here the errors are mostly about validation of types and GraphQL syntaxes.
+        # TODO: There may be "GraphQLLocatedError" which is raised if resolve()
+        # methods raises an arbitrary exception.
+        raise InvalidAPIParameters(result.errors[0].args[0])
     else:
         return web.json_response(result.data, status=200, dumps=json.dumps)
 
@@ -97,7 +106,6 @@ class CreateKeyPair(graphene.Mutation):
 
 
 class KeyPair(graphene.ObjectType):
-    user_id = graphene.Int()
     access_key = graphene.String()
     secret_key = graphene.String()
     is_active = graphene.Boolean()
@@ -109,6 +117,30 @@ class KeyPair(graphene.ObjectType):
     rate_limit = graphene.Int()
     num_queries = graphene.Int()
 
+    vfolders = graphene.List(lambda: VirtualFolder)
+
+    @classmethod
+    async def to_obj(cls, row):
+        return cls(
+            access_key=row.access_key,
+            secret_key=row.secret_key,
+            is_active=row.is_active,
+            billing_plan=row.billing_plan,
+            created_at=row.created_at,
+            last_used=row.last_used,
+            concurrency_limit=row.concurrency_limit,
+            concurrency_used=row.concurrency_used,
+            rate_limit=row.rate_limit,
+            num_queries=row.num_queries,
+        )
+
+    async def resolve_vfolders(self, info):
+        conn = info.context['conn']
+        vfloader = info.context['vfloader']
+        # Use dataloader for automatic batching
+        result = await vfloader.load(self.access_key)
+        return result
+
 
 class VirtualFolder(graphene.ObjectType):
     id = graphene.UUID()
@@ -116,11 +148,37 @@ class VirtualFolder(graphene.ObjectType):
     name = graphene.String()
     max_files = graphene.Int()
     max_size = graphene.Int()
-    cur_size = graphene.Int()  # virtual value
     num_files = graphene.Int()
+    cur_size = graphene.Int()  # virtual value
     created_at = GQLDateTime()
     last_used = GQLDateTime()
-    belongs_to = graphene.String()  # fk:access_key
+
+    @classmethod
+    async def to_obj(cls, row):
+        return cls(
+            id=row.id,
+            host=row.host,
+            name=row.name,
+            max_files=row.max_files,
+            max_size=row.max_size,    # in KiB
+            num_files=row.num_files,  # TODO: measure on-the-fly?
+            cur_size=1234,            # TODO: measure on-the-fly
+            created_at=row.created_at,
+            last_used=row.last_used,
+        )
+
+    @staticmethod
+    async def batch_load(conn, access_keys):
+        query = (sa.select('*')
+                   .select_from(vfolders)
+                   .where(vfolders.c.belongs_to.in_(access_keys)))
+        objs_per_key = OrderedDict()
+        for k in access_keys:
+            objs_per_key[k] = list()
+        async for row in conn.execute(query):
+            o = await to_obj(row)
+            objs_per_key[row.belongs_to].append(o)
+        return tuple(objs_per_key.values())
 
 
 class Mutation(graphene.ObjectType):
@@ -129,31 +187,30 @@ class Mutation(graphene.ObjectType):
 
 class Query(graphene.ObjectType):
     keypairs = graphene.List(KeyPair, user_id=graphene.Int(required=True))
-    vfolders = graphene.List(VirtualFolder, access_key=graphene.String(required=True))
+    vfolders = graphene.List(VirtualFolder,
+                             access_key=graphene.String(required=True))
 
-    async def resolve_keypairs(self, info, user_id):
+    @staticmethod
+    async def resolve_keypairs(executor, info, user_id):
         conn = info.context['conn']
         query = (sa.select('*')
                    .select_from(keypairs)
                    .where(keypairs.c.user_id == user_id))
         objects = []
         async for row in conn.execute(query):
-            o = KeyPair(**row)
+            o = await KeyPair.to_obj(row)
             objects.append(o)
         return objects
 
-    async def resolve_vfolders(self, info, access_key):
+    @staticmethod
+    async def resolve_vfolders(executor, info, access_key):
         conn = info.context['conn']
         query = (sa.select('*')
                    .select_from(vfolders)
                    .where(vfolders.c.belongs_to == access_key))
         objects = []
         async for row in conn.execute(query):
-            # TODO: implement - read the actual size from NAS/EFS
-            cur_size = 1234
-            o = VirtualFolder(
-                cur_size=cur_size,
-                **row)
+            o = await VirtualFolder.to_obj(row)
             objects.append(o)
         return objects
 
