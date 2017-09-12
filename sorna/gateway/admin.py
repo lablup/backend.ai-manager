@@ -79,9 +79,12 @@ async def handle_gql(request):
 
 class KeyPairInput(graphene.InputObjectType):
     is_active = graphene.Boolean()
-    billing_plan = graphene.String()
+    resource_policy = graphene.String()
     concurrency_limit = graphene.Int()
     rate_limit = graphene.Int()
+
+    # When creating, you MUST set all fields.
+    # When modifying, set the field to "None" to skip setting the value.
 
 
 class CreateKeyPair(graphene.Mutation):
@@ -104,7 +107,7 @@ class CreateKeyPair(graphene.Mutation):
             'access_key': ak,
             'secret_key': sk,
             'is_active': props.is_active,
-            'billing_plan': props.billing_plan,
+            'resource_policy': props.resource_policy,
             'concurrency_limit': props.concurrency_limit,
             'concurrency_used': 0,
             'rate_limit': props.rate_limit,
@@ -112,18 +115,72 @@ class CreateKeyPair(graphene.Mutation):
         }
         query = (keypairs.insert().values(data))
         result = await conn.execute(query)
-        if result.rowcount == 1:
-            o = KeyPair(**data)
+        if result.rowcount > 0:
+            o = await KeyPair.to_obj(data)
             return CreateKeyPair(ok=True, msg='success', keypair=o)
         else:
             return CreateKeyPair(ok=False, msg='failed to create keypair', keypair=None)
+
+
+class ModifyKeyPair(graphene.Mutation):
+
+    class Arguments:
+        access_key = graphene.String(required=True)
+        props = KeyPairInput(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @staticmethod
+    async def mutate(root, info, access_key, props):
+        conn = info.context['conn']
+        data = {}
+
+        def set_if_set(name):
+            v = getattr(props, name)
+            if v is not None:
+                data[name] = v
+
+        set_if_set('is_active')
+        set_if_set('resource_policy')
+        set_if_set('concurrency_limit')
+        set_if_set('rate_limit')
+
+        query = (keypairs.update()
+                         .values(data)
+                         .where(keypairs.c.access_key == access_key))
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            return ModifyKeyPair(ok=True, msg='success')
+        else:
+            return ModifyKeyPair(ok=False, msg='failed to modify keypair')
+
+
+class DeleteKeyPair(graphene.Mutation):
+
+    class Arguments:
+        access_key = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @staticmethod
+    async def mutate(root, info, access_key):
+        conn = info.context['conn']
+        query = (keypairs.delete()
+                         .where(keypairs.c.access_key == access_key))
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            return DeleteKeyPair(ok=True, msg='success')
+        else:
+            return DeleteKeyPair(ok=False, msg='failed to delete keypair')
 
 
 class KeyPair(graphene.ObjectType):
     access_key = graphene.String()
     secret_key = graphene.String()
     is_active = graphene.Boolean()
-    billing_plan = graphene.String()
+    resource_policy = graphene.String()
     created_at = GQLDateTime()
     last_used = GQLDateTime()
     concurrency_limit = graphene.Int()
@@ -139,7 +196,7 @@ class KeyPair(graphene.ObjectType):
             access_key=row.access_key,
             secret_key=row.secret_key,
             is_active=row.is_active,
-            billing_plan=row.billing_plan,
+            resource_policy=row.resource_policy,
             created_at=row.created_at,
             last_used=row.last_used,
             concurrency_limit=row.concurrency_limit,
@@ -210,6 +267,8 @@ class VirtualFolder(graphene.ObjectType):
 
 class Mutation(graphene.ObjectType):
     create_keypair = CreateKeyPair.Field()
+    modify_keypair = ModifyKeyPair.Field()
+    delete_keypair = DeleteKeyPair.Field()
 
 
 class Query(graphene.ObjectType):
