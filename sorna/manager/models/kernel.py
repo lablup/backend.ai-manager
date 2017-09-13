@@ -82,7 +82,6 @@ class SessionCommons:
     sess_id = graphene.String()
     id = graphene.UUID()
 
-    #status = graphene.Enum.from_enum(KernelStatus)
     status = graphene.String()
     status_info = graphene.String()
     created_at = GQLDateTime()
@@ -135,7 +134,9 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
     '''
 
     lang = graphene.String()
-    workers = graphene.List(lambda: ComputeWorker)
+    workers = graphene.List(lambda: ComputeWorker,
+        status=graphene.String(),
+    )
 
     @classmethod
     def from_row(cls, row):
@@ -143,15 +144,18 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
         o.lang = row.lang
         return o
 
-    async def resolve_workers(self, info):
+    async def resolve_workers(self, info, status=None):
         '''
         Retrieves all children worker sessions.
         '''
-        loader = info.context['cwloader']
+        manager = info.context['dlmgr']
+        if status is not None:
+            status = KernelStatus[status]
+        loader = manager.get_loader('ComputeWorker', status=status)
         return await loader.load(self.sess_id)
 
     @staticmethod
-    async def batch_load(conn, access_keys, status=None):
+    async def batch_load(conn, access_keys, *, status=None):
         query = (sa.select('*')
                    .select_from(kernels)
                    .where((kernels.c.access_key.in_(access_keys)) &
@@ -173,7 +177,7 @@ class ComputeWorker(SessionCommons, graphene.ObjectType):
     '''
 
     @staticmethod
-    async def batch_load(conn, sess_ids, status=None):
+    async def batch_load(conn, sess_ids, *, status=None):
         query = (sa.select('*')
                    .select_from(kernels)
                    .where((kernels.c.sess_id.in_(sess_ids)) &

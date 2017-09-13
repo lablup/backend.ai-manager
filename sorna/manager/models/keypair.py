@@ -63,15 +63,20 @@ class KeyPair(graphene.ObjectType):
         )
 
     async def resolve_vfolders(self, info):
-        loader = info.context['vfloader']
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('VirtualFolder')
         return await loader.load(self.access_key)
 
     async def resolve_compute_sessions(self, info, status=None):
-        loader = info.context['csloader']
+        manager = info.context['dlmgr']
+        from . import KernelStatus  # noqa: avoid circular imports
+        if status is not None:
+            status = KernelStatus[status]
+        loader = manager.get_loader('ComputeSession', status=status)
         return await loader.load(self.access_key)
 
     @staticmethod
-    async def batch_load(conn, user_ids, is_active=None):
+    async def batch_load(conn, user_ids, *, is_active=None):
         query = (sa.select('*')
                    .select_from(keypairs)
                    .where(keypairs.c.user_id.in_(user_ids)))

@@ -1,6 +1,9 @@
 import enum
+import sys
 import uuid
 
+from aiodataloader import DataLoader
+from aiotools import apartial
 import sqlalchemy as sa
 from sqlalchemy.types import (
     Enum as SAEnum,
@@ -86,3 +89,42 @@ class GUID(TypeDecorator):
 def IDColumn(name='id'):
     return sa.Column(name, GUID, primary_key=True,
                      server_default=sa.text("uuid_generate_v4()"))
+
+
+class DataLoaderManager:
+    '''
+    For every different combination of filtering conditions, we need to make a
+    new DataLoader instance because it "batches" the database queries.
+    This manager get-or-creates dataloaders with fixed conditions (represetned
+    as arguments) like a cache.
+
+    NOTE: Just like DataLoaders, it is recommended to instantiate this manager
+    for every incoming API request.
+    '''
+
+    def __init__(self, *common_args):
+        self.cache = {}
+        self.common_args = common_args
+        self.mod = sys.modules['sorna.manager.models']
+
+    @staticmethod
+    def _get_key(otname, args, kwargs):
+        '''
+        Calculate the hash of the all arguments and keyword arguments.
+        '''
+        key = (otname, ) + args
+        for item in kwargs.items():
+            key += item
+        return hash(key)
+
+    def get_loader(self, objtype_name, *args, **kwargs):
+        k = self._get_key(objtype_name, args, kwargs)
+        loader = self.cache.get(k)
+        if loader is None:
+            objtype = getattr(self.mod, objtype_name)
+            batch_load_fn = objtype.batch_load
+            loader = DataLoader(
+                apartial(batch_load_fn, *self.common_args, *args, **kwargs),
+                max_batch_size=16)
+            self.cache[k] = loader
+        return loader
