@@ -48,7 +48,7 @@ class KeyPair(graphene.ObjectType):
     )
 
     @classmethod
-    async def to_obj(cls, row):
+    def from_row(cls, row):
         return cls(
             access_key=row.access_key,
             secret_key=row.secret_key,
@@ -81,7 +81,7 @@ class KeyPair(graphene.ObjectType):
         for k in user_ids:
             objs_per_key[k] = list()
         async for row in conn.execute(query):
-            o = await KeyPair.to_obj(row)
+            o = KeyPair.from_row(row)
             objs_per_key[row.user_id].append(o)
         return tuple(objs_per_key.values())
 
@@ -125,10 +125,11 @@ class CreateKeyPair(graphene.Mutation):
         query = (keypairs.insert().values(data))
         result = await conn.execute(query)
         if result.rowcount > 0:
-            o = await KeyPair.to_obj(data)
+            o = KeyPair.from_row(data)
             return CreateKeyPair(ok=True, msg='success', keypair=o)
         else:
-            return CreateKeyPair(ok=False, msg='failed to create keypair', keypair=None)
+            return CreateKeyPair(ok=False, msg='failed to create keypair',
+                                 keypair=None)
 
 
 class ModifyKeyPair(graphene.Mutation):

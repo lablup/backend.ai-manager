@@ -105,7 +105,7 @@ class SessionCommons:
     io_write_bytes = graphene.Int()
 
     @classmethod
-    async def to_obj(cls, row):
+    def from_row(cls, row):
         return cls(
             sess_id=row.sess_id,
             id=row.id,
@@ -138,8 +138,8 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
     workers = graphene.List(lambda: ComputeWorker)
 
     @classmethod
-    async def to_obj(cls, row):
-        o = await super().to_obj(row)
+    def from_row(cls, row):
+        o = super().from_row(row)
         o.lang = row.lang
         return o
 
@@ -162,7 +162,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
         for k in access_keys:
             objs_per_key[k] = list()
         async for row in conn.execute(query):
-            o = await ComputeSession.to_obj(row)
+            o = ComputeSession.from_row(row)
             objs_per_key[row.access_key].append(o)
         return tuple(objs_per_key.values())
 
@@ -184,6 +184,6 @@ class ComputeWorker(SessionCommons, graphene.ObjectType):
         for k in sess_ids:
             objs_per_key[k] = list()
         async for row in conn.execute(query):
-            o = await ComputeWorker.to_obj(row)
+            o = ComputeWorker.from_row(row)
             objs_per_key[row.sess_id].append(o)
         return tuple(objs_per_key.values())

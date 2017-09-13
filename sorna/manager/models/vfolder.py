@@ -46,27 +46,33 @@ class VirtualFolder(graphene.ObjectType):
     name = graphene.String()
     max_files = graphene.Int()
     max_size = graphene.Int()
-    num_files = graphene.Int()
-    cur_size = graphene.Int()  # virtual value
     created_at = GQLDateTime()
     last_used = GQLDateTime()
 
+    num_files = graphene.Int()
+    cur_size = graphene.Int()
     # num_attached = graphene.Int()
 
     @classmethod
-    async def to_obj(cls, row):
+    def from_row(cls, row):
         return cls(
             id=row.id,
             host=row.host,
             name=row.name,
             max_files=row.max_files,
             max_size=row.max_size,    # in KiB
-            num_files=row.num_files,  # TODO: measure on-the-fly?
-            cur_size=0,               # TODO: measure on-the-fly
             created_at=row.created_at,
             last_used=row.last_used,
             num_attached=row.num_attached,
         )
+
+    async def resolve_num_files(self, info):
+        # TODO: measure on-the-fly
+        return 0
+
+    async def resolve_cur_size(self, info):
+        # TODO: measure on-the-fly
+        return 0
 
     @staticmethod
     async def batch_load(conn, access_keys):
@@ -78,6 +84,6 @@ class VirtualFolder(graphene.ObjectType):
         for k in access_keys:
             objs_per_key[k] = list()
         async for row in conn.execute(query):
-            o = await VirtualFolder.to_obj(row)
+            o = VirtualFolder.from_row(row)
             objs_per_key[row.belongs_to].append(o)
         return tuple(objs_per_key.values())
