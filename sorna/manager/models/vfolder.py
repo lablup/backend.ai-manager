@@ -1,8 +1,16 @@
+from collections import OrderedDict
 import enum
+
+import graphene
+from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
+
 from .base import metadata, GUID, IDColumn
 
-__all__ = ('vfolders', )
+__all__ = (
+    'vfolders',
+    'VirtualFolder',
+)
 
 
 vfolders = sa.Table(
@@ -30,3 +38,46 @@ vfolder_attachment = sa.Table(
               nullable=False),
     sa.PrimaryKeyConstraint('vfolder', 'kernel'),
 )
+
+
+class VirtualFolder(graphene.ObjectType):
+    id = graphene.UUID()
+    host = graphene.String()
+    name = graphene.String()
+    max_files = graphene.Int()
+    max_size = graphene.Int()
+    num_files = graphene.Int()
+    cur_size = graphene.Int()  # virtual value
+    created_at = GQLDateTime()
+    last_used = GQLDateTime()
+
+    # num_attached = graphene.Int()
+
+    @classmethod
+    async def to_obj(cls, row):
+        return cls(
+            id=row.id,
+            host=row.host,
+            name=row.name,
+            max_files=row.max_files,
+            max_size=row.max_size,    # in KiB
+            num_files=row.num_files,  # TODO: measure on-the-fly?
+            cur_size=0,               # TODO: measure on-the-fly
+            created_at=row.created_at,
+            last_used=row.last_used,
+            num_attached=row.num_attached,
+        )
+
+    @staticmethod
+    async def batch_load(conn, access_keys):
+        # TODO: num_attached count group-by
+        query = (sa.select('*')
+                   .select_from(vfolders)
+                   .where(vfolders.c.belongs_to.in_(access_keys)))
+        objs_per_key = OrderedDict()
+        for k in access_keys:
+            objs_per_key[k] = list()
+        async for row in conn.execute(query):
+            o = await VirtualFolder.to_obj(row)
+            objs_per_key[row.belongs_to].append(o)
+        return tuple(objs_per_key.values())

@@ -1,8 +1,16 @@
+from collections import OrderedDict
 import enum
+
+import graphene
+from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
+
 from .base import metadata, EnumType, IDColumn
 
-__all__ = ('kernels', 'KernelStatus')
+__all__ = (
+    'kernels', 'KernelStatus',
+    'ComputeSession', 'ComputeWorker',
+)
 
 
 class KernelStatus(enum.Enum):
@@ -67,3 +75,115 @@ kernels = sa.Table(
 
     sa.Index('ix_kernels_sess_id_role', 'sess_id', 'role', unique=False),
 )
+
+
+class SessionCommons:
+
+    sess_id = graphene.String()
+    id = graphene.UUID()
+
+    #status = graphene.Enum.from_enum(KernelStatus)
+    status = graphene.String()
+    status_info = graphene.String()
+    created_at = GQLDateTime()
+    terminated_at = GQLDateTime()
+
+    agent = graphene.String()
+    container_id = graphene.String()
+
+    mem_slot = graphene.Int()
+    cpu_slot = graphene.Int()
+    gpu_slot = graphene.Int()
+
+    num_queries = graphene.Int()
+    cpu_used = graphene.Int()
+    max_mem_bytes = graphene.Int()
+    cur_mem_bytes = graphene.Int()
+    net_rx_bytes = graphene.Int()
+    net_tx_bytes = graphene.Int()
+    io_read_bytes = graphene.Int()
+    io_write_bytes = graphene.Int()
+
+    @classmethod
+    async def to_obj(cls, row):
+        return cls(
+            sess_id=row.sess_id,
+            id=row.id,
+            status=row.status,
+            status_info=row.status_info,
+            created_at=row.created_at,
+            terminated_at=row.terminated_at,
+            agent=row.agent,
+            container_id=row.container_id,
+            mem_slot=row.mem_slot,
+            cpu_slot=row.cpu_slot,
+            gpu_slot=row.gpu_slot,
+            num_queries=row.num_queries,
+            cpu_used=row.cpu_used,
+            max_mem_bytes=row.max_mem_bytes,
+            cur_mem_bytes=row.cur_mem_bytes,
+            net_rx_bytes=row.net_rx_bytes,
+            net_tx_bytes=row.net_tx_bytes,
+            io_read_bytes=row.io_read_bytes,
+            io_write_bytes=row.io_write_bytes,
+        )
+
+
+class ComputeSession(SessionCommons, graphene.ObjectType):
+    '''
+    Represents a master session.
+    '''
+
+    lang = graphene.String()
+    workers = graphene.List(lambda: ComputeWorker)
+
+    @classmethod
+    async def to_obj(cls, row):
+        o = await super().to_obj(row)
+        o.lang = row.lang
+        return o
+
+    async def resolve_workers(self, info):
+        '''
+        Retrieves all children worker sessions.
+        '''
+        loader = info.context['cwloader']
+        return await loader.load(self.sess_id)
+
+    @staticmethod
+    async def batch_load(conn, access_keys, status=None):
+        query = (sa.select('*')
+                   .select_from(kernels)
+                   .where((kernels.c.access_key.in_(access_keys)) &
+                          (kernels.c.role == 'master')))
+        if status is not None:
+            query = query.where(kernels.c.status == status)
+        objs_per_key = OrderedDict()
+        for k in access_keys:
+            objs_per_key[k] = list()
+        async for row in conn.execute(query):
+            o = await ComputeSession.to_obj(row)
+            objs_per_key[row.access_key].append(o)
+        return tuple(objs_per_key.values())
+
+
+class ComputeWorker(SessionCommons, graphene.ObjectType):
+    '''
+    Represents a worker session that belongs to a master session.
+    '''
+
+    @staticmethod
+    async def batch_load(conn, sess_ids, status=None):
+        query = (sa.select('*')
+                   .select_from(kernels)
+                   .where((kernels.c.sess_id.in_(sess_ids)) &
+                          (kernels.c.role == 'worker')))
+        if status is not None:
+            query = query.where(kernels.c.status == status)
+        objs_per_key = OrderedDict()
+        for k in sess_ids:
+            objs_per_key[k] = list()
+        async for row in conn.execute(query):
+            o = await ComputeWorker.to_obj(row)
+            objs_per_key[row.sess_id].append(o)
+        return tuple(objs_per_key.values())
