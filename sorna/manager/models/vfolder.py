@@ -75,15 +75,16 @@ class VirtualFolder(graphene.ObjectType):
         return 0
 
     @staticmethod
-    async def batch_load(conn, access_keys):
-        # TODO: num_attached count group-by
-        query = (sa.select('*')
-                   .select_from(vfolders)
-                   .where(vfolders.c.belongs_to.in_(access_keys)))
-        objs_per_key = OrderedDict()
-        for k in access_keys:
-            objs_per_key[k] = list()
-        async for row in conn.execute(query):
-            o = VirtualFolder.from_row(row)
-            objs_per_key[row.belongs_to].append(o)
+    async def batch_load(dbpool, access_keys):
+        async with dbpool.acquire() as conn:
+            # TODO: num_attached count group-by
+            query = (sa.select('*')
+                       .select_from(vfolders)
+                       .where(vfolders.c.belongs_to.in_(access_keys)))
+            objs_per_key = OrderedDict()
+            for k in access_keys:
+                objs_per_key[k] = list()
+            async for row in conn.execute(query):
+                o = VirtualFolder.from_row(row)
+                objs_per_key[row.belongs_to].append(o)
         return tuple(objs_per_key.values())

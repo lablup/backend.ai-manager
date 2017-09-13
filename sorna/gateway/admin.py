@@ -47,18 +47,17 @@ async def handle_gql(request):
         raise InvalidAPIParameters(e.args[0])
     text = await request.text()
     log.debug(f'handle_gql: processing request\n{text}')
-    async with request.app['dbpool'].acquire() as conn, conn.begin():
-        dlmanager = DataLoaderManager(conn)
-        result = schema.execute(
-            body['query'], executor,
-            variable_values=body['variables'],
-            context_value={
-                'conn': conn,
-                'dlmgr': dlmanager,
-            },
-            return_promise=True)
-        if inspect.isawaitable(result):
-            result = await result
+    dlmanager = DataLoaderManager(request.app['dbpool'])
+    result = schema.execute(
+        body['query'], executor,
+        variable_values=body['variables'],
+        context_value={
+            'dlmgr': dlmanager,
+            'dbpool': request.app['dbpool'],
+        },
+        return_promise=True)
+    if inspect.isawaitable(result):
+        result = await result
     if result.errors:
         has_internal_errors = False
         for e in result.errors:

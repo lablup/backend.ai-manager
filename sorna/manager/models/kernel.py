@@ -155,19 +155,20 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
         return await loader.load(self.sess_id)
 
     @staticmethod
-    async def batch_load(conn, access_keys, *, status=None):
-        query = (sa.select('*')
-                   .select_from(kernels)
-                   .where((kernels.c.access_key.in_(access_keys)) &
-                          (kernels.c.role == 'master')))
-        if status is not None:
-            query = query.where(kernels.c.status == status)
-        objs_per_key = OrderedDict()
-        for k in access_keys:
-            objs_per_key[k] = list()
-        async for row in conn.execute(query):
-            o = ComputeSession.from_row(row)
-            objs_per_key[row.access_key].append(o)
+    async def batch_load(dbpool, access_keys, *, status=None):
+        async with dbpool.acquire() as conn:
+            query = (sa.select('*')
+                       .select_from(kernels)
+                       .where((kernels.c.access_key.in_(access_keys)) &
+                              (kernels.c.role == 'master')))
+            if status is not None:
+                query = query.where(kernels.c.status == status)
+            objs_per_key = OrderedDict()
+            for k in access_keys:
+                objs_per_key[k] = list()
+            async for row in conn.execute(query):
+                o = ComputeSession.from_row(row)
+                objs_per_key[row.access_key].append(o)
         return tuple(objs_per_key.values())
 
 
@@ -177,17 +178,18 @@ class ComputeWorker(SessionCommons, graphene.ObjectType):
     '''
 
     @staticmethod
-    async def batch_load(conn, sess_ids, *, status=None):
-        query = (sa.select('*')
-                   .select_from(kernels)
-                   .where((kernels.c.sess_id.in_(sess_ids)) &
-                          (kernels.c.role == 'worker')))
-        if status is not None:
-            query = query.where(kernels.c.status == status)
-        objs_per_key = OrderedDict()
-        for k in sess_ids:
-            objs_per_key[k] = list()
-        async for row in conn.execute(query):
-            o = ComputeWorker.from_row(row)
-            objs_per_key[row.sess_id].append(o)
+    async def batch_load(dbpool, sess_ids, *, status=None):
+        async with dbpool.acquire() as conn:
+            query = (sa.select('*')
+                       .select_from(kernels)
+                       .where((kernels.c.sess_id.in_(sess_ids)) &
+                              (kernels.c.role == 'worker')))
+            if status is not None:
+                query = query.where(kernels.c.status == status)
+            objs_per_key = OrderedDict()
+            for k in sess_ids:
+                objs_per_key[k] = list()
+            async for row in conn.execute(query):
+                o = ComputeWorker.from_row(row)
+                objs_per_key[row.sess_id].append(o)
         return tuple(objs_per_key.values())

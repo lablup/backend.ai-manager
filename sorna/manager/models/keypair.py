@@ -76,18 +76,19 @@ class KeyPair(graphene.ObjectType):
         return await loader.load(self.access_key)
 
     @staticmethod
-    async def batch_load(conn, user_ids, *, is_active=None):
-        query = (sa.select('*')
-                   .select_from(keypairs)
-                   .where(keypairs.c.user_id.in_(user_ids)))
-        if is_active is not None:
-            query = query.where(keypairs.c.is_active == is_active)
-        objs_per_key = OrderedDict()
-        for k in user_ids:
-            objs_per_key[k] = list()
-        async for row in conn.execute(query):
-            o = KeyPair.from_row(row)
-            objs_per_key[row.user_id].append(o)
+    async def batch_load(dbpool, user_ids, *, is_active=None):
+        async with dbpool.acquire() as conn:
+            query = (sa.select('*')
+                       .select_from(keypairs)
+                       .where(keypairs.c.user_id.in_(user_ids)))
+            if is_active is not None:
+                query = query.where(keypairs.c.is_active == is_active)
+            objs_per_key = OrderedDict()
+            for k in user_ids:
+                objs_per_key[k] = list()
+            async for row in conn.execute(query):
+                o = KeyPair.from_row(row)
+                objs_per_key[row.user_id].append(o)
         return tuple(objs_per_key.values())
 
 
@@ -113,28 +114,28 @@ class CreateKeyPair(graphene.Mutation):
 
     @staticmethod
     async def mutate(root, info, user_id, props):
-        conn = info.context['conn']
-        ak = 'AKIA' + base64.b32encode(secrets.token_bytes(10)).decode('ascii')
-        sk = secrets.token_urlsafe(30)
-        data = {
-            'user_id': user_id,
-            'access_key': ak,
-            'secret_key': sk,
-            'is_active': props.is_active,
-            'resource_policy': props.resource_policy,
-            'concurrency_limit': props.concurrency_limit,
-            'concurrency_used': 0,
-            'rate_limit': props.rate_limit,
-            'num_queries': 0,
-        }
-        query = (keypairs.insert().values(data))
-        result = await conn.execute(query)
-        if result.rowcount > 0:
-            o = KeyPair.from_row(data)
-            return CreateKeyPair(ok=True, msg='success', keypair=o)
-        else:
-            return CreateKeyPair(ok=False, msg='failed to create keypair',
-                                 keypair=None)
+        async with info.context['dbpool'] as conn, conn.begin():
+            ak = 'AKIA' + base64.b32encode(secrets.token_bytes(10)).decode('ascii')
+            sk = secrets.token_urlsafe(30)
+            data = {
+                'user_id': user_id,
+                'access_key': ak,
+                'secret_key': sk,
+                'is_active': props.is_active,
+                'resource_policy': props.resource_policy,
+                'concurrency_limit': props.concurrency_limit,
+                'concurrency_used': 0,
+                'rate_limit': props.rate_limit,
+                'num_queries': 0,
+            }
+            query = (keypairs.insert().values(data))
+            result = await conn.execute(query)
+            if result.rowcount > 0:
+                o = KeyPair.from_row(data)
+                return CreateKeyPair(ok=True, msg='success', keypair=o)
+            else:
+                return CreateKeyPair(ok=False, msg='failed to create keypair',
+                                     keypair=None)
 
 
 class ModifyKeyPair(graphene.Mutation):
@@ -148,27 +149,27 @@ class ModifyKeyPair(graphene.Mutation):
 
     @staticmethod
     async def mutate(root, info, access_key, props):
-        conn = info.context['conn']
-        data = {}
+        async with info.context['dbpool'] as conn, conn.begin():
+            data = {}
 
-        def set_if_set(name):
-            v = getattr(props, name)
-            if v is not None:
-                data[name] = v
+            def set_if_set(name):
+                v = getattr(props, name)
+                if v is not None:
+                    data[name] = v
 
-        set_if_set('is_active')
-        set_if_set('resource_policy')
-        set_if_set('concurrency_limit')
-        set_if_set('rate_limit')
+            set_if_set('is_active')
+            set_if_set('resource_policy')
+            set_if_set('concurrency_limit')
+            set_if_set('rate_limit')
 
-        query = (keypairs.update()
-                         .values(data)
-                         .where(keypairs.c.access_key == access_key))
-        result = await conn.execute(query)
-        if result.rowcount > 0:
-            return ModifyKeyPair(ok=True, msg='success')
-        else:
-            return ModifyKeyPair(ok=False, msg='failed to modify keypair')
+            query = (keypairs.update()
+                             .values(data)
+                             .where(keypairs.c.access_key == access_key))
+            result = await conn.execute(query)
+            if result.rowcount > 0:
+                return ModifyKeyPair(ok=True, msg='success')
+            else:
+                return ModifyKeyPair(ok=False, msg='failed to modify keypair')
 
 
 class DeleteKeyPair(graphene.Mutation):
@@ -181,11 +182,11 @@ class DeleteKeyPair(graphene.Mutation):
 
     @staticmethod
     async def mutate(root, info, access_key):
-        conn = info.context['conn']
-        query = (keypairs.delete()
-                         .where(keypairs.c.access_key == access_key))
-        result = await conn.execute(query)
-        if result.rowcount > 0:
-            return DeleteKeyPair(ok=True, msg='success')
-        else:
-            return DeleteKeyPair(ok=False, msg='failed to delete keypair')
+        async with info.context['dbpool'] as conn, conn.begin():
+            query = (keypairs.delete()
+                             .where(keypairs.c.access_key == access_key))
+            result = await conn.execute(query)
+            if result.rowcount > 0:
+                return DeleteKeyPair(ok=True, msg='success')
+            else:
+                return DeleteKeyPair(ok=False, msg='failed to delete keypair')
