@@ -35,6 +35,7 @@ class KeyPair(graphene.ObjectType):
     access_key = graphene.String()
     secret_key = graphene.String()
     is_active = graphene.Boolean()
+    is_admin = graphene.Boolean()
     resource_policy = graphene.String()
     created_at = GQLDateTime()
     last_used = GQLDateTime()
@@ -55,6 +56,7 @@ class KeyPair(graphene.ObjectType):
             access_key=row.access_key,
             secret_key=row.secret_key,
             is_active=row.is_active,
+            is_admin=row.is_admin,
             resource_policy=row.resource_policy,
             created_at=row.created_at,
             last_used=row.last_used,
