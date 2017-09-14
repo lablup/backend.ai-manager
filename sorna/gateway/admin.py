@@ -4,6 +4,7 @@ import functools
 import inspect
 import logging
 import secrets
+import traceback
 import typing
 
 from aiohttp import web
@@ -63,8 +64,10 @@ async def handle_gql(request):
         for e in result.errors:
             if isinstance(e, GraphQLLocatedError):
                 exc_info = (type(e.original_error),
-                            e.original_error.args,
+                            e.original_error,
                             e.original_error.__traceback__)
+                tb_text = ''.join(traceback.format_exception(*exc_info))
+                log.error(f'GraphQL located error:\n{tb_text}')
                 request.app['sentry'].captureException(exc_info)
                 has_internal_errors = True
         if has_internal_errors:
