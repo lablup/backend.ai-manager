@@ -3,6 +3,7 @@ from collections import OrderedDict
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
+from sqlalchemy.sql.expression import false
 
 from .base import metadata
 
@@ -19,6 +20,7 @@ keypairs = sa.Table(
     sa.Column('access_key', sa.String(length=20), primary_key=True),
     sa.Column('secret_key', sa.String(length=40)),
     sa.Column('is_active', sa.Boolean, index=True),
+    sa.Column('is_admin', sa.Boolean, index=True, default=False, server_default=false()),
     sa.Column('resource_policy', sa.String, nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
     sa.Column('last_used', sa.DateTime(timezone=True), nullable=True),

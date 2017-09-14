@@ -15,6 +15,7 @@ import simplejson as json
 import sqlalchemy as sa
 
 from .exceptions import InvalidAPIParameters, SornaError
+from .auth import admin_required
 from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
     KeyPair, CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
@@ -25,8 +26,8 @@ from ..manager.models import (
 log = logging.getLogger('sorna.gateway.admin')
 
 
-#@auth_required
-async def handle_gql(request):
+@admin_required
+async def handle_gql(request: web.Request) -> web.Response:
     executor = request.app['admin.gql_executor']
     schema = request.app['admin.gql_schema']
     try:

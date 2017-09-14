@@ -108,6 +108,7 @@ async def auth_middleware_factory(app, handler):
     '''
     async def auth_middleware_handler(request):
         request['is_authorized'] = False
+        request['is_admin'] = False
         request['keypair'] = None
         request['user'] = None
         if not check_date(request):
@@ -116,7 +117,7 @@ async def auth_middleware_factory(app, handler):
         if params:
             sign_method, access_key, signature = params
             async with app['dbpool'].acquire() as conn:
-                query = (keypairs.select()
+                query = (keypairs.select('*')
                                  .where(keypairs.c.access_key == access_key))
                 result = await conn.execute(query)
                 row = await result.fetchone()
@@ -130,9 +131,10 @@ async def auth_middleware_factory(app, handler):
                                      .where(keypairs.c.access_key == access_key))
                     await conn.execute(query)
                     request['is_authorized'] = True
+                    if row.is_admin:
+                        request['is_admin'] = True
                     request['keypair'] = {
                         'access_key': access_key,
-                        'secret_key': row.secret_key,
                         'concurrency_limit': row.concurrency_limit,
                         'rate_limit': row.rate_limit,
                     }
@@ -149,6 +151,15 @@ def auth_required(handler):
     @functools.wraps(handler)
     async def wrapped(request):
         if request.get('is_authorized', False):
+            return (await handler(request))
+        raise AuthorizationFailed
+    return wrapped
+
+
+def admin_required(handler):
+    @functools.wraps(handler)
+    async def wrapped(request):
+        if request.get('is_authorized', False) and request.get('is_admin', False):
             return (await handler(request))
         raise AuthorizationFailed
     return wrapped
