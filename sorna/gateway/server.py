@@ -119,7 +119,7 @@ async def exception_middleware_factory(app, handler):
 
 async def gw_init(app):
     app.on_response_prepare.append(on_prepare)
-    app.router.add_route('GET', r'/v{version}', hello)
+    app.router.add_route('GET', r'/v{version:\d+}', hello)
     app['status'] = GatewayStatus.STARTING
     app['datadog'] = DummyDatadog()
     app['sentry'] = DummySentry()
