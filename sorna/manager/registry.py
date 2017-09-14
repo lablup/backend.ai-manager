@@ -265,15 +265,15 @@ class InstanceRegistry:
             if allow_stale:
                 query = (sa.select(cols)
                            .select_from(kernels)
-                           .where(kernels.c.sess_id in kern_ids and
-                                  kernels.c.role == 'master'))
+                           .where((kernels.c.sess_id.in_(kern_ids)) &
+                                  (kernels.c.role == 'master')))
             else:
                 query = (sa.select(cols)
                            .select_from(kernels.join(agents))
-                           .where(kernels.c.sess_id in kern_ids and
-                                  kernels.c.role == 'master' and
-                                  agents.c.status == AgentStatus.ALIVE and
-                                  agents.c.id == kernels.c.agent))
+                           .where((kernels.c.sess_id.in_(kern_ids)) &
+                                  (kernels.c.role == 'master') &
+                                  (agents.c.status == AgentStatus.ALIVE) &
+                                  (agents.c.id == kernels.c.agent)))
             result = await conn.execute(query)
             rows = await result.fetchall()
             return rows
@@ -485,8 +485,8 @@ class InstanceRegistry:
         async with reenter_txn(self.dbpool, conn) as conn:
             query = (sa.update(kernels)
                        .values(updated_fields)
-                       .where(kernels.c.sess_id == sess_id and
-                              kernels.c.role == 'master'))
+                       .where((kernels.c.sess_id == sess_id) &
+                              (kernels.c.role == 'master')))
             await conn.execute(query)
 
     async def increment_session_usage(self, sess_id, conn=None):
@@ -494,8 +494,8 @@ class InstanceRegistry:
         async with reenter_txn(self.dbpool, conn) as conn:
             query = (sa.update(kernels)
                        .values(num_queries=kernels.c.num_queries + 1)
-                       .where(kernels.c.sess_id == sess_id and
-                              kernels.c.role == 'master'))
+                       .where((kernels.c.sess_id == sess_id) &
+                              (kernels.c.role == 'master')))
             await conn.execute(query)
 
     async def get_kernels_in_instance(self, inst_id):
