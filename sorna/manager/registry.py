@@ -602,6 +602,10 @@ class InstanceRegistry:
             await conn.execute(query)
 
     async def mark_kernel_terminated(self, kernel_id, conn=None):
+        '''
+        Mark the kernel (individual worker) terminated and release
+        the resource slots occupied by it.
+        '''
         async with reenter_txn(self.dbpool, conn) as conn:
             # check if already terminated
             query = (sa.select([kernels.c.status])
@@ -680,6 +684,11 @@ class InstanceRegistry:
             '''
 
     async def mark_session_terminated(self, sess_id):
+        '''
+        Mark the compute session terminated and restore the concurrency limit
+        of the owner access key.  Releasing resource limits is handled by
+        func:`mark_kernel_terminated`.
+        '''
         async with self.dbpool.acquire() as conn:
 
             # restore concurrency usage of the owner access-key
