@@ -61,7 +61,6 @@ def init_logger(config):
                 'class': 'logging.StreamHandler',
                 'level': 'DEBUG',
                 'formatter': 'colored',
-                'filters': ['sql_reset_filter'],
                 'stream': 'ext://sys.stderr',
             },
             'null': {
