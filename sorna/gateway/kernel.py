@@ -145,7 +145,8 @@ async def update_instance_usage(app, inst_id):
 
 @catch_unexpected(log)
 async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
-    kernel = await app['registry'].get_kernel(kernel_id, kernels.c.role)
+    kernel = await app['registry'].get_kernel(
+        kernel_id, kernels.c.role, allow_stale=True)
     await app['registry'].mark_kernel_terminated(kernel_id)
     if kernel['role'] == 'master':
         sess_id = kernel['sess_id']
