@@ -152,15 +152,15 @@ async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
         # Skip if missing
         return
     # Skip if restarting
-    if kernel.status == KernelStatus.RESTARTING:
-        return
-    await app['registry'].mark_kernel_terminated(kernel_id)
-    if kernel['role'] == 'master':
+    if kernel.status != KernelStatus.RESTARTING:
+        await app['registry'].mark_kernel_terminated(kernel_id)
+    if kernel.role == 'master':
         sess_id = kernel['sess_id']
         for handler in app['stream_pty_handlers'][sess_id].copy():
             handler.cancel()
             await handler
-        await app['registry'].mark_session_terminated(sess_id)
+        if kernel.status != KernelStatus.RESTARTING:
+            await app['registry'].mark_session_terminated(sess_id)
 
 
 @catch_unexpected(log)
