@@ -176,7 +176,9 @@ class InstanceRegistry:
 
         cols = [kernels.c.id, kernels.c.sess_id,
                 kernels.c.agent_addr, kernels.c.access_key]
-        if isinstance(field, (tuple, list)):
+        if field == '*':
+            cols = '*'
+        elif isinstance(field, (tuple, list)):
             cols.extend(field)
         elif isinstance(field, (sa.Column, sa.sql.elements.ColumnClause)):
             cols.append(field)
@@ -214,9 +216,11 @@ class InstanceRegistry:
         If ``allow_stale`` is true, it skips checking validity of the kernel owner instance.
         '''
 
-        cols = [kernels.c.id, kernels.c.sess_id,
+        cols = [kernels.c.id, kernels.c.sess_id, kernels.c.lang,
                 kernels.c.agent_addr, kernels.c.access_key]
-        if isinstance(field, (tuple, list)):
+        if field == '*':
+            cols = '*'
+        elif isinstance(field, (tuple, list)):
             cols.extend(field)
         elif isinstance(field, (sa.Column, sa.sql.elements.ColumnClause)):
             cols.append(field)

@@ -284,20 +284,20 @@ async def get_info(request):
     log.info(f"GETINFO (u:{request['keypair']['access_key']}, k:{sess_id})")
     try:
         await request.app['registry'].increment_session_usage(sess_id)
-        kern = await request.app['registry'].get_kernel_session(sess_id)
+        kern = await request.app['registry'].get_kernel_session(sess_id, field='*')
         resp['lang'] = kern.lang
         age = datetime.now(tzutc()) - kern.created_at
         resp['age'] = age.total_seconds() * 1000
         # Resource limits collected from agent heartbeats
         # TODO: factor out policy/image info as a common repository
-        resp['queryTimeout']  = int(kern.exec_timeout * 1000)
-        resp['idleTimeout']   = int(kern.idle_timeout * 1000)
-        resp['memoryLimit']   = kern.mem_limit
-        resp['maxCpuCredit']  = int(kern.exec_timeout * 1000)
+        resp['queryTimeout']  = -1  # deprecated
+        resp['idleTimeout']   = -1  # deprecated
+        resp['memoryLimit']   = kern.max_mem_bytes
+        resp['maxCpuCredit']  = -1  # deprecated
         # Stats collected from agent heartbeats
         resp['numQueriesExecuted'] = kern.num_queries
-        resp['idle']          = int(kern.idle * 1000)
-        resp['memoryUsed']    = kern.mem_max_bytes // 1024
+        resp['idle']          = -1  # deprecated
+        resp['memoryUsed']    = kern.cur_mem_bytes // 1024
         resp['cpuCreditUsed'] = kern.cpu_used
         log.info(f'information retrieved: {resp!r}')
     except SornaError:
