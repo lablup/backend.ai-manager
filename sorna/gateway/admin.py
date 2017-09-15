@@ -1,18 +1,14 @@
 import asyncio
-import base64
-import functools
 import inspect
 import logging
-import secrets
 import traceback
-import typing
+from typing import Mapping
 
 from aiohttp import web
 import graphene
 from graphql.execution.executors.asyncio import AsyncioExecutor
 from graphql.error.located_error import GraphQLLocatedError
 import simplejson as json
-import sqlalchemy as sa
 
 from .exceptions import InvalidAPIParameters, SornaError
 from .auth import admin_required
@@ -41,7 +37,7 @@ async def handle_gql(request: web.Request) -> web.Response:
                'The "query" field must be a JSON string.'
         if 'variables' in body:
             assert (body['variables'] is None or
-                    isinstance(body['variables'], typing.Mapping)), \
+                    isinstance(body['variables'], Mapping)), \
                    'The "variables" field must be an JSON object or null.'
         else:
             body['variables'] = None
@@ -86,18 +82,22 @@ class Mutation(graphene.ObjectType):
 
 class Query(graphene.ObjectType):
 
-    keypairs = graphene.List(KeyPair,
+    keypairs = graphene.List(
+        KeyPair,
         user_id=graphene.Int(required=True),
         is_active=graphene.Boolean())
 
-    vfolders = graphene.List(VirtualFolder,
+    vfolders = graphene.List(
+        VirtualFolder,
         access_key=graphene.String(required=True))
 
-    compute_sessions = graphene.List(ComputeSession,
+    compute_sessions = graphene.List(
+        ComputeSession,
         access_key=graphene.String(required=True),
         status=graphene.String())
 
-    compute_workers = graphene.List(ComputeWorker,
+    compute_workers = graphene.List(
+        ComputeWorker,
         sess_id=graphene.String(required=True),
         status=graphene.String())
 

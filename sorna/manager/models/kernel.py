@@ -134,7 +134,8 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
     '''
 
     lang = graphene.String()
-    workers = graphene.List(lambda: ComputeWorker,
+    workers = graphene.List(
+        lambda: ComputeWorker,
         status=graphene.String(),
     )
 

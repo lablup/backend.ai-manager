@@ -5,11 +5,9 @@ The main web / websocket server
 import asyncio
 from ipaddress import ip_address
 import logging
-import multiprocessing as mp
 from multiprocessing.managers import SyncManager
 import signal
 import ssl
-import sys
 
 import aiohttp
 from aiohttp import web
@@ -144,6 +142,7 @@ async def gw_init(app):
             f'user={app.config.db_user} password={app.config.db_password} '
             f'dbname={app.config.db_name}',
         minsize=4, maxsize=16,
+        echo=bool(app.config.debug),
     )
     app.middlewares.append(exception_middleware_factory)
     app.middlewares.append(api_middleware_factory)

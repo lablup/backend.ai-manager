@@ -24,7 +24,7 @@ from sqlalchemy.sql.expression import true, null
 import zmq
 
 from .exceptions import (ServiceUnavailable, InvalidAPIParameters, QuotaExceeded,
-                         QueryNotImplemented, InstanceNotFound, KernelNotFound,
+                         QueryNotImplemented, KernelNotFound,
                          SornaError)
 from . import GatewayStatus
 from .auth import auth_required

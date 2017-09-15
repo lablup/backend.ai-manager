@@ -1,14 +1,12 @@
 import asyncio
 from collections import defaultdict
+import functools
 import logging
-import time
 
-import aiotools
 import aiozmq
 import zmq
 
 from sorna.common import msgpack
-from .utils import catch_unexpected
 
 log = logging.getLogger('sorna.gateway.events')
 
@@ -27,7 +25,7 @@ def event_router(_, pidx, args):
         pass
     except:
         log.exception('unexpected error')
-        #raven.captureException()
+        # raven.captureException()
     finally:
         in_sock.close()
         out_sock.close()

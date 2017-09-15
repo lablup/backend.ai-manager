@@ -5,14 +5,14 @@ from .base import metadata, EnumType
 
 __all__ = ('agents', 'AgentStatus', 'ResourceSlot')
 
+ResourceSlot = namedtuple('ResourceSlot', 'id mem cpu gpu')
+
 
 class AgentStatus(enum.Enum):
     ALIVE = 0
     LOST = 1
     RESTARTING = 2
     TERMINATED = 3
-
-ResourceSlot = namedtuple('ResourceSlot', 'id mem cpu gpu')
 
 
 agents = sa.Table(

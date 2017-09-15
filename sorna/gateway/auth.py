@@ -10,7 +10,7 @@ from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
 import simplejson as json
 
-from .exceptions import GenericBadRequest, InvalidAuthParameters, AuthorizationFailed
+from .exceptions import InvalidAuthParameters, AuthorizationFailed
 from .config import load_config, init_logger
 from ..manager.models import keypairs
 

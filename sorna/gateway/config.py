@@ -38,14 +38,6 @@ def load_config(argv=None, extra_args_func=None):
     return args
 
 
-class SQLResetQueryLogFilter(logging.Filter):
-
-    def filter(self, record):
-        #if record.name == 'asyncpgsa.query':
-        #    return not record.msg.lower().startswith('select pg_advisory_unlock_all();')
-        return True
-
-
 def init_logger(config):
     logging.config.dictConfig({
         'version': 1,
@@ -74,11 +66,6 @@ def init_logger(config):
             },
             'null': {
                 'class': 'logging.NullHandler',
-            },
-        },
-        'filters': {
-            'sql_reset_filter': {
-                '()': SQLResetQueryLogFilter,
             },
         },
         'loggers': {

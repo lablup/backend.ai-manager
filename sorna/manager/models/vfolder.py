@@ -1,5 +1,4 @@
 from collections import OrderedDict
-import enum
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime

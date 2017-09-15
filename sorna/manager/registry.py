@@ -1,12 +1,8 @@
 import asyncio
-from contextlib import contextmanager
 from datetime import datetime
 from dateutil.tz import tzutc
-import functools
 import logging
-import operator
 import sys
-from typing import Union
 import uuid
 
 import aiozmq, aiozmq.rpc
@@ -16,14 +12,13 @@ from async_timeout import timeout as _timeout
 import sqlalchemy as sa
 import zmq
 
-from sorna.common.utils import dict2kvlist
-from ..gateway.exceptions import (SornaError,
+from ..gateway.exceptions import (
+    SornaError,
     InstanceNotAvailable, InstanceNotFound, KernelNotFound,
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
     AgentError)
 from .models import agents, kernels, keypairs, ResourceSlot, AgentStatus, KernelStatus
-from .structs import Instance, Kernel
 from ..gateway.utils import catch_unexpected
 
 __all__ = ['InstanceRegistry', 'InstanceNotFound']
@@ -118,10 +113,11 @@ class InstanceRegistry:
             await conn.execute(query)
 
     @aiotools.actxmgr
-    async def handle_kernel_exception(self, op, sess_id,
-                                error_callback=None,
-                                cancellation_callback=None,
-                                set_error=False):
+    async def handle_kernel_exception(
+            self, op, sess_id,
+            error_callback=None,
+            cancellation_callback=None,
+            set_error=False):
         op_exc = {
             'create_kernel': KernelCreationFailed,
             'restart_kernel': KernelRestartFailed,
@@ -169,9 +165,10 @@ class InstanceRegistry:
         Retreive the kernel information from the given kernel ID.
         This ID is unique for all individual agent-spawned containers.
 
-        If ``field`` is given, it extracts only the raw value of the given field, without
-        wrapping it as Kernel object.
-        If ``allow_stale`` is true, it skips checking validity of the kernel owner instance.
+        If ``field`` is given, it extracts only the raw value of the given
+        field, without wrapping it as Kernel object.
+        If ``allow_stale`` is true, it skips checking validity of the kernel
+        owner instance.
         '''
 
         cols = [kernels.c.id, kernels.c.sess_id,
@@ -207,13 +204,13 @@ class InstanceRegistry:
 
     async def get_kernel_session(self, sess_id: str, field=None, allow_stale=False):
         '''
-        Retreive the kernel information from the session ID (client-side session token).
-        If the kernel is composed of multiple containers, it returns the address of the master
-        container.
+        Retreive the kernel information from the session ID (client-side
+        session token).  If the kernel is composed of multiple containers, it
+        returns the address of the master container.
 
-        If ``field`` is given, it extracts only the raw value of the given field, without
-        wrapping it as Kernel object.
-        If ``allow_stale`` is true, it skips checking validity of the kernel owner instance.
+        If ``field`` is given, it extracts only the raw value of the given
+        field, without wrapping it as Kernel object.  If ``allow_stale`` is
+        true, it skips checking validity of the kernel owner instance.
         '''
 
         cols = [kernels.c.id, kernels.c.sess_id, kernels.c.lang,
@@ -282,7 +279,8 @@ class InstanceRegistry:
             rows = await result.fetchall()
             return rows
 
-    async def set_kernel_status(self, sess_id, status, db_connection=None, **extra_fields):
+    async def set_kernel_status(self, sess_id, status,
+                                db_connection=None, **extra_fields):
         data = {
             'status': status,
         }
@@ -397,7 +395,8 @@ class InstanceRegistry:
                         'lang': lang,
                         # TODO: apply limits/mounts/vfolders
                     }
-                    created_info = await rpc.call.create_kernel(str(kernel_id), config)
+                    created_info = await rpc.call.create_kernel(str(kernel_id),
+                                                                config)
                 if created_info is None:
                     raise KernelCreationFailed('ooops')
                 log.debug(f'create_kernel("{sess_id}") -> '
@@ -425,7 +424,6 @@ class InstanceRegistry:
                 assert result.rowcount == 1
                 return kernel_access_info
 
-
     async def destroy_kernel(self, sess_id):
         log.debug(f"destroy_kernel({sess_id})")
         async with self.handle_kernel_exception('destroy_kernel', sess_id,
@@ -448,7 +446,8 @@ class InstanceRegistry:
                     'cpu_set': kernel['cpu_set'],
                     'gpu_set': kernel['gpu_set'],
                 }
-                kernel_info = await rpc.call.restart_kernel(str(kernel['id']), prev_config)
+                kernel_info = await rpc.call.restart_kernel(str(kernel['id']),
+                                                            prev_config)
             # TODO: what if prev status was "building" or others?
             await self.set_kernel_status(sess_id, KernelStatus.RUNNING,
                                          container_id=kernel_info['container_id'],
@@ -484,7 +483,7 @@ class InstanceRegistry:
                 result = await rpc.call.upload_file(str(kernel['id']), filename, filedata)
                 return result
 
-    async def update_kernel(self, sess_id, updated_fields):
+    async def update_kernel(self, sess_id, updated_fields, conn=None):
         log.debug(f'update_kernel({sess_id})')
         async with reenter_txn(self.dbpool, conn) as conn:
             query = (sa.update(kernels)
@@ -502,8 +501,8 @@ class InstanceRegistry:
                               (kernels.c.role == 'master')))
             await conn.execute(query)
 
-    async def get_kernels_in_instance(self, inst_id):
-        async with self.dbpool.acquire() as conn:
+    async def get_kernels_in_instance(self, inst_id, conn=None):
+        async with reenter_txn(self.dbpool, conn) as conn:
             query = (sa.select([kernels.c.sess_id])
                        .select_from(kernels)
                        .where(kernels.c.agent == inst_id))
@@ -515,23 +514,23 @@ class InstanceRegistry:
 
     async def handle_stats(self, inst_id, kern_stats, interval):
         pass
-        #async with self.lifecycle_lock, \
-        #           self.redis_inst.get() as ri, \
-        #           self.redis_kern.get() as rk:  # noqa
+        # async with self.lifecycle_lock, \
+        #            self.redis_inst.get() as ri, \
+        #            self.redis_kern.get() as rk:  # noqa
 
-        #    rk_pipe = rk.pipeline()
-        #    for kern_id in kern_stats.keys():
-        #        rk_pipe.exists(kern_id)
-        #    kernel_existence = await rk_pipe.execute()
+        #     rk_pipe = rk.pipeline()
+        #     for kern_id in kern_stats.keys():
+        #         rk_pipe.exists(kern_id)
+        #     kernel_existence = await rk_pipe.execute()
 
-        #    ri_pipe = ri.pipeline()
-        #    rk_pipe = rk.pipeline()
-        #    for (kern_id, stats), alive in zip(kern_stats.items(), kernel_existence):
-        #        if alive:
-        #            ri_pipe.sadd(f'{inst_id}.kernels', kern_id)
-        #            rk_pipe.hmset(kern_id, *dict2kvlist(stats))
-        #    await ri_pipe.execute()
-        #    await rk_pipe.execute()
+        #     ri_pipe = ri.pipeline()
+        #     rk_pipe = rk.pipeline()
+        #     for (kern_id, stats), alive in zip(kern_stats.items(), kernel_existence):
+        #         if alive:
+        #             ri_pipe.sadd(f'{inst_id}.kernels', kern_id)
+        #             rk_pipe.hmset(kern_id, *dict2kvlist(stats))
+        #     await ri_pipe.execute()
+        #     await rk_pipe.execute()
 
     async def handle_heartbeat(self, agent_id, agent_info):
         async with self.dbpool.acquire() as conn:
@@ -574,12 +573,12 @@ class InstanceRegistry:
 
     async def mark_agent_terminated(self, agent_id, status, conn=None):
         # TODO: interpret kern_id to sess_id
-        #for kern_id in (await app['registry'].get_kernels_in_instance(agent_id)):
-        #    for handler in app['stream_pty_handlers'][kern_id].copy():
-        #        handler.cancel()
-        #        await handler
-        # TODO: define behavior when agent reuse running instances upon revive
-        #await app['registry'].forget_all_kernels_in_instance(agent_id)
+        # for kern_id in (await app['registry'].get_kernels_in_instance(agent_id)):
+        #     for handler in app['stream_pty_handlers'][kern_id].copy():
+        #         handler.cancel()
+        #         await handler
+        #  TODO: define behavior when agent reuse running instances upon revive
+        # await app['registry'].forget_all_kernels_in_instance(agent_id)
         async with reenter_txn(self.dbpool, conn) as conn:
 
             query = (sa.select([agents.c.status])

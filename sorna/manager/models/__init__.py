@@ -1,13 +1,14 @@
-from .base import metadata
+from .base import metadata  # noqa
 
-from .agent import *
-from .keypair import *
-from .kernel import *
-from .vfolder import *
+from .agent import *    # noqa
+from .keypair import *  # noqa
+from .kernel import *   # noqa
+from .vfolder import *  # noqa
 
 __all__ = (
-    agent.__all__,
-    keypair.__all__,
-    kernel.__all__,
-    vfolder.__all__,
+    'metadata',
+    agent.__all__,    # noqa
+    keypair.__all__,  # noqa
+    kernel.__all__,   # noqa
+    vfolder.__all__,  # noqa
 )
