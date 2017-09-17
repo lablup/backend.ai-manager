@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 
 '''
-The Sorna API Server
+The Backend.Ai API Server
 
 It routes the API requests to kernel agents in VMs and manages the VM instance pool.
 '''
@@ -17,22 +17,22 @@ import zmq, aiozmq
 import aioredis
 import uvloop
 
-from sorna import defs
-from sorna.argparse import port_no
-from sorna.exceptions import \
+from backend.ai import defs
+from backend.ai.argparse import port_no
+from backend.ai.exceptions import \
     InstanceNotAvailable, \
     KernelCreationFailed, KernelDestructionFailed, \
     KernelNotFound, QuotaExceeded
-from sorna.proto import Message
-from sorna.utils import AsyncBarrier, get_instance_ip
-from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
+from backend.ai.proto import Message
+from backend.ai.utils import AsyncBarrier, get_instance_ip
+from backend.ai.proto.msgtypes import ManagerRequestTypes, Backend.AiResponseTypes
 
 from ..gateway.config import init_logger, load_config
 from .registry import InstanceRegistry
 from . import __version__
 
 
-log = logging.getLogger('sorna.manager.server')
+log = logging.getLogger('backend.ai.manager.server')
 
 # Kernel IP overrides
 kernel_ip_override = None
@@ -56,7 +56,7 @@ async def handle_api(loop, term_ev, term_barrier, server, registry):
         if 'action' not in req:
 
             log.warn(_r('Malformed API request!', request_id))
-            resp['reply'] = SornaResponseTypes.INVALID_INPUT
+            resp['reply'] = Backend.AiResponseTypes.INVALID_INPUT
             resp['cause'] = 'Malformed API request.'
 
         elif req['action'] == ManagerRequestTypes.PING:
@@ -65,10 +65,10 @@ async def handle_api(loop, term_ev, term_barrier, server, registry):
                 log.info(_r('PING (body:{})', request_id, req['body']))
             except KeyError:
                 log.warn(_r('PING: invalid parameters', request_id))
-                resp['reply'] = SornaResponseTypes.INVALID_INPUT
+                resp['reply'] = Backend.AiResponseTypes.INVALID_INPUT
                 resp['cause'] = 'Missing API parameters.'
             else:
-                resp['reply'] = SornaResponseTypes.PONG
+                resp['reply'] = Backend.AiResponseTypes.PONG
                 resp['body']  = req['body']
 
         elif req['action'] == ManagerRequestTypes.GET_OR_CREATE:
@@ -78,7 +78,7 @@ async def handle_api(loop, term_ev, term_barrier, server, registry):
                          req['user_id'], req['entry_id'], req['lang']))
             except KeyError:
                 log.warn(_r('GET_OR_CREATE: invalid parameters', request_id))
-                resp['reply'] = SornaResponseTypes.INVALID_INPUT
+                resp['reply'] = Backend.AiResponseTypes.INVALID_INPUT
                 resp['cause'] = 'Missing API parameters.'
             else:
                 try:
@@ -88,7 +88,7 @@ async def handle_api(loop, term_ev, term_barrier, server, registry):
                     kernel = await registry.get_or_create_kernel(client_sess_token,
                                                                  req['lang'])
                     log.info(_r('got/created kernel {} successfully.', request_id, kernel.id))
-                    resp['reply'] = SornaResponseTypes.SUCCESS
+                    resp['reply'] = Backend.AiResponseTypes.SUCCESS
                     resp['kernel_id'] = kernel.id
                     if kernel_ip_override:
                         p = urlsplit(kernel.addr)
@@ -117,16 +117,16 @@ async def handle_api(loop, term_ev, term_barrier, server, registry):
                                                       kernel.stdout_port)
                 except InstanceNotAvailable:
                     log.error(_r('instance not available', request_id))
-                    resp['reply'] = SornaResponseTypes.FAILURE
+                    resp['reply'] = Backend.AiResponseTypes.FAILURE
                     resp['cause'] = 'There is no available instance.'
                 except KernelCreationFailed:
                     log.error(_r('kernel creation failed', request_id))
-                    resp['reply'] = SornaResponseTypes.FAILURE
+                    resp['reply'] = Backend.AiResponseTypes.FAILURE
                     resp['cause'] = 'Kernel creation failed. Try again later.'
                 except QuotaExceeded:
                     # currently unused. reserved for future per-user quota impl.
                     log.error(_r('quota exceeded', request_id))
-                    resp['reply'] = SornaResponseTypes.FAILURE
+                    resp['reply'] = Backend.AiResponseTypes.FAILURE
                     resp['cause'] = 'You cannot create more kernels.'
 
         elif req['action'] == ManagerRequestTypes.DESTROY:
@@ -135,21 +135,21 @@ async def handle_api(loop, term_ev, term_barrier, server, registry):
                 log.info(_r('DESTROY (k:{})', request_id, req['kernel_id']))
             except KeyError:
                 log.warn(_r('DESTROY: invalid parameters', request_id))
-                resp['reply'] = SornaResponseTypes.INVALID_INPUT
+                resp['reply'] = Backend.AiResponseTypes.INVALID_INPUT
                 resp['cause'] = 'Missing API parameters.'
             else:
                 # TODO: assert if session matches with the kernel id?
                 try:
                     await registry.destroy_kernel(req['kernel_id'])
                     log.info(_r('destroyed successfully.', request_id))
-                    resp['reply'] = SornaResponseTypes.SUCCESS
+                    resp['reply'] = Backend.AiResponseTypes.SUCCESS
                 except KernelNotFound:
                     log.error(_r('kernel not found.', request_id))
-                    resp['reply'] = SornaResponseTypes.INVALID_INPUT
+                    resp['reply'] = Backend.AiResponseTypes.INVALID_INPUT
                     resp['cause'] = 'No such kernel.'
                 except KernelDestructionFailed:
                     log.error(_r('kernel not found.', request_id))
-                    resp['reply'] = SornaResponseTypes.INVALID_INPUT
+                    resp['reply'] = Backend.AiResponseTypes.INVALID_INPUT
                     resp['cause']  = 'No such kernel.'
 
         server.write([resp.encode()])
@@ -168,7 +168,7 @@ async def handle_notifications(loop, term_ev, term_barrier, registry):
     # Enable "expired" event notification
     # See more details at: http://redis.io/topics/notifications
     await redis_sub.config_set('notify-keyspace-events', 'Ex')
-    chprefix = '__keyevent@{}__*'.format(defs.SORNA_INSTANCE_DB)
+    chprefix = '__keyevent@{}__*'.format(defs.BACKEND.AI_INSTANCE_DB)
     channels = await redis_sub.psubscribe(chprefix)
     log.info('subscribed redis notifications.')
     g = None
@@ -188,13 +188,13 @@ async def handle_notifications(loop, term_ev, term_barrier, registry):
                 inst_id = evkey.split(':', 1)[1]
                 log.warning('instance {} has expired (terminated).'.format(inst_id))
                 # Let's actually delete the original key.
-                await redis.select(defs.SORNA_INSTANCE_DB)
+                await redis.select(defs.BACKEND.AI_INSTANCE_DB)
                 kern_ids = await redis.smembers(inst_id + '.kernels')
                 pipe = redis.pipeline()
                 pipe.delete(inst_id)
                 pipe.delete(inst_id + '.kernels')
                 await pipe.execute()
-                await redis.select(defs.SORNA_KERNEL_DB)
+                await redis.select(defs.BACKEND.AI_KERNEL_DB)
                 if kern_ids:
                     await redis.delete(*kern_ids)
                 # Session entries will become stale, but accessing it will raise
@@ -218,7 +218,7 @@ def main():
     global kernel_ip_override
 
     def manager_args(parser):
-        parser.add('--manager-port', env_var='SORNA_MANAGER_PORT', type=port_no, default=5001,
+        parser.add('--manager-port', env_var='BACKEND.AI_MANAGER_PORT', type=port_no, default=5001,
                    help='The TCP port number where the legacy manager listens on. '
                         '(default: 5001)')
 
@@ -236,7 +236,7 @@ def main():
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     loop = asyncio.get_event_loop()
 
-    log.info('Sorna Manager {}'.format(__version__))
+    log.info('Backend.Ai Manager {}'.format(__version__))
 
     server = loop.run_until_complete(
         aiozmq.create_zmq_stream(zmq.REP, bind='tcp://*:{0}'.format(config.manager_port),
