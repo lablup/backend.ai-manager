@@ -1,2 +1,2 @@
--e git+ssh://git@github.com/lablup/sorna-common#egg=sorna-common
+-e git+ssh://git@github.com/lablup/backend.ai-common#egg=backend.ai-common
 -e .[dev]

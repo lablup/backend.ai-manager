@@ -9,19 +9,19 @@ import unittest
 import aioredis
 import zmq
 
-from sorna.proto import Message
-from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
-from sorna.utils import get_instance_ip
-from sorna.exceptions import InstanceNotAvailableError
-from sorna.manager.registry import InstanceRegistry
+from backend.ai.proto import Message
+from backend.ai.proto.msgtypes import ManagerRequestTypes, Backend.AiResponseTypes
+from backend.ai.utils import get_instance_ip
+from backend.ai.exceptions import InstanceNotAvailableError
+from backend.ai.manager.registry import InstanceRegistry
 
 
-class SornaProcessManagerMixin:
+class Backend.AiProcessManagerMixin:
 
     @staticmethod
     def run_agent(max_kernels=1):
         # Run a local agent
-        cmd = ['python3', '-m', 'sorna.agent.server',
+        cmd = ['python3', '-m', 'backend.ai.agent.server',
                '--manager-addr', 'tcp://127.0.0.1:5001',
                '--max-kernels', str(max_kernels)]
         agent_proc = subprocess.Popen(cmd, start_new_session=True,
@@ -38,7 +38,7 @@ class SornaProcessManagerMixin:
     @staticmethod
     def run_manager():
         # Run a local server
-        cmd = ['python3', '-m', 'sorna.manager.server']
+        cmd = ['python3', '-m', 'backend.ai.manager.server']
         manager_proc = subprocess.Popen(cmd, start_new_session=True,
                                         stdout=subprocess.DEVNULL,
                                         stderr=subprocess.DEVNULL)
@@ -54,9 +54,9 @@ class SornaProcessManagerMixin:
         return sock
 
 
-class SornaRegistryTest(unittest.TestCase, SornaProcessManagerMixin):
+class Backend.AiRegistryTest(unittest.TestCase, Backend.AiProcessManagerMixin):
     '''
-    Test the functionality of :class:`InstanceRegistry <sorna.instance.InstanceRegistry>`.
+    Test the functionality of :class:`InstanceRegistry <backend.ai.instance.InstanceRegistry>`.
     This test suite requires a temporary Redis server and a set of docker link
     environment variables to it.
     '''
@@ -117,10 +117,10 @@ class SornaRegistryTest(unittest.TestCase, SornaProcessManagerMixin):
         time.sleep(1)
 
 
-class SornaIntegrationTest(unittest.TestCase, SornaProcessManagerMixin):
+class Backend.AiIntegrationTest(unittest.TestCase, Backend.AiProcessManagerMixin):
     '''
     Test the manager using the full API interaction steps, including zmq-based communication.
-    This test requires a temporary Redis server like :class:`SornaInstanceRegistryTest`.
+    This test requires a temporary Redis server like :class:`Backend.AiInstanceRegistryTest`.
     '''
 
     def setUp(self):
@@ -168,7 +168,7 @@ class SornaIntegrationTest(unittest.TestCase, SornaProcessManagerMixin):
         self.assertNotEqual(sock.poll(1000), 0)
         response_data = sock.recv()
         response = Message.decode(response_data)
-        self.assertEqual(response['reply'], SornaResponseTypes.SUCCESS)
+        self.assertEqual(response['reply'], Backend.AiResponseTypes.SUCCESS)
         kernel_id = response['kernel_id']
 
         # Get the kernel (the kernel should be same!)
@@ -207,7 +207,7 @@ class SornaIntegrationTest(unittest.TestCase, SornaProcessManagerMixin):
         self.assertNotEqual(sock.poll(1000), 0)
         response_data = sock.recv()
         response = Message.decode(response_data)
-        self.assertEqual(response['reply'], SornaResponseTypes.SUCCESS)
+        self.assertEqual(response['reply'], Backend.AiResponseTypes.SUCCESS)
 
         request = Message(
             ('action', ManagerRequestTypes.DESTROY),
@@ -217,7 +217,7 @@ class SornaIntegrationTest(unittest.TestCase, SornaProcessManagerMixin):
         self.assertNotEqual(sock.poll(1000), 0)
         response_data = sock.recv()
         response = Message.decode(response_data)
-        self.assertEqual(response['reply'], SornaResponseTypes.SUCCESS)
+        self.assertEqual(response['reply'], Backend.AiResponseTypes.SUCCESS)
 
         sock.close()
         self.kill_proc(mgr)

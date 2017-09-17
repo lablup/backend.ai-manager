@@ -1,4 +1,4 @@
-.. currentmodule:: sorna.instance
+.. currentmodule:: backend.ai.instance
 
 Instance
 ========

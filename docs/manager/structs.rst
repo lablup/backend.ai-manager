@@ -1,4 +1,4 @@
-.. currentmodule:: sorna.structs
+.. currentmodule:: backend.ai.structs
 
 Data Structures
 ===============
