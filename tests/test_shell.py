@@ -2,8 +2,8 @@
 
 # TODO: transform this as a proper test suite
 
-from sorna.proto import Message, odict, generate_uuid
-from sorna.proto.msgtypes import ManagerRequestTypes, ManagerResponseTypes, AgentRequestTypes
+from backend.ai.proto import Message, odict, generate_uuid
+from backend.ai.proto.msgtypes import ManagerRequestTypes, ManagerResponseTypes, AgentRequestTypes
 import asyncio, zmq, aiozmq
 from colorama import init as colorama_init, Fore
 import signal

@@ -24,11 +24,11 @@ try:
 except ImportError:
     raven_available = False
 
-from sorna.argparse import ipaddr, path, port_no
-from .exceptions import (SornaError, GenericNotFound,
+from backend.ai.argparse import ipaddr, path, port_no
+from .exceptions import (Backend.AiError, GenericNotFound,
                          GenericBadRequest, InternalServerError)
-from sorna.utils import env_info
-from sorna.monitor import DummyDatadog, DummySentry
+from backend.ai.utils import env_info
+from backend.ai.monitor import DummyDatadog, DummySentry
 from ..manager import __version__
 from . import GatewayStatus
 from .auth import init as auth_init, shutdown as auth_shutdown
@@ -43,7 +43,7 @@ VALID_VERSIONS = frozenset([
 ])
 LATEST_API_VERSION = 'v2.20170315'
 
-log = logging.getLogger('sorna.gateway.server')
+log = logging.getLogger('backend.ai.gateway.server')
 
 
 async def hello(request) -> web.Response:
@@ -74,18 +74,18 @@ async def version_middleware_factory(app, handler):
 async def exception_middleware_factory(app, handler):
     async def exception_middleware_handler(request):
         try:
-            app['datadog'].statsd.increment('sorna.gateway.api.requests')
+            app['datadog'].statsd.increment('backend.ai.gateway.api.requests')
             resp = (await handler(request))
-        except SornaError as ex:
+        except Backend.AiError as ex:
             app['sentry'].captureException()
             statsd = app['datadog'].statsd
-            statsd.increment('sorna.gateway.api.failures')
-            statsd.increment(f'sorna.gateway.api.status.{ex.status_code}')
+            statsd.increment('backend.ai.gateway.api.failures')
+            statsd.increment(f'backend.ai.gateway.api.status.{ex.status_code}')
             raise
         except web.HTTPException as ex:
             statsd = app['datadog'].statsd
-            statsd.increment('sorna.gateway.api.failures')
-            statsd.increment(f'sorna.gateway.api.status.{ex.status_code}')
+            statsd.increment('backend.ai.gateway.api.failures')
+            statsd.increment(f'backend.ai.gateway.api.status.{ex.status_code}')
             if ex.status_code == 404:
                 raise GenericNotFound
             log.warning(f'Bad request: {ex!r}')
@@ -95,7 +95,7 @@ async def exception_middleware_factory(app, handler):
             log.exception('Uncaught exception in HTTP request handlers')
             raise InternalServerError
         else:
-            app['datadog'].statsd.increment(f'sorna.gateway.api.status.{resp.status}')
+            app['datadog'].statsd.increment(f'backend.ai.gateway.api.status.{resp.status}')
             return resp
     return exception_middleware_handler
 
@@ -139,22 +139,22 @@ async def gw_shutdown(app):
 
 
 def gw_args(parser):
-    parser.add('--service-ip', env_var='SORNA_SERVICE_IP', type=ipaddr, default=ip_address('0.0.0.0'),
+    parser.add('--service-ip', env_var='BACKEND.AI_SERVICE_IP', type=ipaddr, default=ip_address('0.0.0.0'),
                help='The IP where the API gateway server listens on. (default: 0.0.0.0)')
-    parser.add('--service-port', env_var='SORNA_SERVICE_PORT', type=port_no, default=0,
+    parser.add('--service-port', env_var='BACKEND.AI_SERVICE_PORT', type=port_no, default=0,
                help='The TCP port number where the API gateway server listens on. '
                     '(default: 8080, 8443 when SSL is enabled) '
                     'To run in production, you need the root privilege to use the standard 80/443 ports.')
-    parser.add('--events-port', env_var='SORNA_EVENTS_PORT', type=port_no, default=5002,
+    parser.add('--events-port', env_var='BACKEND.AI_EVENTS_PORT', type=port_no, default=5002,
                help='The TCP port number where the event server listens on.')
-    parser.add('--ssl-cert', env_var='SORNA_SSL_CERT', type=path, default=None,
+    parser.add('--ssl-cert', env_var='BACKEND.AI_SSL_CERT', type=path, default=None,
                help='The path to an SSL certificate file. '
                     'It may contain inter/root CA certificates as well. '
                     '(default: None)')
-    parser.add('--ssl-key', env_var='SORNA_SSL_KEY', type=path, default=None,
+    parser.add('--ssl-key', env_var='BACKEND.AI_SSL_KEY', type=path, default=None,
                help='The path to the private key used to make requests for the SSL certificate. '
                     '(default: None)')
-    parser.add('--gpu-instances', env_var='SORNA_GPU_INSTANCES', type=str, default=None,
+    parser.add('--gpu-instances', env_var='BACKEND.AI_GPU_INSTANCES', type=str, default=None,
                help='Manually set list of GPU-enabled agent instance IDs.')
     if datadog_available:
         parser.add('--datadog-api-key', env_var='DATADOG_API_KEY', type=str, default=None,
@@ -175,10 +175,10 @@ def main():
     app.config = load_config(extra_args_func=gw_args)
     init_logger(app.config)
 
-    log.info(f'Sorna Gateway {__version__}')
+    log.info(f'Backend.Ai Gateway {__version__}')
     log.info(f'runtime: {env_info()}')
 
-    log_config = logging.getLogger('sorna.gateway.config')
+    log_config = logging.getLogger('backend.ai.gateway.config')
     log_config.debug('debug mode enabled.')
 
     if app.config.debug:

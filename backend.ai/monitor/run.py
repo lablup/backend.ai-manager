@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 
 '''
-The Sorna Monitoring Daemon
+The Backend.Ai Monitoring Daemon
 
 It routes the API requests to kernel agents in VMs and manages the VM instance pool.
 '''
@@ -17,11 +17,11 @@ import aiohttp
 import simplejson as json
 import zmq, aiozmq
 
-from sorna.proto import Message
-from sorna.proto.msgtypes import ManagerRequestTypes, SornaResponseTypes
+from backend.ai.proto import Message
+from backend.ai.proto.msgtypes import ManagerRequestTypes, Backend.AiResponseTypes
 
-API_URL = os.environ.get('SORNA_WATCHDOG_API_URL', None)
-MGR_ADDR = os.environ.get('SORNA_MANAGER_ADDR', 'tcp://localhost:5001')
+API_URL = os.environ.get('BACKEND.AI_WATCHDOG_API_URL', None)
+MGR_ADDR = os.environ.get('BACKEND.AI_MANAGER_ADDR', 'tcp://localhost:5001')
 
 
 def randstr(len=10):
@@ -32,7 +32,7 @@ async def send_msg(loop, msg):
     with aiohttp.ClientSession(loop=loop) as sess:
         data = json.dumps(dict(ChainMap(msg, {
             'channel': '#watchdog',
-            'username': 'sorna',
+            'username': 'backend.ai',
         })))
         async with sess.post(API_URL, data=data) as resp:
             ret = await resp.text()
@@ -65,8 +65,8 @@ async def monitor_manager(loop, term_ev):
         except asyncio.TimeoutError:
             if last_state == 'normal':
                 await send_msg(loop, {'attachments': [{
-                    'pretext': 'Sorna manager has problems!',
-                    'fallback': '[DANGER] Sorna manager timeout!',
+                    'pretext': 'Backend.Ai manager has problems!',
+                    'fallback': '[DANGER] Backend.Ai manager timeout!',
                     'color': 'danger',
                     'fields': [{
                         'title': 'Ping timeout detected.',
@@ -77,13 +77,13 @@ async def monitor_manager(loop, term_ev):
         else:
             resp = Message.decode(resp_data[0])
             try:
-                assert resp['reply'] == SornaResponseTypes.PONG
+                assert resp['reply'] == Backend.AiResponseTypes.PONG
                 assert resp['body'] == payload
             except AssertionError:
                 if last_state == 'normal':
                     await send_msg(loop, {'attachments': [{
-                        'pretext': 'Sorna manager has problems!',
-                        'fallback': '[DANGER] Sorna manager corrupted!',
+                        'pretext': 'Backend.Ai manager has problems!',
+                        'fallback': '[DANGER] Backend.Ai manager corrupted!',
                         'color': 'danger',
                         'fields': [{
                             'title': 'Corrupted PING/PONG detected.',
@@ -94,8 +94,8 @@ async def monitor_manager(loop, term_ev):
             else:
                 if last_state != 'normal':
                     await send_msg(loop, {'attachments': [{
-                        'pretext': 'Sorna manager has recovered!',
-                        'fallback': '[GOOD] Sorna manager recovered!',
+                        'pretext': 'Backend.Ai manager has recovered!',
+                        'fallback': '[GOOD] Backend.Ai manager recovered!',
                         'color': 'good',
                         'fields': [{
                             'title': 'The manager is running normal.',
@@ -108,7 +108,7 @@ async def monitor_manager(loop, term_ev):
 
 if __name__ == '__main__':
     if not API_URL:
-        print("SORNA_WATCHDOG_API_URL environment variable is not set.", file=sys.stderr)
+        print("BACKEND.AI_WATCHDOG_API_URL environment variable is not set.", file=sys.stderr)
         print("You create one using Slack's incoming webook integration.", file=sys.stderr)
         sys.exit(1)
 

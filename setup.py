@@ -20,7 +20,7 @@ requires = [
     'python-dateutil>=2.5',
     'simplejson',
     'uvloop>=0.8',
-    'sorna-common~=0.9.0',
+    'backend.ai-common~=0.9.0',
 ]
 build_requires = [
     'pypandoc',
@@ -43,15 +43,15 @@ monitor_requires = [
 ]
 
 sys.path.insert(0, '.')
-import sorna.manager
+import backend.ai.manager
 
 
 setup(
-    name='sorna-manager',
-    version=sorna.manager.__version__,
-    description='Sorna Manager',
+    name='backend.ai-manager',
+    version=backend.ai.manager.__version__,
+    description='Backend.Ai Manager',
     long_description=long_description,
-    url='https://github.com/lablup/sorna-manager',
+    url='https://github.com/lablup/backend.ai-manager',
     author='Lablup Inc.',
     author_email='joongi@lablup.com',
     license='LGPLv3',
@@ -69,8 +69,8 @@ setup(
         'Topic :: Software Development',
     ],
 
-    packages=['sorna.manager', 'sorna.gateway', 'sorna.monitor'],
-    namespace_packages=['sorna'],
+    packages=['backend.ai.manager', 'backend.ai.gateway', 'backend.ai.monitor'],
+    namespace_packages=['backend.ai'],
 
     python_requires='>=3.6',
     install_requires=requires,

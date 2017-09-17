@@ -8,7 +8,7 @@ import aiozmq, aiozmq.rpc
 
 from . import defs
 
-log = logging.getLogger('sorna.gateway.events')
+log = logging.getLogger('backend.ai.gateway.events')
 
 
 class EventServer(aiozmq.rpc.AttrHandler):
@@ -41,7 +41,7 @@ async def monitor_redis_events(app):
     # Enable "expired" event notification
     # See more details at: http://redis.io/topics/notifications
     await redis_sub.config_set('notify-keyspace-events', 'Ex')
-    chprefix = f'__keyevent@{defs.SORNA_INSTANCE_DB}__*'
+    chprefix = f'__keyevent@{defs.BACKEND.AI_INSTANCE_DB}__*'
     channels = await redis_sub.psubscribe(chprefix)
     log.debug('monitor_redis_events: subscribed notifications.')
     try:

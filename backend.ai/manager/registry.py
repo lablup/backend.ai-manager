@@ -11,19 +11,19 @@ import aioredis
 from async_timeout import timeout as _timeout
 import zmq
 
-from sorna.utils import dict2kvlist
+from backend.ai.utils import dict2kvlist
 from ..gateway.exceptions import (
     InstanceNotAvailable, InstanceNotFound, KernelNotFound,
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
     AgentError)
-from ..gateway.defs import (SORNA_KERNEL_DB, SORNA_INSTANCE_DB,
-                            SORNA_SESSION_DB)
+from ..gateway.defs import (BACKEND.AI_KERNEL_DB, BACKEND.AI_INSTANCE_DB,
+                            BACKEND.AI_SESSION_DB)
 from .structs import Instance, Kernel
 
 __all__ = ['InstanceRegistry', 'InstanceNotFound']
 
-log = logging.getLogger('sorna.manager.registry')
+log = logging.getLogger('backend.ai.manager.registry')
 
 
 def auto_get_kernel(func):
@@ -114,17 +114,17 @@ class InstanceRegistry:
         self.redis_kern = await aioredis.create_pool(self.redis_addr.as_sockaddr(),
                                                      minsize=5,
                                                      encoding='utf8',
-                                                     db=SORNA_KERNEL_DB,
+                                                     db=BACKEND.AI_KERNEL_DB,
                                                      loop=self.loop)
         self.redis_inst = await aioredis.create_pool(self.redis_addr.as_sockaddr(),
                                                      minsize=5,
                                                      encoding='utf8',
-                                                     db=SORNA_INSTANCE_DB,
+                                                     db=BACKEND.AI_INSTANCE_DB,
                                                      loop=self.loop)
         self.redis_sess = await aioredis.create_pool(self.redis_addr.as_sockaddr(),
                                                      minsize=5,
                                                      encoding='utf8',
-                                                     db=SORNA_SESSION_DB,
+                                                     db=BACKEND.AI_SESSION_DB,
                                                      loop=self.loop)
         log.debug('ready.')
 

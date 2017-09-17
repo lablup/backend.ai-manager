@@ -16,7 +16,7 @@ Instance = namedlist('Instance', [
 Instance.__doc__ = '''\
 A compound data structure to represent instance information.
 Note that this object does not represent the database records (e.g., those in
-Redis), but just a metadata container passed around the sorna system.
+Redis), but just a metadata container passed around the backend.ai system.
 '''
 # VM instances should run a docker daemon using "-H tcp://0.0.0.0:2375" in DOCKER_OPTS.
 
@@ -47,7 +47,7 @@ class Kernel(namedlist('_Kernel', [
 ])):
     '''
     A compound data structure to represent kernel information.
-    The purpose of this object is same to :class:`Instance <sorna.structs.Instance>`.
+    The purpose of this object is same to :class:`Instance <backend.ai.structs.Instance>`.
     '''
 
     def apply_type(self):

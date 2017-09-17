@@ -12,9 +12,9 @@ import sqlalchemy as sa
 import pytest
 import uvloop
 
-from sorna.gateway.config import load_config
-from sorna.gateway.server import gw_init, gw_args
-from sorna.gateway.models import KeyPair
+from backend.ai.gateway.config import load_config
+from backend.ai.gateway.server import gw_init, gw_args
+from backend.ai.gateway.models import KeyPair
 
 here = pathlib.Path(__file__).parent
 

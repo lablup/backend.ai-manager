@@ -1,4 +1,4 @@
-.. currentmodule:: sorna.driver
+.. currentmodule:: backend.ai.driver
 
 Driver
 ======

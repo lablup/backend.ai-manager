@@ -10,10 +10,10 @@ from sqlalchemy.dialects.postgresql import UUID
 
 from .config import load_config, init_logger
 
-log = logging.getLogger('sorna.gateway.models')
+log = logging.getLogger('backend.ai.gateway.models')
 metadata = sa.MetaData()
 
-test_user_email = 'testion@sorna.io'
+test_user_email = 'testion@backend.ai.io'
 
 
 class CurrencyTypes(enum.Enum):
@@ -59,7 +59,7 @@ def IDColumn(name='id'):
 
 
 KeyPair = sa.Table(
-    'sorna_cloud_api_keypair', metadata,
+    'backend.ai_cloud_api_keypair', metadata,
     sa.Column('user_id', sa.Integer()),  # foreign key
     sa.Column('access_key', sa.String(length=20), primary_key=True),
     sa.Column('secret_key', sa.String(length=40)),
@@ -75,7 +75,7 @@ KeyPair = sa.Table(
 )
 
 Usage = sa.Table(
-    'sorna_cloud_api_usage', metadata,
+    'backend.ai_cloud_api_usage', metadata,
     #IDColumn('id'),
     sa.Column('access_key_id', sa.ForeignKey('keypairs.access_key')),
     sa.Column('kernel_type', sa.String),

@@ -14,7 +14,7 @@ from .exceptions import GenericBadRequest, InvalidAuthParameters, AuthorizationF
 from .config import load_config, init_logger
 from .models import KeyPair
 
-log = logging.getLogger('sorna.gateway.auth')
+log = logging.getLogger('backend.ai.gateway.auth')
 
 
 def _extract_auth_params(request):
@@ -29,7 +29,7 @@ def _extract_auth_params(request):
     if len(pieces) != 2:
         raise InvalidAuthParameters('Malformed authorization header')
     auth_type, auth_str = pieces
-    if auth_type not in ('BackendAI', 'Sorna'):
+    if auth_type not in ('BackendAI', 'Backend.Ai'):
         raise InvalidAuthParameters('Invalid authorization type name')
 
     raw_params = map(lambda s: s.strip(), auth_str.split(','))
@@ -50,7 +50,7 @@ def check_date(request) -> bool:
     raw_date = request.headers.get('Date')
     if not raw_date:
         raw_date = request.headers.get('X-BackendAI-Date',
-                                       request.headers.get('X-Sorna-Date'))
+                                       request.headers.get('X-Backend.Ai-Date'))
     if not raw_date:
         return False
     try:
@@ -81,7 +81,7 @@ async def sign_request(sign_method, request, secret_key) -> str:
             body = b''
         body_hash = hashlib.new(hash_type, body).hexdigest()
         new_api_version = request.headers.get('X-BackendAI-Version')
-        legacy_api_version = request.headers.get('X-Sorna-Version')
+        legacy_api_version = request.headers.get('X-Backend.Ai-Version')
         api_version = new_api_version or legacy_api_version
         assert api_version is not None, 'API version missing in request headers'
 
@@ -89,7 +89,7 @@ async def sign_request(sign_method, request, secret_key) -> str:
             request.method, str(request.rel_url), request['raw_date'],
             request.host, request.content_type, api_version,
             body_hash,
-            name='backendai' if new_api_version is not None else 'sorna'
+            name='backendai' if new_api_version is not None else 'backend.ai'
         ).encode()
         sign_key = hmac.new(secret_key.encode(),
                             request['date'].strftime('%Y%m%d').encode(),

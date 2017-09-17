@@ -1,25 +1,25 @@
 import pytest
 import simplejson as json
 
-from sorna.gateway.exceptions import SornaError, SornaAgentError
-from sorna.utils import odict
+from backend.ai.gateway.exceptions import Backend.AiError, Backend.AiAgentError
+from backend.ai.utils import odict
 
 
-def test_sorna_error_obj():
-    sorna_err = SornaError()
-    assert sorna_err.args == (sorna_err.status_code, sorna_err.reason,
-                              sorna_err.error_type)
-    assert sorna_err.body == json.dumps(odict(
-        ('type', sorna_err.error_type), ('title', sorna_err.error_title)
+def test_backend.ai_error_obj():
+    backend.ai_err = Backend.AiError()
+    assert backend.ai_err.args == (backend.ai_err.status_code, backend.ai_err.reason,
+                              backend.ai_err.error_type)
+    assert backend.ai_err.body == json.dumps(odict(
+        ('type', backend.ai_err.error_type), ('title', backend.ai_err.error_title)
     )).encode()
 
     extra_msg = '!@#$'
-    sorna_err = SornaError(extra_msg)
-    assert extra_msg in sorna_err.error_title
+    backend.ai_err = Backend.AiError(extra_msg)
+    assert extra_msg in backend.ai_err.error_title
 
 
-def test_sorna_agent_error_obj():
-    agt_err = SornaAgentError('timeout')
+def test_backend.ai_agent_error_obj():
+    agt_err = Backend.AiAgentError('timeout')
 
     assert agt_err.args == (agt_err.status_code, agt_err.reason,
                             agt_err.error_type, agt_err.agent_error_type)

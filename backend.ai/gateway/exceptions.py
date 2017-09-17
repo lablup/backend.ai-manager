@@ -1,7 +1,7 @@
 '''
-This module defines a series of Sorna-specific errors based on HTTP Error
+This module defines a series of Backend.AI-specific errors based on HTTP Error
 classes from aiohttp.
-Raising a SornaError automatically is automatically mapped to a corresponding
+Raising a Backend.AiError automatically is automatically mapped to a corresponding
 HTTP error response with RFC7807-style JSON-encoded description in its response
 body.
 
@@ -14,15 +14,15 @@ from aiohttp import web
 import simplejson as json
 
 
-class SornaError(web.HTTPError):
+class Backend.AiError(web.HTTPError):
     '''
     An RFC-7807 error class as a drop-in replacement of the original
     aiohttp.web.HTTPError subclasses.
     '''
 
     status_code = 500
-    error_type  = 'https://api.sorna.io/probs/general-error'
-    error_title = 'General Sorna API Error.'
+    error_type  = 'https://api.backend.ai.io/probs/general-error'
+    error_title = 'General Backend.Ai API Error.'
 
     def __init__(self, extra_msg=None):
         super().__init__()
@@ -37,68 +37,68 @@ class SornaError(web.HTTPError):
         }).encode()
 
 
-class GenericNotFound(web.HTTPNotFound, SornaError):
-    error_type  = 'https://api.sorna.io/probs/generic-not-found'
+class GenericNotFound(web.HTTPNotFound, Backend.AiError):
+    error_type  = 'https://api.backend.ai.io/probs/generic-not-found'
     error_title = 'Unknown URL path.'
 
 
-class GenericBadRequest(web.HTTPBadRequest, SornaError):
-    error_type  = 'https://api.sorna.io/probs/generic-bad-request'
+class GenericBadRequest(web.HTTPBadRequest, Backend.AiError):
+    error_type  = 'https://api.backend.ai.io/probs/generic-bad-request'
     error_title = 'Bad request.'
 
 
-class InternalServerError(web.HTTPInternalServerError, SornaError):
-    error_type  = 'https://api.sorna.io/probs/internal-server-error'
+class InternalServerError(web.HTTPInternalServerError, Backend.AiError):
+    error_type  = 'https://api.backend.ai.io/probs/internal-server-error'
     error_title = 'Internal server error.'
 
 
-class ServiceUnavailable(web.HTTPServiceUnavailable, SornaError):
-    error_type  = 'https://api.sorna.io/probs/service-unavailable'
+class ServiceUnavailable(web.HTTPServiceUnavailable, Backend.AiError):
+    error_type  = 'https://api.backend.ai.io/probs/service-unavailable'
     error_title = 'Serivce unavailable.'
 
 
-class QueryNotImplemented(web.HTTPServiceUnavailable, SornaError):
-    error_type  = 'https://api.sorna.io/probs/not-implemented'
+class QueryNotImplemented(web.HTTPServiceUnavailable, Backend.AiError):
+    error_type  = 'https://api.backend.ai.io/probs/not-implemented'
     error_title = 'This API query is not implemented.'
 
 
-class InvalidAuthParameters(web.HTTPBadRequest, SornaError):
-    error_type  = 'https://api.sorna.io/probs/invalid-auth-params'
+class InvalidAuthParameters(web.HTTPBadRequest, Backend.AiError):
+    error_type  = 'https://api.backend.ai.io/probs/invalid-auth-params'
     error_title = 'Missing or invalid authorization parameters.'
 
 
-class AuthorizationFailed(web.HTTPUnauthorized, SornaError):
-    error_type  = 'https://api.sorna.io/probs/auth-failed'
+class AuthorizationFailed(web.HTTPUnauthorized, Backend.AiError):
+    error_type  = 'https://api.backend.ai.io/probs/auth-failed'
     error_title = 'Credential/signature mismatch.'
 
 
-class InvalidAPIParameters(web.HTTPBadRequest, SornaError):
-    error_type  = 'https://api.sorna.io/probs/invalid-api-params'
+class InvalidAPIParameters(web.HTTPBadRequest, Backend.AiError):
+    error_type  = 'https://api.backend.ai.io/probs/invalid-api-params'
     error_title = 'Missing or invalid API parameters.'
 
 
-class InstanceNotFound(web.HTTPNotFound, SornaError):
-    error_type  = 'https://api.sorna.io/probs/instance-not-found'
+class InstanceNotFound(web.HTTPNotFound, Backend.AiError):
+    error_type  = 'https://api.backend.ai.io/probs/instance-not-found'
     error_title = 'No such instance.'
 
 
-class KernelNotFound(web.HTTPNotFound, SornaError):
-    error_type  = 'https://api.sorna.io/probs/kernel-not-found'
+class KernelNotFound(web.HTTPNotFound, Backend.AiError):
+    error_type  = 'https://api.backend.ai.io/probs/kernel-not-found'
     error_title = 'No such kernel.'
 
 
-class QuotaExceeded(web.HTTPPreconditionFailed, SornaError):
-    error_type  = 'https://api.sorna.io/probs/quota-exceeded'
+class QuotaExceeded(web.HTTPPreconditionFailed, Backend.AiError):
+    error_type  = 'https://api.backend.ai.io/probs/quota-exceeded'
     error_title = 'You have reached your resource limit.'
 
 
-class RateLimitExceeded(web.HTTPTooManyRequests, SornaError):
-    error_type  = 'https://api.sorna.io/probs/rate-limit-exceeded'
+class RateLimitExceeded(web.HTTPTooManyRequests, Backend.AiError):
+    error_type  = 'https://api.backend.ai.io/probs/rate-limit-exceeded'
     error_title = 'You have reached your API query rate limit.'
 
 
-class InstanceNotAvailable(web.HTTPServiceUnavailable, SornaError):
-    error_type  = 'https://api.sorna.io/probs/instance-not-available'
+class InstanceNotAvailable(web.HTTPServiceUnavailable, Backend.AiError):
+    error_type  = 'https://api.backend.ai.io/probs/instance-not-available'
     error_title = 'There is no available instance.'
 
 
@@ -113,15 +113,15 @@ class AgentError(RuntimeError):
     pass
 
 
-class SornaAgentError(SornaError):
+class Backend.AiAgentError(Backend.AiError):
     '''
     An RFC-7807 error class that wraps agent-side errors.
     '''
 
     _short_type_map = {
-        'TIMEOUT': 'https://api.sorna.io/probs/agent-timeout',
-        'INVALID_INPUT': 'https://api.sorna.io/probs/agent-invalid-input',
-        'FAILURE': 'https://api.sorna.io/probs/agent-failure',
+        'TIMEOUT': 'https://api.backend.ai.io/probs/agent-timeout',
+        'INVALID_INPUT': 'https://api.backend.ai.io/probs/agent-invalid-input',
+        'FAILURE': 'https://api.backend.ai.io/probs/agent-failure',
     }
 
     def __init__(self, agent_error_type, exc_info=None):
@@ -172,21 +172,21 @@ class SornaAgentError(SornaError):
         }).encode()
 
 
-class KernelCreationFailed(web.HTTPInternalServerError, SornaAgentError):
-    error_type  = 'https://api.sorna.io/probs/kernel-creation-failed'
+class KernelCreationFailed(web.HTTPInternalServerError, Backend.AiAgentError):
+    error_type  = 'https://api.backend.ai.io/probs/kernel-creation-failed'
     error_title = 'Kernel creation has failed.'
 
 
-class KernelDestructionFailed(web.HTTPInternalServerError, SornaAgentError):
-    error_type  = 'https://api.sorna.io/probs/kernel-destruction-failed'
+class KernelDestructionFailed(web.HTTPInternalServerError, Backend.AiAgentError):
+    error_type  = 'https://api.backend.ai.io/probs/kernel-destruction-failed'
     error_title = 'Kernel destruction has failed.'
 
 
-class KernelRestartFailed(web.HTTPInternalServerError, SornaAgentError):
-    error_type  = 'https://api.sorna.io/probs/kernel-restart-failed'
+class KernelRestartFailed(web.HTTPInternalServerError, Backend.AiAgentError):
+    error_type  = 'https://api.backend.ai.io/probs/kernel-restart-failed'
     error_title = 'Kernel restart has failed.'
 
 
-class KernelExecutionFailed(web.HTTPInternalServerError, SornaAgentError):
-    error_type  = 'https://api.sorna.io/probs/kernel-execution-failed'
+class KernelExecutionFailed(web.HTTPInternalServerError, Backend.AiAgentError):
+    error_type  = 'https://api.backend.ai.io/probs/kernel-execution-failed'
     error_title = 'Executing user code in the kernel has failed.'
