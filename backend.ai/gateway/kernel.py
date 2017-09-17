@@ -24,7 +24,7 @@ import zmq
 
 from .exceptions import (ServiceUnavailable, InvalidAPIParameters, QuotaExceeded,
                          QueryNotImplemented, InstanceNotFound, KernelNotFound,
-                         SornaError)
+                         Backend.AiError)
 from . import GatewayStatus
 from .auth import auth_required
 from .models import KeyPair, Usage
@@ -32,7 +32,7 @@ from ..manager.registry import InstanceRegistry
 
 _json_type = 'application/json'
 
-log = logging.getLogger('sorna.gateway.kernel')
+log = logging.getLogger('backend.ai.gateway.kernel')
 
 grace_events = []
 
@@ -87,7 +87,7 @@ async def create(request):
                            .values(concurrency_used=KeyPair.c.concurrency_used + 1)
                            .where(KeyPair.c.access_key == access_key))
                 await conn.execute(query)
-    except SornaError:
+    except Backend.AiError:
         log.exception('GET_OR_CREATE: API Internal Error')
         raise
     return web.Response(status=201, content_type=_json_type,
@@ -265,16 +265,16 @@ async def instance_stats(app, inst_id, kern_stats, interval):
 async def datadog_update(app):
     with app['datadog'].statsd as statsd:
 
-        statsd.gauge('sorna.gateway.coroutines', len(asyncio.Task.all_tasks()))
+        statsd.gauge('backend.ai.gateway.coroutines', len(asyncio.Task.all_tasks()))
 
         all_inst_ids = [inst_id async for inst_id in app['registry'].enumerate_instances()]
-        statsd.gauge('sorna.gateway.agent_instances', len(all_inst_ids))
+        statsd.gauge('backend.ai.gateway.agent_instances', len(all_inst_ids))
 
         async with app.dbpool.acquire() as conn, conn.transaction():
             query = (sa.select([sa.func.sum(KeyPair.c.concurrency_used)])
                        .select_from(KeyPair))
             n = await conn.fetchval(query)
-            statsd.gauge('sorna.gateway.active_kernels', n)
+            statsd.gauge('backend.ai.gateway.active_kernels', n)
 
             subquery = (sa.select([sa.func.count()])
                           .select_from(KeyPair)
@@ -282,16 +282,16 @@ async def datadog_update(app):
                           .group_by(KeyPair.c.user_id))
             query = sa.select([sa.func.count()]).select_from(subquery.alias())
             n = await conn.fetchval(query)
-            statsd.gauge('sorna.users.has_active_key', n)
+            statsd.gauge('backend.ai.users.has_active_key', n)
 
             subquery = subquery.where(KeyPair.c.last_used != null())
             query = sa.select([sa.func.count()]).select_from(subquery.alias())
             n = await conn.fetchval(query)
-            statsd.gauge('sorna.users.has_used_key', n)
+            statsd.gauge('backend.ai.users.has_used_key', n)
 
             query = sa.select([sa.func.count()]).select_from(Usage)
             n = await conn.fetchval(query)
-            statsd.gauge('sorna.gateway.accum_kernels', n)
+            statsd.gauge('backend.ai.gateway.accum_kernels', n)
 
 
 async def datadog_update_timer(app):
@@ -395,7 +395,7 @@ async def destroy(request):
     log.info(f"DESTROY (u:{request['keypair']['access_key']}, k:{kern_id})")
     try:
         await request.app['registry'].destroy_kernel(kern_id)
-    except SornaError:
+    except Backend.AiError:
         log.exception('DESTROY: API Internal Error')
         raise
     return web.Response(status=204)
@@ -425,7 +425,7 @@ async def get_info(request):
         resp['memoryUsed']    = kern.mem_max_bytes // 1024
         resp['cpuCreditUsed'] = kern.cpu_used
         log.info(f'information retrieved: {resp!r}')
-    except SornaError:
+    except Backend.AiError:
         log.exception('GETINFO: API Internal Error')
         raise
     return web.Response(status=200, content_type=_json_type,
@@ -442,7 +442,7 @@ async def restart(request):
         await request.app['registry'].restart_kernel(kern_id)
         for sock in request.app['stream_stdin_socks'][kern_id]:
             sock.close()
-    except SornaError:
+    except Backend.AiError:
         log.exception('RESTART: API Internal Error')
         raise
     except:
@@ -478,7 +478,7 @@ async def execute_snippet(request):
             opts = params.get('options', None) or {}
         resp['result'] = await request.app['registry'].execute_snippet(
             kern_id, api_version, mode, code, opts)
-    except SornaError:
+    except Backend.AiError:
         log.exception('EXECUTE_SNIPPET: API Internal Error')
         raise
     return web.Response(status=200, content_type=_json_type,
@@ -511,7 +511,7 @@ async def upload_files(request):
             t = loop.create_task(request.app['registry'].upload_file(kern_id, file.filename, data))
             upload_tasks.append(t)
         await asyncio.gather(*upload_tasks)
-    except SornaError:
+    except Backend.AiError:
         log.exception('UPLOAD_FILES: API Internal Error')
         raise
     return web.Response(status=204)
