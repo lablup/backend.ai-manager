@@ -1,34 +1,34 @@
-Sorna Manager and API Gateway
+Backend.AI-Manager and API Gateway
 =============================
 
 Package Structure
 -----------------
 
- * sorna
+ * Backend.AI
    * manager: Abstraction of agents and computation kernels
    * gateway: RESTful API gateway based on aiohttp
 
 Installation
 ------------
 
-Sorna Manager requires Python 3.6 or higher.  We highly recommend to use
+Backend.AI Manager requires Python 3.6 or higher.  We highly recommend to use
 [pyenv](https://github.com/yyuu/pyenv) for an isolated setup of custom Python
 versions that might be different from default installations managed by your OS
 or Linux distros.
 
 ```console
-$ pip install sorna-manager
+$ pip install backend.ai-manager
 ```
 
 ### For development:
 
 We recommend to use virtual environments in Python.
-You may share a virtual environment with other Sorna projects.
+You may share a virtual environment with other Backend.AI projects.
 
 ```console
-$ git clone https://github.com/lablup/sorna-manager.git
-$ python -m venv venv-sorna
-$ source venv-sorna/bin/activate
+$ git clone https://github.com/lablup/backend.ai-manager.git
+$ python -m venv venv-backend.ai
+$ source venv-backend.ai/bin/activate
 $ pip install -U pip setuptools  # ensure latest versions!
 $ pip install -r requirements-dev.txt
 ```
@@ -40,11 +40,11 @@ Running and Deployment
 
  * An RDBMS (PostgreSQL)
  * A Redis server
-   - Sorna Manager uses the following [database IDs](http://redis.io/commands/SELECT)
+   - Backend.AI Manager uses the following [database IDs](http://redis.io/commands/SELECT)
      - 1: to track status and availability of kernel sessions
      - 2: to track status and availability of instances (agents)
      - 3: to track session IDs
-     - These IDs are defined in [sorna-common](https://github.com/lablup/sorna-common/blob/master/sorna/defs.py)
+     - These IDs are defined in [backend.ai-common](https://github.com/lablup/backend.ai-common/blob/master/backend.ai/defs.py)
 
 ### Configuration
 
@@ -57,16 +57,16 @@ run the server module with `--help`.
 ### Running the API gateway server from a command line:
 
 ```console
-$ python -m sorna.gateway.server
+$ python -m backend.ai.gateway.server
 ```
 
 ### Example supervisord config:
 
 ```dosini
-[program:sorna-manager]
+[program:backend.ai-manager]
 stopsignal = TERM
 stopasgroup = true
-command = /home/sorna/run-manager.sh
+command = /home/backend.ai/run-manager.sh
 ```
 
 ### TCP Port numbers to open
