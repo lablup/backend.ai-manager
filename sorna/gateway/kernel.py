@@ -563,17 +563,26 @@ async def init(app):
     app['stream_pty_handlers'] = defaultdict(set)
     app['stream_stdin_socks'] = defaultdict(set)
 
-    app['agent_lost_checker'] = aiotools.create_timer(
-        functools.partial(check_agent_lost, app), 1.0)
-
     app['registry'] = InstanceRegistry(app['dbpool'])
     await app['registry'].init()
+
+    # Scan ALIVE agents
+    if app['pidx'] == 0:
+        log.debug('initializing agent status checker')
+        now = time.monotonic()
+        async for inst in app['registry'].enumerate_instances():
+            app['shared_states'].agent_last_seen[inst.id] = now
+        app['agent_lost_checker'] = aiotools.create_timer(
+            functools.partial(check_agent_lost, app), 1.0)
+
+    app['shared_states'].barrier.wait()
     app['status'] = GatewayStatus.RUNNING
 
 
 async def shutdown(app):
-    app['agent_lost_checker'].cancel()
-    await app['agent_lost_checker']
+    if app['pidx'] == 0:
+        app['agent_lost_checker'].cancel()
+        await app['agent_lost_checker']
 
     checked_tasks = ('kernel_agent_event_collector', 'kernel_ddtimer')
     for tname in checked_tasks:

@@ -101,7 +101,9 @@ class InstanceRegistry:
 
     async def enumerate_instances(self, check_shadow=True):
         async with self.dbpool.acquire() as conn:
-            query = (sa.select_from(agents))
+            query = (sa.select('*').select_from(agents))
+            if check_shadow:
+                query = query.where(agents.c.status == AgentStatus.ALIVE)
             async for row in conn.execute(query):
                 yield row
 

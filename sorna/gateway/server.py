@@ -6,6 +6,7 @@ import asyncio
 from ipaddress import ip_address
 import logging
 from multiprocessing.managers import SyncManager
+import os
 import signal
 import ssl
 
@@ -167,6 +168,7 @@ async def server_main(loop, pidx, _args):
         app.config.service_port = 8443 if app.sslctx else 8080
 
     app['shared_states'] = _args[1]
+    app['pidx'] = pidx
 
     await etcd_init(app)
     await event_init(app)
@@ -262,14 +264,16 @@ def main():
 
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
+    num_workers = os.cpu_count()
     manager = SyncManager()
     manager.start(lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
     shared_states = manager.Namespace()
     shared_states.lock = manager.Lock()
+    shared_states.barrier = manager.Barrier(num_workers)
     shared_states.agent_last_seen = manager.dict()
 
     try:
-        aiotools.start_server(server_main, num_workers=2,
+        aiotools.start_server(server_main, num_workers=num_workers,
                               extra_procs=[event_router],
                               args=(config, shared_states))
     finally:
