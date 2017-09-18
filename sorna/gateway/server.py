@@ -143,7 +143,7 @@ async def gw_init(app):
             f'user={app.config.db_user} password={app.config.db_password} '
             f'dbname={app.config.db_name}',
         minsize=4, maxsize=16,
-        echo=bool(app.config.debug),
+        echo=bool(app.config.verbose),
     )
     app.middlewares.append(exception_middleware_factory)
     app.middlewares.append(api_middleware_factory)
