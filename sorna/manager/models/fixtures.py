@@ -15,6 +15,7 @@ example_keypair = [
                 'concurrency_used': 0,
                 'rate_limit': 1000,
                 'num_queries': 0,
+                'is_admin': True,
                 # Sample free tier: 500 launches per day x 30 days per month
                 # 'remaining_cpu': 180000 * 500 * 30,   # msec (180 sec per launch)
                 # 'remaining_mem': 1048576 * 500 * 30,  # KBytes (1GB per launch)
