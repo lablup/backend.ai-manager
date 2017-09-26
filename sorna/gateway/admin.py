@@ -11,7 +11,7 @@ from graphql.error.located_error import GraphQLLocatedError
 import simplejson as json
 
 from .exceptions import InvalidAPIParameters, SornaError
-from .auth import admin_required
+from .auth import auth_required
 from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
     KeyPair, CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
@@ -22,10 +22,13 @@ from ..manager.models import (
 log = logging.getLogger('sorna.gateway.admin')
 
 
-@admin_required
+@auth_required
 async def handle_gql(request: web.Request) -> web.Response:
     executor = request.app['admin.gql_executor']
-    schema = request.app['admin.gql_schema']
+    if request['is_admin']:
+        schema = request.app['admin.gql_schema_admin']
+    else:
+        schema = request.app['admin.gql_schema_user']
     try:
         body = await request.json(loads=json.loads)
     except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
@@ -51,6 +54,7 @@ async def handle_gql(request: web.Request) -> web.Response:
         variable_values=body['variables'],
         context_value={
             'dlmgr': dlmanager,
+            'access_key': request['keypair']['access_key'],
             'dbpool': request.app['dbpool'],
         },
         return_promise=True)
@@ -74,13 +78,24 @@ async def handle_gql(request: web.Request) -> web.Response:
         return web.json_response(result.data, status=200, dumps=json.dumps)
 
 
-class Mutation(graphene.ObjectType):
+class MutationForAdmin(graphene.ObjectType):
     create_keypair = CreateKeyPair.Field()
     modify_keypair = ModifyKeyPair.Field()
     delete_keypair = DeleteKeyPair.Field()
 
 
-class Query(graphene.ObjectType):
+# Nothing yet!
+# class MutationForUser(graphene.ObjectType):
+#     pass
+
+
+class QueryForAdmin(graphene.ObjectType):
+    '''
+    Available GraphQL queries for the admin privilege.
+    It allows use of any access keys regardless of the one specified in the
+    authorization header as well as querying the keypair information of all
+    users.
+    '''
 
     keypairs = graphene.List(
         KeyPair,
@@ -89,11 +104,11 @@ class Query(graphene.ObjectType):
 
     vfolders = graphene.List(
         VirtualFolder,
-        access_key=graphene.String(required=True))
+        access_key=graphene.String())
 
     compute_sessions = graphene.List(
         ComputeSession,
-        access_key=graphene.String(required=True),
+        access_key=graphene.String(),
         status=graphene.String())
 
     compute_workers = graphene.List(
@@ -108,16 +123,20 @@ class Query(graphene.ObjectType):
         return await loader.load(user_id)
 
     @staticmethod
-    async def resolve_vfolders(executor, info, access_key):
+    async def resolve_vfolders(executor, info, access_key=None):
         manager = info.context['dlmgr']
+        if access_key is None:
+            access_key = info.context['access_key']
         loader = manager.get_loader('VirtualFolder')
         return await loader.load(access_key)
 
     @staticmethod
-    async def resolve_compute_sessions(executor, info, access_key, status=None):
+    async def resolve_compute_sessions(executor, info, access_key=None, status=None):
         manager = info.context['dlmgr']
         # TODO: make status a proper graphene.Enum type
         #       (https://github.com/graphql-python/graphene/issues/544)
+        if access_key is None:
+            access_key = info.context['access_key']
         if status is not None:
             status = KernelStatus[status]
         loader = manager.get_loader('ComputeSession', status=status)
@@ -132,13 +151,63 @@ class Query(graphene.ObjectType):
         return await loader.load(sess_id)
 
 
+class QueryForUser(graphene.ObjectType):
+    '''
+    Available GraphQL queries for the user priveilege.
+    It only allows use of the access key specified in the authorization header.
+    '''
+
+    vfolders = graphene.List(VirtualFolder)
+
+    compute_sessions = graphene.List(
+        ComputeSession,
+        status=graphene.String())
+
+    compute_workers = graphene.List(
+        ComputeWorker,
+        sess_id=graphene.String(required=True),
+        status=graphene.String())
+
+    @staticmethod
+    async def resolve_vfolders(executor, info):
+        manager = info.context['dlmgr']
+        access_key = info.context['access_key']
+        loader = manager.get_loader('VirtualFolder')
+        return await loader.load(access_key)
+
+    @staticmethod
+    async def resolve_compute_sessions(executor, info, status=None):
+        manager = info.context['dlmgr']
+        access_key = info.context['access_key']
+        # TODO: make status a proper graphene.Enum type
+        #       (https://github.com/graphql-python/graphene/issues/544)
+        if status is not None:
+            status = KernelStatus[status]
+        loader = manager.get_loader('ComputeSession', status=status)
+        return await loader.load(access_key)
+
+    @staticmethod
+    async def resolve_compute_workers(executor, info, sess_id, status=None):
+        manager = info.context['dlmgr']
+        access_key = info.context['access_key']
+        if status is not None:
+            status = KernelStatus[status]
+        loader = manager.get_loader(
+            'ComputeWorker', status=status, access_key=access_key)
+        return await loader.load(sess_id)
+
+
 async def init(app):
     loop = asyncio.get_event_loop()
     app.router.add_route('POST', r'/v{version:\d+}/admin/graphql', handle_gql)
     app['admin.gql_executor'] = AsyncioExecutor(loop=loop)
-    app['admin.gql_schema'] = graphene.Schema(
-        query=Query,
-        mutation=Mutation,
+    app['admin.gql_schema_admin'] = graphene.Schema(
+        query=QueryForAdmin,
+        mutation=MutationForAdmin,
+        auto_camelcase=False)
+    app['admin.gql_schema_user'] = graphene.Schema(
+        query=QueryForUser,
+        mutation=None,
         auto_camelcase=False)
 
 
