@@ -460,16 +460,15 @@ class InstanceRegistry:
                                          stdin_port=kernel_info['stdin_port'],
                                          stdout_port=kernel_info['stdout_port'])
 
-    async def execute(self, sess_id, api_version, mode, code, opts):
+    async def execute(self, sess_id, api_version, run_id, mode, code, opts):
         log.debug(f'execute:v{api_version}({sess_id}, {mode})')
         async with self.handle_kernel_exception('execute', sess_id):
             kernel = await self.get_kernel_session(sess_id)
-            # must be longer than kernel exec_timeout
-            # TODO: cope with agent restarts with save-loaded runner states
-            # TODO: cope with changes of container public ports after agent restarts
-            async with RPCContext(kernel['agent_addr'], 200) as rpc:
+            # The agent aggregates at most 2 seconds of outputs
+            # if the kernel runs for a long time.
+            async with RPCContext(kernel['agent_addr'], 300) as rpc:
                 exec_coro = rpc.call.execute(api_version, str(kernel['id']),
-                                             mode, code, opts)
+                                             run_id, mode, code, opts)
                 if exec_coro is None:
                     raise RuntimeError('execute cancelled')
                 try:
@@ -477,11 +476,32 @@ class InstanceRegistry:
                 except TypeError as e:
                     log.exception('typeerror????')
 
+    async def interrupt_kernel(self, sess_id, mode):
+        log.debug(f'interrupt({sess_id}, {mode})')
+        async with self.handle_kernel_exception('execute', sess_id):
+            kernel = await self.get_kernel_session(sess_id)
+            async with RPCContext(kernel['agent_addr'], 5) as rpc:
+                exec_coro = rpc.call.interrupt_kernel(str(kernel['id']), mode)
+                if exec_coro is None:
+                    raise RuntimeError('interrupt cancelled')
+                return await exec_coro
+
+    async def get_completions(self, sess_id, mode, text, opts):
+        log.debug(f'get_completions({sess_id}, {mode})')
+        async with self.handle_kernel_exception('execute', sess_id):
+            kernel = await self.get_kernel_session(sess_id)
+            async with RPCContext(kernel['agent_addr'], 5) as rpc:
+                exec_coro = rpc.call.get_completions(str(kernel['id']), mode,
+                                                     text, opts)
+                if exec_coro is None:
+                    raise RuntimeError('get_completions cancelled')
+                return await exec_coro
+
     async def upload_file(self, sess_id, filename, filedata):
         log.debug(f'upload_file({sess_id}, {filename})')
         async with self.handle_kernel_exception('upload_file', sess_id):
             kernel = await self.get_kernel_session(sess_id)
-            async with RPCContext(kernel['agent_addr'], 10000) as rpc:
+            async with RPCContext(kernel['agent_addr'], 180) as rpc:
                 result = await rpc.call.upload_file(str(kernel['id']), filename, filedata)
                 return result
 

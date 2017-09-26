@@ -8,6 +8,7 @@ from collections import defaultdict
 from datetime import datetime
 import functools
 import logging
+import secrets
 import time
 from urllib.parse import urlparse
 
@@ -351,20 +352,68 @@ async def execute(request):
         if api_version == 1:
             mode = 'query'
             code = params['code']
+            run_id = params.get('runId', secrets.token_hex(8))
             opts = {}
         elif api_version in (2, 3):
             mode = params['mode']
             code = params.get('code', '')
+            run_id = params.get('runId', secrets.token_hex(8))
             mode = params['mode']
             assert mode in ('query', 'batch', 'complete')
             opts = params.get('options', None) or {}
-        resp['result'] = await request.app['registry'].execute(
-            sess_id, api_version, mode, code, opts)
+        if mode == 'complete':
+            # For legacy
+            resp['result'] = await request.app['registry'].get_completions(
+                sess_id, 'query', code, opts)
+        else:
+            resp['result'] = await request.app['registry'].execute(
+                sess_id, api_version, run_id, mode, code, opts)
     except AssertionError:
         log.warning('EXECUTE: invalid/missing parameters')
         raise InvalidAPIParameters
     except SornaError:
         log.exception('EXECUTE: exception')
+        raise
+    return web.json_response(resp, status=200, dumps=json.dumps)
+
+
+@auth_required
+@server_ready_required
+async def interrupt(request):
+    sess_id = request.match_info['sess_id']
+    log.info(f"INTERRUPT(u:{request['keypair']['access_key']}, k:{sess_id})")
+    try:
+        await request.app['registry'].increment_session_usage(sess_id)
+        await request.app['registry'].interrupt_kernel(sess_id, mode)
+    except SornaError:
+        log.exception('INTERRUPT: exception')
+        raise
+    return web.Response(status=204)
+
+
+@auth_required
+@server_ready_required
+async def complete(request):
+    resp = {}
+    sess_id = request.match_info['sess_id']
+    try:
+        with _timeout(2):
+            params = await request.json(loads=json.loads)
+        log.info(f"COMPLETE(u:{request['keypair']['access_key']}, k:{sess_id})")
+    except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
+        log.warning('COMPLETE: invalid/missing parameters')
+        raise InvalidAPIParameters
+    try:
+        code = params.get('code', '')
+        opts = params.get('options', None) or {}
+        await request.app['registry'].increment_session_usage(sess_id)
+        resp['result'] = await request.app['registry'].get_completions(
+            sess_id, 'query', code, opts)
+    except AssertionError:
+        log.warning('COMPLETE: invalid/missing parameters')
+        raise InvalidAPIParameters
+    except SornaError:
+        log.exception('COMPLETE: exception')
         raise
     return web.json_response(resp, status=200, dumps=json.dumps)
 
@@ -547,6 +596,8 @@ async def init(app):
     app.router.add_route('PATCH',  r'/v{version:\d+}/kernel/{sess_id}', restart)
     app.router.add_route('DELETE', r'/v{version:\d+}/kernel/{sess_id}', destroy)
     app.router.add_route('POST',   r'/v{version:\d+}/kernel/{sess_id}', execute)
+    app.router.add_route('POST',   r'/v{version:\d+}/kernel/{sess_id}/interrupt', interrupt)
+    app.router.add_route('POST',   r'/v{version:\d+}/kernel/{sess_id}/complete', complete)
     app.router.add_route('GET',    r'/v{version:\d+}/stream/kernel/{sess_id}/pty', stream_pty)
     app.router.add_route('GET',    r'/v{version:\d+}/stream/kernel/{sess_id}/events', not_impl_stub)
     app.router.add_route('POST',   r'/v{version:\d+}/kernel/{sess_id}/upload', upload_files)
