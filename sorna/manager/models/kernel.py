@@ -161,7 +161,8 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             query = (sa.select('*')
                        .select_from(kernels)
                        .where((kernels.c.access_key.in_(access_keys)) &
-                              (kernels.c.role == 'master')))
+                              (kernels.c.role == 'master'))
+                       .order_by(sa.desc(kernels.c.created_at)))
             if status is not None:
                 query = query.where(kernels.c.status == status)
             objs_per_key = OrderedDict()
@@ -179,14 +180,19 @@ class ComputeWorker(SessionCommons, graphene.ObjectType):
     '''
 
     @staticmethod
-    async def batch_load(dbpool, sess_ids, *, status=None):
+    async def batch_load(dbpool, sess_ids, *, status=None, access_key=None):
         async with dbpool.acquire() as conn:
             query = (sa.select('*')
                        .select_from(kernels)
                        .where((kernels.c.sess_id.in_(sess_ids)) &
-                              (kernels.c.role == 'worker')))
+                              (kernels.c.role == 'worker'))
+                       .order_by(sa.desc(kernels.c.created_at)))
             if status is not None:
                 query = query.where(kernels.c.status == status)
+            if access_key is not None:
+                # For user queries, ensure only the user's own workers
+                # even when he/she knows other users' session IDs.
+                query = query.where(kernels.c.access_key == access_key)
             objs_per_key = OrderedDict()
             for k in sess_ids:
                 objs_per_key[k] = list()

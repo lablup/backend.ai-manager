@@ -79,7 +79,8 @@ class VirtualFolder(graphene.ObjectType):
             # TODO: num_attached count group-by
             query = (sa.select('*')
                        .select_from(vfolders)
-                       .where(vfolders.c.belongs_to.in_(access_keys)))
+                       .where(vfolders.c.belongs_to.in_(access_keys))
+                       .order_by(sa.desc(vfolders.c.created_at)))
             objs_per_key = OrderedDict()
             for k in access_keys:
                 objs_per_key[k] = list()
