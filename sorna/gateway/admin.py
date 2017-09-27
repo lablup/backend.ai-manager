@@ -234,3 +234,21 @@ async def init(app):
 
 async def shutdown(app):
     pass
+
+
+if __name__ == '__main__':
+    # If executed as a main program, print all GraphQL schemas.
+    # (graphene transforms our object model into a textual representation)
+    # This is useful for writing documentation!
+    admin_schema = graphene.Schema(
+        query=QueryForAdmin,
+        mutation=MutationForAdmin,
+        auto_camelcase=False)
+    user_schema = graphene.Schema(
+        query=QueryForUser,
+        mutation=None,
+        auto_camelcase=False)
+    print('======== Admin Schema ========')
+    print(str(admin_schema))
+    print('======== User Schema ========')
+    print(str(user_schema))
