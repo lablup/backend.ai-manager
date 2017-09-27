@@ -14,6 +14,7 @@ from .exceptions import InvalidAPIParameters, SornaError
 from .auth import auth_required
 from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
+    Agent, AgentStatus,
     KeyPair, CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
     ComputeSession, ComputeWorker, KernelStatus,
     VirtualFolder,
@@ -97,7 +98,15 @@ class QueryForAdmin(graphene.ObjectType):
     users.
     '''
 
-    keypair = graphene.NonNull(
+    agent = graphene.Field(
+        Agent,
+        agent_id=graphene.String())
+
+    agents = graphene.List(
+        Agent,
+        status=graphene.String())
+
+    keypair = graphene.Field(
         KeyPair,
         access_key=graphene.String())
 
@@ -119,6 +128,17 @@ class QueryForAdmin(graphene.ObjectType):
         ComputeWorker,
         sess_id=graphene.String(required=True),
         status=graphene.String())
+
+    @staticmethod
+    async def resolve_agent(executor, info, agent_id):
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('Agent', status=None)
+        return await loader.load(agent_id)
+
+    @staticmethod
+    async def resolve_agents(executor, info, status=None):
+        dbpool = info.context['dbpool']
+        return await Agent.load_all(dbpool, status=status)
 
     @staticmethod
     async def resolve_keypair(executor, info, access_key=None):

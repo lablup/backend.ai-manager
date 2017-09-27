@@ -9,7 +9,7 @@ from .base import metadata, EnumType, IDColumn
 
 __all__ = (
     'kernels', 'KernelStatus',
-    'ComputeSession', 'ComputeWorker',
+    'ComputeSession', 'ComputeWorker', 'Computation',
 )
 
 
@@ -81,6 +81,8 @@ class SessionCommons:
 
     sess_id = graphene.String()
     id = graphene.UUID()
+    role = graphene.String()
+    lang = graphene.String()
 
     status = graphene.String()
     status_info = graphene.String()
@@ -110,6 +112,8 @@ class SessionCommons:
         return cls(
             sess_id=row.sess_id,
             id=row.id,
+            role=row.role,
+            lang=row.lang,
             status=row.status,
             status_info=row.status_info,
             created_at=row.created_at,
@@ -135,17 +139,10 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
     Represents a master session.
     '''
 
-    lang = graphene.String()
     workers = graphene.List(
         lambda: ComputeWorker,
         status=graphene.String(),
     )
-
-    @classmethod
-    def from_row(cls, row):
-        o = super().from_row(row)
-        o.lang = row.lang
-        return o
 
     async def resolve_workers(self, info, status=None):
         '''
@@ -201,4 +198,28 @@ class ComputeWorker(SessionCommons, graphene.ObjectType):
             async for row in conn.execute(query):
                 o = ComputeWorker.from_row(row)
                 objs_per_key[row.sess_id].append(o)
+        return tuple(objs_per_key.values())
+
+
+class Computation(SessionCommons, graphene.ObjectType):
+    '''
+    Any kind of computation: either a session master or a worker.
+    '''
+
+    @staticmethod
+    async def batch_load_by_agent_id(dbpool, agent_ids, *, status=None):
+        async with dbpool.acquire() as conn:
+            query = (sa.select('*')
+                       .select_from(kernels)
+                       .where(kernels.c.agent.in_(agent_ids))
+                       .order_by(sa.desc(kernels.c.created_at)))
+            if status is not None:
+                status = KernelStatus[status]
+                query = query.where(kernels.c.status == status)
+            objs_per_key = OrderedDict()
+            for k in agent_ids:
+                objs_per_key[k] = list()
+            async for row in conn.execute(query):
+                o = Computation.from_row(row)
+                objs_per_key[row.agent].append(o)
         return tuple(objs_per_key.values())
