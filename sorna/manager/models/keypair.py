@@ -108,7 +108,7 @@ class KeyPair(graphene.ObjectType):
             objs_per_key = OrderedDict()
             # For each access key, there is only one keypair.
             # So we don't build lists in objs_per_key variable.
-            for k in user_ids:
+            for k in access_keys:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
                 o = KeyPair.from_row(row)
