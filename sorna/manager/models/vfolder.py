@@ -54,6 +54,8 @@ class VirtualFolder(graphene.ObjectType):
 
     @classmethod
     def from_row(cls, row):
+        if row is None:
+            return None
         return cls(
             id=row.id,
             host=row.host,

@@ -54,6 +54,8 @@ class KeyPair(graphene.ObjectType):
 
     @classmethod
     def from_row(cls, row):
+        if row is None:
+            return None
         return cls(
             access_key=row.access_key,
             secret_key=row.secret_key,
@@ -82,7 +84,7 @@ class KeyPair(graphene.ObjectType):
         return await loader.load(self.access_key)
 
     @staticmethod
-    async def batch_load(dbpool, user_ids, *, is_active=None):
+    async def batch_load_by_uid(dbpool, user_ids, *, is_active=None):
         async with dbpool.acquire() as conn:
             query = (sa.select('*')
                        .select_from(keypairs)
@@ -95,6 +97,20 @@ class KeyPair(graphene.ObjectType):
             async for row in conn.execute(query):
                 o = KeyPair.from_row(row)
                 objs_per_key[row.user_id].append(o)
+        return tuple(objs_per_key.values())
+
+    @staticmethod
+    async def batch_load_by_ak(dbpool, access_keys):
+        async with dbpool.acquire() as conn:
+            query = (sa.select('*')
+                       .select_from(keypairs)
+                       .where(keypairs.c.access_key.in_(access_keys)))
+            objs_per_key = OrderedDict()
+            # For each access key, there is only one keypair.
+            # So we don't build lists in objs_per_key variable.
+            result = await conn.execute(query)
+            row = await result.first()
+            objs_per_key[row.access_key] = KeyPair.from_row(row)
         return tuple(objs_per_key.values())
 
 

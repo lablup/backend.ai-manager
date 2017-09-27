@@ -97,6 +97,10 @@ class QueryForAdmin(graphene.ObjectType):
     users.
     '''
 
+    keypair = graphene.NonNull(
+        KeyPair,
+        access_key=graphene.String())
+
     keypairs = graphene.List(
         KeyPair,
         user_id=graphene.Int(required=True),
@@ -117,9 +121,17 @@ class QueryForAdmin(graphene.ObjectType):
         status=graphene.String())
 
     @staticmethod
+    async def resolve_keypair(executor, info, access_key=None):
+        manager = info.context['dlmgr']
+        if access_key is None:
+            access_key = info.context['access_key']
+        loader = manager.get_loader('KeyPair.by_ak')
+        return await loader.load(access_key)
+
+    @staticmethod
     async def resolve_keypairs(executor, info, user_id, is_active=None):
         manager = info.context['dlmgr']
-        loader = manager.get_loader('KeyPair', is_active=is_active)
+        loader = manager.get_loader('KeyPair.by_uid', is_active=is_active)
         return await loader.load(user_id)
 
     @staticmethod
@@ -157,6 +169,8 @@ class QueryForUser(graphene.ObjectType):
     It only allows use of the access key specified in the authorization header.
     '''
 
+    keypair = graphene.Field(lambda: KeyPair)
+
     vfolders = graphene.List(VirtualFolder)
 
     compute_sessions = graphene.List(
@@ -167,6 +181,13 @@ class QueryForUser(graphene.ObjectType):
         ComputeWorker,
         sess_id=graphene.String(required=True),
         status=graphene.String())
+
+    @staticmethod
+    async def resolve_keypair(executor, info):
+        manager = info.context['dlmgr']
+        access_key = info.context['access_key']
+        loader = manager.get_loader('KeyPair.by_ak')
+        return await loader.load(access_key)
 
     @staticmethod
     async def resolve_vfolders(executor, info):

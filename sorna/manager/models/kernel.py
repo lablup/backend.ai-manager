@@ -105,6 +105,8 @@ class SessionCommons:
 
     @classmethod
     def from_row(cls, row):
+        if row is None:
+            return None
         return cls(
             sess_id=row.sess_id,
             id=row.id,

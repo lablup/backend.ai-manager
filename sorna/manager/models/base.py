@@ -121,8 +121,12 @@ class DataLoaderManager:
         k = self._get_key(objtype_name, args, kwargs)
         loader = self.cache.get(k)
         if loader is None:
+            objtype_name, has_variant, variant_name = objtype_name.partition('.')
             objtype = getattr(self.mod, objtype_name)
-            batch_load_fn = objtype.batch_load
+            if has_variant:
+                batch_load_fn = getattr(objtype, 'batch_load_' + variant_name)
+            else:
+                batch_load_fn = objtype.batch_load
             loader = DataLoader(
                 apartial(batch_load_fn, *self.common_args, *args, **kwargs),
                 max_batch_size=16)
