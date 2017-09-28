@@ -135,7 +135,9 @@ async def gw_init(app):
         if app.config.raven_uri is None:
             log.info('skipping Sentry initialization due to missing DSN URI...')
         else:
-            app['sentry'] = raven.Client(app.config.raven_uri)
+            app['sentry'] = raven.Client(
+                app.config.raven_uri,
+                release=raven.fetch_package_version('sorna-manager'))
             log.info('sentry logging enabled')
 
     app['dbpool'] = await create_engine(
