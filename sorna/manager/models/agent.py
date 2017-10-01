@@ -28,6 +28,7 @@ agents = sa.Table(
     sa.Column('id', sa.String(length=64), primary_key=True),
     sa.Column('status', EnumType(AgentStatus), nullable=False, index=True,
               default=AgentStatus.ALIVE),
+    sa.Column('region', sa.String(length=64), index=True, nullable=False),
 
     sa.Column('mem_slots', sa.Integer(), nullable=False),        # in the unit of 256 MBytes
     sa.Column('cpu_slots', sa.Integer(), nullable=False),        # 2 * number of cores
@@ -47,6 +48,7 @@ class Agent(graphene.ObjectType):
 
     id = graphene.String()
     status = graphene.String()
+    region = graphene.String()
     mem_slots = graphene.Int()
     cpu_slots = graphene.Int()
     gpu_slots = graphene.Int()
@@ -68,6 +70,7 @@ class Agent(graphene.ObjectType):
         return cls(
             id=row.id,
             status=row.status,
+            region=row.region,
             mem_slots=row.mem_slots,
             cpu_slots=row.cpu_slots,
             gpu_slots=row.gpu_slots,

@@ -567,6 +567,7 @@ class InstanceRegistry:
                 query = agents.insert().values({
                     'id': agent_id,
                     'status': AgentStatus.ALIVE,
+                    'region': agent_info['region'],
                     'mem_slots': agent_info['mem_slots'],
                     'cpu_slots': agent_info['cpu_slots'],
                     'gpu_slots': agent_info['gpu_slots'],

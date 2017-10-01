@@ -48,7 +48,6 @@ async def handle_gql(request: web.Request) -> web.Response:
     except AssertionError as e:
         raise InvalidAPIParameters(e.args[0])
     text = await request.text()
-    log.debug(f'handle_gql: processing request\n{text}')
     dlmanager = DataLoaderManager(request.app['dbpool'])
     result = schema.execute(
         body['query'], executor,
