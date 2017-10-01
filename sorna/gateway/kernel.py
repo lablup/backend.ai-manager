@@ -455,7 +455,9 @@ async def stream_pty(request):
     app = request.app
     sess_id = request.match_info['sess_id']
     try:
-        kernel = await app['registry'].get_kernel_session(sess_id)
+        kernel = await app['registry'].get_kernel_session(sess_id, field=(
+            kernels.c.stdin_port, kernels.c.stdout_port
+        ))
     except KernelNotFound:
         raise
 
@@ -468,7 +470,7 @@ async def stream_pty(request):
     app['stream_pty_handlers'][sess_id].add(asyncio.Task.current_task())
 
     async def connect_streams(kernel):
-        kernel_ip = urlparse(kernel.addr).hostname
+        kernel_ip = urlparse(kernel.agent_addr).hostname
         stdin_addr = f'tcp://{kernel_ip}:{kernel.stdin_port}'
         log.debug(f'stream_pty({sess_id}): stdin: {stdin_addr}')
         stdin_sock = await aiozmq_sock(zmq.PUB, connect=stdin_addr)
@@ -510,16 +512,16 @@ async def stream_pty(request):
                             stream_sync.set()
                             continue
                     else:
-                        kernel = await app['registry'].get_kernel_session(sess_id)
-                        await request.app['registry'].update_kernel(sess_id, {
-                            'num_queries': int(kernel.num_queries) + 1,
-                        })
+                        await app['registry'].increment_session_usage(sess_id)
                         api_version = 2
+                        run_id = secrets.token_hex(8)
                         if data['type'] == 'resize':
                             code = f"%resize {data['rows']} {data['cols']}"
-                            await app['registry'].execute(sess_id, api_version, 'query', code, {})
+                            await app['registry'].execute(sess_id, api_version, run_id,
+                                                          'query', code, {})
                         elif data['type'] == 'ping':
-                            await app['registry'].execute(sess_id, api_version, 'query', '%ping', {})
+                            await app['registry'].execute(sess_id, api_version, run_id,
+                                                          'query', '%ping', {})
                         elif data['type'] == 'restart':
                             # Close existing zmq sockets and let stream handlers get a new one
                             # with changed stdin/stdout ports.
