@@ -724,10 +724,10 @@ class InstanceRegistry:
             num_kernels = len(all_kernels)
             if num_kernels > 0:
                 access_key = all_kernels[0]['access_key']
+                # concurrency is per session.
                 query = (sa.update(keypairs)
                            .values({
-                               'concurrency_used': (keypairs.c.concurrency_used -
-                                                    num_kernels),
+                               'concurrency_used': (keypairs.c.concurrency_used - 1),
                            })
                            .where(keypairs.c.access_key == access_key))
                 await conn.execute(query)
