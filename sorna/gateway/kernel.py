@@ -616,7 +616,7 @@ async def init(app):
     app['stream_pty_handlers'] = defaultdict(set)
     app['stream_stdin_socks'] = defaultdict(set)
 
-    app['registry'] = InstanceRegistry(app['dbpool'])
+    app['registry'] = InstanceRegistry(app['dbpool'], app['redis_stat_pool'])
     await app['registry'].init()
 
     # Scan ALIVE agents

@@ -12,6 +12,7 @@ import ssl
 
 import aiohttp
 from aiohttp import web
+import aioredis
 import aiotools
 from aiopg.sa import create_engine
 import uvloop
@@ -31,6 +32,7 @@ from sorna.common.utils import env_info
 from sorna.common.monitor import DummyDatadog, DummySentry
 from ..manager import __version__
 from . import GatewayStatus
+from .defs import REDIS_STAT_DB
 from .exceptions import (SornaError, GenericNotFound,
                          GenericBadRequest, InternalServerError)
 from .admin import init as admin_init, shutdown as admin_shutdown
@@ -147,6 +149,11 @@ async def gw_init(app):
         minsize=4, maxsize=16,
         echo=bool(app.config.verbose),
     )
+    app['redis_stat_pool'] = await aioredis.create_pool(
+        app.config.redis_addr.as_sockaddr(),
+        create_connection_timeout=3.0,
+        encoding='utf8',
+        db=REDIS_STAT_DB)
     app.middlewares.append(exception_middleware_factory)
     app.middlewares.append(api_middleware_factory)
 

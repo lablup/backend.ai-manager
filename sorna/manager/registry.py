@@ -78,9 +78,10 @@ class InstanceRegistry:
     policy, such as the limitation of maximum number of kernels per instance.
     '''
 
-    def __init__(self, dbpool, loop=None):
+    def __init__(self, dbpool, redis_stat_pool, loop=None):
         self.loop = loop if loop is not None else asyncio.get_event_loop()
         self.dbpool = dbpool
+        self.redis_stat_pool = redis_stat_pool
 
     async def init(self):
         log.debug('ready.')
@@ -641,11 +642,23 @@ class InstanceRegistry:
 
             # change the status to TERMINATED
             # (we don't delete the row for later logging and billing)
+            kern_data = {
+                'status': KernelStatus.TERMINATED,
+                'terminated_at': datetime.now(tzutc()),
+            }
+            async with self.redis_stat_pool.get() as rs:
+                kern_stat = await rs.hgetall(kernel_id)
+                if kern_stat is not None:
+                    kern_data.update({
+                        'cpu_used': kern_stat['cpu_used'],
+                        'max_mem_bytes': kern_stat['mem_max_bytes'],
+                        'io_read_bytes': kern_stat['io_read_bytes'],
+                        'io_write_bytes': kern_stat['io_write_bytes'],
+                        'net_rx_bytes': kern_stat['net_rx_bytes'],
+                        'net_tx_bytes': kern_stat['net_tx_bytes'],
+                    })
             query = (sa.update(kernels)
-                       .values({
-                           'status': KernelStatus.TERMINATED,
-                           'terminated_at': datetime.now(tzutc()),
-                       })
+                       .values(kern_data)
                        .where(kernels.c.id == kernel_id))
             await conn.execute(query)
 
@@ -671,40 +684,6 @@ class InstanceRegistry:
                        })
                        .where(agents.c.id == kernel['agent']))
             await conn.execute(query)
-
-            '''
-            if kern_stat:
-                # if last stats available, use it.
-                log.info(f'update_session_usage: {kern.id}, last-stat: {kern_stat}')
-                values = {
-                    'access_key_id': kern.access_key,
-                    'kernel_type': kern.lang,
-                    'kernel_id': kern.id,
-                    'started_at': kern.created_at,
-                    'terminated_at': datetime.now(tzutc()),
-                    'cpu_used': kern_stat['cpu_used'],
-                    'mem_used': kern_stat['mem_max_bytes'] // 1024,
-                    'io_used': (kern_stat['io_read_bytes'] + kern_stat['io_write_bytes']) // 1024,
-                    'net_used': (kern_stat['net_rx_bytes'] + kern_stat['net_tx_bytes']) // 1024,
-                }
-                query = usage.insert().values(**values)
-            else:
-                # otherwise, get the latest stats from the registry.
-                log.info(f'update_session_usage: {kern.id}, registry-stat')
-                values = {
-                    'access_key_id': kern.access_key,
-                    'kernel_type': kern.lang,
-                    'kernel_id': kern.id,
-                    'started_at': kern.created_at,
-                    'terminated_at': datetime.now(tzutc()),
-                    'cpu_used': kern.cpu_used,
-                    'mem_used': kern.mem_max_bytes // 1024,
-                    'io_used': (kern.io_read_bytes + kern.io_write_bytes) // 1024,
-                    'net_used': (kern.net_rx_bytes + kern.net_tx_bytes) // 1024,
-                }
-                query = usage.insert().values(**values)
-            await conn.execute(query)
-            '''
 
     async def mark_session_terminated(self, sess_id):
         '''

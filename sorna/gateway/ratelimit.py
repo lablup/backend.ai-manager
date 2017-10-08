@@ -5,7 +5,7 @@ import time
 import aioredis
 
 from sorna.common.utils import dict2kvlist
-from .defs import SORNA_RLIM_DB
+from .defs import REDIS_RLIM_DB
 from .exceptions import RateLimitExceeded
 
 log = logging.getLogger('sorna.gateway.ratelimit')
@@ -22,7 +22,7 @@ async def rlim_middleware_factory(app, handler):
             rate_limit = request['keypair']['rate_limit']
             access_key = request['keypair']['access_key']
             rlim_next_reset = now + _rlim_window
-            async with app.redis_rlim.get() as rr:
+            async with app['redis_rlim'].get() as rr:
                 tracker = await rr.hgetall(access_key)
                 if tracker:
                     rlim_reset = Decimal(tracker['rlim_reset'])
@@ -61,17 +61,19 @@ async def rlim_middleware_factory(app, handler):
 
 
 async def init(app):
-    app.redis_rlim = await aioredis.create_pool(app.config.redis_addr.as_sockaddr(),
-                                                encoding='utf8',
-                                                db=SORNA_RLIM_DB)
+    app['redis_rlim'] = await aioredis.create_pool(
+        app.config.redis_addr.as_sockaddr(),
+        create_connection_timeout=3.0,
+        encoding='utf8',
+        db=REDIS_RLIM_DB)
     app.middlewares.append(rlim_middleware_factory)
 
 
 async def shutdown(app):
     try:
-        async with app.redis_rlim.get() as rr:
+        async with app['redis_rlim'].get() as rr:
             await rr.flushdb()
     except ConnectionRefusedError:
         pass
-    app.redis_rlim.close()
-    await app.redis_rlim.wait_closed()
+    app['redis_rlim'].close()
+    await app['redis_rlim'].wait_closed()

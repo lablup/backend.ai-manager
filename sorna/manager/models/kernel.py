@@ -133,6 +133,8 @@ class SessionCommons:
             io_write_bytes=row.io_write_bytes,
         )
 
+    # TODO: resolve stats from Redis cache
+
 
 class ComputeSession(SessionCommons, graphene.ObjectType):
     '''

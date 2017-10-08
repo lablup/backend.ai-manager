@@ -1,3 +1,4 @@
 # Redis database IDs depending on purposes
 
-SORNA_RLIM_DB     = 4
+REDIS_STAT_DB = 0
+REDIS_RLIM_DB = 1
