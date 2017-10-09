@@ -159,6 +159,8 @@ async def gw_init(app):
 
 
 async def gw_shutdown(app):
+    app['redis_stat_pool'].close()
+    await app['redis_stat_pool'].wait_closed()
     app['dbpool'].close()
     await app['dbpool'].wait_closed()
 
