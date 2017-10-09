@@ -98,42 +98,83 @@ class SessionCommons:
 
     num_queries = graphene.Int()
     cpu_used = graphene.Int()
-    max_mem_bytes = graphene.Int()
-    cur_mem_bytes = graphene.Int()
+    mem_max_bytes = graphene.Int()
+    mem_cur_bytes = graphene.Int()
     net_rx_bytes = graphene.Int()
     net_tx_bytes = graphene.Int()
     io_read_bytes = graphene.Int()
     io_write_bytes = graphene.Int()
 
+    async def resolve_cpu_used(self, info):
+        async with info.context['redis_stat_pool'].get() as rs:
+            ret = await rs.hget(str(self.id), 'cpu_used')
+            return float(ret) if ret is not None else 0
+
+    async def resolve_mem_max_bytes(self, info):
+        async with info.context['redis_stat_pool'].get() as rs:
+            ret = await rs.hget(str(self.id), 'mem_max_bytes')
+            return int(ret) if ret is not None else 0
+
+    async def resolve_mem_cur_bytes(self, info):
+        async with info.context['redis_stat_pool'].get() as rs:
+            ret = await rs.hget(str(self.id), 'mem_cur_bytes')
+            return int(ret) if ret is not None else 0
+
+    async def resolve_net_rx_bytes(self, info):
+        async with info.context['redis_stat_pool'].get() as rs:
+            ret = await rs.hget(str(self.id), 'net_rx_bytes')
+            return int(ret) if ret is not None else 0
+
+    async def resolve_net_tx_bytes(self, info):
+        async with info.context['redis_stat_pool'].get() as rs:
+            ret = await rs.hget(str(self.id), 'net_tx_bytes')
+            return int(ret) if ret is not None else 0
+
+    async def resolve_io_read_bytes(self, info):
+        async with info.context['redis_stat_pool'].get() as rs:
+            ret = await rs.hget(str(self.id), 'io_read_bytes')
+            return int(ret) if ret is not None else 0
+
+    async def resolve_io_write_bytes(self, info):
+        async with info.context['redis_stat_pool'].get() as rs:
+            ret = await rs.hget(str(self.id), 'io_write_bytes')
+            return int(ret) if ret is not None else 0
+
     @classmethod
     def from_row(cls, row):
         if row is None:
             return None
-        return cls(
-            sess_id=row.sess_id,
-            id=row.id,
-            role=row.role,
-            lang=row.lang,
-            status=row.status,
-            status_info=row.status_info,
-            created_at=row.created_at,
-            terminated_at=row.terminated_at,
-            agent=row.agent,
-            container_id=row.container_id,
-            mem_slot=row.mem_slot,
-            cpu_slot=row.cpu_slot,
-            gpu_slot=row.gpu_slot,
-            num_queries=row.num_queries,
-            cpu_used=row.cpu_used,
-            max_mem_bytes=row.max_mem_bytes,
-            cur_mem_bytes=row.cur_mem_bytes,
-            net_rx_bytes=row.net_rx_bytes,
-            net_tx_bytes=row.net_tx_bytes,
-            io_read_bytes=row.io_read_bytes,
-            io_write_bytes=row.io_write_bytes,
-        )
-
-    # TODO: resolve stats from Redis cache
+        props = {
+            'sess_id': row.sess_id,
+            'id': row.id,
+            'role': row.role,
+            'lang': row.lang,
+            'status': row.status,
+            'status_info': row.status_info,
+            'created_at': row.created_at,
+            'terminated_at': row.terminated_at,
+            'agent': row.agent,
+            'container_id': row.container_id,
+            'mem_slot': row.mem_slot,
+            'cpu_slot': row.cpu_slot,
+            'gpu_slot': row.gpu_slot,
+            'num_queries': row.num_queries,
+        }
+        if row.status in (KernelStatus.BUILDING, KernelStatus.RUNNING):
+            # let it resolve from the Redis stat cache
+            pass
+        else:
+            # return the DB stored values
+            props.update({
+                'cpu_used': row.cpu_used,
+                'mem_max_bytes': row.max_mem_bytes,
+                'mem_cur_bytes': row.cur_mem_bytes,
+                'net_rx_bytes': row.net_rx_bytes,
+                'net_tx_bytes': row.net_tx_bytes,
+                'io_read_bytes': row.io_read_bytes,
+                'io_write_bytes': row.io_write_bytes,
+            })
+        return cls(**props)
 
 
 class ComputeSession(SessionCommons, graphene.ObjectType):

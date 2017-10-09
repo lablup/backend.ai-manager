@@ -535,26 +535,6 @@ class InstanceRegistry:
                 return tuple()
             return rows
 
-    async def handle_stats(self, inst_id, kern_stats, interval):
-        pass
-        # async with self.lifecycle_lock, \
-        #            self.redis_inst.get() as ri, \
-        #            self.redis_kern.get() as rk:  # noqa
-
-        #     rk_pipe = rk.pipeline()
-        #     for kern_id in kern_stats.keys():
-        #         rk_pipe.exists(kern_id)
-        #     kernel_existence = await rk_pipe.execute()
-
-        #     ri_pipe = ri.pipeline()
-        #     rk_pipe = rk.pipeline()
-        #     for (kern_id, stats), alive in zip(kern_stats.items(), kernel_existence):
-        #         if alive:
-        #             ri_pipe.sadd(f'{inst_id}.kernels', kern_id)
-        #             rk_pipe.hmset(kern_id, *dict2kvlist(stats))
-        #     await ri_pipe.execute()
-        #     await rk_pipe.execute()
-
     async def handle_heartbeat(self, agent_id, agent_info):
         async with self.dbpool.acquire() as conn:
             # TODO: check why sa.column('status') does not work
@@ -650,7 +630,7 @@ class InstanceRegistry:
                 kern_stat = await rs.hgetall(kernel_id)
                 if kern_stat is not None:
                     kern_data.update({
-                        'cpu_used': kern_stat['cpu_used'],
+                        'cpu_used': int(float(kern_stat['cpu_used'])),
                         'max_mem_bytes': kern_stat['mem_max_bytes'],
                         'io_read_bytes': kern_stat['io_read_bytes'],
                         'io_write_bytes': kern_stat['io_write_bytes'],
