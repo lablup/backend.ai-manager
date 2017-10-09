@@ -226,6 +226,8 @@ def gw_args(parser):
     parser.add('--etcd-addr', env_var='SORNA_ETCD_ADDR', type=host_port_pair,
                default=HostPortPair(ip_address('127.0.0.1'), 2379),
                help='The host:port pair of the etcd cluster or its proxy.')
+    parser.add('--events-port', env_var='SORNA_EVENTS_PORT', type=port_no, default=5002,
+               help='The TCP port number where the event server listens on.')
     parser.add('--heartbeat-timeout', env_var='SORNA_HEARTBEAT_TIMEOUT', type=float, default=5.0,
                help='The timeout for agent heartbeats.')
     parser.add('--service-ip', env_var='SORNA_SERVICE_IP', type=ipaddr, default=ip_address('0.0.0.0'),
@@ -249,10 +251,6 @@ def gw_args(parser):
     if raven_available:
         parser.add('--raven-uri', env_var='RAVEN_URI', type=str, default=None,
                    help='The sentry.io event report URL with DSN.')
-
-    # to deprecate
-    parser.add('--events-port', env_var='SORNA_EVENTS_PORT', type=port_no, default=5002,
-               help='The TCP port number where the event server listens on.')
 
 
 def main():
