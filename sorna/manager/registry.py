@@ -631,11 +631,11 @@ class InstanceRegistry:
                 if kern_stat is not None:
                     kern_data.update({
                         'cpu_used': int(float(kern_stat['cpu_used'])),
-                        'max_mem_bytes': kern_stat['mem_max_bytes'],
-                        'io_read_bytes': kern_stat['io_read_bytes'],
-                        'io_write_bytes': kern_stat['io_write_bytes'],
-                        'net_rx_bytes': kern_stat['net_rx_bytes'],
-                        'net_tx_bytes': kern_stat['net_tx_bytes'],
+                        'max_mem_bytes': int(kern_stat['mem_max_bytes']),
+                        'io_read_bytes': int(kern_stat['io_read_bytes']),
+                        'io_write_bytes': int(kern_stat['io_write_bytes']),
+                        'net_rx_bytes': int(kern_stat['net_rx_bytes']),
+                        'net_tx_bytes': int(kern_stat['net_tx_bytes']),
                     })
             query = (sa.update(kernels)
                        .values(kern_data)
