@@ -6,11 +6,11 @@ from aiodataloader import DataLoader
 from aiotools import apartial
 import sqlalchemy as sa
 from sqlalchemy.types import (
-    Enum as SAEnum,
+    SchemaType,
     TypeDecorator,
     CHAR
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, ENUM
 
 # The common shared metadata instance
 convention = {
@@ -23,19 +23,28 @@ convention = {
 metadata = sa.MetaData(naming_convention=convention)
 
 
-class EnumType(TypeDecorator):
+class EnumType(TypeDecorator, SchemaType):
     '''
     A stripped-down version of Spoqa's sqlalchemy-enum34.
+    It also handles postgres-specific enum type creation.
     '''
 
-    impl = SAEnum
+    impl = ENUM
 
     def __init__(self, enum_cls, **opts):
         assert issubclass(enum_cls, enum.Enum)
+        if 'name' not in opts:
+            opts['name'] = enum_cls.__name__.lower()
         self._opts = opts
         self._enum_cls = enum_cls
         enums = (m.name for m in enum_cls)
         super().__init__(*enums, **opts)
+
+    def _set_parent(self, column):
+        self.impl._set_parent(column)
+
+    def _set_table(self, table, column):
+        self.impl._set_table(table, column)
 
     def process_bind_param(self, value, dialect):
         return value.name if value else None

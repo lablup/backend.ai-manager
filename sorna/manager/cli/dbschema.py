@@ -58,20 +58,23 @@ def show(args):
 def oneshot(args):
     '''Set up your database with one-shot schema migration instead of
     iterating over multiple revisions.
+    It uses alembic.ini to configure database connection.
 
     Reference: http://alembic.zzzcomputing.com/en/latest/cookbook.html#building-an-up-to-date-database-from-scratch
     '''
     from alembic.config import Config
     from alembic import command
 
+    alembic_cfg = Config(args.config)
+    sa_url = alembic_cfg.get_main_option('sqlalchemy.url')
+
     log.info('Creating tables...')
-    engine = sa.create_engine(f"postgres://{args.db_user}:{args.db_password}"
-                              f"@{args.db_addr}/{args.db_name}")
+    engine = sa.create_engine(sa_url)
+    engine.execute('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";')
     # it will raise error if tables already exist.
     metadata.create_all(engine, checkfirst=False)
 
     log.info(f'Stamping alembic version to {args.schema_version}...')
-    alembic_cfg = Config(args.config)
     command.stamp(alembic_cfg, args.schema_version)
     log.info("If you don't need old migrations, delete them and set "
              "\"down_revision\" value in the earliest migration to \"None\".")
