@@ -596,7 +596,7 @@ class InstanceRegistry:
             if status == AgentStatus.LOST:
                 log.warning(f'agent {agent_id} heartbeat timeout detected.')
             elif status == AgentStatus.TERMINATED:
-                log.warning(f'agent {agent_id} has terminated.')
+                log.info(f'agent {agent_id} has terminated.')
             query = (sa.update(agents)
                        .values({
                            'status': status,

@@ -28,6 +28,8 @@ class KernelStatus(enum.Enum):
     TERMINATED = 41
     ERROR = 42
 
+LIVE_STATUS = frozenset(['BUILDING', 'RUNNING'])
+
 
 kernels = sa.Table(
     'kernels', metadata,
@@ -106,49 +108,49 @@ class SessionCommons:
     io_write_bytes = graphene.Int()
 
     async def resolve_cpu_used(self, info):
-        if self.status not in ('RUNNING', 'BUILDING'):
+        if self.status not in LIVE_STATUS:
             return self.cpu_used
         async with info.context['redis_stat_pool'].get() as rs:
             ret = await rs.hget(str(self.id), 'cpu_used')
             return float(ret) if ret is not None else 0
 
     async def resolve_mem_max_bytes(self, info):
-        if self.status not in ('RUNNING', 'BUILDING'):
+        if self.status not in LIVE_STATUS:
             return self.mem_max_bytes
         async with info.context['redis_stat_pool'].get() as rs:
             ret = await rs.hget(str(self.id), 'mem_max_bytes')
             return int(ret) if ret is not None else 0
 
     async def resolve_mem_cur_bytes(self, info):
-        if self.status not in ('RUNNING', 'BUILDING'):
+        if self.status not in LIVE_STATUS:
             return self.mem_cur_bytes
         async with info.context['redis_stat_pool'].get() as rs:
             ret = await rs.hget(str(self.id), 'mem_cur_bytes')
             return int(ret) if ret is not None else 0
 
     async def resolve_net_rx_bytes(self, info):
-        if self.status not in ('RUNNING', 'BUILDING'):
+        if self.status not in LIVE_STATUS:
             return self.net_rx_bytes
         async with info.context['redis_stat_pool'].get() as rs:
             ret = await rs.hget(str(self.id), 'net_rx_bytes')
             return int(ret) if ret is not None else 0
 
     async def resolve_net_tx_bytes(self, info):
-        if self.status not in ('RUNNING', 'BUILDING'):
+        if self.status not in LIVE_STATUS:
             return self.net_tx_bytes
         async with info.context['redis_stat_pool'].get() as rs:
             ret = await rs.hget(str(self.id), 'net_tx_bytes')
             return int(ret) if ret is not None else 0
 
     async def resolve_io_read_bytes(self, info):
-        if self.status not in ('RUNNING', 'BUILDING'):
+        if self.status not in LIVE_STATUS:
             return self.io_read_bytes
         async with info.context['redis_stat_pool'].get() as rs:
             ret = await rs.hget(str(self.id), 'io_read_bytes')
             return int(ret) if ret is not None else 0
 
     async def resolve_io_write_bytes(self, info):
-        if self.status not in ('RUNNING', 'BUILDING'):
+        if self.status not in LIVE_STATUS:
             return self.io_write_bytes
         async with info.context['redis_stat_pool'].get() as rs:
             ret = await rs.hget(str(self.id), 'io_write_bytes')
@@ -173,21 +175,16 @@ class SessionCommons:
             'cpu_slot': row.cpu_slot,
             'gpu_slot': row.gpu_slot,
             'num_queries': row.num_queries,
+            # live statistics
+            # NOTE: currently graphene always uses resolve methods!
+            'cpu_used': row.cpu_used,
+            'mem_max_bytes': row.max_mem_bytes,
+            'mem_cur_bytes': row.cur_mem_bytes,
+            'net_rx_bytes': row.net_rx_bytes,
+            'net_tx_bytes': row.net_tx_bytes,
+            'io_read_bytes': row.io_read_bytes,
+            'io_write_bytes': row.io_write_bytes,
         }
-        if row.status in (KernelStatus.BUILDING, KernelStatus.RUNNING):
-            # let it resolve from the Redis stat cache
-            pass
-        else:
-            # return the DB stored values
-            props.update({
-                'cpu_used': row.cpu_used,
-                'mem_max_bytes': row.max_mem_bytes,
-                'mem_cur_bytes': row.cur_mem_bytes,
-                'net_rx_bytes': row.net_rx_bytes,
-                'net_tx_bytes': row.net_tx_bytes,
-                'io_read_bytes': row.io_read_bytes,
-                'io_write_bytes': row.io_write_bytes,
-            })
         return cls(**props)
 
 

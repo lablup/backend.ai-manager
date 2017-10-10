@@ -120,21 +120,6 @@ async def update_instance_usage(app, inst_id):
         for kern in all_kernels:
             if kern is None:
                 continue
-            '''
-            values = {
-                'access_key_id': kern.access_key,
-                'kernel_type': kern.lang,
-                'kernel_id': kern.id,
-                'started_at': kern.created_at,
-                'terminated_at': datetime.now(tzutc()),
-                'cpu_used': kern.cpu_used,
-                'mem_used': kern.mem_max_bytes // 1024,
-                'io_used': (kern.io_read_bytes + kern.io_write_bytes) // 1024,
-                'net_used': (kern.net_rx_bytes + kern.net_tx_bytes) // 1024,
-            }
-            query = usage.insert().values(**values)
-            await conn.execute(query)
-            '''
             query = (sa.update(keypairs)
                        .values({
                            'concurrency_used': keypairs.c.concurrency_used -
