@@ -631,7 +631,7 @@ class InstanceRegistry:
                 if kern_stat is not None:
                     kern_data.update({
                         'cpu_used': int(float(kern_stat['cpu_used'])),
-                        'max_mem_bytes': int(kern_stat['mem_max_bytes']),
+                        'mem_max_bytes': int(kern_stat['mem_max_bytes']),
                         'io_read_bytes': int(kern_stat['io_read_bytes']),
                         'io_write_bytes': int(kern_stat['io_write_bytes']),
                         'net_rx_bytes': int(kern_stat['net_rx_bytes']),

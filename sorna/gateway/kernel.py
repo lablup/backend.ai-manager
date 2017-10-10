@@ -285,12 +285,12 @@ async def get_info(request):
         # TODO: factor out policy/image info as a common repository
         resp['queryTimeout']  = -1  # deprecated
         resp['idleTimeout']   = -1  # deprecated
-        resp['memoryLimit']   = kern.max_mem_bytes
+        resp['memoryLimit']   = kern.mem_max_bytes >> 10  # KiB
         resp['maxCpuCredit']  = -1  # deprecated
         # Stats collected from agent heartbeats
         resp['numQueriesExecuted'] = kern.num_queries
         resp['idle']          = -1  # deprecated
-        resp['memoryUsed']    = kern.cur_mem_bytes // 1024
+        resp['memoryUsed']    = kern.mem_cur_bytes >> 10  # KiB
         resp['cpuCreditUsed'] = kern.cpu_used
         log.info(f'information retrieved: {resp!r}')
     except SornaError:

@@ -68,8 +68,8 @@ kernels = sa.Table(
     # Live stats
     sa.Column('num_queries', sa.BigInteger(), default=0),
     sa.Column('cpu_used', sa.BigInteger(), default=0),       # msec
-    sa.Column('max_mem_bytes', sa.BigInteger(), default=0),  # bytes
-    sa.Column('cur_mem_bytes', sa.BigInteger(), default=0),  # bytes
+    sa.Column('mem_max_bytes', sa.BigInteger(), default=0),  # bytes
+    sa.Column('mem_cur_bytes', sa.BigInteger(), default=0),  # bytes
     sa.Column('net_rx_bytes', sa.BigInteger(), default=0),
     sa.Column('net_tx_bytes', sa.BigInteger(), default=0),
     sa.Column('io_read_bytes', sa.BigInteger(), default=0),
@@ -178,8 +178,8 @@ class SessionCommons:
             # live statistics
             # NOTE: currently graphene always uses resolve methods!
             'cpu_used': row.cpu_used,
-            'mem_max_bytes': row.max_mem_bytes,
-            'mem_cur_bytes': row.cur_mem_bytes,
+            'mem_max_bytes': row.mem_max_bytes,
+            'mem_cur_bytes': row.mem_cur_bytes,
             'net_rx_bytes': row.net_rx_bytes,
             'net_tx_bytes': row.net_tx_bytes,
             'io_read_bytes': row.io_read_bytes,
