@@ -68,12 +68,12 @@ kernels = sa.Table(
     # Live stats
     sa.Column('num_queries', sa.BigInteger(), default=0),
     sa.Column('cpu_used', sa.BigInteger(), default=0),       # msec
-    sa.Column('mem_max_bytes', sa.BigInteger(), default=0),  # bytes
-    sa.Column('mem_cur_bytes', sa.BigInteger(), default=0),  # bytes
+    sa.Column('mem_max_bytes', sa.BigInteger(), default=0),
     sa.Column('net_rx_bytes', sa.BigInteger(), default=0),
     sa.Column('net_tx_bytes', sa.BigInteger(), default=0),
     sa.Column('io_read_bytes', sa.BigInteger(), default=0),
     sa.Column('io_write_bytes', sa.BigInteger(), default=0),
+    sa.Column('io_max_scratch_size', sa.BigInteger(), default=0),
 
     sa.Index('ix_kernels_sess_id_role', 'sess_id', 'role', unique=False),
 )
@@ -106,6 +106,8 @@ class SessionCommons:
     net_tx_bytes = graphene.Int()
     io_read_bytes = graphene.Int()
     io_write_bytes = graphene.Int()
+    io_max_scratch_size = graphene.Int()
+    io_cur_scratch_size = graphene.Int()
 
     async def resolve_cpu_used(self, info):
         if self.status not in LIVE_STATUS:
@@ -123,7 +125,7 @@ class SessionCommons:
 
     async def resolve_mem_cur_bytes(self, info):
         if self.status not in LIVE_STATUS:
-            return self.mem_cur_bytes
+            return 0
         async with info.context['redis_stat_pool'].get() as rs:
             ret = await rs.hget(str(self.id), 'mem_cur_bytes')
             return int(ret) if ret is not None else 0
@@ -156,6 +158,20 @@ class SessionCommons:
             ret = await rs.hget(str(self.id), 'io_write_bytes')
             return int(ret) if ret is not None else 0
 
+    async def resolve_io_max_scratch_size(self, info):
+        if self.status not in LIVE_STATUS:
+            return self.io_max_scratch_size
+        async with info.context['redis_stat_pool'].get() as rs:
+            ret = await rs.hget(str(self.id), 'io_max_scratch_size')
+            return int(ret) if ret is not None else 0
+
+    async def resolve_io_cur_scratch_size(self, info):
+        if self.status not in LIVE_STATUS:
+            return 0
+        async with info.context['redis_stat_pool'].get() as rs:
+            ret = await rs.hget(str(self.id), 'io_cur_scratch_size')
+            return int(ret) if ret is not None else 0
+
     @classmethod
     def from_row(cls, row):
         if row is None:
@@ -179,11 +195,13 @@ class SessionCommons:
             # NOTE: currently graphene always uses resolve methods!
             'cpu_used': row.cpu_used,
             'mem_max_bytes': row.mem_max_bytes,
-            'mem_cur_bytes': row.mem_cur_bytes,
+            'mem_cur_bytes': 0,
             'net_rx_bytes': row.net_rx_bytes,
             'net_tx_bytes': row.net_tx_bytes,
             'io_read_bytes': row.io_read_bytes,
             'io_write_bytes': row.io_write_bytes,
+            'io_max_scratch_size': row.io_max_scratch_size,
+            'io_cur_scratch_size': 0,
         }
         return cls(**props)
 
