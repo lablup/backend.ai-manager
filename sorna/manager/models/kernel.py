@@ -5,7 +5,7 @@ import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 
-from .base import metadata, EnumType, IDColumn
+from .base import metadata, zero_if_none, EnumType, IDColumn
 
 __all__ = (
     'kernels', 'KernelStatus',
@@ -111,14 +111,14 @@ class SessionCommons:
 
     async def resolve_cpu_used(self, info):
         if self.status not in LIVE_STATUS:
-            return self.cpu_used
+            return zero_if_none(self.cpu_used)
         async with info.context['redis_stat_pool'].get() as rs:
             ret = await rs.hget(str(self.id), 'cpu_used')
             return float(ret) if ret is not None else 0
 
     async def resolve_mem_max_bytes(self, info):
         if self.status not in LIVE_STATUS:
-            return self.mem_max_bytes
+            return zero_if_none(self.mem_max_bytes)
         async with info.context['redis_stat_pool'].get() as rs:
             ret = await rs.hget(str(self.id), 'mem_max_bytes')
             return int(ret) if ret is not None else 0
@@ -132,35 +132,35 @@ class SessionCommons:
 
     async def resolve_net_rx_bytes(self, info):
         if self.status not in LIVE_STATUS:
-            return self.net_rx_bytes
+            return zero_if_none(self.net_rx_bytes)
         async with info.context['redis_stat_pool'].get() as rs:
             ret = await rs.hget(str(self.id), 'net_rx_bytes')
             return int(ret) if ret is not None else 0
 
     async def resolve_net_tx_bytes(self, info):
         if self.status not in LIVE_STATUS:
-            return self.net_tx_bytes
+            return zero_if_none(self.net_tx_bytes)
         async with info.context['redis_stat_pool'].get() as rs:
             ret = await rs.hget(str(self.id), 'net_tx_bytes')
             return int(ret) if ret is not None else 0
 
     async def resolve_io_read_bytes(self, info):
         if self.status not in LIVE_STATUS:
-            return self.io_read_bytes
+            return zero_if_none(self.io_read_bytes)
         async with info.context['redis_stat_pool'].get() as rs:
             ret = await rs.hget(str(self.id), 'io_read_bytes')
             return int(ret) if ret is not None else 0
 
     async def resolve_io_write_bytes(self, info):
         if self.status not in LIVE_STATUS:
-            return self.io_write_bytes
+            return zero_if_none(self.io_write_bytes)
         async with info.context['redis_stat_pool'].get() as rs:
             ret = await rs.hget(str(self.id), 'io_write_bytes')
             return int(ret) if ret is not None else 0
 
     async def resolve_io_max_scratch_size(self, info):
         if self.status not in LIVE_STATUS:
-            return self.io_max_scratch_size
+            return zero_if_none(self.io_max_scratch_size)
         async with info.context['redis_stat_pool'].get() as rs:
             ret = await rs.hget(str(self.id), 'io_max_scratch_size')
             return int(ret) if ret is not None else 0

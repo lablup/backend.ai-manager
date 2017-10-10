@@ -23,6 +23,11 @@ convention = {
 metadata = sa.MetaData(naming_convention=convention)
 
 
+# helper functions
+def zero_if_none(val):
+    return 0 if val is None else val
+
+
 class EnumType(TypeDecorator, SchemaType):
     '''
     A stripped-down version of Spoqa's sqlalchemy-enum34.
