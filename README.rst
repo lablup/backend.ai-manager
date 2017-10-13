@@ -34,7 +34,7 @@ For development
 ~~~~~~~~~~~~~~~
 
 We recommend to use virtual environments in Python.
-You may share a virtual environment with other Sorna projects.
+You may share a virtual environment with other Backend.AI projects.
 
 .. code-block:: sh
 
@@ -44,9 +44,9 @@ You may share a virtual environment with other Sorna projects.
    pip install -U pip setuptools   # ensure latest versions
    pip install -U -r requirements-dev.txt
 
-The above example is only for sorna-manager, but normally you would want to install
-all depedencies like agents and databases for integration tests.
-Check out `README on the meta-repo <https://github.com/lablup/backend.ai>`_ for details.
+The above example shows a standalone installation process for the manager, but
+normally you would want to install all other depedencies like agents and
+databases for integration tests.
 
 Running and Deployment
 ----------------------
@@ -56,13 +56,18 @@ Prepare databases
 
 * An RDBMS (PostgreSQL)
 
+* An etcd (v3) server
+
 * A Redis server
 
   - The manager uses the following `database IDs <http://redis.io/commands/SELECT>`_
 
-    - 0 (default): to track realtime statistics of computing sessions
+    - 0 (default): to track realtime performance metrics and statistics of computing sessions
 
     - 1: to track realtime request rate-limits of each API access key
+
+Check out `README on the meta-repo <https://github.com/lablup/backend.ai>`_ for the
+docker-compose example to run above databases with a single command.
 
 Configuration
 ~~~~~~~~~~~~~
@@ -77,7 +82,7 @@ run the server module with ``--help``.
 
    $ cp alembic.ini.sample alembic.ini
    $ edit alembic.ini
-   $ python -m sorna.manager.cli schema oneshot head
+   $ python -m ai.backend.manager.cli schema oneshot head
    Creating tables...
    Stamping alembic version to ...
 
@@ -87,7 +92,7 @@ You may add your own ones in fixtures directory for deployment.
 
 .. code-block:: console
 
-   $ python -m sorna.manager.cli fixture populate example_keypair
+   $ python -m ai.backend.manager.cli fixture populate example_keypair
    populating fixture 'example_keypair'
 
 Running the API gateway server
