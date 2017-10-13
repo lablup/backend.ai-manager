@@ -1,9 +1,9 @@
 import logging
 
-from sorna.common.etcd import AsyncEtcd
-from sorna.common.identity import get_instance_id, get_instance_ip
+from ai.backend.common.etcd import AsyncEtcd
+from ai.backend.common.identity import get_instance_id, get_instance_ip
 
-log = logging.getLogger('sorna.gateway.etcd')
+log = logging.getLogger('ai.backend.gateway.etcd')
 
 
 class ConfigServer:

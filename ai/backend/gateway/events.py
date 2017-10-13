@@ -6,9 +6,9 @@ import logging
 import aiozmq
 import zmq
 
-from sorna.common import msgpack
+from ai.backend.common import msgpack
 
-log = logging.getLogger('sorna.gateway.events')
+log = logging.getLogger('ai.backend.gateway.events')
 
 
 def event_router(_, pidx, args):
@@ -18,7 +18,7 @@ def event_router(_, pidx, args):
     in_sock = ctx.socket(zmq.PULL)
     in_sock.bind(f'tcp://*:{args[0].events_port}')
     out_sock = ctx.socket(zmq.PUSH)
-    out_sock.bind('ipc://sorna.agent-events')
+    out_sock.bind('ipc://ai.backend.agent-events')
     try:
         zmq.proxy(in_sock, out_sock)
     except KeyboardInterrupt:
@@ -56,7 +56,7 @@ class EventDispatcher:
 
 async def event_subscriber(dispatcher):
     event_sock = await aiozmq.create_zmq_stream(
-        zmq.PULL, connect=f'ipc://sorna.agent-events')
+        zmq.PULL, connect=f'ipc://ai.backend.agent-events')
     try:
         while True:
             data = await event_sock.read()

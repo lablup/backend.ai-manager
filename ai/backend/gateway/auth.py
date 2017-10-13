@@ -14,7 +14,7 @@ from .exceptions import InvalidAuthParameters, AuthorizationFailed
 from .config import load_config, init_logger
 from ..manager.models import keypairs
 
-log = logging.getLogger('sorna.gateway.auth')
+log = logging.getLogger('ai.backend.gateway.auth')
 
 
 def _extract_auth_params(request):

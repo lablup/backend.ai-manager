@@ -26,14 +26,14 @@ import zmq
 
 from .exceptions import (ServiceUnavailable, InvalidAPIParameters, QuotaExceeded,
                          QueryNotImplemented, KernelNotFound,
-                         SornaError)
+                         BackendError)
 from . import GatewayStatus
 from .auth import auth_required
 from .utils import catch_unexpected
 from ..manager.models import keypairs, kernels, AgentStatus, KernelStatus
 from ..manager.registry import InstanceRegistry
 
-log = logging.getLogger('sorna.gateway.kernel')
+log = logging.getLogger('ai.backend.gateway.kernel')
 
 grace_events = []
 
@@ -89,7 +89,7 @@ async def create(request):
                            .values(concurrency_used=keypairs.c.concurrency_used + 1)
                            .where(keypairs.c.access_key == access_key))
                 await conn.execute(query)
-    except SornaError:
+    except BackendError:
         log.exception('GET_OR_CREATE: exception')
         raise
     return web.json_response(resp, status=201, dumps=json.dumps)
@@ -208,16 +208,16 @@ async def instance_stats(app, agent_id, kern_stats):
 async def datadog_update(app):
     with app['datadog'].statsd as statsd:
 
-        statsd.gauge('sorna.gateway.coroutines', len(asyncio.Task.all_tasks()))
+        statsd.gauge('ai.backend.gateway.coroutines', len(asyncio.Task.all_tasks()))
 
         all_inst_ids = [inst_id async for inst_id in app['registry'].enumerate_instances()]
-        statsd.gauge('sorna.gateway.agent_instances', len(all_inst_ids))
+        statsd.gauge('ai.backend.gateway.agent_instances', len(all_inst_ids))
 
         async with app['dbpool'].acquire() as conn:
             query = (sa.select([sa.func.sum(keypairs.c.concurrency_used)])
                        .select_from(keypairs))
             n = await conn.scalar(query)
-            statsd.gauge('sorna.gateway.active_kernels', n)
+            statsd.gauge('ai.backend.gateway.active_kernels', n)
 
             subquery = (sa.select([sa.func.count()])
                           .select_from(keypairs)
@@ -225,17 +225,17 @@ async def datadog_update(app):
                           .group_by(keypairs.c.user_id))
             query = sa.select([sa.func.count()]).select_from(subquery.alias())
             n = await conn.scalar(query)
-            statsd.gauge('sorna.users.has_active_key', n)
+            statsd.gauge('ai.backend.users.has_active_key', n)
 
             subquery = subquery.where(keypairs.c.last_used != null())
             query = sa.select([sa.func.count()]).select_from(subquery.alias())
             n = await conn.scalar(query)
-            statsd.gauge('sorna.users.has_used_key', n)
+            statsd.gauge('ai.backend.users.has_used_key', n)
 
             '''
             query = sa.select([sa.func.count()]).select_from(usage)
             n = await conn.scalar(query)
-            statsd.gauge('sorna.gateway.accum_kernels', n)
+            statsd.gauge('ai.backend.gateway.accum_kernels', n)
             '''
 
 
@@ -263,7 +263,7 @@ async def destroy(request):
     log.info(f"DESTROY (u:{request['keypair']['access_key']}, k:{sess_id})")
     try:
         await request.app['registry'].destroy_kernel(sess_id)
-    except SornaError:
+    except BackendError:
         log.exception('DESTROY: exception')
         raise
     return web.Response(status=204)
@@ -293,7 +293,7 @@ async def get_info(request):
         resp['memoryUsed']    = kern.mem_cur_bytes >> 10  # KiB
         resp['cpuCreditUsed'] = kern.cpu_used
         log.info(f'information retrieved: {resp!r}')
-    except SornaError:
+    except BackendError:
         log.exception('GETINFO: exception')
         raise
     return web.json_response(resp, status=200, dumps=json.dumps)
@@ -309,7 +309,7 @@ async def restart(request):
         await request.app['registry'].restart_kernel(sess_id)
         for sock in request.app['stream_stdin_socks'][sess_id]:
             sock.close()
-    except SornaError:
+    except BackendError:
         log.exception('RESTART: exception')
         raise
     except:
@@ -356,7 +356,7 @@ async def execute(request):
     except AssertionError:
         log.warning('EXECUTE: invalid/missing parameters')
         raise InvalidAPIParameters
-    except SornaError:
+    except BackendError:
         log.exception('EXECUTE: exception')
         raise
     return web.json_response(resp, status=200, dumps=json.dumps)
@@ -370,7 +370,7 @@ async def interrupt(request):
     try:
         await request.app['registry'].increment_session_usage(sess_id)
         await request.app['registry'].interrupt_kernel(sess_id, mode)
-    except SornaError:
+    except BackendError:
         log.exception('INTERRUPT: exception')
         raise
     return web.Response(status=204)
@@ -397,7 +397,7 @@ async def complete(request):
     except AssertionError:
         log.warning('COMPLETE: invalid/missing parameters')
         raise InvalidAPIParameters
-    except SornaError:
+    except BackendError:
         log.exception('COMPLETE: exception')
         raise
     return web.json_response(resp, status=200, dumps=json.dumps)
@@ -429,7 +429,7 @@ async def upload_files(request):
             t = loop.create_task(request.app['registry'].upload_file(sess_id, file.filename, data))
             upload_tasks.append(t)
         await asyncio.gather(*upload_tasks)
-    except SornaError:
+    except BackendError:
         log.exception('UPLOAD_FILES: exception')
         raise
     return web.Response(status=204)

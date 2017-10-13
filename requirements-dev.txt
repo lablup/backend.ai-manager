@@ -1,2 +1,3 @@
--e git+ssh://git@github.com/lablup/sorna-common#egg=sorna-common
+--no-binary protobuf protobuf
+-e git+ssh://git@github.com/lablup/backend.ai-common@develop#egg=backend.ai-common
 -e .[dev]

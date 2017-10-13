@@ -4,11 +4,10 @@ import time
 
 import aioredis
 
-from sorna.common.utils import dict2kvlist
 from .defs import REDIS_RLIM_DB
 from .exceptions import RateLimitExceeded
 
-log = logging.getLogger('sorna.gateway.ratelimit')
+log = logging.getLogger('ai.backend.gateway.ratelimit')
 
 _time_prec = Decimal('1e-3')  # msec
 _rlim_window = 60 * 15        # 15 minutes
@@ -39,7 +38,7 @@ async def rlim_middleware_factory(app, handler):
                         'rlim_remaining': int(tracker['rlim_remaining']) - 1,
                         'rlim_reset': tracker['rlim_reset'],  # copy
                     }
-                await rr.hmset(access_key, *dict2kvlist(tracker))
+                await rr.hmset_dict(access_key, tracker)
             if tracker['rlim_remaining'] <= 0:
                 raise RateLimitExceeded
             rlim_reset = Decimal(tracker['rlim_reset'])

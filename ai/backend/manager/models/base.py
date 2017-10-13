@@ -119,7 +119,7 @@ class DataLoaderManager:
     def __init__(self, *common_args):
         self.cache = {}
         self.common_args = common_args
-        self.mod = sys.modules['sorna.manager.models']
+        self.mod = sys.modules['ai.backend.manager.models']
 
     @staticmethod
     def _get_key(otname, args, kwargs):

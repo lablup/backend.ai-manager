@@ -13,7 +13,7 @@ import sqlalchemy as sa
 import zmq
 
 from ..gateway.exceptions import (
-    SornaError,
+    BackendError,
     InstanceNotAvailable, InstanceNotFound, KernelNotFound,
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
@@ -23,7 +23,7 @@ from ..gateway.utils import catch_unexpected
 
 __all__ = ['InstanceRegistry', 'InstanceNotFound']
 
-log = logging.getLogger('sorna.manager.registry')
+log = logging.getLogger('ai.backend.manager.registry')
 
 
 @aiotools.actxmgr
@@ -150,7 +150,7 @@ class InstanceRegistry:
             if error_callback:
                 await error_callback()
             raise exc_class('FAILURE', e)
-        except SornaError:
+        except BackendError:
             # silently re-raise to make them handled by gateway http handlers
             raise
         except:

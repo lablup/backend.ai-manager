@@ -10,7 +10,7 @@ from graphql.execution.executors.asyncio import AsyncioExecutor
 from graphql.error.located_error import GraphQLLocatedError
 import simplejson as json
 
-from .exceptions import InvalidAPIParameters, SornaError
+from .exceptions import InvalidAPIParameters, BackendError
 from .auth import auth_required
 from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
@@ -20,7 +20,7 @@ from ..manager.models import (
     VirtualFolder,
 )
 
-log = logging.getLogger('sorna.gateway.admin')
+log = logging.getLogger('ai.backend.gateway.admin')
 
 
 @auth_required
@@ -73,7 +73,7 @@ async def handle_gql(request: web.Request) -> web.Response:
                 request.app['sentry'].captureException(exc_info)
                 has_internal_errors = True
         if has_internal_errors:
-            raise SornaError(str(result.errors[0]))
+            raise BackendError(str(result.errors[0]))
         raise InvalidAPIParameters(str(result.errors[0]))
     else:
         return web.json_response(result.data, status=200, dumps=json.dumps)

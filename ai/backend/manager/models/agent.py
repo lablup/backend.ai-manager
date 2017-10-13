@@ -60,7 +60,7 @@ class Agent(graphene.ObjectType):
     lost_at = GQLDateTime()
 
     computations = graphene.List(
-        'sorna.manager.models.Computation',
+        'ai.backend.manager.models.Computation',
         status=graphene.String())
 
     @classmethod

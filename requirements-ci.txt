@@ -1,2 +1,3 @@
--e git+https://github.com/lablup/sorna-common@{BRANCH}#egg=sorna-common
+--no-binary protobuf protobuf
+-e git+https://github.com/lablup/backend.ai-common@{BRANCH}#egg=backend.ai-common
 -e .[build,test,ci]

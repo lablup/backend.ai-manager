@@ -46,9 +46,9 @@ class KeyPair(graphene.ObjectType):
     rate_limit = graphene.Int()
     num_queries = graphene.Int()
 
-    vfolders = graphene.List('sorna.manager.models.VirtualFolder')
+    vfolders = graphene.List('ai.backend.manager.models.VirtualFolder')
     compute_sessions = graphene.List(
-        'sorna.manager.models.ComputeSession',
+        'ai.backend.manager.models.ComputeSession',
         status=graphene.String(),
     )
 

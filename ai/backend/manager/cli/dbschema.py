@@ -33,13 +33,13 @@ def dbshell(args):
 dbshell.add_argument('-d', '--dockerize', action='store_true', default=False,
                      help='Assume dockerized db instance. It creates a '
                           'temporary pgsql shell container. [default: false]')
-dbshell.add_argument('--docker-network', default='sorna_default',
+dbshell.add_argument('--docker-network', default='backend_ai_default',
                      help='The network name to attach the shell container. '
                           '(used only with --dockerize) '
-                          '[default: sorna_default]')
-dbshell.add_argument('--docker-dbaddr', default='sorna-db',
+                          '[default: backend_ai_default]')
+dbshell.add_argument('--docker-dbaddr', default='backendai-db',
                      help='The address of the database host in the container. '
-                          '(used only with --dockerize) [default: sorna-db]')
+                          '(used only with --dockerize) [default: backendai-db]')
 
 
 @register_command
