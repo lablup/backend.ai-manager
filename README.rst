@@ -5,7 +5,9 @@ Package Structure
 -----------------
 
 * ai.backend
+
   * manager: Abstraction of agents and computation kernels
+
   * gateway: RESTful API gateway based on aiohttp
 
 Installation
@@ -206,13 +208,13 @@ networks reachable via VPNs.
 You need to check the firewall settings to allow the following access patterns
 (all ports are TCP):
 
- * The manager's service port: open to the reverse-proxy or the public Internet
- * The manager's events port: open to the agents
- * The etcd's service port: open to the manager and agents
- * The redis' service port: open to the manager and agents
- * The (optional) private docker registry's service port: open to the manager and agents
- * The database's service port: open to the manager
- * The agents' ALL ports: open to the manager
+* The manager's service port: open to the reverse-proxy or the public Internet
+* The manager's events port: open to the agents
+* The etcd's service port: open to the manager and agents
+* The redis' service port: open to the manager and agents
+* The (optional) private docker registry's service port: open to the manager and agents
+* The database's service port: open to the manager
+* The agents' ALL ports: open to the manager
 
 Note that etcd/redis server may run on different physical servers or cloud
 instances as long as the manager and agents can access them.
