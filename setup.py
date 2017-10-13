@@ -8,7 +8,7 @@ requires = [
     'aiodataloader',
     'aiohttp~=2.2.0',
     'aiopg~=0.13.0',
-    'aioredis~=0.2.8',
+    'aioredis~=0.3.3',
     'aiotools>=0.4.4',
     'aiozmq>=0.7',
     'alembic~=0.9.2',
