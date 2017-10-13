@@ -54,10 +54,14 @@ Running and Deployment
 Prepare databases
 ~~~~~~~~~~~~~~~~~
 
- * An RDBMS (PostgreSQL)
- * A Redis server
+* An RDBMS (PostgreSQL)
+
+* A Redis server
+
    - The manager uses the following `database IDs <http://redis.io/commands/SELECT>`_
+
      - 0 (default): to track realtime statistics of computing sessions
+
      - 1: to track realtime request rate-limits of each API access key
 
 Configuration
