@@ -1,5 +1,5 @@
-Sorna Manager and API Gateway
-=============================
+Backend.AI Manager with API Gateway
+===================================
 
 Package Structure
 -----------------
