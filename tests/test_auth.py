@@ -50,8 +50,9 @@ async def test_auth(create_app_and_client, unused_port, default_keypair):
                             now.strftime('%Y%m%d').encode(), hash_type).digest()
         sign_key = hmac.new(sign_key, hostname.encode(), hash_type).digest()
         signature = hmac.new(sign_key, sign_bytes, hash_type).hexdigest()
-        headers['Authorization'] = 'BackendAI signMethod=HMAC-{}, '.format(hash_type.upper()) \
-                                   + 'credential={}:{}'.format(default_keypair['access_key'], signature)
+        headers['Authorization'] = \
+            'BackendAI signMethod=HMAC-{}, '.format(hash_type.upper()) \
+            + 'credential={}:{}'.format(default_keypair['access_key'], signature)
         # Only shown when there are failures in this test case
         print('Request headers')
         pprint(headers)

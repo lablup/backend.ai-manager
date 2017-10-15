@@ -27,7 +27,10 @@ try:
 except ImportError:
     raven_available = False
 
-from ai.backend.common.argparse import ipaddr, path, port_no, host_port_pair, HostPortPair
+from ai.backend.common.argparse import (
+    ipaddr, path, port_no,
+    host_port_pair, HostPortPair
+)
 from ai.backend.common.utils import env_info
 from ai.backend.common.monitor import DummyDatadog, DummySentry
 from ..manager import __version__
@@ -109,7 +112,8 @@ async def exception_middleware_factory(app, handler):
             log.exception('Uncaught exception in HTTP request handlers')
             raise InternalServerError
         else:
-            app['datadog'].statsd.increment(f'ai.backend.gateway.api.status.{resp.status}')
+            app['datadog'].statsd.increment(
+                f'ai.backend.gateway.api.status.{resp.status}')
             return resp
     return exception_middleware_handler
 
@@ -238,7 +242,8 @@ def gw_args(parser):
                help='The timeout for agent heartbeats.')
     parser.add('--service-ip', env_var='BACKEND_SERVICE_IP',
                type=ipaddr, default=ip_address('0.0.0.0'),
-               help='The IP where the API gateway server listens on. (default: 0.0.0.0)')
+               help='The IP where the API gateway server listens on. '
+                    '(default: 0.0.0.0)')
     parser.add('--service-port', env_var='BACKEND_SERVICE_PORT',
                type=port_no, default=0,
                help='The TCP port number where the API gateway server listens on. '

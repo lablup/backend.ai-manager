@@ -60,7 +60,8 @@ def oneshot(args):
     iterating over multiple revisions.
     It uses alembic.ini to configure database connection.
 
-    Reference: http://alembic.zzzcomputing.com/en/latest/cookbook.html#building-an-up-to-date-database-from-scratch
+    Reference: http://alembic.zzzcomputing.com/en/latest/cookbook.html
+               #building-an-up-to-date-database-from-scratch
     '''
     from alembic.config import Config
     from alembic import command

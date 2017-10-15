@@ -21,9 +21,11 @@ vfolders = sa.Table(
     sa.Column('max_size', sa.Integer(), default=1024),  # in KBytes
     sa.Column('num_files', sa.Integer(), default=0),
     sa.Column('cur_size', sa.Integer(), default=0),  # in KBytes
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
+    sa.Column('created_at', sa.DateTime(timezone=True),
+              server_default=sa.func.now()),
     sa.Column('last_used', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('belongs_to', sa.String(length=20), sa.ForeignKey('keypairs.access_key'), nullable=False),
+    sa.Column('belongs_to', sa.String(length=20),
+              sa.ForeignKey('keypairs.access_key'), nullable=False),
 )
 
 

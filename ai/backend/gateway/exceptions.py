@@ -128,7 +128,12 @@ class BackendAgentError(BackendError):
         super().__init__()
         if not agent_error_type.startswith('https://'):
             agent_error_type = self._short_type_map[agent_error_type.upper()]
-        self.args = (self.status_code, self.reason, self.error_type, agent_error_type)
+        self.args = (
+            self.status_code,
+            self.reason,
+            self.error_type,
+            agent_error_type,
+        )
         if isinstance(exc_info, str):
             agent_error_title = exc_info
             agent_details = {

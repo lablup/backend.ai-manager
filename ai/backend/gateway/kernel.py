@@ -69,7 +69,8 @@ async def create(request):
                        .select_from(keypairs)
                        .where(keypairs.c.access_key == access_key))
             concurrency_used = await conn.scalar(query)
-            log.debug(f'access_key: {access_key} ({concurrency_used} / {concurrency_limit})')
+            log.debug(f'access_key: {access_key} '
+                      f'({concurrency_used} / {concurrency_limit})')
             if concurrency_used >= concurrency_limit:
                 raise QuotaExceeded
             if request['api_version'] == 1:
@@ -123,7 +124,7 @@ async def update_instance_usage(app, inst_id):
             query = (sa.update(keypairs)
                        .values({
                            'concurrency_used': keypairs.c.concurrency_used -
-                                               per_key_counts[kern['access_key']],
+                                               per_key_counts[kern['access_key']],  # noqa
                        })
                        .where(keypairs.c.access_key == kern['access_key']))
             await conn.execute(query)
@@ -192,7 +193,8 @@ async def check_agent_lost(app, interval):
             copied = app['shared_states'].agent_last_seen.copy()
         for agent_id, prev in copied.items():
             if now - prev >= app.config.heartbeat_timeout:
-                # TODO: change this to "send_event" (actual zeromq push) for non-duplicate events
+                # TODO: change this to "send_event" (actual zeromq push)
+                #       for non-duplicate events
                 app['event_dispatcher'].dispatch('instance_terminated',
                                                  agent_id, ('agent-lost', ))
     except asyncio.CancelledError:
@@ -210,7 +212,9 @@ async def datadog_update(app):
 
         statsd.gauge('ai.backend.gateway.coroutines', len(asyncio.Task.all_tasks()))
 
-        all_inst_ids = [inst_id async for inst_id in app['registry'].enumerate_instances()]
+        all_inst_ids = [
+            inst_id async for inst_id
+            in app['registry'].enumerate_instances()]
         statsd.gauge('ai.backend.gateway.agent_instances', len(all_inst_ids))
 
         async with app['dbpool'].acquire() as conn:
@@ -369,7 +373,7 @@ async def interrupt(request):
     log.info(f"INTERRUPT(u:{request['keypair']['access_key']}, k:{sess_id})")
     try:
         await request.app['registry'].increment_session_usage(sess_id)
-        await request.app['registry'].interrupt_kernel(sess_id, mode)
+        await request.app['registry'].interrupt_kernel(sess_id)
     except BackendError:
         log.exception('INTERRUPT: exception')
         raise
@@ -426,7 +430,8 @@ async def upload_files(request):
                 raise InvalidAPIParameters('Too large file')
             data = file.decode(chunk)
             log.debug(f'received file: {file.filename} ({len(data):,} bytes)')
-            t = loop.create_task(request.app['registry'].upload_file(sess_id, file.filename, data))
+            t = loop.create_task(
+                request.app['registry'].upload_file(sess_id, file.filename, data))
             upload_tasks.append(t)
         await asyncio.gather(*upload_tasks)
     except BackendError:
@@ -483,11 +488,13 @@ async def stream_pty(request):
                         try:
                             socks[0].write([raw_data])
                         except (AttributeError, aiozmq.ZmqStreamClosed):
-                            # AttributeError occurs when stdin_sock._transport is None
-                            # because it's already closed somewhere else.
+                            # AttributeError occurs when stdin_sock._transport
+                            # is None because it's already closed somewhere
+                            # else.
                             app['stream_stdin_socks'][sess_id].remove(socks[0])
                             socks[1].close()
-                            kernel = await app['registry'].get_kernel_session(sess_id)
+                            kernel = \
+                                await app['registry'].get_kernel_session(sess_id)
                             stdin_sock, stdout_sock = await connect_streams(kernel)
                             socks[0] = stdin_sock
                             socks[1] = stdout_sock
@@ -502,19 +509,22 @@ async def stream_pty(request):
                         run_id = secrets.token_hex(8)
                         if data['type'] == 'resize':
                             code = f"%resize {data['rows']} {data['cols']}"
-                            await app['registry'].execute(sess_id, api_version, run_id,
-                                                          'query', code, {})
+                            await app['registry'].execute(
+                                sess_id, api_version, run_id, 'query', code, {})
                         elif data['type'] == 'ping':
-                            await app['registry'].execute(sess_id, api_version, run_id,
-                                                          'query', '%ping', {})
+                            await app['registry'].execute(
+                                sess_id, api_version, run_id, 'query', '%ping', {})
                         elif data['type'] == 'restart':
-                            # Close existing zmq sockets and let stream handlers get a new one
-                            # with changed stdin/stdout ports.
+                            # Close existing zmq sockets and let stream
+                            # handlers get a new one with changed stdin/stdout
+                            # ports.
                             if not socks[0].at_closing():
                                 await app['registry'].restart_kernel(sess_id)
                                 socks[0].close()
                             else:
-                                log.warning(f'stream_stdin({sess_id}): duplicate kernel restart request; ignoring it.')
+                                log.warning(f'stream_stdin({sess_id}): '
+                                            'duplicate kernel restart request; '
+                                            'ignoring it.')
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     log.warning(f'stream_stdin({sess_id}): '
                                 f'connection closed ({ws.exception()})')
@@ -578,23 +588,24 @@ async def not_impl_stub(request):
 
 
 async def init(app):
-    app.router.add_route('POST',   r'/v{version:\d+}/kernel/create', create)
-    app.router.add_route('GET',    r'/v{version:\d+}/kernel/{sess_id}', get_info)
+    rt = app.router.add_route
+    rt('POST',   r'/v{version:\d+}/kernel/create', create)
+    rt('GET',    r'/v{version:\d+}/kernel/{sess_id}', get_info)
 
-    app.router.add_route('POST',   r'/v{version:\d+}/kernel/{sess_id}', method_placeholder('PATCH'))
-    app.router.add_route('PATCH',  r'/v{version:\d+}/kernel/{sess_id}', restart)
-    app.router.add_route('POST',   r'/v{version:\d+}/kernel/{sess_id}', method_placholder('DELETE'))
-    app.router.add_route('DELETE', r'/v{version:\d+}/kernel/{sess_id}', destroy)
-    app.router.add_route('POST',   r'/v{version:\d+}/kernel/{sess_id}', execute)
-    app.router.add_route('POST',   r'/v{version:\d+}/kernel/{sess_id}/interrupt', interrupt)
-    app.router.add_route('POST',   r'/v{version:\d+}/kernel/{sess_id}/complete', complete)
-    app.router.add_route('GET',    r'/v{version:\d+}/stream/kernel/{sess_id}/pty', stream_pty)
-    app.router.add_route('GET',    r'/v{version:\d+}/stream/kernel/{sess_id}/events', not_impl_stub)
-    app.router.add_route('POST',   r'/v{version:\d+}/kernel/{sess_id}/upload', upload_files)
-    app.router.add_route('POST',   r'/v{version:\d+}/folder/create', not_impl_stub)
-    app.router.add_route('GET',    r'/v{version:\d+}/folder/{folder_id}', not_impl_stub)
-    app.router.add_route('POST',   r'/v{version:\d+}/folder/{folder_id}', method_placeholder('DELETE'))
-    app.router.add_route('DELETE', r'/v{version:\d+}/folder/{folder_id}', not_impl_stub)
+    rt('POST',   r'/v{version:\d+}/kernel/{sess_id}', method_placeholder('PATCH'))
+    rt('PATCH',  r'/v{version:\d+}/kernel/{sess_id}', restart)
+    rt('POST',   r'/v{version:\d+}/kernel/{sess_id}', method_placeholder('DELETE'))
+    rt('DELETE', r'/v{version:\d+}/kernel/{sess_id}', destroy)
+    rt('POST',   r'/v{version:\d+}/kernel/{sess_id}', execute)
+    rt('POST',   r'/v{version:\d+}/kernel/{sess_id}/interrupt', interrupt)
+    rt('POST',   r'/v{version:\d+}/kernel/{sess_id}/complete', complete)
+    rt('GET',    r'/v{version:\d+}/stream/kernel/{sess_id}/pty', stream_pty)
+    rt('GET',    r'/v{version:\d+}/stream/kernel/{sess_id}/events', not_impl_stub)
+    rt('POST',   r'/v{version:\d+}/kernel/{sess_id}/upload', upload_files)
+    rt('POST',   r'/v{version:\d+}/folder/create', not_impl_stub)
+    rt('GET',    r'/v{version:\d+}/folder/{folder_id}', not_impl_stub)
+    rt('POST',   r'/v{version:\d+}/folder/{folder_id}', method_placeholder('DELETE'))
+    rt('DELETE', r'/v{version:\d+}/folder/{folder_id}', not_impl_stub)
 
     app['event_dispatcher'].add_handler('kernel_terminated', kernel_terminated)
     app['event_dispatcher'].add_handler('instance_started', instance_started)

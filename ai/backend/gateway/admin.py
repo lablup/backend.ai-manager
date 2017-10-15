@@ -14,7 +14,7 @@ from .exceptions import InvalidAPIParameters, BackendError
 from .auth import auth_required
 from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
-    Agent, AgentStatus,
+    Agent,
     KeyPair, CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
     ComputeSession, ComputeWorker, KernelStatus,
     VirtualFolder,
@@ -47,7 +47,6 @@ async def handle_gql(request: web.Request) -> web.Response:
             body['variables'] = None
     except AssertionError as e:
         raise InvalidAPIParameters(e.args[0])
-    text = await request.text()
     dlmanager = DataLoaderManager(request.app['dbpool'])
     result = schema.execute(
         body['query'], executor,

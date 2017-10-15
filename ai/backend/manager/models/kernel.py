@@ -28,6 +28,7 @@ class KernelStatus(enum.Enum):
     TERMINATED = 41
     ERROR = 42
 
+
 LIVE_STATUS = frozenset(['BUILDING', 'RUNNING'])
 
 

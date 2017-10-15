@@ -20,7 +20,8 @@ log = logging.getLogger('ai.backend.gateway.auth')
 def _extract_auth_params(request):
     """
     HTTP Authorization header must be formatted as:
-    "Authorization: BackendAI signMethod=HMAC-SHA256, credential=<ACCESS_KEY>:<SIGNATURE>"
+    "Authorization: BackendAI signMethod=HMAC-SHA256,
+                    credential=<ACCESS_KEY>:<SIGNATURE>"
     """
     auth_hdr = request.headers.get('Authorization')
     if not auth_hdr:
@@ -73,7 +74,8 @@ async def sign_request(sign_method, request, secret_key) -> str:
     try:
         mac_type, hash_type = map(lambda s: s.lower(), sign_method.split('-'))
         assert mac_type == 'hmac', 'Unsupported request signing method (MAC type)'
-        assert hash_type in hashlib.algorithms_guaranteed, 'Unsupported request signing method (hash type)'
+        assert hash_type in hashlib.algorithms_guaranteed, \
+               'Unsupported request signing method (hash type)'
 
         if request.has_body and not request.content_type == 'multipart/form-data':
             body = await request.read()
@@ -85,7 +87,8 @@ async def sign_request(sign_method, request, secret_key) -> str:
         api_version = new_api_version or legacy_api_version
         assert api_version is not None, 'API version missing in request headers'
 
-        sign_bytes = '{0}\n{1}\n{2}\nhost:{3}\ncontent-type:{4}\nx-{name}-version:{5}\n{6}'.format(
+        sign_bytes = ('{0}\n{1}\n{2}\nhost:{3}\ncontent-type:{4}\n'
+                      'x-{name}-version:{5}\n{6}').format(
             request.method, str(request.rel_url), request['raw_date'],
             request.host, request.content_type, api_version,
             body_hash,
@@ -123,7 +126,8 @@ async def auth_middleware_factory(app, handler):
                 row = await result.fetchone()
                 if row is None:
                     raise AuthorizationFailed('Access key not found')
-                my_signature = await sign_request(sign_method, request, row.secret_key)
+                my_signature = \
+                    await sign_request(sign_method, request, row.secret_key)
                 if secrets.compare_digest(my_signature, signature):
                     query = (keypairs.update()
                                      .values(last_used=datetime.now(tzutc()),

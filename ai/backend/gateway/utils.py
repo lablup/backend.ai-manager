@@ -13,6 +13,7 @@ def method_placeholder(orig_method):
         raise web.HTTPMethodNotAllowed(request.method, [orig_method])
     return _handler
 
+
 def prettify_traceback(exc):
     # Make a compact stack trace string
     with io.StringIO() as buf:

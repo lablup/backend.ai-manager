@@ -18,7 +18,10 @@ from ..gateway.exceptions import (
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
     AgentError)
-from .models import agents, kernels, keypairs, ResourceSlot, AgentStatus, KernelStatus
+from .models import (
+    agents, kernels, keypairs,
+    ResourceSlot, AgentStatus, KernelStatus
+)
 from ..gateway.utils import catch_unexpected
 
 __all__ = ['InstanceRegistry', 'InstanceNotFound']
@@ -302,8 +305,9 @@ class InstanceRegistry:
             kern = await self.get_kernel_session(client_sess_token)
             created = False
         except KernelNotFound:
-            kern = await self.create_kernel(client_sess_token, lang, owner_access_key,
-                                            limits=limits, mounts=mounts, conn=conn)
+            kern = await self.create_kernel(
+                client_sess_token, lang, owner_access_key,
+                limits=limits, mounts=mounts, conn=conn)
             created = True
         assert kern is not None
         return kern, created
@@ -314,7 +318,8 @@ class InstanceRegistry:
             None, 1, 1, 0
         )
 
-    async def create_kernel(self, sess_id, lang, owner_access_key, limits=None, mounts=None, conn=None):
+    async def create_kernel(self, sess_id, lang, owner_access_key,
+                            limits=None, mounts=None, conn=None):
         agent_id = None
         limits = limits or {}
         mounts = mounts or []
@@ -477,12 +482,12 @@ class InstanceRegistry:
                 except TypeError as e:
                     log.exception('typeerror????')
 
-    async def interrupt_kernel(self, sess_id, mode):
-        log.debug(f'interrupt({sess_id}, {mode})')
+    async def interrupt_kernel(self, sess_id):
+        log.debug(f'interrupt({sess_id})')
         async with self.handle_kernel_exception('execute', sess_id):
             kernel = await self.get_kernel_session(sess_id)
             async with RPCContext(kernel['agent_addr'], 5) as rpc:
-                exec_coro = rpc.call.interrupt_kernel(str(kernel['id']), mode)
+                exec_coro = rpc.call.interrupt_kernel(str(kernel['id']))
                 if exec_coro is None:
                     raise RuntimeError('interrupt cancelled')
                 return await exec_coro
@@ -498,12 +503,13 @@ class InstanceRegistry:
                     raise RuntimeError('get_completions cancelled')
                 return await exec_coro
 
-    async def upload_file(self, sess_id, filename, filedata):
+    async def upload_file(self, sess_id, filename, payload):
         log.debug(f'upload_file({sess_id}, {filename})')
         async with self.handle_kernel_exception('upload_file', sess_id):
             kernel = await self.get_kernel_session(sess_id)
             async with RPCContext(kernel['agent_addr'], 180) as rpc:
-                result = await rpc.call.upload_file(str(kernel['id']), filename, filedata)
+                result = \
+                    await rpc.call.upload_file(str(kernel['id']), filename, payload)
                 return result
 
     async def update_kernel(self, sess_id, updated_fields, conn=None):
