@@ -3,8 +3,15 @@ import io
 import re
 import traceback
 
+from aiohttp import web
+
 _rx_sitepkg_path = re.compile(r'^.+/site-packages/')
 
+
+def method_placeholder(orig_method):
+    async def _handler(request):
+        raise web.HTTPMethodNotAllowed(request.method, [orig_method])
+    return _handler
 
 def prettify_traceback(exc):
     # Make a compact stack trace string

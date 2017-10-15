@@ -1,6 +1,3 @@
-import asyncio
-import contextlib
-import gc
 import pathlib
 import socket
 import ssl
@@ -10,11 +7,10 @@ from aiohttp import web
 from aiopg.sa import create_engine
 import sqlalchemy as sa
 import pytest
-import uvloop
 
-from sorna.gateway.config import load_config
-from sorna.gateway.server import gw_init, gw_args
-from sorna.manager.models import keypairs
+from ai.backend.gateway.config import load_config
+from ai.backend.gateway.server import gw_init, gw_args
+from ai.backend.manager.models import keypairs
 
 here = pathlib.Path(__file__).parent
 
@@ -68,30 +64,28 @@ class Client:
 
 
 @pytest.fixture
-def default_keypair(loop):
+async def default_keypair(event_loop):
+    access_key = 'AKIAIOSFODNN7EXAMPLE'
+    config = load_config(argv=[], extra_args_func=gw_args)
+    pool = await create_engine(
+        dsn=f'host={config.db_addr[0]} port={config.db_addr[1]} '
+            f'user={config.db_user} password={config.db_password} '
+            f'dbname={config.db_name}',
+        minsize=1, maxsize=4,
+    )
+    async with pool.acquire() as conn:
+        query = sa.select([keypairs.c.access_key, keypairs.c.secret_key]) \
+                  .where(keypairs.c.access_key == access_key)
+        result = await conn.execute(query)
+        row = await result.first()
+        keypair = {
+            'access_key': access_key,
+            'secret_key': row.secret_key,
+        }
+    pool.close()
+    await pool.wait_closed()
+    return keypair
 
-    async def _fetch():
-        access_key = 'AKIAIOSFODNN7EXAMPLE'
-        config = load_config(argv=[], extra_args_func=gw_args)
-        pool = await create_engine(
-            dsn=f'host={config.db_addr[0]} port={config.db_addr[1]} '
-                f'user={config.db_user} password={cofnig.db_password} '
-                f'dbname={config.db_name}',
-            minsize=1, maxsize=4,
-        )
-        async with pool.acquire() as conn:
-            query = sa.select([keypairs.c.access_key, keypairs.c.secret_key]) \
-                      .where(keypairs.c.access_key == access_key)
-            row = await conn.fetchrow(query)
-            keypair = {
-                'access_key': access_key,
-                'secret_key': row.secret_key,
-            }
-        pool.close()
-        await pool.wait_closed()
-        return keypair
-
-    return loop.run_until_complete(_fetch())
 
 async def _create_server(loop, unused_port, extra_inits=None, debug=False):
     app = web.Application(loop=loop)
@@ -111,11 +105,13 @@ async def _create_server(loop, unused_port, extra_inits=None, debug=False):
         for init in extra_inits:
             await init(app)
     handler = app.make_handler(debug=debug, keep_alive_on=False)
-    server = await loop.create_server(handler,
-                                      app.config.service_ip,
-                                      app.config.service_port,
-                                      ssl=app.sslctx)
+    server = await loop.create_server(
+        handler,
+        app.config.service_ip,
+        app.config.service_port,
+        ssl=app.sslctx)
     return app, app.config.service_port, handler, server
+
 
 async def _finish_server(app, handler, server):
     server.close()
@@ -126,7 +122,7 @@ async def _finish_server(app, handler, server):
 
 
 @pytest.fixture
-def create_app_and_client(loop, unused_port):
+async def create_app_and_client(event_loop, unused_port):
     client = None
     app = handler = server = None
 
@@ -135,17 +131,17 @@ def create_app_and_client(loop, unused_port):
         server_params = {}
         client_params = {}
         app, port, handler, server = await _create_server(
-            loop, unused_port, extra_inits=extra_inits, **server_params)
+            event_loop, unused_port, extra_inits=extra_inits, **server_params)
         if app.sslctx:
             url = 'https://localhost:{}'.format(port)
             client_params['connector'] = aiohttp.TCPConnector(verify_ssl=False)
         else:
             url = 'http://localhost:{}'.format(port)
-        client = Client(aiohttp.ClientSession(loop=loop, **client_params), url)
+        client = Client(aiohttp.ClientSession(loop=event_loop, **client_params), url)
         return app, client
 
     yield maker
 
-    loop.run_until_complete(_finish_server(app, handler, server))
+    await _finish_server(app, handler, server)
     if client:
         client.close()

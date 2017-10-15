@@ -29,7 +29,7 @@ from .exceptions import (ServiceUnavailable, InvalidAPIParameters, QuotaExceeded
                          BackendError)
 from . import GatewayStatus
 from .auth import auth_required
-from .utils import catch_unexpected
+from .utils import catch_unexpected, method_placeholder
 from ..manager.models import keypairs, kernels, AgentStatus, KernelStatus
 from ..manager.registry import InstanceRegistry
 
@@ -580,7 +580,10 @@ async def not_impl_stub(request):
 async def init(app):
     app.router.add_route('POST',   r'/v{version:\d+}/kernel/create', create)
     app.router.add_route('GET',    r'/v{version:\d+}/kernel/{sess_id}', get_info)
+
+    app.router.add_route('POST',   r'/v{version:\d+}/kernel/{sess_id}', method_placeholder('PATCH'))
     app.router.add_route('PATCH',  r'/v{version:\d+}/kernel/{sess_id}', restart)
+    app.router.add_route('POST',   r'/v{version:\d+}/kernel/{sess_id}', method_placholder('DELETE'))
     app.router.add_route('DELETE', r'/v{version:\d+}/kernel/{sess_id}', destroy)
     app.router.add_route('POST',   r'/v{version:\d+}/kernel/{sess_id}', execute)
     app.router.add_route('POST',   r'/v{version:\d+}/kernel/{sess_id}/interrupt', interrupt)
@@ -590,6 +593,7 @@ async def init(app):
     app.router.add_route('POST',   r'/v{version:\d+}/kernel/{sess_id}/upload', upload_files)
     app.router.add_route('POST',   r'/v{version:\d+}/folder/create', not_impl_stub)
     app.router.add_route('GET',    r'/v{version:\d+}/folder/{folder_id}', not_impl_stub)
+    app.router.add_route('POST',   r'/v{version:\d+}/folder/{folder_id}', method_placeholder('DELETE'))
     app.router.add_route('DELETE', r'/v{version:\d+}/folder/{folder_id}', not_impl_stub)
 
     app['event_dispatcher'].add_handler('kernel_terminated', kernel_terminated)

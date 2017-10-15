@@ -18,6 +18,8 @@ env:
   global:
     - BACKEND_ETCD_ADDR=localhost:2379
     - BACKEND_NAMESPACE=local
+    # TODO: config for postgres
+    # TODO: config for redis
 
 # TODO: the test suite should be updated
 matrix:
@@ -52,7 +54,7 @@ jobs:
            --initial-cluster-state new
            --auto-compaction-retention 1
       script:
-        - pyhton -m flake8 ai/backend tests
+        - python -m flake8 ai/backend tests
         - python -m pytest -m "not integration" --cov=ai/backend
       after_success:
         - codecov

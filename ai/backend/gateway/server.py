@@ -67,24 +67,20 @@ async def on_prepare(request, response):
 
 async def api_middleware_factory(app, handler):
     async def api_middleware_handler(request):
+        _handler = handler
         method_override = request.headers.get('X-Method-Override', None)
         if method_override:
             request = request.clone(method=method_override)
+            new_match_info = await app.router.resolve(request)
+            _handler = new_match_info.handler
+            request._match_info = new_match_info
         if request.match_info.http_exception is not None:
-            raise request.match_info.http_exception
-        try:
-            version = int(request.match_info['version'])
-        except KeyError:
-            version = request.headers.get('X-BackendAI-Version')
-            if not version:
-                version = request.headers.get('X-Sorna-Version')
-            if version not in VALID_VERSIONS:
-                raise GenericBadRequest('Invalid API version.')
-            version = int(version.split('.')[0][1:])
+            return request.match_info.http_exception
+        version = int(request.match_info['version'])
         if version < 1 or version > 3:
             raise GenericBadRequest('Unsupported API major version.')
         request['api_version'] = version
-        resp = (await handler(request))
+        resp = (await _handler(request))
         return resp
     return api_middleware_handler
 

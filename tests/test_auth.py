@@ -8,9 +8,9 @@ from dateutil.tz import tzutc, gettz
 import pytest
 import simplejson as json
 
-from sorna.gateway.auth import init as auth_init
-from sorna.gateway.auth import check_date
-from sorna.gateway.server import LATEST_API_VERSION
+from ai.backend.gateway.auth import init as auth_init
+from ai.backend.gateway.auth import check_date
+from ai.backend.gateway.server import LATEST_API_VERSION
 
 
 @pytest.mark.asyncio
@@ -32,7 +32,7 @@ async def test_auth(create_app_and_client, unused_port, default_keypair):
         headers = {
             'Date': now.isoformat(),
             'Content-Type': 'application/json',
-            'X-Sorna-Version': api_version,
+            'X-BackendAI-Version': api_version,
         }
         req_data = {
             'echo': str(uuid.uuid4()),
@@ -44,13 +44,13 @@ async def test_auth(create_app_and_client, unused_port, default_keypair):
                      + now.isoformat().encode() + b'\n' \
                      + b'host:' + hostname.encode() + b'\n' \
                      + b'content-type:application/json\n' \
-                     + b'x-sorna-version:' + api_version.encode() + b'\n' \
+                     + b'x-backendai-version:' + api_version.encode() + b'\n' \
                      + req_hash.encode()
         sign_key = hmac.new(default_keypair['secret_key'].encode(),
                             now.strftime('%Y%m%d').encode(), hash_type).digest()
         sign_key = hmac.new(sign_key, hostname.encode(), hash_type).digest()
         signature = hmac.new(sign_key, sign_bytes, hash_type).hexdigest()
-        headers['Authorization'] = 'Sorna signMethod=HMAC-{}, '.format(hash_type.upper()) \
+        headers['Authorization'] = 'BackendAI signMethod=HMAC-{}, '.format(hash_type.upper()) \
                                    + 'credential={}:{}'.format(default_keypair['access_key'], signature)
         # Only shown when there are failures in this test case
         print('Request headers')
@@ -109,5 +109,5 @@ def test_check_date(mocker):
     request.headers = {'Date': 'some-unrecognizable-malformed-date-time'}
     assert not check_date(request)
 
-    request.headers = {'X-Sorna-Date': now.isoformat()}
+    request.headers = {'X-BackendAI-Date': now.isoformat()}
     assert check_date(request)
