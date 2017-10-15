@@ -23,7 +23,7 @@ requires = [
     'simplejson',
     'SQLAlchemy~=1.1.14',
     'uvloop>=0.8',
-    'backend.ai-common~=1.0.2',
+    'backend.ai-common~=1.0.3',
 ]
 build_requires = [
     'wheel',

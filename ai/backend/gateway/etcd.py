@@ -7,11 +7,19 @@ log = logging.getLogger('ai.backend.gateway.etcd')
 
 class ConfigServer:
 
-    def __init__(self, etcd):
-        self.etcd = etcd
+    def __init__(self, config):
+        # WARNING: importing etcd3/grpc must be done after forks.
+        self.config = config
+        from ai.backend.common.etcd import AsyncEtcd
+        self.etcd = AsyncEtcd(config.etcd_addr, config.namespace)
 
-    async def register_myself(self, instance_id):
-        await self.etcd.put('nodes/manager', instance_id)
+    async def register_myself(self):
+        instance_id = await get_instance_id()
+        instance_ip = await get_instance_ip()
+        event_addr = f'{instance_ip}:{self.config.events_port}'
+        await self.etcd.put_multi(
+            ['nodes/manager', 'nodes/redis', 'nodes/manager/event_addr'],
+            [instance_id, self.config.redis_addr, event_addr])
 
     async def deregister_myself(self):
         await self.etcd.delete_prefix('nodes/manager')
@@ -23,16 +31,8 @@ class ConfigServer:
 
 
 async def init(app):
-    # importing etcd3/grpc must be done after forks.
-    from ai.backend.common.etcd import AsyncEtcd
-    etcd = AsyncEtcd(app.config.etcd_addr, app.config.namespace)
-    instance_id = await get_instance_id()
-    instance_ip = await get_instance_ip()
-    app['config_server'] = ConfigServer(etcd)
-    await app['config_server'].register_myself(instance_id)
-    await etcd.put('nodes/redis', app.config.redis_addr)
-    event_addr = f'{instance_ip}:{app.config.events_port}'
-    await etcd.put('nodes/manager/event_addr', event_addr)
+    app['config_server'] = ConfigServer(app.config)
+    await app['config_server'].register_myself()
 
 
 async def shutdown(app):
