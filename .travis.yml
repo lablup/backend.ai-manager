@@ -2,6 +2,8 @@ language: python
 cache: pip
 services:
   - docker
+  - postgresql
+  - redis-server
 
 # stage decl.
 stages:
@@ -18,8 +20,9 @@ env:
   global:
     - BACKEND_ETCD_ADDR=localhost:2379
     - BACKEND_NAMESPACE=local
-    # TODO: config for postgres
-    # TODO: config for redis
+    - BACKEND_DB_USER=postgres
+    - BACKEND_DB_PASSWORD=
+    - BACKEND_DB_NAME=testing
 
 # stage def.
 jobs:
@@ -47,6 +50,7 @@ jobs:
            --initial-cluster-token backendai-etcd-token
            --initial-cluster-state new
            --auto-compaction-retention 1
+        - psql -c 'CREATE DATABASE testing;' -U postgres
       script:
         - python -m flake8 ai/backend tests
         - python -m pytest -m "not integration" --cov=ai/backend
