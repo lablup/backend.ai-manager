@@ -1,13 +1,13 @@
 """init
 
 Revision ID: 5de06da3c2b5
-Revises: 
+Revises:
 Create Date: 2017-06-08 15:08:23.166237
 
 """
 from alembic import op
 import sqlalchemy as sa
-import sorna.manager.models.base
+import ai.backend.manager.models.base
 
 
 # revision identifiers, used by Alembic.
@@ -35,7 +35,7 @@ def upgrade():
     sa.PrimaryKeyConstraint('access_key')
     )
     op.create_table('kernels',
-    sa.Column('sess_id', sorna.manager.models.base.GUID(), server_default=sa.text('uuid_generate_v4()'), nullable=False),
+    sa.Column('sess_id', ai.backend.manager.models.base.GUID(), server_default=sa.text('uuid_generate_v4()'), nullable=False),
     sa.Column('lang', sa.String(length=64), nullable=True),
     sa.Column('access_key', sa.String(length=20), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),

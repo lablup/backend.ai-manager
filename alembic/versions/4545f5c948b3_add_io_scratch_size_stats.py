@@ -7,7 +7,7 @@ Create Date: 2017-10-10 15:57:48.463055
 """
 from alembic import op
 import sqlalchemy as sa
-import sorna.manager.models.base
+import ai.backend.manager.models.base
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.

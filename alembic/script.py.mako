@@ -7,7 +7,7 @@ Create Date: ${create_date}
 """
 from alembic import op
 import sqlalchemy as sa
-import sorna.manager.models.base
+import ai.backend.manager.models.base
 ${imports if imports else ""}
 
 # revision identifiers, used by Alembic.
