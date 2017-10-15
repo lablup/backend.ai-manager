@@ -1,6 +1,5 @@
 import logging
 
-from ai.backend.common.etcd import AsyncEtcd
 from ai.backend.common.identity import get_instance_id, get_instance_ip
 
 log = logging.getLogger('ai.backend.gateway.etcd')
@@ -24,6 +23,8 @@ class ConfigServer:
 
 
 async def init(app):
+    # importing etcd3/grpc must be done after forks.
+    from ai.backend.common.etcd import AsyncEtcd
     etcd = AsyncEtcd(app.config.etcd_addr, app.config.namespace)
     instance_id = await get_instance_id()
     instance_ip = await get_instance_ip()

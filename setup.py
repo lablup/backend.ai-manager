@@ -9,7 +9,7 @@ requires = [
     'aiohttp~=2.2.0',
     'aiopg~=0.13.0',
     'aioredis~=0.3.3',
-    'aiotools>=0.4.4',
+    'aiotools>=0.4.5',
     'aiozmq>=0.7',
     'alembic~=0.9.2',
     'coloredlogs>=5.2',
@@ -23,7 +23,7 @@ requires = [
     'simplejson',
     'SQLAlchemy~=1.1.14',
     'uvloop>=0.8',
-    'backend.ai-common~=1.0.0',
+    'backend.ai-common~=1.0.2',
 ]
 build_requires = [
     'wheel',

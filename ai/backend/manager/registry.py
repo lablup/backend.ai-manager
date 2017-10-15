@@ -84,7 +84,7 @@ class InstanceRegistry:
         self.redis_stat_pool = redis_stat_pool
 
     async def init(self):
-        log.debug('ready.')
+        pass
 
     async def terminate(self):
         pass

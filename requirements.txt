@@ -1,2 +1,1 @@
---no-binary protobuf protobuf
 -e .

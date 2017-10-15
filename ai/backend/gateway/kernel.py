@@ -606,7 +606,7 @@ async def init(app):
 
     # Scan ALIVE agents
     if app['pidx'] == 0:
-        log.debug('initializing agent status checker')
+        log.debug(f'initializing agent status checker at proc:{app["pidx"]}')
         now = time.monotonic()
         async for inst in app['registry'].enumerate_instances():
             app['shared_states'].agent_last_seen[inst.id] = now
