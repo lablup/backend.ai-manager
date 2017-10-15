@@ -62,7 +62,7 @@ jobs:
            --auto-compaction-retention 1
         - psql -c 'CREATE DATABASE testing;' -U postgres
         - cp alembic.ini.sample alembic.ini
-        - sed -i'' 's!^sqlalchemy.url = .*$!sqlalchemy.url = postgresql://postgres@localhost:5432/testing!' alembic.ini
+        - sed -i'' -e 's!^sqlalchemy.url = .*$!sqlalchemy.url = postgresql://postgres@localhost:5432/testing!' alembic.ini
         - python -m ai.backend.manager.cli schema oneshot head
         - python -m ai.backend.manager.cli fixture populate example_keypair
       script:
