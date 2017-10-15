@@ -20,6 +20,7 @@ env:
   global:
     - BACKEND_ETCD_ADDR=localhost:2379
     - BACKEND_NAMESPACE=local
+    - BACKEND_REDIS_ADDR=localhost:6379
     - BACKEND_DB_ADDR=localhost:5432
     - BACKEND_DB_USER=postgres
     - BACKEND_DB_PASSWORD=
@@ -52,6 +53,10 @@ jobs:
            --initial-cluster-state new
            --auto-compaction-retention 1
         - psql -c 'CREATE DATABASE testing;' -U postgres
+        - cp alembic.ini.sample alembic.ini
+        - sed -i'' 's!^sqlalchemy.url = .*$!sqlalchemy.url = postgresql://postgres@localhost:5432/testing!' alembic.ini
+        - python -m ai.backend.manager.cli schema oneshot head
+        - python -m ai.backend.manager.cli fixture populate example_keypair
       script:
         - python -m flake8 ai/backend tests
         - python -m pytest -m "not integration" --cov=ai/backend
