@@ -20,6 +20,7 @@ env:
   global:
     - BACKEND_ETCD_ADDR=localhost:2379
     - BACKEND_NAMESPACE=local
+    - BACKEND_DB_ADDR=localhost:5432
     - BACKEND_DB_USER=postgres
     - BACKEND_DB_PASSWORD=
     - BACKEND_DB_NAME=testing

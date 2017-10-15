@@ -113,14 +113,6 @@ async def _create_server(loop, unused_port, extra_inits=None, debug=False):
     return app, app.config.service_port, handler, server
 
 
-async def _finish_server(app, handler, server):
-    server.close()
-    await server.wait_closed()
-    await app.shutdown()
-    await handler.finish_connections()
-    await app.cleanup()
-
-
 @pytest.fixture
 async def create_app_and_client(event_loop, unused_port):
     client = None
@@ -142,6 +134,10 @@ async def create_app_and_client(event_loop, unused_port):
 
     yield maker
 
-    await _finish_server(app, handler, server)
     if client:
         client.close()
+    server.close()
+    await server.wait_closed()
+    await app.shutdown()
+    await handler.finish_connections()
+    await app.cleanup()
