@@ -123,7 +123,7 @@ async def auth_middleware_factory(app, handler):
                 query = (keypairs.select()
                                  .where(keypairs.c.access_key == access_key))
                 result = await conn.execute(query)
-                row = await result.fetchone()
+                row = await result.first()
                 if row is None:
                     raise AuthorizationFailed('Access key not found')
                 my_signature = \

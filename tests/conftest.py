@@ -74,8 +74,9 @@ async def default_keypair(event_loop):
         minsize=1, maxsize=4,
     )
     async with pool.acquire() as conn:
-        query = sa.select([keypairs.c.access_key, keypairs.c.secret_key]) \
-                  .where(keypairs.c.access_key == access_key)
+        query = (sa.select([keypairs.c.access_key, keypairs.c.secret_key])
+                   .select_from(keypairs)
+                   .where(keypairs.c.access_key == access_key))
         result = await conn.execute(query)
         row = await result.first()
         keypair = {

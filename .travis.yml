@@ -1,5 +1,7 @@
 language: python
 cache: pip
+addons:
+  postgresql: "9.6"
 services:
   - docker
   - postgresql
@@ -59,7 +61,7 @@ jobs:
         - python -m ai.backend.manager.cli fixture populate example_keypair
       script:
         - python -m flake8 ai/backend tests
-        - python -m pytest -m "not integration" --cov=ai/backend
+        - python -m pytest tests --cov=ai/backend
       after_success:
         - codecov
 
