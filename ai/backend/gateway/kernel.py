@@ -592,9 +592,7 @@ async def init(app):
     rt('POST',   r'/v{version:\d+}/kernel/create', create)
     rt('GET',    r'/v{version:\d+}/kernel/{sess_id}', get_info)
 
-    rt('POST',   r'/v{version:\d+}/kernel/{sess_id}', method_placeholder('PATCH'))
     rt('PATCH',  r'/v{version:\d+}/kernel/{sess_id}', restart)
-    rt('POST',   r'/v{version:\d+}/kernel/{sess_id}', method_placeholder('DELETE'))
     rt('DELETE', r'/v{version:\d+}/kernel/{sess_id}', destroy)
     rt('POST',   r'/v{version:\d+}/kernel/{sess_id}', execute)
     rt('POST',   r'/v{version:\d+}/kernel/{sess_id}/interrupt', interrupt)

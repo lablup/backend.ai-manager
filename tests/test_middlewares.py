@@ -26,7 +26,7 @@ async def test_api_method_override(test_client):
     assert (await resp.read()) == b'test'
     assert observed_method == 'REPORT'
 
-    # overrided method
+    # overriden method
     observed_method = None
     resp = await client.post('/v2/test', headers={
         'X-Method-Override': 'REPORT',
@@ -46,6 +46,57 @@ async def test_api_method_override(test_client):
     resp = await client.delete('/v2/test')
     assert resp.status == 405
     assert observed_method is None
+
+
+async def test_api_method_override_with_different_ops(test_client):
+    observed_method = None
+    app = web.Application()
+
+    async def op1_handler(request):
+        nonlocal observed_method
+        observed_method = request.method
+        return web.Response(body=b'op1')
+
+    async def op2_handler(request):
+        nonlocal observed_method
+        observed_method = request.method
+        return web.Response(body=b'op2')
+
+    app.router.add_route('POST', '/v{version:\d+}/test', op1_handler)
+    app.router.add_route('REPORT', '/v{version:\d+}/test', op2_handler)
+    app.middlewares.append(api_middleware_factory)
+    client = await test_client(app)
+
+    # native method
+    resp = await client.request('POST', '/v2/test')
+    assert resp.status == 200
+    assert (await resp.read()) == b'op1'
+    assert observed_method == 'POST'
+
+    # native method
+    observed_method = None
+    resp = await client.request('REPORT', '/v2/test')
+    assert resp.status == 200
+    assert (await resp.read()) == b'op2'
+    assert observed_method == 'REPORT'
+
+    # overriden method
+    observed_method = None
+    resp = await client.request('REPORT', '/v2/test', headers={
+        'X-Method-Override': 'POST',
+    })
+    assert resp.status == 200
+    assert (await resp.read()) == b'op1'
+    assert observed_method == 'POST'
+
+    # overriden method
+    observed_method = None
+    resp = await client.request('POST', '/v2/test', headers={
+        'X-Method-Override': 'REPORT',
+    })
+    assert resp.status == 200
+    assert (await resp.read()) == b'op2'
+    assert observed_method == 'REPORT'
 
 
 async def test_api_ver(test_client):
