@@ -2,6 +2,7 @@ import asyncio
 from collections import defaultdict
 import functools
 import logging
+import sys
 
 import aiozmq
 import zmq
@@ -9,6 +10,13 @@ import zmq
 from ai.backend.common import msgpack
 
 log = logging.getLogger('ai.backend.gateway.events')
+
+if sys.platform == 'darwin':
+    EVENT_IPC_ADDR = 'ipc://ai.backend.agent-events'
+elif sys.platform == 'linux':
+    EVENT_IPC_ADDR = 'ipc://@/ai.backend.agent-events'
+else:
+    raise NotImplementedError('unsupported platform')
 
 
 def event_router(_, pidx, args):
@@ -18,7 +26,7 @@ def event_router(_, pidx, args):
     in_sock = ctx.socket(zmq.PULL)
     in_sock.bind(f'tcp://*:{args[0].events_port}')
     out_sock = ctx.socket(zmq.PUSH)
-    out_sock.bind('ipc://ai.backend.agent-events')
+    out_sock.bind(EVENT_IPC_ADDR)
     try:
         zmq.proxy(in_sock, out_sock)
     except KeyboardInterrupt:
@@ -56,7 +64,7 @@ class EventDispatcher:
 
 async def event_subscriber(dispatcher):
     event_sock = await aiozmq.create_zmq_stream(
-        zmq.PULL, connect=f'ipc://ai.backend.agent-events')
+        zmq.PULL, connect=EVENT_IPC_ADDR)
     try:
         while True:
             data = await event_sock.read()
