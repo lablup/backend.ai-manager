@@ -67,7 +67,6 @@ class Client:
 async def default_keypair(event_loop):
     access_key = 'AKIAIOSFODNN7EXAMPLE'
     config = load_config(argv=[], extra_args_func=gw_args)
-    config.db_name = 'testing'
     pool = await create_engine(
         dsn=f'host={config.db_addr[0]} port={config.db_addr[1]} '
             f'user={config.db_user} password={config.db_password} '
@@ -94,7 +93,6 @@ async def _create_server(loop, unused_port, extra_inits=None, debug=False):
     app.config = load_config(argv=[], extra_args_func=gw_args)
 
     # Override default configs for testing setup.
-    app.config.db_name = 'testing'
     app.config.ssl_cert = here / 'sample-ssl-cert' / 'sample.crt'
     app.config.ssl_key = here / 'sample-ssl-cert' / 'sample.key'
     app.config.service_ip = '127.0.0.1'
