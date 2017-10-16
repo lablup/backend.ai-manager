@@ -76,6 +76,7 @@ def oneshot(args):
     metadata.create_all(engine, checkfirst=False)
 
     log.info(f'Stamping alembic version to {args.schema_version}...')
+    print(alembic_cfg)
     command.stamp(alembic_cfg, args.schema_version)
     log.info("If you don't need old migrations, delete them and set "
              "\"down_revision\" value in the earliest migration to \"None\".")

@@ -26,9 +26,6 @@ def populate(args):
         return
 
     args.db_name = 'testing'
-    print('##')
-    print(args)
-    print('##')
     engine = sa.create_engine(f"postgres://{args.db_user}:{args.db_password}"
                               f"@{args.db_addr}/{args.db_name}")
     conn = engine.connect()
