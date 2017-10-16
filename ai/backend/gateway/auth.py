@@ -56,6 +56,7 @@ def check_date(request) -> bool:
         return False
     try:
         date = dtparse(raw_date)
+        print(date)
         if date.tzinfo is None:
             date = date.replace(tzinfo=tzutc())  # assume as UTC
         now = datetime.now(tzutc())

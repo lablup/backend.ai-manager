@@ -41,7 +41,10 @@ jobs:
     - stage: test
       install:
         - pip install -U pip setuptools
-        - sed -i'' -e "s/{BRANCH}/$TRAVIS_BRANCH/g" requirements-ci.txt
+        # TODO: remove line below after testing
+        - echo $TRAVIS_BRANCH
+        - if [[ $TRAVIS_BRANCH -eq 'feature' ]]; then BRANCH='master'; else BRANCH=$TRAVIS_BRANCH; fi
+        - sed -i'' -e "s/{BRANCH}/$BRANCH/g" requirements-ci.txt
         - pip install -U -r requirements-ci.txt
       before_script:
         - mkdir -p /tmp/etcd

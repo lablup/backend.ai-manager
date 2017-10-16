@@ -105,7 +105,12 @@ def test_check_date(mocker):
     # RFC822-style date formatting used in plain HTTP with a non-UTC timezone
     now_kst = now.astimezone(gettz('Asia/Seoul'))
     request.headers = {'Date': '{:%a, %d %b %Y %H:%M:%S %Z}'.format(now_kst)}
+    print('###')
+    print(now)
+    print(now_kst)
+    print(request.headers)
     assert check_date(request)
+    print('###')
 
     request.headers = {'Date': 'some-unrecognizable-malformed-date-time'}
     assert not check_date(request)
