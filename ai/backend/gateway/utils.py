@@ -64,4 +64,5 @@ def gen_tzinfos():
             if tzinfo:
                 yield tzdate.tzname(), tzinfo
 
+
 TZINFOS = dict(gen_tzinfos())

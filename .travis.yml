@@ -28,12 +28,6 @@ env:
     - BACKEND_DB_PASSWORD=
     - BACKEND_DB_NAME=testing
 
-# TODO: the test suite should be updated
-matrix:
-  allow_failures:
-    - python: "3.6"
-      os: linux
-
 # stage def.
 jobs:
   include:
