@@ -57,8 +57,11 @@ def check_date(request) -> bool:
     try:
         date = dtparse(raw_date)
         print(date)
+        print(date.tzinfo)
         if date.tzinfo is None:
             date = date.replace(tzinfo=tzutc())  # assume as UTC
+        from dateutil.tz import tzlocal
+        print(datetime.now(tzlocal()).tzname())
         now = datetime.now(tzutc())
         min_date = now - timedelta(minutes=15)
         max_date = now + timedelta(minutes=15)
