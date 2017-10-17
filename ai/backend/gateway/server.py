@@ -142,7 +142,7 @@ async def gw_init(app):
                 release=raven.fetch_package_version('backend.ai-manager'))
             log.info('sentry logging enabled')
 
-    app['dbpool']= await create_engine(
+    app['dbpool'] = await create_engine(
         host=app.config.db_addr[0], port=app.config.db_addr[1],
         user=app.config.db_user, password=app.config.db_password,
         dbname=app.config.db_name, minsize=4, maxsize=16,

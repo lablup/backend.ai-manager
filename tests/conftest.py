@@ -67,7 +67,7 @@ class Client:
 async def default_keypair(event_loop):
     access_key = 'AKIAIOSFODNN7EXAMPLE'
     config = load_config(argv=[], extra_args_func=gw_args)
-    pool= await create_engine(
+    pool = await create_engine(
         host=config.db_addr[0], port=config.db_addr[1],
         user=config.db_user, password=config.db_password,
         dbname=config.db_name, minsize=1, maxsize=4
