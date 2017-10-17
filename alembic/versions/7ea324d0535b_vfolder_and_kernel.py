@@ -7,7 +7,7 @@ Create Date: 2017-08-08 16:25:59.553570
 """
 from alembic import op
 import sqlalchemy as sa
-import sorna.manager.models.base
+import ai.backend.manager.models.base
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
@@ -32,7 +32,7 @@ def upgrade():
     sa.PrimaryKeyConstraint('id', name=op.f('pk_agents'))
     )
     op.create_table('vfolders',
-    sa.Column('id', sorna.manager.models.base.GUID(), server_default=sa.text('uuid_generate_v4()'), nullable=False),
+    sa.Column('id', ai.backend.manager.models.base.GUID(), server_default=sa.text('uuid_generate_v4()'), nullable=False),
     sa.Column('host', sa.String(length=128), nullable=False),
     sa.Column('name', sa.String(length=64), nullable=False),
     sa.Column('max_files', sa.Integer(), nullable=True),

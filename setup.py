@@ -1,37 +1,31 @@
 from setuptools import setup
-import sys
-try:
-    import pypandoc
-    long_description = pypandoc.convert('README.md', 'rst')
-except (IOError, ImportError):
-    long_description = ""
+from pathlib import Path
+import ai.backend.manager
 
 
 requires = [
-    'ConfigArgParse',
-    'coloredlogs>=5.2',
-    'pyzmq>=16.0',
-    'aiozmq>=0.7',
-    'aiohttp~=2.2.0',
-    'aiopg~=0.13.0',
-    'aioredis~=0.2.8',
-    'aiotools>=0.4.4',
     'aioconsole>=0.1.3',
     'aiodataloader',
-    'etcd3~=0.5.2',
-    'namedlist',
-    'graphene>=2.0.dev',
+    'aiohttp~=2.2.0',
+    'aiopg~=0.13.0',
+    'aioredis~=0.3.3',
+    'aiotools>=0.4.5',
+    'aiozmq>=0.7',
     'alembic~=0.9.2',
+    'coloredlogs>=5.2',
+    'ConfigArgParse',
+    'graphene>=2.0.dev',
+    'iso8601',  # required by graphene
+    'namedlist',
     'psycopg2~=2.7.0',
-    'SQLAlchemy',
     'python-dateutil>=2.5',
+    'pyzmq>=16.0',
     'simplejson',
+    'SQLAlchemy~=1.1.14',
     'uvloop>=0.8',
-    'iso8601',
-    'sorna-common~=1.0.0',
+    'backend.ai-common~=1.0.3',
 ]
 build_requires = [
-    'pypandoc',
     'wheel',
     'twine',
 ]
@@ -53,16 +47,13 @@ monitor_requires = [
     'raven>=6.1',
 ]
 
-sys.path.insert(0, '.')
-import sorna.manager
-
 
 setup(
-    name='sorna-manager',
-    version=sorna.manager.__version__,
-    description='Sorna Manager',
-    long_description=long_description,
-    url='https://github.com/lablup/sorna-manager',
+    name='backend.ai-manager',
+    version=ai.backend.manager.__version__,
+    description='Backend.AI Manager',
+    long_description=Path('README.rst').read_text(),
+    url='https://github.com/lablup/backend.ai-manager',
     author='Lablup Inc.',
     author_email='joongi@lablup.com',
     license='LGPLv3',
@@ -79,10 +70,10 @@ setup(
         'Topic :: Scientific/Engineering',
         'Topic :: Software Development',
     ],
-
-    packages=['sorna.manager', 'sorna.gateway'],
-    namespace_packages=['sorna'],
-
+    packages=[
+        'ai.backend.manager',
+        'ai.backend.gateway',
+    ],
     python_requires='>=3.6',
     install_requires=requires,
     extras_require={

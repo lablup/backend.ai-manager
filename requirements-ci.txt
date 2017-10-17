@@ -1,2 +1,2 @@
--e git+https://github.com/lablup/sorna-common@{BRANCH}#egg=sorna-common
+-e git+https://github.com/lablup/backend.ai-common@{BRANCH}#egg=backend.ai-common
 -e .[build,test,ci]

@@ -1,2 +1,2 @@
--e git+https://git@github.com/lablup/backend.ai-common#egg=sorna.ai-common
+-e git+https://github.com/lablup/backend.ai-common@develop#egg=backend.ai-common
 -e .[dev]

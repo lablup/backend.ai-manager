@@ -14,11 +14,11 @@ fileConfig(config.config_file_name)
 # Import the shared metadata and all models.
 # (We need to explicilty import models because model modules
 # should be executed to add table definitions to the metadata.)
-from sorna.manager.models.base import metadata
-import sorna.manager.models.agent
-import sorna.manager.models.keypair
-import sorna.manager.models.kernel
-import sorna.manager.models.vfolder
+from ai.backend.manager.models.base import metadata
+import ai.backend.manager.models.agent
+import ai.backend.manager.models.keypair
+import ai.backend.manager.models.kernel
+import ai.backend.manager.models.vfolder
 
 target_metadata = metadata
 

@@ -7,7 +7,7 @@ Create Date: 2017-08-21 17:08:20.581565
 """
 from alembic import op
 import sqlalchemy as sa
-import sorna.manager.models.base
+import ai.backend.manager.models.base
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
@@ -22,7 +22,7 @@ def upgrade():
     op.drop_constraint('fk_vfolder_attachment_kernel_kernels', 'vfolder_attachment', type_='foreignkey')
     op.drop_constraint('pk_kernels', 'kernels', type_='primary')
     op.add_column('kernels',
-                  sa.Column('id', sorna.manager.models.base.GUID(),
+                  sa.Column('id', ai.backend.manager.models.base.GUID(),
                             server_default=sa.text('uuid_generate_v4()'),
                             nullable=False))
     op.add_column('kernels', sa.Column('role', sa.String(length=16), nullable=False, default='master'))
