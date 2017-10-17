@@ -19,9 +19,8 @@ def shell(args):
 
 async def create_dbpool():
     p = await create_engine(
-        dsn=f'host={_args.db_addr[0]} port={_args.db_addr[1]} '
-            f'user={_args.db_user} password={_args.db_password} '
-            f'dbname={_args.db_name}',
-        minsize=1, maxsize=4,
+        host=_args.db_addr[0], port=_args.db_addr[1],
+        user=_args.db_user, password=_args.db_password,
+        dbname=_args.db_name, minsize=1, maxsize=4
     )
     return p

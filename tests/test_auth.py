@@ -106,6 +106,9 @@ def test_check_date(mocker):
     now_kst = now.astimezone(gettz('Asia/Seoul'))
     request.headers = {'Date': '{:%a, %d %b %Y %H:%M:%S %Z}'.format(now_kst)}
     assert check_date(request)
+    now_est = now.astimezone(gettz('America/Panama'))
+    request.headers = {'Date': '{:%a, %d %b %Y %H:%M:%S %Z}'.format(now_est)}
+    assert check_date(request)
 
     request.headers = {'Date': 'some-unrecognizable-malformed-date-time'}
     assert not check_date(request)

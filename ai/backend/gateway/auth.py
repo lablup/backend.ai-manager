@@ -13,6 +13,7 @@ import simplejson as json
 from .exceptions import InvalidAuthParameters, AuthorizationFailed
 from .config import load_config, init_logger
 from ..manager.models import keypairs
+from .utils import TZINFOS
 
 log = logging.getLogger('ai.backend.gateway.auth')
 
@@ -55,7 +56,8 @@ def check_date(request) -> bool:
     if not raw_date:
         return False
     try:
-        date = dtparse(raw_date)
+        # abbr timezones are not automatically parsable without tzinfos
+        date = dtparse(raw_date, tzinfos=TZINFOS)
         if date.tzinfo is None:
             date = date.replace(tzinfo=tzutc())  # assume as UTC
         now = datetime.now(tzutc())

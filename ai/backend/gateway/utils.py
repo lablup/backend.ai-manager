@@ -1,9 +1,12 @@
+from datetime import datetime
 import functools
 import io
 import re
 import traceback
 
 from aiohttp import web
+from dateutil.tz import gettz
+import pytz
 
 _rx_sitepkg_path = re.compile(r'^.+/site-packages/')
 
@@ -46,3 +49,20 @@ def catch_unexpected(log, raven=None):
         return _wrapped
 
     return _wrap
+
+
+def gen_tzinfos():
+    """ Yield abbreviated timezone name and tzinfo"""
+    for zone in pytz.common_timezones:
+        try:
+            tzdate = pytz.timezone(zone).localize(datetime.utcnow(), is_dst=None)
+        except pytz.NonExistentTimeError:
+            pass
+        else:
+            tzinfo = gettz(zone)
+
+            if tzinfo:
+                yield tzdate.tzname(), tzinfo
+
+
+TZINFOS = dict(gen_tzinfos())

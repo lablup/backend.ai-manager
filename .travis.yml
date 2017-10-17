@@ -28,12 +28,6 @@ env:
     - BACKEND_DB_PASSWORD=
     - BACKEND_DB_NAME=testing
 
-# TODO: the test suite should be updated
-matrix:
-  allow_failures:
-    - python: "3.6"
-      os: linux
-
 # stage def.
 jobs:
   include:
@@ -41,7 +35,10 @@ jobs:
     - stage: test
       install:
         - pip install -U pip setuptools
-        - sed -i'' -e "s/{BRANCH}/$TRAVIS_BRANCH/g" requirements-ci.txt
+        # TODO: remove line below after testing
+        - echo $TRAVIS_BRANCH
+        - if [[ $TRAVIS_BRANCH == 'feature'* ]]; then BRANCH='master'; else BRANCH=$TRAVIS_BRANCH; fi
+        - sed -i'' -e "s/{BRANCH}/$BRANCH/g" requirements-ci.txt
         - pip install -U -r requirements-ci.txt
       before_script:
         - mkdir -p /tmp/etcd

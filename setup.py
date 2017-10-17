@@ -19,6 +19,7 @@ requires = [
     'namedlist',
     'psycopg2~=2.7.0',
     'python-dateutil>=2.5',
+    'pytz',
     'pyzmq>=16.0',
     'simplejson',
     'SQLAlchemy~=1.1.14',

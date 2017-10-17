@@ -143,10 +143,9 @@ async def gw_init(app):
             log.info('sentry logging enabled')
 
     app['dbpool'] = await create_engine(
-        dsn=f'host={app.config.db_addr[0]} port={app.config.db_addr[1]} '
-            f'user={app.config.db_user} password={app.config.db_password} '
-            f'dbname={app.config.db_name}',
-        minsize=4, maxsize=16,
+        host=app.config.db_addr[0], port=app.config.db_addr[1],
+        user=app.config.db_user, password=app.config.db_password,
+        dbname=app.config.db_name, minsize=4, maxsize=16,
         echo=bool(app.config.verbose),
     )
     app['redis_stat_pool'] = await aioredis.create_pool(
