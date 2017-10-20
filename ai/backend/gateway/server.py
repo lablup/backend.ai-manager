@@ -233,7 +233,7 @@ def gw_args(parser):
                type=port_no, default=5002,
                help='The TCP port number where the event server listens on.')
     parser.add('--docker-registry', env_var='BACKEND_DOCKER_REGISTRY',
-               type=host_port_pair, default=None,
+               type=str, metavar='URL', default=None,
                help='The host:port pair of the private docker registry '
                     'that caches the kernel images')
     parser.add('--heartbeat-timeout', env_var='BACKEND_HEARTBEAT_TIMEOUT',

@@ -10,6 +10,7 @@ def init_app_args(parser):
     import ai.backend.manager.cli.fixture   # noqa
     import ai.backend.manager.cli.dbschema  # noqa
     import ai.backend.manager.cli.shell     # noqa
+    import ai.backend.manager.cli.etcd      # noqa
 
 
 config = load_config(extra_args_func=init_app_args)
