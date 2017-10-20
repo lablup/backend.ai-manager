@@ -226,7 +226,7 @@ def gw_args(parser):
                type=str, default='local',
                help='The namespace of this Backend.AI cluster. (default: local)')
     parser.add('--etcd-addr', env_var='BACKEND_ETCD_ADDR',
-               type=host_port_pair,
+               type=host_port_pair, metavar='HOST:PORT',
                default=HostPortPair(ip_address('127.0.0.1'), 2379),
                help='The host:port pair of the etcd cluster or its proxy.')
     parser.add('--events-port', env_var='BACKEND_EVENTS_PORT',
