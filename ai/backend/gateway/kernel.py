@@ -266,11 +266,15 @@ async def destroy(request):
     sess_id = request.match_info['sess_id']
     log.info(f"DESTROY (u:{request['keypair']['access_key']}, k:{sess_id})")
     try:
-        await request.app['registry'].destroy_kernel(sess_id)
+        last_stat = await request.app['registry'].destroy_kernel(sess_id)
     except BackendError:
         log.exception('DESTROY: exception')
         raise
-    return web.Response(status=204)
+    else:
+        resp = {
+            'stats': last_stat,
+        }
+        return web.json_response(resp, status=200, dumps=json.dumps)
 
 
 @auth_required

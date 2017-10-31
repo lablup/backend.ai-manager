@@ -439,7 +439,7 @@ class InstanceRegistry:
             kernel = await self.get_kernel_session(sess_id)
             await self.set_kernel_status(sess_id, KernelStatus.TERMINATING)
             async with RPCContext(kernel['agent_addr'], 10) as rpc:
-                await rpc.call.destroy_kernel(str(kernel['id']))
+                return await rpc.call.destroy_kernel(str(kernel['id']))
 
     async def restart_kernel(self, sess_id):
         log.debug(f'restart_kernel({sess_id})')
