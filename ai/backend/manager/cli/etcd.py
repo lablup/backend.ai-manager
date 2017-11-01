@@ -10,6 +10,16 @@ from ...gateway.etcd import ConfigServer
 log = logging.getLogger(__name__)
 
 
+def _add_common_args(func):
+    func.add_argument('--etcd-addr', env_var='BACKEND_ETCD_ADDR',
+                      type=host_port_pair, metavar='HOST:PORT',
+                      default=HostPortPair(ip_address('127.0.0.1'), 2379),
+                      help='The address of etcd server.')
+    func.add_argument('--namespace', env_var='BACKEND_NAMESPACE',
+                      type=str, default='local',
+                      help='The namespace of this Backend.AI cluster.')
+
+
 @register_command
 def etcd(args):
     '''Provides commands to manage etcd-based Backend.AI cluster configs.'''
@@ -37,15 +47,29 @@ def update_kernels(args):
 
 update_kernels.add_argument('-f', '--file', type=Path, metavar='PATH',
                             help='A config file to use.')
-update_kernels.add_argument('--etcd-addr', env_var='BACKEND_ETCD_ADDR',
-                            type=host_port_pair, metavar='HOST:PORT',
-                            default=HostPortPair(ip_address('127.0.0.1'), 2379),
-                            help='The address of etcd server.')
-update_kernels.add_argument('--namespace', env_var='BACKEND_NAMESPACE',
-                            type=str, default='local',
-                            help='The namespace of this Backend.AI cluster.')
 update_kernels.add_argument('--scan-registry', default=False, action='store_true',
                             help='Scan the Docker hub to get the latest versinos.')
 update_kernels.add_argument('--docker-registry', env_var='BACKEND_DOCKER_REGISTRY',
                             type=str, metavar='URL', default=None,
                             help='The address of Docker registry server.')
+_add_common_args(update_kernels)
+
+
+@etcd.register_command
+def update_aliases(args):
+    '''Update the image aliase list.'''
+    loop = asyncio.get_event_loop()
+    config_server = ConfigServer(args.etcd_addr, args.namespace)
+    try:
+        if not args.file:
+            log.error('Please specify the file path using "-f" option.')
+            return
+        loop.run_until_complete(
+            config_server.update_aliases_from_file(args.file))
+    finally:
+        loop.close()
+
+
+update_aliases.add_argument('-f', '--file', type=Path, metavar='PATH',
+                            help='A config file to use.')
+_add_common_args(update_aliases)

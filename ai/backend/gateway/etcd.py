@@ -47,6 +47,20 @@ class ConfigServer:
                  '{0},{1}'.format(*image['resources']['gpu'])])
         log.info('Done.')
 
+    async def update_aliases_from_file(self, file: Path):
+        log.info(f'Updating image aliases from "{file}"')
+        try:
+            data = yaml.load(open(file, 'rb'))
+        except IOError:
+            log.error(f'Cannot open "{file}".')
+            return
+        for item in data['aliases']:
+            alias = item[0]
+            target = item[1]
+            await self.etcd.put(f'images/_alias/{alias}', target)
+            print(f'{alias} -> {target}')
+        log.info('Done.')
+
     async def update_kernel_images_from_registry(self, registry_addr):
         log.info(f'Scanning kernel image versions from "{registry_addr}"')
         # TODO: a method to scan docker hub and update kernel image versions
@@ -54,7 +68,7 @@ class ConfigServer:
         raise NotImplementedError
 
     async def get_image_resource_range(self, name):
-        installed = self.etcd.get(f'images/{name}')
+        installed = await self.etcd.get(f'images/{name}')
         if installed is None:
             raise RuntimeError('Image metadata is not available!')
         cpu = await self.etcd.get(f'images/{name}/cpu')
@@ -67,6 +81,15 @@ class ConfigServer:
             'mem': tuple(map(int, mem.split(','))),
             'gpu': tuple(map(int, gpu.split(','))),
         }
+
+    async def resolve_alias(self, name):
+        orig_name = await self.etcd.get(f'images/_aliases/{name}')
+        if orig_name is None:
+            return None
+        installed = await self.etcd.get(f'images/{orig_name}')
+        if installed is None:
+            return None
+        return orig_name
 
 
 async def init(app):

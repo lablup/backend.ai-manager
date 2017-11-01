@@ -82,6 +82,11 @@ class InstanceNotFound(web.HTTPNotFound, BackendError):
     error_title = 'No such instance.'
 
 
+class ImageNotFound(web.HTTPNotFound, BackendError):
+    error_type  = 'https://api.backend.ai/probs/image-not-found'
+    error_title = 'No such environment image.'
+
+
 class KernelNotFound(web.HTTPNotFound, BackendError):
     error_type  = 'https://api.backend.ai/probs/kernel-not-found'
     error_title = 'No such kernel.'

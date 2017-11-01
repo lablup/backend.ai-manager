@@ -14,7 +14,8 @@ import zmq
 
 from ..gateway.exceptions import (
     BackendError,
-    InstanceNotAvailable, InstanceNotFound, KernelNotFound,
+    InstanceNotAvailable, InstanceNotFound,
+    ImageNotFound, KernelNotFound,
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
     AgentError)
@@ -313,19 +314,22 @@ class InstanceRegistry:
         assert kern is not None
         return kern, created
 
-    async def get_kernel_slot(self, lang):
-        data = await self.config_server.get_image_resource_range(lang)
-        # Use the minimum values of the resource range
-        return ResourceSlot(
-            None, data['cpu'][0], data['mem'][0], data['gpu'][0]
-        )
-
     async def create_kernel(self, sess_id, lang, owner_access_key,
                             limits=None, mounts=None, conn=None):
         agent_id = None
         limits = limits or {}
         mounts = mounts or []
-        required_slot = await self.get_kernel_slot(lang)
+        lang = await self.config_server.resolve_alias(lang)
+        if lang is None:
+            raise ImageNotFound('Unregistered image or unknown alias.')
+        resource_data = await self.config_server.get_image_resource_range(lang)
+        # Use the minimum values of the resource range
+        required_slot = ResourceSlot(
+            None,
+            resource_data['cpu'][0],
+            resource_data['mem'][0],
+            resource_data['gpu'][0],
+        )
         created_info = None
 
         async with reenter_txn(self.dbpool, conn) as conn:
