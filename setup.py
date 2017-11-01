@@ -20,6 +20,7 @@ requires = [
     'psycopg2~=2.7.0',
     'python-dateutil>=2.5',
     'pytz',
+    'PyYAML',
     'pyzmq>=16.0',
     'simplejson',
     'SQLAlchemy~=1.1.14',
@@ -60,7 +61,8 @@ setup(
     license='LGPLv3',
     classifiers=[
         'Development Status :: 4 - Beta',
-        'License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)',
+        'License :: OSI Approved :: ' +
+            'GNU Lesser General Public License v3 or later (LGPLv3+)',
         'Intended Audience :: Developers',
         'Programming Language :: Python',
         'Programming Language :: Python :: 3',

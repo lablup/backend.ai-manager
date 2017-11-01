@@ -1,0 +1,175 @@
+images:
+  - name: python3
+    tags:
+      - ["latest", ""]
+      - ["3.6",    ""]
+    resources: &def_res
+      # min-max, min is used as default.
+      cpu: [1, 4]
+      mem: [1, 32]  # 256 MiB - 8 GiB
+      gpu: [0, 0]
+  - name: python3-tensorflow
+    tags:
+      - ["latest", ""]
+      - ["tf1.4",  ""]
+      - ["tf1.3",  ""]
+      - ["tf1.2",  ""]
+      - ["tf1.1",  ""]
+      - ["tf1.0",  ""]
+    resources: &dl_res
+      cpu: [4, 8]
+      mem: [32, 64]  # 8 GiB - 16 GiB
+      gpu: [0, 0]
+  - name: python3-tensorflow-gpu
+    tags:
+      - ["latest", ""]
+      - ["tf1.4",  ""]
+      - ["tf1.3",  ""]
+      - ["tf1.2",  ""]
+      - ["tf1.1",  ""]
+      - ["tf1.0",  ""]
+    resources:
+      <<: *dl_res
+      gpu: [1, 1]
+  - name: python3-caffe
+    tags:
+      - ["latest", ""]
+      - ["2",      ""]
+    resources:
+      <<: *dl_res
+      gpu: [0, 0]
+  - name: python3-caffe-gpu
+    tags:
+      - ["latest", ""]
+      - ["2",      ""]
+    resources:
+      <<: *dl_res
+      gpu: [1, 1]
+  - name: python3-torch
+    tags:
+      - ["latest", ""]
+      - ["0.2",    ""]
+    resources:
+      <<: *dl_res
+      gpu: [0, 0]
+  - name: python3-torch-gpu
+    tags:
+      - ["latest", ""]
+      - ["0.2",    ""]
+    resources:
+      <<: *dl_res
+      gpu: [1, 1]
+  # - name: lua-torch
+  #   tags:
+  #     - ["latest", ""]
+  #   resources:
+  #     <<: *dl_res
+  #     gpu: [0, 0]
+  # - name: lua-torch-gpu
+  #   tags:
+  #     - ["latest", ""]
+  #   resources:
+  #     <<: *dl_res
+  #     gpu: [1, 1]
+  - name: julia
+    tags:
+      - ["latest", ""]
+      - ["0.6",    ""]
+    resources:
+      <<: *dl_res
+      gpu: [0, 0]
+  # - name: julia-gpu
+  #   tags:
+  #     - ["latest", ""]
+  #     - ["0.6",    ""]
+  #   resources:
+  #     <<: *dl_res
+  #     gpu: [1, 1]
+  - name: r
+    tags:
+      - ["latest",  ""]  # original
+      - ["3.4",     ""]  # original
+      - ["mso-latest", ""]  # Microsoft R Open
+      - ["mso-3.4",    ""]  # Microsoft R Open
+    resources:
+      <<: *dl_res
+      gpu: [0, 0]
+  # - name: r-gpu
+  #   tags:
+  #     - ["latest",  ""]  # original
+  #     - ["3.4",     ""]  # original
+  #     - ["mso-latest", ""]  # Microsoft R Open
+  #     - ["mso-3.4",    ""]  # Microsoft R Open
+  #   resources:
+  #     <<: *dl_res
+  #     gpu: [1, 1]
+  - name: octave
+    tags:
+      - ["latest", ""]
+      - ["4.2",    ""]
+    resources:
+      <<: *dl_res
+      gpu: [0, 0]
+  - name: c
+    tags:
+      - ["latest", "b9279e3d3e50"]
+      - ["11"    , "b9279e3d3e50"]
+    resources:
+      <<: *def_res
+  - name: cpp
+    tags:
+      - ["latest", "e49a54194361"]
+      - ["14",     "e49a54194361"]
+    resources:
+      <<: *def_res
+  - name: go
+    tags:
+      - ["latest", "25f2349c4ee0"]
+      - ["1.9",    "25f2349c4ee0"]
+    resources:
+      <<: *def_res
+  - name: nodejs
+    tags:
+      - ["latest", ""]
+      - ["7",      ""]
+      - ["6",      ""]
+    resources:
+      <<: *def_res
+  - name: lua
+    tags:
+      - ["latest", ""]
+      - ["5.2",    ""]
+      - ["5.1",    ""]
+    resources:
+      <<: *def_res
+  - name: java
+    tags:
+      - ["latest", ""]
+      - ["8",      ""]
+      - ["7",      ""]
+    resources:
+      <<: *def_res
+      mem: [4, 16]
+  - name: php
+    tags:
+      - ["latest", ""]
+      - ["7",      ""]
+    resources:
+      <<: *def_res
+  - name: rust
+    tags:
+      - ["latest", ""]
+      - ["1.21",   ""]
+    resources:
+      <<: *def_res
+  - name: git
+    tags:
+      - ["latest", ""]
+    resources:
+      <<: *def_res
+  - name: haskell
+    tags:
+      - ["latest", ""]
+      - ["8",      ""]
+    resources:
+      <<: *def_res

@@ -180,8 +180,7 @@ async def server_main(loop, pidx, _args):
     app['shared_states'] = _args[1]
     app['pidx'] = pidx
 
-    if pidx == 0:
-        await etcd_init(app)
+    await etcd_init(app)
     await event_init(app)
     await gw_init(app)
     await auth_init(app)
@@ -213,8 +212,7 @@ async def server_main(loop, pidx, _args):
         await auth_shutdown(app)
         await gw_shutdown(app)
         await event_shutdown(app)
-        if pidx == 0:
-            await etcd_shutdown(app)
+        await etcd_shutdown(app)
 
         await app.shutdown()
         await web_handler.finish_connections(60.0)

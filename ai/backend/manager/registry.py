@@ -81,8 +81,9 @@ class InstanceRegistry:
     policy, such as the limitation of maximum number of kernels per instance.
     '''
 
-    def __init__(self, dbpool, redis_stat_pool, loop=None):
+    def __init__(self, config_server, dbpool, redis_stat_pool, loop=None):
         self.loop = loop if loop is not None else asyncio.get_event_loop()
+        self.config_server = config_server
         self.dbpool = dbpool
         self.redis_stat_pool = redis_stat_pool
 
@@ -312,10 +313,11 @@ class InstanceRegistry:
         assert kern is not None
         return kern, created
 
-    def get_kernel_slot(self, lang):
-        # TODO: implement
+    async def get_kernel_slot(self, lang):
+        data = await self.config_server.get_image_resource_range(lang)
+        # Use the minimum values of the resource range
         return ResourceSlot(
-            None, 1, 1, 0
+            None, data['cpu'][0], data['mem'][0], data['gpu'][0]
         )
 
     async def create_kernel(self, sess_id, lang, owner_access_key,
@@ -323,7 +325,7 @@ class InstanceRegistry:
         agent_id = None
         limits = limits or {}
         mounts = mounts or []
-        required_slot = self.get_kernel_slot(lang)
+        required_slot = await self.get_kernel_slot(lang)
         created_info = None
 
         async with reenter_txn(self.dbpool, conn) as conn:
