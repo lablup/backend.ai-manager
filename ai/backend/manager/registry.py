@@ -48,7 +48,7 @@ async def RPCContext(addr, timeout=10):
         server.transport.setsockopt(zmq.LINGER, 50)
         with _timeout(timeout):
             yield server
-    except:
+    except Exception:
         exc_type, exc, tb = sys.exc_info()
         if issubclass(exc_type, GenericError):
             e = AgentError(exc.args[0], exc.args[1])
@@ -403,11 +403,16 @@ class InstanceRegistry:
             result = await conn.execute(query)
             assert result.rowcount == 1
 
+            limits['mem_slot'] = required_slot.mem
+            limits['cpu_slot'] = required_slot.cpu
+            limits['gpu_slot'] = required_slot.gpu
+
             async with self.handle_kernel_exception('create_kernel', sess_id):
                 async with RPCContext(agent_addr, 3) as rpc:
                     config = {
                         'lang': lang,
-                        # TODO: apply limits/mounts/vfolders
+                        'limits': limits,
+                        'mounts': mounts,
                     }
                     created_info = await rpc.call.create_kernel(str(kernel_id),
                                                                 config)
@@ -455,13 +460,22 @@ class InstanceRegistry:
             kernel = await self.get_kernel_session(sess_id, extra_cols)
             await self.set_kernel_status(sess_id, KernelStatus.RESTARTING)
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
-                prev_config = {
+                # TODO: read from vfolders attachment table
+                mounts = []
+                limits = {
+                    'cpu_slot': kernel['cpu_slot'],
+                    'gpu_slot': kernel['gpu_slot'],
+                    'mem_slot': kernel['mem_slot'],
+                }
+                new_config = {
                     'lang': kernel['lang'],
+                    'mounts': mounts,
+                    'limits': limits,
                     'cpu_set': kernel['cpu_set'],
                     'gpu_set': kernel['gpu_set'],
                 }
                 kernel_info = await rpc.call.restart_kernel(str(kernel['id']),
-                                                            prev_config)
+                                                            new_config)
             # TODO: what if prev status was "building" or others?
             await self.set_kernel_status(sess_id, KernelStatus.RUNNING,
                                          container_id=kernel_info['container_id'],

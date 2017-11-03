@@ -85,7 +85,7 @@ class ConfigServer:
     async def resolve_alias(self, name):
         orig_name = await self.etcd.get(f'images/_aliases/{name}')
         if orig_name is None:
-            return None
+            orig_name = name  # try the given one as-is
         installed = await self.etcd.get(f'images/{orig_name}')
         if installed is None:
             return None
