@@ -75,6 +75,8 @@ setup(
     ],
     packages=[
         'ai.backend.manager',
+        'ai.backend.manager.models',
+        'ai.backend.manager.cli',
         'ai.backend.gateway',
     ],
     python_requires='>=3.6',
