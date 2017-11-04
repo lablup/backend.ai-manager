@@ -654,7 +654,7 @@ class InstanceRegistry:
             }
             async with self.redis_stat_pool.get() as rs:
                 kern_stat = await rs.hgetall(kernel_id)
-                if kern_stat is not None:
+                if kern_stat is not None and 'cpu_used' in kern_stat:
                     kern_data.update({
                         'cpu_used': int(float(kern_stat['cpu_used'])),
                         'mem_max_bytes': int(kern_stat['mem_max_bytes']),
