@@ -9,9 +9,9 @@ images:
       - ["3.6-debian", "ca7b9f52b6c2"]
       # TODO: update kernel runner for ["2.7-debian", ""]
     slots: &default
-      - cpu: 1    # cores
-      - mem: 1.0  # GiB
-      - gpu: 0    # fraction of GPU device
+      cpu: 1    # cores
+      mem: 1.0  # GiB
+      gpu: 0    # fraction of GPU device
   - name: python-tensorflow
     syntax: python
     tags:
@@ -22,9 +22,9 @@ images:
       - ["1.4-py36-dense",     "96cd362cac2a"]
       - ["1.4-py36-dense-gpu", "c5f63f2e5320"]
     slots: &for_computing
-      - cpu: 4     # cores
-      - mem: 8.0   # GiB
-      - gpu: 0.32  # fraction of GPU device
+      cpu: 4     # cores
+      mem: 8.0   # GiB
+      gpu: 0.32  # fraction of GPU device
       # NOTE: gpu slot is only used for the images tagged with "-gpu".
   - name: python-caffe
     syntax: python
