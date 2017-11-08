@@ -215,7 +215,6 @@ async def server_main(loop, pidx, _args):
         await etcd_shutdown(app)
 
         await app.shutdown()
-        await web_handler.finish_connections(60.0)
         await app.cleanup()
 
 
