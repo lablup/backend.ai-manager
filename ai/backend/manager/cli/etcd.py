@@ -27,7 +27,7 @@ def etcd(args):
 
 
 @etcd.register_command
-def update_kernels(args):
+def update_images(args):
     '''Update the latest version of kernels (Docker images)
     that Backend.AI agents will use.'''
     loop = asyncio.get_event_loop()
@@ -45,14 +45,14 @@ def update_kernels(args):
         loop.close()
 
 
-update_kernels.add_argument('-f', '--file', type=Path, metavar='PATH',
-                            help='A config file to use.')
-update_kernels.add_argument('--scan-registry', default=False, action='store_true',
-                            help='Scan the Docker hub to get the latest versinos.')
-update_kernels.add_argument('--docker-registry', env_var='BACKEND_DOCKER_REGISTRY',
-                            type=str, metavar='URL', default=None,
-                            help='The address of Docker registry server.')
-_add_common_args(update_kernels)
+update_images.add_argument('-f', '--file', type=Path, metavar='PATH',
+                           help='A config file to use.')
+update_images.add_argument('--scan-registry', default=False, action='store_true',
+                           help='Scan the Docker hub to get the latest versinos.')
+update_images.add_argument('--docker-registry', env_var='BACKEND_DOCKER_REGISTRY',
+                           type=str, metavar='URL', default=None,
+                           help='The address of Docker registry server.')
+_add_common_args(update_images)
 
 
 @etcd.register_command
