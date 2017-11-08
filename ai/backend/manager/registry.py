@@ -15,7 +15,7 @@ import zmq
 from ..gateway.exceptions import (
     BackendError,
     InstanceNotAvailable, InstanceNotFound,
-    ImageNotFound, KernelNotFound,
+    KernelNotFound,
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
     AgentError)
@@ -319,10 +319,9 @@ class InstanceRegistry:
         agent_id = None
         limits = limits or {}
         mounts = mounts or []
-        lang = await self.config_server.resolve_alias(lang)
-        if lang is None:
-            raise ImageNotFound('Unregistered image or unknown alias.')
-        resource_data = await self.config_server.get_image_resource_range(lang)
+        name, tag = await self.config_server.resolve_image_name(lang)
+        booking = await self.config_server.get_image_required_slots(name, tag)
+        lang = f'{name}:{tag}'
         # Use the minimum values of the resource range
         required_slot = ResourceSlot(
             None,
@@ -355,7 +354,7 @@ class InstanceRegistry:
 
             # load-balance
             if avail_slots:
-                agent_id = (max(avail_slots, key=lambda s: s.mem + s.cpu + s.gpu)).id
+                agent_id = (max(avail_slots, key=lambda s: (s.gpu, s.mem, s.cpu))).id
             else:
                 raise InstanceNotAvailable
 
@@ -574,13 +573,17 @@ class InstanceRegistry:
             if prev_status is None:
                 # new agent detected!
                 log.info(f'agent {agent_id} joined!')
+                ob_factors = await self.config_server.get_overbook_factors()
+                mem_slots = int(agent_info['mem_slots'] * ob_factors['mem'])
+                cpu_slots = int(agent_info['cpu_slots'] * ob_factors['cpu'])
+                gpu_slots = int(agent_info['gpu_slots'] * ob_factors['gpu'])
                 query = agents.insert().values({
                     'id': agent_id,
                     'status': AgentStatus.ALIVE,
                     'region': agent_info['region'],
-                    'mem_slots': agent_info['mem_slots'],
-                    'cpu_slots': agent_info['cpu_slots'],
-                    'gpu_slots': agent_info['gpu_slots'],
+                    'mem_slots': mem_slots,
+                    'cpu_slots': cpu_slots,
+                    'gpu_slots': gpu_slots,
                     'used_mem_slots': 0,
                     'used_cpu_slots': 0,
                     'used_gpu_slots': 0,
@@ -594,10 +597,17 @@ class InstanceRegistry:
                 pass
             elif prev_status in (AgentStatus.LOST, AgentStatus.TERMINATED):
                 log.warning(f'agent {agent_id} revived!')
+                ob_factors = await self.config_server.get_overbook_factors()
+                mem_slots = int(agent_info['mem_slots'] * ob_factors['mem'])
+                cpu_slots = int(agent_info['cpu_slots'] * ob_factors['cpu'])
+                gpu_slots = int(agent_info['gpu_slots'] * ob_factors['gpu'])
                 query = (sa.update(agents)
                            .values({
                                'status': AgentStatus.ALIVE,
                                'lost_at': None,
+                               'mem_slots': mem_slots,
+                               'cpu_slots': cpu_slots,
+                               'gpu_slots': gpu_slots,
                            })
                            .where(agents.c.id == agent_id))
                 await conn.execute(query)

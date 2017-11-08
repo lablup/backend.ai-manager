@@ -1,8 +1,11 @@
 import logging
 from pathlib import Path
 
+import aiotools
 import yaml
+
 from ai.backend.common.identity import get_instance_id, get_instance_ip
+from .exceptions import ImageNotFound
 
 log = logging.getLogger('ai.backend.gateway.etcd')
 
@@ -35,16 +38,32 @@ class ConfigServer:
         for image in data['images']:
             name = image['name']
             print(f"Updating {name}")
-            # TODO: image['tags'] -> (name, hash)
+
+            tags = {tag: hash for tag, hash in image['tags']}
+            for tag, hash in tags.items():
+                assert hash
+                if hash.startswith(':'):
+                    tags[tag] = tags[hash[1:]]
+
+            cpu_count = image['slots']['cpu']
+            mem_mbytes = int(image['slots']['mem'] * 1024)
+            gpu_fraction = image['slots']['gpu']
             await self.etcd.put_multi(
                 [f'images/{name}',
                  f'images/{name}/cpu',
                  f'images/{name}/mem',
                  f'images/{name}/gpu'],
-                ['installed',
-                 '{0},{1}'.format(*image['resources']['cpu']),
-                 '{0},{1}'.format(*image['resources']['mem']),
-                 '{0},{1}'.format(*image['resources']['gpu'])])
+                ['1',
+                 '{0:d}'.format(cpu_count),
+                 '{0:d}'.format(mem_mbytes),
+                 '{0:.2f}'.format(gpu_fraction)])
+
+            ks = []
+            vs = []
+            for tag, hash in tags.items():
+                ks.append(f'images/{name}/tags/{tag}')
+                vs.append(hash)
+            await self.etcd.put_multi(ks, vs)
         log.info('Done.')
 
     async def update_aliases_from_file(self, file: Path):
@@ -67,29 +86,60 @@ class ConfigServer:
         # TODO: a cli command to execute the above method
         raise NotImplementedError
 
-    async def get_image_resource_range(self, name):
+    @aiotools.lru_cache(maxsize=1)
+    async def get_overbook_factors(self):
+        '''
+        Retrieves the overbook parameters which is used to
+        scale the resource slot values reported by the agent
+        to increase server utilization.
+
+        TIP: If your users run mostly compute-intesive sessions,
+        lower these values towards 1.0.
+        '''
+
+        cpu = await self.etcd.get('config/overbook/cpu')
+        cpu = 6.0 if cpu is None else float(cpu)
+        mem = await self.etcd.get('config/overbook/mem')
+        mem = 2.0 if mem is None else float(mem)
+        gpu = await self.etcd.get('config/overbook/gpu')
+        gpu = 1.0 if gpu is None else float(gpu)
+        return {
+            'mem': mem,
+            'cpu': cpu,
+            'gpu': gpu,
+        }
+
+    @aiotools.lru_cache()
+    async def get_image_required_slots(self, name, tag):
         installed = await self.etcd.get(f'images/{name}')
         if installed is None:
             raise RuntimeError('Image metadata is not available!')
-        cpu = await self.etcd.get(f'images/{name}/cpu')
         mem = await self.etcd.get(f'images/{name}/mem')
-        gpu = await self.etcd.get(f'images/{name}/gpu')
-        log.warning(f'name: {name}')
-        log.warning(f'resource: {cpu}, {mem}, {gpu}')
+        cpu = await self.etcd.get(f'images/{name}/cpu')
+        if 'gpu' in tag:
+            gpu = await self.etcd.get(f'images/{name}/gpu')
+        else:
+            gpu = 0
         return {
-            'cpu': tuple(map(int, cpu.split(','))),
-            'mem': tuple(map(int, mem.split(','))),
-            'gpu': tuple(map(int, gpu.split(','))),
+            'mem': int(mem),
+            'cpu': int(cpu),
+            'gpu': int(gpu),
         }
 
-    async def resolve_alias(self, name):
+    @aiotools.lru_cache()
+    async def resolve_image_name(self, name):
         orig_name = await self.etcd.get(f'images/_aliases/{name}')
         if orig_name is None:
             orig_name = name  # try the given one as-is
-        installed = await self.etcd.get(f'images/{orig_name}')
-        if installed is None:
-            return None
-        return orig_name
+        name, _, tag = orig_name.partition(':')
+        if not tag:
+            tag = 'latest'
+        hash = await self.etcd.get(f'images/{name}/tags/{tag}')
+        if hash is None:
+            raise ImageNotFound('Unregistered image or unknown alias.')
+        return name, tag
+
+    # TODO: invalidate config cache when etcd content is updated
 
 
 async def init(app):
