@@ -57,7 +57,7 @@ class ConfigServer:
         for item in data['aliases']:
             alias = item[0]
             target = item[1]
-            await self.etcd.put(f'images/_alias/{alias}', target)
+            await self.etcd.put(f'images/_aliases/{alias}', target)
             print(f'{alias} -> {target}')
         log.info('Done.')
 
