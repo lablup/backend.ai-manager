@@ -6,10 +6,10 @@ import ai.backend.manager
 requires = [
     'aioconsole>=0.1.3',
     'aiodataloader',
-    'aiohttp~=2.2.0',
+    'aiohttp~=2.3.0',
     'aiopg~=0.13.0',
     'aioredis~=0.3.3',
-    'aiotools>=0.4.5',
+    'aiotools>=0.5.0',
     'aiozmq>=0.7',
     'alembic~=0.9.2',
     'coloredlogs>=5.2',
