@@ -447,8 +447,11 @@ class InstanceRegistry:
         log.debug(f"destroy_kernel({sess_id})")
         async with self.handle_kernel_exception('destroy_kernel', sess_id,
                                                 set_error=True):
-            kernel = await self.get_kernel_session(sess_id)
-            await self.set_kernel_status(sess_id, KernelStatus.TERMINATING)
+            try:
+                kernel = await self.get_kernel_session(sess_id)
+                await self.set_kernel_status(sess_id, KernelStatus.TERMINATING)
+            except KernelNotFound:
+                return
             async with RPCContext(kernel['agent_addr'], 10) as rpc:
                 return await rpc.call.destroy_kernel(str(kernel['id']))
 
