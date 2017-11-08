@@ -1,175 +1,146 @@
 images:
-  - name: python3
+
+  - name: python
+    syntax: python
+    # The clients should use Python 3-compatibile syntax highlights
+    # and leave Python 2 only codes as legacy.
     tags:
-      - ["latest", ""]
-      - ["3.6",    ""]
-    resources: &def_res
-      # min-max, min is used as default.
-      cpu: [1, 4]
-      mem: [1, 32]  # 256 MiB - 8 GiB
-      gpu: [0, 0]
-  - name: python3-tensorflow
+      - ["latest",     ":3.6-debian"]
+      - ["3.6-debian", "ca7b9f52b6c2"]
+      # TODO: update kernel runner for ["2.7-debian", ""]
+    slots: &default
+      - cpu: 1    # cores
+      - mem: 1.0  # GiB
+      - gpu: 0    # fraction of GPU device
+  - name: python-tensorflow
+    syntax: python
     tags:
-      - ["latest", ""]
-      - ["tf1.4",  ""]
-      - ["tf1.3",  ""]
-      - ["tf1.2",  ""]
-      - ["tf1.1",  ""]
-      - ["tf1.0",  ""]
-    resources: &dl_res
-      cpu: [4, 8]
-      mem: [32, 64]  # 8 GiB - 16 GiB
-      gpu: [0, 0]
-  - name: python3-tensorflow-gpu
+      - ["latest",        ":1.4-py36-dense"]
+      - ["latest-gpu",    ":1.4-py36-dense-gpu"]
+      - ["1.3-py36-dense",     "3c1d4b4626af"]
+      - ["1.3-py36-dense-gpu", "a7b9070ef8a1"]
+      - ["1.4-py36-dense",     "96cd362cac2a"]
+      - ["1.4-py36-dense-gpu", "c5f63f2e5320"]
+    slots: &for_computing
+      - cpu: 4     # cores
+      - mem: 8.0   # GiB
+      - gpu: 0.32  # fraction of GPU device
+      # NOTE: gpu slot is only used for the images tagged with "-gpu".
+  - name: python-caffe
+    syntax: python
     tags:
-      - ["latest", ""]
-      - ["tf1.4",  ""]
-      - ["tf1.3",  ""]
-      - ["tf1.2",  ""]
-      - ["tf1.1",  ""]
-      - ["tf1.0",  ""]
-    resources:
-      <<: *dl_res
-      gpu: [1, 1]
-  - name: python3-caffe
+      - ["latest",   ":1.0-py36"]
+      - ["1.0-py36", "9c5384df6631"]
+    slots:
+      <<: *for_computing
+      gpu: 1.0  # requires a full GPU if used
+  - name: python-torch
+    syntax: python
     tags:
-      - ["latest", ""]
-      - ["2",      ""]
-    resources:
-      <<: *dl_res
-      gpu: [0, 0]
-  - name: python3-caffe-gpu
-    tags:
-      - ["latest", ""]
-      - ["2",      ""]
-    resources:
-      <<: *dl_res
-      gpu: [1, 1]
-  - name: python3-torch
-    tags:
-      - ["latest", ""]
-      - ["0.2",    ""]
-    resources:
-      <<: *dl_res
-      gpu: [0, 0]
-  - name: python3-torch-gpu
-    tags:
-      - ["latest", ""]
-      - ["0.2",    ""]
-    resources:
-      <<: *dl_res
-      gpu: [1, 1]
-  # - name: lua-torch
-  #   tags:
-  #     - ["latest", ""]
-  #   resources:
-  #     <<: *dl_res
-  #     gpu: [0, 0]
-  # - name: lua-torch-gpu
-  #   tags:
-  #     - ["latest", ""]
-  #   resources:
-  #     <<: *dl_res
-  #     gpu: [1, 1]
+      - ["latest",     ":0.2-py36"]
+      - ["latest-gpu", ":0.2-py36-gpu"]
+      - ["0.2-py36",     "bf6f0eb94d61"]
+      - ["0.2-py36-gpu", "92c4d8d7e2f4"]
+    slots:
+      <<: *for_computing
+      gpu: 1.0   # requires a full GPU if used
   - name: julia
+    syntax: julia
     tags:
-      - ["latest", ""]
-      - ["0.6",    ""]
-    resources:
-      <<: *dl_res
-      gpu: [0, 0]
-  # - name: julia-gpu
-  #   tags:
-  #     - ["latest", ""]
-  #     - ["0.6",    ""]
-  #   resources:
-  #     <<: *dl_res
-  #     gpu: [1, 1]
+      - ["latest",     ":0.6-debian"]
+      - ["0.6-debian", "d34a84a8b4f6"]
+    slots:
+      <<: *for_computing
+      gpu: 0
   - name: r
+    syntax: Rscript
     tags:
-      - ["latest",  ""]  # original
-      - ["3.4",     ""]  # original
-      - ["mso-latest", ""]  # Microsoft R Open
-      - ["mso-3.4",    ""]  # Microsoft R Open
-    resources:
-      <<: *dl_res
-      gpu: [0, 0]
-  # - name: r-gpu
-  #   tags:
-  #     - ["latest",  ""]  # original
-  #     - ["3.4",     ""]  # original
-  #     - ["mso-latest", ""]  # Microsoft R Open
-  #     - ["mso-3.4",    ""]  # Microsoft R Open
-  #   resources:
-  #     <<: *dl_res
-  #     gpu: [1, 1]
-  - name: octave
-    tags:
-      - ["latest", ""]
-      - ["4.2",    ""]
-    resources:
-      <<: *dl_res
-      gpu: [0, 0]
+      - ["latest",     ":3.3-alpine"]
+      - ["3.3-alpine", "fbba576ece80"]
+      #- ["mso-latest", ""]  # Microsoft R Open
+      #- ["mso-3.3",    ""]  # Microsoft R Open
+    slots:
+      <<: *for_computing
+      gpu: 0
+  # TODO: upgrade octave kernel
+  #- name: octave
+  #  syntax: octave
+  #  tags:
+  #    - ["latest", ""]
+  #    - ["4.2",    ""]
+  #  slots:
+  #    <<: *for_computing
+  #    gpu: 0
   - name: c
+    syntax: c
     tags:
-      - ["latest", "b9279e3d3e50"]
-      - ["11"    , "b9279e3d3e50"]
-    resources:
-      <<: *def_res
+      - ["latest",        ":gcc6.3-alpine"]
+      - ["gcc6.3-alpine", "0e251dfb5109"]
+    slots:
+      <<: *default
   - name: cpp
+    syntax: cpp
     tags:
-      - ["latest", "e49a54194361"]
-      - ["14",     "e49a54194361"]
-    resources:
-      <<: *def_res
+      - ["latest",        ":gcc6.3-alpine"]
+      - ["gcc6.3-alpine", "a5b52501b789"]
+    slots:
+      <<: *default
   - name: go
+    syntax: go
     tags:
-      - ["latest", "25f2349c4ee0"]
-      - ["1.9",    "25f2349c4ee0"]
-    resources:
-      <<: *def_res
+      - ["latest",     ":1.9-alpine"]
+      - ["1.9-alpine", "6664d2b3b5f1"]
+      - ["1.8-alpine", "d393feb13893"]
+    slots:
+      <<: *default
   - name: nodejs
+    syntax: javascript
     tags:
-      - ["latest", ""]
-      - ["7",      ""]
-      - ["6",      ""]
-    resources:
-      <<: *def_res
+      - ["latest",   ":6-alpine"]
+      - ["6-alpine", "2c75ac2a5827"]
+    slots:
+      <<: *default
   - name: lua
+    syntax: lua
     tags:
-      - ["latest", ""]
-      - ["5.2",    ""]
-      - ["5.1",    ""]
-    resources:
-      <<: *def_res
+      - ["latest",     ":5.3-alpine"]
+      - ["5.3-alpine", "d8ce75e16033"]
+      - ["5.2-alpine", "c2f0636a5871"]
+      - ["5.1-alpine", "ddbf74c59174"]
+    slots:
+      <<: *default
   - name: java
+    syntax: java
     tags:
-      - ["latest", ""]
-      - ["8",      ""]
-      - ["7",      ""]
-    resources:
-      <<: *def_res
-      mem: [4, 16]
+      - ["latest",   ":8-alpine"]
+      - ["8-alpine", "940ad16f3414"]
+    slots:
+      <<: *default
   - name: php
+    syntax: php
     tags:
-      - ["latest", ""]
-      - ["7",      ""]
-    resources:
-      <<: *def_res
+      - ["latest",   ":7-alpine"]
+      - ["7-alpine", "a4cba6081d0d"]
+    slots:
+      <<: *default
   - name: rust
+    syntax: rust
     tags:
-      - ["latest", ""]
-      - ["1.21",   ""]
-    resources:
-      <<: *def_res
+      - ["latest",      ":1.17-alpine"]
+      - ["1.17-alpine", "65ab5eaba5ff"]
+    slots:
+      <<: *default
   - name: git
+    syntax: shell
     tags:
-      - ["latest", ""]
-    resources:
-      <<: *def_res
+      - ["latest", ":alpine"]
+      - ["alpine", "7a9b00c893f4"]
+    slots:
+      <<: *default
   - name: haskell
+    syntax: haskell
     tags:
-      - ["latest", ""]
-      - ["8",      ""]
-    resources:
-      <<: *def_res
+      - ["latest",        ":ghc8.2-debian"]
+      - ["ghc8.2-debian", "b376929b9af7"]
+    slots:
+      <<: *default
