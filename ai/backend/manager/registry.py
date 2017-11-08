@@ -326,9 +326,9 @@ class InstanceRegistry:
         # Use the minimum values of the resource range
         required_slot = ResourceSlot(
             None,
-            resource_data['cpu'][0],
-            resource_data['mem'][0],
-            resource_data['gpu'][0],
+            booking['mem'],
+            booking['cpu'],
+            booking['gpu'],
         )
         created_info = None
 
