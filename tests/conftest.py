@@ -139,5 +139,4 @@ async def create_app_and_client(event_loop, unused_port):
     server.close()
     await server.wait_closed()
     await app.shutdown()
-    await handler.finish_connections()
     await app.cleanup()
