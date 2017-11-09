@@ -565,24 +565,29 @@ class InstanceRegistry:
     async def handle_heartbeat(self, agent_id, agent_info):
         async with self.dbpool.acquire() as conn:
             # TODO: check why sa.column('status') does not work
-            query = (sa.select([agents.c.status], for_update=True)
+            query = (sa.select([agents.c.status,
+                                agents.c.mem_slots,
+                                agents.c.cpu_slots,
+                                agents.c.gpu_slots],
+                               for_update=True)
                        .select_from(agents)
                        .where(agents.c.id == agent_id))
-            prev_status = await conn.scalar(query)
-            if prev_status is None:
+            result = await conn.execute(query)
+            row = await result.first()
+            ob_factors = await self.config_server.get_overbook_factors()
+            reported_mem_slots = int(agent_info['mem_slots'] * ob_factors['mem'])
+            reported_cpu_slots = int(agent_info['cpu_slots'] * ob_factors['cpu'])
+            reported_gpu_slots = int(agent_info['gpu_slots'] * ob_factors['gpu'])
+            if row.status is None:
                 # new agent detected!
                 log.info(f'agent {agent_id} joined!')
-                ob_factors = await self.config_server.get_overbook_factors()
-                mem_slots = int(agent_info['mem_slots'] * ob_factors['mem'])
-                cpu_slots = int(agent_info['cpu_slots'] * ob_factors['cpu'])
-                gpu_slots = int(agent_info['gpu_slots'] * ob_factors['gpu'])
                 query = agents.insert().values({
                     'id': agent_id,
                     'status': AgentStatus.ALIVE,
                     'region': agent_info['region'],
-                    'mem_slots': mem_slots,
-                    'cpu_slots': cpu_slots,
-                    'gpu_slots': gpu_slots,
+                    'mem_slots': reported_mem_slots,
+                    'cpu_slots': reported_cpu_slots,
+                    'gpu_slots': reported_gpu_slots,
                     'used_mem_slots': 0,
                     'used_cpu_slots': 0,
                     'used_gpu_slots': 0,
@@ -592,26 +597,33 @@ class InstanceRegistry:
                 })
                 result = await conn.execute(query)
                 assert result.rowcount == 1
-            elif prev_status == AgentStatus.ALIVE:
-                pass
-            elif prev_status in (AgentStatus.LOST, AgentStatus.TERMINATED):
+            elif row.status == AgentStatus.ALIVE:
+                changed_cols = {}
+                if row.mem_slots != reported_mem_slots:
+                    changed_cols['mem_slots'] = reported_mem_slots
+                if row.cpu_slots != reported_cpu_slots:
+                    changed_cols['cpu_slots'] = reported_cpu_slots
+                if row.gpu_slots != reported_gpu_slots:
+                    changed_cols['gpu_slots'] = reported_gpu_slots
+                if changed_cols:
+                    query = (sa.update(agents)
+                               .values(changed_cols)
+                               .where(agents.c.id == agent_id))
+                    await conn.execute(query)
+            elif row.status in (AgentStatus.LOST, AgentStatus.TERMINATED):
                 log.warning(f'agent {agent_id} revived!')
-                ob_factors = await self.config_server.get_overbook_factors()
-                mem_slots = int(agent_info['mem_slots'] * ob_factors['mem'])
-                cpu_slots = int(agent_info['cpu_slots'] * ob_factors['cpu'])
-                gpu_slots = int(agent_info['gpu_slots'] * ob_factors['gpu'])
                 query = (sa.update(agents)
                            .values({
                                'status': AgentStatus.ALIVE,
                                'lost_at': None,
-                               'mem_slots': mem_slots,
-                               'cpu_slots': cpu_slots,
-                               'gpu_slots': gpu_slots,
+                               'mem_slots': reported_mem_slots,
+                               'cpu_slots': reported_cpu_slots,
+                               'gpu_slots': reported_gpu_slots,
                            })
                            .where(agents.c.id == agent_id))
                 await conn.execute(query)
             else:
-                log.error(f'should not reach here! {type(prev_status)}')
+                log.error(f'should not reach here! {type(row.status)}')
 
     async def mark_agent_terminated(self, agent_id, status, conn=None):
         # TODO: interpret kern_id to sess_id
