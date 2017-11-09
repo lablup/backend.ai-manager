@@ -324,10 +324,9 @@ class InstanceRegistry:
         lang = f'{name}:{tag}'
         # Use the minimum values of the resource range
         required_slot = ResourceSlot(
-            None,
-            booking['mem'],
-            booking['cpu'],
-            booking['gpu'],
+            mem=booking['mem'],
+            cpu=booking['cpu'],
+            gpu=booking['gpu'],
         )
         created_info = None
 
@@ -339,10 +338,10 @@ class InstanceRegistry:
                        .where(agents.c.status == AgentStatus.ALIVE))
             async for row in conn.execute(query):
                 sdiff = ResourceSlot(
-                    row['id'],
-                    row['mem_slots'] - row['used_mem_slots'],
-                    row['cpu_slots'] - row['used_cpu_slots'],
-                    row['gpu_slots'] - row['used_gpu_slots'],
+                    id=row['id'],
+                    mem=row['mem_slots'] - row['used_mem_slots'],
+                    cpu=row['cpu_slots'] - row['used_cpu_slots'],
+                    gpu=row['gpu_slots'] - row['used_gpu_slots'],
                 )
                 avail_slots.append(sdiff)
 

@@ -1,5 +1,6 @@
-from collections import namedtuple, OrderedDict
+from collections import OrderedDict
 import enum
+from typing import NamedTuple, Optional
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -12,7 +13,11 @@ __all__ = (
     'Agent',
 )
 
-ResourceSlot = namedtuple('ResourceSlot', 'id mem cpu gpu')
+class ResourceSlot(NamedTuple):
+    id: Optional[str] = None
+    mem: int = 0      # MiBytes
+    cpu: float = 0.0  # fraction of CPU cores
+    gpu: float = 0.0  # fraction of GPU devices
 
 
 class AgentStatus(enum.Enum):
@@ -29,13 +34,13 @@ agents = sa.Table(
               default=AgentStatus.ALIVE),
     sa.Column('region', sa.String(length=64), index=True, nullable=False),
 
-    sa.Column('mem_slots', sa.Integer(), nullable=False),  # in the unit of 256 MiB
-    sa.Column('cpu_slots', sa.Integer(), nullable=False),  # 2 * number of cores
-    sa.Column('gpu_slots', sa.Integer(), nullable=False),  # 2 * number of GPUs
+    sa.Column('mem_slots', sa.BigInteger(), nullable=False),  # MiBytes
+    sa.Column('cpu_slots', sa.Float(), nullable=False),  # number of CPU cores
+    sa.Column('gpu_slots', sa.Float(), nullable=False),  # number of GPU devices
 
-    sa.Column('used_mem_slots', sa.Integer(), nullable=False),
-    sa.Column('used_cpu_slots', sa.Integer(), nullable=False),
-    sa.Column('used_gpu_slots', sa.Integer(), nullable=False),
+    sa.Column('used_mem_slots', sa.BigInteger(), nullable=False),
+    sa.Column('used_cpu_slots', sa.Float(), nullable=False),
+    sa.Column('used_gpu_slots', sa.Float(), nullable=False),
 
     sa.Column('addr', sa.String(length=128), nullable=False),
     sa.Column('first_contact', sa.DateTime(timezone=True),
@@ -50,11 +55,11 @@ class Agent(graphene.ObjectType):
     status = graphene.String()
     region = graphene.String()
     mem_slots = graphene.Int()
-    cpu_slots = graphene.Int()
-    gpu_slots = graphene.Int()
+    cpu_slots = graphene.Float()
+    gpu_slots = graphene.Float()
     used_mem_slots = graphene.Int()
-    used_cpu_slots = graphene.Int()
-    used_gpu_slots = graphene.Int()
+    used_cpu_slots = graphene.Float()
+    used_gpu_slots = graphene.Float()
     addr = graphene.String()
     first_contact = GQLDateTime()
     lost_at = GQLDateTime()
