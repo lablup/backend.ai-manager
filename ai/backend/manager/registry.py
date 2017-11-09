@@ -573,7 +573,7 @@ class InstanceRegistry:
             reported_mem_slots = int(agent_info['mem_slots'] * ob_factors['mem'])
             reported_cpu_slots = int(agent_info['cpu_slots'] * ob_factors['cpu'])
             reported_gpu_slots = int(agent_info['gpu_slots'] * ob_factors['gpu'])
-            if row.status is None:
+            if row is None or row.status is None:
                 # new agent detected!
                 log.info(f'agent {agent_id} joined!')
                 query = agents.insert().values({
