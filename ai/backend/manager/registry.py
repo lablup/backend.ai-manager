@@ -630,7 +630,7 @@ class InstanceRegistry:
         # await app['registry'].forget_all_kernels_in_instance(agent_id)
         async with reenter_txn(self.dbpool, conn) as conn:
 
-            query = (sa.select([agents.c.status])
+            query = (sa.select([agents.c.status], for_update=True)
                        .select_from(agents)
                        .where(agents.c.id == agent_id))
             result = await conn.execute(query)
@@ -657,7 +657,7 @@ class InstanceRegistry:
         '''
         async with reenter_txn(self.dbpool, conn) as conn:
             # check if already terminated
-            query = (sa.select([kernels.c.status])
+            query = (sa.select([kernels.c.status], for_update=True)
                        .select_from(kernels)
                        .where(kernels.c.id == kernel_id))
             result = await conn.execute(query)
