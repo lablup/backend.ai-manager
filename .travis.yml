@@ -35,9 +35,7 @@ jobs:
     - stage: test
       install:
         - pip install -U pip setuptools
-        # TODO: remove line below after testing
-        - echo $TRAVIS_BRANCH
-        - if [[ $TRAVIS_BRANCH == 'feature'* ]]; then BRANCH='master'; else BRANCH=$TRAVIS_BRANCH; fi
+        - if [[ $TRAVIS_BRANCH == "develop" ]]; then BRANCH="develop"; else BRANCH="master"; fi
         - sed -i'' -e "s/{BRANCH}/$BRANCH/g" requirements-ci.txt
         - pip install -U -r requirements-ci.txt
       before_script:
