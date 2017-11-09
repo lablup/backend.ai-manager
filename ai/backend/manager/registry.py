@@ -721,8 +721,7 @@ class InstanceRegistry:
 
             # restore concurrency usage of the owner access-key
             query = (sa.select([sa.column('id'),
-                                sa.column('access_key')],
-                               for_update=True)
+                                sa.column('access_key')])
                        .select_from(kernels)
                        .where(kernels.c.sess_id == sess_id))
             result = await conn.execute(query)
