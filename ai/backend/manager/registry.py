@@ -319,16 +319,11 @@ class InstanceRegistry:
         agent_id = None
         limits = limits or {}
         mounts = mounts or []
-        name, tag = await self.config_server.resolve_image_name(lang)
-        booking = await self.config_server.get_image_required_slots(name, tag)
-        lang = f'{name}:{tag}'
-        # Use the minimum values of the resource range
-        required_slot = ResourceSlot(
-            mem=booking['mem'],
-            cpu=booking['cpu'],
-            gpu=booking['gpu'],
-        )
         created_info = None
+
+        name, tag = await self.config_server.resolve_image_name(lang)
+        required_slot = await self.config_server.get_image_required_slots(name, tag)
+        lang = f'{name}:{tag}'
 
         async with reenter_txn(self.dbpool, conn) as conn:
 

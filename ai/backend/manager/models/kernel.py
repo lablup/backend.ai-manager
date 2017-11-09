@@ -47,9 +47,9 @@ kernels = sa.Table(
     sa.Column('container_id', sa.String(length=64)),
     sa.Column('cpu_set', sa.ARRAY(sa.Integer)),
     sa.Column('gpu_set', sa.ARRAY(sa.Integer)),
-    sa.Column('mem_slot', sa.Integer(), nullable=False),
-    sa.Column('cpu_slot', sa.Integer(), nullable=False),
-    sa.Column('gpu_slot', sa.Integer(), nullable=False),
+    sa.Column('mem_slot', sa.BigInteger(), nullable=False),
+    sa.Column('cpu_slot', sa.Float(), nullable=False),
+    sa.Column('gpu_slot', sa.Float(), nullable=False),
 
     # Port mappings
     sa.Column('repl_in_port', sa.Integer(), nullable=False),
@@ -96,8 +96,8 @@ class SessionCommons:
     container_id = graphene.String()
 
     mem_slot = graphene.Int()
-    cpu_slot = graphene.Int()
-    gpu_slot = graphene.Int()
+    cpu_slot = graphene.Float()
+    gpu_slot = graphene.Float()
 
     num_queries = graphene.Int()
     cpu_used = graphene.Int()

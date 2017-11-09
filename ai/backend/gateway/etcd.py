@@ -5,6 +5,7 @@ import aiotools
 import yaml
 
 from ai.backend.common.identity import get_instance_id, get_instance_ip
+from ..manager.models.agent import ResourceSlot
 from .exceptions import ImageNotFound
 
 log = logging.getLogger('ai.backend.gateway.etcd')
@@ -120,11 +121,11 @@ class ConfigServer:
             gpu = await self.etcd.get(f'images/{name}/gpu')
         else:
             gpu = 0
-        return {
-            'mem': int(mem),
-            'cpu': int(cpu),
-            'gpu': int(gpu),
-        }
+        return ResourceSlot(
+            mem=int(mem),
+            cpu=float(cpu),
+            gpu=float(gpu),
+        )
 
     @aiotools.lru_cache()
     async def resolve_image_name(self, name):
