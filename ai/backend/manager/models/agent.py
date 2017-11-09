@@ -13,6 +13,7 @@ __all__ = (
     'Agent',
 )
 
+
 class ResourceSlot(NamedTuple):
     id: Optional[str] = None
     mem: int = 0      # MiBytes
