@@ -452,7 +452,14 @@ class InstanceRegistry:
         log.debug(f'restart_kernel({sess_id})')
         async with self.handle_kernel_exception('restart_kernel', sess_id,
                                                 set_error=True):
-            extra_cols = (kernels.c.lang, kernels.c.cpu_set, kernels.c.gpu_set)
+            extra_cols = (
+                kernels.c.lang,
+                kernels.c.mem_slot,
+                kernels.c.cpu_slot,
+                kernels.c.gpu_slot,
+                kernels.c.cpu_set,
+                kernels.c.gpu_set,
+            )
             kernel = await self.get_kernel_session(sess_id, extra_cols)
             await self.set_kernel_status(sess_id, KernelStatus.RESTARTING)
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
