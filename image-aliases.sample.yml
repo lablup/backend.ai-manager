@@ -122,5 +122,6 @@ aliases:
   - ['lua5.2',     'lua:5.2-alpine']
   - ['lua5.3',     'lua:5.3-alpine']
   - ['haskell',    'haskell:latest']
+  - ['git',        'git:latest']
   - ['git-shell',  'git:latest']
   - ['shell',      'git:latest']
