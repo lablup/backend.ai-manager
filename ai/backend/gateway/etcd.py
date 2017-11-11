@@ -128,16 +128,17 @@ class ConfigServer:
         )
 
     @aiotools.lru_cache()
-    async def resolve_image_name(self, name):
-        orig_name = await self.etcd.get(f'images/_aliases/{name}')
+    async def resolve_image_name(self, name_or_alias):
+        orig_name = await self.etcd.get(f'images/_aliases/{name_or_alias}')
         if orig_name is None:
-            orig_name = name  # try the given one as-is
+            orig_name = name_or_alias  # try the given one as-is
         name, _, tag = orig_name.partition(':')
         if not tag:
             tag = 'latest'
         hash = await self.etcd.get(f'images/{name}/tags/{tag}')
         if hash is None:
-            raise ImageNotFound('Unregistered image or unknown alias.')
+            raise ImageNotFound(f'{name_or_alias}: Unregistered image '
+                                'or unknown alias.')
         return name, tag
 
     # TODO: invalidate config cache when etcd content is updated
