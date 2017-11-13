@@ -1,6 +1,15 @@
 Changes
 =======
 
+1.0.2 (2017-11-14)
+------------------
+
+- Fix synchronization issues when restarting kernels
+
+- Fix missing database column errors when restarting streaming sessions
+
+- Fix a missing null check when registering new agents or updating existing ones
+
 1.0.1 (2017-11-08)
 ------------------
 
