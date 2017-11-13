@@ -479,15 +479,17 @@ class InstanceRegistry:
                 }
                 kernel_info = await rpc.call.restart_kernel(str(kernel['id']),
                                                             new_config)
-            # TODO: what if prev status was "building" or others?
-            await self.set_kernel_status(sess_id, KernelStatus.RUNNING,
-                                         container_id=kernel_info['container_id'],
-                                         cpu_set=list(kernel_info['cpu_set']),
-                                         gpu_set=list(kernel_info['gpu_set']),
-                                         repl_in_port=kernel_info['repl_in_port'],
-                                         repl_out_port=kernel_info['repl_out_port'],
-                                         stdin_port=kernel_info['stdin_port'],
-                                         stdout_port=kernel_info['stdout_port'])
+                # TODO: what if prev status was "building" or others?
+                await self.set_kernel_status(
+                    sess_id, KernelStatus.RUNNING,
+                    container_id=kernel_info['container_id'],
+                    cpu_set=list(kernel_info['cpu_set']),
+                    gpu_set=list(kernel_info['gpu_set']),
+                    repl_in_port=kernel_info['repl_in_port'],
+                    repl_out_port=kernel_info['repl_out_port'],
+                    stdin_port=kernel_info['stdin_port'],
+                    stdout_port=kernel_info['stdout_port'],
+                )
 
     async def execute(self, sess_id, api_version, run_id, mode, code, opts):
         log.debug(f'execute:v{api_version}({sess_id}, {mode})')
