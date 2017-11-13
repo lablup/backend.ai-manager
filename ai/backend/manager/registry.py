@@ -244,7 +244,8 @@ class InstanceRegistry:
                            .where((kernels.c.sess_id == sess_id) &
                                   (kernels.c.role == 'master') &
                                   (kernels.c.status.in_([KernelStatus.BUILDING,
-                                                         KernelStatus.RUNNING])) &
+                                                         KernelStatus.RUNNING,
+                                                         KernelStatus.RESTARTING])) &
                                   (agents.c.status == AgentStatus.ALIVE) &
                                   (agents.c.id == kernels.c.agent))
                            .limit(1).offset(0))
