@@ -448,10 +448,10 @@ async def upload_files(request):
 async def stream_pty(request):
     app = request.app
     sess_id = request.match_info['sess_id']
+    extra_fields = (kernels.c.stdin_port, kernels.c.stdout_port)
     try:
-        kernel = await app['registry'].get_kernel_session(sess_id, field=(
-            kernels.c.stdin_port, kernels.c.stdout_port
-        ))
+        kernel = await app['registry'].get_kernel_session(
+            sess_id, field=extra_fields)
     except KernelNotFound:
         raise
 
@@ -497,8 +497,8 @@ async def stream_pty(request):
                             # else.
                             app['stream_stdin_socks'][sess_id].remove(socks[0])
                             socks[1].close()
-                            kernel = \
-                                await app['registry'].get_kernel_session(sess_id)
+                            kernel = await app['registry'].get_kernel_session(
+                                sess_id, field=extra_fields)
                             stdin_sock, stdout_sock = await connect_streams(kernel)
                             socks[0] = stdin_sock
                             socks[1] = stdout_sock
@@ -522,6 +522,7 @@ async def stream_pty(request):
                             # Close existing zmq sockets and let stream
                             # handlers get a new one with changed stdin/stdout
                             # ports.
+                            log.warning('stream_stdin: restart requested')
                             if not socks[0].at_closing():
                                 await app['registry'].restart_kernel(sess_id)
                                 socks[0].close()
