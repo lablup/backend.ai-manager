@@ -522,7 +522,7 @@ async def stream_pty(request):
                             # Close existing zmq sockets and let stream
                             # handlers get a new one with changed stdin/stdout
                             # ports.
-                            log.warning('stream_stdin: restart requested')
+                            log.debug('stream_stdin: restart requested')
                             if not socks[0].at_closing():
                                 await app['registry'].restart_kernel(sess_id)
                                 socks[0].close()
