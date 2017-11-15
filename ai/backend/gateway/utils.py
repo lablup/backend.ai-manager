@@ -1,6 +1,7 @@
 from datetime import datetime
 import functools
 import io
+import numbers
 import re
 import traceback
 
@@ -15,6 +16,30 @@ def method_placeholder(orig_method):
     async def _handler(request):
         raise web.HTTPMethodNotAllowed(request.method, [orig_method])
     return _handler
+
+
+class _Infinity(numbers.Number):
+
+    def __lt__(self, o):
+        return False
+
+    def __le__(self, o):
+        return False
+
+    def __gt__(self, o):
+        return True
+
+    def __ge__(self, o):
+        return False
+
+    def __float__(self):
+        return float('inf')
+
+    def __int__(self):
+        return 1 << 64  # a practical 64-bit maximum
+
+numbers.Number.register(_Infinity)
+Infinity = _Infinity()
 
 
 def prettify_traceback(exc):

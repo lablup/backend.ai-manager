@@ -50,6 +50,7 @@ kernels = sa.Table(
     sa.Column('mem_slot', sa.BigInteger(), nullable=False),
     sa.Column('cpu_slot', sa.Float(), nullable=False),
     sa.Column('gpu_slot', sa.Float(), nullable=False),
+    sa.Column('environ', sa.ARRAY(sa.String), nullable=True),
 
     # Port mappings
     sa.Column('repl_in_port', sa.Integer(), nullable=False),

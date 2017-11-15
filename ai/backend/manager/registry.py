@@ -23,7 +23,7 @@ from .models import (
     agents, kernels, keypairs,
     ResourceSlot, AgentStatus, KernelStatus
 )
-from ..gateway.utils import catch_unexpected
+from ..gateway.utils import catch_unexpected, Infinity
 
 __all__ = ['InstanceRegistry', 'InstanceNotFound']
 
@@ -301,29 +301,50 @@ class InstanceRegistry:
             await conn.execute(query)
 
     @catch_unexpected(log)
-    async def get_or_create_kernel(self, client_sess_token, lang, owner_access_key,
-                                   limits=None, mounts=None, conn=None):
+    async def get_or_create_kernel(self, client_sess_token,
+                                   lang, owner_access_key,
+                                   creation_config,
+                                   conn=None):
         assert owner_access_key
         try:
             kern = await self.get_kernel_session(client_sess_token)
             created = False
         except KernelNotFound:
             kern = await self.create_kernel(
-                client_sess_token, lang, owner_access_key,
-                limits=limits, mounts=mounts, conn=conn)
+                client_sess_token,
+                lang, owner_access_key,
+                creation_config,
+                conn=conn)
             created = True
         assert kern is not None
         return kern, created
 
-    async def create_kernel(self, sess_id, lang, owner_access_key,
-                            limits=None, mounts=None, conn=None):
+    async def create_kernel(self, sess_id,
+                            lang, owner_access_key,
+                            creation_config,
+                            conn=None):
         agent_id = None
-        limits = limits or {}
-        mounts = mounts or []
         created_info = None
+        mounts = creation_config.get('mounts', [])
+        environ = creation_config.get('environ', {})
 
         name, tag = await self.config_server.resolve_image_name(lang)
         required_slot = await self.config_server.get_image_required_slots(name, tag)
+        required_slot = ResourceSlot(
+            id=None,
+            mem=min(
+                required_slot.mem,
+                int(creation_config.get('instanceMemory') or Infinity),
+            ),
+            cpu=min(
+                required_slot.cpu,
+                float(creation_config.get('instanceCores') or Infinity),
+            ),
+            gpu=min(
+                required_slot.gpu,
+                float(creation_config.get('instanceGPUs') or Infinity),
+            ),
+        )
         lang = f'{name}:{tag}'
 
         async with reenter_txn(self.dbpool, conn) as conn:
@@ -387,6 +408,7 @@ class InstanceRegistry:
                 'mem_slot': required_slot.mem,
                 'cpu_slot': required_slot.cpu,
                 'gpu_slot': required_slot.gpu,
+                'environ': [f'{k}={v}' for k, v in environ.items()],
                 'cpu_set': [],
                 'gpu_set': [],
                 'repl_in_port': 0,
@@ -397,16 +419,17 @@ class InstanceRegistry:
             result = await conn.execute(query)
             assert result.rowcount == 1
 
-            limits['mem_slot'] = required_slot.mem
-            limits['cpu_slot'] = required_slot.cpu
-            limits['gpu_slot'] = required_slot.gpu
-
             async with self.handle_kernel_exception('create_kernel', sess_id):
                 async with RPCContext(agent_addr, 3) as rpc:
                     config = {
                         'lang': lang,
-                        'limits': limits,
+                        'limits': {
+                            'mem_slot': required_slot.mem,
+                            'cpu_slot': required_slot.cpu,
+                            'gpu_slot': required_slot.gpu,
+                        },
                         'mounts': mounts,
+                        'environ': environ,
                     }
                     created_info = await rpc.call.create_kernel(str(kernel_id),
                                                                 config)
@@ -458,6 +481,7 @@ class InstanceRegistry:
                 kernels.c.mem_slot,
                 kernels.c.cpu_slot,
                 kernels.c.gpu_slot,
+                kernels.c.environ,
                 kernels.c.cpu_set,
                 kernels.c.gpu_set,
             )
@@ -471,10 +495,15 @@ class InstanceRegistry:
                     'gpu_slot': kernel['gpu_slot'],
                     'mem_slot': kernel['mem_slot'],
                 }
+                environ = {
+                     k: v for k, v in
+                     map(lambda s: s.split('=', 1), kernel['environ'])
+                }
                 new_config = {
                     'lang': kernel['lang'],
                     'mounts': mounts,
                     'limits': limits,
+                    'environ': environ,
                     'cpu_set': kernel['cpu_set'],
                     'gpu_set': kernel['gpu_set'],
                 }

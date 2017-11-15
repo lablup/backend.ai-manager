@@ -73,16 +73,23 @@ async def create(request):
                       f'({concurrency_used} / {concurrency_limit})')
             if concurrency_used >= concurrency_limit:
                 raise QuotaExceeded
+            creation_config = {
+                'mounts': None,
+                'environ': None,
+                'clusterSize': None,
+                'instanceMemory': None,
+                'instanceCores': None,
+                'instanceGPUs': None,
+            }
             if request['api_version'] == 1:
-                limits = params.get('resourceLimits', None)
-                mounts = None
+                # custom resource limit unsupported
+                pass
             elif request['api_version'] in (2, 3):
-                limits = params.get('limits', None)
-                mounts = params.get('mounts', None)
+                creation_config.update(params.get('config', {}))
             kernel, created = await request.app['registry'].get_or_create_kernel(
                 params['clientSessionToken'],
                 params['lang'], access_key,
-                limits, mounts,
+                creation_config,
                 conn=conn)
             resp['kernelId'] = str(kernel['sess_id'])
             if created:
