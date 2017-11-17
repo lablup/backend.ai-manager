@@ -1,0 +1,30 @@
+volumes:
+
+  - name: azure-shard-1
+    mount:
+      # requires samba, cifs-utils package
+      at: requested
+      fstype: cifs
+      path: "//UUUUU.file.core.windows.net/vfolder"
+      options: "vers=3.0,username=UUUUUU,password=XXXXXXXXXXXXXXX,dir_mode=0777,file_mode=0777,sec=ntlmssp"
+
+  - name: aws-shard-1
+    mount:
+      at: requested
+      fstype: nfs
+      path: "...efs...."
+      options: "..."
+
+  - name: azure-deeplearning-samples
+    mount:
+      at: startup
+      fstype: cifs
+      path: "//UUUUU.file.core.windows.net/vfolder"
+      options: "vers=3.0,username=UUUUUU,password=XXXXXXXXXXXXXXX,dir_mode=0777,file_mode=0777,sec=ntlmssp"
+
+  - name: aws-deeplearning-samples
+    mount:
+      at: startup
+      fstype: nfs
+      path: "..."
+      options: "..."
