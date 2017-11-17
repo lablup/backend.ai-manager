@@ -92,4 +92,4 @@ def update_volumes(args):
 
 update_volumes.add_argument('-f', '--file', type=Path, metavar='PATH',
                             help='A config file to use.')
-_add_common_args(update_aliases)
+_add_common_args(update_volumes)

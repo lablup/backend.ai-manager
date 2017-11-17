@@ -325,8 +325,8 @@ class InstanceRegistry:
                             conn=None):
         agent_id = None
         created_info = None
-        mounts = creation_config.get('mounts', [])
-        environ = creation_config.get('environ', {})
+        mounts = creation_config.get('mounts') or []
+        environ = creation_config.get('environ') or {}
 
         name, tag = await self.config_server.resolve_image_name(lang)
         required_slot = await self.config_server.get_image_required_slots(name, tag)

@@ -25,12 +25,12 @@ from sqlalchemy.sql.expression import true, null
 import zmq
 
 from .exceptions import (ServiceUnavailable, InvalidAPIParameters, QuotaExceeded,
-                         QueryNotImplemented, KernelNotFound,
+                         QueryNotImplemented, KernelNotFound, FolderNotFound,
                          BackendError)
 from . import GatewayStatus
 from .auth import auth_required
 from .utils import catch_unexpected, method_placeholder
-from ..manager.models import keypairs, kernels, AgentStatus, KernelStatus
+from ..manager.models import keypairs, kernels, vfolders, AgentStatus, KernelStatus
 from ..manager.registry import InstanceRegistry
 
 log = logging.getLogger('ai.backend.gateway.kernel')
@@ -86,6 +86,24 @@ async def create(request):
                 pass
             elif request['api_version'] in (2, 3):
                 creation_config.update(params.get('config', {}))
+            # sanity check for vfolders
+            if creation_config['mounts']:
+                mount_details = []
+                for mount in creation_config['mounts']:
+                    query = (sa.select('*').select_from(vfolders)
+                                .where((vfolders.c.belongs_to == access_key) &
+                                       (vfolders.c.name == mount)))
+                    result = await conn.execute(query)
+                    row = await result.first()
+                    if row is None:
+                        raise FolderNotFound
+                    else:
+                        mount_details.append([
+                            row.name,
+                            row.host,
+                            row.id.hex
+                        ])
+                creation_config['mounts'] = mount_details
             kernel, created = await request.app['registry'].get_or_create_kernel(
                 params['clientSessionToken'],
                 params['lang'], access_key,
