@@ -45,6 +45,7 @@ from .etcd import init as etcd_init, shutdown as etcd_shutdown
 from .events import init as event_init, shutdown as event_shutdown
 from .events import event_router
 from .kernel import init as kernel_init, shutdown as kernel_shutdown
+from .vfolder import init as vfolder_init, shutdown as vfolder_shutdown
 from .ratelimit import init as rlim_init, shutdown as rlim_shutdown
 
 VALID_VERSIONS = frozenset([
@@ -184,6 +185,7 @@ async def server_main(loop, pidx, _args):
     await event_init(app)
     await gw_init(app)
     await auth_init(app)
+    await vfolder_init(app)
     await admin_init(app)
     await rlim_init(app)
     await kernel_init(app)
@@ -209,6 +211,7 @@ async def server_main(loop, pidx, _args):
         await kernel_shutdown(app)
         await rlim_shutdown(app)
         await admin_shutdown(app)
+        await vfolder_shutdown(app)
         await auth_shutdown(app)
         await gw_shutdown(app)
         await event_shutdown(app)

@@ -92,6 +92,11 @@ class KernelNotFound(web.HTTPNotFound, BackendError):
     error_title = 'No such kernel.'
 
 
+class FolderNotFound(web.HTTPNotFound, BackendError):
+    error_type  = 'https://api.backend.ai/probs/folder-not-found'
+    error_title = 'No such virtual folder.'
+
+
 class QuotaExceeded(web.HTTPPreconditionFailed, BackendError):
     error_type  = 'https://api.backend.ai/probs/quota-exceeded'
     error_title = 'You have reached your resource limit.'

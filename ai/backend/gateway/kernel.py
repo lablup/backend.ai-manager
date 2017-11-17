@@ -601,7 +601,8 @@ async def not_impl_stub(request):
 
 async def init(app):
     rt = app.router.add_route
-    rt('POST',   r'/v{version:\d+}/kernel/create', create)
+    rt('POST',   r'/v{version:\d+}/kernel/create', create)  # legacy
+    rt('POST',   r'/v{version:\d+}/kernel/', create)
     rt('GET',    r'/v{version:\d+}/kernel/{sess_id}', get_info)
 
     rt('PATCH',  r'/v{version:\d+}/kernel/{sess_id}', restart)

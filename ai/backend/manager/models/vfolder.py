@@ -17,8 +17,8 @@ vfolders = sa.Table(
     IDColumn('id'),
     sa.Column('host', sa.String(length=128), nullable=False),
     sa.Column('name', sa.String(length=64), nullable=False),
-    sa.Column('max_files', sa.Integer(), default=512),
-    sa.Column('max_size', sa.Integer(), default=1024),  # in KBytes
+    sa.Column('max_files', sa.Integer(), default=1000),
+    sa.Column('max_size', sa.Integer(), default=1048576),  # in KBytes
     sa.Column('num_files', sa.Integer(), default=0),
     sa.Column('cur_size', sa.Integer(), default=0),  # in KBytes
     sa.Column('created_at', sa.DateTime(timezone=True),

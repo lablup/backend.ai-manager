@@ -73,3 +73,23 @@ def update_aliases(args):
 update_aliases.add_argument('-f', '--file', type=Path, metavar='PATH',
                             help='A config file to use.')
 _add_common_args(update_aliases)
+
+
+@etcd.register_command
+def update_volumes(args):
+    '''Update the volume information.'''
+    loop = asyncio.get_event_loop()
+    config_server = ConfigServer(args.etcd_addr, args.namespace)
+    try:
+        if not args.file:
+            log.error('Please specify the file path using "-f" option.')
+            return
+        loop.run_until_complete(
+            config_server.update_volumes_from_file(args.file))
+    finally:
+        loop.close()
+
+
+update_volumes.add_argument('-f', '--file', type=Path, metavar='PATH',
+                            help='A config file to use.')
+_add_common_args(update_aliases)

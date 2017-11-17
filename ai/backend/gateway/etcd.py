@@ -87,6 +87,23 @@ class ConfigServer:
         # TODO: a cli command to execute the above method
         raise NotImplementedError
 
+    async def update_volumes_from_file(self, file: Path):
+        log.info(f'Updating network volumes from "{file}"')
+        try:
+            data = yaml.load(open(file, 'rb'))
+        except IOError:
+            log.error(f'Cannot open "{file}".')
+            return
+        for item in data['volumes']:
+            name = item['name']
+            ks = []
+            vs = []
+            for k, v in item['mount'].items():
+                ks.append(f'volumes/{name}/mount/{k}')
+                vs.append(v)
+            await self.etcd.put_multi(ks, vs)
+        log.info('done')
+
     @aiotools.lru_cache(maxsize=1)
     async def get_overbook_factors(self):
         '''
