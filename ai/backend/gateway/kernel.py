@@ -55,7 +55,8 @@ async def create(request):
             params = await request.json(loads=json.loads)
         log.info(f"GET_OR_CREATE (u:{request['keypair']['access_key']}, "
                  f"lang:{params['lang']}, token:{params['clientSessionToken']})")
-        assert 8 <= len(params['clientSessionToken']) <= 80
+        assert 8 <= len(params['clientSessionToken']) <= 64, \
+               'clientSessionToken is too short or long (8 to 64 bytes required)!'
     except (asyncio.TimeoutError, AssertionError,
             KeyError, json.decoder.JSONDecodeError) as e:
         log.warning(f'GET_OR_CREATE: invalid/missing parameters, {e!r}')
