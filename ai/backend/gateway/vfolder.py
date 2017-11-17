@@ -41,6 +41,7 @@ async def create(request):
             'id': folder_id,
             'name': params['name'],
         }
+        # TODO: check for duplicate name
         result = await conn.execute(query)
         assert result.rowcount == 1
     return web.json_response(resp, status=201)
@@ -94,6 +95,38 @@ async def get_info(request):
 
 
 @auth_required
+async def upload(request):
+    dbpool = request.app['dbpool']
+    folder_name = request.match_info['name']
+    access_key = request['keypair']['access_key']
+    log.info(f"VFOLDER.UPLOAD (u:{access_key}, f:{folder_name})")
+    async with dbpool.acquire() as conn:
+        query = (sa.select('*')
+                   .select_from(vfolders)
+                   .where((vfolders.c.belongs_to == access_key) &
+                          (vfolders.c.name == folder_name)))
+        result = await conn.execute(query)
+        row = await result.first()
+        if row is None:
+            log.error('why here')
+            raise FolderNotFound()
+        folder_path = (VF_ROOT / row.id.hex)
+        reader = await request.multipart()
+        file_count = 0
+        while True:
+            file = await reader.next()
+            if file is None:
+                break
+            # TODO: impose limits on file size and count
+            file_count += 1
+            with open(folder_path / file.filename, 'wb') as f:
+                while not file.at_eof():
+                    chunk = await file.read_chunk(size=8192)
+                    f.write(file.decode(chunk))
+    return web.Response(status=201)
+
+
+@auth_required
 async def delete(request):
     resp = {}
     dbpool = request.app['dbpool']
@@ -130,6 +163,7 @@ async def init(app):
     rt('GET',    r'/v{version:\d+}/folders/', list_folders)
     rt('GET',    r'/v{version:\d+}/folders/{name}', get_info)
     rt('DELETE', r'/v{version:\d+}/folders/{name}', delete)
+    rt('POST',   r'/v{version:\d+}/folders/{name}/upload', upload)
 
 
 async def shutdown(app):
