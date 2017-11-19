@@ -195,6 +195,7 @@ async def server_main(loop, pidx, _args):
         web_handler,
         host=str(app.config.service_ip),
         port=app.config.service_port,
+        backlog=1024,
         reuse_port=True,
         ssl=app.sslctx,
     )
