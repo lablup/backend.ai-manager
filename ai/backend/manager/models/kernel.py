@@ -114,65 +114,65 @@ class SessionCommons:
     async def resolve_cpu_used(self, info):
         if self.status not in LIVE_STATUS:
             return zero_if_none(self.cpu_used)
-        async with info.context['redis_stat_pool'].get() as rs:
-            ret = await rs.hget(str(self.id), 'cpu_used')
-            return float(ret) if ret is not None else 0
+        rs = info.context['redis_stat_pool']
+        ret = await rs.hget(str(self.id), 'cpu_used')
+        return float(ret) if ret is not None else 0
 
     async def resolve_mem_max_bytes(self, info):
         if self.status not in LIVE_STATUS:
             return zero_if_none(self.mem_max_bytes)
-        async with info.context['redis_stat_pool'].get() as rs:
-            ret = await rs.hget(str(self.id), 'mem_max_bytes')
-            return int(ret) if ret is not None else 0
+        rs = info.context['redis_stat_pool']
+        ret = await rs.hget(str(self.id), 'mem_max_bytes')
+        return int(ret) if ret is not None else 0
 
     async def resolve_mem_cur_bytes(self, info):
         if self.status not in LIVE_STATUS:
             return 0
-        async with info.context['redis_stat_pool'].get() as rs:
-            ret = await rs.hget(str(self.id), 'mem_cur_bytes')
-            return int(ret) if ret is not None else 0
+        rs = info.context['redis_stat_pool']
+        ret = await rs.hget(str(self.id), 'mem_cur_bytes')
+        return int(ret) if ret is not None else 0
 
     async def resolve_net_rx_bytes(self, info):
         if self.status not in LIVE_STATUS:
             return zero_if_none(self.net_rx_bytes)
-        async with info.context['redis_stat_pool'].get() as rs:
-            ret = await rs.hget(str(self.id), 'net_rx_bytes')
-            return int(ret) if ret is not None else 0
+        rs = info.context['redis_stat_pool']
+        ret = await rs.hget(str(self.id), 'net_rx_bytes')
+        return int(ret) if ret is not None else 0
 
     async def resolve_net_tx_bytes(self, info):
         if self.status not in LIVE_STATUS:
             return zero_if_none(self.net_tx_bytes)
-        async with info.context['redis_stat_pool'].get() as rs:
-            ret = await rs.hget(str(self.id), 'net_tx_bytes')
-            return int(ret) if ret is not None else 0
+        rs = info.context['redis_stat_pool']
+        ret = await rs.hget(str(self.id), 'net_tx_bytes')
+        return int(ret) if ret is not None else 0
 
     async def resolve_io_read_bytes(self, info):
         if self.status not in LIVE_STATUS:
             return zero_if_none(self.io_read_bytes)
-        async with info.context['redis_stat_pool'].get() as rs:
-            ret = await rs.hget(str(self.id), 'io_read_bytes')
-            return int(ret) if ret is not None else 0
+        rs = info.context['redis_stat_pool']
+        ret = await rs.hget(str(self.id), 'io_read_bytes')
+        return int(ret) if ret is not None else 0
 
     async def resolve_io_write_bytes(self, info):
         if self.status not in LIVE_STATUS:
             return zero_if_none(self.io_write_bytes)
-        async with info.context['redis_stat_pool'].get() as rs:
-            ret = await rs.hget(str(self.id), 'io_write_bytes')
-            return int(ret) if ret is not None else 0
+        rs = info.context['redis_stat_pool']
+        ret = await rs.hget(str(self.id), 'io_write_bytes')
+        return int(ret) if ret is not None else 0
 
     async def resolve_io_max_scratch_size(self, info):
         if self.status not in LIVE_STATUS:
             return zero_if_none(self.io_max_scratch_size)
-        async with info.context['redis_stat_pool'].get() as rs:
-            ret = await rs.hget(str(self.id), 'io_max_scratch_size')
-            return int(ret) if ret is not None else 0
+        rs = info.context['redis_stat_pool']
+        ret = await rs.hget(str(self.id), 'io_max_scratch_size')
+        return int(ret) if ret is not None else 0
 
     async def resolve_io_cur_scratch_size(self, info):
         if self.status not in LIVE_STATUS:
             return 0
-        async with info.context['redis_stat_pool'].get() as rs:
-            ret = await rs.hget(str(self.id), 'io_cur_scratch_size')
-            return int(ret) if ret is not None else 0
+        rs = info.context['redis_stat_pool']
+        ret = await rs.hget(str(self.id), 'io_cur_scratch_size')
+        return int(ret) if ret is not None else 0
 
     @classmethod
     def from_row(cls, row):

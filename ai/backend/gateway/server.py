@@ -149,9 +149,9 @@ async def gw_init(app):
         dbname=app.config.db_name, minsize=4, maxsize=16,
         echo=bool(app.config.verbose),
     )
-    app['redis_stat_pool'] = await aioredis.create_pool(
+    app['redis_stat_pool'] = await aioredis.create_redis_pool(
         app.config.redis_addr.as_sockaddr(),
-        create_connection_timeout=3.0,
+        timeout=3.0,
         encoding='utf8',
         db=REDIS_STAT_DB)
     app.middlewares.append(exception_middleware_factory)
