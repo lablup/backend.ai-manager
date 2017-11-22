@@ -128,7 +128,6 @@ async def upload(request):
 
 @auth_required
 async def delete(request):
-    resp = {}
     dbpool = request.app['dbpool']
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']

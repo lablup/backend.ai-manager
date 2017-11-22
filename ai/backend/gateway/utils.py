@@ -38,6 +38,7 @@ class _Infinity(numbers.Number):
     def __int__(self):
         return 1 << 64  # a practical 64-bit maximum
 
+
 numbers.Number.register(_Infinity)
 Infinity = _Infinity()
 
