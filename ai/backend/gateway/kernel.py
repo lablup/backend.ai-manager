@@ -383,7 +383,7 @@ async def execute(request):
         if mode == 'complete':
             # For legacy
             resp['result'] = await request.app['registry'].get_completions(
-                sess_id, 'query', code, opts)
+                sess_id, code, opts)
         else:
             resp['result'] = await request.app['registry'].execute(
                 sess_id, api_version, run_id, mode, code, opts)
@@ -427,7 +427,7 @@ async def complete(request):
         opts = params.get('options', None) or {}
         await request.app['registry'].increment_session_usage(sess_id)
         resp['result'] = await request.app['registry'].get_completions(
-            sess_id, 'query', code, opts)
+            sess_id, code, opts)
     except AssertionError:
         log.warning('COMPLETE: invalid/missing parameters')
         raise InvalidAPIParameters
