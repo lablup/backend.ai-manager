@@ -710,7 +710,7 @@ class InstanceRegistry:
                 'status': KernelStatus.TERMINATED,
                 'terminated_at': datetime.now(tzutc()),
             }
-            kern_stat = await rs.hgetall(kernel_id)
+            kern_stat = await self.redis_stat_pool.hgetall(kernel_id)
             if kern_stat is not None and 'cpu_used' in kern_stat:
                 kern_data.update({
                     'cpu_used': int(float(kern_stat['cpu_used'])),
