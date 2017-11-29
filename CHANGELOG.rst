@@ -1,10 +1,19 @@
 Changes
 =======
 
-1.0.3 (to be released)
+1.0.4 (to be released)
 ----------------------
 
+- Fix atomicity of rate-limiting calculation.
+
+1.0.3 (2017-11-29)
+------------------
+
 - Add virtual folder!
+
+- Update aioredis to v1.0.0 release.
+
+- Remove "mode" argument when calling agent RPC "get completions" calls.
 
 1.0.2 (2017-11-14)
 ------------------
