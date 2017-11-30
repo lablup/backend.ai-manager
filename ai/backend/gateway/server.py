@@ -146,8 +146,10 @@ async def gw_init(app):
     app['dbpool'] = await create_engine(
         host=app.config.db_addr[0], port=app.config.db_addr[1],
         user=app.config.db_user, password=app.config.db_password,
-        dbname=app.config.db_name, minsize=4, maxsize=16,
+        dbname=app.config.db_name,
         echo=bool(app.config.verbose),
+        minsize=4, maxsize=16,
+        timeout=30, pool_recycle=30,
     )
     app['redis_stat_pool'] = await aioredis.create_redis_pool(
         app.config.redis_addr.as_sockaddr(),
