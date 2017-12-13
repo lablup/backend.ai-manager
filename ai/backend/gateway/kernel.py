@@ -53,14 +53,18 @@ async def create(request):
     try:
         with _timeout(2):
             params = await request.json(loads=json.loads)
-        log.info(f"GET_OR_CREATE (u:{request['keypair']['access_key']}, "
-                 f"lang:{params['lang']}, token:{params['clientSessionToken']})")
+        assert params.get('lang'), \
+               'lang is missing or empty!'
+        assert params.get('clientSessionToken'), \
+               'clientSessionToken is missing or empty!'
         assert 8 <= len(params['clientSessionToken']) <= 64, \
                'clientSessionToken is too short or long (8 to 64 bytes required)!'
+        log.info(f"GET_OR_CREATE (u:{request['keypair']['access_key']}, "
+                 f"lang:{params['lang']}, token:{params['clientSessionToken']})")
     except (asyncio.TimeoutError, AssertionError,
-            KeyError, json.decoder.JSONDecodeError) as e:
+            json.decoder.JSONDecodeError) as e:
         log.warning(f'GET_OR_CREATE: invalid/missing parameters, {e!r}')
-        raise InvalidAPIParameters
+        raise InvalidAPIParameters(extra_msg=str(e.args[0]))
     resp = {}
     try:
         access_key = request['keypair']['access_key']
@@ -369,16 +373,18 @@ async def execute(request):
         await request.app['registry'].increment_session_usage(sess_id)
         api_version = request['api_version']
         if api_version == 1:
+            run_id = params.get('runId', secrets.token_hex(8))
             mode = 'query'
-            code = params['code']
-            run_id = params.get('runId', secrets.token_hex(8))
-            opts = {}
-        elif api_version in (2, 3):
-            mode = params['mode']
             code = params.get('code', '')
-            run_id = params.get('runId', secrets.token_hex(8))
+            opts = {}
+        elif api_version >= 2:
+            assert params.get('runId'), 'runId is missing!'
+            run_id = params['runId']
+            assert params.get('mode'), 'mode is missing or empty!'
             mode = params['mode']
-            assert mode in ('query', 'batch', 'complete')
+            assert mode in {'query', 'batch', 'complete', 'continue', 'input'}, \
+                   'mode has an invalid value.'
+            code = params.get('code', '')
             opts = params.get('options', None) or {}
         if mode == 'complete':
             # For legacy
@@ -387,9 +393,9 @@ async def execute(request):
         else:
             resp['result'] = await request.app['registry'].execute(
                 sess_id, api_version, run_id, mode, code, opts)
-    except AssertionError:
-        log.warning('EXECUTE: invalid/missing parameters')
-        raise InvalidAPIParameters
+    except AssertionError as e:
+        log.warning('EXECUTE: invalid/missing parameters: {e}')
+        raise InvalidAPIParameters(extra_msg=e.args[0])
     except BackendError:
         log.exception('EXECUTE: exception')
         raise
