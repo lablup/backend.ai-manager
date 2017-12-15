@@ -1,10 +1,23 @@
 Changes
 =======
 
-1.0.4 (to be released)
+1.1.0 (to be released)
 ----------------------
 
-- Fix atomicity of rate-limiting calculation.
+**API CHANGES**
+
+- In the API responses, Rate-Limit-Reset is gone away and now we have
+  Rate-Limit-Window value instead.
+  Since we use a rolling counter, there is no explicit reset point
+  but you are now guaranteed to send at most N requests for the last
+  15 minutes (where N is the per-user rate limit) at ANY moment.
+
+- When continuing or sending user-inputs via the execute API, you
+  must set the mode field to "continue" or "input" respectively.
+
+**OTHER IMPROVEMENTS**
+
+- Fix atomicity of rate-limiting calculation (#55).
 
 1.0.3 (2017-11-29)
 ------------------
