@@ -115,6 +115,7 @@ async def create(request):
                 creation_config,
                 conn=conn)
             resp['kernelId'] = str(kernel['sess_id'])
+            resp['created'] = bool(created)
             if created:
                 query = (sa.update(keypairs)
                            .values(concurrency_used=keypairs.c.concurrency_used + 1)
