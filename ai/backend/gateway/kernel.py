@@ -310,6 +310,7 @@ async def destroy(request):
 @auth_required
 @server_ready_required
 async def get_info(request):
+    # NOTE: This API should be replaced with GraphQL version.
     resp = {}
     sess_id = request.match_info['sess_id']
     log.info(f"GETINFO (u:{request['keypair']['access_key']}, k:{sess_id})")
@@ -328,7 +329,7 @@ async def get_info(request):
         # Stats collected from agent heartbeats
         resp['numQueriesExecuted'] = kern.num_queries
         resp['idle']          = -1  # deprecated
-        resp['memoryUsed']    = kern.mem_cur_bytes >> 10  # KiB
+        resp['memoryUsed']    = -1  # deprecated
         resp['cpuCreditUsed'] = kern.cpu_used
         log.info(f'information retrieved: {resp!r}')
     except BackendError:
