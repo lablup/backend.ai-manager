@@ -10,61 +10,66 @@ from .exceptions import RateLimitExceeded
 log = logging.getLogger('ai.backend.gateway.ratelimit')
 
 _time_prec = Decimal('1e-3')  # msec
-_rlim_window = 60 * 15        # 15 minutes
+_rlim_window = 60 * 15
+
+# We implement rate limiting using a rolling counter, which prevents
+# last-minute and first-minute bursts between the intervals.
+
+_rlim_script = '''
+local access_key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local request_id = tonumber(redis.call('INCR', '__request_id'))
+if request_id >= 1e12 then
+    redis.call('SET', '__request_id', 1)
+end
+if redis.call('EXISTS', access_key) == 1 then
+    redis.call('ZREMRANGEBYSCORE', access_key, 0, now - window)
+end
+redis.call('ZADD', access_key, now, tostring(request_id))
+redis.call('EXPIRE', access_key, window)
+return redis.call('ZCARD', access_key)
+'''
 
 
 async def rlim_middleware_factory(app, handler):
     async def rlim_middleware_handler(request):
-        # TODO: use a global timer if we scale out the gateway.
-        now = Decimal(time.monotonic()).quantize(_time_prec)
+        now = Decimal(time.time()).quantize(_time_prec)
         rr = app['redis_rlim']
         if request['is_authorized']:
             rate_limit = request['keypair']['rate_limit']
             access_key = request['keypair']['access_key']
-            rlim_next_reset = now + _rlim_window
-            tracker = await rr.hgetall(access_key)
-            if tracker:
-                rlim_reset = Decimal(tracker['rlim_reset'])
-            if not tracker or rlim_reset <= now:
-                # create a new tracker info
-                tracker = {
-                    'rlim_limit': rate_limit,
-                    'rlim_remaining': rate_limit,
-                    'rlim_reset': str(rlim_next_reset),
-                }
-            else:
-                tracker = {
-                    'rlim_limit': rate_limit,
-                    'rlim_remaining': int(tracker['rlim_remaining']) - 1,
-                    'rlim_reset': tracker['rlim_reset'],  # copy
-                }
-            await rr.hmset_dict(access_key, tracker)
-            if tracker['rlim_remaining'] <= 0:
+            ret = await rr.evalsha(
+                app['redis_rlim_script'],
+                keys=[access_key],
+                args=[str(now), str(_rlim_window)])
+            rolling_count = int(ret)
+            if rolling_count > rate_limit:
                 raise RateLimitExceeded
-            rlim_reset = Decimal(tracker['rlim_reset'])
-            count_remaining = tracker['rlim_remaining']
-            window_remaining = int((rlim_reset - now) * 1000)
+            remaining = rate_limit - rolling_count
             response = await handler(request)
             response.headers['X-RateLimit-Limit'] = str(rate_limit)
-            response.headers['X-RateLimit-Remaining'] = str(count_remaining)
-            response.headers['X-RateLimit-Reset'] = str(window_remaining)
+            response.headers['X-RateLimit-Remaining'] = str(remaining)
+            response.headers['X-RateLimit-Window'] = str(_rlim_window)
             return response
         else:
             # No checks for rate limiting for non-authorized queries.
             response = await handler(request)
             response.headers['X-RateLimit-Limit'] = '1000'
             response.headers['X-RateLimit-Remaining'] = '1000'
-            response.headers['X-RateLimit-Reset'] = str(_rlim_window * 1000)
+            response.headers['X-RateLimit-Window'] = str(_rlim_window)
             return response
     return rlim_middleware_handler
 
 
 async def init(app):
-    app['redis_rlim'] = await aioredis.create_redis_pool(
+    rr = await aioredis.create_redis_pool(
         app.config.redis_addr.as_sockaddr(),
         timeout=3.0,
         encoding='utf8',
         db=REDIS_RLIM_DB)
+    app['redis_rlim'] = rr
+    app['redis_rlim_script'] = await rr.script_load(_rlim_script)
     app.middlewares.append(rlim_middleware_factory)
 
 
