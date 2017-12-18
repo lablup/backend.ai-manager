@@ -59,17 +59,17 @@ class KeyPair(graphene.ObjectType):
         if row is None:
             return None
         return cls(
-            access_key=row.access_key,
-            secret_key=row.secret_key,
-            is_active=row.is_active,
-            is_admin=row.is_admin,
-            resource_policy=row.resource_policy,
-            created_at=row.created_at,
-            last_used=row.last_used,
-            concurrency_limit=row.concurrency_limit,
-            concurrency_used=row.concurrency_used,
-            rate_limit=row.rate_limit,
-            num_queries=row.num_queries,
+            access_key=row['access_key'],
+            secret_key=row['secret_key'],
+            is_active=row['is_active'],
+            is_admin=row['is_admin'],
+            resource_policy=row['resource_policy'],
+            created_at=row['created_at'],
+            last_used=row['last_used'],
+            concurrency_limit=row['concurrency_limit'],
+            concurrency_used=row['concurrency_used'],
+            rate_limit=row['rate_limit'],
+            num_queries=row['num_queries'],
         )
 
     async def resolve_vfolders(self, info):
@@ -120,6 +120,7 @@ class KeyPair(graphene.ObjectType):
 
 class KeyPairInput(graphene.InputObjectType):
     is_active = graphene.Boolean()
+    is_admin = graphene.Boolean()
     resource_policy = graphene.String()
     concurrency_limit = graphene.Int()
     rate_limit = graphene.Int()
@@ -140,14 +141,15 @@ class CreateKeyPair(graphene.Mutation):
 
     @staticmethod
     async def mutate(root, info, user_id, props):
-        async with info.context['dbpool'] as conn, conn.begin():
+        async with info.context['dbpool'].acquire() as conn, conn.begin():
             ak = 'AKIA' + base64.b32encode(secrets.token_bytes(10)).decode('ascii')
             sk = secrets.token_urlsafe(30)
             data = {
                 'user_id': user_id,
                 'access_key': ak,
                 'secret_key': sk,
-                'is_active': props.is_active,
+                'is_active': bool(props.is_active),
+                'is_admin': bool(props.is_admin),
                 'resource_policy': props.resource_policy,
                 'concurrency_limit': props.concurrency_limit,
                 'concurrency_used': 0,
@@ -155,9 +157,16 @@ class CreateKeyPair(graphene.Mutation):
                 'num_queries': 0,
             }
             query = (keypairs.insert().values(data))
-            result = await conn.execute(query)
+            try:
+                result = await conn.execute(query)
+            except Exception as e:
+                return CreateKeyPair(ok=False, msg=str(e),
+                                     keypair=None)
             if result.rowcount > 0:
-                o = KeyPair.from_row(data)
+                # Read the created key data from DB.
+                checkq = keypairs.select().where(keypairs.c.access_key == ak)
+                result = await conn.execute(checkq)
+                o = KeyPair.from_row(await result.first())
                 return CreateKeyPair(ok=True, msg='success', keypair=o)
             else:
                 return CreateKeyPair(ok=False, msg='failed to create keypair',
@@ -175,7 +184,7 @@ class ModifyKeyPair(graphene.Mutation):
 
     @staticmethod
     async def mutate(root, info, access_key, props):
-        async with info.context['dbpool'] as conn, conn.begin():
+        async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
 
             def set_if_set(name):
@@ -184,6 +193,7 @@ class ModifyKeyPair(graphene.Mutation):
                     data[name] = v
 
             set_if_set('is_active')
+            set_if_set('is_admin')
             set_if_set('resource_policy')
             set_if_set('concurrency_limit')
             set_if_set('rate_limit')
@@ -208,7 +218,7 @@ class DeleteKeyPair(graphene.Mutation):
 
     @staticmethod
     async def mutate(root, info, access_key):
-        async with info.context['dbpool'] as conn, conn.begin():
+        async with info.context['dbpool'].acquire() as conn, conn.begin():
             query = (keypairs.delete()
                              .where(keypairs.c.access_key == access_key))
             result = await conn.execute(query)

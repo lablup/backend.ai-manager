@@ -14,7 +14,7 @@ requires = [
     'alembic~=0.9.2',
     'coloredlogs>=5.2',
     'ConfigArgParse',
-    'graphene>=2.0.dev',
+    'graphene~=2.0.1',
     'iso8601',  # required by graphene
     'namedlist',
     'psycopg2~=2.7.0',

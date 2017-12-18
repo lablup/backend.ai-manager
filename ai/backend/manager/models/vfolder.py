@@ -59,14 +59,14 @@ class VirtualFolder(graphene.ObjectType):
         if row is None:
             return None
         return cls(
-            id=row.id,
-            host=row.host,
-            name=row.name,
-            max_files=row.max_files,
-            max_size=row.max_size,    # in KiB
-            created_at=row.created_at,
-            last_used=row.last_used,
-            num_attached=row.num_attached,
+            id=row['id'],
+            host=row['host'],
+            name=row['name'],
+            max_files=row['max_files'],
+            max_size=row['max_size'],    # in KiB
+            created_at=row['created_at'],
+            last_used=row['last_used'],
+            num_attached=row['num_attached'],
         )
 
     async def resolve_num_files(self, info):

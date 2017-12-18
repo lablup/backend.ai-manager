@@ -74,18 +74,18 @@ class Agent(graphene.ObjectType):
         if row is None:
             return None
         return cls(
-            id=row.id,
-            status=row.status,
-            region=row.region,
-            mem_slots=row.mem_slots,
-            cpu_slots=row.cpu_slots,
-            gpu_slots=row.gpu_slots,
-            used_mem_slots=row.used_mem_slots,
-            used_cpu_slots=row.used_cpu_slots,
-            used_gpu_slots=row.used_gpu_slots,
-            addr=row.addr,
-            first_contact=row.first_contact,
-            lost_at=row.lost_at,
+            id=row['id'],
+            status=row['status'],
+            region=row['region'],
+            mem_slots=row['mem_slots'],
+            cpu_slots=row['cpu_slots'],
+            gpu_slots=row['gpu_slots'],
+            used_mem_slots=row['used_mem_slots'],
+            used_cpu_slots=row['used_cpu_slots'],
+            used_gpu_slots=row['used_gpu_slots'],
+            addr=row['addr'],
+            first_contact=row['first_contact'],
+            lost_at=row['lost_at'],
         )
 
     async def resolve_computations(self, info, status=None):
