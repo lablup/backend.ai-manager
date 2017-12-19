@@ -1,10 +1,17 @@
 Changes
 =======
 
-1.0.4 (to be released)
+1.1.0 (to be released)
 ----------------------
 
 - Fix atomicity of rate-limiting calculation.
+
+1.0.4 (2017-12-19)
+------------------
+
+- Minor update for execute API: allow explicit continue/input mode values.
+
+- Mitigate connection failures after a DB failover event (#35)
 
 1.0.3 (2017-11-29)
 ------------------
