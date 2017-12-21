@@ -478,6 +478,22 @@ async def upload_files(request):
     return web.Response(status=204)
 
 
+@auth_required
+@server_ready_required
+async def get_logs(request):
+    resp = {}
+    sess_id = request.match_info['sess_id']
+    log.info(f"GETLOG (u:{request['keypair']['access_key']}, k:{sess_id})")
+    try:
+        await request.app['registry'].increment_session_usage(sess_id)
+        resp['result'] = await request.app['registry'].get_logs(sess_id)
+        log.info(f'container log retrieved: {resp!r}')
+    except BackendError:
+        log.exception('GETLOG: exception')
+        raise
+    return web.json_response(resp, status=200, dumps=json.dumps)
+
+
 @server_ready_required
 async def stream_pty(request):
     app = request.app
@@ -631,6 +647,7 @@ async def init(app):
     rt('POST',   r'/v{version:\d+}/kernel/create', create)  # legacy
     rt('POST',   r'/v{version:\d+}/kernel/', create)
     rt('GET',    r'/v{version:\d+}/kernel/{sess_id}', get_info)
+    rt('GET',    r'/v{version:\d+}/kernel/{sess_id}/logs', get_logs)
 
     rt('PATCH',  r'/v{version:\d+}/kernel/{sess_id}', restart)
     rt('DELETE', r'/v{version:\d+}/kernel/{sess_id}', destroy)

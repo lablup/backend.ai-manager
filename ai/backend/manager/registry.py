@@ -132,6 +132,7 @@ class InstanceRegistry:
             'destroy_kernel': KernelDestructionFailed,
             'execute': KernelExecutionFailed,
             'upload_file': KernelExecutionFailed,
+            'get_logs': KernelExecutionFailed,
         }
         exc_class = op_exc[op]
         try:
@@ -566,6 +567,16 @@ class InstanceRegistry:
                 result = \
                     await rpc.call.upload_file(str(kernel['id']), filename, payload)
                 return result
+
+    async def get_logs(self, sess_id):
+        log.debug(f'get_logs({sess_id})')
+        async with self.handle_kernel_exception('get_logs', sess_id):
+            kernel = await self.get_kernel_session(sess_id)
+            async with RPCContext(kernel['agent_addr'], 5) as rpc:
+                exec_coro = rpc.call.get_logs(str(kernel['id']))
+                if exec_coro is None:
+                    raise RuntimeError('get_logs cancelled')
+                return await exec_coro
 
     async def update_kernel(self, sess_id, updated_fields, conn=None):
         log.debug(f'update_kernel({sess_id})')
