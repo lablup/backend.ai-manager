@@ -8,6 +8,7 @@ from collections import defaultdict
 from datetime import datetime
 import functools
 import logging
+import re
 import secrets
 import time
 from urllib.parse import urlparse
@@ -37,6 +38,8 @@ log = logging.getLogger('ai.backend.gateway.kernel')
 
 grace_events = []
 
+_rx_sess_token = re.compile(r'\w[\w.-]*\w', re.ASCII)
+
 
 def server_ready_required(handler):
     @functools.wraps(handler)
@@ -57,8 +60,10 @@ async def create(request):
                'lang is missing or empty!'
         assert params.get('clientSessionToken'), \
                'clientSessionToken is missing or empty!'
-        assert 8 <= len(params['clientSessionToken']) <= 64, \
-               'clientSessionToken is too short or long (8 to 64 bytes required)!'
+        assert 4 <= len(params['clientSessionToken']) <= 64, \
+               'clientSessionToken is too short or long (4 to 64 bytes required)!'
+        assert _rx_sess_token.fullmatch(params['clientSessionToken']), \
+               'clientSessionToken contains invalid characters.'
         log.info(f"GET_OR_CREATE (u:{request['keypair']['access_key']}, "
                  f"lang:{params['lang']}, token:{params['clientSessionToken']})")
     except (asyncio.TimeoutError, AssertionError,
@@ -396,7 +401,7 @@ async def execute(request):
             resp['result'] = await request.app['registry'].execute(
                 sess_id, api_version, run_id, mode, code, opts)
     except AssertionError as e:
-        log.warning('EXECUTE: invalid/missing parameters: {e}')
+        log.warning(f'EXECUTE: invalid/missing parameters: {e}')
         raise InvalidAPIParameters(extra_msg=e.args[0])
     except BackendError:
         log.exception('EXECUTE: exception')
