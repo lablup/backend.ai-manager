@@ -1,6 +1,6 @@
 from ipaddress import ip_address
 
-from ai.backend.common.argparse import HostPortPair, host_port_pair, port_no
+from ai.backend.common.argparse import host_port_pair, port_no
 from ai.backend.gateway.config import load_config
 from ai.backend.gateway.server import gw_args
 
