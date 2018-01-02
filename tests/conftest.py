@@ -8,6 +8,7 @@ from aiopg.sa import create_engine
 import sqlalchemy as sa
 import pytest
 
+from ai.backend.common.argparse import host_port_pair
 from ai.backend.gateway.config import load_config
 from ai.backend.gateway.server import gw_init, gw_args
 from ai.backend.manager.models import keypairs
@@ -140,3 +141,27 @@ async def create_app_and_client(event_loop, unused_port):
     await server.wait_closed()
     await app.shutdown()
     await app.cleanup()
+
+
+@pytest.fixture
+async def pre_app(event_loop, unused_port):
+    app = web.Application(loop=event_loop)
+    app.config = load_config(argv=[], extra_args_func=gw_args)
+
+    # Override basic settings
+    app.config.db_addr = host_port_pair('127.0.0.1:5432')
+    app.config.db_name = 'testing'
+
+    # Override extra settings
+    app.config.service_ip = '127.0.0.1'
+    app.config.service_port = unused_port
+    # app.config.ssl_cert = here / 'sample-ssl-cert' / 'sample.crt'
+    # app.config.ssl_key = here / 'sample-ssl-cert' / 'sample.key'
+    # app.sslctx = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
+    # app.sslctx.load_cert_chain(str(app.config.ssl_cert),
+    #                            str(app.config.ssl_key))
+
+    # app['shared_states'] = None
+    # app['pidx'] = pidx
+
+    return app
