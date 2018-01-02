@@ -13,4 +13,4 @@ Package Structure
 Installation
 ------------
 
-We provide `the installation guides <https://github.com/backend.ai/wiki>`_ separately.
+We provide `the installation guides <https://github.com/lablup/backend.ai/wiki>`_ separately.
