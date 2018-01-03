@@ -522,7 +522,7 @@ class InstanceRegistry:
                 )
 
     async def execute(self, sess_id, api_version, run_id, mode, code, opts):
-        log.debug(f'execute:v{api_version}({sess_id}, {mode})')
+        log.debug(f'execute:v{api_version}({sess_id}, {run_id}, {mode})')
         async with self.handle_kernel_exception('execute', sess_id):
             kernel = await self.get_kernel_session(sess_id)
             # The agent aggregates at most 2 seconds of outputs

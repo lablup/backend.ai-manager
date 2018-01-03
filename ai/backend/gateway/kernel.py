@@ -60,9 +60,10 @@ async def create(request):
                'lang is missing or empty!'
         assert params.get('clientSessionToken'), \
                'clientSessionToken is missing or empty!'
-        assert 4 <= len(params['clientSessionToken']) <= 64, \
+        sess_token = params['clientSessionToken']
+        assert 4 <= len(sess_token) <= 64, \
                'clientSessionToken is too short or long (4 to 64 bytes required)!'
-        assert _rx_sess_token.fullmatch(params['clientSessionToken']), \
+        assert _rx_sess_token.fullmatch(sess_token), \
                'clientSessionToken contains invalid characters.'
         log.info(f"GET_OR_CREATE (u:{request['keypair']['access_key']}, "
                  f"lang:{params['lang']}, token:{params['clientSessionToken']})")
@@ -385,8 +386,8 @@ async def execute(request):
             code = params.get('code', '')
             opts = {}
         elif api_version >= 2:
-            assert params.get('runId'), 'runId is missing!'
-            run_id = params['runId']
+            assert 'runId' in params, 'runId is missing!'
+            run_id = params['runId']  # maybe None
             assert params.get('mode'), 'mode is missing or empty!'
             mode = params['mode']
             assert mode in {'query', 'batch', 'complete', 'continue', 'input'}, \
