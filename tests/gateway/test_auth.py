@@ -8,8 +8,9 @@ from dateutil.tz import tzutc, gettz
 import pytest
 import simplejson as json
 
-from ai.backend.gateway.auth import init as auth_init
 from ai.backend.gateway.auth import (
+    init as auth_init,
+    shutdown as auth_shutdown,
     _extract_auth_params, check_date
 )
 from ai.backend.gateway.exceptions import InvalidAuthParameters
@@ -84,24 +85,24 @@ def test_check_date():
 
 
 @pytest.mark.asyncio
-async def test_auth(create_app_and_client, unused_port, default_keypair):
-    app, client = await create_app_and_client(extra_inits=[auth_init])
+async def test_authorize(create_app_and_client, default_keypair):
+    app, client = await create_app_and_client(extra_inits=[auth_init],
+                                              extra_shutdowns=[auth_shutdown])
 
     async def do_authorize(hash_type, api_version):
         now = datetime.now(tzutc())
-        hostname = 'localhost:{}'.format(unused_port)
+        # hostname = f'localhost:{unused_tcp_port}'
+        hostname = f'localhost:{app.config.service_port}'
         headers = {
             'Date': now.isoformat(),
             'Content-Type': 'application/json',
             'X-BackendAI-Version': api_version,
         }
-        req_data = {
-            'echo': str(uuid.uuid4()),
-        }
+        req_data = {'echo': str(uuid.uuid4())}
         req_bytes = json.dumps(req_data).encode()
         req_hash = hashlib.new(hash_type, req_bytes).hexdigest()
         sign_bytes = b'GET\n' \
-                     + b'/v1/authorize\n' \
+                     + b'/v3/authorize\n' \
                      + now.isoformat().encode() + b'\n' \
                      + b'host:' + hostname.encode() + b'\n' \
                      + b'content-type:application/json\n' \
@@ -112,12 +113,13 @@ async def test_auth(create_app_and_client, unused_port, default_keypair):
         sign_key = hmac.new(sign_key, hostname.encode(), hash_type).digest()
         signature = hmac.new(sign_key, sign_bytes, hash_type).hexdigest()
         headers['Authorization'] = \
-            'BackendAI signMethod=HMAC-{}, '.format(hash_type.upper()) \
-            + 'credential={}:{}'.format(default_keypair['access_key'], signature)
+            f'BackendAI signMethod=HMAC-{hash_type.upper()}, ' \
+            + f'credential={default_keypair["access_key"]}:{signature}'
+
         # Only shown when there are failures in this test case
         print('Request headers')
         pprint(headers)
-        resp = await client.get('/v1/authorize',
+        resp = await client.get('/v3/authorize',
                                 data=req_bytes,
                                 headers=headers,
                                 skip_auto_headers=('User-Agent',))
@@ -127,6 +129,6 @@ async def test_auth(create_app_and_client, unused_port, default_keypair):
         assert data['echo'] == req_data['echo']
 
     # Try multiple different hashing schemes
-    await do_authorize('sha1', 'v1.20160915')
-    await do_authorize('sha256', 'v1.20160915')
-    await do_authorize('md5', 'v1.20160915')
+    await do_authorize('sha1', 'v3.20170615')
+    await do_authorize('sha256', 'v3.20170615')
+    await do_authorize('md5', 'v3.20170615')
