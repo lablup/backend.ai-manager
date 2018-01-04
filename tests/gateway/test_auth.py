@@ -84,12 +84,12 @@ def test_check_date():
 
 
 @pytest.mark.asyncio
-async def test_auth(create_app_and_client, unused_tcp_port, default_keypair):
+async def test_auth(create_app_and_client, unused_port, default_keypair):
     app, client = await create_app_and_client(extra_inits=[auth_init])
 
     async def do_authorize(hash_type, api_version):
         now = datetime.now(tzutc())
-        hostname = 'localhost:{}'.format(unused_tcp_port)
+        hostname = 'localhost:{}'.format(unused_port)
         headers = {
             'Date': now.isoformat(),
             'Content-Type': 'application/json',
