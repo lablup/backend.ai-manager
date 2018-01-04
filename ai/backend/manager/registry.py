@@ -122,14 +122,14 @@ class InstanceRegistry:
 
     @aiotools.actxmgr
     async def handle_kernel_exception(
-            self, op, sess_id,
+            self, op, sess_id, access_key,
             error_callback=None,
             cancellation_callback=None,
             set_error=False):
         op_exc = {
-            'create_kernel': KernelCreationFailed,
-            'restart_kernel': KernelRestartFailed,
-            'destroy_kernel': KernelDestructionFailed,
+            'create_session': KernelCreationFailed,
+            'restart_session': KernelRestartFailed,
+            'destroy_session': KernelDestructionFailed,
             'execute': KernelExecutionFailed,
             'upload_file': KernelExecutionFailed,
             'get_logs': KernelExecutionFailed,
@@ -139,8 +139,9 @@ class InstanceRegistry:
             yield
         except asyncio.TimeoutError:
             if set_error:
-                await self.set_kernel_status(sess_id, KernelStatus.ERROR,
-                                             status_info=f'Operation timeout ({op})')
+                await self.set_session_status(
+                    sess_id, access_key, KernelStatus.ERROR,
+                    status_info=f'Operation timeout ({op})')
             if error_callback:
                 await error_callback()
             raise exc_class('TIMEOUT')
@@ -151,8 +152,9 @@ class InstanceRegistry:
         except AgentError as e:
             log.exception(f'{op}: agent-side error')
             if set_error:
-                await self.set_kernel_status(sess_id, KernelStatus.ERROR,
-                                             status_info='Agent error')
+                await self.set_session_status(sess_id, access_key,
+                                              KernelStatus.ERROR,
+                                              status_info='Agent error')
             if error_callback:
                 await error_callback()
             raise exc_class('FAILURE', e)
@@ -163,8 +165,9 @@ class InstanceRegistry:
             log.exception(f'{op}: other error')
             # TODO: raven.captureException()
             if set_error:
-                await self.set_kernel_status(sess_id, KernelStatus.ERROR,
-                                             status_info='Other error')
+                await self.set_session_status(sess_id, access_key,
+                                              KernelStatus.ERROR,
+                                              status_info='Other error')
             if error_callback:
                 await error_callback()
             raise
@@ -211,7 +214,8 @@ class InstanceRegistry:
                 raise KernelNotFound
             return row
 
-    async def get_kernel_session(self, sess_id: str, field=None, allow_stale=False):
+    async def get_session(self, sess_id: str, access_key: str,
+                          field=None, allow_stale=False):
         '''
         Retreive the kernel information from the session ID (client-side
         session token).  If the kernel is composed of multiple containers, it
@@ -222,8 +226,8 @@ class InstanceRegistry:
         true, it skips checking validity of the kernel owner instance.
         '''
 
-        cols = [kernels.c.id, kernels.c.sess_id, kernels.c.lang,
-                kernels.c.agent_addr, kernels.c.access_key]
+        cols = [kernels.c.id, kernels.c.sess_id, kernels.c.access_key,
+                kernels.c.agent_addr, kernels.c.lang]
         if field == '*':
             cols = '*'
         elif isinstance(field, (tuple, list)):
@@ -237,16 +241,16 @@ class InstanceRegistry:
                 query = (sa.select(cols)
                            .select_from(kernels)
                            .where((kernels.c.sess_id == sess_id) &
+                                  (kernels.c.access_key == access_key) &
                                   (kernels.c.role == 'master'))
                            .limit(1).offset(0))
             else:
                 query = (sa.select(cols)
                            .select_from(kernels.join(agents))
                            .where((kernels.c.sess_id == sess_id) &
+                                  (kernels.c.access_key == access_key) &
                                   (kernels.c.role == 'master') &
-                                  (kernels.c.status.in_([KernelStatus.BUILDING,
-                                                         KernelStatus.RUNNING,
-                                                         KernelStatus.RESTARTING])) &
+                                  (kernels.c.status != KernelStatus.TERMINATED) &
                                   (agents.c.status == AgentStatus.ALIVE) &
                                   (agents.c.id == kernels.c.agent))
                            .limit(1).offset(0))
@@ -256,10 +260,10 @@ class InstanceRegistry:
                 raise KernelNotFound
             return row
 
-    async def get_kernels(self, kern_ids, field=None, allow_stale=False):
+    async def get_sessions(self, sess_ids, field=None, allow_stale=False):
         '''
-        Batched version of :meth:`get_kernel() <InstanceRegistry.get_kernel>`.
-        The order of the returend array is same to the order of ``kern_ids``.
+        Batched version of :meth:`get_session() <InstanceRegistry.get_session>`.
+        The order of the returend array is same to the order of ``sess_ids``.
         For non-existent or missing kernel IDs, it fills None in their
         positions without raising KernelNotFound exception.
         '''
@@ -276,12 +280,12 @@ class InstanceRegistry:
             if allow_stale:
                 query = (sa.select(cols)
                            .select_from(kernels)
-                           .where((kernels.c.sess_id.in_(kern_ids)) &
+                           .where((kernels.c.sess_id.in_(sess_ids)) &
                                   (kernels.c.role == 'master')))
             else:
                 query = (sa.select(cols)
                            .select_from(kernels.join(agents))
-                           .where((kernels.c.sess_id.in_(kern_ids)) &
+                           .where((kernels.c.sess_id.in_(sess_ids)) &
                                   (kernels.c.role == 'master') &
                                   (agents.c.status == AgentStatus.ALIVE) &
                                   (agents.c.id == kernels.c.agent)))
@@ -289,8 +293,8 @@ class InstanceRegistry:
             rows = await result.fetchall()
             return rows
 
-    async def set_kernel_status(self, sess_id, status,
-                                db_connection=None, **extra_fields):
+    async def set_session_status(self, sess_id, access_key, status,
+                                 db_connection=None, **extra_fields):
         data = {
             'status': status,
         }
@@ -298,34 +302,32 @@ class InstanceRegistry:
         async with reenter_txn(self.dbpool, db_connection) as conn:
             query = (sa.update(kernels)
                        .values(data)
-                       .where(kernels.c.sess_id == sess_id))
+                       .where((kernels.c.sess_id == sess_id) &
+                              # TODO: include slave workers?
+                              (kernels.c.status != KernelStatus.TERMINATED) &
+                              (kernels.c.access_key == access_key)))
             await conn.execute(query)
 
-    @catch_unexpected(log)
-    async def get_or_create_kernel(self, client_sess_token,
-                                   lang, owner_access_key,
-                                   creation_config,
-                                   conn=None):
-        assert owner_access_key
+    async def get_or_create_session(self, sess_id, access_key,
+                                    lang, creation_config,
+                                    conn=None):
         try:
-            kern = await self.get_kernel_session(client_sess_token)
+            kern = await self.get_session(sess_id, access_key)
             if kern.lang != lang:
                 raise KernelAlreadyExists
             created = False
         except KernelNotFound:
-            kern = await self.create_kernel(
-                client_sess_token,
-                lang, owner_access_key,
-                creation_config,
+            kern = await self.create_session(
+                sess_id, access_key,
+                lang, creation_config,
                 conn=conn)
             created = True
         assert kern is not None
         return kern, created
 
-    async def create_kernel(self, sess_id,
-                            lang, owner_access_key,
-                            creation_config,
-                            conn=None):
+    async def create_session(self, sess_id, access_key,
+                             lang, creation_config,
+                             conn=None):
         agent_id = None
         created_info = None
         mounts = creation_config.get('mounts') or []
@@ -406,7 +408,7 @@ class InstanceRegistry:
                 'role': 'master',
                 'agent': agent_id,
                 'agent_addr': agent_addr,
-                'access_key': owner_access_key,
+                'access_key': access_key,
                 'lang': lang,
                 'mem_slot': required_slot.mem,
                 'cpu_slot': required_slot.cpu,
@@ -422,7 +424,8 @@ class InstanceRegistry:
             result = await conn.execute(query)
             assert result.rowcount == 1
 
-            async with self.handle_kernel_exception('create_kernel', sess_id):
+            async with self.handle_kernel_exception(
+                    'create_session', sess_id, access_key):
                 async with RPCContext(agent_addr, 3) as rpc:
                     config = {
                         'lang': lang,
@@ -438,7 +441,7 @@ class InstanceRegistry:
                                                                 config)
                 if created_info is None:
                     raise KernelCreationFailed('ooops')
-                log.debug(f'create_kernel("{sess_id}") -> '
+                log.debug(f'create_session("{sess_id}", "{access_key}") -> '
                           f'created on {agent_id}\n{created_info!r}')
                 assert str(kernel_id) == created_info['id']
                 kernel_access_info = {
@@ -463,22 +466,21 @@ class InstanceRegistry:
                 assert result.rowcount == 1
                 return kernel_access_info
 
-    async def destroy_kernel(self, sess_id):
-        log.debug(f"destroy_kernel({sess_id})")
-        async with self.handle_kernel_exception('destroy_kernel', sess_id,
-                                                set_error=True):
+    async def destroy_session(self, sess_id, access_key):
+        async with self.handle_kernel_exception(
+                'destroy_session', sess_id, access_key, set_error=True):
             try:
-                kernel = await self.get_kernel_session(sess_id)
-                await self.set_kernel_status(sess_id, KernelStatus.TERMINATING)
+                kernel = await self.get_session(sess_id, access_key)
+                await self.set_session_status(sess_id, access_key,
+                                              KernelStatus.TERMINATING)
             except KernelNotFound:
                 return
             async with RPCContext(kernel['agent_addr'], 10) as rpc:
                 return await rpc.call.destroy_kernel(str(kernel['id']))
 
-    async def restart_kernel(self, sess_id):
-        log.debug(f'restart_kernel({sess_id})')
-        async with self.handle_kernel_exception('restart_kernel', sess_id,
-                                                set_error=True):
+    async def restart_session(self, sess_id, access_key):
+        async with self.handle_kernel_exception(
+                'restart_session', sess_id, access_key, set_error=True):
             extra_cols = (
                 kernels.c.lang,
                 kernels.c.mem_slot,
@@ -488,8 +490,9 @@ class InstanceRegistry:
                 kernels.c.cpu_set,
                 kernels.c.gpu_set,
             )
-            kernel = await self.get_kernel_session(sess_id, extra_cols)
-            await self.set_kernel_status(sess_id, KernelStatus.RESTARTING)
+            kernel = await self.get_session(sess_id, access_key, extra_cols)
+            await self.set_session_status(sess_id, access_key,
+                                          KernelStatus.RESTARTING)
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 # TODO: read from vfolders attachment table
                 mounts = []
@@ -513,8 +516,9 @@ class InstanceRegistry:
                 kernel_info = await rpc.call.restart_kernel(str(kernel['id']),
                                                             new_config)
                 # TODO: what if prev status was "building" or others?
-                await self.set_kernel_status(
-                    sess_id, KernelStatus.RUNNING,
+                await self.set_session_status(
+                    sess_id, access_key,
+                    KernelStatus.RUNNING,
                     container_id=kernel_info['container_id'],
                     cpu_set=list(kernel_info['cpu_set']),
                     gpu_set=list(kernel_info['gpu_set']),
@@ -524,10 +528,10 @@ class InstanceRegistry:
                     stdout_port=kernel_info['stdout_port'],
                 )
 
-    async def execute(self, sess_id, api_version, run_id, mode, code, opts):
-        log.debug(f'execute:v{api_version}({sess_id}, {run_id}, {mode})')
-        async with self.handle_kernel_exception('execute', sess_id):
-            kernel = await self.get_kernel_session(sess_id)
+    async def execute(self, sess_id, access_key,
+                      api_version, run_id, mode, code, opts):
+        async with self.handle_kernel_exception('execute', sess_id, access_key):
+            kernel = await self.get_session(sess_id, access_key)
             # The agent aggregates at most 2 seconds of outputs
             # if the kernel runs for a long time.
             async with RPCContext(kernel['agent_addr'], 300) as rpc:
@@ -540,20 +544,18 @@ class InstanceRegistry:
                 except TypeError as e:
                     log.exception('typeerror????')
 
-    async def interrupt_kernel(self, sess_id):
-        log.debug(f'interrupt({sess_id})')
-        async with self.handle_kernel_exception('execute', sess_id):
-            kernel = await self.get_kernel_session(sess_id)
+    async def interrupt_session(self, sess_id, access_key):
+        async with self.handle_kernel_exception('execute', sess_id, access_key):
+            kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], 5) as rpc:
                 exec_coro = rpc.call.interrupt_kernel(str(kernel['id']))
                 if exec_coro is None:
                     raise RuntimeError('interrupt cancelled')
                 return await exec_coro
 
-    async def get_completions(self, sess_id, mode, text, opts):
-        log.debug(f'get_completions({sess_id}, {mode})')
-        async with self.handle_kernel_exception('execute', sess_id):
-            kernel = await self.get_kernel_session(sess_id)
+    async def get_completions(self, sess_id, access_key, mode, text, opts):
+        async with self.handle_kernel_exception('execute', sess_id, access_key):
+            kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], 5) as rpc:
                 exec_coro = rpc.call.get_completions(str(kernel['id']), mode,
                                                      text, opts)
@@ -561,48 +563,50 @@ class InstanceRegistry:
                     raise RuntimeError('get_completions cancelled')
                 return await exec_coro
 
-    async def upload_file(self, sess_id, filename, payload):
-        log.debug(f'upload_file({sess_id}, {filename})')
-        async with self.handle_kernel_exception('upload_file', sess_id):
-            kernel = await self.get_kernel_session(sess_id)
+    async def upload_file(self, sess_id, access_key, filename, payload):
+        async with self.handle_kernel_exception('upload_file', sess_id, access_key):
+            kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], 180) as rpc:
                 result = \
                     await rpc.call.upload_file(str(kernel['id']), filename, payload)
                 return result
 
-    async def get_logs(self, sess_id):
-        log.debug(f'get_logs({sess_id})')
-        async with self.handle_kernel_exception('get_logs', sess_id):
-            kernel = await self.get_kernel_session(sess_id)
+    async def get_logs(self, sess_id, access_key):
+        async with self.handle_kernel_exception('get_logs', sess_id, access_key):
+            kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], 5) as rpc:
                 exec_coro = rpc.call.get_logs(str(kernel['id']))
                 if exec_coro is None:
                     raise RuntimeError('get_logs cancelled')
                 return await exec_coro
 
-    async def update_kernel(self, sess_id, updated_fields, conn=None):
-        log.debug(f'update_kernel({sess_id})')
+    async def update_session(self, sess_id, access_key, updated_fields, conn=None):
         async with reenter_txn(self.dbpool, conn) as conn:
             query = (sa.update(kernels)
                        .values(updated_fields)
                        .where((kernels.c.sess_id == sess_id) &
+                              (kernels.c.access_key == access_key) &
+                              (kernels.c.status != KernelStatus.TERMINATED) &
                               (kernels.c.role == 'master')))
             await conn.execute(query)
 
-    async def increment_session_usage(self, sess_id, conn=None):
-        log.debug(f'increment_session_usage({sess_id})')
+    async def increment_session_usage(self, sess_id, access_key, conn=None):
         async with reenter_txn(self.dbpool, conn) as conn:
             query = (sa.update(kernels)
                        .values(num_queries=kernels.c.num_queries + 1)
                        .where((kernels.c.sess_id == sess_id) &
+                              (kernels.c.access_key == access_key) &
+                              (kernels.c.status != KernelStatus.TERMINATED) &
                               (kernels.c.role == 'master')))
             await conn.execute(query)
 
-    async def get_kernels_in_instance(self, inst_id, conn=None):
+    async def get_sessions_in_instance(self, inst_id, conn=None):
         async with reenter_txn(self.dbpool, conn) as conn:
             query = (sa.select([kernels.c.sess_id])
                        .select_from(kernels)
-                       .where(kernels.c.agent == inst_id))
+                       .where((kernels.c.agent == inst_id) &
+                              (kernels.c.role == 'master') &
+                              (kernels.c.status != KernelStatus.TERMINATED)))
             result = await conn.execute(query)
             rows = await result.fetchall()
             if not rows:
@@ -762,31 +766,21 @@ class InstanceRegistry:
                        .where(agents.c.id == kernel['agent']))
             await conn.execute(query)
 
-    async def mark_session_terminated(self, sess_id):
+    async def mark_session_terminated(self, sess_id, access_key):
         '''
         Mark the compute session terminated and restore the concurrency limit
         of the owner access key.  Releasing resource limits is handled by
         func:`mark_kernel_terminated`.
         '''
         async with self.dbpool.acquire() as conn:
-
-            # restore concurrency usage of the owner access-key
-            query = (sa.select([sa.column('id'),
-                                sa.column('access_key')])
-                       .select_from(kernels)
-                       .where(kernels.c.sess_id == sess_id))
-            result = await conn.execute(query)
-            all_kernels = await result.fetchall()
-            num_kernels = len(all_kernels)
-            if num_kernels > 0:
-                access_key = all_kernels[0]['access_key']
-                # concurrency is per session.
-                query = (sa.update(keypairs)
-                           .values({
-                               'concurrency_used': (keypairs.c.concurrency_used - 1),
-                           })
-                           .where(keypairs.c.access_key == access_key))
-                await conn.execute(query)
+            # concurrency is per session.
+            query = (sa.update(keypairs)
+                       .values({
+                           'concurrency_used': (
+                               keypairs.c.concurrency_used - 1),
+                       })
+                       .where(keypairs.c.access_key == access_key))
+            await conn.execute(query)
 
     async def forget_instance(self, inst_id):
         async with self.dbpool.acquire() as conn:

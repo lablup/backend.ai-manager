@@ -52,7 +52,7 @@ def server_ready_required(handler):
 
 @auth_required
 @server_ready_required
-async def create(request):
+async def create(request) -> web.Response:
     try:
         with _timeout(2):
             params = await request.json(loads=json.loads)
@@ -60,13 +60,13 @@ async def create(request):
                'lang is missing or empty!'
         assert params.get('clientSessionToken'), \
                'clientSessionToken is missing or empty!'
-        sess_token = params['clientSessionToken']
-        assert 4 <= len(sess_token) <= 64, \
+        sess_id = params['clientSessionToken']
+        assert 4 <= len(sess_id) <= 64, \
                'clientSessionToken is too short or long (4 to 64 bytes required)!'
-        assert _rx_sess_token.fullmatch(sess_token), \
+        assert _rx_sess_token.fullmatch(sess_id), \
                'clientSessionToken contains invalid characters.'
         log.info(f"GET_OR_CREATE (u:{request['keypair']['access_key']}, "
-                 f"lang:{params['lang']}, token:{params['clientSessionToken']})")
+                 f"lang:{params['lang']}, token:{sess_id})")
     except (asyncio.TimeoutError, AssertionError,
             json.decoder.JSONDecodeError) as e:
         log.warning(f'GET_OR_CREATE: invalid/missing parameters, {e!r}')
@@ -115,10 +115,9 @@ async def create(request):
                             row.id.hex
                         ])
                 creation_config['mounts'] = mount_details
-            kernel, created = await request.app['registry'].get_or_create_kernel(
-                params['clientSessionToken'],
-                params['lang'], access_key,
-                creation_config,
+            kernel, created = await request.app['registry'].get_or_create_session(
+                sess_id, access_key,
+                params['lang'], creation_config,
                 conn=conn)
             resp['kernelId'] = str(kernel['sess_id'])
             resp['created'] = bool(created)
@@ -139,11 +138,9 @@ async def create(request):
 
 @catch_unexpected(log)
 async def update_instance_usage(app, inst_id):
-    # In heartbeat timeouts, we do NOT clear Redis keys because
-    # the timeout may be a transient one.
-    kern_ids = await app['registry'].get_kernels_in_instance(inst_id)
-    all_kernels = await app['registry'].get_kernels(kern_ids, allow_stale=True)
-    affected_keys = [kern['access_key'] for kern in all_kernels if kern is not None]
+    sess_ids = await app['registry'].get_sessions_in_instance(inst_id)
+    all_sessions = await app['registry'].get_sessions(sess_ids)
+    affected_keys = [kern['access_key'] for kern in all_sessions if kern is not None]
 
     # TODO: enqueue termination event to streaming response queue
 
@@ -151,7 +148,7 @@ async def update_instance_usage(app, inst_id):
     for ak in filter(lambda ak: ak is not None, affected_keys):
         per_key_counts[ak] += 1
     per_key_counts_str = ', '.join(f'{k}:{v}' for k, v in per_key_counts.items())
-    log.info(f'-> cleaning {kern_ids!r}')
+    log.info(f'-> cleaning {sess_ids!r}')
     log.info(f'-> per-key usage: {per_key_counts_str}')
 
     if not affected_keys:
@@ -159,7 +156,7 @@ async def update_instance_usage(app, inst_id):
 
     async with app['dbpool'].acquire() as conn:
         log.debug(f'update_instance_usage({inst_id})')
-        for kern in all_kernels:
+        for kern in all_sessions:
             if kern is None:
                 continue
             query = (sa.update(keypairs)
@@ -182,13 +179,16 @@ async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
     # Skip if restarting
     if kernel.status != KernelStatus.RESTARTING:
         await app['registry'].mark_kernel_terminated(kernel_id)
+        # TODO: spawn another kernel to keep the capacity of multi-container bundle?
     if kernel.role == 'master':
         sess_id = kernel['sess_id']
-        for handler in app['stream_pty_handlers'][sess_id].copy():
+        access_key = kernel['access_key']
+        stream_key = (sess_id, access_key)
+        for handler in app['stream_pty_handlers'][stream_key].copy():
             handler.cancel()
             await handler
         if kernel.status != KernelStatus.RESTARTING:
-            await app['registry'].mark_session_terminated(sess_id)
+            await app['registry'].mark_session_terminated(sess_id, access_key)
 
 
 @catch_unexpected(log)
@@ -303,11 +303,13 @@ async def datadog_update_timer(app):
 
 @auth_required
 @server_ready_required
-async def destroy(request):
+async def destroy(request) -> web.Response:
+    registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    log.info(f"DESTROY (u:{request['keypair']['access_key']}, k:{sess_id})")
+    access_key = request['keypair']['access_key']
+    log.info(f"DESTROY (u:{access_key}, k:{sess_id})")
     try:
-        last_stat = await request.app['registry'].destroy_kernel(sess_id)
+        last_stat = await registry.destroy_session(sess_id, access_key)
     except BackendError:
         log.exception('DESTROY: exception')
         raise
@@ -320,14 +322,16 @@ async def destroy(request):
 
 @auth_required
 @server_ready_required
-async def get_info(request):
+async def get_info(request) -> web.Response:
     # NOTE: This API should be replaced with GraphQL version.
     resp = {}
+    registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    log.info(f"GETINFO (u:{request['keypair']['access_key']}, k:{sess_id})")
+    access_key = request['keypair']['access_key']
+    log.info(f"GETINFO (u:{access_key}, k:{sess_id})")
     try:
-        await request.app['registry'].increment_session_usage(sess_id)
-        kern = await request.app['registry'].get_kernel_session(sess_id, field='*')
+        await registry.increment_session_usage(sess_id, access_key)
+        kern = await registry.get_session(sess_id, access_key, field='*')
         resp['lang'] = kern.lang
         age = datetime.now(tzutc()) - kern.created_at
         resp['age'] = age.total_seconds() * 1000
@@ -351,12 +355,14 @@ async def get_info(request):
 
 @auth_required
 @server_ready_required
-async def restart(request):
+async def restart(request) -> web.Response:
+    registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    log.info(f"RESTART (u:{request['keypair']['access_key']}, k:{sess_id})")
+    access_key = request['keypair']['access_key']
+    log.info(f"RESTART (u:{access_key}, k:{sess_id})")
     try:
-        await request.app['registry'].increment_session_usage(sess_id)
-        await request.app['registry'].restart_kernel(sess_id)
+        await registry.increment_session_usage(sess_id, access_key)
+        await registry.restart_session(sess_id, access_key)
         for sock in request.app['stream_stdin_socks'][sess_id]:
             sock.close()
     except BackendError:
@@ -371,18 +377,20 @@ async def restart(request):
 
 @auth_required
 @server_ready_required
-async def execute(request):
+async def execute(request) -> web.Response:
     resp = {}
+    registry = request.app['registry']
     sess_id = request.match_info['sess_id']
+    access_key = request['keypair']['access_key']
     try:
         with _timeout(2):
             params = await request.json(loads=json.loads)
-        log.info(f"EXECUTE(u:{request['keypair']['access_key']}, k:{sess_id})")
+        log.info(f"EXECUTE(u:{access_key}, k:{sess_id})")
     except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
         log.warning('EXECUTE: invalid/missing parameters')
         raise InvalidAPIParameters
     try:
-        await request.app['registry'].increment_session_usage(sess_id)
+        await registry.increment_session_usage(sess_id, access_key)
         api_version = request['api_version']
         if api_version == 1:
             run_id = params.get('runId', secrets.token_hex(8))
@@ -400,11 +408,12 @@ async def execute(request):
             opts = params.get('options', None) or {}
         if mode == 'complete':
             # For legacy
-            resp['result'] = await request.app['registry'].get_completions(
-                sess_id, code, opts)
+            resp['result'] = await registry.get_completions(
+                sess_id, access_key, code, opts)
         else:
-            resp['result'] = await request.app['registry'].execute(
-                sess_id, api_version, run_id, mode, code, opts)
+            resp['result'] = await registry.execute(
+                sess_id, access_key,
+                api_version, run_id, mode, code, opts)
     except AssertionError as e:
         log.warning(f'EXECUTE: invalid/missing parameters: {e}')
         raise InvalidAPIParameters(extra_msg=e.args[0])
@@ -416,12 +425,14 @@ async def execute(request):
 
 @auth_required
 @server_ready_required
-async def interrupt(request):
+async def interrupt(request) -> web.Response:
+    registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    log.info(f"INTERRUPT(u:{request['keypair']['access_key']}, k:{sess_id})")
+    access_key = request['keypair']['access_key']
+    log.info(f"INTERRUPT(u:{access_key}, k:{sess_id})")
     try:
-        await request.app['registry'].increment_session_usage(sess_id)
-        await request.app['registry'].interrupt_kernel(sess_id)
+        await registry.increment_session_usage(sess_id, access_key)
+        await registry.interrupt_session(sess_id, access_key)
     except BackendError:
         log.exception('INTERRUPT: exception')
         raise
@@ -430,20 +441,22 @@ async def interrupt(request):
 
 @auth_required
 @server_ready_required
-async def complete(request):
+async def complete(request) -> web.Response:
     resp = {}
+    registry = request.app['registry']
     sess_id = request.match_info['sess_id']
+    access_key = request['keypair']['access_key']
     try:
         with _timeout(2):
             params = await request.json(loads=json.loads)
-        log.info(f"COMPLETE(u:{request['keypair']['access_key']}, k:{sess_id})")
+        log.info(f"COMPLETE(u:{access_key}, k:{sess_id})")
     except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
         log.warning('COMPLETE: invalid/missing parameters')
         raise InvalidAPIParameters
     try:
         code = params.get('code', '')
         opts = params.get('options', None) or {}
-        await request.app['registry'].increment_session_usage(sess_id)
+        await registry.increment_session_usage(sess_id, access_key)
         resp['result'] = await request.app['registry'].get_completions(
             sess_id, code, opts)
     except AssertionError:
@@ -457,12 +470,14 @@ async def complete(request):
 
 @auth_required
 @server_ready_required
-async def upload_files(request):
+async def upload_files(request) -> web.Response:
     loop = asyncio.get_event_loop()
     reader = await request.multipart()
+    registry = request.app['registry']
     sess_id = request.match_info['sess_id']
+    access_key = request['keypair']['access_key']
     try:
-        await request.app['registry'].increment_session_usage(sess_id)
+        await registry.increment_session_usage(sess_id, access_key)
         file_count = 0
         upload_tasks = []
         while True:
@@ -479,7 +494,7 @@ async def upload_files(request):
             data = file.decode(chunk)
             log.debug(f'received file: {file.filename} ({len(data):,} bytes)')
             t = loop.create_task(
-                request.app['registry'].upload_file(sess_id, file.filename, data))
+                registry.upload_file(sess_id, access_key, file.filename, data))
             upload_tasks.append(t)
         await asyncio.gather(*upload_tasks)
     except BackendError:
@@ -490,13 +505,15 @@ async def upload_files(request):
 
 @auth_required
 @server_ready_required
-async def get_logs(request):
+async def get_logs(request) -> web.Response:
     resp = {}
+    registry = request.app['registry']
     sess_id = request.match_info['sess_id']
+    access_key = request['keypair']['access_key']
     log.info(f"GETLOG (u:{request['keypair']['access_key']}, k:{sess_id})")
     try:
-        await request.app['registry'].increment_session_usage(sess_id)
-        resp['result'] = await request.app['registry'].get_logs(sess_id)
+        await registry.increment_session_usage(sess_id, access_key)
+        resp['result'] = await registry.get_logs(sess_id, access_key)
         log.info(f'container log retrieved: {resp!r}')
     except BackendError:
         log.exception('GETLOG: exception')
@@ -505,32 +522,35 @@ async def get_logs(request):
 
 
 @server_ready_required
-async def stream_pty(request):
+async def stream_pty(request) -> web.Response:
     app = request.app
+    registry = request.app['registry']
     sess_id = request.match_info['sess_id']
+    access_key = request['keypair']['access_key']
+    stream_key = (sess_id, access_key)
     extra_fields = (kernels.c.stdin_port, kernels.c.stdout_port)
     try:
-        kernel = await app['registry'].get_kernel_session(
-            sess_id, field=extra_fields)
+        kernel = await registry.get_session(
+            sess_id, access_key, field=extra_fields)
     except KernelNotFound:
         raise
 
-    await app['registry'].increment_session_usage(sess_id)
+    await registry.increment_session_usage(sess_id, access_key)
 
     # Upgrade connection to WebSocket.
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
-    app['stream_pty_handlers'][sess_id].add(asyncio.Task.current_task())
+    app['stream_pty_handlers'][stream_key].add(asyncio.Task.current_task())
 
     async def connect_streams(kernel):
         kernel_ip = urlparse(kernel.agent_addr).hostname
         stdin_addr = f'tcp://{kernel_ip}:{kernel.stdin_port}'
-        log.debug(f'stream_pty({sess_id}): stdin: {stdin_addr}')
+        log.debug(f'stream_pty({stream_key}): stdin: {stdin_addr}')
         stdin_sock = await aiozmq_sock(zmq.PUB, connect=stdin_addr)
         stdin_sock.transport.setsockopt(zmq.LINGER, 100)
         stdout_addr = f'tcp://{kernel_ip}:{kernel.stdout_port}'
-        log.debug(f'stream_pty({sess_id}): stdout: {stdout_addr}')
+        log.debug(f'stream_pty({stream_key}): stdout: {stdout_addr}')
         stdout_sock = await aiozmq_sock(zmq.SUB, connect=stdout_addr)
         stdout_sock.transport.setsockopt(zmq.LINGER, 100)
         stdout_sock.transport.subscribe(b'')
@@ -538,7 +558,7 @@ async def stream_pty(request):
 
     # Wrap sockets in a list so that below coroutines can share reference changes.
     socks = list(await connect_streams(kernel))
-    app['stream_stdin_socks'][sess_id].add(socks[0])
+    app['stream_stdin_socks'][stream_key].add(socks[0])
     stream_sync = asyncio.Event()
 
     async def stream_stdin():
@@ -555,58 +575,61 @@ async def stream_pty(request):
                             # AttributeError occurs when stdin_sock._transport
                             # is None because it's already closed somewhere
                             # else.
-                            app['stream_stdin_socks'][sess_id].remove(socks[0])
+                            app['stream_stdin_socks'][stream_key].remove(socks[0])
                             socks[1].close()
-                            kernel = await app['registry'].get_kernel_session(
-                                sess_id, field=extra_fields)
+                            kernel = await registry.get_session(
+                                sess_id, access_key, field=extra_fields)
                             stdin_sock, stdout_sock = await connect_streams(kernel)
                             socks[0] = stdin_sock
                             socks[1] = stdout_sock
-                            app['stream_stdin_socks'][sess_id].add(socks[0])
+                            app['stream_stdin_socks'][stream_key].add(socks[0])
                             socks[0].write([raw_data])
-                            log.debug(f'stream_stdin({sess_id}): zmq stream reset')
+                            log.debug(f'stream_stdin({stream_key}): '
+                                      'zmq stream reset')
                             stream_sync.set()
                             continue
                     else:
-                        await app['registry'].increment_session_usage(sess_id)
+                        await registry.increment_session_usage(sess_id, access_key)
                         api_version = 2
                         run_id = secrets.token_hex(8)
                         if data['type'] == 'resize':
                             code = f"%resize {data['rows']} {data['cols']}"
-                            await app['registry'].execute(
-                                sess_id, api_version, run_id, 'query', code, {})
+                            await registry.execute(
+                                sess_id, access_key,
+                                api_version, run_id, 'query', code, {})
                         elif data['type'] == 'ping':
-                            await app['registry'].execute(
-                                sess_id, api_version, run_id, 'query', '%ping', {})
+                            await registry.execute(
+                                sess_id, access_key,
+                                api_version, run_id, 'query', '%ping', {})
                         elif data['type'] == 'restart':
                             # Close existing zmq sockets and let stream
                             # handlers get a new one with changed stdin/stdout
                             # ports.
                             log.debug('stream_stdin: restart requested')
                             if not socks[0].at_closing():
-                                await app['registry'].restart_kernel(sess_id)
+                                await registry.restart_session(sess_id, access_key)
                                 socks[0].close()
                             else:
-                                log.warning(f'stream_stdin({sess_id}): '
+                                log.warning(f'stream_stdin({stream_key}): '
                                             'duplicate kernel restart request; '
                                             'ignoring it.')
                 elif msg.type == aiohttp.WSMsgType.ERROR:
-                    log.warning(f'stream_stdin({sess_id}): '
+                    log.warning(f'stream_stdin({stream_key}): '
                                 f'connection closed ({ws.exception()})')
         except asyncio.CancelledError:
             # Agent or kernel is terminated.
             pass
         except:
             app['sentry'].captureException()
-            log.exception(f'stream_stdin({sess_id}): unexpected error')
+            log.exception(f'stream_stdin({stream_key}): unexpected error')
         finally:
-            log.debug(f'stream_stdin({sess_id}): terminated')
+            log.debug(f'stream_stdin({stream_key}): terminated')
             if not socks[0].at_closing():
                 socks[0].close()
 
     async def stream_stdout():
         nonlocal socks
-        log.debug(f'stream_stdout({sess_id}): started')
+        log.debug(f'stream_stdout({stream_key}): started')
         try:
             while True:
                 try:
@@ -614,7 +637,7 @@ async def stream_pty(request):
                 except aiozmq.ZmqStreamClosed:
                     await stream_sync.wait()
                     stream_sync.clear()
-                    log.debug(f'stream_stdout({sess_id}): zmq stream reset')
+                    log.debug(f'stream_stdout({stream_key}): zmq stream reset')
                     continue
                 if ws.closed:
                     break
@@ -626,9 +649,9 @@ async def stream_pty(request):
             pass
         except:
             app['sentry'].captureException()
-            log.exception(f'stream_stdout({sess_id}): unexpected error')
+            log.exception(f'stream_stdout({stream_key}): unexpected error')
         finally:
-            log.debug(f'stream_stdout({sess_id}): terminated')
+            log.debug(f'stream_stdout({stream_key}): terminated')
             socks[1].close()
 
     # According to aiohttp docs, reading ws must be done inside this task.
@@ -638,17 +661,17 @@ async def stream_pty(request):
         await stream_stdin()
     except:
         app['sentry'].captureException()
-        log.exception(f'stream_pty({sess_id}): unexpected error')
+        log.exception(f'stream_pty({stream_key}): unexpected error')
     finally:
-        app['stream_pty_handlers'][sess_id].remove(asyncio.Task.current_task())
-        app['stream_stdin_socks'][sess_id].remove(socks[0])
+        app['stream_pty_handlers'][stream_key].remove(asyncio.Task.current_task())
+        app['stream_stdin_socks'][stream_key].remove(socks[0])
         stdout_task.cancel()
         await stdout_task
     return ws
 
 
 @auth_required
-async def not_impl_stub(request):
+async def not_impl_stub(request) -> web.Response:
     raise QueryNotImplemented
 
 
