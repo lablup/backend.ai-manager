@@ -16,13 +16,6 @@ from ai.backend.manager.models import keypairs
 here = pathlib.Path(__file__).parent
 
 
-@pytest.fixture
-def unused_port():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(('127.0.0.1', 0))
-        return s.getsockname()[1]
-
-
 class Client:
     def __init__(self, session, url):
         self._session = session
