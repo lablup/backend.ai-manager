@@ -20,7 +20,7 @@ depends_on = None
 def upgrade():
     op.create_index(
         op.f('ix_kernels_unique_sess_token'),
-        'kernels', ['sess_id'],
+        'kernels', ['access_key', 'sess_id'],
         unique=True,
         postgresql_where=sa.text("kernels.status != 'TERMINATED'"),
     )
