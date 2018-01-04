@@ -10,10 +10,9 @@ import simplejson as json
 
 from ai.backend.gateway.auth import init as auth_init
 from ai.backend.gateway.auth import (
-    _extract_auth_params, check_date, sign_request
+    _extract_auth_params, check_date
 )
 from ai.backend.gateway.exceptions import InvalidAuthParameters
-from ai.backend.gateway.server import LATEST_API_VERSION
 
 
 def test_extract_auth_params():
