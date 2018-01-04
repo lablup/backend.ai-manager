@@ -52,7 +52,6 @@ class EventDispatcher:
         self.handlers[event_name].append(callback)
 
     def dispatch(self, event_name, agent_id, args=tuple()):
-        first_arg = f', {args[0]}' if args else ''
         log.debug(f"DISPATCH({event_name}/{agent_id})")
         for handler in self.handlers[event_name]:
             if asyncio.iscoroutine(handler) or asyncio.iscoroutinefunction(handler):
