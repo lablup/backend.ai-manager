@@ -63,7 +63,10 @@ target/
 .env
 .envrc
 .*.swp
+
+# virtualenvs
 venv*/
+.python-version
 
 # User configuratinos
 alembic.ini
