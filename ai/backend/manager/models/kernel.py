@@ -78,6 +78,11 @@ kernels = sa.Table(
     sa.Column('io_max_scratch_size', sa.BigInteger(), default=0),
 
     sa.Index('ix_kernels_sess_id_role', 'sess_id', 'role', unique=False),
+    sa.Index('ix_kernels_unique_sess_token', 'access_key', 'sess_id',
+             unique=True,
+             postgresql_where=sa.text(
+                 "status != 'TERMINATED' and "
+                 "role = 'master'")),
 )
 
 

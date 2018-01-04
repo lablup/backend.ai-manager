@@ -22,7 +22,9 @@ def upgrade():
         op.f('ix_kernels_unique_sess_token'),
         'kernels', ['access_key', 'sess_id'],
         unique=True,
-        postgresql_where=sa.text("kernels.status != 'TERMINATED'"),
+        postgresql_where=sa.text(
+            "kernels.status != 'TERMINATED' and "
+            "kernels.role = 'master'"),
     )
 
 
