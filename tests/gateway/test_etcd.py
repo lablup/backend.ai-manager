@@ -70,6 +70,7 @@ async def volumes(config_server, tmpdir):
 
 
 class TestConfigServer:
+
     @pytest.mark.asyncio
     async def test_register_myself(self, pre_app, config_server):
         await config_server.register_myself(pre_app.config)
