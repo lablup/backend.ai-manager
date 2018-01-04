@@ -15,7 +15,7 @@ import zmq
 from ..gateway.exceptions import (
     BackendError,
     InstanceNotAvailable, InstanceNotFound,
-    KernelNotFound,
+    KernelNotFound, KernelAlreadyExists,
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
     AgentError)
@@ -23,7 +23,7 @@ from .models import (
     agents, kernels, keypairs,
     ResourceSlot, AgentStatus, KernelStatus
 )
-from ..gateway.utils import catch_unexpected, Infinity
+from ..gateway.utils import Infinity
 
 __all__ = ['InstanceRegistry', 'InstanceNotFound']
 
@@ -309,6 +309,8 @@ class InstanceRegistry:
         assert owner_access_key
         try:
             kern = await self.get_kernel_session(client_sess_token)
+            if kern.lang != lang:
+                raise KernelAlreadyExists
             created = False
         except KernelNotFound:
             kern = await self.create_kernel(

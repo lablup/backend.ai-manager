@@ -27,7 +27,7 @@ import zmq
 
 from .exceptions import (ServiceUnavailable, InvalidAPIParameters, QuotaExceeded,
                          QueryNotImplemented, KernelNotFound, FolderNotFound,
-                         BackendError)
+                         BackendError, InternalServerError)
 from . import GatewayStatus
 from .auth import auth_required
 from .utils import catch_unexpected, method_placeholder
@@ -130,6 +130,10 @@ async def create(request):
     except BackendError:
         log.exception('GET_OR_CREATE: exception')
         raise
+    except Exception:
+        request.app['sentry'].captureException()
+        log.exception('GET_OR_CREATE: unexpected error!')
+        raise InternalServerError
     return web.json_response(resp, status=201, dumps=json.dumps)
 
 

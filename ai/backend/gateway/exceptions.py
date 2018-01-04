@@ -92,6 +92,12 @@ class KernelNotFound(web.HTTPNotFound, BackendError):
     error_title = 'No such kernel.'
 
 
+class KernelAlreadyExists(web.HTTPNotFound, BackendError):
+    error_type  = 'https://api.backend.ai/probs/kernel-already-exists'
+    error_title = 'The kernel already exists with ' \
+                  'a different runtime type (language).'
+
+
 class FolderNotFound(web.HTTPNotFound, BackendError):
     error_type  = 'https://api.backend.ai/probs/folder-not-found'
     error_title = 'No such virtual folder.'
