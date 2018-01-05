@@ -115,7 +115,8 @@ async def default_keypair(event_loop, pre_app):
 
 @pytest.fixture
 def get_headers(pre_app, default_keypair):
-    def create_header(req_bytes, hash_type='sha256', api_version='v3.20170615'):
+    def create_header(url, req_bytes, hash_type='sha256',
+                      api_version='v3.20170615'):
         now = datetime.now(tzutc())
         hostname = f'localhost:{pre_app.config.service_port}'
         headers = {
@@ -125,7 +126,7 @@ def get_headers(pre_app, default_keypair):
         }
         req_hash = hashlib.new(hash_type, req_bytes).hexdigest()
         sign_bytes = b'GET\n' \
-                     + b'/v3/authorize\n' \
+                     + url.encode() + b'\n' \
                      + now.isoformat().encode() + b'\n' \
                      + b'host:' + hostname.encode() + b'\n' \
                      + b'content-type:application/json\n' \
@@ -169,6 +170,8 @@ async def create_app_and_client(event_loop, pre_app):
         # Store extra inits and shutowns
         extra_inits = []
         for extra in extras:
+            assert extra in ['etcd', 'event', 'auth', 'vfolder', 'admin',
+                             'rlim', 'kernel']
             target_module = import_module(f'ai.backend.gateway.{extra}')
             fn_init = getattr(target_module, 'init', None)
             if fn_init:
