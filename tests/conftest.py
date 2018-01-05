@@ -1,10 +1,13 @@
+from datetime import datetime
+import hashlib, hmac
+from importlib import import_module
 import pathlib
-import socket
 # import ssl
 
 import aiohttp
 from aiohttp import web
 from aiopg.sa import create_engine
+from dateutil.tz import tzutc
 import sqlalchemy as sa
 import pytest
 
@@ -66,11 +69,12 @@ async def pre_app(event_loop, unused_tcp_port):
 
     # Override basic settings.
     # Change these configs if local servers have different port numbers.
-    app.config.redis_addr = host_port_pair('127.0.0.1:6379')
-    app.config.db_addr = host_port_pair('127.0.0.1:5432')
+    app.config.redis_addr = host_port_pair('127.0.0.1:6389')
+    app.config.db_addr = host_port_pair('127.0.0.1:5442')
     app.config.db_name = 'testing'
 
     # Override extra settings
+    app.config.namespace = 'local'
     app.config.service_ip = '127.0.0.1'
     app.config.service_port = unused_tcp_port
     # app.config.ssl_cert = here / 'sample-ssl-cert' / 'sample.crt'
@@ -79,6 +83,8 @@ async def pre_app(event_loop, unused_tcp_port):
     # app.sslctx = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
     # app.sslctx.load_cert_chain(str(app.config.ssl_cert),
     #                            str(app.config.ssl_key))
+
+    app['pidx'] = 0
 
     return app
 
@@ -107,12 +113,41 @@ async def default_keypair(event_loop, pre_app):
     return keypair
 
 
+@pytest.fixture
+def get_headers(pre_app, default_keypair):
+    def create_header(req_bytes, hash_type='sha256', api_version='v3.20170615'):
+        now = datetime.now(tzutc())
+        hostname = f'localhost:{pre_app.config.service_port}'
+        headers = {
+            'Date': now.isoformat(),
+            'Content-Type': 'application/json',
+            'X-BackendAI-Version': api_version,
+        }
+        req_hash = hashlib.new(hash_type, req_bytes).hexdigest()
+        sign_bytes = b'GET\n' \
+                     + b'/v3/authorize\n' \
+                     + now.isoformat().encode() + b'\n' \
+                     + b'host:' + hostname.encode() + b'\n' \
+                     + b'content-type:application/json\n' \
+                     + b'x-backendai-version:' + api_version.encode() + b'\n' \
+                     + req_hash.encode()
+        sign_key = hmac.new(default_keypair['secret_key'].encode(),
+                            now.strftime('%Y%m%d').encode(), hash_type).digest()
+        sign_key = hmac.new(sign_key, hostname.encode(), hash_type).digest()
+        signature = hmac.new(sign_key, sign_bytes, hash_type).hexdigest()
+        headers['Authorization'] = \
+            f'BackendAI signMethod=HMAC-{hash_type.upper()}, ' \
+            + f'credential={default_keypair["access_key"]}:{signature}'
+        return headers
+    return create_header
+
+
 async def _create_server(loop, pre_app, extra_inits=None, debug=False):
     await gw_init(pre_app)
     if extra_inits:
         for init in extra_inits:
             await init(pre_app)
-    handler = pre_app.make_handler(debug=debug, keep_alive_on=False)
+    handler = pre_app.make_handler(debug=debug, keep_alive_on=False, loop=loop)
     server = await loop.create_server(
         handler,
         pre_app.config.service_ip,
@@ -126,13 +161,24 @@ async def _create_server(loop, pre_app, extra_inits=None, debug=False):
 async def create_app_and_client(event_loop, pre_app):
     client = None
     app = handler = server = None
-    extra_shutdown_list = None
+    extra_shutdowns = []
 
-    async def maker(extra_inits=None, extra_shutdowns=None):
-        nonlocal client, app, handler, server, extra_shutdown_list
+    async def maker(extras=None):
+        nonlocal client, app, handler, server, extra_shutdowns
+
+        # Store extra inits and shutowns
+        extra_inits = []
+        for extra in extras:
+            target_module = import_module(f'ai.backend.gateway.{extra}')
+            fn_init = getattr(target_module, 'init', None)
+            if fn_init:
+                extra_inits.append(fn_init)
+            fn_shutdown = getattr(target_module, 'shutdown', None)
+            if fn_shutdown:
+                extra_shutdowns.append(fn_shutdown)
+
         server_params = {}
         client_params = {}
-        extra_shutdown_list = extra_shutdowns
         app, port, handler, server = await _create_server(
             event_loop, pre_app, extra_inits=extra_inits, **server_params)
         if app.sslctx:
@@ -148,9 +194,8 @@ async def create_app_and_client(event_loop, pre_app):
     if client:
         client.close()
     await gw_shutdown(pre_app)
-    if extra_shutdown_list:
-        for shutdown in extra_shutdown_list:
-            await shutdown(pre_app)
+    for shutdown in extra_shutdowns:
+        await shutdown(pre_app)
     if server:
         server.close()
         await server.wait_closed()
