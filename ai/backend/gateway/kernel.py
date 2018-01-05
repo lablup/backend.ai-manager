@@ -7,6 +7,7 @@ import base64
 from collections import defaultdict
 from datetime import datetime
 import functools
+import json
 import logging
 import re
 import secrets
@@ -20,7 +21,6 @@ import aiozmq
 from aiozmq import create_zmq_stream as aiozmq_sock
 from async_timeout import timeout as _timeout
 from dateutil.tz import tzutc
-import simplejson as json
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import true, null
 import zmq

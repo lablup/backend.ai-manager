@@ -10,8 +10,9 @@ canonical error types beacuse "title" field may change due to localization and
 future UX improvements.
 '''
 
+import json
+
 from aiohttp import web
-import simplejson as json
 
 
 class BackendError(web.HTTPError):

@@ -1,12 +1,12 @@
 from collections import UserDict
 from datetime import datetime, timedelta
 import hashlib, hmac
+import json
 from pprint import pprint
 import uuid
 
 from dateutil.tz import tzutc, gettz
 import pytest
-import simplejson as json
 
 from ai.backend.gateway.auth import (
     init as auth_init,

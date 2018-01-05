@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import json
 import logging
 import traceback
 from typing import Mapping
@@ -8,7 +9,6 @@ from aiohttp import web
 import graphene
 from graphql.execution.executors.asyncio import AsyncioExecutor
 from graphql.error.located_error import GraphQLLocatedError
-import simplejson as json
 
 from .exceptions import InvalidAPIParameters, BackendError
 from .auth import auth_required
