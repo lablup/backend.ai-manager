@@ -115,8 +115,10 @@ async def default_keypair(event_loop, pre_app):
 
 @pytest.fixture
 def get_headers(pre_app, default_keypair):
-    def create_header(url, req_bytes, hash_type='sha256',
-                      api_version='v3.20170615'):
+    def create_header(method, url, req_bytes, ctype='application/json',
+                      hash_type='sha256', api_version='v3.20170615'):
+        if ctype == 'application/octet-stream':
+            req_bytes = b''
         now = datetime.now(tzutc())
         hostname = f'localhost:{pre_app.config.service_port}'
         headers = {
@@ -125,11 +127,11 @@ def get_headers(pre_app, default_keypair):
             'X-BackendAI-Version': api_version,
         }
         req_hash = hashlib.new(hash_type, req_bytes).hexdigest()
-        sign_bytes = b'GET\n' \
+        sign_bytes = method.upper().encode() + b'\n' \
                      + url.encode() + b'\n' \
                      + now.isoformat().encode() + b'\n' \
                      + b'host:' + hostname.encode() + b'\n' \
-                     + b'content-type:application/json\n' \
+                     + b'content-type:' + ctype.encode() + b'\n' \
                      + b'x-backendai-version:' + api_version.encode() + b'\n' \
                      + req_hash.encode()
         sign_key = hmac.new(default_keypair['secret_key'].encode(),

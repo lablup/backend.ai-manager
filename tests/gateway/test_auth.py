@@ -87,7 +87,8 @@ async def test_authorize(create_app_and_client, get_headers):
         url = '/v3/authorize'
         req_data = {'echo': str(uuid.uuid4())}
         req_bytes = json.dumps(req_data).encode()
-        headers = get_headers(url, req_bytes, hash_type, api_version)
+        headers = get_headers('GET', url, req_bytes, hash_type=hash_type,
+                              api_version=api_version)
         # Only shown when there are failures in this test case
         print('Request headers')
         pprint(headers)
