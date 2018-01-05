@@ -69,8 +69,8 @@ async def pre_app(event_loop, unused_tcp_port):
 
     # Override basic settings.
     # Change these configs if local servers have different port numbers.
-    app.config.redis_addr = host_port_pair('127.0.0.1:6389')
-    app.config.db_addr = host_port_pair('127.0.0.1:5442')
+    app.config.redis_addr = host_port_pair('127.0.0.1:6379')
+    app.config.db_addr = host_port_pair('127.0.0.1:5432')
     app.config.db_name = 'testing'
 
     # Override extra settings
