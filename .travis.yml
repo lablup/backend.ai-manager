@@ -39,7 +39,7 @@ jobs:
         - sed -i'' -e "s/{BRANCH}/$BRANCH/g" requirements-ci.txt
         - pip install -U -r requirements-ci.txt
       before_script:
-        - mkdir -p /tmp/etcd
+        - mkdir -p /tmp/etcd/vroot
         - docker run -d -p 2379:2379 -p 2380:2380
            -v /tmp/etcd:/etcd-data
            --name backendai-etcd
@@ -55,6 +55,8 @@ jobs:
            --initial-cluster-token backendai-etcd-token
            --initial-cluster-state new
            --auto-compaction-retention 1
+        - docker exec -it backendai-etcd ash -c
+           'ETCDCTL_API=3 etcdctl put /sorna/local/volumes/_vfroot /tmp/etcd/vroot'
         - psql -c 'CREATE DATABASE testing;' -U postgres
         - cp alembic.ini.sample alembic.ini
         - sed -i'' -e 's!^sqlalchemy.url = .*$!sqlalchemy.url = postgresql://postgres@localhost:5432/testing!' alembic.ini
