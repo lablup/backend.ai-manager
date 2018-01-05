@@ -117,13 +117,11 @@ async def default_keypair(event_loop, pre_app):
 def get_headers(pre_app, default_keypair):
     def create_header(method, url, req_bytes, ctype='application/json',
                       hash_type='sha256', api_version='v3.20170615'):
-        if ctype == 'application/octet-stream':
-            req_bytes = b''
         now = datetime.now(tzutc())
         hostname = f'localhost:{pre_app.config.service_port}'
         headers = {
             'Date': now.isoformat(),
-            'Content-Type': 'application/json',
+            'Content-Type': ctype,
             'X-BackendAI-Version': api_version,
         }
         req_hash = hashlib.new(hash_type, req_bytes).hexdigest()
@@ -171,9 +169,11 @@ async def create_app_and_client(event_loop, pre_app):
 
         # Store extra inits and shutowns
         extra_inits = []
+        if extras is None:
+            extras = []
         for extra in extras:
             assert extra in ['etcd', 'event', 'auth', 'vfolder', 'admin',
-                             'rlim', 'kernel']
+                             'ratelimit', 'kernel']
             target_module = import_module(f'ai.backend.gateway.{extra}')
             fn_init = getattr(target_module, 'init', None)
             if fn_init:
