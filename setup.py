@@ -1,6 +1,13 @@
 from setuptools import setup
 from pathlib import Path
-import ai.backend.manager
+import re
+
+
+def get_src_version():
+    p = (Path(__file__).parent / 'ai' / 'backend' / 'manager' / '__init__.py')
+    src = p.read_text()
+    m = re.search(r"^__version__\s*=\s*'([^']+)'", src, re.M)
+    return m.group(1)
 
 
 requires = [
@@ -51,7 +58,7 @@ monitor_requires = [
 
 setup(
     name='backend.ai-manager',
-    version=ai.backend.manager.__version__,
+    version=get_src_version(),
     description='Backend.AI Manager',
     long_description=Path('README.rst').read_text(),
     url='https://github.com/lablup/backend.ai-manager',
