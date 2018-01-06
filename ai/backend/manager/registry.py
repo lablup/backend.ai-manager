@@ -313,7 +313,9 @@ class InstanceRegistry:
                                     conn=None):
         try:
             kern = await self.get_session(sess_id, access_key)
-            if kern.lang != lang:
+            canonical_lang = await self.config_server.resolve_image_name(lang)
+            kernel_lang = tuple(kern.lang.split(':'))
+            if canonical_lang != kernel_lang:
                 raise KernelAlreadyExists
             created = False
         except KernelNotFound:
