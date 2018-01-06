@@ -10,8 +10,9 @@ canonical error types beacuse "title" field may change due to localization and
 future UX improvements.
 '''
 
+import json
+
 from aiohttp import web
-import simplejson as json
 
 
 class BackendError(web.HTTPError):
@@ -90,6 +91,12 @@ class ImageNotFound(web.HTTPNotFound, BackendError):
 class KernelNotFound(web.HTTPNotFound, BackendError):
     error_type  = 'https://api.backend.ai/probs/kernel-not-found'
     error_title = 'No such kernel.'
+
+
+class KernelAlreadyExists(web.HTTPBadRequest, BackendError):
+    error_type  = 'https://api.backend.ai/probs/kernel-already-exists'
+    error_title = 'The kernel already exists with ' \
+                  'a different runtime type (language).'
 
 
 class FolderNotFound(web.HTTPNotFound, BackendError):

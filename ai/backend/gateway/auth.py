@@ -2,13 +2,13 @@ import base64
 from datetime import datetime, timedelta
 import functools
 import hashlib, hmac
+import json
 import logging
 import secrets
 
 from aiohttp import web
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
-import simplejson as json
 
 from .exceptions import InvalidAuthParameters, AuthorizationFailed
 from .config import load_config, init_logger

@@ -4,13 +4,13 @@ Backend.AI Manager with API Gateway
 Package Structure
 -----------------
 
-* ai.backend
+* ``ai.backend``
 
-  * manager: Abstraction of agents and computation kernels
+  * ``manager``: Abstraction of agents and computation kernels
 
-  * gateway: RESTful API gateway based on aiohttp
+  * ``gateway``: User and Admin API (REST/GraphQL) gateway based on aiohttp
 
 Installation
 ------------
 
-We provide `the installation guides <https://github.com/lablup/backend.ai/wiki>`_ separately.
+Please visit `the installation guides <https://github.com/lablup/backend.ai/wiki>`_.

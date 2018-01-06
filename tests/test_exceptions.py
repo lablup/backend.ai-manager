@@ -1,4 +1,4 @@
-import simplejson as json
+import json
 
 from ai.backend.gateway.exceptions import BackendError, BackendAgentError
 from ai.backend.common.utils import odict

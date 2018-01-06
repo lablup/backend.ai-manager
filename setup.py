@@ -22,7 +22,6 @@ requires = [
     'pytz',
     'PyYAML',
     'pyzmq>=16.0',
-    'simplejson',
     'SQLAlchemy~=1.1.14',
     'uvloop>=0.8',
     'backend.ai-common~=1.0.3',

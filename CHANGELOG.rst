@@ -4,27 +4,44 @@ Changes
 1.1.0 (to be released)
 ----------------------
 
+**NOTICE**
+
+- Requires alembic database migration for upgrading.
+
 **API CHANGES**
 
 - In the API responses, Rate-Limit-Reset is gone away and now we have
-  Rate-Limit-Window value instead.
-  Since we use a rolling counter, there is no explicit reset point
-  but you are now guaranteed to send at most N requests for the last
-  15 minutes (where N is the per-user rate limit) at ANY moment.
+  Rate-Limit-Window value instead. (#55)
+
+  Since we use a rolling counter, there is no explicit reset point but you are now
+  guaranteed to send at most N requests for the last 15 minutes (where N is the
+  per-user rate limit) at ANY moment.
 
 - When continuing or sending user-inputs via the execute API, you
   must set the mode field to "continue" or "input" respectively.
 
+- You no longer have to specify a random run ID on the first request of a run during
+  session; if the field is set to null, the server will assign a new run ID
+  automatically.  Note that you STILL have to specify the run ID on subsequent
+  requests for the run. (#59)
+
+  All API responses now include its corresponding run ID regardless of whether it is
+  given by the client or assigned by the server, which eases client-side
+  demultiplexing of concurrent executions.
+
 **OTHER IMPROVEMENTS**
 
-- Fix atomicity of rate-limiting calculation (#55).
+- Ensure uniqueness of client-side session token for each user (access key)
+  during the session who is using the token is alive (not terminated). (#58)
+
+- Fix atomicity of rate-limiting calculation in multi-core setups. (#55)
 
 1.0.4 (2017-12-19)
 ------------------
 
 - Minor update for execute API: allow explicit continue/input mode values.
 
-- Mitigate connection failures after a DB failover event (#35)
+- Mitigate connection failures after a DB failover event. (#35)
 
 1.0.3 (2017-11-29)
 ------------------
