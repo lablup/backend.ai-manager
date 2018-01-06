@@ -1,14 +1,23 @@
 Changes
 =======
 
-1.1.0 (to be released)
+1.1.1 (to be released)
 ----------------------
+
+1.1.0 (2018-01-06)
+------------------
 
 **NOTICE**
 
 - Requires alembic database migration for upgrading.
 
 **API CHANGES**
+
+- The semantic for client session token changes. (#56, #58)
+  Clients may reuse the same session token across different sessions if only a single
+  session is running at a time.
+  The manager now returns an explicit error if the client request is going to violate
+  this constraint.
 
 - In the API responses, Rate-Limit-Reset is gone away and now we have
   Rate-Limit-Window value instead. (#55)
@@ -30,9 +39,6 @@ Changes
   demultiplexing of concurrent executions.
 
 **OTHER IMPROVEMENTS**
-
-- Ensure uniqueness of client-side session token for each user (access key)
-  during the session who is using the token is alive (not terminated). (#58)
 
 - Fix atomicity of rate-limiting calculation in multi-core setups. (#55)
 
