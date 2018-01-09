@@ -205,7 +205,8 @@ async def create_app_and_client(event_loop, pre_app, default_keypair):
             # (app, client, etc) by using aiotools.start_server.
             args = (app.config,)
             extra_proc = mp.Process(target=event_router,
-                                    args=('', 0, args,))
+                                    args=('', 0, args,),
+                                    daemon=True)
             extra_proc.start()
         if app.sslctx:
             url = f'https://localhost:{port}'
@@ -248,3 +249,4 @@ async def create_app_and_client(event_loop, pre_app, default_keypair):
         await app.cleanup()
     if extra_proc:
         os.kill(extra_proc.pid, signal.SIGINT)
+        extra_proc.join()
