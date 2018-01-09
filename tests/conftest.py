@@ -171,7 +171,7 @@ async def _create_server(loop, pre_app, extra_inits=None, debug=False):
 
 
 @pytest.fixture
-async def create_app_and_client(event_loop, pre_app):
+async def create_app_and_client(event_loop, pre_app, default_keypair):
     client = None
     app = handler = server = None
     extra_proc = None
@@ -220,12 +220,18 @@ async def create_app_and_client(event_loop, pre_app):
     # Clean DB
     # TODO: load DB server dedicated only for testing, and exploit transaction
     #       rollback to provide clean DB table for each test.
-    if 'dbpool' in app:
+    if app and 'dbpool' in app:
         from ai.backend.manager.models import vfolders, kernels
+        access_key = default_keypair['access_key']
         async with app['dbpool'].acquire() as conn, conn.begin():
-            query = (vfolders.delete())
-            await conn.execute(query)
-            query = (kernels.delete())
+            await conn.execute((vfolders.delete()))
+            await conn.execute((kernels.delete()))
+            query = (sa.update(keypairs)
+                       .values({
+                           'concurrency_used': 0,
+                           'num_queries': 0,
+                       })
+                       .where(keypairs.c.access_key == access_key))
             await conn.execute(query)
 
     # Terminate client and servers

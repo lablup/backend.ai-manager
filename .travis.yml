@@ -38,6 +38,7 @@ jobs:
         - if [[ $TRAVIS_BRANCH == "develop" ]]; then BRANCH="develop"; else BRANCH="master"; fi
         - sed -i'' -e "s/{BRANCH}/$BRANCH/g" requirements-ci.txt
         - pip install -U -r requirements-ci.txt
+        - pip install backend.ai-agent
       before_script:
         - mkdir -p /tmp/etcd/vroot
         - docker run -d -p 2379:2379 -p 2380:2380
@@ -62,6 +63,10 @@ jobs:
         - sed -i'' -e 's!^sqlalchemy.url = .*$!sqlalchemy.url = postgresql://postgres@localhost:5432/testing!' alembic.ini
         - python -m ai.backend.manager.cli schema oneshot head
         - python -m ai.backend.manager.cli fixture populate example_keypair
+        # load agent server
+        - mkdir -p /var/cache/scratches
+        - python -m ai.backend.agent.server --etcd-addr ${BACKEND_ETCD_ADDR}
+           --namespace ${BACKEND_NAMESPACE} &
       script:
         - python -m flake8 ai/backend tests
         - python -m pytest tests --cov=ai/backend

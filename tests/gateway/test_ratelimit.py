@@ -5,7 +5,6 @@ import pytest
 import ai.backend.gateway.ratelimit as rlim
 
 
-@pytest.mark.skip('make unauthorized request correctly')
 @pytest.mark.asyncio
 async def test_check_rlim_for_non_authrized_query(create_app_and_client,
                                                   get_headers):
@@ -14,7 +13,7 @@ async def test_check_rlim_for_non_authrized_query(create_app_and_client,
     url = '/v3'
     req_bytes = json.dumps({'echo': 'hello!'}).encode()
     headers = get_headers('GET', url, req_bytes)
-    ret = await client.get(url, data=b'no match', headers=headers)
+    ret = await client.get(url, data=b'{"echo": "no match"}', headers=headers)
 
     assert ret.status == 200
     assert '1000' == ret.headers['X-RateLimit-Limit']
