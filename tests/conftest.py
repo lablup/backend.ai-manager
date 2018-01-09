@@ -217,6 +217,18 @@ async def create_app_and_client(event_loop, pre_app):
 
     yield maker
 
+    # Clean DB
+    # TODO: load DB server dedicated only for testing, and exploit transaction
+    #       rollback to provide clean DB table for each test.
+    if 'dbpool' in app:
+        from ai.backend.manager.models import vfolders, kernels
+        async with app['dbpool'].acquire() as conn, conn.begin():
+            query = (vfolders.delete())
+            await conn.execute(query)
+            query = (kernels.delete())
+            await conn.execute(query)
+
+    # Terminate client and servers
     if client:
         client.close()
     await gw_shutdown(pre_app)

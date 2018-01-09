@@ -15,13 +15,6 @@ async def prepare_vfolder(request, create_app_and_client, get_headers,
 
     def finalizer():
         async def fin():
-            # Purge test vfolder from DB
-            dbpool = app['dbpool']
-            async with dbpool.acquire() as conn, conn.begin():
-                query = (vfolders.delete()
-                                .where(vfolders.c.name == folder_name))
-                await conn.execute(query)
-
             # Delete test folder
             from ai.backend.gateway.vfolder import VF_ROOT
             if VF_ROOT and folder_id and (VF_ROOT / folder_id).exists():
