@@ -1,7 +1,10 @@
 from datetime import datetime
 import hashlib, hmac
 from importlib import import_module
+import multiprocessing as mp
+import os
 import pathlib
+import signal
 # import ssl
 
 import aiohttp
@@ -13,6 +16,7 @@ import pytest
 
 from ai.backend.common.argparse import host_port_pair
 from ai.backend.gateway.config import load_config
+from ai.backend.gateway.events import event_router
 from ai.backend.gateway.server import gw_init, gw_shutdown, gw_args
 from ai.backend.manager.models import keypairs
 
@@ -84,6 +88,14 @@ async def pre_app(event_loop, unused_tcp_port):
     # app.sslctx.load_cert_chain(str(app.config.ssl_cert),
     #                            str(app.config.ssl_key))
 
+    num_workers = 1
+    manager = mp.managers.SyncManager()
+    manager.start(lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
+    shared_states = manager.Namespace()
+    shared_states.lock = manager.Lock()
+    shared_states.barrier = manager.Barrier(num_workers)
+    shared_states.agent_last_seen = manager.dict()
+    app['shared_states'] = shared_states
     app['pidx'] = 0
 
     return app
@@ -153,7 +165,7 @@ async def _create_server(loop, pre_app, extra_inits=None, debug=False):
         handler,
         pre_app.config.service_ip,
         pre_app.config.service_port,
-        # ssl=app.sslctx)
+        # ssl=pre_app.sslctx)
     )
     return pre_app, pre_app.config.service_port, handler, server
 
@@ -162,17 +174,18 @@ async def _create_server(loop, pre_app, extra_inits=None, debug=False):
 async def create_app_and_client(event_loop, pre_app):
     client = None
     app = handler = server = None
+    extra_proc = None
     extra_shutdowns = []
 
-    async def maker(extras=None):
-        nonlocal client, app, handler, server, extra_shutdowns
+    async def maker(extras=None, ev_router=False):
+        nonlocal client, app, handler, server, extra_proc, extra_shutdowns
 
         # Store extra inits and shutowns
         extra_inits = []
         if extras is None:
             extras = []
         for extra in extras:
-            assert extra in ['etcd', 'event', 'auth', 'vfolder', 'admin',
+            assert extra in ['etcd', 'events', 'auth', 'vfolder', 'admin',
                              'ratelimit', 'kernel']
             target_module = import_module(f'ai.backend.gateway.{extra}')
             fn_init = getattr(target_module, 'init', None)
@@ -186,6 +199,14 @@ async def create_app_and_client(event_loop, pre_app):
         client_params = {}
         app, port, handler, server = await _create_server(
             event_loop, pre_app, extra_inits=extra_inits, **server_params)
+        if ev_router:
+            # Run event_router proc. Is it enough? No way to get return values
+            # (app, client, etc) by using aiotools.start_server.
+            args = [app.config]
+            extra_proc = mp.Process(target=event_router,
+                                    args=(None, 0, args),
+                                    daemon=True)
+            extra_proc.start()
         if app.sslctx:
             url = f'https://localhost:{port}'
             client_params['connector'] = aiohttp.TCPConnector(verify_ssl=False)
@@ -207,3 +228,5 @@ async def create_app_and_client(event_loop, pre_app):
     if app:
         await app.shutdown()
         await app.cleanup()
+    if extra_proc:
+        os.kill(extra_proc.pid, signal.SIGINT)
