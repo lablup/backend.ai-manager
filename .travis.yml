@@ -38,8 +38,8 @@ jobs:
         - if [[ $TRAVIS_BRANCH == "develop" ]]; then BRANCH="develop"; else BRANCH="master"; fi
         - sed -i'' -e "s/{BRANCH}/$BRANCH/g" requirements-ci.txt
         - pip install -U -r requirements-ci.txt
-        - pip install backend.ai-agent
         - sudo apt-get install libsnappy-dev
+        - pip install backend.ai-agent
       before_script:
         - mkdir -p /tmp/etcd/vroot
         - docker run -d -p 2379:2379 -p 2380:2380
