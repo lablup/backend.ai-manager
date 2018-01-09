@@ -65,7 +65,7 @@ jobs:
         - python -m ai.backend.manager.cli schema oneshot head
         - python -m ai.backend.manager.cli fixture populate example_keypair
         # load agent server
-        - mkdir -p /var/cache/scratches
+        - sudo mkdir -p /var/cache/scratches
         - python -m ai.backend.agent.server --etcd-addr ${BACKEND_ETCD_ADDR}
            --namespace ${BACKEND_NAMESPACE} &
       script:
