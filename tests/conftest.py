@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 import hashlib, hmac
 from importlib import import_module
@@ -6,6 +7,7 @@ import os
 import pathlib
 import signal
 # import ssl
+import uvloop
 
 import aiohttp
 from aiohttp import web
@@ -21,6 +23,12 @@ from ai.backend.gateway.server import gw_init, gw_shutdown, gw_args
 from ai.backend.manager.models import keypairs
 
 here = pathlib.Path(__file__).parent
+
+
+@pytest.fixture
+def event_loop(event_loop):
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+    return event_loop
 
 
 class Client:
