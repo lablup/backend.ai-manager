@@ -2,8 +2,6 @@ import json
 import pytest
 import shutil
 
-from ai.backend.manager.models import vfolders
-
 
 @pytest.fixture
 async def prepare_vfolder(request, create_app_and_client, get_headers,
