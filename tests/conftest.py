@@ -134,6 +134,7 @@ def get_headers(pre_app, default_keypair):
         headers = {
             'Date': now.isoformat(),
             'Content-Type': ctype,
+            'Content-Length': str(len(req_bytes)),
             'X-BackendAI-Version': api_version,
         }
         req_hash = hashlib.new(hash_type, req_bytes).hexdigest()

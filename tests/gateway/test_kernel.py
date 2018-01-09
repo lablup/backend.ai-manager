@@ -5,7 +5,8 @@ import pytest
 
 
 @pytest.fixture
-async def prepare_kernel(request, create_app_and_client, get_headers, event_loop):
+async def prepare_kernel(request, create_app_and_client, get_headers, event_loop,
+                         default_keypair):
     clientSessionToken = 'test-token-0000'
     app, client = await create_app_and_client(
         extras=['etcd', 'events', 'auth', 'vfolder', 'admin', 'ratelimit', 'kernel'],
@@ -20,6 +21,17 @@ async def prepare_kernel(request, create_app_and_client, get_headers, event_loop
             await asyncio.sleep(1)
     task = event_loop.create_task(wait_for_agent())
     await task
+
+    def finalizer():
+        async def fin():
+            sess_id = clientSessionToken
+            access_key = default_keypair['access_key']
+            try:
+                await app['registry'].destroy_session(sess_id, access_key)
+            except Exception:
+                pass
+        event_loop.run_until_complete(fin())
+    request.addfinalizer(finalizer)
 
     async def create_kernel():
         url = '/v3/kernel/'
@@ -42,7 +54,51 @@ async def prepare_kernel(request, create_app_and_client, get_headers, event_loop
 @pytest.mark.asyncio
 async def test_kernel_create(prepare_kernel):
     app, client, create_kernel = prepare_kernel
-    rsp_json = await create_kernel()
+    kernel_info = await create_kernel()
 
-    assert 'kernelId' in rsp_json
-    assert rsp_json['created']
+    assert 'kernelId' in kernel_info
+    assert kernel_info['created']
+
+
+@pytest.mark.xfail(reason='TODO: header information is lost during request')
+@pytest.mark.asyncio
+async def test_destroy_kernel(prepare_kernel, get_headers):
+    app, client, create_kernel = prepare_kernel
+    kernel_info = await create_kernel()
+
+    url = '/v3/kernel/' + kernel_info['kernelId']
+    req_bytes = ''.encode('utf-8')
+    headers = get_headers('DELETE', url, req_bytes, ctype='text/plain')
+    ret = await client.delete(url, data=req_bytes, headers=headers)
+
+    assert ret.status == 201
+
+
+@pytest.mark.asyncio
+async def test_get_info(prepare_kernel, get_headers):
+    app, client, create_kernel = prepare_kernel
+    kernel_info = await create_kernel()
+
+    url = '/v3/kernel/' + kernel_info['kernelId']
+    req_bytes = json.dumps({}).encode()
+    headers = get_headers('GET', url, req_bytes)
+    ret = await client.get(url, data=req_bytes, headers=headers)
+
+    assert ret.status == 200
+    rsp_json = await ret.json()
+    assert rsp_json['lang'] == 'lua:latest'
+
+
+@pytest.mark.asyncio
+async def test_get_logs(prepare_kernel, get_headers):
+    app, client, create_kernel = prepare_kernel
+    kernel_info = await create_kernel()
+
+    url = '/v3/kernel/' + kernel_info['kernelId'] + '/logs'
+    req_bytes = json.dumps({}).encode()
+    headers = get_headers('GET', url, req_bytes)
+    ret = await client.get(url, data=req_bytes, headers=headers)
+
+    assert ret.status == 200
+    rsp_json = await ret.json()
+    assert 'logs' in rsp_json['result']
