@@ -404,6 +404,8 @@ async def execute(request) -> web.Response:
             mode = params['mode']
             assert mode in {'query', 'batch', 'complete', 'continue', 'input'}, \
                    'mode has an invalid value.'
+            if mode in {'continue', 'input'}:
+                assert run_id is not None, 'continuation requires explicit run ID'
             code = params.get('code', '')
             opts = params.get('options', None) or {}
         if mode == 'complete':
@@ -411,9 +413,25 @@ async def execute(request) -> web.Response:
             resp['result'] = await registry.get_completions(
                 sess_id, access_key, code, opts)
         else:
-            resp['result'] = await registry.execute(
+            raw_result = await registry.execute(
                 sess_id, access_key,
                 api_version, run_id, mode, code, opts)
+            # Keep internal/public API compatilibty
+            result = {
+                'status': raw_result['status'],
+                'runId': raw_result['runId'],
+                'exitCode': raw_result.get('exitCode'),
+                'options': raw_result.get('options'),
+                'files': raw_result.get('files'),
+            }
+            if api_version == 1:
+                result['stdout'] = raw_result.get('stdout')
+                result['stderr'] = raw_result.get('stderr')
+                result['media'] = raw_result.get('media')
+                result['html'] = raw_result.get('html')
+            else:
+                result['console'] = raw_result.get('console')
+            resp['result'] = result
     except AssertionError as e:
         log.warning(f'EXECUTE: invalid/missing parameters: {e}')
         raise InvalidAPIParameters(extra_msg=e.args[0])
