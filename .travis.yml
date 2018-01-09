@@ -35,7 +35,7 @@ jobs:
     - stage: test
       install:
         - pip install -U pip setuptools
-        # - pip install backend.ai-agent
+        - pip install backend.ai-agent
         - if [[ $TRAVIS_BRANCH == "develop" ]]; then BRANCH="develop"; else BRANCH="master"; fi
         - sed -i'' -e "s/{BRANCH}/$BRANCH/g" requirements-ci.txt
         - pip install -U -r requirements-ci.txt
@@ -65,9 +65,9 @@ jobs:
         - python -m ai.backend.manager.cli schema oneshot head
         - python -m ai.backend.manager.cli fixture populate example_keypair
         # load agent server
-        # - sudo mkdir -p /var/cache/scratches
-        # - python -m ai.backend.agent.server --etcd-addr ${BACKEND_ETCD_ADDR}
-        #    --namespace ${BACKEND_NAMESPACE} &
+        - sudo mkdir -p /var/cache/scratches
+        - python -m ai.backend.agent.server --etcd-addr ${BACKEND_ETCD_ADDR}
+           --namespace ${BACKEND_NAMESPACE} &
       script:
         - python -m flake8 ai/backend tests
         - python -m pytest tests --cov=ai/backend

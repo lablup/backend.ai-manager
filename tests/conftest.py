@@ -203,10 +203,9 @@ async def create_app_and_client(event_loop, pre_app, default_keypair):
         if ev_router:
             # Run event_router proc. Is it enough? No way to get return values
             # (app, client, etc) by using aiotools.start_server.
-            args = [app.config]
+            args = (app.config,)
             extra_proc = mp.Process(target=event_router,
-                                    args=(None, 0, args),
-                                    daemon=True)
+                                    args=('', 0, args,))
             extra_proc.start()
         if app.sslctx:
             url = f'https://localhost:{port}'
