@@ -10,7 +10,7 @@ async def prepare_kernel(request, create_app_and_client, get_headers, event_loop
     clientSessionToken = 'test-token-0000'
     app, client = await create_app_and_client(
         extras=['etcd', 'events', 'auth', 'vfolder', 'admin', 'ratelimit', 'kernel'],
-        ev_router=True)
+        ev_router=False)
 
     async def wait_for_agent():
         while True:
