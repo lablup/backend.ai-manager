@@ -71,7 +71,7 @@ jobs:
         - python -m ai.backend.manager.cli schema oneshot head
         - python -m ai.backend.manager.cli fixture populate example_keypair
         # load agent server
-        - sudo mkdir -p /tmp/scratches
+        - mkdir -p /tmp/scratches
         - python -m ai.backend.agent.server --etcd-addr ${BACKEND_ETCD_ADDR}
            --namespace ${BACKEND_NAMESPACE} --scratch-root /tmp/scratches &
         - docker pull lablup/kernel-lua:latest
