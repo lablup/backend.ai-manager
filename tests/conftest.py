@@ -1,4 +1,6 @@
+from collections import defaultdict
 from datetime import datetime
+import functools
 import hashlib, hmac
 from importlib import import_module
 import multiprocessing as mp
@@ -6,20 +8,28 @@ import os
 import pathlib
 import signal
 # import ssl
-import time
 
 import aiohttp
 from aiohttp import web
 from aiopg.sa import create_engine
+import aiotools
 from dateutil.tz import tzutc
 import sqlalchemy as sa
 import pytest
 
 from ai.backend.common.argparse import host_port_pair
+from ai.backend.gateway import GatewayStatus
 from ai.backend.gateway.config import load_config
 from ai.backend.gateway.events import event_router
+from ai.backend.gateway.kernel import (
+    create, get_info, get_logs, restart, destroy, execute, interrupt, complete,
+    stream_pty, not_impl_stub, upload_files, kernel_terminated, instance_started,
+    instance_terminated, instance_heartbeat, instance_stats, check_agent_lost
+)
 from ai.backend.gateway.server import gw_init, gw_shutdown, gw_args
+from ai.backend.gateway.utils import method_placeholder
 from ai.backend.manager.models import keypairs
+from ai.backend.manager.registry import InstanceRegistry
 
 here = pathlib.Path(__file__).parent
 
@@ -80,6 +90,7 @@ async def pre_app(event_loop, unused_tcp_port):
 
     # Override extra settings
     app.config.namespace = 'local'
+    app.config.heartbeat_timeout = 10.0
     app.config.service_ip = '127.0.0.1'
     app.config.service_port = unused_tcp_port
     # app.config.ssl_cert = here / 'sample-ssl-cert' / 'sample.crt'
@@ -161,7 +172,6 @@ async def _create_server(loop, pre_app, extra_inits=None, debug=False):
     await gw_init(pre_app)
     if extra_inits:
         for init in extra_inits:
-            time.sleep(0.01)
             await init(pre_app)
 
     handler = pre_app.make_handler(debug=debug, keep_alive_on=False, loop=loop)
@@ -193,6 +203,8 @@ async def create_app_and_client(event_loop, pre_app, default_keypair):
                              'ratelimit', 'kernel']
             target_module = import_module(f'ai.backend.gateway.{extra}')
             fn_init = getattr(target_module, 'init', None)
+            if extra == 'kernel':
+                fn_init = temp_kernel_init
             if fn_init:
                 extra_inits.append(fn_init)
             fn_shutdown = getattr(target_module, 'shutdown', None)
@@ -253,3 +265,53 @@ async def create_app_and_client(event_loop, pre_app, default_keypair):
     if extra_proc:
         os.kill(extra_proc.pid, signal.SIGINT)
         extra_proc.join()
+
+
+async def temp_kernel_init(app):
+    """ Temporary kernel initializer. Will be removed when shared agent heartbeat
+    information is handled by redis."""
+    rt = app.router.add_route
+    rt('POST',   r'/v{version:\d+}/kernel/create', create)  # legacy
+    rt('POST',   r'/v{version:\d+}/kernel/', create)
+    rt('GET',    r'/v{version:\d+}/kernel/{sess_id}', get_info)
+    rt('GET',    r'/v{version:\d+}/kernel/{sess_id}/logs', get_logs)
+
+    rt('PATCH',  r'/v{version:\d+}/kernel/{sess_id}', restart)
+    rt('DELETE', r'/v{version:\d+}/kernel/{sess_id}', destroy)
+    rt('POST',   r'/v{version:\d+}/kernel/{sess_id}', execute)
+    rt('POST',   r'/v{version:\d+}/kernel/{sess_id}/interrupt', interrupt)
+    rt('POST',   r'/v{version:\d+}/kernel/{sess_id}/complete', complete)
+    rt('GET',    r'/v{version:\d+}/stream/kernel/{sess_id}/pty', stream_pty)
+    rt('GET',    r'/v{version:\d+}/stream/kernel/{sess_id}/events', not_impl_stub)
+    rt('POST',   r'/v{version:\d+}/kernel/{sess_id}/upload', upload_files)
+    rt('POST',   r'/v{version:\d+}/folder/create', not_impl_stub)
+    rt('GET',    r'/v{version:\d+}/folder/{folder_id}', not_impl_stub)
+    rt('POST',   r'/v{version:\d+}/folder/{folder_id}', method_placeholder('DELETE'))
+    rt('DELETE', r'/v{version:\d+}/folder/{folder_id}', not_impl_stub)
+
+    app['event_dispatcher'].add_handler('kernel_terminated', kernel_terminated)
+    app['event_dispatcher'].add_handler('instance_started', instance_started)
+    app['event_dispatcher'].add_handler('instance_terminated', instance_terminated)
+    app['event_dispatcher'].add_handler('instance_heartbeat', instance_heartbeat)
+    app['event_dispatcher'].add_handler('instance_stats', instance_stats)
+
+    app['stream_pty_handlers'] = defaultdict(set)
+    app['stream_stdin_socks'] = defaultdict(set)
+
+    app['registry'] = InstanceRegistry(
+        app['config_server'],
+        app['dbpool'],
+        app['redis_stat_pool'])
+    await app['registry'].init()
+
+    # Scan ALIVE agents
+    if app['pidx'] == 0:
+        # log.debug(f'initializing agent status checker at proc:{app["pidx"]}')
+        # now = time.monotonic()
+        # async for inst in app['registry'].enumerate_instances():
+        #     app['shared_states'].agent_last_seen[inst.id] = now
+        app['agent_lost_checker'] = aiotools.create_timer(
+            functools.partial(check_agent_lost, app), 1.0)
+
+    # app['shared_states'].barrier.wait()
+    app['status'] = GatewayStatus.RUNNING
