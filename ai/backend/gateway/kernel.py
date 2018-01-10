@@ -737,7 +737,7 @@ async def init(app):
         app['agent_lost_checker'] = aiotools.create_timer(
             functools.partial(check_agent_lost, app), 1.0)
 
-    # app['shared_states'].barrier.wait()
+    app['shared_states'].barrier.wait()
     app['status'] = GatewayStatus.RUNNING
 
 
