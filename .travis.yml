@@ -35,11 +35,11 @@ jobs:
     - stage: test
       install:
         - pip install -U pip setuptools
+        - sudo apt-get install libsnappy-dev
         - pip install backend.ai-agent
         - if [[ $TRAVIS_BRANCH == "develop" ]]; then BRANCH="develop"; else BRANCH="master"; fi
         - sed -i'' -e "s/{BRANCH}/$BRANCH/g" requirements-ci.txt
         - pip install -U -r requirements-ci.txt
-        - sudo apt-get install libsnappy-dev
       before_script:
         # etcd
         - mkdir -p /tmp/etcd/vroot
