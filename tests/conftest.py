@@ -7,9 +7,11 @@ import pathlib
 import signal
 # import ssl
 
+import aiodocker
 import aiohttp
 from aiohttp import web
 from aiopg.sa import create_engine
+import asyncio
 from dateutil.tz import tzutc
 import sqlalchemy as sa
 import pytest
@@ -79,6 +81,7 @@ async def pre_app(event_loop, unused_tcp_port):
 
     # Override extra settings
     app.config.namespace = 'local'
+    app.config.heartbeat_timeout = 10.0
     app.config.service_ip = '127.0.0.1'
     app.config.service_port = unused_tcp_port
     # app.config.ssl_cert = here / 'sample-ssl-cert' / 'sample.crt'
@@ -88,14 +91,9 @@ async def pre_app(event_loop, unused_tcp_port):
     # app.sslctx.load_cert_chain(str(app.config.ssl_cert),
     #                            str(app.config.ssl_key))
 
-    num_workers = 1
+    # num_workers = 1
     manager = mp.managers.SyncManager()
     manager.start(lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
-    shared_states = manager.Namespace()
-    shared_states.lock = manager.Lock()
-    shared_states.barrier = manager.Barrier(num_workers)
-    shared_states.agent_last_seen = manager.dict()
-    app['shared_states'] = shared_states
     app['pidx'] = 0
 
     return app
@@ -126,7 +124,7 @@ async def default_keypair(event_loop, pre_app):
 
 
 @pytest.fixture
-def get_headers(pre_app, default_keypair):
+def get_headers(pre_app, default_keypair, prepare_docker_images):
     def create_header(method, url, req_bytes, ctype='application/json',
                       hash_type='sha256', api_version='v3.20170615'):
         now = datetime.now(tzutc())
@@ -161,6 +159,7 @@ async def _create_server(loop, pre_app, extra_inits=None, debug=False):
     if extra_inits:
         for init in extra_inits:
             await init(pre_app)
+
     handler = pre_app.make_handler(debug=debug, keep_alive_on=False, loop=loop)
     server = await loop.create_server(
         handler,
@@ -203,9 +202,9 @@ async def create_app_and_client(event_loop, pre_app, default_keypair):
         if ev_router:
             # Run event_router proc. Is it enough? No way to get return values
             # (app, client, etc) by using aiotools.start_server.
-            args = [app.config]
+            args = (app.config,)
             extra_proc = mp.Process(target=event_router,
-                                    args=(None, 0, args),
+                                    args=('', 0, args,),
                                     daemon=True)
             extra_proc.start()
         if app.sslctx:
@@ -249,3 +248,24 @@ async def create_app_and_client(event_loop, pre_app, default_keypair):
         await app.cleanup()
     if extra_proc:
         os.kill(extra_proc.pid, signal.SIGINT)
+        extra_proc.join()
+
+
+@pytest.fixture(scope='session')
+def prepare_docker_images():
+    event_loop = asyncio.get_event_loop()
+
+    async def pull():
+        docker = aiodocker.Docker()
+        images_to_pull = [
+            'lablup/kernel-lua:latest',
+        ]
+        for img in images_to_pull:
+            try:
+                await docker.images.get(img)
+            except aiodocker.exceptions.DockerError as e:
+                assert e.status == 404
+                print(f'Pulling image "{img}" for testing...')
+                await docker.pull(img)
+        await docker.close()
+    event_loop.run_until_complete(pull())

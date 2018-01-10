@@ -51,6 +51,7 @@ async def prepare_kernel(request, create_app_and_client, get_headers, event_loop
     return app, client, create_kernel
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_kernel_create(prepare_kernel):
     app, client, create_kernel = prepare_kernel
@@ -61,6 +62,7 @@ async def test_kernel_create(prepare_kernel):
 
 
 @pytest.mark.xfail(reason='TODO: header information is lost during request')
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_destroy_kernel(prepare_kernel, get_headers):
     app, client, create_kernel = prepare_kernel
@@ -74,6 +76,7 @@ async def test_destroy_kernel(prepare_kernel, get_headers):
     assert ret.status == 201
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_get_info(prepare_kernel, get_headers):
     app, client, create_kernel = prepare_kernel
@@ -89,6 +92,7 @@ async def test_get_info(prepare_kernel, get_headers):
     assert rsp_json['lang'] == 'lua:latest'
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_get_logs(prepare_kernel, get_headers):
     app, client, create_kernel = prepare_kernel

@@ -38,6 +38,7 @@ build_requires = [
     'twine',
 ]
 test_requires = [
+    'aiodocker',
     'pytest>=3.1',
     'pytest-asyncio',
     'pytest-aiohttp',
