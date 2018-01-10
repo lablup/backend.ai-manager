@@ -35,7 +35,7 @@ from ai.backend.common.utils import env_info
 from ai.backend.common.monitor import DummyDatadog, DummySentry
 from ..manager import __version__
 from . import GatewayStatus
-from .defs import REDIS_STAT_DB
+from .defs import REDIS_STAT_DB, REDIS_LIVE_DB
 from .exceptions import (BackendError, GenericNotFound,
                          GenericBadRequest, InternalServerError)
 from .admin import init as admin_init, shutdown as admin_shutdown
@@ -151,6 +151,11 @@ async def gw_init(app):
         minsize=4, maxsize=16,
         timeout=30, pool_recycle=30,
     )
+    app['redis_live_pool'] = await aioredis.create_redis_pool(
+        app.config.redis_addr.as_sockaddr(),
+        timeout=3.0,
+        encoding='utf8',
+        db=REDIS_LIVE_DB)
     app['redis_stat_pool'] = await aioredis.create_redis_pool(
         app.config.redis_addr.as_sockaddr(),
         timeout=3.0,
@@ -163,6 +168,8 @@ async def gw_init(app):
 async def gw_shutdown(app):
     app['redis_stat_pool'].close()
     await app['redis_stat_pool'].wait_closed()
+    app['redis_live_pool'].close()
+    await app['redis_live_pool'].wait_closed()
     app['dbpool'].close()
     await app['dbpool'].wait_closed()
 
@@ -180,7 +187,6 @@ async def server_main(loop, pidx, _args):
     if app.config.service_port == 0:
         app.config.service_port = 8443 if app.sslctx else 8080
 
-    app['shared_states'] = _args[1]
     app['pidx'] = pidx
 
     await etcd_init(app)
@@ -298,15 +304,11 @@ def main():
     num_workers = os.cpu_count()
     manager = SyncManager()
     manager.start(lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
-    shared_states = manager.Namespace()
-    shared_states.lock = manager.Lock()
-    shared_states.barrier = manager.Barrier(num_workers)
-    shared_states.agent_last_seen = manager.dict()
 
     try:
         aiotools.start_server(server_main, num_workers=num_workers,
                               extra_procs=[event_router],
-                              args=(config, shared_states))
+                              args=(config, ))
     finally:
         manager.shutdown()
         log.info('terminated.')

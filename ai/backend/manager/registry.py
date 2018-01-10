@@ -1,6 +1,5 @@
 import asyncio
 from datetime import datetime
-from dateutil.tz import tzutc
 import logging
 import sys
 import uuid
@@ -9,6 +8,7 @@ import aiozmq, aiozmq.rpc
 from aiozmq.rpc.base import GenericError, NotFoundError, ParametersError
 import aiotools
 from async_timeout import timeout as _timeout
+from dateutil.tz import tzutc
 import sqlalchemy as sa
 import zmq
 
@@ -25,7 +25,7 @@ from .models import (
 )
 from ..gateway.utils import Infinity
 
-__all__ = ['InstanceRegistry', 'InstanceNotFound']
+__all__ = ['AgentRegistry', 'InstanceNotFound']
 
 log = logging.getLogger('ai.backend.manager.registry')
 
@@ -72,8 +72,7 @@ async def reenter_txn(pool, conn):
         yield conn
 
 
-# TODO: rename to AgentRegistry
-class InstanceRegistry:
+class AgentRegistry:
     '''
     Provide a high-level API to create, destroy, and query the computation
     kernels.
@@ -82,16 +81,19 @@ class InstanceRegistry:
     policy, such as the limitation of maximum number of kernels per instance.
     '''
 
-    def __init__(self, config_server, dbpool, redis_stat_pool, loop=None):
+    def __init__(self, config_server, dbpool,
+                 redis_stat_pool, redis_live_pool,
+                 loop=None):
         self.loop = loop if loop is not None else asyncio.get_event_loop()
         self.config_server = config_server
         self.dbpool = dbpool
         self.redis_stat_pool = redis_stat_pool
+        self.redis_live_pool = redis_live_pool
 
     async def init(self):
         pass
 
-    async def terminate(self):
+    async def shutdown(self):
         pass
 
     async def get_instance(self, inst_id, field=None):
@@ -262,7 +264,7 @@ class InstanceRegistry:
 
     async def get_sessions(self, sess_ids, field=None, allow_stale=False):
         '''
-        Batched version of :meth:`get_session() <InstanceRegistry.get_session>`.
+        Batched version of :meth:`get_session() <AgentRegistry.get_session>`.
         The order of the returend array is same to the order of ``sess_ids``.
         For non-existent or missing kernel IDs, it fills None in their
         positions without raising KernelNotFound exception.
@@ -616,6 +618,10 @@ class InstanceRegistry:
             return rows
 
     async def handle_heartbeat(self, agent_id, agent_info):
+
+        now = datetime.now(tzutc())
+        await self.redis_live_pool.hset('last_seen', agent_id, now.timestamp())
+
         async with self.dbpool.acquire() as conn:
             # TODO: check why sa.column('status') does not work
             query = (sa.select([agents.c.status,
@@ -686,6 +692,9 @@ class InstanceRegistry:
         #         await handler
         #  TODO: define behavior when agent reuse running instances upon revive
         # await app['registry'].forget_all_kernels_in_instance(agent_id)
+
+        await self.redis_live_pool.hdel('last_seen', agent_id)
+
         async with reenter_txn(self.dbpool, conn) as conn:
 
             query = (sa.select([agents.c.status], for_update=True)
