@@ -1,4 +1,3 @@
-import asyncio
 from datetime import datetime
 import hashlib, hmac
 from importlib import import_module
@@ -162,7 +161,10 @@ async def _create_server(loop, pre_app, extra_inits=None, debug=False):
     await gw_init(pre_app)
     if extra_inits:
         for init in extra_inits:
+            time.sleep(0.01)
             await init(pre_app)
+            time.sleep(0.01)
+
     handler = pre_app.make_handler(debug=debug, keep_alive_on=False, loop=loop)
     server = await loop.create_server(
         handler,
