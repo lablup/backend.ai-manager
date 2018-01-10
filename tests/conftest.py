@@ -7,9 +7,11 @@ import pathlib
 import signal
 # import ssl
 
+import aiodocker
 import aiohttp
 from aiohttp import web
 from aiopg.sa import create_engine
+import asyncio
 from dateutil.tz import tzutc
 import sqlalchemy as sa
 import pytest
@@ -169,7 +171,8 @@ async def _create_server(loop, pre_app, extra_inits=None, debug=False):
 
 
 @pytest.fixture
-async def create_app_and_client(event_loop, pre_app, default_keypair):
+async def create_app_and_client(event_loop, pre_app, default_keypair,
+                                prepare_docker_images):
     client = None
     app = handler = server = None
     extra_proc = None
@@ -247,3 +250,23 @@ async def create_app_and_client(event_loop, pre_app, default_keypair):
     if extra_proc:
         os.kill(extra_proc.pid, signal.SIGINT)
         extra_proc.join()
+
+
+@pytest.fixture(scope='session')
+def prepare_docker_images():
+    event_loop = asyncio.get_event_loop()
+
+    async def pull():
+        docker = aiodocker.Docker()
+        images_to_pull = [
+            'lablup/kernel-lua:latest',
+        ]
+        for img in images_to_pull:
+            try:
+                await docker.images.get(img)
+            except aiodocker.exceptions.DockerError as e:
+                assert e.status == 404
+                print(f'Pulling image "{img}" for testing...')
+                await docker.pull(img)
+        await docker.close()
+    event_loop.run_until_complete(pull())
