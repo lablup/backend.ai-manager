@@ -161,8 +161,8 @@ async def _create_server(loop, pre_app, extra_inits=None, debug=False):
     await gw_init(pre_app)
     if extra_inits:
         for init in extra_inits:
-            await init(pre_app)
             time.sleep(0.01)
+            await init(pre_app)
 
     handler = pre_app.make_handler(debug=debug, keep_alive_on=False, loop=loop)
     server = await loop.create_server(
