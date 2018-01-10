@@ -25,6 +25,12 @@ from ai.backend.manager.models import keypairs
 here = pathlib.Path(__file__).parent
 
 
+@pytest.fixture
+def event_loop(event_loop):
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+    return event_loop
+
+
 class Client:
     def __init__(self, session, url):
         self._session = session
