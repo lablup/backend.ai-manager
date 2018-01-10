@@ -61,7 +61,7 @@ jobs:
         - docker exec -it backendai-etcd ash -c
            'ETCDCTL_API=3 etcdctl put /sorna/local/volumes/_vfroot /tmp/etcd/vroot'
         - python -m ai.backend.manager.cli etcd update-images --namespace=local
-           --etcd-addr=127.0.0.1:2379 -f samples-configs/image-metadata.yml
+           --etcd-addr=127.0.0.1:2379 -f sample-configs/image-metadata.yml
         - python -m ai.backend.manager.cli etcd update-aliases --namespace=local
            --etcd-addr=127.0.0.1:2379 -f sample-configs/image-aliases.yml
         # postgresql
