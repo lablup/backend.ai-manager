@@ -161,7 +161,6 @@ async def _create_server(loop, pre_app, extra_inits=None, debug=False):
     await gw_init(pre_app)
     if extra_inits:
         for init in extra_inits:
-            time.sleep(0.01)
             await init(pre_app)
             time.sleep(0.01)
 
