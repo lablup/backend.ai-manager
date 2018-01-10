@@ -257,14 +257,18 @@ def prepare_docker_images():
     event_loop = asyncio.get_event_loop()
 
     async def pull():
+        print('# pulling...')
         docker = aiodocker.Docker()
         images_to_pull = [
             'lablup/kernel-lua:latest',
         ]
         for img in images_to_pull:
             try:
+                print('# is image found?')
                 await docker.images.get(img)
+                print('# yes!')
             except aiodocker.exceptions.DockerError as e:
+                print('# no', e.status)
                 assert e.status == 404
                 print(f'Pulling image "{img}" for testing...')
                 await docker.pull(img)
