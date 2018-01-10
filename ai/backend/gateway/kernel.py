@@ -225,7 +225,7 @@ async def check_agent_lost(app, interval):
         timeout = timedelta(seconds=app.config.heartbeat_timeout)
         async for agent_id, prev in app['redis_live_pool'].ihscan('last_seen'):
             prev = datetime.fromtimestamp(float(prev), tzutc())
-            if now - prev >= timeout:
+            if now - prev > timeout:
                 app['event_dispatcher'].dispatch('instance_terminated',
                                                  agent_id, ('agent-lost', ))
     except asyncio.CancelledError:

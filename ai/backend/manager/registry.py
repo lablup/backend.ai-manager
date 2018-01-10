@@ -651,7 +651,7 @@ class AgentRegistry:
                     'used_cpu_slots': 0,
                     'used_gpu_slots': 0,
                     'addr': agent_info['addr'],
-                    'first_contact': datetime.now(tzutc()),
+                    'first_contact': now,
                     'lost_at': None,
                 })
                 result = await conn.execute(query)
