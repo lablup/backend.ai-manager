@@ -124,7 +124,7 @@ async def default_keypair(event_loop, pre_app):
 
 
 @pytest.fixture
-def get_headers(pre_app, default_keypair):
+def get_headers(pre_app, default_keypair, prepare_docker_images):
     def create_header(method, url, req_bytes, ctype='application/json',
                       hash_type='sha256', api_version='v3.20170615'):
         now = datetime.now(tzutc())
@@ -171,8 +171,7 @@ async def _create_server(loop, pre_app, extra_inits=None, debug=False):
 
 
 @pytest.fixture
-async def create_app_and_client(event_loop, pre_app, default_keypair,
-                                prepare_docker_images):
+async def create_app_and_client(event_loop, pre_app, default_keypair):
     client = None
     app = handler = server = None
     extra_proc = None
@@ -257,18 +256,14 @@ def prepare_docker_images():
     event_loop = asyncio.get_event_loop()
 
     async def pull():
-        print('# pulling...')
         docker = aiodocker.Docker()
         images_to_pull = [
             'lablup/kernel-lua:latest',
         ]
         for img in images_to_pull:
             try:
-                print('# is image found?')
                 await docker.images.get(img)
-                print('# yes!')
             except aiodocker.exceptions.DockerError as e:
-                print('# no', e.status)
                 assert e.status == 404
                 print(f'Pulling image "{img}" for testing...')
                 await docker.pull(img)
