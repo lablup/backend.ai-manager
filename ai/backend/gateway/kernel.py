@@ -5,13 +5,12 @@ Kernel session management.
 import asyncio
 import base64
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 import functools
 import json
 import logging
 import re
 import secrets
-import time
 from urllib.parse import urlparse
 
 import aiohttp
@@ -32,7 +31,7 @@ from . import GatewayStatus
 from .auth import auth_required
 from .utils import catch_unexpected, method_placeholder
 from ..manager.models import keypairs, kernels, vfolders, AgentStatus, KernelStatus
-from ..manager.registry import InstanceRegistry
+from ..manager.registry import AgentRegistry
 
 log = logging.getLogger('ai.backend.gateway.kernel')
 
@@ -201,11 +200,6 @@ async def instance_started(app, agent_id):
 
 @catch_unexpected(log)
 async def instance_terminated(app, agent_id, reason):
-    with app['shared_states'].lock:
-        try:
-            del app['shared_states'].agent_last_seen[agent_id]
-        except KeyError:
-            pass
     if reason == 'agent-lost':
         await app['registry'].mark_agent_terminated(agent_id, AgentStatus.LOST)
     elif reason == 'agent-restart':
@@ -221,21 +215,17 @@ async def instance_terminated(app, agent_id, reason):
 
 @catch_unexpected(log)
 async def instance_heartbeat(app, agent_id, agent_info):
-    with app['shared_states'].lock:
-        app['shared_states'].agent_last_seen[agent_id] = time.monotonic()
     await app['registry'].handle_heartbeat(agent_id, agent_info)
 
 
 @catch_unexpected(log)
 async def check_agent_lost(app, interval):
     try:
-        now = time.monotonic()
-        with app['shared_states'].lock:
-            copied = app['shared_states'].agent_last_seen.copy()
-        for agent_id, prev in copied.items():
-            if now - prev >= app.config.heartbeat_timeout:
-                # TODO: change this to "send_event" (actual zeromq push)
-                #       for non-duplicate events
+        now = datetime.now(tzutc())
+        timeout = timedelta(seconds=app.config.heartbeat_timeout)
+        async for agent_id, prev in app['redis_live_pool'].ihscan('last_seen'):
+            prev = datetime.fromtimestamp(float(prev), tzutc())
+            if now - prev >= timeout:
                 app['event_dispatcher'].dispatch('instance_terminated',
                                                  agent_id, ('agent-lost', ))
     except asyncio.CancelledError:
@@ -722,22 +712,19 @@ async def init(app):
     app['stream_pty_handlers'] = defaultdict(set)
     app['stream_stdin_socks'] = defaultdict(set)
 
-    app['registry'] = InstanceRegistry(
+    app['registry'] = AgentRegistry(
         app['config_server'],
         app['dbpool'],
-        app['redis_stat_pool'])
+        app['redis_stat_pool'],
+        app['redis_live_pool'])
     await app['registry'].init()
 
     # Scan ALIVE agents
     if app['pidx'] == 0:
         log.debug(f'initializing agent status checker at proc:{app["pidx"]}')
-        now = time.monotonic()
-        async for inst in app['registry'].enumerate_instances():
-            app['shared_states'].agent_last_seen[inst.id] = now
         app['agent_lost_checker'] = aiotools.create_timer(
             functools.partial(check_agent_lost, app), 1.0)
 
-    app['shared_states'].barrier.wait()
     app['status'] = GatewayStatus.RUNNING
 
 
@@ -756,4 +743,4 @@ async def shutdown(app):
         for handler in per_kernel_handlers.copy():
             handler.cancel()
             await handler
-    await app['registry'].terminate()
+    await app['registry'].shutdown()
