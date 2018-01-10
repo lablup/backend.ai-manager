@@ -153,6 +153,12 @@ class ConfigServer:
         if not tag:
             tag = 'latest'
         hash = await self.etcd.get(f'images/{name}/tags/{tag}')
+        print('############')
+        print(orig_name)
+        print(name_or_alias)
+        print(name, tag)
+        print(hash)
+        print('############')
         if hash is None:
             raise ImageNotFound(f'{name_or_alias}: Unregistered image '
                                 'or unknown alias.')

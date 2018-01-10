@@ -71,7 +71,7 @@ jobs:
         - docker pull lablup/kernel-lua:latest
       script:
         - python -m flake8 ai/backend tests
-        - python -m pytest tests -s --cov=ai/backend
+        - python -m pytest tests --cov=ai/backend
       after_success:
         - codecov
 
