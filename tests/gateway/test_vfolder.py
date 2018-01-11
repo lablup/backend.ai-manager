@@ -2,6 +2,8 @@ import json
 import pytest
 import shutil
 
+import aiohttp
+
 
 @pytest.fixture
 async def prepare_vfolder(request, create_app_and_client, get_headers,
@@ -90,27 +92,36 @@ async def test_get_info(prepare_vfolder, get_headers):
     assert rsp_json['numFiles'] == 0
 
 
-@pytest.mark.xfail(reason='TODO: request fails due to un-authorization')
 @pytest.mark.asyncio
 async def test_upload_file(prepare_vfolder, get_headers, tmpdir):
     app, client, create_vfolder = prepare_vfolder
     folder_info = await create_vfolder()
 
-    # Create a file
-    p = tmpdir.join('test.txt')
-    p.write('1357')
+    # Create files
+    p1 = tmpdir.join('test1.txt')
+    p1.write('1357')
+    p2 = tmpdir.join('test2.txt')
+    p2.write('35711')
+
+    # Prepare form data
+    data = aiohttp.FormData()
+    data.add_field('file', open(p1, 'rb'))
+    data.add_field('file', open(p2, 'rb'))
 
     # Upload the file
     url = f'/v3/folders/{folder_info["name"]}/upload'
-    files = {'file': open(p, 'rb')}
-    headers = get_headers('POST', url, b'', ctype='application/octet-stream')
-    ret = await client.post(url, data=files, headers=headers)
+    headers = get_headers('POST', url, b'', ctype='multipart/form-data')
+    ret = await client.post(url, data=data, headers=headers)
+
+    # Get paths for files uploaded to virtual folder
+    from ai.backend.gateway.vfolder import VF_ROOT
+    vf_fname1 = p1.strpath.split('/')[-1]
+    vf_fname2 = p2.strpath.split('/')[-1]
 
     assert ret.status == 201
-    from ai.backend.gateway.vfolder import VF_ROOT
-    vf_fname = p.strpath.split('/')[-1]
-    assert 1 == len(list((VF_ROOT / folder_info['id']).glob('**/*.txt')))
-    assert (VF_ROOT / folder_info['id'] / vf_fname).exists()
+    assert 2 == len(list((VF_ROOT / folder_info['id']).glob('**/*.txt')))
+    assert (VF_ROOT / folder_info['id'] / vf_fname1).exists()
+    assert (VF_ROOT / folder_info['id'] / vf_fname2).exists()
 
 
 @pytest.mark.xfail(reason='TODO: request fails due to un-authorization')

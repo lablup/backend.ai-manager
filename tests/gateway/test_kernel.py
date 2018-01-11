@@ -1,6 +1,7 @@
 import asyncio
 import json
 
+import aiohttp
 import pytest
 
 
@@ -181,18 +182,52 @@ async def test_restart_kernel_cancel_execution(prepare_kernel, get_headers,
     assert (end - start).total_seconds() < 10
 
 
-# @pytest.mark.integration
-# @pytest.mark.asyncio
-# async def test_upload_files(prepare_kernel, get_headers):
-#     app, client, create_kernel = prepare_kernel
-#     kernel_info = await create_kernel()
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_upload_files(prepare_kernel, get_headers, tmpdir):
+    app, client, create_kernel = prepare_kernel
+    kernel_info = await create_kernel()
 
-#     url = '/v3/kernel/' + kernel_info['kernelId'] + '/upload'
-#     req_bytes = json.dumps({}).encode()
-#     headers = get_headers('POST', url, req_bytes)
-#     ret = await client.post(url, data=req_bytes, headers=headers)
+    # Create files
+    p1 = tmpdir.join('test1.txt')
+    p1.write('1357')
+    p2 = tmpdir.join('test2.txt')
+    p2.write('35711')
 
-#     assert ret.status == 201
+    # Prepare form data
+    data = aiohttp.FormData()
+    data.add_field('file', open(p1, 'rb'))
+    data.add_field('file', open(p2, 'rb'))
+
+    url = '/v3/kernel/' + kernel_info['kernelId'] + '/upload'
+    headers = get_headers('POST', url, b'', ctype='multipart/form-data')
+    ret = await client.post(url, data=data, headers=headers)
+
+    assert ret.status == 204
+
+    # TODO: Check existence of files in the kernel folder.
+    #       Way to get the scratch root of agent from here?
+    # from pathlib import Path
+    # import sqlalchemy as sa
+    # from ai.backend.gateway.vfolder import VF_ROOT
+    # from ai.backend.manager.models import agents, kernels
+    # async with app['registry'].dbpool.acquire() as conn:
+    #     cols = [kernels.c.id, kernels.c.sess_id,
+    #             kernels.c.agent_addr, kernels.c.access_key]
+    #     cols = [kernels.c.id]
+    #     query = (sa.select(cols)
+    #                .where(kernel_info['kernelId'] == kernels.c.sess_id)
+    #                .limit(1).offset(0))
+    # result = await conn.execute(query)
+    # row = await result.first()
+    # root = '/private/tmp/sorna-volumes'
+    # kernel_dir = Path(root) / row.id
+    # Get paths for files uploaded to virtual folder
+    # vf_fname1 = p1.strpath.split('/')[-1]
+    # vf_fname2 = p2.strpath.split('/')[-1]
+    # assert 2 == len(list(kernel_dir.glob('**/*.txt')))
+    # assert (kernel_dir / vf_fname1).exists()
+    # assert (kernel_dir / vf_fname2).exists()
 
 
 @pytest.mark.integration

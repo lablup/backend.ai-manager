@@ -141,6 +141,10 @@ def get_headers(pre_app, default_keypair, prepare_docker_images):
             'Content-Length': str(len(req_bytes)),
             'X-BackendAI-Version': api_version,
         }
+        if ctype.startswith('multipart'):
+            req_bytes = b''
+            del headers['Content-Type']
+            del headers['Content-Length']
         req_hash = hashlib.new(hash_type, req_bytes).hexdigest()
         sign_bytes = method.upper().encode() + b'\n' \
                      + url.encode() + b'\n' \
