@@ -63,7 +63,7 @@ class Client:
         while path.startswith('/'):
             path = path[1:]
         url = self._url + path
-        return self._session.delete(url)
+        return self._session.delete(url, **kwargs)
 
     def ws_connect(self, path, **kwargs):
         while path.startswith('/'):
