@@ -1,8 +1,11 @@
 import asyncio
 import json
+import time
 
 import aiohttp
 import pytest
+
+from ai.backend.gateway.exceptions import KernelNotFound
 
 
 @pytest.fixture
@@ -62,19 +65,24 @@ async def test_kernel_create(prepare_kernel):
     assert kernel_info['created']
 
 
-@pytest.mark.xfail(reason='TODO: header information is lost during request')
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_destroy_kernel(prepare_kernel, get_headers):
+async def test_destroy_kernel(prepare_kernel, get_headers, default_keypair):
     app, client, create_kernel = prepare_kernel
     kernel_info = await create_kernel()
 
+    assert await app['registry'].get_session(kernel_info['kernelId'],
+                                             default_keypair['access_key'])
+
     url = '/v3/kernel/' + kernel_info['kernelId']
-    req_bytes = ''.encode('utf-8')
-    headers = get_headers('DELETE', url, req_bytes, ctype='text/plain')
+    req_bytes = json.dumps({}).encode('utf-8')
+    headers = get_headers('DELETE', url, req_bytes)
     ret = await client.delete(url, data=req_bytes, headers=headers)
 
-    assert ret.status == 201
+    assert ret.status == 200
+    with pytest.raises(KernelNotFound):
+        await app['registry'].get_session(kernel_info['kernelId'],
+                                          default_keypair['access_key'])
 
 
 @pytest.mark.integration
@@ -111,7 +119,23 @@ async def test_execute(prepare_kernel, get_headers):
         'code': 'print(135)',
     }).encode()
     headers = get_headers('POST', url, req_bytes)
-    ret = await client.post(url, data=req_bytes, headers=headers)
+    timeout = time.time() + 20
+    while True:
+        ret = await client.post(url, data=req_bytes, headers=headers)
+        rsp_json = await ret.json()
+        if time.time() > timeout:
+            raise TimeoutError('Code execution timeout')
+        if rsp_json['result']['status'] == 'finished':
+            break
+        elif rsp_json['result']['status'] == 'continued':
+            req_bytes = json.dumps({
+                'runId': 'test-runid',
+                'mode': 'continue',
+                'code': '',
+            }).encode()
+            headers = get_headers('POST', url, req_bytes)
+        else:
+            raise Exception('Invalid execution status')
 
     assert ret.status == 200
     rsp_json = await ret.json()
@@ -142,9 +166,12 @@ async def test_restart_kernel_cancel_execution(prepare_kernel, get_headers,
             'code': code,
         }).encode()
         headers = get_headers('POST', url, req_bytes)
+        timeout = time.time() + 20
         while True:
             ret = await client.post(url, data=req_bytes, headers=headers)
             rsp_json = await ret.json()
+            if time.time() > timeout:
+                raise TimeoutError('Code execution timeout')
             if ret is None:
                 break
             elif rsp_json['result']['status'] == 'finished':

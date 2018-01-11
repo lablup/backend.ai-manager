@@ -124,11 +124,13 @@ async def test_upload_file(prepare_vfolder, get_headers, tmpdir):
     assert (VF_ROOT / folder_info['id'] / vf_fname2).exists()
 
 
-@pytest.mark.xfail(reason='TODO: request fails due to un-authorization')
 @pytest.mark.asyncio
 async def test_delete_vfolder(prepare_vfolder, get_headers):
     app, client, create_vfolder = prepare_vfolder
     folder_info = await create_vfolder()
+
+    from ai.backend.gateway.vfolder import VF_ROOT
+    assert (VF_ROOT / folder_info['id']).exists()
 
     url = f'/v3/folders/{folder_info["name"]}'
     req_bytes = json.dumps({}).encode()
@@ -136,3 +138,4 @@ async def test_delete_vfolder(prepare_vfolder, get_headers):
     ret = await client.delete(url, data=req_bytes, headers=headers)
 
     assert ret.status == 204
+    assert not (VF_ROOT / folder_info['id']).exists()
