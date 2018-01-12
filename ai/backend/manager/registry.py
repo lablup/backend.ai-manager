@@ -14,6 +14,7 @@ import sqlalchemy as sa
 import zmq
 
 from ai.backend.common import msgpack
+from ..gateway.config import ProcIdxLogAdapter
 from ..gateway.exceptions import (
     BackendError,
     InstanceNotAvailable, InstanceNotFound,
@@ -29,7 +30,7 @@ from ..gateway.utils import Infinity
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
 
-log = logging.getLogger('ai.backend.manager.registry')
+log = ProcIdxLogAdapter(logging.getLogger('ai.backend.manager.registry'))
 
 
 @aiotools.actxmgr

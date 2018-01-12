@@ -33,6 +33,7 @@ from ai.backend.common.utils import env_info
 from ai.backend.common.monitor import DummyDatadog, DummySentry
 from ..manager import __version__
 from . import GatewayStatus
+from .config import ProcIdxLogAdapter
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
 from .exceptions import (BackendError, GenericNotFound,
                          GenericBadRequest, InternalServerError)
@@ -53,7 +54,7 @@ VALID_VERSIONS = frozenset([
 ])
 LATEST_API_VERSION = 'v3.20170615'
 
-log = logging.getLogger('ai.backend.gateway.server')
+log = ProcIdxLogAdapter(logging.getLogger('ai.backend.gateway.server'))
 
 
 async def hello(request) -> web.Response:
@@ -191,8 +192,8 @@ async def server_main(loop, pidx, _args):
                                    str(app.config.ssl_key))
     if app.config.service_port == 0:
         app.config.service_port = 8443 if app.sslctx else 8080
-
     app['pidx'] = pidx
+    ProcIdxLogAdapter.set_pidx(pidx)
 
     await etcd_init(app)
     await event_init(app)

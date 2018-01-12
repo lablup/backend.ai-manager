@@ -29,11 +29,12 @@ from .exceptions import (ServiceUnavailable, InvalidAPIParameters, QuotaExceeded
                          BackendError, InternalServerError)
 from . import GatewayStatus
 from .auth import auth_required
+from .config import ProcIdxLogAdapter
 from .utils import catch_unexpected, method_placeholder
 from ..manager.models import keypairs, kernels, vfolders, AgentStatus, KernelStatus
 from ..manager.registry import AgentRegistry
 
-log = logging.getLogger('ai.backend.gateway.kernel')
+log = ProcIdxLogAdapter(logging.getLogger('ai.backend.gateway.kernel'))
 
 grace_events = []
 

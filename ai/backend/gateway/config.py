@@ -1,5 +1,6 @@
 from ipaddress import ip_address
 import logging, logging.config
+import threading
 
 from ai.backend.common.argparse import HostPortPair, host_port_pair, ipaddr, port_no
 import configargparse
@@ -51,6 +52,27 @@ def load_config(argv=None, extra_args_func=None):
         extra_args_func(parser)
     args = parser.parse_args(args=argv)
     return args
+
+
+class ProcIdxLogAdapter(logging.LoggerAdapter):
+
+    _tls = threading.local()
+
+    @classmethod
+    def set_pidx(cls, pidx):
+        cls._tls.pidx = pidx
+
+    def __init__(self, *args):
+        super().__init__(*args, extra={})
+        self.pidx = None
+
+    def process(self, msg, kwargs):
+        cls = type(self)
+        if self.pidx is None and hasattr(cls._tls, 'pidx'):
+            self.pidx = cls._tls.pidx
+        if self.pidx is not None and self.pidx != -1:
+            return f"[worker:{self.pidx}] {msg}", kwargs
+        return f"[main] {msg}", kwargs
 
 
 def init_logger(config):

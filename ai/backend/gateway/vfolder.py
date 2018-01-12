@@ -9,10 +9,11 @@ from aiohttp import web
 import sqlalchemy as sa
 
 from .auth import auth_required
+from .config import ProcIdxLogAdapter
 from .exceptions import FolderNotFound
 from ..manager.models import vfolders
 
-log = logging.getLogger('ai.backend.gateway.vfolder')
+log = ProcIdxLogAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
 
 VF_ROOT = None
 

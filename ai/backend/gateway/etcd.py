@@ -6,9 +6,10 @@ import yaml
 
 from ai.backend.common.identity import get_instance_id, get_instance_ip
 from ..manager.models.agent import ResourceSlot
+from .config import ProcIdxLogAdapter
 from .exceptions import ImageNotFound
 
-log = logging.getLogger('ai.backend.gateway.etcd')
+log = ProcIdxLogAdapter(logging.getLogger('ai.backend.gateway.etcd'))
 
 
 class ConfigServer:
