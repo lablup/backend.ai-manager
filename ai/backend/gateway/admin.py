@@ -55,7 +55,7 @@ async def handle_gql(request: web.Request) -> web.Response:
             'dlmgr': dlmanager,
             'access_key': request['keypair']['access_key'],
             'dbpool': request.app['dbpool'],
-            'redis_stat_pool': request.app['redis_stat_pool'],
+            'redis_stat': request.app['redis_stat'],
         },
         return_promise=True)
     if inspect.isawaitable(result):
