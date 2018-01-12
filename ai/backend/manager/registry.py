@@ -358,8 +358,7 @@ class AgentRegistry:
             ),
         )
         lang = f'{name}:{tag}'
-        runnable_agents = frozenset(
-            await self.redis_image.smembers(f'lablup/kernel-{lang}'))
+        runnable_agents = frozenset(await self.redis_image.smembers(lang))
 
         async with reenter_txn(self.dbpool, conn) as conn:
 
