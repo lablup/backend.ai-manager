@@ -358,7 +358,8 @@ class AgentRegistry:
             ),
         )
         lang = f'{name}:{tag}'
-        runnable_agents = frozenset(await self.redis_image.smembers(lang))
+        runnable_agents = frozenset(
+            await self.redis_image.smembers(f'lablup/kernel-{lang}'))
 
         async with reenter_txn(self.dbpool, conn) as conn:
 
@@ -700,7 +701,6 @@ class AgentRegistry:
         for image in images:
             pipe.sadd(image[0], agent_id)
         await pipe.execute()
-
 
     async def mark_agent_terminated(self, agent_id, status, conn=None):
         # TODO: interpret kern_id to sess_id
