@@ -151,25 +151,32 @@ async def gw_init(app):
         minsize=4, maxsize=16,
         timeout=30, pool_recycle=30,
     )
-    app['redis_live_pool'] = await aioredis.create_redis_pool(
+    app['redis_live'] = await aioredis.create_redis(
         app.config.redis_addr.as_sockaddr(),
         timeout=3.0,
         encoding='utf8',
         db=REDIS_LIVE_DB)
-    app['redis_stat_pool'] = await aioredis.create_redis_pool(
+    app['redis_stat'] = await aioredis.create_redis(
         app.config.redis_addr.as_sockaddr(),
         timeout=3.0,
         encoding='utf8',
         db=REDIS_STAT_DB)
+    app['redis_image'] = await aioredis.create_redis(
+        app.config.redis_addr.as_sockaddr(),
+        timeout=3.0,
+        encoding='utf8',
+        db=REDIS_IMAGE_DB)
     app.middlewares.append(exception_middleware_factory)
     app.middlewares.append(api_middleware_factory)
 
 
 async def gw_shutdown(app):
-    app['redis_stat_pool'].close()
-    await app['redis_stat_pool'].wait_closed()
-    app['redis_live_pool'].close()
-    await app['redis_live_pool'].wait_closed()
+    app['redis_image'].close()
+    await app['redis_image'].wait_closed()
+    app['redis_stat'].close()
+    await app['redis_stat'].wait_closed()
+    app['redis_live'].close()
+    await app['redis_live'].wait_closed()
     app['dbpool'].close()
     await app['dbpool'].wait_closed()
 

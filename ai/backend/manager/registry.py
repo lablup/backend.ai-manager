@@ -9,9 +9,11 @@ from aiozmq.rpc.base import GenericError, NotFoundError, ParametersError
 import aiotools
 from async_timeout import timeout as _timeout
 from dateutil.tz import tzutc
+import snappy
 import sqlalchemy as sa
 import zmq
 
+from ai.backend.common import msgpack
 from ..gateway.exceptions import (
     BackendError,
     InstanceNotAvailable, InstanceNotFound,
@@ -82,13 +84,14 @@ class AgentRegistry:
     '''
 
     def __init__(self, config_server, dbpool,
-                 redis_stat_pool, redis_live_pool,
+                 redis_stat, redis_live, redis_image,
                  loop=None):
         self.loop = loop if loop is not None else asyncio.get_event_loop()
         self.config_server = config_server
         self.dbpool = dbpool
-        self.redis_stat_pool = redis_stat_pool
-        self.redis_live_pool = redis_live_pool
+        self.redis_stat = redis_stat
+        self.redis_live = redis_live
+        self.redis_image = redis_image
 
     async def init(self):
         pass
@@ -620,8 +623,11 @@ class AgentRegistry:
     async def handle_heartbeat(self, agent_id, agent_info):
 
         now = datetime.now(tzutc())
-        await self.redis_live_pool.hset('last_seen', agent_id, now.timestamp())
 
+        # Update "last seen" timestamp for liveness tracking
+        await self.redis_live.hset('last_seen', agent_id, now.timestamp())
+
+        # Check and update status of the agent record in DB
         async with self.dbpool.acquire() as conn:
             # TODO: check why sa.column('status') does not work
             query = (sa.select([agents.c.status,
@@ -684,6 +690,14 @@ class AgentRegistry:
             else:
                 log.error(f'should not reach here! {type(row.status)}')
 
+        # Update the mapping of kernel images to agents.
+        images = msgpack.unpackb(snappy.decompress(agent_info['images']))
+        for image in images:
+            pass
+            # TODO: implement
+            # await self.redis_image.sadd(image[0], agent_id)
+
+
     async def mark_agent_terminated(self, agent_id, status, conn=None):
         # TODO: interpret kern_id to sess_id
         # for kern_id in (await app['registry'].get_kernels_in_instance(agent_id)):
@@ -693,7 +707,7 @@ class AgentRegistry:
         #  TODO: define behavior when agent reuse running instances upon revive
         # await app['registry'].forget_all_kernels_in_instance(agent_id)
 
-        await self.redis_live_pool.hdel('last_seen', agent_id)
+        await self.redis_live.hdel('last_seen', agent_id)
 
         async with reenter_txn(self.dbpool, conn) as conn:
 
@@ -738,7 +752,7 @@ class AgentRegistry:
                 'status': KernelStatus.TERMINATED,
                 'terminated_at': datetime.now(tzutc()),
             }
-            kern_stat = await self.redis_stat_pool.hgetall(kernel_id)
+            kern_stat = await self.redis_stat.hgetall(kernel_id)
             if kern_stat is not None and 'cpu_used' in kern_stat:
                 kern_data.update({
                     'cpu_used': int(float(kern_stat['cpu_used'])),

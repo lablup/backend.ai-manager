@@ -26,6 +26,7 @@ requires = [
     'namedlist',
     'psycopg2~=2.7.0',
     'python-dateutil>=2.5',
+    'python-snappy~=0.5.1',
     'pytz',
     'PyYAML',
     'pyzmq>=16.0',
