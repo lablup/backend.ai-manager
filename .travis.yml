@@ -36,7 +36,13 @@ jobs:
       install:
         - pip install -U pip setuptools
         - sudo apt-get install libsnappy-dev
-        - pip install backend.ai-agent
+        # install backend.ai-agent from github
+        - cd ${HOME}/build/lablup
+        - git clone https://github.com/lablup/backend.ai-agent.git
+        - cd backend.ai-agent
+        - pip install -U -e .
+        - cd ../backend.ai-manager
+        # install manager requirements
         - if [[ $TRAVIS_BRANCH == "develop" ]]; then BRANCH="develop"; else BRANCH="master"; fi
         - sed -i'' -e "s/{BRANCH}/$BRANCH/g" requirements-ci.txt
         - pip install -U -r requirements-ci.txt
