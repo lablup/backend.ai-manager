@@ -12,7 +12,7 @@ from graphql.error.located_error import GraphQLLocatedError
 
 from .exceptions import InvalidAPIParameters, BackendError
 from .auth import auth_required
-from .config import ProcIdxLogAdapter
+from .logging import ProcIdxLogAdapter
 from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
     Agent,

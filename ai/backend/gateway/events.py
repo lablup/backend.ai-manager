@@ -8,7 +8,7 @@ import aiozmq
 import zmq
 
 from ai.backend.common import msgpack
-from .config import ProcIdxLogAdapter
+from .logging import ProcIdxLogAdapter
 
 log = ProcIdxLogAdapter(logging.getLogger('ai.backend.gateway.events'))
 

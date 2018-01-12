@@ -11,7 +11,8 @@ from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
 
 from .exceptions import InvalidAuthParameters, AuthorizationFailed
-from .config import load_config, init_logger, ProcIdxLogAdapter
+from .config import load_config, init_logger
+from .logging import ProcIdxLogAdapter
 from ..manager.models import keypairs
 from .utils import TZINFOS
 

@@ -4,8 +4,8 @@ import time
 
 import aioredis
 
-from .config import ProcIdxLogAdapter
 from .defs import REDIS_RLIM_DB
+from .logging import ProcIdxLogAdapter
 from .exceptions import RateLimitExceeded
 
 log = ProcIdxLogAdapter(logging.getLogger('ai.backend.gateway.ratelimit'))

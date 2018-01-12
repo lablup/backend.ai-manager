@@ -14,7 +14,7 @@ import sqlalchemy as sa
 import zmq
 
 from ai.backend.common import msgpack
-from ..gateway.config import ProcIdxLogAdapter
+from ..gateway.logging import ProcIdxLogAdapter
 from ..gateway.exceptions import (
     BackendError,
     InstanceNotAvailable, InstanceNotFound,
