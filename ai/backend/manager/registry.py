@@ -358,6 +358,7 @@ class AgentRegistry:
             ),
         )
         lang = f'{name}:{tag}'
+        runnable_agents = frozenset(await self.redis_image.smembers(lang))
 
         async with reenter_txn(self.dbpool, conn) as conn:
 
@@ -365,7 +366,10 @@ class AgentRegistry:
             avail_slots = []
             query = (sa.select([agents], for_update=True)
                        .where(agents.c.status == AgentStatus.ALIVE))
+
             async for row in conn.execute(query):
+                if row['id'] not in runnable_agents:
+                    continue
                 sdiff = ResourceSlot(
                     id=row['id'],
                     mem=row['mem_slots'] - row['used_mem_slots'],
@@ -692,10 +696,10 @@ class AgentRegistry:
 
         # Update the mapping of kernel images to agents.
         images = msgpack.unpackb(snappy.decompress(agent_info['images']))
+        pipe = self.redis_image.pipeline()
         for image in images:
-            pass
-            # TODO: implement
-            # await self.redis_image.sadd(image[0], agent_id)
+            pipe.sadd(image[0], agent_id)
+        await pipe.execute()
 
 
     async def mark_agent_terminated(self, agent_id, status, conn=None):
@@ -708,6 +712,11 @@ class AgentRegistry:
         # await app['registry'].forget_all_kernels_in_instance(agent_id)
 
         await self.redis_live.hdel('last_seen', agent_id)
+
+        pipe = self.redis_image.pipeline()
+        async for imgname in self.redis_image.iscan():
+            pipe.srem(imgname, agent_id)
+        await pipe.execute()
 
         async with reenter_txn(self.dbpool, conn) as conn:
 

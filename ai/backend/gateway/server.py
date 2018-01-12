@@ -35,7 +35,7 @@ from ai.backend.common.utils import env_info
 from ai.backend.common.monitor import DummyDatadog, DummySentry
 from ..manager import __version__
 from . import GatewayStatus
-from .defs import REDIS_STAT_DB, REDIS_LIVE_DB
+from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
 from .exceptions import (BackendError, GenericNotFound,
                          GenericBadRequest, InternalServerError)
 from .admin import init as admin_init, shutdown as admin_shutdown
