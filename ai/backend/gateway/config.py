@@ -87,6 +87,11 @@ def init_logger(config):
                 'handlers': ['console'],
                 'level': 'INFO',
             },
+            'aiotools': {
+                'handlers': ['console'],
+                'propagate': False,
+                'level': 'DEBUG' if config.debug else 'INFO',
+            },
             'aiopg': {
                 'handlers': ['console'],
                 'propagate': False,
