@@ -56,8 +56,8 @@ Checkpoints:
   * It should delete running kernel information and restore `concurrency_usage` for affected access keys in the DB.
 * After agent resumption, **backend.ai-gateway** receives `instance_heartbeat` event(s) *without* `instance_started` event. Multiple duplicate events may arrive together because they might be queued up instantly after agent resumption.
   * On the first heartbeat, **backend.ai-gateway** sends `reset_instance` rpc-call to **backend.ai-agent**.
-    * **sorna-agent** should destroy all kernels *without* sending back `kernel_terminated` event(s).
+    * **backend.ai-agent** should destroy all kernels *without* sending back `kernel_terminated` event(s).
       (Resending them can make `concurrency_usage` negative!)
-    * **sorna-gateway** should *ignore* running kernel information from subsequent `instance_heartbeat` events until `reset_instance` call returns.
+    * **backend.ai-gateway** should *ignore* running kernel information from subsequent `instance_heartbeat` events until `reset_instance` call returns.
       It should mark this particular agent "pending" as well until then (i.e. should not create new kernels here).
 * As the result, this agent should be like a fresh new one with no kernels running.
