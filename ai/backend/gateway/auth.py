@@ -10,7 +10,7 @@ from aiohttp import web
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
 
-from ai.backend.common.logging import log_args, Logger
+from ai.backend.common.logging import Logger
 from .exceptions import InvalidAuthParameters, AuthorizationFailed
 from .config import load_config
 from ..manager.models import keypairs
@@ -209,7 +209,7 @@ if __name__ == '__main__':
                    action='store_true', default=False,
                    help='Generate a pair of access key and secret key.')
 
-    config = load_config(extra_args_funcs=(auth_args, log_args))
+    config = load_config(extra_args_funcs=(auth_args, Logger.update_log_args))
     logger = Logger(config)
     logger.add_pkg('ai.backend')
     with logger:

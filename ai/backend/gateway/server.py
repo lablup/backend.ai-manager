@@ -31,7 +31,7 @@ from ai.backend.common.argparse import (
 )
 from ai.backend.common.utils import env_info
 from ai.backend.common.monitor import DummyDatadog, DummySentry
-from ai.backend.common.logging import log_args, Logger
+from ai.backend.common.logging import Logger
 from ..manager import __version__
 from . import GatewayStatus
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
@@ -293,7 +293,7 @@ def gw_args(parser):
 
 def main():
 
-    config = load_config(extra_args_funcs=(gw_args, log_args))
+    config = load_config(extra_args_funcs=(gw_args, Logger.update_log_args))
     logger = Logger(config)
     logger.add_pkg('aiotools')
     logger.add_pkg('aiopg')
