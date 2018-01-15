@@ -11,12 +11,12 @@ from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
 
 from .exceptions import InvalidAuthParameters, AuthorizationFailed
-from .config import load_config, init_logger
-from .logging import ProcIdxLogAdapter
+from .config import load_config
+from .logging import init_logger
 from ..manager.models import keypairs
 from .utils import TZINFOS
 
-log = ProcIdxLogAdapter(logging.getLogger('ai.backend.gateway.auth'))
+log = logging.getLogger('ai.backend.gateway.auth')
 
 
 def _extract_auth_params(request):

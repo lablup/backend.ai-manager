@@ -34,12 +34,12 @@ from ai.backend.common.monitor import DummyDatadog, DummySentry
 from ..manager import __version__
 from . import GatewayStatus
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
-from .logging import ProcIdxLogAdapter
+from .logging import init_logger
 from .exceptions import (BackendError, GenericNotFound,
                          GenericBadRequest, InternalServerError)
 from .admin import init as admin_init, shutdown as admin_shutdown
 from .auth import init as auth_init, shutdown as auth_shutdown
-from .config import load_config, init_logger
+from .config import load_config
 from .etcd import init as etcd_init, shutdown as etcd_shutdown
 from .events import init as event_init, shutdown as event_shutdown
 from .events import event_router
@@ -54,7 +54,7 @@ VALID_VERSIONS = frozenset([
 ])
 LATEST_API_VERSION = 'v3.20170615'
 
-log = ProcIdxLogAdapter(logging.getLogger('ai.backend.gateway.server'))
+log = logging.getLogger('ai.backend.gateway.server')
 
 
 async def hello(request) -> web.Response:
@@ -124,29 +124,34 @@ async def gw_init(app):
     app['status'] = GatewayStatus.STARTING
     app['datadog'] = DummyDatadog()
     app['sentry'] = DummySentry()
+    app['datadog.enabled'] = False
+    app['sentry.enabled'] = False
     if datadog_available:
         if app.config.datadog_api_key is None:
-            log.warning('datadog logging disabled (missing API key)')
+            log.warning('Datadog logging is disabled (missing API key).')
         else:
             datadog.initialize(
                 api_key=app.config.datadog_api_key,
                 app_key=app.config.datadog_app_key)
             app['datadog'] = datadog
-            log.info('datadog logging enabled')
+            app['datadog.enabled'] = True
+            log.info('Datadog logging is enabled.')
     if raven_available:
         if app.config.raven_uri is None:
-            log.info('skipping Sentry initialization due to missing DSN URI...')
+            log.warning('Sentry error reporting is disabled (missing DSN URI).')
         else:
             app['sentry'] = raven.Client(
                 app.config.raven_uri,
                 release=raven.fetch_package_version('backend.ai-manager'))
-            log.info('sentry logging enabled')
+            app['sentry.enabled'] = True
+            log.info('Sentry error reporting is enabled.')
 
     app['dbpool'] = await create_engine(
         host=app.config.db_addr[0], port=app.config.db_addr[1],
         user=app.config.db_user, password=app.config.db_password,
         dbname=app.config.db_name,
         echo=bool(app.config.verbose),
+        # TODO: check the throughput impacts of DB/redis pool sizes
         minsize=4, maxsize=16,
         timeout=30, pool_recycle=30,
     )
@@ -193,7 +198,6 @@ async def server_main(loop, pidx, _args):
     if app.config.service_port == 0:
         app.config.service_port = 8443 if app.sslctx else 8080
     app['pidx'] = pidx
-    ProcIdxLogAdapter.set_pidx(pidx)
 
     await etcd_init(app)
     await event_init(app)

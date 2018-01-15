@@ -1,26 +1,25 @@
+from datetime import datetime
 import logging, logging.config
+from pathlib import Path
 import threading
 
+from pythonjsonlogger.jsonlogger import JsonFormatter
 
-class ProcIdxLogAdapter(logging.LoggerAdapter):
+_tls = threading.local()
 
-    _tls = threading.local()
 
-    @classmethod
-    def set_pidx(cls, pidx):
-        cls._tls.pidx = pidx
+class CustomJsonFormatter(JsonFormatter):
 
-    def __init__(self, *args):
-        super().__init__(*args, extra={})
-        self.pidx = None
-
-    def process(self, msg, kwargs):
-        cls = type(self)
-        if self.pidx is None and hasattr(cls._tls, 'pidx'):
-            self.pidx = cls._tls.pidx
-        if self.pidx is not None and self.pidx != -1:
-            return f"[worker:{self.pidx}] {msg}", kwargs
-        return f"[main] {msg}", kwargs
+    def add_fields(self, log_record, record, message_dict):
+        super().add_fields(log_record, record, message_dict)
+        if not log_record.get('timestamp'):
+            # this doesn't use record.created, so it is slightly off
+            now = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+            log_record['timestamp'] = now
+        if log_record.get('level', record.levelname):
+            log_record['level'] = log_record['level'].upper()
+        else:
+            log_record['level'] = record.levelname
 
 
 def init_logger(config):
@@ -30,15 +29,21 @@ def init_logger(config):
         'formatters': {
             'colored': {
                 '()': 'coloredlogs.ColoredFormatter',
-                'format': '%(asctime)s %(levelname)s %(name)s %(message)s',
+                'format': '%(asctime)s %(levelname)s %(name)s '
+                          '[%(processName)s] %(message)s',
                 'field_styles': {'levelname': {'color': 'black', 'bold': True},
                                  'name': {'color': 'black', 'bold': True},
+                                 'processName': {'color': 'black', 'bold': True},
                                  'asctime': {'color': 'black'}},
                 'level_styles': {'info': {'color': 'cyan'},
                                  'debug': {'color': 'green'},
                                  'warning': {'color': 'yellow'},
                                  'error': {'color': 'red'},
                                  'critical': {'color': 'red', 'bold': True}},
+            },
+            'json': {
+                '()': CustomJsonFormatter,
+                'format': '(timestamp) (level) (name) (processName) (message)',
             },
         },
         'handlers': {
@@ -48,13 +53,22 @@ def init_logger(config):
                 'formatter': 'colored',
                 'stream': 'ext://sys.stderr',
             },
+            'jsonfile': {
+                'class': 'logging.handlers.RotatingFileHandler',
+                'level': 'DEBUG',
+                'filename': Path.cwd() / 'backend.log',
+                'backupCount': 10,
+                'maxBytes': 10485760,  # 10 MiB
+                'formatter': 'json',
+                'encoding': 'utf-8',
+            },
             'null': {
                 'class': 'logging.NullHandler',
             },
         },
         'loggers': {
             '': {
-                'handlers': ['console'],
+                'handlers': ['console', 'jsonfile'],
                 'level': 'INFO',
             },
             'aiotools': {
@@ -68,7 +82,7 @@ def init_logger(config):
                 'level': 'DEBUG' if config.debug else 'INFO',
             },
             'ai.backend': {
-                'handlers': ['console'],
+                'handlers': ['console', 'jsonfile'],
                 'propagate': False,
                 'level': 'DEBUG' if config.debug else 'INFO',
             },

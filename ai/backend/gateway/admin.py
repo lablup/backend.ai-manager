@@ -12,7 +12,6 @@ from graphql.error.located_error import GraphQLLocatedError
 
 from .exceptions import InvalidAPIParameters, BackendError
 from .auth import auth_required
-from .logging import ProcIdxLogAdapter
 from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
     Agent,
@@ -21,7 +20,7 @@ from ..manager.models import (
     VirtualFolder,
 )
 
-log = ProcIdxLogAdapter(logging.getLogger('ai.backend.gateway.admin'))
+log = logging.getLogger('ai.backend.gateway.admin')
 
 
 @auth_required

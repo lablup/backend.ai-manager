@@ -8,9 +8,8 @@ import aiozmq
 import zmq
 
 from ai.backend.common import msgpack
-from .logging import ProcIdxLogAdapter
 
-log = ProcIdxLogAdapter(logging.getLogger('ai.backend.gateway.events'))
+log = logging.getLogger('ai.backend.gateway.events')
 
 if sys.platform == 'darwin':
     EVENT_IPC_ADDR = 'ipc://ai.backend.agent-events'

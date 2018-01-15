@@ -5,10 +5,9 @@ import time
 import aioredis
 
 from .defs import REDIS_RLIM_DB
-from .logging import ProcIdxLogAdapter
 from .exceptions import RateLimitExceeded
 
-log = ProcIdxLogAdapter(logging.getLogger('ai.backend.gateway.ratelimit'))
+log = logging.getLogger('ai.backend.gateway.ratelimit')
 
 _time_prec = Decimal('1e-3')  # msec
 _rlim_window = 60 * 15
