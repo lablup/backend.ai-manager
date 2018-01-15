@@ -48,7 +48,7 @@ def log_worker(config, log_queue):
         file_handler = logging.handlers.RotatingFileHandler(
             filename=config.log_file,
             backupCount=config.log_file_count,
-            maxBytes=1048576 * float(config.log_file_size),
+            maxBytes=1048576 * config.log_file_size,
             encoding='utf-8',
         )
         file_handler.setLevel(logging.DEBUG)
