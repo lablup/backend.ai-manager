@@ -1,5 +1,5 @@
 from ai.backend.gateway.config import load_config
-from ai.backend.gateway.logging import log_args, log_init
+from ai.backend.gateway.logging import log_args, log_configure
 from ai.backend.manager import cli
 
 resolved_command_classes = {}
@@ -15,5 +15,8 @@ def init_app_args(parser):
 
 
 config = load_config(extra_args_funcs=(init_app_args, log_args))
-log_init(config)
-config.function(config)
+log_finalize = log_configure(config)
+try:
+    config.function(config)
+finally:
+    log_finalize()

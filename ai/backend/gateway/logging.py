@@ -1,11 +1,10 @@
 from datetime import datetime
 import logging, logging.config
+import multiprocessing as mp
 from pathlib import Path
-import threading
+import signal
 
 from pythonjsonlogger.jsonlogger import JsonFormatter
-
-_tls = threading.local()
 
 
 class CustomJsonFormatter(JsonFormatter):
@@ -43,7 +42,25 @@ def log_args(parser):
                help='The maximum size of each log file in MiB (default: 10 MiB)')
 
 
-def log_init(config):
+def log_worker(config, log_queue):
+    if config.log_file is not None:
+        fmt = '(timestamp) (level) (name) (processName) (message)'
+        file_handler = logging.handlers.RotatingFileHandler(
+            filename=config.log_file,
+            backupCount=config.log_file_count,
+            maxBytes=1048576 * float(config.log_file_size),
+            encoding='utf-8',
+        )
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(CustomJsonFormatter(fmt))
+    while True:
+        rec = log_queue.get()
+        if rec is None:
+            break
+        file_handler.emit(rec)
+
+
+def log_configure(config):
     log_cfg = {
         'version': 1,
         'disable_existing_loggers': False,
@@ -61,10 +78,6 @@ def log_init(config):
                                  'warning': {'color': 'yellow'},
                                  'error': {'color': 'red'},
                                  'critical': {'color': 'red', 'bold': True}},
-            },
-            'json': {
-                '()': CustomJsonFormatter,
-                'format': '(timestamp) (level) (name) (processName) (message)',
             },
         },
         'handlers': {
@@ -100,16 +113,28 @@ def log_init(config):
             },
         },
     }
-    if config.log_file:
-        log_cfg['handlers']['jsonfile'] = {
-            'class': 'logging.handlers.RotatingFileHandler',
+    log_queue = mp.Queue()
+
+    def _finalize():
+        log_queue.put(None)
+        log_queue.close()
+        log_queue.join_thread()
+
+    if config.log_file is not None:
+        log_cfg['handlers']['fileq'] = {
+            'class': 'logging.handlers.QueueHandler',
             'level': 'DEBUG',
-            'filename': config.log_file,
-            'backupCount': config.log_file_count,
-            'maxBytes': 1048576 * float(config.log_file_size),
-            'formatter': 'json',
-            'encoding': 'utf-8',
+            'queue': log_queue,
         }
-        log_cfg['loggers']['']['handlers'].append('jsonfile')
-        log_cfg['loggers']['ai.backend']['handlers'].append('jsonfile')
+        for l in log_cfg['loggers'].values():
+            l['handlers'].append('fileq')
+
     logging.config.dictConfig(log_cfg)
+    # block signals that may interrupt/corrupt logging
+    stop_signals = {signal.SIGINT, signal.SIGTERM}
+    signal.pthread_sigmask(signal.SIG_BLOCK, stop_signals)
+    proc = mp.Process(target=log_worker, name='Logger',
+                      args=(config, log_queue))
+    proc.start()
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, stop_signals)
+    return _finalize

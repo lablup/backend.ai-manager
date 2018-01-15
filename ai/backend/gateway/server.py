@@ -4,7 +4,9 @@ The main web / websocket server
 
 import asyncio
 from ipaddress import ip_address
+import itertools
 import logging
+import multiprocessing as mp
 import os
 import ssl
 
@@ -34,7 +36,7 @@ from ai.backend.common.monitor import DummyDatadog, DummySentry
 from ..manager import __version__
 from . import GatewayStatus
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
-from .logging import log_args, log_init
+from .logging import log_args, log_configure
 from .exceptions import (BackendError, GenericNotFound,
                          GenericBadRequest, InternalServerError)
 from .admin import init as admin_init, shutdown as admin_shutdown
@@ -294,7 +296,7 @@ def gw_args(parser):
 def main():
 
     config = load_config(extra_args_funcs=(gw_args, log_args))
-    log_init(config)
+    log_finalize = log_configure(config)
 
     log.info(f'Backend.AI Gateway {__version__}')
     log.info(f'runtime: {env_info()}')
@@ -314,11 +316,14 @@ def main():
     num_workers = os.cpu_count()
 
     try:
+        # reset process counter
+        mp.process._process_counter = itertools.count(0)
         aiotools.start_server(server_main, num_workers=num_workers,
                               extra_procs=[event_router],
-                              args=(config, ))
+                              args=(config,))
     finally:
         log.info('terminated.')
+        log_finalize()
 
 
 if __name__ == '__main__':
