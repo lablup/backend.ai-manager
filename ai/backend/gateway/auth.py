@@ -10,9 +10,9 @@ from aiohttp import web
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
 
+from ai.backend.common.logging import log_args, Logger
 from .exceptions import InvalidAuthParameters, AuthorizationFailed
 from .config import load_config
-from .logging import log_args, log_configure
 from ..manager.models import keypairs
 from .utils import TZINFOS
 
@@ -210,11 +210,10 @@ if __name__ == '__main__':
                    help='Generate a pair of access key and secret key.')
 
     config = load_config(extra_args_funcs=(auth_args, log_args))
-    log_finalize = log_configure(config)
-
-    if config.generate_keypair:
-        ak, sk = generate_keypair()
-        print(f'Access Key: {ak} ({len(ak)} bytes)')
-        print(f'Secret Key: {sk} ({len(sk)} bytes)')
-
-    log_finalize()
+    logger = Logger(config)
+    logger.add_pkg('ai.backend')
+    with logger:
+        if config.generate_keypair:
+            ak, sk = generate_keypair()
+            print(f'Access Key: {ak} ({len(ak)} bytes)')
+            print(f'Secret Key: {sk} ({len(sk)} bytes)')

@@ -26,14 +26,13 @@ requires = [
     'namedlist',
     'psycopg2~=2.7.0',
     'python-dateutil>=2.5',
-    'python-json-logger',
     'python-snappy~=0.5.1',
     'pytz',
     'PyYAML',
     'pyzmq>=16.0',
     'SQLAlchemy~=1.1.14',
     'uvloop>=0.8',
-    'backend.ai-common~=1.0.3',
+    'backend.ai-common~=1.1.1',
 ]
 build_requires = [
     'wheel',

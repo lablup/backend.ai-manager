@@ -4,9 +4,7 @@ The main web / websocket server
 
 import asyncio
 from ipaddress import ip_address
-import itertools
 import logging
-import multiprocessing as mp
 import os
 import ssl
 
@@ -33,10 +31,10 @@ from ai.backend.common.argparse import (
 )
 from ai.backend.common.utils import env_info
 from ai.backend.common.monitor import DummyDatadog, DummySentry
+from ai.backend.common.logging import log_args, Logger
 from ..manager import __version__
 from . import GatewayStatus
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
-from .logging import log_args, log_configure
 from .exceptions import (BackendError, GenericNotFound,
                          GenericBadRequest, InternalServerError)
 from .admin import init as admin_init, shutdown as admin_shutdown
@@ -296,34 +294,31 @@ def gw_args(parser):
 def main():
 
     config = load_config(extra_args_funcs=(gw_args, log_args))
-    log_finalize = log_configure(config)
+    logger = Logger(config)
+    logger.add_pkg('aiotools')
+    logger.add_pkg('aiopg')
+    logger.add_pkg('ai.backend')
 
-    log.info(f'Backend.AI Gateway {__version__}')
-    log.info(f'runtime: {env_info()}')
+    with logger:
+        log.info(f'Backend.AI Gateway {__version__}')
+        log.info(f'runtime: {env_info()}')
+        log_config = logging.getLogger('ai.backend.gateway.config')
+        log_config.debug('debug mode enabled.')
+        if config.debug:
+            aiohttp.log.server_logger.setLevel('DEBUG')
+            aiohttp.log.access_logger.setLevel('DEBUG')
+        else:
+            aiohttp.log.server_logger.setLevel('WARNING')
+            aiohttp.log.access_logger.setLevel('WARNING')
 
-    log_config = logging.getLogger('ai.backend.gateway.config')
-    log_config.debug('debug mode enabled.')
-
-    if config.debug:
-        aiohttp.log.server_logger.setLevel('DEBUG')
-        aiohttp.log.access_logger.setLevel('DEBUG')
-    else:
-        aiohttp.log.server_logger.setLevel('WARNING')
-        aiohttp.log.access_logger.setLevel('WARNING')
-
-    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-
-    num_workers = os.cpu_count()
-
-    try:
-        # reset process counter
-        mp.process._process_counter = itertools.count(0)
-        aiotools.start_server(server_main, num_workers=num_workers,
-                              extra_procs=[event_router],
-                              args=(config,))
-    finally:
-        log.info('terminated.')
-        log_finalize()
+        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+        num_workers = os.cpu_count()
+        try:
+            aiotools.start_server(server_main, num_workers=num_workers,
+                                  extra_procs=[event_router],
+                                  args=(config,))
+        finally:
+            log.info('terminated.')
 
 
 if __name__ == '__main__':
