@@ -34,7 +34,7 @@ from ai.backend.common.monitor import DummyDatadog, DummySentry
 from ..manager import __version__
 from . import GatewayStatus
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
-from .logging import init_logger
+from .logging import log_args, init_logger
 from .exceptions import (BackendError, GenericNotFound,
                          GenericBadRequest, InternalServerError)
 from .admin import init as admin_init, shutdown as admin_shutdown
@@ -293,7 +293,7 @@ def gw_args(parser):
 
 def main():
 
-    config = load_config(extra_args_func=gw_args)
+    config = load_config(extra_args_funcs=(gw_args, log_args))
     init_logger(config)
 
     log.info(f'Backend.AI Gateway {__version__}')

@@ -22,6 +22,21 @@ class CustomJsonFormatter(JsonFormatter):
             log_record['level'] = record.levelname
 
 
+def log_args(parser):
+    parser.add('--debug', env_var='BACKEND_DEBUG',
+               action='store_true', default=False,
+               help='Set the debug mode and verbose logging. (default: false)')
+    parser.add('-v', '--verbose', env_var='BACKEND_VERBOSE',
+               action='store_true', default=False,
+               help='Set even more verbose logging which includes all SQL '
+                    'statements issued. (default: false)')
+    parser.add('--log-file', env_var='BACKEND_LOG_FILE',
+               type=Path, default=None,
+               help='If set to a file path, line-by-line JSON logs will be '
+                    'recorded there.  It also automatically rotates the logs using '
+                    'dotted number suffixes. (default: None)')
+
+
 def init_logger(config):
     log_cfg = {
         'version': 1,
@@ -53,22 +68,13 @@ def init_logger(config):
                 'formatter': 'colored',
                 'stream': 'ext://sys.stderr',
             },
-            'jsonfile': {
-                'class': 'logging.handlers.RotatingFileHandler',
-                'level': 'DEBUG',
-                'filename': Path.cwd() / 'backend.log',
-                'backupCount': 10,
-                'maxBytes': 10485760,  # 10 MiB
-                'formatter': 'json',
-                'encoding': 'utf-8',
-            },
             'null': {
                 'class': 'logging.NullHandler',
             },
         },
         'loggers': {
             '': {
-                'handlers': ['console', 'jsonfile'],
+                'handlers': ['console'],
                 'level': 'INFO',
             },
             'aiotools': {
@@ -82,10 +88,22 @@ def init_logger(config):
                 'level': 'DEBUG' if config.debug else 'INFO',
             },
             'ai.backend': {
-                'handlers': ['console', 'jsonfile'],
+                'handlers': ['console'],
                 'propagate': False,
                 'level': 'DEBUG' if config.debug else 'INFO',
             },
         },
     }
+    if config.log_file:
+        log_cfg['handlers']['jsonfile'] = {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'level': 'DEBUG',
+            'filename': config.log_file,
+            'backupCount': 10,
+            'maxBytes': 10485760,  # 10 MiB
+            'formatter': 'json',
+            'encoding': 'utf-8',
+        }
+        log_cfg['loggers']['']['handlers'].append('jsonfile')
+        log_cfg['loggers']['ai.backend']['handlers'].append('jsonfile')
     logging.config.dictConfig(log_cfg)
