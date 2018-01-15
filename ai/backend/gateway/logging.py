@@ -35,9 +35,15 @@ def log_args(parser):
                help='If set to a file path, line-by-line JSON logs will be '
                     'recorded there.  It also automatically rotates the logs using '
                     'dotted number suffixes. (default: None)')
+    parser.add('--log-file-count', env_var='BACKEND_LOG_FILE_COUNT',
+               type=int, default=10,
+               help='The maximum number of rotated log files (default: 10)')
+    parser.add('--log-file-size', env_var='BACKEND_LOG_FILE_SIZE',
+               type=float, default=10.0,
+               help='The maximum size of each log file in MiB (default: 10 MiB)')
 
 
-def init_logger(config):
+def log_init(config):
     log_cfg = {
         'version': 1,
         'disable_existing_loggers': False,
@@ -99,8 +105,8 @@ def init_logger(config):
             'class': 'logging.handlers.RotatingFileHandler',
             'level': 'DEBUG',
             'filename': config.log_file,
-            'backupCount': 10,
-            'maxBytes': 10485760,  # 10 MiB
+            'backupCount': config.log_file_count,
+            'maxBytes': 1048576 * float(config.log_file_size),
             'formatter': 'json',
             'encoding': 'utf-8',
         }

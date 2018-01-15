@@ -12,7 +12,7 @@ from dateutil.parser import parse as dtparse
 
 from .exceptions import InvalidAuthParameters, AuthorizationFailed
 from .config import load_config
-from .logging import init_logger
+from .logging import log_args, log_init
 from ..manager.models import keypairs
 from .utils import TZINFOS
 
@@ -208,8 +208,8 @@ if __name__ == '__main__':
         parser.add('--generate-keypair', action='store_true', default=False,
                    help='Generate a pair of access key and secret key.')
 
-    config = load_config(extra_args_func=auth_args)
-    init_logger(config)
+    config = load_config(extra_args_funcs=(auth_args, log_args))
+    log_init(config)
 
     if config.generate_keypair:
         ak, sk = generate_keypair()
