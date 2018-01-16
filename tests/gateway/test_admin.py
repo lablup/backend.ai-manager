@@ -1,11 +1,8 @@
 import json
 
-from dateutil.tz import tzutc
 import pytest
-import sqlalchemy as sa
 
-from ai.backend.gateway.admin import init as admin_init
-from ai.backend.manager.models import agents, vfolders, AgentStatus
+from ai.backend.manager.models import agents, AgentStatus
 
 USER_KEYPAIR = {
     'access_key': 'AKIANOTADMIN7EXAMPLE',
@@ -35,7 +32,7 @@ class TestAdminQuery:
                 'addr': '127.0.0.1',
                 'lost_at': None,
             })
-            result = await conn.execute(query)
+            await conn.execute(query)
 
         query = '{ agent(agent_id: "test-agent-id") { status region addr } }'
         req_bytes = json.dumps({'query': query}).encode()
@@ -68,7 +65,7 @@ class TestAdminQuery:
                     'addr': '127.0.0.1',
                     'lost_at': None,
                 })
-                result = await conn.execute(query)
+                await conn.execute(query)
 
         query = '{ agents { status region addr } }'
         req_bytes = json.dumps({'query': query}).encode()
