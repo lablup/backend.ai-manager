@@ -109,12 +109,15 @@ class Agent(graphene.ObjectType):
             return [Agent.from_row(r) for r in rows]
 
     @staticmethod
-    async def batch_load(dbpool, agent_ids):
+    async def batch_load(dbpool, agent_ids, status=None):
         async with dbpool.acquire() as conn:
             query = (sa.select('*')
                        .select_from(agents)
                        .where(agents.c.id.in_(agent_ids))
                        .order_by(agents.c.id))
+            if status is not None:
+                status = AgentStatus[status]
+                query = query.where(agents.c.status == status)
             objs_per_key = OrderedDict()
             for k in agent_ids:
                 objs_per_key[k] = None
