@@ -20,7 +20,7 @@ from ai.backend.common.argparse import host_port_pair
 from ai.backend.gateway.config import load_config
 from ai.backend.gateway.events import event_router
 from ai.backend.gateway.server import gw_init, gw_shutdown, gw_args
-from ai.backend.manager.models import keypairs
+from ai.backend.manager.models import kernels, keypairs, vfolders
 
 here = pathlib.Path(__file__).parent
 
@@ -130,9 +130,34 @@ async def default_keypair(event_loop, pre_app):
 
 
 @pytest.fixture
+async def user_keypair(event_loop, pre_app):
+    access_key = 'AKIANOTADMIN7EXAMPLE'
+    config = pre_app.config
+    pool = await create_engine(
+        host=config.db_addr[0], port=config.db_addr[1],
+        user=config.db_user, password=config.db_password,
+        dbname=config.db_name, minsize=1, maxsize=4
+    )
+    async with pool.acquire() as conn:
+        query = (sa.select([keypairs.c.access_key, keypairs.c.secret_key])
+                   .select_from(keypairs)
+                   .where(keypairs.c.access_key == access_key))
+        result = await conn.execute(query)
+        row = await result.first()
+        keypair = {
+            'access_key': access_key,
+            'secret_key': row.secret_key,
+        }
+    pool.close()
+    await pool.wait_closed()
+    return keypair
+
+
+@pytest.fixture
 def get_headers(pre_app, default_keypair, prepare_docker_images):
     def create_header(method, url, req_bytes, ctype='application/json',
-                      hash_type='sha256', api_version='v3.20170615'):
+                      hash_type='sha256', api_version='v3.20170615',
+                      keypair=default_keypair):
         now = datetime.now(tzutc())
         hostname = f'localhost:{pre_app.config.service_port}'
         headers = {
@@ -153,13 +178,13 @@ def get_headers(pre_app, default_keypair, prepare_docker_images):
                      + b'content-type:' + ctype.encode() + b'\n' \
                      + b'x-backendai-version:' + api_version.encode() + b'\n' \
                      + req_hash.encode()
-        sign_key = hmac.new(default_keypair['secret_key'].encode(),
+        sign_key = hmac.new(keypair['secret_key'].encode(),
                             now.strftime('%Y%m%d').encode(), hash_type).digest()
         sign_key = hmac.new(sign_key, hostname.encode(), hash_type).digest()
         signature = hmac.new(sign_key, sign_bytes, hash_type).hexdigest()
         headers['Authorization'] = \
             f'BackendAI signMethod=HMAC-{hash_type.upper()}, ' \
-            + f'credential={default_keypair["access_key"]}:{signature}'
+            + f'credential={keypair["access_key"]}:{signature}'
         return headers
     return create_header
 
@@ -181,7 +206,7 @@ async def _create_server(loop, pre_app, extra_inits=None, debug=False):
 
 
 @pytest.fixture
-async def create_app_and_client(event_loop, pre_app, default_keypair):
+async def create_app_and_client(event_loop, pre_app, default_keypair, user_keypair):
     client = None
     app = handler = server = None
     extra_proc = None
@@ -231,11 +256,20 @@ async def create_app_and_client(event_loop, pre_app, default_keypair):
     # TODO: load DB server dedicated only for testing, and exploit transaction
     #       rollback to provide clean DB table for each test.
     if app and 'dbpool' in app:
-        from ai.backend.manager.models import vfolders, kernels
-        access_key = default_keypair['access_key']
         async with app['dbpool'].acquire() as conn, conn.begin():
             await conn.execute((vfolders.delete()))
             await conn.execute((kernels.delete()))
+            # from ai.backend.manager.models import agents
+            # await conn.execute((agents.delete()))
+            access_key = default_keypair['access_key']
+            query = (sa.update(keypairs)
+                       .values({
+                           'concurrency_used': 0,
+                           'num_queries': 0,
+                       })
+                       .where(keypairs.c.access_key == access_key))
+            await conn.execute(query)
+            access_key = user_keypair['access_key']
             query = (sa.update(keypairs)
                        .values({
                            'concurrency_used': 0,

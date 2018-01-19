@@ -66,7 +66,7 @@ class VirtualFolder(graphene.ObjectType):
             max_size=row['max_size'],    # in KiB
             created_at=row['created_at'],
             last_used=row['last_used'],
-            num_attached=row['num_attached'],
+            # num_attached=row['num_attached'],
         )
 
     async def resolve_num_files(self, info):
