@@ -20,7 +20,7 @@ from ai.backend.common.argparse import host_port_pair
 from ai.backend.gateway.config import load_config
 from ai.backend.gateway.events import event_router
 from ai.backend.gateway.server import gw_init, gw_shutdown, gw_args
-from ai.backend.manager.models import kernels, keypairs, vfolders
+from ai.backend.manager.models import agents, kernels, keypairs, vfolders
 
 here = pathlib.Path(__file__).parent
 
@@ -259,8 +259,7 @@ async def create_app_and_client(event_loop, pre_app, default_keypair, user_keypa
         async with app['dbpool'].acquire() as conn, conn.begin():
             await conn.execute((vfolders.delete()))
             await conn.execute((kernels.delete()))
-            # from ai.backend.manager.models import agents
-            # await conn.execute((agents.delete()))
+            await conn.execute((agents.delete()))
             access_key = default_keypair['access_key']
             query = (sa.update(keypairs)
                        .values({
