@@ -5,9 +5,7 @@ The main web / websocket server
 import asyncio
 from ipaddress import ip_address
 import logging
-from multiprocessing.managers import SyncManager
 import os
-import signal
 import ssl
 
 import aiohttp
@@ -33,14 +31,15 @@ from ai.backend.common.argparse import (
 )
 from ai.backend.common.utils import env_info
 from ai.backend.common.monitor import DummyDatadog, DummySentry
+from ai.backend.common.logging import Logger
 from ..manager import __version__
 from . import GatewayStatus
-from .defs import REDIS_STAT_DB, REDIS_LIVE_DB
+from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
 from .exceptions import (BackendError, GenericNotFound,
                          GenericBadRequest, InternalServerError)
 from .admin import init as admin_init, shutdown as admin_shutdown
 from .auth import init as auth_init, shutdown as auth_shutdown
-from .config import load_config, init_logger
+from .config import load_config
 from .etcd import init as etcd_init, shutdown as etcd_shutdown
 from .events import init as event_init, shutdown as event_shutdown
 from .events import event_router
@@ -125,51 +124,63 @@ async def gw_init(app):
     app['status'] = GatewayStatus.STARTING
     app['datadog'] = DummyDatadog()
     app['sentry'] = DummySentry()
+    app['datadog.enabled'] = False
+    app['sentry.enabled'] = False
     if datadog_available:
         if app.config.datadog_api_key is None:
-            log.warning('datadog logging disabled (missing API key)')
+            log.warning('Datadog logging is disabled (missing API key).')
         else:
             datadog.initialize(
                 api_key=app.config.datadog_api_key,
                 app_key=app.config.datadog_app_key)
             app['datadog'] = datadog
-            log.info('datadog logging enabled')
+            app['datadog.enabled'] = True
+            log.info('Datadog logging is enabled.')
     if raven_available:
         if app.config.raven_uri is None:
-            log.info('skipping Sentry initialization due to missing DSN URI...')
+            log.warning('Sentry error reporting is disabled (missing DSN URI).')
         else:
             app['sentry'] = raven.Client(
                 app.config.raven_uri,
                 release=raven.fetch_package_version('backend.ai-manager'))
-            log.info('sentry logging enabled')
+            app['sentry.enabled'] = True
+            log.info('Sentry error reporting is enabled.')
 
     app['dbpool'] = await create_engine(
         host=app.config.db_addr[0], port=app.config.db_addr[1],
         user=app.config.db_user, password=app.config.db_password,
         dbname=app.config.db_name,
         echo=bool(app.config.verbose),
+        # TODO: check the throughput impacts of DB/redis pool sizes
         minsize=4, maxsize=16,
         timeout=30, pool_recycle=30,
     )
-    app['redis_live_pool'] = await aioredis.create_redis_pool(
+    app['redis_live'] = await aioredis.create_redis(
         app.config.redis_addr.as_sockaddr(),
         timeout=3.0,
         encoding='utf8',
         db=REDIS_LIVE_DB)
-    app['redis_stat_pool'] = await aioredis.create_redis_pool(
+    app['redis_stat'] = await aioredis.create_redis(
         app.config.redis_addr.as_sockaddr(),
         timeout=3.0,
         encoding='utf8',
         db=REDIS_STAT_DB)
+    app['redis_image'] = await aioredis.create_redis(
+        app.config.redis_addr.as_sockaddr(),
+        timeout=3.0,
+        encoding='utf8',
+        db=REDIS_IMAGE_DB)
     app.middlewares.append(exception_middleware_factory)
     app.middlewares.append(api_middleware_factory)
 
 
 async def gw_shutdown(app):
-    app['redis_stat_pool'].close()
-    await app['redis_stat_pool'].wait_closed()
-    app['redis_live_pool'].close()
-    await app['redis_live_pool'].wait_closed()
+    app['redis_image'].close()
+    await app['redis_image'].wait_closed()
+    app['redis_stat'].close()
+    await app['redis_stat'].wait_closed()
+    app['redis_live'].close()
+    await app['redis_live'].wait_closed()
     app['dbpool'].close()
     await app['dbpool'].wait_closed()
 
@@ -186,7 +197,6 @@ async def server_main(loop, pidx, _args):
                                    str(app.config.ssl_key))
     if app.config.service_port == 0:
         app.config.service_port = 8443 if app.sslctx else 8080
-
     app['pidx'] = pidx
 
     await etcd_init(app)
@@ -283,35 +293,32 @@ def gw_args(parser):
 
 def main():
 
-    config = load_config(extra_args_func=gw_args)
-    init_logger(config)
+    config = load_config(extra_args_funcs=(gw_args, Logger.update_log_args))
+    logger = Logger(config)
+    logger.add_pkg('aiotools')
+    logger.add_pkg('aiopg')
+    logger.add_pkg('ai.backend')
 
-    log.info(f'Backend.AI Gateway {__version__}')
-    log.info(f'runtime: {env_info()}')
+    with logger:
+        log.info(f'Backend.AI Gateway {__version__}')
+        log.info(f'runtime: {env_info()}')
+        log_config = logging.getLogger('ai.backend.gateway.config')
+        log_config.debug('debug mode enabled.')
+        if config.debug:
+            aiohttp.log.server_logger.setLevel('DEBUG')
+            aiohttp.log.access_logger.setLevel('DEBUG')
+        else:
+            aiohttp.log.server_logger.setLevel('WARNING')
+            aiohttp.log.access_logger.setLevel('WARNING')
 
-    log_config = logging.getLogger('ai.backend.gateway.config')
-    log_config.debug('debug mode enabled.')
-
-    if config.debug:
-        aiohttp.log.server_logger.setLevel('DEBUG')
-        aiohttp.log.access_logger.setLevel('DEBUG')
-    else:
-        aiohttp.log.server_logger.setLevel('WARNING')
-        aiohttp.log.access_logger.setLevel('WARNING')
-
-    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-
-    num_workers = os.cpu_count()
-    manager = SyncManager()
-    manager.start(lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
-
-    try:
-        aiotools.start_server(server_main, num_workers=num_workers,
-                              extra_procs=[event_router],
-                              args=(config, ))
-    finally:
-        manager.shutdown()
-        log.info('terminated.')
+        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+        num_workers = os.cpu_count()
+        try:
+            aiotools.start_server(server_main, num_workers=num_workers,
+                                  extra_procs=[event_router],
+                                  args=(config,))
+        finally:
+            log.info('terminated.')
 
 
 if __name__ == '__main__':

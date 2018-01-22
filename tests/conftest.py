@@ -98,8 +98,6 @@ async def pre_app(event_loop, unused_tcp_port):
     #                            str(app.config.ssl_key))
 
     # num_workers = 1
-    manager = mp.managers.SyncManager()
-    manager.start(lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
     app['pidx'] = 0
 
     return app

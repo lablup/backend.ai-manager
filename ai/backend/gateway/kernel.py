@@ -223,7 +223,7 @@ async def check_agent_lost(app, interval):
     try:
         now = datetime.now(tzutc())
         timeout = timedelta(seconds=app.config.heartbeat_timeout)
-        async for agent_id, prev in app['redis_live_pool'].ihscan('last_seen'):
+        async for agent_id, prev in app['redis_live'].ihscan('last_seen'):
             prev = datetime.fromtimestamp(float(prev), tzutc())
             if now - prev > timeout:
                 app['event_dispatcher'].dispatch('instance_terminated',
@@ -715,8 +715,9 @@ async def init(app):
     app['registry'] = AgentRegistry(
         app['config_server'],
         app['dbpool'],
-        app['redis_stat_pool'],
-        app['redis_live_pool'])
+        app['redis_stat'],
+        app['redis_live'],
+        app['redis_image'])
     await app['registry'].init()
 
     # Scan ALIVE agents
