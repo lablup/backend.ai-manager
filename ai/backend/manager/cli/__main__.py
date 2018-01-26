@@ -1,5 +1,5 @@
 from ai.backend.gateway.config import load_config
-from ai.backend.gateway.logging import Logger
+from ai.backend.common.logging import Logger
 from ai.backend.manager import cli
 
 resolved_command_classes = {}
