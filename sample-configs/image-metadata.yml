@@ -64,15 +64,14 @@ images:
     slots:
       <<: *for_computing
       gpu: 0
-  # TODO: upgrade octave kernel
-  #- name: octave
-  #  syntax: octave
-  #  tags:
-  #    - ["latest", ""]
-  #    - ["4.2",    ""]
-  #  slots:
-  #    <<: *for_computing
-  #    gpu: 0
+  - name: octave
+    syntax: octave
+    tags:
+      - ["latest",     ":3.8-debian"]
+      - ["3.8-debian", "c55517c9ee4a"]
+    slots:
+      <<: *for_computing
+      gpu: 0
   - name: c
     syntax: c
     tags:
