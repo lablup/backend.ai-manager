@@ -77,7 +77,7 @@ async def pre_app(event_loop, unused_tcp_port):
     """ For tests not require actual server running.
     """
     app = web.Application(loop=event_loop)
-    app.config = load_config(argv=[], extra_args_func=gw_args)
+    app.config = load_config(argv=[], extra_args_funcs=(gw_args,))
 
     # Override basic settings.
     # Change these configs if local servers have different port numbers.
@@ -90,6 +90,7 @@ async def pre_app(event_loop, unused_tcp_port):
     app.config.heartbeat_timeout = 10.0
     app.config.service_ip = '127.0.0.1'
     app.config.service_port = unused_tcp_port
+    app.config.verbose = False
     # app.config.ssl_cert = here / 'sample-ssl-cert' / 'sample.crt'
     # app.config.ssl_key = here / 'sample-ssl-cert' / 'sample.key'
     app.sslctx = None
