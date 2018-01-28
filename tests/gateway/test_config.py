@@ -31,7 +31,7 @@ def test_args_parse_by_load_config():
         '--events-port', str(events_port),
     ]
 
-    args = load_config(argv, extra_args_func=gw_args)
+    args = load_config(argv, extra_args_funcs=(gw_args,))
 
     assert args.agent_port == agent_port
     assert args.redis_addr == host_port_pair(redis_addr)
@@ -39,8 +39,6 @@ def test_args_parse_by_load_config():
     assert args.db_name == db_name
     assert args.db_user == db_user
     assert args.db_password == db_password
-    assert not args.debug
-    assert not args.verbose
     assert args.kernel_ip_override is None
 
     assert args.namespace == namespace
