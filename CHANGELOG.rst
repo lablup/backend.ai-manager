@@ -1,8 +1,33 @@
 Changes
 =======
 
-1.1.1 (to be released)
+1.2.1 (to be released)
 ----------------------
+
+1.2.0 (2018-01-30)
+------------------
+
+**NOTICE**
+
+- From this release, the manager and agent versions will go together, which indicates
+  the compatibility of them, even when either one has relatively little improvements.
+
+**CHANGES**
+
+- The gateway server now consider per-agent image availability when scheduling a new
+  kernel. (#29)
+
+- The execute API now returns exitCode value of underlying subprocesses in the batch
+  mode. (#60)
+
+- The gateway server is now fully horizontally-scalable.
+  There is no states shared via multiprocessing shared memory and all such states are
+  now managed by a separate Redis instance.
+
+- Improve logging: it now provides multiprocess-safe file-based rotating logs. (#10)
+
+- Fix the Admin API error when filtering agents by their status due to a missing
+  method parameter in ``Agent.batch_load()``.
 
 1.1.0 (2018-01-06)
 ------------------
@@ -41,6 +66,10 @@ Changes
 **OTHER IMPROVEMENTS**
 
 - Fix atomicity of rate-limiting calculation in multi-core setups. (#55)
+
+- Remove simplejson from dependencies in favor of the standard library.
+  The stdlib has been updated to support all required features and use
+  an internal C-based module for performance.
 
 1.0.4 (2017-12-19)
 ------------------
