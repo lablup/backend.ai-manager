@@ -3,7 +3,7 @@ from pathlib import Path
 import re
 
 
-def get_src_version():
+def read_src_version():
     p = (Path(__file__).parent / 'ai' / 'backend' / 'manager' / '__init__.py')
     src = p.read_text()
     m = re.search(r"^__version__\s*=\s*'([^']+)'", src, re.M)
@@ -60,7 +60,7 @@ monitor_requires = [
 
 setup(
     name='backend.ai-manager',
-    version=get_src_version(),
+    version=read_src_version(),
     description='Backend.AI Manager',
     long_description=Path('README.rst').read_text(),
     url='https://github.com/lablup/backend.ai-manager',
