@@ -21,12 +21,11 @@ os:
 env:
   global:
     - BACKEND_ETCD_ADDR=localhost:2379
-    - BACKEND_NAMESPACE=local
     - BACKEND_REDIS_ADDR=localhost:6379
     - BACKEND_DB_ADDR=localhost:5432
     - BACKEND_DB_USER=postgres
     - BACKEND_DB_PASSWORD=
-    - BACKEND_DB_NAME=testing
+    # namespace and db_name are random-generated.
 
 # stage def.
 jobs:
@@ -64,22 +63,8 @@ jobs:
            --initial-cluster-token backendai-etcd-token
            --initial-cluster-state new
            --auto-compaction-retention 1
-        - docker exec -it backendai-etcd ash -c
-           'ETCDCTL_API=3 etcdctl put /sorna/local/volumes/_vfroot /tmp/etcd/vroot'
-        - python -m ai.backend.manager.cli etcd update-images --namespace=local
-           --etcd-addr=127.0.0.1:2379 -f sample-configs/image-metadata.yml
-        - python -m ai.backend.manager.cli etcd update-aliases --namespace=local
-           --etcd-addr=127.0.0.1:2379 -f sample-configs/image-aliases.yml
-        # postgresql
-        - psql -c 'CREATE DATABASE testing;' -U postgres
-        - cp alembic.ini.sample alembic.ini
-        - sed -i'' -e 's!^sqlalchemy.url = .*$!sqlalchemy.url = postgresql://postgres@localhost:5432/testing!' alembic.ini
-        - python -m ai.backend.manager.cli schema oneshot head
-        - python -m ai.backend.manager.cli fixture populate example_keypair
         # load agent server
         - mkdir -p /tmp/scratches
-        - python -m ai.backend.agent.server --etcd-addr ${BACKEND_ETCD_ADDR}
-           --namespace ${BACKEND_NAMESPACE} --scratch-root /tmp/scratches &
         - docker pull lablup/kernel-lua:latest
       script:
         - python -m flake8 ai/backend tests

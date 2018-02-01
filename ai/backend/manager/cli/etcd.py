@@ -29,18 +29,22 @@ etcd.add_argument('--namespace', env_var='BACKEND_NAMESPACE',
 
 @contextlib.contextmanager
 def etcd_ctx(args):
-    loop = asyncio.get_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     config_server = ConfigServer(args.etcd_addr, args.namespace)
     with contextlib.closing(loop):
         yield loop, config_server.etcd
+    asyncio.set_event_loop(None)
 
 
 @contextlib.contextmanager
 def config_ctx(args):
-    loop = asyncio.get_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     config_server = ConfigServer(args.etcd_addr, args.namespace)
     with contextlib.closing(loop):
         yield loop, config_server
+    asyncio.set_event_loop(None)
 
 
 @etcd.register_command
@@ -69,10 +73,15 @@ get.add_argument('key', type=str, help='The key.')
 def delete(args):
     '''Delete the key in the configured etcd namespace.'''
     with etcd_ctx(args) as (loop, etcd):
-        loop.run_until_complete(etcd.delete(args.key))
+        if args.prefix:
+            loop.run_until_complete(etcd.delete_prefix(args.key))
+        else:
+            loop.run_until_complete(etcd.delete(args.key))
 
 
 delete.add_argument('key', type=str, help='The key.')
+delete.add_argument('--prefix', action='store_true', default=False,
+                    help='Delete all keys prefixed with the given key.')
 
 
 @etcd.register_command

@@ -16,7 +16,7 @@ def dbshell(args):
         cmd = [
             'docker', 'run', '--rm', '-i', '-t',
             '--network', args.docker_network,
-            'postgres:9.6',
+            'postgres:9.6-alpine',
             'psql',
             (f'postgres://{args.db_user}:{args.db_password}'
              f'@{args.docker_dbaddr}/{args.db_name}'),
