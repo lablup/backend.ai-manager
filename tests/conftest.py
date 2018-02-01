@@ -1,10 +1,15 @@
+from argparse import Namespace
 from datetime import datetime
 import hashlib, hmac
 from importlib import import_module
 import multiprocessing as mp
 import os
 import pathlib
+import re
+import secrets
 import signal
+import subprocess
+import tempfile
 # import ssl
 
 import aiodocker
@@ -14,15 +19,129 @@ from aiopg.sa import create_engine
 import asyncio
 from dateutil.tz import tzutc
 import sqlalchemy as sa
+import psycopg2 as pg
 import pytest
 
 from ai.backend.common.argparse import host_port_pair
 from ai.backend.gateway.config import load_config
 from ai.backend.gateway.events import event_router
 from ai.backend.gateway.server import gw_init, gw_shutdown, gw_args
-from ai.backend.manager.models import agents, kernels, keypairs, vfolders
+from ai.backend.manager import models
+from ai.backend.manager.models import fixtures, agents, kernels, keypairs, vfolders
+from ai.backend.manager.cli.etcd import delete, put, update_images, update_aliases
+from ai.backend.manager.cli.dbschema import oneshot
 
 here = pathlib.Path(__file__).parent
+
+
+@pytest.fixture(scope='session')
+def test_id():
+    return secrets.token_hex(12)
+
+
+@pytest.fixture(scope='session')
+def test_ns(test_id):
+    return f'testing-ns-{test_id}'
+
+
+@pytest.fixture(scope='session')
+def test_db(test_id):
+    return f'test_db_{test_id}'
+
+
+@pytest.fixture(scope='session', autouse=True)
+def prepare_and_cleanup_databases(request, test_ns, test_db):
+    os.environ['BACKEND_NAMESPACE'] = test_ns
+    os.environ['BACKEND_DB_NAME'] = test_db
+
+    # Clear and reset etcd namespace.
+    etcd_addr = host_port_pair(os.environ['BACKEND_ETCD_ADDR'])
+    samples = here / '..' / 'sample-configs'
+    args = Namespace(file=samples / 'image-metadata.yml',
+                     etcd_addr=etcd_addr, namespace=test_ns)
+    update_images(args)
+    args = Namespace(file=samples / 'image-aliases.yml',
+                     etcd_addr=etcd_addr, namespace=test_ns)
+    update_aliases(args)
+    args = Namespace(key='volumes/_vfroot', value='testing',
+                     etcd_addr=etcd_addr, namespace=test_ns)
+    put(args)
+
+    def finalize_etcd():
+        args = Namespace(key='', prefix=True,
+                         etcd_addr=etcd_addr, namespace=test_ns)
+        delete(args)
+
+    request.addfinalizer(finalize_etcd)
+
+    # Create database using low-level psycopg2 API.
+    db_addr = host_port_pair(os.environ['BACKEND_DB_ADDR'])
+    db_user = os.environ['BACKEND_DB_USER']
+    db_pass = os.environ['BACKEND_DB_PASSWORD']
+    if db_pass:
+        # TODO: escape/urlquote db_pass
+        db_url = f'postgresql://{db_user}:{db_pass}@{db_addr}'
+    else:
+        db_url = f'postgresql://{db_user}@{db_addr}'
+    conn = pg.connect(db_url)
+    conn.set_isolation_level(pg.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+    cur = conn.cursor()
+    cur.execute(f'CREATE DATABASE "{test_db}";')
+    cur.close()
+    conn.close()
+
+    def finalize_db():
+        conn = pg.connect(db_url)
+        conn.set_isolation_level(pg.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+        cur = conn.cursor()
+        cur.execute(f'DROP DATABASE "{test_db}";')
+        cur.close()
+        conn.close()
+
+    request.addfinalizer(finalize_db)
+
+    # Load the database schema using SQLAlchemy API.
+    alembic_url = db_url + '/' + test_db
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf8') as alembic_cfg:
+        alembic_sample_cfg = here / '..' / 'alembic.ini.sample'
+        alembic_cfg_data = alembic_sample_cfg.read_text()
+        alembic_cfg_data = re.sub(
+            r'^sqlalchemy.url = .*$',
+            f'sqlalchemy.url = {alembic_url}',
+            alembic_cfg_data, flags=re.M)
+        alembic_cfg.write(alembic_cfg_data)
+        alembic_cfg.flush()
+        args = Namespace(
+            config=pathlib.Path(alembic_cfg.name),
+            schema_version='head')
+        oneshot(args)
+
+    # Populate example_keypair fixture
+    fixture = getattr(fixtures, 'example_keypair')
+    engine = sa.create_engine(alembic_url)
+    conn = engine.connect()
+    for rowset in fixture:
+        table = getattr(models, rowset[0])
+        conn.execute(table.insert(), rowset[1])
+    conn.close()
+    engine.dispose()
+
+    # Launch an agent daemon
+    agent_proc = subprocess.Popen([
+        'python', '-m', 'ai.backend.agent.server',
+        '--etcd-addr', str(etcd_addr),
+        '--namespace', test_ns,
+        '--scratch-root', '/tmp/scratches',
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def finalize_agent():
+        agent_proc.terminate()
+        try:
+            agent_proc.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            agent_proc.kill()
+
+    request.addfinalizer(finalize_agent)
 
 
 class Client:
@@ -73,20 +192,20 @@ class Client:
 
 
 @pytest.fixture
-async def pre_app(event_loop, unused_tcp_port):
-    """ For tests not require actual server running.
+async def pre_app(event_loop, test_ns, test_db, unused_tcp_port):
+    """ For tests that do not require actual server running.
     """
     app = web.Application(loop=event_loop)
     app.config = load_config(argv=[], extra_args_funcs=(gw_args,))
 
     # Override basic settings.
     # Change these configs if local servers have different port numbers.
-    app.config.redis_addr = host_port_pair('127.0.0.1:6379')
-    app.config.db_addr = host_port_pair('127.0.0.1:5432')
-    app.config.db_name = 'testing'
+    app.config.redis_addr = host_port_pair(os.environ['BACKEND_REDIS_ADDR'])
+    app.config.db_addr = host_port_pair(os.environ['BACKEND_DB_ADDR'])
+    app.config.db_name = test_db
 
     # Override extra settings
-    app.config.namespace = 'local'
+    app.config.namespace = test_ns
     app.config.heartbeat_timeout = 10.0
     app.config.service_ip = '127.0.0.1'
     app.config.service_port = unused_tcp_port
@@ -251,9 +370,8 @@ async def create_app_and_client(event_loop, pre_app, default_keypair, user_keypa
 
     yield maker
 
-    # Clean DB
-    # TODO: load DB server dedicated only for testing, and exploit transaction
-    #       rollback to provide clean DB table for each test.
+    # Clean DB tables.
+    # (the database itself is dropped when all tests finishes.)
     if app and 'dbpool' in app:
         async with app['dbpool'].acquire() as conn, conn.begin():
             await conn.execute((vfolders.delete()))
