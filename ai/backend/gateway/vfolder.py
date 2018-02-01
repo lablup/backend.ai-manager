@@ -155,8 +155,11 @@ async def delete(request):
 
 async def init(app):
     global VF_ROOT
+    mount_prefix = await app['config_server'].etcd.get('volumes/_mount')
+    if mount_prefix is None:
+        mount_prefix = '/mnt'
     root_name = await app['config_server'].etcd.get('volumes/_vfroot')
-    VF_ROOT = Path('/mnt') / root_name
+    VF_ROOT = Path(mount_prefix) / root_name
     rt = app.router.add_route
     rt('POST',   r'/v{version:\d+}/folders/', create)
     rt('GET',    r'/v{version:\d+}/folders/', list_folders)

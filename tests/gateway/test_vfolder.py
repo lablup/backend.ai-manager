@@ -1,4 +1,5 @@
 import json
+import os
 import pytest
 import shutil
 
@@ -13,6 +14,9 @@ async def prepare_vfolder(request, create_app_and_client, get_headers,
     folder_name = 'test-folder'
     folder_id = None
 
+    from ai.backend.gateway.vfolder import VF_ROOT
+    os.makedirs(VF_ROOT, exist_ok=True)
+
     def finalizer():
         async def fin():
             # Delete test folder
@@ -20,6 +24,7 @@ async def prepare_vfolder(request, create_app_and_client, get_headers,
             if VF_ROOT and folder_id and (VF_ROOT / folder_id).exists():
                 shutil.rmtree(VF_ROOT / folder_id)
         event_loop.run_until_complete(fin())
+
     request.addfinalizer(finalizer)
 
     async def create_vfolder():

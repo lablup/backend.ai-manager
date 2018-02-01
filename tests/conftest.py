@@ -49,12 +49,17 @@ def test_db(test_id):
     return f'test_db_{test_id}'
 
 
+@pytest.fixture(scope='session')
+def test_vfroot(test_id):
+    return f'test-vf-{test_id}'
+
+
 @pytest.fixture(scope='session', autouse=True)
-def prepare_and_cleanup_databases(request, test_ns, test_db):
+def prepare_and_cleanup_databases(request, test_ns, test_db, test_vfroot):
     os.environ['BACKEND_NAMESPACE'] = test_ns
     os.environ['BACKEND_DB_NAME'] = test_db
 
-    # Clear and reset etcd namespace.
+    # Clear and reset etcd namespace using CLI functions.
     etcd_addr = host_port_pair(os.environ['BACKEND_ETCD_ADDR'])
     samples = here / '..' / 'sample-configs'
     args = Namespace(file=samples / 'image-metadata.yml',
@@ -63,7 +68,10 @@ def prepare_and_cleanup_databases(request, test_ns, test_db):
     args = Namespace(file=samples / 'image-aliases.yml',
                      etcd_addr=etcd_addr, namespace=test_ns)
     update_aliases(args)
-    args = Namespace(key='volumes/_vfroot', value='testing',
+    args = Namespace(key='volumes/_mount', value='/tmp',
+                     etcd_addr=etcd_addr, namespace=test_ns)
+    put(args)
+    args = Namespace(key='volumes/_vfroot', value=test_vfroot,
                      etcd_addr=etcd_addr, namespace=test_ns)
     put(args)
 
@@ -100,7 +108,7 @@ def prepare_and_cleanup_databases(request, test_ns, test_db):
 
     request.addfinalizer(finalize_db)
 
-    # Load the database schema using SQLAlchemy API.
+    # Load the database schema using CLI function.
     alembic_url = db_url + '/' + test_db
     with tempfile.NamedTemporaryFile(mode='w', encoding='utf8') as alembic_cfg:
         alembic_sample_cfg = here / '..' / 'alembic.ini.sample'
