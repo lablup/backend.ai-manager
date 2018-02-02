@@ -552,12 +552,16 @@ async def stream_pty(request) -> web.Response:
     app['stream_pty_handlers'][stream_key].add(asyncio.Task.current_task())
 
     async def connect_streams(kernel):
-        kernel_ip = urlparse(kernel.agent_addr).hostname
-        stdin_addr = f'tcp://{kernel_ip}:{kernel.stdin_port}'
+        # TODO: refactor as custom row/table method
+        if kernel.kernel_host is None:
+            kernel_host = urlparse(kernel.agent_addr).hostname
+        else:
+            kernel_host = kernel.kernel_host
+        stdin_addr = f'tcp://{kernel_host}:{kernel.stdin_port}'
         log.debug(f'stream_pty({stream_key}): stdin: {stdin_addr}')
         stdin_sock = await aiozmq_sock(zmq.PUB, connect=stdin_addr)
         stdin_sock.transport.setsockopt(zmq.LINGER, 100)
-        stdout_addr = f'tcp://{kernel_ip}:{kernel.stdout_port}'
+        stdout_addr = f'tcp://{kernel_host}:{kernel.stdout_port}'
         log.debug(f'stream_pty({stream_key}): stdout: {stdout_addr}')
         stdout_sock = await aiozmq_sock(zmq.SUB, connect=stdout_addr)
         stdout_sock.transport.setsockopt(zmq.LINGER, 100)

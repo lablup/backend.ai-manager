@@ -189,7 +189,7 @@ class AgentRegistry:
         '''
 
         cols = [kernels.c.id, kernels.c.sess_id,
-                kernels.c.agent_addr, kernels.c.access_key]
+                kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.access_key]
         if field == '*':
             cols = '*'
         elif isinstance(field, (tuple, list)):
@@ -232,7 +232,7 @@ class AgentRegistry:
         '''
 
         cols = [kernels.c.id, kernels.c.sess_id, kernels.c.access_key,
-                kernels.c.agent_addr, kernels.c.lang]
+                kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.lang]
         if field == '*':
             cols = '*'
         elif isinstance(field, (tuple, list)):
@@ -274,7 +274,7 @@ class AgentRegistry:
         '''
 
         cols = [kernels.c.id, kernels.c.sess_id,
-                kernels.c.agent_addr, kernels.c.access_key]
+                kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.access_key]
         if isinstance(field, (tuple, list)):
             cols.extend(field)
         elif isinstance(field, (sa.Column, sa.sql.elements.ColumnClause)):
@@ -427,6 +427,7 @@ class AgentRegistry:
                 'environ': [f'{k}={v}' for k, v in environ.items()],
                 'cpu_set': [],
                 'gpu_set': [],
+                'kernel_host': None,
                 'repl_in_port': 0,
                 'repl_out_port': 0,
                 'stdin_port': 0,
@@ -460,6 +461,7 @@ class AgentRegistry:
                     'sess_id': sess_id,
                     'agent': agent_id,
                     'agent_addr': agent_addr,
+                    'kernel_host': created_info['kernel_host'],
                 }
                 query = (kernels.update()
                                 .values({
@@ -467,6 +469,7 @@ class AgentRegistry:
                                     'container_id': created_info['container_id'],
                                     'cpu_set': list(created_info['cpu_set']),
                                     'gpu_set': list(created_info['gpu_set']),
+                                    'kernel_host': created_info['kernel_host'],
                                     'repl_in_port': created_info['repl_in_port'],
                                     'repl_out_port': created_info['repl_out_port'],
                                     'stdin_port': created_info['stdin_port'],
