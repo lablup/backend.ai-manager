@@ -39,7 +39,6 @@ def test_args_parse_by_load_config():
     assert args.db_name == db_name
     assert args.db_user == db_user
     assert args.db_password == db_password
-    assert args.kernel_ip_override is None
 
     assert args.namespace == namespace
     assert args.etcd_addr == host_port_pair(etcd_addr)

@@ -258,6 +258,16 @@ def gw_args(parser):
     parser.add('--heartbeat-timeout', env_var='BACKEND_HEARTBEAT_TIMEOUT',
                type=float, default=5.0,
                help='The timeout for agent heartbeats.')
+    parser.add('--advertised-manager-host',
+               env_var='BACKEND_ADVERTISED_MANAGER_HOST',
+               type=str, default=None,
+               help='Manually set the manager hostname or IP address advertised '
+                    'to the agents in this cluster via etcd.  '
+                    'If not set, the manager tries the followings in order: '
+                    '1) get the private IP address from the instance metadata in '
+                    'supported cloud environments, '
+                    '2) resolve the current hostname, or '
+                    '3) return "127.0.0.1".')
     parser.add('--service-ip', env_var='BACKEND_SERVICE_IP',
                type=ipaddr, default=ip_address('0.0.0.0'),
                help='The IP where the API gateway server listens on. '

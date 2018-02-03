@@ -20,7 +20,14 @@ class ConfigServer:
 
     async def register_myself(self, app_config):
         instance_id = await get_instance_id()
-        instance_ip = await get_instance_ip()
+        if app_config.advertised_manager_host:
+            log.info('Manually set the advertised manager host!')
+            instance_ip = app_config.advertised_manager_host
+        else:
+            # fall back 1: read private IP from cloud instance metadata
+            # fall back 2: read hostname and resolve it
+            # fall back 3: "127.0.0.1"
+            instance_ip = await get_instance_ip()
         event_addr = f'{instance_ip}:{app_config.events_port}'
         await self.etcd.put_multi(
             ['nodes/manager', 'nodes/redis', 'nodes/manager/event_addr'],
