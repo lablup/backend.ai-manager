@@ -169,9 +169,10 @@ class ConfigServer:
 
 
 async def init(app):
-    app['config_server'] = ConfigServer(app.config.etcd_addr, app.config.namespace)
+    app['config_server'] = ConfigServer(
+        app['config'].etcd_addr, app['config'].namespace)
     if app['pidx'] == 0:
-        await app['config_server'].register_myself(app.config)
+        await app['config_server'].register_myself(app['config'])
 
 
 async def shutdown(app):

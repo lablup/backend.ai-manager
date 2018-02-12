@@ -159,8 +159,8 @@ class Client:
             url += '/'
         self._url = url
 
-    def close(self):
-        self._session.close()
+    async def close(self):
+        await self._session.close()
 
     def request(self, method, path, **kwargs):
         while path.startswith('/'):
@@ -204,26 +204,25 @@ async def pre_app(event_loop, test_ns, test_db, unused_tcp_port):
     """ For tests that do not require actual server running.
     """
     app = web.Application(loop=event_loop)
-    app.config = load_config(argv=[], extra_args_funcs=(gw_args,))
+    app['config'] = load_config(argv=[], extra_args_funcs=(gw_args,))
 
     # Override basic settings.
     # Change these configs if local servers have different port numbers.
-    app.config.redis_addr = host_port_pair(os.environ['BACKEND_REDIS_ADDR'])
-    app.config.db_addr = host_port_pair(os.environ['BACKEND_DB_ADDR'])
-    app.config.db_name = test_db
+    app['config'].redis_addr = host_port_pair(os.environ['BACKEND_REDIS_ADDR'])
+    app['config'].db_addr = host_port_pair(os.environ['BACKEND_DB_ADDR'])
+    app['config'].db_name = test_db
 
     # Override extra settings
-    app.config.namespace = test_ns
-    app.config.heartbeat_timeout = 10.0
-    app.config.service_ip = '127.0.0.1'
-    app.config.service_port = unused_tcp_port
-    app.config.verbose = False
-    # app.config.ssl_cert = here / 'sample-ssl-cert' / 'sample.crt'
-    # app.config.ssl_key = here / 'sample-ssl-cert' / 'sample.key'
-    app.sslctx = None
-    # app.sslctx = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
-    # app.sslctx.load_cert_chain(str(app.config.ssl_cert),
-    #                            str(app.config.ssl_key))
+    app['config'].namespace = test_ns
+    app['config'].heartbeat_timeout = 10.0
+    app['config'].service_ip = '127.0.0.1'
+    app['config'].service_port = unused_tcp_port
+    app['config'].verbose = False
+    # app['config'].ssl_cert = here / 'sample-ssl-cert' / 'sample.crt'
+    # app['config'].ssl_key = here / 'sample-ssl-cert' / 'sample.key'
+    # app['sslctx'] = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
+    # app['sslctx'].load_cert_chain(str(app['config'].ssl_cert),
+    #                            str(app['config'].ssl_key))
 
     # num_workers = 1
     app['pidx'] = 0
@@ -234,7 +233,7 @@ async def pre_app(event_loop, test_ns, test_db, unused_tcp_port):
 @pytest.fixture
 async def default_keypair(event_loop, pre_app):
     access_key = 'AKIAIOSFODNN7EXAMPLE'
-    config = pre_app.config
+    config = pre_app['config']
     pool = await create_engine(
         host=config.db_addr[0], port=config.db_addr[1],
         user=config.db_user, password=config.db_password,
@@ -258,7 +257,7 @@ async def default_keypair(event_loop, pre_app):
 @pytest.fixture
 async def user_keypair(event_loop, pre_app):
     access_key = 'AKIANOTADMIN7EXAMPLE'
-    config = pre_app.config
+    config = pre_app['config']
     pool = await create_engine(
         host=config.db_addr[0], port=config.db_addr[1],
         user=config.db_user, password=config.db_password,
@@ -285,7 +284,7 @@ def get_headers(pre_app, default_keypair, prepare_docker_images):
                       hash_type='sha256', api_version='v3.20170615',
                       keypair=default_keypair):
         now = datetime.now(tzutc())
-        hostname = f'localhost:{pre_app.config.service_port}'
+        hostname = f"localhost:{pre_app['config'].service_port}"
         headers = {
             'Date': now.isoformat(),
             'Content-Type': ctype,
@@ -324,11 +323,11 @@ async def _create_server(loop, pre_app, extra_inits=None, debug=False):
     handler = pre_app.make_handler(debug=debug, keep_alive_on=False, loop=loop)
     server = await loop.create_server(
         handler,
-        pre_app.config.service_ip,
-        pre_app.config.service_port,
-        # ssl=pre_app.sslctx)
+        pre_app['config'].service_ip,
+        pre_app['config'].service_port,
+        ssl=pre_app.get('sslctx'),
     )
-    return pre_app, pre_app.config.service_port, handler, server
+    return pre_app, pre_app['config'].service_port, handler, server
 
 
 @pytest.fixture
@@ -363,12 +362,12 @@ async def create_app_and_client(event_loop, pre_app, default_keypair, user_keypa
         if ev_router:
             # Run event_router proc. Is it enough? No way to get return values
             # (app, client, etc) by using aiotools.start_server.
-            args = (app.config,)
+            args = (app['config'],)
             extra_proc = mp.Process(target=event_router,
                                     args=('', 0, args,),
                                     daemon=True)
             extra_proc.start()
-        if app.sslctx:
+        if app.get('sslctx'):
             url = f'https://localhost:{port}'
             client_params['connector'] = aiohttp.TCPConnector(verify_ssl=False)
         else:
@@ -404,7 +403,7 @@ async def create_app_and_client(event_loop, pre_app, default_keypair, user_keypa
 
     # Terminate client and servers
     if client:
-        client.close()
+        await client.close()
     await gw_shutdown(pre_app)
     for shutdown in extra_shutdowns:
         await shutdown(pre_app)

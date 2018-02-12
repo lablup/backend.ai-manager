@@ -48,8 +48,8 @@ async def test_event_router(pre_app, event_loop, unused_tcp_port, mocker):
     TEST_EVENT_IPC_ADDR = EVENT_IPC_ADDR + '-test-router'
     mocker.patch('ai.backend.gateway.events.EVENT_IPC_ADDR', TEST_EVENT_IPC_ADDR)
 
-    pre_app.config.events_port = unused_tcp_port
-    args = (pre_app.config,)
+    pre_app['config'].events_port = unused_tcp_port
+    args = (pre_app['config'],)
 
     try:
         # Router process

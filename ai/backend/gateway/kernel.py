@@ -222,7 +222,7 @@ async def instance_heartbeat(app, agent_id, agent_info):
 async def check_agent_lost(app, interval):
     try:
         now = datetime.now(tzutc())
-        timeout = timedelta(seconds=app.config.heartbeat_timeout)
+        timeout = timedelta(seconds=app['config'].heartbeat_timeout)
         async for agent_id, prev in app['redis_live'].ihscan('last_seen'):
             prev = datetime.fromtimestamp(float(prev), tzutc())
             if now - prev > timeout:

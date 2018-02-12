@@ -64,7 +64,7 @@ async def rlim_middleware_factory(app, handler):
 
 async def init(app):
     rr = await aioredis.create_redis_pool(
-        app.config.redis_addr.as_sockaddr(),
+        app['config'].redis_addr.as_sockaddr(),
         timeout=3.0,
         encoding='utf8',
         db=REDIS_RLIM_DB)

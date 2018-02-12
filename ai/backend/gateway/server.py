@@ -127,46 +127,46 @@ async def gw_init(app):
     app['datadog.enabled'] = False
     app['sentry.enabled'] = False
     if datadog_available:
-        if app.config.datadog_api_key is None:
+        if app['config'].datadog_api_key is None:
             log.warning('Datadog logging is disabled (missing API key).')
         else:
             datadog.initialize(
-                api_key=app.config.datadog_api_key,
-                app_key=app.config.datadog_app_key)
+                api_key=app['config'].datadog_api_key,
+                app_key=app['config'].datadog_app_key)
             app['datadog'] = datadog
             app['datadog.enabled'] = True
             log.info('Datadog logging is enabled.')
     if raven_available:
-        if app.config.raven_uri is None:
+        if app['config'].raven_uri is None:
             log.warning('Sentry error reporting is disabled (missing DSN URI).')
         else:
             app['sentry'] = raven.Client(
-                app.config.raven_uri,
+                app['config'].raven_uri,
                 release=raven.fetch_package_version('backend.ai-manager'))
             app['sentry.enabled'] = True
             log.info('Sentry error reporting is enabled.')
 
     app['dbpool'] = await create_engine(
-        host=app.config.db_addr[0], port=app.config.db_addr[1],
-        user=app.config.db_user, password=app.config.db_password,
-        dbname=app.config.db_name,
-        echo=bool(app.config.verbose),
+        host=app['config'].db_addr[0], port=app['config'].db_addr[1],
+        user=app['config'].db_user, password=app['config'].db_password,
+        dbname=app['config'].db_name,
+        echo=bool(app['config'].verbose),
         # TODO: check the throughput impacts of DB/redis pool sizes
         minsize=4, maxsize=16,
         timeout=30, pool_recycle=30,
     )
     app['redis_live'] = await aioredis.create_redis(
-        app.config.redis_addr.as_sockaddr(),
+        app['config'].redis_addr.as_sockaddr(),
         timeout=3.0,
         encoding='utf8',
         db=REDIS_LIVE_DB)
     app['redis_stat'] = await aioredis.create_redis(
-        app.config.redis_addr.as_sockaddr(),
+        app['config'].redis_addr.as_sockaddr(),
         timeout=3.0,
         encoding='utf8',
         db=REDIS_STAT_DB)
     app['redis_image'] = await aioredis.create_redis(
-        app.config.redis_addr.as_sockaddr(),
+        app['config'].redis_addr.as_sockaddr(),
         timeout=3.0,
         encoding='utf8',
         db=REDIS_IMAGE_DB)
@@ -189,14 +189,14 @@ async def gw_shutdown(app):
 async def server_main(loop, pidx, _args):
 
     app = web.Application()
-    app.config = _args[0]
-    app.sslctx = None
-    if app.config.ssl_cert and app.config.ssl_key:
-        app.sslctx = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
-        app.sslctx.load_cert_chain(str(app.config.ssl_cert),
-                                   str(app.config.ssl_key))
-    if app.config.service_port == 0:
-        app.config.service_port = 8443 if app.sslctx else 8080
+    app['config'] = _args[0]
+    app['sslctx'] = None
+    if app['config'].ssl_cert and app['config'].ssl_key:
+        app['sslctx'] = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
+        app['sslctx'].load_cert_chain(str(app['config'].ssl_cert),
+                                      str(app['config'].ssl_key))
+    if app['config'].service_port == 0:
+        app['config'].service_port = 8443 if app['sslctx'] else 8080
     app['pidx'] = pidx
 
     await etcd_init(app)
@@ -211,11 +211,11 @@ async def server_main(loop, pidx, _args):
     web_handler = app.make_handler()
     server = await loop.create_server(
         web_handler,
-        host=str(app.config.service_ip),
-        port=app.config.service_port,
+        host=str(app['config'].service_ip),
+        port=app['config'].service_port,
         backlog=1024,
         reuse_port=True,
-        ssl=app.sslctx,
+        ssl=app['sslctx'],
     )
     log.info('started.')
 

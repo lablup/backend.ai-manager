@@ -13,7 +13,7 @@ def read_src_version():
 requires = [
     'aioconsole>=0.1.3',
     'aiodataloader',
-    'aiohttp~=2.3.0',
+    'aiohttp~=3.0.0',
     'aiopg~=0.13.0',
     'aioredis~=1.0.0',
     'aiotools>=0.5.4',
