@@ -21,8 +21,8 @@ class ConfigServer:
     async def register_myself(self, app_config):
         instance_id = await get_instance_id()
         if app_config.advertised_manager_host:
-            log.info('Manually set the advertised manager host!')
             instance_ip = app_config.advertised_manager_host
+            log.info(f'manually set advertised manager host: {instance_ip}')
         else:
             # fall back 1: read private IP from cloud instance metadata
             # fall back 2: read hostname and resolve it
