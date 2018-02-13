@@ -44,6 +44,10 @@ aliases:
   - ['python-tensorflow:1.4-gpu',      'python-tensorflow:1.4-py36-dense-gpu'] # preferred
   - ['python-tensorflow:1.4-py36',     'python-tensorflow:1.4-py36-dense']     # preferred
   - ['python-tensorflow:1.4-py36-gpu', 'python-tensorflow:1.4-py36-dense-gpu'] # preferred
+  - ['python-tensorflow:1.5',          'python-tensorflow:1.5-py36-dense']     # preferred
+  - ['python-tensorflow:1.5-gpu',      'python-tensorflow:1.5-py36-dense-gpu'] # preferred
+  - ['python-tensorflow:1.5-py36',     'python-tensorflow:1.5-py36-dense']     # preferred
+  - ['python-tensorflow:1.5-py36-gpu', 'python-tensorflow:1.5-py36-dense-gpu'] # preferred
   - ['tensorflow',                     'python-tensorflow:latest-dense']
   - ['tensorflow-gpu',                 'python-tensorflow:latest-dense-gpu']
   - ['tensorflow-python',              'python-tensorflow:latest-dense']
@@ -56,11 +60,15 @@ aliases:
   - ['tensorflow:1.4-gpu',             'python-tensorflow:1.4-py36-dense-gpu'] # preferred
   - ['tensorflow:1.4-py36',            'python-tensorflow:1.4-py36-dense']     # preferred
   - ['tensorflow:1.4-py36-gpu',        'python-tensorflow:1.4-py36-dense-gpu'] # preferred
+  - ['tensorflow:1.5',                 'python-tensorflow:1.5-py36-dense']     # preferred
+  - ['tensorflow:1.5-gpu',             'python-tensorflow:1.5-py36-dense-gpu'] # preferred
+  - ['tensorflow:1.5-py36',            'python-tensorflow:1.5-py36-dense']     # preferred
+  - ['tensorflow:1.5-py36-gpu',        'python-tensorflow:1.5-py36-dense-gpu'] # preferred
 
   - ['keras',        'python-tensorflow:latest-dense']
   - ['keras-gpu',    'python-tensorflow:latest-dense-gpu']
-  - ['keras:2.0',     'python-tensorflow:1.4-py36-dense']     # preferred
-  - ['keras:2.0-gpu', 'python-tensorflow:1.4-py36-dense-gpu'] # preferred
+  - ['keras:2.0',     'python-tensorflow:1.5-py36-dense']     # preferred
+  - ['keras:2.0-gpu', 'python-tensorflow:1.5-py36-dense-gpu'] # preferred
 
   - ['python3-caffe',        'python-caffe:latest']      # CodeOnWeb legacy
   - ['python3-caffe-gpu',    'python-caffe:latest-gpu']  # CodeOnWeb legacy

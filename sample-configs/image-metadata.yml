@@ -15,14 +15,16 @@ images:
   - name: python-tensorflow
     syntax: python
     tags:
-      - ["latest",             ":1.4-py36-dense"]
-      - ["latest-gpu",         ":1.4-py36-dense-gpu"]
-      - ["latest-dense",       ":1.4-py36-dense"]
-      - ["latest-dense-gpu",   ":1.4-py36-dense-gpu"]
+      - ["latest",             ":1.5-py36-dense"]
+      - ["latest-gpu",         ":1.5-py36-dense-gpu"]
+      - ["latest-dense",       ":1.5-py36-dense"]
+      - ["latest-dense-gpu",   ":1.5-py36-dense-gpu"]
       - ["1.3-py36-dense",     "3c1d4b4626af"]
       - ["1.3-py36-dense-gpu", "a7b9070ef8a1"]
       - ["1.4-py36-dense",     "96cd362cac2a"]
       - ["1.4-py36-dense-gpu", "c5f63f2e5320"]
+      - ["1.5-py36-dense",     "2af9e0898ef5"]
+      - ["1.5-py36-dense-gpu", "b4eb715f32fc"]
     slots: &for_computing
       cpu: 4     # cores
       mem: 8.0   # GiB
