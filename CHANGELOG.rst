@@ -1,8 +1,17 @@
 Changes
 =======
 
-1.2.1 (to be released)
+1.3.0 (to be released)
 ----------------------
+
+- Upgrade aiohttp to v3.0 release. (#64)
+
+- Improve dockerization support. (#62)
+
+1.2.1 (2018-01-30)
+------------------
+
+- Minor update to fix dependency versions.
 
 1.2.0 (2018-01-30)
 ------------------
