@@ -208,15 +208,17 @@ async def server_main(loop, pidx, _args):
     await rlim_init(app)
     await kernel_init(app)
 
-    web_handler = app.make_handler()
-    server = await loop.create_server(
-        web_handler,
-        host=str(app['config'].service_ip),
-        port=app['config'].service_port,
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(
+        runner,
+        str(app['config'].service_ip),
+        app['config'].service_port,
         backlog=1024,
         reuse_port=True,
-        ssl=app['sslctx'],
+        ssl_context=app['sslctx'],
     )
+    await site.start()
     log.info('started.')
 
     try:
@@ -224,8 +226,6 @@ async def server_main(loop, pidx, _args):
     finally:
 
         log.info('shutting down...')
-        server.close()
-        await server.wait_closed()
 
         await kernel_shutdown(app)
         await rlim_shutdown(app)
@@ -236,8 +236,7 @@ async def server_main(loop, pidx, _args):
         await event_shutdown(app)
         await etcd_shutdown(app)
 
-        await app.shutdown()
-        await app.cleanup()
+        await runner.cleanup()
 
 
 def gw_args(parser):
