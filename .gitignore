@@ -43,6 +43,7 @@ nosetests.xml
 coverage.xml
 *,cover
 .mypy-cache/
+.pytest_cache/
 
 # Translations
 *.mo
