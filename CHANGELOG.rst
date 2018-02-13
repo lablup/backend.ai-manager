@@ -1,8 +1,17 @@
 Changes
 =======
 
-1.2.1 (to be released)
-----------------------
+1.2.2 (2018-02-14)
+------------------
+
+- Add metadata/aliases for TensorFlow v1.5 kernel images to the default sample configs.
+
+- Polish CI and test suites.
+
+1.2.1 (2018-01-30)
+------------------
+
+- Minor update to fix dependency versions.
 
 1.2.0 (2018-01-30)
 ------------------
