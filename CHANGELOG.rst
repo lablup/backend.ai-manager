@@ -8,6 +8,16 @@ Changes
 
 - Improve dockerization support. (#62)
 
+1.2.2 (2018-02-14)
+------------------
+
+- Add metadata/aliases for TensorFlow v1.5 kernel images to the default sample configs.
+
+- Polish CI and test suites.
+
+- Add etcd put/get/del manager CLI commands to get rid of the necessity of an extra
+  etcdcli binary during installation. (lablup/backend.ai#15)
+
 1.2.1 (2018-01-30)
 ------------------
 
