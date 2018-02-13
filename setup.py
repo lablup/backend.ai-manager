@@ -40,8 +40,8 @@ build_requires = [
 ]
 test_requires = [
     'aiodocker',
-    'pytest>=3.1',
-    'pytest-asyncio',
+    'pytest>=3.4.0',
+    'pytest-asyncio>=0.8.0',
     'pytest-aiohttp',
     'pytest-cov',
     'pytest-mock',
@@ -49,7 +49,7 @@ test_requires = [
     'flake8',
 ]
 dev_requires = build_requires + test_requires + [
-    'pytest-sugar',
+    'pytest-sugar>=0.9.1',
 ]
 ci_requires = []
 monitor_requires = [

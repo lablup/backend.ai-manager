@@ -7,6 +7,7 @@ import os
 import pathlib
 import re
 import secrets
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -134,23 +135,6 @@ def prepare_and_cleanup_databases(request, test_ns, test_db, test_vfroot):
     conn.close()
     engine.dispose()
 
-    # Launch an agent daemon
-    agent_proc = subprocess.Popen([
-        'python', '-m', 'ai.backend.agent.server',
-        '--etcd-addr', str(etcd_addr),
-        '--namespace', test_ns,
-        '--scratch-root', '/tmp/scratches',
-    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    def finalize_agent():
-        agent_proc.terminate()
-        try:
-            agent_proc.wait(timeout=5.0)
-        except subprocess.TimeoutExpired:
-            agent_proc.kill()
-
-    request.addfinalizer(finalize_agent)
-
 
 class Client:
     def __init__(self, session, url):
@@ -200,7 +184,7 @@ class Client:
 
 
 @pytest.fixture
-async def pre_app(event_loop, test_ns, test_db, unused_tcp_port):
+async def app(event_loop, test_ns, test_db, unused_tcp_port):
     """ For tests that do not require actual server running.
     """
     app = web.Application(loop=event_loop)
@@ -231,9 +215,9 @@ async def pre_app(event_loop, test_ns, test_db, unused_tcp_port):
 
 
 @pytest.fixture
-async def default_keypair(event_loop, pre_app):
+async def default_keypair(event_loop, app):
     access_key = 'AKIAIOSFODNN7EXAMPLE'
-    config = pre_app['config']
+    config = app['config']
     pool = await create_engine(
         host=config.db_addr[0], port=config.db_addr[1],
         user=config.db_user, password=config.db_password,
@@ -255,9 +239,9 @@ async def default_keypair(event_loop, pre_app):
 
 
 @pytest.fixture
-async def user_keypair(event_loop, pre_app):
+async def user_keypair(event_loop, app):
     access_key = 'AKIANOTADMIN7EXAMPLE'
-    config = pre_app['config']
+    config = app['config']
     pool = await create_engine(
         host=config.db_addr[0], port=config.db_addr[1],
         user=config.db_user, password=config.db_password,
@@ -279,12 +263,12 @@ async def user_keypair(event_loop, pre_app):
 
 
 @pytest.fixture
-def get_headers(pre_app, default_keypair, prepare_docker_images):
+def get_headers(app, default_keypair, prepare_docker_images):
     def create_header(method, url, req_bytes, ctype='application/json',
                       hash_type='sha256', api_version='v3.20170615',
                       keypair=default_keypair):
         now = datetime.now(tzutc())
-        hostname = f"localhost:{pre_app['config'].service_port}"
+        hostname = f"localhost:{app['config'].service_port}"
         headers = {
             'Date': now.isoformat(),
             'Content-Type': ctype,
@@ -314,31 +298,35 @@ def get_headers(pre_app, default_keypair, prepare_docker_images):
     return create_header
 
 
-async def _create_server(loop, pre_app, extra_inits=None, debug=False):
-    await gw_init(pre_app)
+async def _create_server(loop, app, extra_inits=None, debug=False):
+    await gw_init(app)
     if extra_inits:
         for init in extra_inits:
-            await init(pre_app)
+            await init(app)
 
-    handler = pre_app.make_handler(debug=debug, keep_alive_on=False, loop=loop)
-    server = await loop.create_server(
-        handler,
-        pre_app['config'].service_ip,
-        pre_app['config'].service_port,
-        ssl=pre_app.get('sslctx'),
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(
+        runner,
+        app['config'].service_ip,
+        app['config'].service_port,
+        ssl_context=app.get('sslctx'),
     )
-    return pre_app, pre_app['config'].service_port, handler, server
+    await site.start()
+    return runner
 
 
 @pytest.fixture
-async def create_app_and_client(event_loop, pre_app, default_keypair, user_keypair):
+async def create_app_and_client(request, test_id, test_ns,
+                                event_loop, app,
+                                default_keypair, user_keypair):
     client = None
-    app = handler = server = None
+    runner = None
     extra_proc = None
     extra_shutdowns = []
 
-    async def maker(extras=None, ev_router=False):
-        nonlocal client, app, handler, server, extra_proc, extra_shutdowns
+    async def maker(extras=None, ev_router=False, spawn_agent=False):
+        nonlocal client, runner, extra_proc, extra_shutdowns
 
         # Store extra inits and shutowns
         extra_inits = []
@@ -357,8 +345,11 @@ async def create_app_and_client(event_loop, pre_app, default_keypair, user_keypa
 
         server_params = {}
         client_params = {}
-        app, port, handler, server = await _create_server(
-            event_loop, pre_app, extra_inits=extra_inits, **server_params)
+        runner = await _create_server(
+            event_loop, app,
+            extra_inits=extra_inits,
+            **server_params)
+
         if ev_router:
             # Run event_router proc. Is it enough? No way to get return values
             # (app, client, etc) by using aiotools.start_server.
@@ -367,6 +358,39 @@ async def create_app_and_client(event_loop, pre_app, default_keypair, user_keypa
                                     args=('', 0, args,),
                                     daemon=True)
             extra_proc.start()
+
+        # Launch an agent daemon
+        if spawn_agent:
+            etcd_addr = host_port_pair(os.environ['BACKEND_ETCD_ADDR'])
+            os.makedirs(f'/tmp/backend.ai/scratches-{test_id}', exist_ok=True)
+            agent_proc = subprocess.Popen([
+                'python', '-m', 'ai.backend.agent.server',
+                '--etcd-addr', str(etcd_addr),
+                '--namespace', test_ns,
+                '--scratch-root', f'/tmp/backend.ai/scratches-{test_id}',
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            def finalize_agent():
+                agent_proc.terminate()
+                try:
+                    agent_proc.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    agent_proc.kill()
+                shutil.rmtree(f'/tmp/backend.ai/scratches-{test_id}')
+
+            request.addfinalizer(finalize_agent)
+
+            async def wait_for_agent():
+                while True:
+                    all_ids = [inst_id async for inst_id in
+                               app['registry'].enumerate_instances()]
+                    if len(all_ids) > 0:
+                        break
+                    await asyncio.sleep(0.2)
+            task = event_loop.create_task(wait_for_agent())
+            await task
+
+        port = app['config'].service_port
         if app.get('sslctx'):
             url = f'https://localhost:{port}'
             client_params['connector'] = aiohttp.TCPConnector(verify_ssl=False)
@@ -377,10 +401,10 @@ async def create_app_and_client(event_loop, pre_app, default_keypair, user_keypa
 
     yield maker
 
-    # Clean DB tables.
-    # (the database itself is dropped when all tests finishes.)
-    if app and 'dbpool' in app:
-        async with app['dbpool'].acquire() as conn, conn.begin():
+    dbpool = app.get('dbpool')
+    if dbpool is not None:
+        # Clean DB tables for subsequent tests.
+        async with dbpool.acquire() as conn, conn.begin():
             await conn.execute((vfolders.delete()))
             await conn.execute((kernels.delete()))
             await conn.execute((agents.delete()))
@@ -404,15 +428,17 @@ async def create_app_and_client(event_loop, pre_app, default_keypair, user_keypa
     # Terminate client and servers
     if client:
         await client.close()
-    await gw_shutdown(pre_app)
+    await gw_shutdown(app)
     for shutdown in extra_shutdowns:
-        await shutdown(pre_app)
-    if server:
-        server.close()
-        await server.wait_closed()
-    if app:
-        await app.shutdown()
-        await app.cleanup()
+        await shutdown(app)
+    if runner:
+        await runner.cleanup()
+
+    if dbpool is not None:
+        # Close the DB connection pool.
+        dbpool.close()
+        await dbpool.wait_closed()
+
     if extra_proc:
         os.kill(extra_proc.pid, signal.SIGINT)
         extra_proc.join()
@@ -435,4 +461,5 @@ def prepare_docker_images():
                 print(f'Pulling image "{img}" for testing...')
                 await docker.pull(img)
         await docker.close()
+
     event_loop.run_until_complete(pull())

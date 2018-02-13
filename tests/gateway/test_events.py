@@ -14,13 +14,13 @@ from ai.backend.gateway.events import (
 
 
 @pytest.fixture
-def dispatcher(pre_app, event_loop):
-    return EventDispatcher(pre_app, loop=event_loop)
+def dispatcher(app, event_loop):
+    return EventDispatcher(app, loop=event_loop)
 
 
 class TestEventDispatcher:
 
-    def test_add_and_dispatch_handler(self, pre_app, dispatcher, event_loop):
+    def test_add_and_dispatch_handler(self, app, dispatcher, event_loop):
         event_name = 'test-event'
         assert len(dispatcher.handlers) == 0
 
@@ -33,23 +33,23 @@ class TestEventDispatcher:
         assert dispatcher.handlers[event_name][0] == cb
 
         # Dispatch the event
-        pre_app['test-flag'] = False
+        app['test-flag'] = False
         dispatcher.dispatch(event_name, agent_id='')
 
         # Run loop only once (https://stackoverflow.com/a/29797709/7397571)
         event_loop.call_soon(event_loop.stop)
         event_loop.run_forever()
 
-        assert pre_app['test-flag']
+        assert app['test-flag']
 
 
 @pytest.mark.asyncio
-async def test_event_router(pre_app, event_loop, unused_tcp_port, mocker):
+async def test_event_router(app, event_loop, unused_tcp_port, mocker):
     TEST_EVENT_IPC_ADDR = EVENT_IPC_ADDR + '-test-router'
     mocker.patch('ai.backend.gateway.events.EVENT_IPC_ADDR', TEST_EVENT_IPC_ADDR)
 
-    pre_app['config'].events_port = unused_tcp_port
-    args = (pre_app['config'],)
+    app['config'].events_port = unused_tcp_port
+    args = (app['config'],)
 
     try:
         # Router process
@@ -80,12 +80,12 @@ async def test_event_router(pre_app, event_loop, unused_tcp_port, mocker):
 
 
 @pytest.mark.asyncio
-async def test_event_subscriber(pre_app, dispatcher, event_loop, mocker):
+async def test_event_subscriber(app, dispatcher, event_loop, mocker):
     TEST_EVENT_IPC_ADDR = EVENT_IPC_ADDR + '-test-event-subscriber'
     mocker.patch('ai.backend.gateway.events.EVENT_IPC_ADDR', TEST_EVENT_IPC_ADDR)
 
     event_name = 'test-event'
-    pre_app['test-flag'] = False
+    app['test-flag'] = False
 
     # Add test handler to dispatcher
     def cb(app, agent_id, *args):
@@ -106,7 +106,7 @@ async def test_event_subscriber(pre_app, dispatcher, event_loop, mocker):
 
         # Checking flas is set by the subscriber
         while True:
-            if pre_app['test-flag']:
+            if app['test-flag']:
                 break
             await asyncio.sleep(0.5)
     send_task = event_loop.create_task(_send_msg())
@@ -116,4 +116,4 @@ async def test_event_subscriber(pre_app, dispatcher, event_loop, mocker):
     sub_task.cancel()
     await sub_task
 
-    assert pre_app['test-flag']
+    assert app['test-flag']

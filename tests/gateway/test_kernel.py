@@ -14,28 +14,8 @@ async def prepare_kernel(request, create_app_and_client, get_headers, event_loop
     clientSessionToken = 'test-token-0000'
     app, client = await create_app_and_client(
         extras=['etcd', 'events', 'auth', 'vfolder', 'admin', 'ratelimit', 'kernel'],
+        spawn_agent=True,
         ev_router=True)
-
-    async def wait_for_agent():
-        while True:
-            all_ids = [inst_id async for inst_id in
-                       app['registry'].enumerate_instances()]
-            if len(all_ids) > 0:
-                break
-            await asyncio.sleep(1)
-    task = event_loop.create_task(wait_for_agent())
-    await task
-
-    def finalizer():
-        async def fin():
-            sess_id = clientSessionToken
-            access_key = default_keypair['access_key']
-            try:
-                await app['registry'].destroy_session(sess_id, access_key)
-            except Exception:
-                pass
-        event_loop.run_until_complete(fin())
-    request.addfinalizer(finalizer)
 
     async def create_kernel():
         url = '/v3/kernel/'
@@ -52,6 +32,17 @@ async def prepare_kernel(request, create_app_and_client, get_headers, event_loop
 
         return rsp_json
 
+    def finalizer():
+        async def fin():
+            sess_id = clientSessionToken
+            access_key = default_keypair['access_key']
+            try:
+                await app['registry'].destroy_session(sess_id, access_key)
+            except Exception:
+                pass
+        event_loop.run_until_complete(fin())
+
+    request.addfinalizer(finalizer)
     return app, client, create_kernel
 
 
