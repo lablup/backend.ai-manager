@@ -5,7 +5,6 @@ import logging
 from pathlib import Path
 
 from . import register_command
-from ...common.argparse import host_port_pair, HostPortPair
 from ...gateway.etcd import ConfigServer
 
 log = logging.getLogger(__name__)
@@ -16,15 +15,6 @@ def etcd(args):
     '''Provides commands to manage etcd-based Backend.AI cluster configs
     and a simple etcd client functionality'''
     pass
-
-
-etcd.add_argument('--etcd-addr', env_var='BACKEND_ETCD_ADDR',
-                  type=host_port_pair, metavar='HOST:PORT',
-                  default=HostPortPair(ip_address('127.0.0.1'), 2379),
-                  help='The address of etcd server.')
-etcd.add_argument('--namespace', env_var='BACKEND_NAMESPACE',
-                  type=str, default='local',
-                  help='The namespace of this Backend.AI cluster.')
 
 
 @contextlib.contextmanager
@@ -54,8 +44,8 @@ def put(args):
         loop.run_until_complete(etcd.put(args.key, args.value))
 
 
-put.add_argument('key', type=str, help='The key.')
-put.add_argument('value', type=str, help='The value.')
+put.add('key', type=str, help='The key.')
+put.add('value', type=str, help='The value.')
 
 
 @etcd.register_command
@@ -66,7 +56,7 @@ def get(args):
         print(val)
 
 
-get.add_argument('key', type=str, help='The key.')
+get.add('key', type=str, help='The key.')
 
 
 @etcd.register_command
@@ -79,9 +69,9 @@ def delete(args):
             loop.run_until_complete(etcd.delete(args.key))
 
 
-delete.add_argument('key', type=str, help='The key.')
-delete.add_argument('--prefix', action='store_true', default=False,
-                    help='Delete all keys prefixed with the given key.')
+delete.add('key', type=str, help='The key.')
+delete.add('--prefix', action='store_true', default=False,
+           help='Delete all keys prefixed with the given key.')
 
 
 @etcd.register_command
@@ -99,13 +89,13 @@ def update_images(args):
             log.error('Please specify one of the options. See "--help".')
 
 
-update_images.add_argument('-f', '--file', type=Path, metavar='PATH',
-                           help='A config file to use.')
-update_images.add_argument('--scan-registry', default=False, action='store_true',
-                           help='Scan the Docker hub to get the latest versinos.')
-update_images.add_argument('--docker-registry', env_var='BACKEND_DOCKER_REGISTRY',
-                           type=str, metavar='URL', default=None,
-                           help='The address of Docker registry server.')
+update_images.add('-f', '--file', type=Path, metavar='PATH',
+                  help='A config file to use.')
+update_images.add('--scan-registry', default=False, action='store_true',
+                  help='Scan the Docker hub to get the latest versinos.')
+update_images.add('--docker-registry', env_var='BACKEND_DOCKER_REGISTRY',
+                  type=str, metavar='URL', default=None,
+                  help='The address of Docker registry server.')
 
 
 @etcd.register_command
@@ -119,8 +109,8 @@ def update_aliases(args):
             config_server.update_aliases_from_file(args.file))
 
 
-update_aliases.add_argument('-f', '--file', type=Path, metavar='PATH',
-                            help='A config file to use.')
+update_aliases.add('-f', '--file', type=Path, metavar='PATH',
+                   help='A config file to use.')
 
 
 @etcd.register_command
@@ -134,5 +124,5 @@ def update_volumes(args):
             config_server.update_volumes_from_file(args.file))
 
 
-update_volumes.add_argument('-f', '--file', type=Path, metavar='PATH',
-                            help='A config file to use.')
+update_volumes.add('-f', '--file', type=Path, metavar='PATH',
+                   help='A config file to use.')

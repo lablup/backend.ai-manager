@@ -30,16 +30,16 @@ def dbshell(args):
     subprocess.call(cmd)
 
 
-dbshell.add_argument('-d', '--dockerize', action='store_true', default=False,
-                     help='Assume dockerized db instance. It creates a '
-                          'temporary pgsql shell container. [default: false]')
-dbshell.add_argument('--docker-network', default='backend_ai_default',
-                     help='The network name to attach the shell container. '
-                          '(used only with --dockerize) '
-                          '[default: backend_ai_default]')
-dbshell.add_argument('--docker-dbaddr', default='backendai-db',
-                     help='The address of the database host in the container. '
-                          '(used only with --dockerize) [default: backendai-db]')
+dbshell.add('-d', '--dockerize', action='store_true', default=False,
+            help='Assume dockerized db instance. It creates a '
+                 'temporary pgsql shell container. [default: false]')
+dbshell.add('--docker-network', default='backend_ai_default',
+            help='The network name to attach the shell container. '
+                 '(used only with --dockerize) '
+                 '[default: backend_ai_default]')
+dbshell.add('--docker-dbaddr', default='backendai-db',
+            help='The address of the database host in the container. '
+                 '(used only with --dockerize) [default: backendai-db]')
 
 
 @register_command
@@ -81,8 +81,8 @@ def oneshot(args):
              "\"down_revision\" value in the earliest migration to \"None\".")
 
 
-oneshot.add_argument('schema_version',
-                     help='The schema version hash. (example: head)')
-oneshot.add_argument('-f', '--config', default='alembic.ini', metavar='PATH',
-                     help='The path to Alembic config file. '
-                          '[default: alembic.ini]')
+oneshot.add('schema_version',
+            help='The schema version hash. (example: head)')
+oneshot.add('-f', '--config', default='alembic.ini', metavar='PATH',
+            help='The path to Alembic config file. '
+                 '[default: alembic.ini]')

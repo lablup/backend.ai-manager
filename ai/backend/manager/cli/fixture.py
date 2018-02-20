@@ -34,7 +34,7 @@ def populate(args):
     conn.close()
 
 
-populate.add_argument('fixture_name', type=str, help='The name of fixture.')
+populate.add('fixture_name', type=str, help='The name of fixture.')
 
 
 @fixture.register_command

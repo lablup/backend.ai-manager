@@ -20,7 +20,7 @@ requires = [
     'aiozmq>=0.7',
     'alembic~=0.9.2',
     'coloredlogs>=5.2',
-    'ConfigArgParse',
+    'ConfigArgParse==0.12',
     'graphene~=2.0.1',
     'iso8601',  # required by graphene
     'namedlist',

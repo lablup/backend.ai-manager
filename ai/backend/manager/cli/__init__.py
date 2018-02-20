@@ -6,21 +6,22 @@ import configargparse
 
 ArgParserType = Union[argparse.ArgumentParser, configargparse.ArgumentParser]
 
-global_argparser = configargparse.ArgumentParser()
+global_argparser = None
 _subparsers = dict()
 
 
 def register_command(handler: Callable[[argparse.Namespace], None],
-                     main_parser: Optional[ArgParserType]=None) \
+                     outer_parser: Optional[ArgParserType]=None) \
                      -> Callable[[argparse.Namespace], None]:
-    if main_parser is None:
-        main_parser = global_argparser
-    if id(main_parser) not in _subparsers:
-        subparsers = main_parser.add_subparsers(title='commands',
+    if outer_parser is None:
+        assert global_argparser is not None
+        outer_parser = global_argparser
+    if id(outer_parser) not in _subparsers:
+        subparsers = outer_parser.add_subparsers(title='commands',
                                                 dest='command')
-        _subparsers[id(main_parser)] = subparsers
+        _subparsers[id(outer_parser)] = subparsers
     else:
-        subparsers = _subparsers[id(main_parser)]
+        subparsers = _subparsers[id(outer_parser)]
 
     @functools.wraps(handler)
     def wrapped(args):
@@ -32,6 +33,7 @@ def register_command(handler: Callable[[argparse.Namespace], None],
                                          help=doc_summary)
     inner_parser.set_defaults(function=wrapped)
     wrapped.register_command = functools.partial(register_command,
-                                                 main_parser=inner_parser)
+                                                 outer_parser=inner_parser)
     wrapped.add_argument = inner_parser.add_argument
+    wrapped.add = inner_parser.add
     return wrapped
