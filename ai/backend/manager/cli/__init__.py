@@ -6,7 +6,7 @@ import configargparse
 
 ArgParserType = Union[argparse.ArgumentParser, configargparse.ArgumentParser]
 
-global_argparser = None
+fallback_global_argparser = configargparse.ArgumentParser()
 _subparsers = dict()
 
 
@@ -14,8 +14,7 @@ def register_command(handler: Callable[[argparse.Namespace], None],
                      outer_parser: Optional[ArgParserType]=None) \
                      -> Callable[[argparse.Namespace], None]:
     if outer_parser is None:
-        assert global_argparser is not None
-        outer_parser = global_argparser
+        outer_parser = fallback_global_argparser
     if id(outer_parser) not in _subparsers:
         subparsers = outer_parser.add_subparsers(title='commands',
                                                  dest='command')
