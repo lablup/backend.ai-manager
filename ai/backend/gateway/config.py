@@ -6,6 +6,17 @@ import configargparse
 
 def load_config(argv=None, extra_args_funcs=()):
     parser = configargparse.ArgumentParser()
+    parser.add('--namespace', env_var='BACKEND_NAMESPACE',
+               type=str, default='local',
+               help='The namespace of this Backend.AI cluster. (default: local)')
+    parser.add('--etcd-addr', env_var='BACKEND_ETCD_ADDR',
+               type=host_port_pair, metavar='HOST:PORT',
+               default=HostPortPair(ip_address('127.0.0.1'), 2379),
+               help='The host:port pair of the etcd cluster or its proxy.')
+    parser.add('--docker-registry', env_var='BACKEND_DOCKER_REGISTRY',
+               type=str, metavar='URL', default=None,
+               help='The host:port pair of the private docker registry '
+                    'that caches the kernel images')
     parser.add('--agent-port', env_var='BACKEND_AGENT_PORT',
                type=port_no, default=6001,
                help='The TCP port number where the agent instances are listening on.'

@@ -27,7 +27,6 @@ except ImportError:
 
 from ai.backend.common.argparse import (
     ipaddr, path, port_no,
-    host_port_pair, HostPortPair
 )
 from ai.backend.common.utils import env_info
 from ai.backend.common.monitor import DummyDatadog, DummySentry
@@ -240,20 +239,6 @@ async def server_main(loop, pidx, _args):
 
 
 def gw_args(parser):
-    parser.add('--namespace', env_var='BACKEND_NAMESPACE',
-               type=str, default='local',
-               help='The namespace of this Backend.AI cluster. (default: local)')
-    parser.add('--etcd-addr', env_var='BACKEND_ETCD_ADDR',
-               type=host_port_pair, metavar='HOST:PORT',
-               default=HostPortPair(ip_address('127.0.0.1'), 2379),
-               help='The host:port pair of the etcd cluster or its proxy.')
-    parser.add('--events-port', env_var='BACKEND_EVENTS_PORT',
-               type=port_no, default=5002,
-               help='The TCP port number where the event server listens on.')
-    parser.add('--docker-registry', env_var='BACKEND_DOCKER_REGISTRY',
-               type=str, metavar='URL', default=None,
-               help='The host:port pair of the private docker registry '
-                    'that caches the kernel images')
     parser.add('--heartbeat-timeout', env_var='BACKEND_HEARTBEAT_TIMEOUT',
                type=float, default=5.0,
                help='The timeout for agent heartbeats.')
@@ -267,6 +252,9 @@ def gw_args(parser):
                     'supported cloud environments, '
                     '2) resolve the current hostname, or '
                     '3) return "127.0.0.1".')
+    parser.add('--events-port', env_var='BACKEND_EVENTS_PORT',
+               type=port_no, default=5002,
+               help='The TCP port number where the event server listens on.')
     parser.add('--service-ip', env_var='BACKEND_SERVICE_IP',
                type=ipaddr, default=ip_address('0.0.0.0'),
                help='The IP where the API gateway server listens on. '
