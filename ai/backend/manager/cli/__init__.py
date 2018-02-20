@@ -18,7 +18,7 @@ def register_command(handler: Callable[[argparse.Namespace], None],
         outer_parser = global_argparser
     if id(outer_parser) not in _subparsers:
         subparsers = outer_parser.add_subparsers(title='commands',
-                                                dest='command')
+                                                 dest='command')
         _subparsers[id(outer_parser)] = subparsers
     else:
         subparsers = _subparsers[id(outer_parser)]
