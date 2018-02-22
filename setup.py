@@ -14,6 +14,7 @@ requires = [
     'aioconsole>=0.1.3',
     'aiodataloader',
     'aiohttp~=3.0.0',
+    'aiojobs>=0.1',
     'aiopg~=0.13.0',
     'aioredis~=1.0.0',
     'aiotools>=0.5.4',
