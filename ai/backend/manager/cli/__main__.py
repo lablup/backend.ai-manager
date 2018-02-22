@@ -4,7 +4,7 @@ from ai.backend.manager import cli
 
 
 def init_app_args(parser):
-    cli.global_argparser = parser
+    cli.fallback_global_argparser = parser
 
     import ai.backend.manager.cli.fixture   # noqa
     import ai.backend.manager.cli.dbschema  # noqa
