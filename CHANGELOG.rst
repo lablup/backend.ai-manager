@@ -4,6 +4,14 @@ Changes
 1.3.0 (to be released)
 ----------------------
 
+- Now the Backend.AI gateway uses a modular architecture where you can add 3rd-party
+  extensions as aiohttp.web.Application and middlewares via ``BACKEND_EXTENSIONS``
+  environment variable. (#65)
+
+- Adopt aiojobs as the main coroutine task scheduler. (#65)
+
+- Public non-authorized APIs become accessible without "Date" HTTP header set. (#65)
+
 - Upgrade aiohttp to v3.0 release. (#64)
 
 - Improve dockerization support. (#62)
