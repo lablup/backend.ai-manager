@@ -29,7 +29,7 @@ from .exceptions import (ServiceUnavailable, InvalidAPIParameters, QuotaExceeded
                          BackendError, InternalServerError)
 from . import GatewayStatus
 from .auth import auth_required
-from .utils import add_func_attrs, catch_unexpected, method_placeholder
+from .utils import set_handler_attr, catch_unexpected
 from ..manager.models import keypairs, kernels, vfolders, AgentStatus, KernelStatus
 
 log = logging.getLogger('ai.backend.gateway.kernel')
@@ -47,7 +47,7 @@ def server_ready_required(handler):
             raise ServiceUnavailable('Server not ready.')
         return (await handler(request))
 
-    add_func_attrs(wrapped, 'ready_required', True)
+    set_handler_attr(wrapped, 'ready_required', True)
     return wrapped
 
 

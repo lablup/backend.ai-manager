@@ -14,7 +14,7 @@ from ai.backend.common.logging import Logger
 from .exceptions import InvalidAuthParameters, AuthorizationFailed
 from .config import load_config
 from ..manager.models import keypairs
-from .utils import TZINFOS, add_func_attrs, get_func_attrs
+from .utils import TZINFOS, set_handler_attr, get_handler_attr
 
 log = logging.getLogger('ai.backend.gateway.auth')
 
@@ -119,7 +119,7 @@ async def auth_middleware(request, handler):
     request['is_admin'] = False
     request['keypair'] = None
     request['user'] = None
-    if not get_func_attrs(handler, 'auth_required', False):
+    if not get_handler_attr(request, 'auth_required', False):
         return (await handler(request))
     if not check_date(request):
         raise InvalidAuthParameters('Date/time sync error')
@@ -165,7 +165,7 @@ def auth_required(handler):
             return (await handler(request))
         raise AuthorizationFailed
 
-    add_func_attrs(wrapped, 'auth_required', True)
+    set_handler_attr(wrapped, 'auth_required', True)
     return wrapped
 
 
@@ -177,7 +177,7 @@ def admin_required(handler):
             return (await handler(request))
         raise AuthorizationFailed
 
-    add_func_attrs(wrapped, 'admin_required', True)
+    set_handler_attr(wrapped, 'admin_required', True)
     return wrapped
 
 

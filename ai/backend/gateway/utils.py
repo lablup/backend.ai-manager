@@ -94,7 +94,7 @@ def gen_tzinfos():
 TZINFOS = dict(gen_tzinfos())
 
 
-def add_func_attrs(func, key, value):
+def set_handler_attr(func, key, value):
     attrs = getattr(func, '_backend_attrs', None)
     if attrs is None:
         attrs = {}
@@ -102,8 +102,12 @@ def add_func_attrs(func, key, value):
     setattr(func, '_backend_attrs', attrs)
 
 
-def get_func_attrs(func, key, default=None):
-    attrs = getattr(func, '_backend_attrs', None)
+def get_handler_attr(request, key, default=None):
+    # When used in the aiohttp server-side codes, we should use
+    # request.match_info.hanlder instead of handler passed to the middleware
+    # functions because aiohttp wraps this original handler with functools.partial
+    # multiple times to implement its internal middleware processing.
+    attrs = getattr(request.match_info.handler, '_backend_attrs', None)
     if attrs is not None:
         return attrs.get(key, default)
     return default
