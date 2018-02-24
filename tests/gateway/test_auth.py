@@ -84,16 +84,13 @@ async def test_authorize(create_app_and_client, get_headers):
     app, client = await create_app_and_client(extras=['auth'])
 
     async def do_authorize(hash_type, api_version):
-        url = '/v3/authorize'
+        url = '/v3/auth/test'
         req_data = {'echo': str(uuid.uuid4())}
         req_bytes = json.dumps(req_data).encode()
-        headers = get_headers('GET', url, req_bytes, hash_type=hash_type,
+        headers = get_headers('POST', url, req_bytes,
+                              hash_type=hash_type,
                               api_version=api_version)
-        # Only shown when there are failures in this test case
-        print('Request headers')
-        pprint(headers)
-        resp = await client.get(url, data=req_bytes, headers=headers,
-                                skip_auto_headers=('User-Agent',))
+        resp = await client.post(url, data=req_bytes, headers=headers)
         assert resp.status == 200
         data = json.loads(await resp.text())
         assert data['authorized'] == 'yes'

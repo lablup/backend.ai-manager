@@ -53,6 +53,21 @@ LATEST_API_VERSION = 'v3.20170615'
 
 log = logging.getLogger('ai.backend.gateway.server')
 
+public_interfaces = [
+    'pidx',
+    'status',
+    'config',
+    'config_server',
+    'dbpool',
+    'registry',
+    'redis_live',
+    'redis_stat',
+    'redis_image',
+    'event_dispatcher',
+    'datadog',
+    'sentry',
+]
+
 
 async def hello(request) -> web.Response:
     '''
@@ -217,6 +232,10 @@ async def server_main(loop, pidx, _args):
     app.on_response_prepare.append(on_prepare)
     app.router.add_route('GET', r'', hello)
 
+    # legacy redirects
+    app.router.add_route('GET', '/v{version:\d+}/authorize',
+                         lambda request: web.HTTPFound('/v3/auth/test'))
+
     subapp_pkgs = [
         '.etcd', '.events',
         '.auth', '.ratelimit',
@@ -232,18 +251,8 @@ async def server_main(loop, pidx, _args):
         assert isinstance(subapp, web.Application)
         # Allow subapp's access to the root app properties.
         # These are the public APIs exposed to extensions as well.
-        subapp['pidx'] = app['pidx']
-        subapp['status'] = app['status']
-        subapp['config'] = app['config']
-        subapp['config_server'] = app['config_server']
-        subapp['dbpool'] = app['dbpool']
-        subapp['registry'] = app['registry']
-        subapp['redis_live'] = app['redis_live']
-        subapp['redis_stat'] = app['redis_stat']
-        subapp['redis_image'] = app['redis_image']
-        subapp['event_dispatcher'] = app['event_dispatcher']
-        subapp['datadog'] = app['datadog']
-        subapp['sentry'] = app['sentry']
+        for key in public_interfaces:
+            subapp[key] = app[key]
         prefix = subapp.get('prefix', pkgname.split('.')[-1].replace('_', '-'))
         app.add_subapp(r'/v{version:\d+}/' + prefix, subapp)
         app.middlewares.extend(global_middlewares)

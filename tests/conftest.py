@@ -26,7 +26,9 @@ import pytest
 from ai.backend.common.argparse import host_port_pair
 from ai.backend.gateway.config import load_config
 from ai.backend.gateway.events import event_router
-from ai.backend.gateway.server import gw_init, gw_shutdown, gw_args
+from ai.backend.gateway.server import (
+    gw_init, gw_shutdown, gw_args,
+    public_interfaces)
 from ai.backend.manager import models
 from ai.backend.manager.models import fixtures, agents, kernels, keypairs, vfolders
 from ai.backend.manager.cli.etcd import delete, put, update_images, update_aliases
@@ -299,11 +301,6 @@ def get_headers(app, default_keypair, prepare_docker_images):
 
 
 async def _create_server(loop, app, extra_inits=None, debug=False):
-    await gw_init(app)
-    if extra_inits:
-        for init in extra_inits:
-            await init(app)
-
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(
@@ -323,31 +320,31 @@ async def create_app_and_client(request, test_id, test_ns,
     client = None
     runner = None
     extra_proc = None
-    extra_shutdowns = []
 
     async def maker(extras=None, ev_router=False, spawn_agent=False):
-        nonlocal client, runner, extra_proc, extra_shutdowns
+        nonlocal client, runner, extra_proc
 
         # Store extra inits and shutowns
         extra_inits = []
         if extras is None:
             extras = []
+        await gw_init(app)
         for extra in extras:
             assert extra in ['etcd', 'events', 'auth', 'vfolder', 'admin',
                              'ratelimit', 'kernel']
             target_module = import_module(f'ai.backend.gateway.{extra}')
-            fn_init = getattr(target_module, 'init', None)
-            if fn_init:
-                extra_inits.append(fn_init)
-            fn_shutdown = getattr(target_module, 'shutdown', None)
-            if fn_shutdown:
-                extra_shutdowns.append(fn_shutdown)
+            subapp, mw = getattr(target_module, 'create_app', None)()
+            assert isinstance(subapp, web.Application)
+            for key in public_interfaces:
+                subapp[key] = app[key]
+            prefix = subapp.get('prefix', extra.split('.')[-1].replace('_', '-'))
+            app.add_subapp(r'/v{version:\d+}/' + prefix, subapp)
+            app.middlewares.extend(mw)
 
         server_params = {}
         client_params = {}
         runner = await _create_server(
             event_loop, app,
-            extra_inits=extra_inits,
             **server_params)
 
         if ev_router:
@@ -428,16 +425,9 @@ async def create_app_and_client(request, test_id, test_ns,
     # Terminate client and servers
     if client:
         await client.close()
-    await gw_shutdown(app)
-    for shutdown in extra_shutdowns:
-        await shutdown(app)
     if runner:
         await runner.cleanup()
-
-    if dbpool is not None:
-        # Close the DB connection pool.
-        dbpool.close()
-        await dbpool.wait_closed()
+    await gw_shutdown(app)
 
     if extra_proc:
         os.kill(extra_proc.pid, signal.SIGINT)

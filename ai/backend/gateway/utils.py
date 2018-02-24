@@ -92,3 +92,18 @@ def gen_tzinfos():
 
 
 TZINFOS = dict(gen_tzinfos())
+
+
+def add_func_attrs(func, key, value):
+    attrs = getattr(func, '_backend_attrs', None)
+    if attrs is None:
+        attrs = {}
+    attrs[key] = value
+    setattr(func, '_backend_attrs', attrs)
+
+
+def get_func_attrs(func, key, default=None):
+    attrs = getattr(func, '_backend_attrs', None)
+    if attrs is not None:
+        return attrs.get(key, default)
+    return default

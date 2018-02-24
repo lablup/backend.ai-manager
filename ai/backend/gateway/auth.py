@@ -14,7 +14,7 @@ from ai.backend.common.logging import Logger
 from .exceptions import InvalidAuthParameters, AuthorizationFailed
 from .config import load_config
 from ..manager.models import keypairs
-from .utils import TZINFOS
+from .utils import TZINFOS, add_func_attrs, get_func_attrs
 
 log = logging.getLogger('ai.backend.gateway.auth')
 
@@ -119,6 +119,8 @@ async def auth_middleware(request, handler):
     request['is_admin'] = False
     request['keypair'] = None
     request['user'] = None
+    if not get_func_attrs(handler, 'auth_required', False):
+        return (await handler(request))
     if not check_date(request):
         raise InvalidAuthParameters('Date/time sync error')
     params = _extract_auth_params(request)
@@ -156,25 +158,31 @@ async def auth_middleware(request, handler):
 
 
 def auth_required(handler):
+
     @functools.wraps(handler)
     async def wrapped(request):
         if request.get('is_authorized', False):
             return (await handler(request))
         raise AuthorizationFailed
+
+    add_func_attrs(wrapped, 'auth_required', True)
     return wrapped
 
 
 def admin_required(handler):
+
     @functools.wraps(handler)
     async def wrapped(request):
         if request.get('is_authorized', False) and request.get('is_admin', False):
             return (await handler(request))
         raise AuthorizationFailed
+
+    add_func_attrs(wrapped, 'admin_required', True)
     return wrapped
 
 
 @auth_required
-async def authorize(request) -> web.Response:
+async def auth_test(request) -> web.Response:
     try:
         params = json.loads(await request.text())
     except json.decoder.JSONDecodeError:
@@ -194,21 +202,13 @@ def generate_keypair():
     return ak, sk
 
 
-async def init(app):
-    pass
-
-
-async def shutdown(app):
-    pass
-
-
 def create_app():
     app = web.Application()
-    app['prefix'] = 'authorize'
+    app['prefix'] = 'auth/'  # slashed to distinguish with "/vN/authorize"
     app['api_versions'] = (1, 2, 3)
-    app.on_startup.append(init)
-    app.on_shutdown.append(shutdown)
-    app.router.add_route('GET', r'', authorize)
+    res = app.router.add_resource(r'/test')
+    res.add_route('GET', auth_test)
+    res.add_route('POST', auth_test)
     return app, [auth_middleware]
 
 

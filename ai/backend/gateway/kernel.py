@@ -29,7 +29,7 @@ from .exceptions import (ServiceUnavailable, InvalidAPIParameters, QuotaExceeded
                          BackendError, InternalServerError)
 from . import GatewayStatus
 from .auth import auth_required
-from .utils import catch_unexpected, method_placeholder
+from .utils import add_func_attrs, catch_unexpected, method_placeholder
 from ..manager.models import keypairs, kernels, vfolders, AgentStatus, KernelStatus
 
 log = logging.getLogger('ai.backend.gateway.kernel')
@@ -40,11 +40,14 @@ _rx_sess_token = re.compile(r'\w[\w.-]*\w', re.ASCII)
 
 
 def server_ready_required(handler):
+
     @functools.wraps(handler)
     async def wrapped(request):
         if request.app['status'] != GatewayStatus.RUNNING:
             raise ServiceUnavailable('Server not ready.')
         return (await handler(request))
+
+    add_func_attrs(wrapped, 'ready_required', True)
     return wrapped
 
 

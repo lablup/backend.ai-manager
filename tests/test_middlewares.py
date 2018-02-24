@@ -1,6 +1,6 @@
 from aiohttp import web
 
-from ai.backend.gateway.server import api_middleware_factory
+from ai.backend.gateway.server import api_middleware
 from ai.backend.gateway.utils import method_placeholder
 
 
@@ -17,7 +17,7 @@ async def test_api_method_override(test_client):
                          method_placeholder('REPORT'))
     app.router.add_route('REPORT', '/v{version:\d+}/test',
                          service_handler)
-    app.middlewares.append(api_middleware_factory)
+    app.middlewares.append(api_middleware)
     client = await test_client(app)
 
     # native method
@@ -64,7 +64,7 @@ async def test_api_method_override_with_different_ops(test_client):
 
     app.router.add_route('POST', '/v{version:\d+}/test', op1_handler)
     app.router.add_route('REPORT', '/v{version:\d+}/test', op2_handler)
-    app.middlewares.append(api_middleware_factory)
+    app.middlewares.append(api_middleware)
     client = await test_client(app)
 
     # native method
@@ -109,7 +109,7 @@ async def test_api_ver(test_client):
         return web.Response(body=b'test')
 
     app.router.add_post('/v{version:\d+}/test', dummy_handler)
-    app.middlewares.append(api_middleware_factory)
+    app.middlewares.append(api_middleware)
     client = await test_client(app)
 
     # normal call
