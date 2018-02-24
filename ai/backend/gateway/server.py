@@ -11,7 +11,7 @@ import ssl
 
 import aiohttp
 from aiohttp import web
-import aiojobs, aiojobs.aiohttp
+import aiojobs.aiohttp
 import aioredis
 import aiotools
 from aiopg.sa import create_engine
@@ -130,6 +130,15 @@ async def exception_middleware(request, handler):
 
 
 async def gw_init(app):
+    # should be done in create_app() in other modules.
+    app.router.add_route('GET', r'', hello)
+    app.on_response_prepare.append(on_prepare)
+
+    # legacy redirects
+    app.router.add_route('GET', '/v{version:\d+}/authorize',
+                         lambda request: web.HTTPFound('/v3/auth/test'))
+
+    # populate public interfaces
     app['config_server'] = ConfigServer(
         app['config'].etcd_addr, app['config'].namespace)
 
@@ -217,8 +226,8 @@ async def gw_shutdown(app):
 async def server_main(loop, pidx, _args):
 
     app = web.Application(middlewares=[
-        api_middleware,
         exception_middleware,
+        api_middleware,
     ])
     app['config'] = _args[0]
     app['sslctx'] = None
@@ -229,12 +238,6 @@ async def server_main(loop, pidx, _args):
     if app['config'].service_port == 0:
         app['config'].service_port = 8443 if app['sslctx'] else 8080
     app['pidx'] = pidx
-    app.on_response_prepare.append(on_prepare)
-    app.router.add_route('GET', r'', hello)
-
-    # legacy redirects
-    app.router.add_route('GET', '/v{version:\d+}/authorize',
-                         lambda request: web.HTTPFound('/v3/auth/test'))
 
     subapp_pkgs = [
         '.etcd', '.events',

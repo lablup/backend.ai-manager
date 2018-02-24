@@ -16,6 +16,7 @@ import tempfile
 import aiodocker
 import aiohttp
 from aiohttp import web
+import aiojobs.aiohttp
 from aiopg.sa import create_engine
 import asyncio
 from dateutil.tz import tzutc
@@ -300,19 +301,6 @@ def get_headers(app, default_keypair, prepare_docker_images):
     return create_header
 
 
-async def _create_server(loop, app, extra_inits=None, debug=False):
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(
-        runner,
-        app['config'].service_ip,
-        app['config'].service_port,
-        ssl_context=app.get('sslctx'),
-    )
-    await site.start()
-    return runner
-
-
 @pytest.fixture
 async def create_app_and_client(request, test_id, test_ns,
                                 event_loop, app,
@@ -321,31 +309,38 @@ async def create_app_and_client(request, test_id, test_ns,
     runner = None
     extra_proc = None
 
-    async def maker(extras=None, ev_router=False, spawn_agent=False):
+    async def maker(modules=None, ev_router=False, spawn_agent=False):
         nonlocal client, runner, extra_proc
 
-        # Store extra inits and shutowns
-        extra_inits = []
-        if extras is None:
-            extras = []
+        if modules is None:
+            modules = []
         await gw_init(app)
-        for extra in extras:
-            assert extra in ['etcd', 'events', 'auth', 'vfolder', 'admin',
-                             'ratelimit', 'kernel']
-            target_module = import_module(f'ai.backend.gateway.{extra}')
+        for mod in modules:
+            assert mod in {'etcd', 'events', 'auth', 'vfolder', 'admin',
+                           'ratelimit', 'kernel'}
+            target_module = import_module(f'.{mod}', 'ai.backend.gateway')
             subapp, mw = getattr(target_module, 'create_app', None)()
             assert isinstance(subapp, web.Application)
             for key in public_interfaces:
                 subapp[key] = app[key]
-            prefix = subapp.get('prefix', extra.split('.')[-1].replace('_', '-'))
+            prefix = subapp.get('prefix', mod.replace('_', '-'))
             app.add_subapp(r'/v{version:\d+}/' + prefix, subapp)
             app.middlewares.extend(mw)
 
         server_params = {}
         client_params = {}
-        runner = await _create_server(
-            event_loop, app,
-            **server_params)
+
+        aiojobs.aiohttp.setup(app)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(
+            runner,
+            app['config'].service_ip,
+            app['config'].service_port,
+            ssl_context=app.get('sslctx'),
+            **server_params,
+        )
+        await site.start()
 
         if ev_router:
             # Run event_router proc. Is it enough? No way to get return values
