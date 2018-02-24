@@ -239,7 +239,6 @@ class QueryForUser(graphene.ObjectType):
 
 async def init(app):
     loop = asyncio.get_event_loop()
-    app.router.add_route('POST', r'/v{version:\d+}/admin/graphql', handle_gql)
     app['admin.gql_executor'] = AsyncioExecutor(loop=loop)
     app['admin.gql_schema_admin'] = graphene.Schema(
         query=QueryForAdmin,
@@ -253,6 +252,15 @@ async def init(app):
 
 async def shutdown(app):
     pass
+
+
+def create_app():
+    app = web.Application()
+    app.on_startup.append(init)
+    app.on_shutdown.append(shutdown)
+    app['api_versions'] = (2, 3)
+    app.router.add_route('POST', r'/graphql', handle_gql)
+    return app, []
 
 
 if __name__ == '__main__':

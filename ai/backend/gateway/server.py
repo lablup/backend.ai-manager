@@ -3,6 +3,7 @@ The main web / websocket server
 '''
 
 import asyncio
+import importlib
 from ipaddress import ip_address
 import logging
 import os
@@ -10,6 +11,7 @@ import ssl
 
 import aiohttp
 from aiohttp import web
+import aiojobs, aiojobs.aiohttp
 import aioredis
 import aiotools
 from aiopg.sa import create_engine
@@ -32,19 +34,15 @@ from ai.backend.common.utils import env_info
 from ai.backend.common.monitor import DummyDatadog, DummySentry
 from ai.backend.common.logging import Logger
 from ..manager import __version__
+from ..manager.registry import AgentRegistry
 from . import GatewayStatus
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
+from .etcd import ConfigServer
+from .events import EventDispatcher, event_subscriber
 from .exceptions import (BackendError, GenericNotFound,
                          GenericBadRequest, InternalServerError)
-from .admin import init as admin_init, shutdown as admin_shutdown
-from .auth import init as auth_init, shutdown as auth_shutdown
 from .config import load_config
-from .etcd import init as etcd_init, shutdown as etcd_shutdown
-from .events import init as event_init, shutdown as event_shutdown
 from .events import event_router
-from .kernel import init as kernel_init, shutdown as kernel_shutdown
-from .vfolder import init as vfolder_init, shutdown as vfolder_shutdown
-from .ratelimit import init as rlim_init, shutdown as rlim_shutdown
 
 VALID_VERSIONS = frozenset([
     'v1.20160915',
@@ -67,59 +65,59 @@ async def on_prepare(request, response):
     response.headers['Server'] = 'BackendAI-API/' + LATEST_API_VERSION
 
 
-async def api_middleware_factory(app, handler):
-    async def api_middleware_handler(request):
-        _handler = handler
-        method_override = request.headers.get('X-Method-Override', None)
-        if method_override:
-            request = request.clone(method=method_override)
-            new_match_info = await app.router.resolve(request)
-            _handler = new_match_info.handler
-            request._match_info = new_match_info
-        if request.match_info.http_exception is not None:
-            return request.match_info.http_exception
-        version = int(request.match_info['version'])
-        if version < 1 or version > 3:
-            raise GenericBadRequest('Unsupported API major version.')
-        request['api_version'] = version
-        resp = (await _handler(request))
+@web.middleware
+async def api_middleware(request, handler):
+    _handler = handler
+    method_override = request.headers.get('X-Method-Override', None)
+    if method_override:
+        request = request.clone(method=method_override)
+        new_match_info = await request.app.router.resolve(request)
+        _handler = new_match_info.handler
+        request._match_info = new_match_info
+    if request.match_info.http_exception is not None:
+        return request.match_info.http_exception
+    version = int(request.match_info.get('version', 3))
+    if version < 1 or version > 3:
+        raise GenericBadRequest('Unsupported API major version.')
+    request['api_version'] = version
+    resp = (await _handler(request))
+    return resp
+
+
+@web.middleware
+async def exception_middleware(request, handler):
+    app = request.app
+    try:
+        app['datadog'].statsd.increment('ai.backend.gateway.api.requests')
+        resp = (await handler(request))
+    except BackendError as ex:
+        app['sentry'].captureException()
+        statsd = app['datadog'].statsd
+        statsd.increment('ai.backend.gateway.api.failures')
+        statsd.increment(f'ai.backend.gateway.api.status.{ex.status_code}')
+        raise
+    except web.HTTPException as ex:
+        statsd = app['datadog'].statsd
+        statsd.increment('ai.backend.gateway.api.failures')
+        statsd.increment(f'ai.backend.gateway.api.status.{ex.status_code}')
+        if ex.status_code == 404:
+            raise GenericNotFound
+        log.warning(f'Bad request: {ex!r}')
+        raise GenericBadRequest
+    except Exception as ex:
+        app['sentry'].captureException()
+        log.exception('Uncaught exception in HTTP request handlers')
+        raise InternalServerError
+    else:
+        app['datadog'].statsd.increment(
+            f'ai.backend.gateway.api.status.{resp.status}')
         return resp
-    return api_middleware_handler
-
-
-async def exception_middleware_factory(app, handler):
-    async def exception_middleware_handler(request):
-        try:
-            app['datadog'].statsd.increment('ai.backend.gateway.api.requests')
-            resp = (await handler(request))
-        except BackendError as ex:
-            app['sentry'].captureException()
-            statsd = app['datadog'].statsd
-            statsd.increment('ai.backend.gateway.api.failures')
-            statsd.increment(f'ai.backend.gateway.api.status.{ex.status_code}')
-            raise
-        except web.HTTPException as ex:
-            statsd = app['datadog'].statsd
-            statsd.increment('ai.backend.gateway.api.failures')
-            statsd.increment(f'ai.backend.gateway.api.status.{ex.status_code}')
-            if ex.status_code == 404:
-                raise GenericNotFound
-            log.warning(f'Bad request: {ex!r}')
-            raise GenericBadRequest
-        except Exception as ex:
-            app['sentry'].captureException()
-            log.exception('Uncaught exception in HTTP request handlers')
-            raise InternalServerError
-        else:
-            app['datadog'].statsd.increment(
-                f'ai.backend.gateway.api.status.{resp.status}')
-            return resp
-    return exception_middleware_handler
 
 
 async def gw_init(app):
-    app.on_response_prepare.append(on_prepare)
-    app.router.add_route('GET', r'/v{version:\d+}', hello)
+    app['config_server'] = ConfigServer(
+        app['config'].etcd_addr, app['config'].namespace)
+
     app['status'] = GatewayStatus.STARTING
     app['datadog'] = DummyDatadog()
     app['sentry'] = DummySentry()
@@ -169,11 +167,27 @@ async def gw_init(app):
         timeout=3.0,
         encoding='utf8',
         db=REDIS_IMAGE_DB)
-    app.middlewares.append(exception_middleware_factory)
-    app.middlewares.append(api_middleware_factory)
+
+    loop = asyncio.get_event_loop()
+    dispatcher = EventDispatcher(app)
+    app['event_dispatcher'] = dispatcher
+    app['event_subscriber'] = loop.create_task(event_subscriber(dispatcher))
+
+    app['registry'] = AgentRegistry(
+        app['config_server'],
+        app['dbpool'],
+        app['redis_stat'],
+        app['redis_live'],
+        app['redis_image'])
+    await app['registry'].init()
 
 
 async def gw_shutdown(app):
+    await app['registry'].shutdown()
+
+    app['event_subscriber'].cancel()
+    await app['event_subscriber']
+
     app['redis_image'].close()
     await app['redis_image'].wait_closed()
     app['redis_stat'].close()
@@ -187,7 +201,10 @@ async def gw_shutdown(app):
 @aiotools.actxmgr
 async def server_main(loop, pidx, _args):
 
-    app = web.Application()
+    app = web.Application(middlewares=[
+        api_middleware,
+        exception_middleware,
+    ])
     app['config'] = _args[0]
     app['sslctx'] = None
     if app['config'].ssl_cert and app['config'].ssl_key:
@@ -197,16 +214,41 @@ async def server_main(loop, pidx, _args):
     if app['config'].service_port == 0:
         app['config'].service_port = 8443 if app['sslctx'] else 8080
     app['pidx'] = pidx
+    app.on_response_prepare.append(on_prepare)
+    app.router.add_route('GET', r'', hello)
 
-    await etcd_init(app)
-    await event_init(app)
+    subapp_pkgs = [
+        '.etcd', '.events',
+        '.auth', '.ratelimit',
+        '.vfolder', '.admin', '.kernel'
+    ] + [
+        ext_name for ext_name in app['config'].extensions
+    ]
+
     await gw_init(app)
-    await auth_init(app)
-    await vfolder_init(app)
-    await admin_init(app)
-    await rlim_init(app)
-    await kernel_init(app)
+    for pkgname in subapp_pkgs:
+        subapp_mod = importlib.import_module(pkgname, 'ai.backend.gateway')
+        subapp, global_middlewares = getattr(subapp_mod, 'create_app')()
+        assert isinstance(subapp, web.Application)
+        # Allow subapp's access to the root app properties.
+        # These are the public APIs exposed to extensions as well.
+        subapp['pidx'] = app['pidx']
+        subapp['status'] = app['status']
+        subapp['config'] = app['config']
+        subapp['config_server'] = app['config_server']
+        subapp['dbpool'] = app['dbpool']
+        subapp['registry'] = app['registry']
+        subapp['redis_live'] = app['redis_live']
+        subapp['redis_stat'] = app['redis_stat']
+        subapp['redis_image'] = app['redis_image']
+        subapp['event_dispatcher'] = app['event_dispatcher']
+        subapp['datadog'] = app['datadog']
+        subapp['sentry'] = app['sentry']
+        prefix = subapp.get('prefix', pkgname.split('.')[-1].replace('_', '-'))
+        app.add_subapp(r'/v{version:\d+}/' + prefix, subapp)
+        app.middlewares.extend(global_middlewares)
 
+    aiojobs.aiohttp.setup(app)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(
@@ -223,19 +265,9 @@ async def server_main(loop, pidx, _args):
     try:
         yield
     finally:
-
         log.info('shutting down...')
-
-        await kernel_shutdown(app)
-        await rlim_shutdown(app)
-        await admin_shutdown(app)
-        await vfolder_shutdown(app)
-        await auth_shutdown(app)
-        await gw_shutdown(app)
-        await event_shutdown(app)
-        await etcd_shutdown(app)
-
         await runner.cleanup()
+        await gw_shutdown(app)
 
 
 def gw_args(parser):

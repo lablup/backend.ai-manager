@@ -160,13 +160,21 @@ async def init(app):
         mount_prefix = '/mnt'
     root_name = await app['config_server'].etcd.get('volumes/_vfroot')
     VF_ROOT = Path(mount_prefix) / root_name
-    rt = app.router.add_route
-    rt('POST',   r'/v{version:\d+}/folders/', create)
-    rt('GET',    r'/v{version:\d+}/folders/', list_folders)
-    rt('GET',    r'/v{version:\d+}/folders/{name}', get_info)
-    rt('DELETE', r'/v{version:\d+}/folders/{name}', delete)
-    rt('POST',   r'/v{version:\d+}/folders/{name}/upload', upload)
 
 
 async def shutdown(app):
     pass
+
+
+def create_app():
+    app = web.Application()
+    app['prefix'] = 'folders'
+    app['api_versions'] = (2, 3)
+    app.on_startup.append(init)
+    app.on_shutdown.append(shutdown)
+    app.router.add_route('POST',   r'', create)
+    app.router.add_route('GET',    r'', list_folders)
+    app.router.add_route('GET',    r'/{name}', get_info)
+    app.router.add_route('DELETE', r'/{name}', delete)
+    app.router.add_route('POST',   r'/{name}/upload', upload)
+    return app, []

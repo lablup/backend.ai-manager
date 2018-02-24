@@ -108,50 +108,51 @@ async def sign_request(sign_method, request, secret_key) -> str:
         raise InvalidAuthParameters(e.args[0])
 
 
-async def auth_middleware_factory(app, handler):
+@web.middleware
+async def auth_middleware(request, handler):
     '''
-    Fetches user information and sets up keypair, uesr, and is_authorized attributes.
+    Fetches user information and sets up keypair, uesr, and is_authorized
+    attributes.
     '''
-    async def auth_middleware_handler(request):
-        request['is_authorized'] = False
-        request['is_admin'] = False
-        request['keypair'] = None
-        request['user'] = None
-        if not check_date(request):
-            raise InvalidAuthParameters('Date/time sync error')
-        params = _extract_auth_params(request)
-        if params:
-            sign_method, access_key, signature = params
-            async with app['dbpool'].acquire() as conn:
-                query = (keypairs.select()
+    # This is a global middleware: request.app is the root app.
+    request['is_authorized'] = False
+    request['is_admin'] = False
+    request['keypair'] = None
+    request['user'] = None
+    if not check_date(request):
+        raise InvalidAuthParameters('Date/time sync error')
+    params = _extract_auth_params(request)
+    if params:
+        sign_method, access_key, signature = params
+        async with request.app['dbpool'].acquire() as conn:
+            query = (keypairs.select()
+                             .where(keypairs.c.access_key == access_key))
+            result = await conn.execute(query)
+            row = await result.first()
+            if row is None:
+                raise AuthorizationFailed('Access key not found')
+            my_signature = \
+                await sign_request(sign_method, request, row.secret_key)
+            if secrets.compare_digest(my_signature, signature):
+                query = (keypairs.update()
+                                 .values(last_used=datetime.now(tzutc()),
+                                         num_queries=keypairs.c.num_queries + 1)
                                  .where(keypairs.c.access_key == access_key))
-                result = await conn.execute(query)
-                row = await result.first()
-                if row is None:
-                    raise AuthorizationFailed('Access key not found')
-                my_signature = \
-                    await sign_request(sign_method, request, row.secret_key)
-                if secrets.compare_digest(my_signature, signature):
-                    query = (keypairs.update()
-                                     .values(last_used=datetime.now(tzutc()),
-                                             num_queries=keypairs.c.num_queries + 1)
-                                     .where(keypairs.c.access_key == access_key))
-                    await conn.execute(query)
-                    request['is_authorized'] = True
-                    if row.is_admin:
-                        request['is_admin'] = True
-                    request['keypair'] = {
-                        'access_key': access_key,
-                        'concurrency_limit': row.concurrency_limit,
-                        'rate_limit': row.rate_limit,
-                    }
-                    request['user'] = {
-                        'id': row.user_id,
-                    }
-        # No matter if authenticated or not, pass-through to the handler.
-        # (if it's required, auth_required decorator will handle the situation.)
-        return (await handler(request))
-    return auth_middleware_handler
+                await conn.execute(query)
+                request['is_authorized'] = True
+                if row.is_admin:
+                    request['is_admin'] = True
+                request['keypair'] = {
+                    'access_key': access_key,
+                    'concurrency_limit': row.concurrency_limit,
+                    'rate_limit': row.rate_limit,
+                }
+                request['user'] = {
+                    'id': row.user_id,
+                }
+    # No matter if authenticated or not, pass-through to the handler.
+    # (if it's required, auth_required decorator will handle the situation.)
+    return (await handler(request))
 
 
 def auth_required(handler):
@@ -194,12 +195,21 @@ def generate_keypair():
 
 
 async def init(app):
-    app.router.add_route('GET', r'/v{version:\d+}/authorize', authorize)
-    app.middlewares.append(auth_middleware_factory)
+    pass
 
 
 async def shutdown(app):
     pass
+
+
+def create_app():
+    app = web.Application()
+    app['prefix'] = 'authorize'
+    app['api_versions'] = (1, 2, 3)
+    app.on_startup.append(init)
+    app.on_shutdown.append(shutdown)
+    app.router.add_route('GET', r'', authorize)
+    return app, [auth_middleware]
 
 
 if __name__ == '__main__':

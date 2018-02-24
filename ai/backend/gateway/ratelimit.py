@@ -1,7 +1,9 @@
 from decimal import Decimal
+import functools
 import logging
 import time
 
+from aiohttp import web
 import aioredis
 
 from .defs import REDIS_RLIM_DB
@@ -32,34 +34,34 @@ return redis.call('ZCARD', access_key)
 '''
 
 
-async def rlim_middleware_factory(app, handler):
-    async def rlim_middleware_handler(request):
-        now = Decimal(time.time()).quantize(_time_prec)
-        rr = app['redis_rlim']
-        if request['is_authorized']:
-            rate_limit = request['keypair']['rate_limit']
-            access_key = request['keypair']['access_key']
-            ret = await rr.evalsha(
-                app['redis_rlim_script'],
-                keys=[access_key],
-                args=[str(now), str(_rlim_window)])
-            rolling_count = int(ret)
-            if rolling_count > rate_limit:
-                raise RateLimitExceeded
-            remaining = rate_limit - rolling_count
-            response = await handler(request)
-            response.headers['X-RateLimit-Limit'] = str(rate_limit)
-            response.headers['X-RateLimit-Remaining'] = str(remaining)
-            response.headers['X-RateLimit-Window'] = str(_rlim_window)
-            return response
-        else:
-            # No checks for rate limiting for non-authorized queries.
-            response = await handler(request)
-            response.headers['X-RateLimit-Limit'] = '1000'
-            response.headers['X-RateLimit-Remaining'] = '1000'
-            response.headers['X-RateLimit-Window'] = str(_rlim_window)
-            return response
-    return rlim_middleware_handler
+@web.middleware
+async def rlim_middleware(app, request, handler):
+    # This is a global middleware: request.app is the root app.
+    now = Decimal(time.time()).quantize(_time_prec)
+    rr = app['redis_rlim']
+    if request['is_authorized']:
+        rate_limit = request['keypair']['rate_limit']
+        access_key = request['keypair']['access_key']
+        ret = await rr.evalsha(
+            app['redis_rlim_script'],
+            keys=[access_key],
+            args=[str(now), str(_rlim_window)])
+        rolling_count = int(ret)
+        if rolling_count > rate_limit:
+            raise RateLimitExceeded
+        remaining = rate_limit - rolling_count
+        response = await handler(request)
+        response.headers['X-RateLimit-Limit'] = str(rate_limit)
+        response.headers['X-RateLimit-Remaining'] = str(remaining)
+        response.headers['X-RateLimit-Window'] = str(_rlim_window)
+        return response
+    else:
+        # No checks for rate limiting for non-authorized queries.
+        response = await handler(request)
+        response.headers['X-RateLimit-Limit'] = '1000'
+        response.headers['X-RateLimit-Remaining'] = '1000'
+        response.headers['X-RateLimit-Window'] = str(_rlim_window)
+        return response
 
 
 async def init(app):
@@ -70,7 +72,6 @@ async def init(app):
         db=REDIS_RLIM_DB)
     app['redis_rlim'] = rr
     app['redis_rlim_script'] = await rr.script_load(_rlim_script)
-    app.middlewares.append(rlim_middleware_factory)
 
 
 async def shutdown(app):
@@ -80,3 +81,12 @@ async def shutdown(app):
         pass
     app['redis_rlim'].close()
     await app['redis_rlim'].wait_closed()
+
+
+def create_app():
+    app = web.Application()
+    app['api_versions'] = (1, 2, 3)
+    app.on_startup.append(init)
+    app.on_shutdown.append(shutdown)
+    # middleware must be wrapped by web.middleware at the outermost level.
+    return app, [web.middleware(functools.partial(rlim_middleware, app))]

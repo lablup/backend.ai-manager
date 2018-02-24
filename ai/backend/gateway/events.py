@@ -4,6 +4,7 @@ import functools
 import logging
 import sys
 
+from aiohttp import web
 import aiozmq
 import zmq
 
@@ -80,12 +81,16 @@ async def event_subscriber(dispatcher):
 
 
 async def init(app):
-    loop = asyncio.get_event_loop()
-    dispatcher = EventDispatcher(app)
-    app['event_dispatcher'] = dispatcher
-    app['event_subscriber'] = loop.create_task(event_subscriber(dispatcher))
+    pass
 
 
 async def shutdown(app):
-    app['event_subscriber'].cancel()
-    await app['event_subscriber']
+    pass
+
+
+def create_app():
+    app = web.Application()
+    app['api_versions'] = (3,)
+    app.on_startup.append(init)
+    app.on_shutdown.append(shutdown)
+    return app, []

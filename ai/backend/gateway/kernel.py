@@ -31,7 +31,6 @@ from . import GatewayStatus
 from .auth import auth_required
 from .utils import catch_unexpected, method_placeholder
 from ..manager.models import keypairs, kernels, vfolders, AgentStatus, KernelStatus
-from ..manager.registry import AgentRegistry
 
 log = logging.getLogger('ai.backend.gateway.kernel')
 
@@ -688,25 +687,6 @@ async def not_impl_stub(request) -> web.Response:
 
 
 async def init(app):
-    rt = app.router.add_route
-    rt('POST',   r'/v{version:\d+}/kernel/create', create)  # legacy
-    rt('POST',   r'/v{version:\d+}/kernel/', create)
-    rt('GET',    r'/v{version:\d+}/kernel/{sess_id}', get_info)
-    rt('GET',    r'/v{version:\d+}/kernel/{sess_id}/logs', get_logs)
-
-    rt('PATCH',  r'/v{version:\d+}/kernel/{sess_id}', restart)
-    rt('DELETE', r'/v{version:\d+}/kernel/{sess_id}', destroy)
-    rt('POST',   r'/v{version:\d+}/kernel/{sess_id}', execute)
-    rt('POST',   r'/v{version:\d+}/kernel/{sess_id}/interrupt', interrupt)
-    rt('POST',   r'/v{version:\d+}/kernel/{sess_id}/complete', complete)
-    rt('GET',    r'/v{version:\d+}/stream/kernel/{sess_id}/pty', stream_pty)
-    rt('GET',    r'/v{version:\d+}/stream/kernel/{sess_id}/events', not_impl_stub)
-    rt('POST',   r'/v{version:\d+}/kernel/{sess_id}/upload', upload_files)
-    rt('POST',   r'/v{version:\d+}/folder/create', not_impl_stub)
-    rt('GET',    r'/v{version:\d+}/folder/{folder_id}', not_impl_stub)
-    rt('POST',   r'/v{version:\d+}/folder/{folder_id}', method_placeholder('DELETE'))
-    rt('DELETE', r'/v{version:\d+}/folder/{folder_id}', not_impl_stub)
-
     app['event_dispatcher'].add_handler('kernel_terminated', kernel_terminated)
     app['event_dispatcher'].add_handler('instance_started', instance_started)
     app['event_dispatcher'].add_handler('instance_terminated', instance_terminated)
@@ -715,14 +695,6 @@ async def init(app):
 
     app['stream_pty_handlers'] = defaultdict(set)
     app['stream_stdin_socks'] = defaultdict(set)
-
-    app['registry'] = AgentRegistry(
-        app['config_server'],
-        app['dbpool'],
-        app['redis_stat'],
-        app['redis_live'],
-        app['redis_image'])
-    await app['registry'].init()
 
     # Scan ALIVE agents
     if app['pidx'] == 0:
@@ -748,4 +720,27 @@ async def shutdown(app):
         for handler in per_kernel_handlers.copy():
             handler.cancel()
             await handler
-    await app['registry'].shutdown()
+
+
+def create_app():
+    app = web.Application()
+    app.on_startup.append(init)
+    app.on_shutdown.append(shutdown)
+    app['api_versions'] = (1, 2, 3)
+    app.router.add_route('POST',   r'/create', create)  # legacy
+    app.router.add_route('POST',   r'', create)
+    app.router.add_route('GET',    r'/{sess_id}', get_info)
+    app.router.add_route('GET',    r'/{sess_id}/logs', get_logs)
+    app.router.add_route
+    app.router.add_route('PATCH',  r'/{sess_id}', restart)
+    app.router.add_route('DELETE', r'/{sess_id}', destroy)
+    app.router.add_route('POST',   r'/{sess_id}', execute)
+    app.router.add_route('POST',   r'/{sess_id}/interrupt', interrupt)
+    app.router.add_route('POST',   r'/{sess_id}/complete', complete)
+    # TODO: split as "streaming" subapp
+    # app.router.add_route('GET',
+    #   r'/v{version:\d+}/stream/kernel/{sess_id}/pty', stream_pty)
+    # app.router.add_route('GET',
+    #   r'/v{version:\d+}/stream/kernel/{sess_id}/events', not_impl_stub)
+    app.router.add_route('POST',   r'/{sess_id}/upload', upload_files)
+    return app, []

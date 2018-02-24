@@ -1,6 +1,7 @@
 import logging
 from pathlib import Path
 
+from aiohttp import web
 import aiotools
 import yaml
 
@@ -169,8 +170,6 @@ class ConfigServer:
 
 
 async def init(app):
-    app['config_server'] = ConfigServer(
-        app['config'].etcd_addr, app['config'].namespace)
     if app['pidx'] == 0:
         await app['config_server'].register_myself(app['config'])
 
@@ -178,3 +177,11 @@ async def init(app):
 async def shutdown(app):
     if app['pidx'] == 0:
         await app['config_server'].deregister_myself()
+
+
+def create_app():
+    app = web.Application()
+    app['api_versions'] = (3,)
+    app.on_startup.append(init)
+    app.on_shutdown.append(shutdown)
+    return app, []

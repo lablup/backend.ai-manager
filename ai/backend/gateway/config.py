@@ -40,6 +40,10 @@ def load_config(argv=None, extra_args_funcs=()):
                type=str, default='develove',
                help='The password to authenticate to the database server. '
                     '(default: develove)')
+    parser.add('--extensions', env_var='BACKEND_EXTENSIONS',
+               type=str, default='',
+               help='A comma-separated list of extension module names installed '
+                    'as Python packages')
     for func in extra_args_funcs:
         func(parser)
     args = parser.parse_args(args=argv)
