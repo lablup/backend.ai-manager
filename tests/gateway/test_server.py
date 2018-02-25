@@ -1,5 +1,3 @@
-import json
-
 import pytest
 
 from ai.backend.gateway.server import LATEST_API_VERSION
