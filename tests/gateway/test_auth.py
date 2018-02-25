@@ -81,7 +81,7 @@ def test_check_date():
 
 @pytest.mark.asyncio
 async def test_authorize(create_app_and_client, get_headers):
-    app, client = await create_app_and_client(extras=['auth'])
+    app, client = await create_app_and_client(modules=['auth'])
 
     async def do_authorize(hash_type, api_version):
         url = '/v3/auth/test'

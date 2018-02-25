@@ -13,7 +13,7 @@ async def prepare_kernel(request, create_app_and_client, get_headers, event_loop
                          default_keypair):
     clientSessionToken = 'test-token-0000'
     app, client = await create_app_and_client(
-        extras=['etcd', 'events', 'auth', 'vfolder', 'admin', 'ratelimit', 'kernel'],
+        modules=['etcd', 'events', 'auth', 'vfolder', 'admin', 'ratelimit', 'kernel'],
         spawn_agent=True,
         ev_router=True)
 

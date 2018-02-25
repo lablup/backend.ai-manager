@@ -13,7 +13,7 @@ class TestAdminQuery:
 
     @pytest.mark.asyncio
     async def test_query_agent(self, create_app_and_client, get_headers):
-        app, client = await create_app_and_client(extras=['auth', 'admin'])
+        app, client = await create_app_and_client(modules=['auth', 'admin'])
 
         # Add test agent info to db
         async with app['dbpool'].acquire() as conn:
@@ -45,7 +45,7 @@ class TestAdminQuery:
 
     @pytest.mark.asyncio
     async def test_query_agents(self, create_app_and_client, get_headers):
-        app, client = await create_app_and_client(extras=['auth', 'admin'])
+        app, client = await create_app_and_client(modules=['auth', 'admin'])
 
         # Add test agents info to db (all ALIVE)
         async with app['dbpool'].acquire() as conn:
@@ -92,7 +92,7 @@ class TestAdminQuery:
     @pytest.mark.asyncio
     async def test_query_keypair(self, create_app_and_client, get_headers,
                                  default_keypair):
-        app, client = await create_app_and_client(extras=['auth', 'admin'])
+        app, client = await create_app_and_client(modules=['auth', 'admin'])
 
         query = '{ keypair { access_key secret_key is_active is_admin } }'
         req_bytes = json.dumps({'query': query}).encode()
@@ -109,7 +109,7 @@ class TestAdminQuery:
     @pytest.mark.asyncio
     async def test_query_other_keypair(self, create_app_and_client, get_headers,
                                        user_keypair):
-        app, client = await create_app_and_client(extras=['auth', 'admin'])
+        app, client = await create_app_and_client(modules=['auth', 'admin'])
 
         query = '''{ keypair(access_key: "AKIANOTADMIN7EXAMPLE") {
     access_key secret_key is_active is_admin
@@ -128,7 +128,7 @@ class TestAdminQuery:
     @pytest.mark.asyncio
     async def test_query_keypairs(self, create_app_and_client, get_headers,
                                   default_keypair, user_keypair):
-        app, client = await create_app_and_client(extras=['auth', 'admin'])
+        app, client = await create_app_and_client(modules=['auth', 'admin'])
 
         query = '{ keypairs(user_id: 2) { access_key secret_key } }'
         req_bytes = json.dumps({'query': query}).encode()
@@ -153,7 +153,7 @@ class TestAdminQuery:
     @pytest.mark.asyncio
     async def test_query_vfolders(self, create_app_and_client, get_headers,
                                   default_keypair):
-        app, client = await create_app_and_client(extras=['auth', 'admin'])
+        app, client = await create_app_and_client(modules=['auth', 'admin'])
 
         # Add test vfolder info to db
         async with app['dbpool'].acquire() as conn:
@@ -179,7 +179,7 @@ class TestAdminQuery:
     @pytest.mark.asyncio
     async def test_query_compute_sessions(self, create_app_and_client, get_headers,
                                           default_keypair):
-        app, client = await create_app_and_client(extras=['auth', 'admin'])
+        app, client = await create_app_and_client(modules=['auth', 'admin'])
 
         # Add test agent info to db (needed for foreign key for kernel)
         async with app['dbpool'].acquire() as conn:
@@ -237,7 +237,7 @@ class TestAdminQuery:
     @pytest.mark.asyncio
     async def test_query_compute_worker(self, create_app_and_client, get_headers,
                                         default_keypair):
-        app, client = await create_app_and_client(extras=['auth', 'admin'])
+        app, client = await create_app_and_client(modules=['auth', 'admin'])
 
         # Add test agent info to db (needed for foreign key for kernel)
         async with app['dbpool'].acquire() as conn:
@@ -319,7 +319,7 @@ class TestUserQuery:
     @pytest.mark.asyncio
     async def test_query_keypair(self, create_app_and_client, get_headers,
                                  user_keypair):
-        app, client = await create_app_and_client(extras=['auth', 'admin'])
+        app, client = await create_app_and_client(modules=['auth', 'admin'])
 
         query = '{ keypair { access_key secret_key is_active is_admin } }'
         req_bytes = json.dumps({'query': query}).encode()
@@ -336,7 +336,7 @@ class TestUserQuery:
     @pytest.mark.asyncio
     async def test_query_vfolders(self, create_app_and_client, get_headers,
                                   user_keypair):
-        app, client = await create_app_and_client(extras=['auth', 'admin'])
+        app, client = await create_app_and_client(modules=['auth', 'admin'])
 
         # Add test vfolder info to db
         async with app['dbpool'].acquire() as conn:
@@ -363,7 +363,7 @@ class TestUserQuery:
     @pytest.mark.asyncio
     async def test_query_compute_sessions(self, create_app_and_client, get_headers,
                                           user_keypair):
-        app, client = await create_app_and_client(extras=['auth', 'admin'])
+        app, client = await create_app_and_client(modules=['auth', 'admin'])
 
         # Add test agent info to db (needed for foreign key for kernel)
         async with app['dbpool'].acquire() as conn:
@@ -421,7 +421,7 @@ class TestUserQuery:
     @pytest.mark.asyncio
     async def test_query_compute_worker(self, create_app_and_client, get_headers,
                                         user_keypair):
-        app, client = await create_app_and_client(extras=['auth', 'admin'])
+        app, client = await create_app_and_client(modules=['auth', 'admin'])
 
         # Add test agent info to db (needed for foreign key for kernel)
         async with app['dbpool'].acquire() as conn:

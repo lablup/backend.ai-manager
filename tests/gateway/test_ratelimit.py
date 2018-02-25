@@ -7,7 +7,7 @@ import ai.backend.gateway.ratelimit as rlim
 
 @pytest.mark.asyncio
 async def test_check_rlim_for_non_authrized_query(create_app_and_client):
-    app, client = await create_app_and_client(extras=['auth', 'ratelimit'])
+    app, client = await create_app_and_client(modules=['auth', 'ratelimit'])
     ret = await client.get('/')
     assert ret.status == 200
     assert '1000' == ret.headers['X-RateLimit-Limit']
@@ -18,7 +18,7 @@ async def test_check_rlim_for_non_authrized_query(create_app_and_client):
 @pytest.mark.asyncio
 async def test_check_rlim_for_authrized_query(create_app_and_client,
                                               get_headers):
-    app, client = await create_app_and_client(extras=['auth', 'ratelimit'])
+    app, client = await create_app_and_client(modules=['auth', 'ratelimit'])
 
     url = '/v3/auth/test'
     req_bytes = json.dumps({'echo': 'hello!'}).encode()

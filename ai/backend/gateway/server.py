@@ -242,7 +242,8 @@ async def server_main(loop, pidx, _args):
     subapp_pkgs = [
         '.etcd', '.events',
         '.auth', '.ratelimit',
-        '.vfolder', '.admin', '.kernel'
+        '.vfolder', '.admin',
+        '.kernel', '.stream',
     ] + [
         ext_name for ext_name in app['config'].extensions
     ]

@@ -9,7 +9,7 @@ import aiohttp
 @pytest.fixture
 async def prepare_vfolder(request, create_app_and_client, get_headers,
                           event_loop):
-    app, client = await create_app_and_client(extras=['etcd', 'auth', 'vfolder'])
+    app, client = await create_app_and_client(modules=['etcd', 'auth', 'vfolder'])
 
     folder_name = 'test-folder'
     folder_id = None
