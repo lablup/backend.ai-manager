@@ -69,5 +69,8 @@ target/
 venv*/
 .python-version
 
+# for local integration tests
+ai/backend/agent
+
 # User configuratinos
 alembic.ini
