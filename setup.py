@@ -13,7 +13,7 @@ def read_src_version():
 requires = [
     'aioconsole>=0.1.3',
     'aiodataloader',
-    'aiohttp~=3.0.0',
+    'aiohttp>=3.0.0',
     'aiojobs>=0.1',
     'aiopg~=0.13.0',
     'aioredis~=1.0.0',
@@ -98,7 +98,7 @@ setup(
         'monitor': monitor_requires,
     },
     dependency_links=[
-        'https://github.com/achimnol/aiohttp@dynamic-subapp-prefix#egg=aiohttp',
+        'git+https://github.com/achimnol/aiohttp@dynamic-subapp-prefix#egg=aiohttp',
     ],
     data_files=[],
 )
