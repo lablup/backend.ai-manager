@@ -97,5 +97,8 @@ setup(
         'ci': ci_requires,
         'monitor': monitor_requires,
     },
+    dependency_links=[
+        'https://github.com/achimnol/aiohttp@dynamic-subapp-prefix#egg=aiohttp',
+    ],
     data_files=[],
 )
