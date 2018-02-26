@@ -22,7 +22,7 @@ requires = [
     'alembic~=0.9.2',
     'coloredlogs>=5.2',
     'ConfigArgParse==0.12',
-    'dataclasses ; python_version<3.7',
+    'dataclasses; python_version<"3.7"',
     'graphene~=2.0.1',
     'iso8601',  # required by graphene
     'namedlist',
