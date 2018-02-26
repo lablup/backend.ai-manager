@@ -316,8 +316,6 @@ async def create_app_and_client(request, test_id, test_ns,
             modules = []
         await gw_init(app)
         for mod in modules:
-            assert mod in {'etcd', 'events', 'auth', 'vfolder', 'admin',
-                           'ratelimit', 'kernel'}
             target_module = import_module(f'.{mod}', 'ai.backend.gateway')
             subapp, mw = getattr(target_module, 'create_app', None)()
             assert isinstance(subapp, web.Application)
