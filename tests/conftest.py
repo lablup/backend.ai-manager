@@ -16,7 +16,6 @@ import tempfile
 import aiodocker
 import aiohttp
 from aiohttp import web
-import aiojobs.aiohttp
 from aiopg.sa import create_engine
 import asyncio
 from dateutil.tz import tzutc

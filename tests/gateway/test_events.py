@@ -2,7 +2,6 @@ import asyncio
 from multiprocessing import Process
 import os
 import signal
-import sys
 
 import aiojobs.aiohttp
 import aiozmq
