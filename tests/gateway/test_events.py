@@ -2,7 +2,9 @@ import asyncio
 from multiprocessing import Process
 import os
 import signal
+import sys
 
+import aiojobs.aiohttp
 import aiozmq
 import pytest
 import zmq
@@ -14,33 +16,68 @@ from ai.backend.gateway.events import (
 
 
 @pytest.fixture
-def dispatcher(app, event_loop):
-    return EventDispatcher(app, loop=event_loop)
+async def dispatcher(app, event_loop):
+    aiojobs.aiohttp.setup(app)
+    app.freeze()
+    await app.on_startup.send(app)
+    scheduler = aiojobs.aiohttp.get_scheduler_from_app(app)
+    assert scheduler is not None
+
+    yield EventDispatcher(app, loop=event_loop)
+
+    await app.on_cleanup.send(app)
 
 
-class TestEventDispatcher:
+@pytest.mark.asyncio
+async def test_dispatch(app, dispatcher):
+    event_name = 'test-event-01'
+    assert len(dispatcher.handlers) == 0
 
-    def test_add_and_dispatch_handler(self, app, dispatcher, event_loop):
-        event_name = 'test-event'
-        assert len(dispatcher.handlers) == 0
+    async def acb(app, agent_id):
+        app['test-var'].add('async')
 
-        # Add test handler
-        def cb(app, agent_id):
-            print('executing test event callback...')
-            app['test-flag'] = True
-        dispatcher.add_handler(event_name, cb)
+    def scb(app, agent_id):
+        app['test-var'].add('sync')
 
-        assert dispatcher.handlers[event_name][0] == cb
+    dispatcher.add_handler(event_name, app, acb)
+    dispatcher.add_handler(event_name, app, scb)
 
-        # Dispatch the event
-        app['test-flag'] = False
-        dispatcher.dispatch(event_name, agent_id='')
+    # Dispatch the event
+    app['test-var'] = set()
+    await dispatcher.dispatch(event_name, agent_id='')
+    await asyncio.sleep(0.1)
+    assert len(app['test-var']) == 2
+    assert 'async' in app['test-var']
+    assert 'sync' in app['test-var']
 
-        # Run loop only once (https://stackoverflow.com/a/29797709/7397571)
-        event_loop.call_soon(event_loop.stop)
-        event_loop.run_forever()
 
-        assert app['test-flag']
+@pytest.mark.asyncio
+async def test_error_on_dispatch(app, dispatcher, event_loop):
+    event_name = 'test-event-02'
+    assert len(dispatcher.handlers) == 0
+    exception_log = []
+
+    def handle_exception(loop, context):
+        exc = context['exception']
+        exception_log.append(type(exc).__name__)
+
+    event_loop.set_exception_handler(handle_exception)
+
+    async def acb(app, agent_id):
+        raise ZeroDivisionError
+
+    def scb(app, agent_id):
+        raise OverflowError
+
+    dispatcher.add_handler(event_name, app, scb)
+    dispatcher.add_handler(event_name, app, acb)
+    await dispatcher.dispatch(event_name, agent_id='')
+    await asyncio.sleep(0.1)
+    assert len(exception_log) == 2
+    assert 'ZeroDivisionError' in exception_log
+    assert 'OverflowError' in exception_log
+
+    event_loop.set_exception_handler(None)
 
 
 @pytest.mark.asyncio
@@ -90,7 +127,8 @@ async def test_event_subscriber(app, dispatcher, event_loop, mocker):
     # Add test handler to dispatcher
     def cb(app, agent_id, *args):
         app['test-flag'] = True
-    dispatcher.add_handler(event_name, cb)
+
+    dispatcher.add_handler(event_name, app, cb)
 
     # Create a task that runs event subscriber
     sub_task = event_loop.create_task(event_subscriber(dispatcher))

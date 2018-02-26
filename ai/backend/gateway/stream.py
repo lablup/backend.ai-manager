@@ -176,9 +176,24 @@ async def stream_pty(request) -> web.Response:
     return ws
 
 
+async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
+    try:
+        kernel = await app['registry'].get_kernel(
+            kernel_id, (kernels.c.role, kernels.c.status), allow_stale=True)
+    except KernelNotFound:
+        return
+    if kernel.role == 'master':
+        stream_key = (kernel['sess_id'], kernel['access_key'])
+        for handler in app['stream_pty_handlers'][stream_key].copy():
+            handler.cancel()
+            await handler
+        # TODO: reconnect if restarting?
+
+
 async def init(app):
     app['stream_pty_handlers'] = defaultdict(set)
     app['stream_stdin_socks'] = defaultdict(set)
+    app['event_dispatcher'].add_handler('kernel_terminated', app, kernel_terminated)
 
 
 async def shutdown(app):

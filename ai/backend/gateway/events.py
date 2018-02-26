@@ -1,10 +1,13 @@
 import asyncio
 from collections import defaultdict
+from dataclasses import dataclass
 import functools
 import logging
 import sys
+from typing import Callable
 
 from aiohttp import web
+from aiojobs.aiohttp import get_scheduler_from_app
 import aiozmq
 import zmq
 
@@ -41,24 +44,32 @@ def event_router(_, pidx, args):
         ctx.term()
 
 
+@dataclass
+class EventHandler:
+    app: web.Application
+    callback: Callable
+
+
 class EventDispatcher:
 
     def __init__(self, app, loop=None):
-        self.app = app
         self.loop = loop if loop else asyncio.get_event_loop()
+        self.root_app = app
         self.handlers = defaultdict(list)
 
-    def add_handler(self, event_name, callback):
+    def add_handler(self, event_name, app, callback):
         assert callable(callback)
-        self.handlers[event_name].append(callback)
+        self.handlers[event_name].append(EventHandler(app, callback))
 
-    def dispatch(self, event_name, agent_id, args=tuple()):
+    async def dispatch(self, event_name, agent_id, args=tuple()):
         log.debug(f"DISPATCH({event_name}/{agent_id})")
+        scheduler = get_scheduler_from_app(self.root_app)
         for handler in self.handlers[event_name]:
-            if asyncio.iscoroutine(handler) or asyncio.iscoroutinefunction(handler):
-                self.loop.create_task(handler(self.app, agent_id, *args))
+            cb = handler.callback
+            if asyncio.iscoroutine(cb) or asyncio.iscoroutinefunction(cb):
+                await scheduler.spawn(cb(handler.app, agent_id, *args))
             else:
-                cb = functools.partial(handler, self.app, agent_id, *args)
+                cb = functools.partial(cb, handler.app, agent_id, *args)
                 self.loop.call_soon(cb)
 
 
@@ -71,7 +82,7 @@ async def event_subscriber(dispatcher):
             event_name = data[0].decode('ascii')
             agent_id = data[1].decode('utf8')
             args = msgpack.unpackb(data[2])
-            dispatcher.dispatch(event_name, agent_id, args)
+            await dispatcher.dispatch(event_name, agent_id, args)
     except asyncio.CancelledError:
         pass
     except:

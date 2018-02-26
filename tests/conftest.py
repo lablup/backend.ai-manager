@@ -213,7 +213,6 @@ async def app(event_loop, test_ns, test_db, unused_tcp_port):
 
     # num_workers = 1
     app['pidx'] = 0
-
     return app
 
 
@@ -328,7 +327,6 @@ async def create_app_and_client(request, test_id, test_ns,
         server_params = {}
         client_params = {}
 
-        aiojobs.aiohttp.setup(app)
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(

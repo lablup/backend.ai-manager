@@ -3,11 +3,13 @@ The main web / websocket server
 '''
 
 import asyncio
+import functools
 import importlib
 from ipaddress import ip_address
 import logging
 import os
 import ssl
+import sys
 
 import aiohttp
 from aiohttp import web
@@ -222,6 +224,20 @@ async def gw_shutdown(app):
     await app['dbpool'].wait_closed()
 
 
+def handle_loop_error(app, loop, context):
+    exception = context.get('exception')
+    if exception is not None:
+        app['sentry'].user_context(context)
+        if sys.exc_info()[0] is not None:
+            log.exception(f"Error inside event loop: {context['message']}")
+            app['sentry'].captureException(True)
+        else:
+            exc_info = (type(exception), exception, exception.__traceback__)
+            log.error(f"Error inside event loop: {context['message']}",
+                      exc_info=exc_info)
+            app['sentry'].capture('raven.events.Exception', exc_info)
+
+
 @aiotools.actxmgr
 async def server_main(loop, pidx, _args):
 
@@ -247,6 +263,8 @@ async def server_main(loop, pidx, _args):
     ] + [
         ext_name for ext_name in app['config'].extensions
     ]
+
+    loop.set_exception_handler(functools.partial(handle_loop_error, app))
 
     await gw_init(app)
     for pkgname in subapp_pkgs:

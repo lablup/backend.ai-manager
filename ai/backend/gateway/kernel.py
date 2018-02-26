@@ -119,7 +119,6 @@ async def create(request) -> web.Response:
     return web.json_response(resp, status=201, dumps=json.dumps)
 
 
-@catch_unexpected(log)
 async def update_instance_usage(app, inst_id):
     sess_ids = await app['registry'].get_sessions_in_instance(inst_id)
     all_sessions = await app['registry'].get_sessions(sess_ids)
@@ -151,30 +150,21 @@ async def update_instance_usage(app, inst_id):
             await conn.execute(query)
 
 
-@catch_unexpected(log)
 async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
     try:
         kernel = await app['registry'].get_kernel(
             kernel_id, (kernels.c.role, kernels.c.status), allow_stale=True)
     except KernelNotFound:
-        # Skip if missing
         return
-    # Skip if restarting
     if kernel.status != KernelStatus.RESTARTING:
         await app['registry'].mark_kernel_terminated(kernel_id)
         # TODO: spawn another kernel to keep the capacity of multi-container bundle?
-    if kernel.role == 'master':
-        sess_id = kernel['sess_id']
-        access_key = kernel['access_key']
-        stream_key = (sess_id, access_key)
-        for handler in app['stream_pty_handlers'][stream_key].copy():
-            handler.cancel()
-            await handler
-        if kernel.status != KernelStatus.RESTARTING:
-            await app['registry'].mark_session_terminated(sess_id, access_key)
+    if kernel.role == 'master' and kernel.status != KernelStatus.RESTARTING:
+        await app['registry'].mark_session_terminated(
+            kernel['sess_id'],
+            kernel['access_key'])
 
 
-@catch_unexpected(log)
 async def instance_started(app, agent_id):
     # TODO: make feedback to our auto-scaler
     await app['registry'].update_instance(agent_id, {
@@ -182,7 +172,6 @@ async def instance_started(app, agent_id):
     })
 
 
-@catch_unexpected(log)
 async def instance_terminated(app, agent_id, reason):
     if reason == 'agent-lost':
         await app['registry'].mark_agent_terminated(agent_id, AgentStatus.LOST)
@@ -197,7 +186,6 @@ async def instance_terminated(app, agent_id, reason):
         await app['registry'].mark_agent_terminated(agent_id, AgentStatus.TERMINATED)
 
 
-@catch_unexpected(log)
 async def instance_heartbeat(app, agent_id, agent_info):
     await app['registry'].handle_heartbeat(agent_id, agent_info)
 
@@ -210,14 +198,13 @@ async def check_agent_lost(app, interval):
         async for agent_id, prev in app['redis_live'].ihscan('last_seen'):
             prev = datetime.fromtimestamp(float(prev), tzutc())
             if now - prev > timeout:
-                app['event_dispatcher'].dispatch('instance_terminated',
-                                                 agent_id, ('agent-lost', ))
+                await app['event_dispatcher'].dispatch('instance_terminated',
+                                                       agent_id, ('agent-lost', ))
     except asyncio.CancelledError:
         pass
 
 
 # NOTE: This event is ignored during the grace period.
-@catch_unexpected(log)
 async def instance_stats(app, agent_id, kern_stats):
     await app['registry'].handle_stats(agent_id, kern_stats)
 
@@ -514,11 +501,12 @@ async def get_logs(request) -> web.Response:
 
 
 async def init(app):
-    app['event_dispatcher'].add_handler('kernel_terminated', kernel_terminated)
-    app['event_dispatcher'].add_handler('instance_started', instance_started)
-    app['event_dispatcher'].add_handler('instance_terminated', instance_terminated)
-    app['event_dispatcher'].add_handler('instance_heartbeat', instance_heartbeat)
-    app['event_dispatcher'].add_handler('instance_stats', instance_stats)
+    event_dispatcher = app['event_dispatcher']
+    event_dispatcher.add_handler('kernel_terminated', app, kernel_terminated)
+    event_dispatcher.add_handler('instance_started', app, instance_started)
+    event_dispatcher.add_handler('instance_terminated', app, instance_terminated)
+    event_dispatcher.add_handler('instance_heartbeat', app, instance_heartbeat)
+    event_dispatcher.add_handler('instance_stats', app, instance_stats)
 
     # Scan ALIVE agents
     if app['pidx'] == 0:
