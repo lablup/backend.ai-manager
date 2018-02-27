@@ -91,11 +91,12 @@ async def api_middleware(request, handler):
         new_match_info = await request.app.router.resolve(request)
         _handler = new_match_info.handler
         request._match_info = new_match_info
-    if request.match_info.http_exception is not None:
-        if request.match_info.http_exception.status_code == 404:
+    ex = request.match_info.http_exception
+    if ex is not None:
+        if ex.status_code == 404:
             raise GenericNotFound
         log.warning(f'Bad request: {ex!r}')
-        return GenericBadRequest
+        raise GenericBadRequest
     version = int(request.match_info.get('version', 3))
     if version < 1 or version > 3:
         raise GenericBadRequest('Unsupported API major version.')
