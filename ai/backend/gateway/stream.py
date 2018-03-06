@@ -16,14 +16,15 @@ import aiozmq
 from aiozmq import create_zmq_stream as aiozmq_sock
 import zmq
 
+from .auth import auth_required
 from .exceptions import KernelNotFound
-from .utils import server_ready_required, not_impl_stub
+from .utils import not_impl_stub
 from ..manager.models import kernels
 
 log = logging.getLogger('ai.backend.gateway.stream')
 
 
-@server_ready_required
+@auth_required
 async def stream_pty(request) -> web.Response:
     app = request.app
     registry = request.app['registry']
