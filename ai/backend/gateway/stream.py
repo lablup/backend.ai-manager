@@ -148,7 +148,7 @@ async def stream_pty(request) -> web.Response:
                     continue
                 if ws.closed:
                     break
-                ws.send_str(json.dumps({
+                await ws.send_str(json.dumps({
                     'type': 'out',
                     'data': base64.b64encode(data[0]).decode('ascii'),
                 }, ensure_ascii=False))
