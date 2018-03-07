@@ -55,7 +55,7 @@ LATEST_API_VERSION = 'v3.20170615'
 
 log = logging.getLogger('ai.backend.gateway.server')
 
-public_interfaces = [
+PUBLIC_INTERFACES = [
     'pidx',
     'status',
     'config',
@@ -125,6 +125,11 @@ async def exception_middleware(request, handler):
             raise GenericNotFound
         log.warning(f'Bad request: {ex!r}')
         raise GenericBadRequest
+    except asyncio.CancelledError:
+        # The server is closing or the client has disconnected in the middle of
+        # request.  Atomic requests are still executed to their ends.
+        log.warning(f'Request cancelled ({request.method} {request.rel_url})')
+        return web.Response(text='Request cancelled.', status=408)
     except Exception as ex:
         app['sentry'].captureException()
         log.exception('Uncaught exception in HTTP request handlers')
@@ -268,8 +273,13 @@ async def server_main(loop, pidx, _args):
         ext_name for ext_name in app['config'].extensions
     ]
 
-    loop.set_exception_handler(functools.partial(handle_loop_error, app))
-
+    global_exception_handler = functools.partial(handle_loop_error, app)
+    scheduler_opts = {
+        'close_timeout': 30,
+        'exception_handler': global_exception_handler,
+    }
+    loop.set_exception_handler(global_exception_handler)
+    aiojobs.aiohttp.setup(app, **scheduler_opts)
     await gw_init(app)
     for pkgname in subapp_pkgs:
         subapp_mod = importlib.import_module(pkgname, 'ai.backend.gateway')
@@ -277,13 +287,13 @@ async def server_main(loop, pidx, _args):
         assert isinstance(subapp, web.Application)
         # Allow subapp's access to the root app properties.
         # These are the public APIs exposed to extensions as well.
-        for key in public_interfaces:
+        for key in PUBLIC_INTERFACES:
             subapp[key] = app[key]
         prefix = subapp.get('prefix', pkgname.split('.')[-1].replace('_', '-'))
+        aiojobs.aiohttp.setup(subapp, **scheduler_opts)
         app.add_subapp(r'/v{version:\d+}/' + prefix, subapp)
         app.middlewares.extend(global_middlewares)
 
-    aiojobs.aiohttp.setup(app)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(

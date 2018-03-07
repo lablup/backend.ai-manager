@@ -7,6 +7,7 @@ import logging
 import secrets
 
 from aiohttp import web
+from aiojobs.aiohttp import atomic
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
 
@@ -182,6 +183,7 @@ def admin_required(handler):
 
 
 @auth_required
+@atomic
 async def auth_test(request) -> web.Response:
     try:
         params = json.loads(await request.text())

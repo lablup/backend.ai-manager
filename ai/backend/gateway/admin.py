@@ -6,6 +6,7 @@ import traceback
 from typing import Mapping
 
 from aiohttp import web
+from aiojobs.aiohttp import atomic
 import graphene
 from graphql.execution.executors.asyncio import AsyncioExecutor
 from graphql.error.located_error import GraphQLLocatedError
@@ -24,6 +25,7 @@ log = logging.getLogger('ai.backend.gateway.admin')
 
 
 @auth_required
+@atomic
 async def handle_gql(request: web.Request) -> web.Response:
     executor = request.app['admin.gql_executor']
     if request['is_admin']:
