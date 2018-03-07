@@ -275,6 +275,7 @@ async def server_main(loop, pidx, _args):
 
     global_exception_handler = functools.partial(handle_loop_error, app)
     scheduler_opts = {
+        'limit': 2048,
         'close_timeout': 30,
         'exception_handler': global_exception_handler,
     }
