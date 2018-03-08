@@ -41,7 +41,7 @@ from . import GatewayStatus
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
 from .etcd import ConfigServer
 from .events import EventDispatcher, event_subscriber
-from .exceptions import (BackendError, GenericNotFound,
+from .exceptions import (BackendError, MethodNotAllowed, GenericNotFound,
                          GenericBadRequest, InternalServerError)
 from .config import load_config
 from .events import event_router
@@ -93,10 +93,8 @@ async def api_middleware(request, handler):
         request._match_info = new_match_info
     ex = request.match_info.http_exception
     if ex is not None:
-        if ex.status_code == 404:
-            raise GenericNotFound
-        log.warning(f'Bad request: {ex!r}')
-        raise GenericBadRequest
+        # handled by exception_middleware
+        raise ex
     version = int(request.match_info.get('version', 3))
     if version < 1 or version > 3:
         raise GenericBadRequest('Unsupported API major version.')
@@ -123,6 +121,8 @@ async def exception_middleware(request, handler):
         statsd.increment(f'ai.backend.gateway.api.status.{ex.status_code}')
         if ex.status_code == 404:
             raise GenericNotFound
+        if ex.status_code == 405:
+            raise MethodNotAllowed
         log.warning(f'Bad request: {ex!r}')
         raise GenericBadRequest
     except asyncio.CancelledError:
