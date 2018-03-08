@@ -21,7 +21,7 @@ Changes
 - Improve dockerization support. (#62)
 
 - Fix "X-Method-Override" support that was interfering with RFC-7807-style error
-  reporting.
+  reporting.  Also return correct HTTP status code when failed route resolution.
 
 1.2.2 (2018-02-14)
 ------------------
