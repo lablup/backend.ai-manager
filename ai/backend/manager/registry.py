@@ -155,7 +155,9 @@ class AgentRegistry:
                 await cancellation_callback()
             raise
         except AgentError as e:
-            log.exception(f'{op}: agent-side error')
+            if not issubclass(e.args[0], AssertionError):
+                log.exception(f'{op}: agent-side error')
+            # TODO: wrap some assertion errors as "invalid requests"
             if set_error:
                 await self.set_session_status(sess_id, access_key,
                                               KernelStatus.ERROR,
