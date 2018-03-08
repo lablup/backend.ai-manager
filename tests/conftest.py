@@ -11,11 +11,11 @@ import shutil
 import signal
 import subprocess
 import tempfile
-# import ssl
 
 import aiodocker
 import aiohttp
 from aiohttp import web
+import aiojobs.aiohttp
 from aiopg.sa import create_engine
 import asyncio
 from dateutil.tz import tzutc
@@ -204,6 +204,7 @@ async def app(event_loop, test_ns, test_db, unused_tcp_port):
     app['config'].service_ip = '127.0.0.1'
     app['config'].service_port = unused_tcp_port
     app['config'].verbose = False
+    # import ssl
     # app['config'].ssl_cert = here / 'sample-ssl-cert' / 'sample.crt'
     # app['config'].ssl_key = here / 'sample-ssl-cert' / 'sample.key'
     # app['sslctx'] = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
@@ -312,6 +313,10 @@ async def create_app_and_client(request, test_id, test_ns,
 
         if modules is None:
             modules = []
+        scheduler_opts = {
+            'close_timeout': 10,
+        }
+        aiojobs.aiohttp.setup(app, **scheduler_opts)
         await gw_init(app)
         for mod in modules:
             target_module = import_module(f'.{mod}', 'ai.backend.gateway')
@@ -320,6 +325,7 @@ async def create_app_and_client(request, test_id, test_ns,
             for key in public_interfaces:
                 subapp[key] = app[key]
             prefix = subapp.get('prefix', mod.replace('_', '-'))
+            aiojobs.aiohttp.setup(subapp, **scheduler_opts)
             app.add_subapp(r'/v{version:\d+}/' + prefix, subapp)
             app.middlewares.extend(mw)
 
@@ -386,42 +392,44 @@ async def create_app_and_client(request, test_id, test_ns,
         client = Client(aiohttp.ClientSession(loop=event_loop, **client_params), url)
         return app, client
 
-    yield maker
+    try:
+        yield maker
+    finally:
 
-    dbpool = app.get('dbpool')
-    if dbpool is not None:
-        # Clean DB tables for subsequent tests.
-        async with dbpool.acquire() as conn, conn.begin():
-            await conn.execute((vfolders.delete()))
-            await conn.execute((kernels.delete()))
-            await conn.execute((agents.delete()))
-            access_key = default_keypair['access_key']
-            query = (sa.update(keypairs)
-                       .values({
-                           'concurrency_used': 0,
-                           'num_queries': 0,
-                       })
-                       .where(keypairs.c.access_key == access_key))
-            await conn.execute(query)
-            access_key = user_keypair['access_key']
-            query = (sa.update(keypairs)
-                       .values({
-                           'concurrency_used': 0,
-                           'num_queries': 0,
-                       })
-                       .where(keypairs.c.access_key == access_key))
-            await conn.execute(query)
+        dbpool = app.get('dbpool')
+        if dbpool is not None:
+            # Clean DB tables for subsequent tests.
+            async with dbpool.acquire() as conn, conn.begin():
+                await conn.execute((vfolders.delete()))
+                await conn.execute((kernels.delete()))
+                await conn.execute((agents.delete()))
+                access_key = default_keypair['access_key']
+                query = (sa.update(keypairs)
+                           .values({
+                               'concurrency_used': 0,
+                               'num_queries': 0,
+                           })
+                           .where(keypairs.c.access_key == access_key))
+                await conn.execute(query)
+                access_key = user_keypair['access_key']
+                query = (sa.update(keypairs)
+                           .values({
+                               'concurrency_used': 0,
+                               'num_queries': 0,
+                           })
+                           .where(keypairs.c.access_key == access_key))
+                await conn.execute(query)
 
-    # Terminate client and servers
-    if client:
-        await client.close()
-    if runner:
-        await runner.cleanup()
-    await gw_shutdown(app)
+        # Terminate client and servers
+        if client:
+            await client.close()
+        if runner:
+            await runner.cleanup()
+        await gw_shutdown(app)
 
-    if extra_proc:
-        os.kill(extra_proc.pid, signal.SIGINT)
-        extra_proc.join()
+        if extra_proc:
+            os.kill(extra_proc.pid, signal.SIGINT)
+            extra_proc.join()
 
 
 @pytest.fixture(scope='session')
