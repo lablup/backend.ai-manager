@@ -1,8 +1,11 @@
 Changes
 =======
 
-1.3.0 (to be released)
+1.4.0 (to be released)
 ----------------------
+
+1.3.0 (2018-03-08)
+------------------
 
 - Now the Backend.AI gateway uses a modular architecture where you can add 3rd-party
   extensions as aiohttp.web.Application and middlewares via ``BACKEND_EXTENSIONS``
