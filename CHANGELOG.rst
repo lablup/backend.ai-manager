@@ -9,12 +9,16 @@ Changes
   environment variable. (#65)
 
 - Adopt aiojobs as the main coroutine task scheduler. (#65)
+  Using this, improve handler/task cancellation as well.
 
 - Public non-authorized APIs become accessible without "Date" HTTP header set. (#65)
 
 - Upgrade aiohttp to v3.0 release. (#64)
 
 - Improve dockerization support. (#62)
+
+- Fix "X-Method-Override" support that was interfering with RFC-7807-style error
+  reporting.
 
 1.2.2 (2018-02-14)
 ------------------
