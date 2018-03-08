@@ -317,7 +317,7 @@ async def create_app_and_client(request, test_id, test_ns,
             target_module = import_module(f'.{mod}', 'ai.backend.gateway')
             subapp, mw = getattr(target_module, 'create_app', None)()
             assert isinstance(subapp, web.Application)
-            for key in public_interfaces:
+            for key in PUBLIC_INTERFACES:
                 subapp[key] = app[key]
             prefix = subapp.get('prefix', mod.replace('_', '-'))
             app.add_subapp(r'/v{version:\d+}/' + prefix, subapp)
