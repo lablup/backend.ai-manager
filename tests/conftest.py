@@ -28,7 +28,7 @@ from ai.backend.gateway.config import load_config
 from ai.backend.gateway.events import event_router
 from ai.backend.gateway.server import (
     gw_init, gw_shutdown, gw_args,
-    public_interfaces)
+    PUBLIC_INTERFACES)
 from ai.backend.manager import models
 from ai.backend.manager.models import fixtures, agents, kernels, keypairs, vfolders
 from ai.backend.manager.cli.etcd import delete, put, update_images, update_aliases
@@ -322,7 +322,7 @@ async def create_app_and_client(request, test_id, test_ns,
             target_module = import_module(f'.{mod}', 'ai.backend.gateway')
             subapp, mw = getattr(target_module, 'create_app', None)()
             assert isinstance(subapp, web.Application)
-            for key in public_interfaces:
+            for key in PUBLIC_INTERFACES:
                 subapp[key] = app[key]
             prefix = subapp.get('prefix', mod.replace('_', '-'))
             aiojobs.aiohttp.setup(subapp, **scheduler_opts)
