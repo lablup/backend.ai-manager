@@ -48,6 +48,11 @@ class GenericBadRequest(web.HTTPBadRequest, BackendError):
     error_title = 'Bad request.'
 
 
+class MethodNotAllowed(web.HTTPMethodNotAllowed, BackendError):
+    error_type  = 'https://api.backend.ai/probs/method-not-allowed'
+    error_title = 'HTTP Method Not Allowed.'
+
+
 class InternalServerError(web.HTTPInternalServerError, BackendError):
     error_type  = 'https://api.backend.ai/probs/internal-server-error'
     error_title = 'Internal server error.'
