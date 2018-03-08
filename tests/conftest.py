@@ -28,7 +28,7 @@ from ai.backend.gateway.config import load_config
 from ai.backend.gateway.events import event_router
 from ai.backend.gateway.server import (
     gw_init, gw_shutdown, gw_args,
-    public_interfaces)
+    PUBLIC_INTERFACES)
 from ai.backend.manager import models
 from ai.backend.manager.models import fixtures, agents, kernels, keypairs, vfolders
 from ai.backend.manager.cli.etcd import delete, put, update_images, update_aliases
