@@ -4,6 +4,12 @@ Changes
 1.4.0 (to be released)
 ----------------------
 
+1.3.1 (2018-03-14)
+------------------
+
+- Allow separate upgrade of the manager from v1.2 to v1.3 by extrapolating a new
+  "kernel_host" field in the return value of the internal krenel creation RPC call.
+
 1.3.0 (2018-03-08)
 ------------------
 
