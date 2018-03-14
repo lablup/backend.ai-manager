@@ -11,6 +11,7 @@ from async_timeout import timeout as _timeout
 from dateutil.tz import tzutc
 import snappy
 import sqlalchemy as sa
+from yarl import URL
 import zmq
 
 from ai.backend.common import msgpack
@@ -458,12 +459,14 @@ class AgentRegistry:
                 log.debug(f'create_session("{sess_id}", "{access_key}") -> '
                           f'created on {agent_id}\n{created_info!r}')
                 assert str(kernel_id) == created_info['id']
+                agent_host = URL(agent_addr).host
+                kernel_host = created_info.get('kernel_host', agent_host)
                 kernel_access_info = {
                     'id': kernel_id,
                     'sess_id': sess_id,
                     'agent': agent_id,
                     'agent_addr': agent_addr,
-                    'kernel_host': created_info['kernel_host'],
+                    'kernel_host': kernel_host,
                 }
                 query = (kernels.update()
                                 .values({
@@ -471,7 +474,7 @@ class AgentRegistry:
                                     'container_id': created_info['container_id'],
                                     'cpu_set': list(created_info['cpu_set']),
                                     'gpu_set': list(created_info['gpu_set']),
-                                    'kernel_host': created_info['kernel_host'],
+                                    'kernel_host': kernel_host,
                                     'repl_in_port': created_info['repl_in_port'],
                                     'repl_out_port': created_info['repl_out_port'],
                                     'stdin_port': created_info['stdin_port'],
