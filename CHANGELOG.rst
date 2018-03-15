@@ -1,8 +1,13 @@
 Changes
 =======
 
-1.3.2 (to be released)
+1.3.3 (to be released)
 ----------------------
+
+1.3.2 (2018-03-15)
+------------------
+
+- Technical release to fix backend.ai-common depedency version.
 
 1.3.1 (2018-03-14)
 ------------------

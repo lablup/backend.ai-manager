@@ -34,7 +34,7 @@ requires = [
     'pyzmq>=16.0',
     'SQLAlchemy~=1.1.14',
     'uvloop~=0.8.0',
-    'backend.ai-common~=1.2.0',
+    'backend.ai-common~=1.3.0',
 ]
 build_requires = [
     'wheel',
