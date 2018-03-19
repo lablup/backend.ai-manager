@@ -4,6 +4,12 @@ Changes
 1.4.0 (to be released)
 ----------------------
 
+1.3.3 (2018-03-20)
+------------------
+
+- Improve vfolder APIs to handle sub-directories correctly when uploading and use
+  the configured mount directory ("volumes/_mount" key in our etcd namespace).
+
 1.3.2 (2018-03-15)
 ------------------
 
