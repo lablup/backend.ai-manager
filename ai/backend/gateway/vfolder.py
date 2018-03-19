@@ -7,14 +7,13 @@ import uuid
 
 from aiohttp import web
 import sqlalchemy as sa
+import psycopg2
 
 from .auth import auth_required
-from .exceptions import FolderNotFound
+from .exceptions import FolderNotFound, InvalidAPIParameters
 from ..manager.models import vfolders
 
 log = logging.getLogger('ai.backend.gateway.vfolder')
-
-VF_ROOT = None
 
 _rx_slug = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$')
 
@@ -29,11 +28,14 @@ async def create(request):
     assert _rx_slug.search(params['name']) is not None
     async with dbpool.acquire() as conn:
         folder_id = uuid.uuid4().hex
-        os.mkdir(VF_ROOT / folder_id)
+        # TODO: make this configurable
+        folder_host = 'azure-shard01'
+        folder_path = (request.app['VFOLDER_MOUNT'] / folder_host / folder_id)
+        folder_path.mkdir(parents=True, exist_ok=True)
         query = (vfolders.insert().values({
             'id': folder_id,
             'name': params['name'],
-            'host': 'azure-shard01',
+            'host': folder_host,
             'last_used': None,
             'belongs_to': access_key,
         }))
@@ -41,8 +43,10 @@ async def create(request):
             'id': folder_id,
             'name': params['name'],
         }
-        # TODO: check for duplicate name
-        result = await conn.execute(query)
+        try:
+            result = await conn.execute(query)
+        except psycopg2.DataError as e:
+            raise InvalidAPIParameters
         assert result.rowcount == 1
     return web.json_response(resp, status=201)
 
@@ -57,7 +61,10 @@ async def list_folders(request):
         query = (sa.select('*')
                    .select_from(vfolders)
                    .where(vfolders.c.belongs_to == access_key))
-        result = await conn.execute(query)
+        try:
+            result = await conn.execute(query)
+        except psycopg2.DataError as e:
+            raise InvalidAPIParameters
         async for row in result:
             resp.append({
                 'name': row.name,
@@ -78,12 +85,15 @@ async def get_info(request):
                    .select_from(vfolders)
                    .where((vfolders.c.belongs_to == access_key) &
                           (vfolders.c.name == folder_name)))
-        result = await conn.execute(query)
+        try:
+            result = await conn.execute(query)
+        except psycopg2.DataError as e:
+            raise InvalidAPIParameters
         row = await result.first()
         if row is None:
             raise FolderNotFound()
         # TODO: handle nested directory structure
-        folder_path = (VF_ROOT / row.id.hex)
+        folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
         num_files = len(list(folder_path.iterdir()))
         resp = {
             'name': row.name,
@@ -105,12 +115,15 @@ async def upload(request):
                    .select_from(vfolders)
                    .where((vfolders.c.belongs_to == access_key) &
                           (vfolders.c.name == folder_name)))
-        result = await conn.execute(query)
+        try:
+            result = await conn.execute(query)
+        except psycopg2.DataError as e:
+            raise InvalidAPIParameters
         row = await result.first()
         if row is None:
             log.error('why here')
             raise FolderNotFound()
-        folder_path = (VF_ROOT / row.id.hex)
+        folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
         reader = await request.multipart()
         file_count = 0
         while True:
@@ -119,6 +132,8 @@ async def upload(request):
                 break
             # TODO: impose limits on file size and count
             file_count += 1
+            file_dir = (folder_path / file.filename).parent
+            file_dir.mkdir(parents=True, exist_ok=True)
             with open(folder_path / file.filename, 'wb') as f:
                 while not file.at_eof():
                     chunk = await file.read_chunk(size=8192)
@@ -137,13 +152,16 @@ async def delete(request):
                    .select_from(vfolders)
                    .where((vfolders.c.belongs_to == access_key) &
                           (vfolders.c.name == folder_name)))
-        result = await conn.execute(query)
+        try:
+            result = await conn.execute(query)
+        except psycopg2.DataError as e:
+            raise InvalidAPIParameters
         row = await result.first()
         if row is None:
             raise FolderNotFound()
-        folder_id = row['id'].hex
+        folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
         try:
-            shutil.rmtree(VF_ROOT / folder_id)
+            shutil.rmtree(folder_path)
         except IOError:
             pass
         # TODO: mark it deleted instead of really deleting
@@ -154,12 +172,10 @@ async def delete(request):
 
 
 async def init(app):
-    global VF_ROOT
     mount_prefix = await app['config_server'].etcd.get('volumes/_mount')
     if mount_prefix is None:
         mount_prefix = '/mnt'
-    root_name = await app['config_server'].etcd.get('volumes/_vfroot')
-    VF_ROOT = Path(mount_prefix) / root_name
+    app['VFOLDER_MOUNT'] = Path(mount_prefix)
 
 
 async def shutdown(app):
