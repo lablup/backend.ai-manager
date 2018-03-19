@@ -26,7 +26,7 @@ requires = [
     'graphene~=2.0.1',
     'iso8601',  # required by graphene
     'namedlist',
-    'psycopg2~=2.7.0',
+    'psycopg2-binary>=2.7.0',
     'python-dateutil>=2.5',
     'python-snappy~=0.5.1',
     'pytz',
@@ -34,7 +34,7 @@ requires = [
     'pyzmq>=16.0',
     'SQLAlchemy~=1.1.14',
     'uvloop~=0.8.0',
-    'backend.ai-common~=1.2.0',
+    'backend.ai-common~=1.3.0',
 ]
 build_requires = [
     'wheel',

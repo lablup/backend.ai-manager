@@ -4,6 +4,11 @@ Changes
 1.4.0 (to be released)
 ----------------------
 
+1.3.2 (2018-03-15)
+------------------
+
+- Technical release to fix backend.ai-common depedency version.
+
 1.3.1 (2018-03-14)
 ------------------
 
@@ -27,7 +32,7 @@ Changes
 - Improve dockerization support. (#62)
 
 - Fix "X-Method-Override" support that was interfering with RFC-7807-style error
-  reporting.
+  reporting.  Also return correct HTTP status code when failed route resolution.
 
 1.2.2 (2018-02-14)
 ------------------

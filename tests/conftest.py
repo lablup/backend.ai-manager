@@ -4,7 +4,7 @@ import hashlib, hmac
 from importlib import import_module
 import multiprocessing as mp
 import os
-import pathlib
+from pathlib import Path
 import re
 import secrets
 import shutil
@@ -34,7 +34,7 @@ from ai.backend.manager.models import fixtures, agents, kernels, keypairs, vfold
 from ai.backend.manager.cli.etcd import delete, put, update_images, update_aliases
 from ai.backend.manager.cli.dbschema import oneshot
 
-here = pathlib.Path(__file__).parent
+here = Path(__file__).parent
 
 
 @pytest.fixture(scope='session')
@@ -53,12 +53,12 @@ def test_db(test_id):
 
 
 @pytest.fixture(scope='session')
-def test_vfroot(test_id):
-    return f'test-vf-{test_id}'
+def folder_mount(test_id):
+    return Path(f'/tmp/backend.ai/vfolders-{test_id}')
 
 
 @pytest.fixture(scope='session', autouse=True)
-def prepare_and_cleanup_databases(request, test_ns, test_db, test_vfroot):
+def prepare_and_cleanup_databases(request, test_ns, test_db, folder_mount):
     os.environ['BACKEND_NAMESPACE'] = test_ns
     os.environ['BACKEND_DB_NAME'] = test_db
 
@@ -71,10 +71,7 @@ def prepare_and_cleanup_databases(request, test_ns, test_db, test_vfroot):
     args = Namespace(file=samples / 'image-aliases.yml',
                      etcd_addr=etcd_addr, namespace=test_ns)
     update_aliases(args)
-    args = Namespace(key='volumes/_mount', value='/tmp',
-                     etcd_addr=etcd_addr, namespace=test_ns)
-    put(args)
-    args = Namespace(key='volumes/_vfroot', value=test_vfroot,
+    args = Namespace(key='volumes/_mount', value=str(folder_mount),
                      etcd_addr=etcd_addr, namespace=test_ns)
     put(args)
 
@@ -123,7 +120,7 @@ def prepare_and_cleanup_databases(request, test_ns, test_db, test_vfroot):
         alembic_cfg.write(alembic_cfg_data)
         alembic_cfg.flush()
         args = Namespace(
-            config=pathlib.Path(alembic_cfg.name),
+            config=Path(alembic_cfg.name),
             schema_version='head')
         oneshot(args)
 

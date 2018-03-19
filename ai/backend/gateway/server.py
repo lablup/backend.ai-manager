@@ -235,16 +235,16 @@ async def gw_shutdown(app):
 
 def handle_loop_error(app, loop, context):
     exception = context.get('exception')
+    msg = context.get('message', '(empty message)')
     if exception is not None:
         app['sentry'].user_context(context)
         if sys.exc_info()[0] is not None:
-            log.exception(f"Error inside event loop: {context['message']}")
+            log.exception(f"Error inside event loop: {msg}")
             app['sentry'].captureException(True)
         else:
             exc_info = (type(exception), exception, exception.__traceback__)
-            log.error(f"Error inside event loop: {context['message']}",
-                      exc_info=exc_info)
-            app['sentry'].capture('raven.events.Exception', exc_info)
+            log.error(f"Error inside event loop: {msg}", exc_info=exc_info)
+            app['sentry'].captureException(exc_info)
 
 
 @aiotools.actxmgr
