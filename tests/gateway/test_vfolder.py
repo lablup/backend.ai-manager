@@ -1,31 +1,32 @@
 import json
 import os
-import pytest
+from pathlib import Path
 import shutil
 
+import pytest
 import aiohttp
 
 
 @pytest.fixture
-async def prepare_vfolder(request, create_app_and_client, get_headers,
-                          event_loop):
+def folder_host():
+    # FIXME: generalize this
+    return 'azure-shard01'
+
+
+@pytest.fixture
+async def prepare_vfolder(event_loop, request, create_app_and_client, get_headers,
+                          folder_mount):
     app, client = await create_app_and_client(modules=['etcd', 'auth', 'vfolder'])
 
     folder_name = 'test-folder'
     folder_id = None
 
-    from ai.backend.gateway.vfolder import VF_ROOT
-    os.makedirs(VF_ROOT, exist_ok=True)
+    folder_mount.mkdir(parents=True, exist_ok=True)
 
-    def finalizer():
-        async def fin():
-            # Delete test folder
-            from ai.backend.gateway.vfolder import VF_ROOT
-            if VF_ROOT and folder_id and (VF_ROOT / folder_id).exists():
-                shutil.rmtree(VF_ROOT / folder_id)
-        event_loop.run_until_complete(fin())
+    def _remove_folder_mount():
+        shutil.rmtree(folder_mount)
 
-    request.addfinalizer(finalizer)
+    request.addfinalizer(_remove_folder_mount)
 
     async def create_vfolder():
         nonlocal folder_id
@@ -98,7 +99,8 @@ async def test_get_info(prepare_vfolder, get_headers):
 
 
 @pytest.mark.asyncio
-async def test_upload_file(prepare_vfolder, get_headers, tmpdir):
+async def test_upload_file(prepare_vfolder, get_headers, tmpdir,
+                           folder_mount, folder_host):
     app, client, create_vfolder = prepare_vfolder
     folder_info = await create_vfolder()
 
@@ -119,23 +121,24 @@ async def test_upload_file(prepare_vfolder, get_headers, tmpdir):
     ret = await client.post(url, data=data, headers=headers)
 
     # Get paths for files uploaded to virtual folder
-    from ai.backend.gateway.vfolder import VF_ROOT
     vf_fname1 = p1.strpath.split('/')[-1]
     vf_fname2 = p2.strpath.split('/')[-1]
+    folder_path = (folder_mount / folder_host / folder_info['id'])
 
     assert ret.status == 201
-    assert 2 == len(list((VF_ROOT / folder_info['id']).glob('**/*.txt')))
-    assert (VF_ROOT / folder_info['id'] / vf_fname1).exists()
-    assert (VF_ROOT / folder_info['id'] / vf_fname2).exists()
+    assert 2 == len(list(folder_path.glob('**/*.txt')))
+    assert (folder_path / vf_fname1).exists()
+    assert (folder_path / vf_fname2).exists()
 
 
 @pytest.mark.asyncio
-async def test_delete_vfolder(prepare_vfolder, get_headers):
+async def test_delete_vfolder(prepare_vfolder, get_headers,
+                              folder_mount, folder_host):
     app, client, create_vfolder = prepare_vfolder
     folder_info = await create_vfolder()
+    folder_path = (folder_mount / folder_host / folder_info['id'])
 
-    from ai.backend.gateway.vfolder import VF_ROOT
-    assert (VF_ROOT / folder_info['id']).exists()
+    assert folder_path.exists()
 
     url = f'/v3/folders/{folder_info["name"]}'
     req_bytes = json.dumps({}).encode()
@@ -143,4 +146,4 @@ async def test_delete_vfolder(prepare_vfolder, get_headers):
     ret = await client.delete(url, data=req_bytes, headers=headers)
 
     assert ret.status == 204
-    assert not (VF_ROOT / folder_info['id']).exists()
+    assert not folder_path.exists()
