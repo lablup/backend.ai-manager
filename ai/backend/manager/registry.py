@@ -64,6 +64,7 @@ async def RPCContext(addr, timeout=10):
     finally:
         if server:
             server.close()
+            await server.wait_closed()
 
 
 @aiotools.actxmgr
@@ -72,7 +73,8 @@ async def reenter_txn(pool, conn):
         async with pool.acquire() as conn, conn.begin():
             yield conn
     else:
-        yield conn
+        async with conn.begin_nested():
+            yield conn
 
 
 class AgentRegistry:
@@ -101,7 +103,7 @@ class AgentRegistry:
         pass
 
     async def get_instance(self, inst_id, field=None):
-        async with self.dbpool.acquire() as conn:
+        async with self.dbpool.acquire() as conn, conn.begin():
             query = (sa.select(['id', field] if field else None)
                        .select_from(agents)
                        .where(agents.c.id == inst_id))
@@ -112,7 +114,7 @@ class AgentRegistry:
             return row
 
     async def enumerate_instances(self, check_shadow=True):
-        async with self.dbpool.acquire() as conn:
+        async with self.dbpool.acquire() as conn, conn.begin():
             query = (sa.select('*').select_from(agents))
             if check_shadow:
                 query = query.where(agents.c.status == AgentStatus.ALIVE)
@@ -120,7 +122,7 @@ class AgentRegistry:
                 yield row
 
     async def update_instance(self, inst_id, updated_fields):
-        async with self.dbpool.acquire() as conn:
+        async with self.dbpool.acquire() as conn, conn.begin():
             query = (sa.update(agents)
                        .values(**updated_fields)
                        .where(agents.c.id == inst_id))
@@ -201,7 +203,7 @@ class AgentRegistry:
             cols.append(field)
         elif isinstance(field, str):
             cols.append(sa.column(field))
-        async with self.dbpool.acquire() as conn:
+        async with self.dbpool.acquire() as conn, conn.begin():
             if allow_stale:
                 query = (sa.select(cols)
                            .select_from(kernels)
@@ -244,7 +246,7 @@ class AgentRegistry:
             cols.append(field)
         elif isinstance(field, str):
             cols.append(sa.column(field))
-        async with self.dbpool.acquire() as conn:
+        async with self.dbpool.acquire() as conn, conn.begin():
             if allow_stale:
                 query = (sa.select(cols)
                            .select_from(kernels)
@@ -284,7 +286,7 @@ class AgentRegistry:
             cols.append(field)
         elif isinstance(field, str):
             cols.append(sa.column(field))
-        async with self.dbpool.acquire() as conn:
+        async with self.dbpool.acquire() as conn, conn.begin():
             if allow_stale:
                 query = (sa.select(cols)
                            .select_from(kernels)
@@ -640,7 +642,7 @@ class AgentRegistry:
         await self.redis_live.hset('last_seen', agent_id, now.timestamp())
 
         # Check and update status of the agent record in DB
-        async with self.dbpool.acquire() as conn:
+        async with self.dbpool.acquire() as conn, conn.begin():
             # TODO: check why sa.column('status') does not work
             query = (sa.select([agents.c.status,
                                 agents.c.mem_slots,
@@ -813,7 +815,7 @@ class AgentRegistry:
         of the owner access key.  Releasing resource limits is handled by
         func:`mark_kernel_terminated`.
         '''
-        async with self.dbpool.acquire() as conn:
+        async with self.dbpool.acquire() as conn, conn.begin():
             # concurrency is per session.
             query = (sa.update(keypairs)
                        .values({
@@ -824,7 +826,7 @@ class AgentRegistry:
             await conn.execute(query)
 
     async def forget_instance(self, inst_id):
-        async with self.dbpool.acquire() as conn:
+        async with self.dbpool.acquire() as conn, conn.begin():
             query = (sa.update(agents)
                        .values(status=AgentStatus.TERMINATED,
                                lost_at=datetime.now(tzutc()))
