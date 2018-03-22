@@ -13,25 +13,23 @@ def read_src_version():
 requires = [
     'aioconsole>=0.1.3',
     'aiodataloader',
-    'aiohttp>=3.0.0',
+    'aiohttp~=3.1.0',
     'aiojobs>=0.1',
     'aiopg~=0.13.0',
     'aioredis~=1.0.0',
     'aiotools>=0.5.4',
     'aiozmq>=0.7',
-    'alembic~=0.9.2',
-    'coloredlogs>=5.2',
+    'alembic~=0.9.8',
     'ConfigArgParse==0.12',
     'dataclasses; python_version<"3.7"',
     'graphene~=2.0.1',
     'iso8601',  # required by graphene
-    'namedlist',
     'psycopg2-binary>=2.7.0',
     'python-dateutil>=2.5',
     'python-snappy~=0.5.1',
     'pytz',
     'PyYAML',
-    'pyzmq>=16.0',
+    'pyzmq>=17.0',
     'SQLAlchemy~=1.1.14',
     'uvloop~=0.8.0',
     'backend.ai-common~=1.3.0',
@@ -57,6 +55,9 @@ ci_requires = []
 monitor_requires = [
     'datadog>=0.16.0',
     'raven>=6.1',
+]
+dependency_links = [
+    'git+https://github.com/achimnol/aiohttp@dynamic-subapp-prefix#egg=aiohttp-3.1.0+git.245be6',
 ]
 
 
@@ -98,8 +99,6 @@ setup(
         'ci': ci_requires,
         'monitor': monitor_requires,
     },
-    dependency_links=[
-        'git+https://github.com/achimnol/aiohttp@dynamic-subapp-prefix#egg=aiohttp',
-    ],
+    dependency_links=dependency_links,
     data_files=[],
 )
