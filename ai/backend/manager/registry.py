@@ -182,7 +182,8 @@ class AgentRegistry:
                 await error_callback()
             raise
 
-    async def get_kernel(self, kern_id: uuid.UUID, field=None, allow_stale=False):
+    async def get_kernel(self, kern_id: uuid.UUID, field=None, allow_stale=False,
+                         db_connection=None):
         '''
         Retreive the kernel information from the given kernel ID.
         This ID is unique for all individual agent-spawned containers.
@@ -203,7 +204,7 @@ class AgentRegistry:
             cols.append(field)
         elif isinstance(field, str):
             cols.append(sa.column(field))
-        async with self.dbpool.acquire() as conn, conn.begin():
+        async with reenter_txn(self.dbpool, db_connection) as conn:
             if allow_stale:
                 query = (sa.select(cols)
                            .select_from(kernels)
@@ -225,7 +226,8 @@ class AgentRegistry:
             return row
 
     async def get_session(self, sess_id: str, access_key: str,
-                          field=None, allow_stale=False):
+                          field=None, allow_stale=False,
+                          db_connection=None):
         '''
         Retreive the kernel information from the session ID (client-side
         session token).  If the kernel is composed of multiple containers, it
@@ -246,7 +248,7 @@ class AgentRegistry:
             cols.append(field)
         elif isinstance(field, str):
             cols.append(sa.column(field))
-        async with self.dbpool.acquire() as conn, conn.begin():
+        async with reenter_txn(self.dbpool, db_connection) as conn:
             if allow_stale:
                 query = (sa.select(cols)
                            .select_from(kernels)
@@ -270,7 +272,8 @@ class AgentRegistry:
                 raise KernelNotFound
             return row
 
-    async def get_sessions(self, sess_ids, field=None, allow_stale=False):
+    async def get_sessions(self, sess_ids, field=None, allow_stale=False,
+                           db_connection=None):
         '''
         Batched version of :meth:`get_session() <AgentRegistry.get_session>`.
         The order of the returend array is same to the order of ``sess_ids``.
@@ -286,7 +289,7 @@ class AgentRegistry:
             cols.append(field)
         elif isinstance(field, str):
             cols.append(sa.column(field))
-        async with self.dbpool.acquire() as conn, conn.begin():
+        async with reenter_txn(self.dbpool, db_connection) as conn:
             if allow_stale:
                 query = (sa.select(cols)
                            .select_from(kernels)
@@ -491,9 +494,12 @@ class AgentRegistry:
         async with self.handle_kernel_exception(
                 'destroy_session', sess_id, access_key, set_error=True):
             try:
-                kernel = await self.get_session(sess_id, access_key)
-                await self.set_session_status(sess_id, access_key,
-                                              KernelStatus.TERMINATING)
+                async with self.dbpool.acquire() as conn, conn.begin():
+                    kernel = await self.get_session(sess_id, access_key,
+                                                    db_connection=conn)
+                    await self.set_session_status(sess_id, access_key,
+                                                  KernelStatus.TERMINATING,
+                                                  db_connection=conn)
             except KernelNotFound:
                 return
             async with RPCContext(kernel['agent_addr'], 10) as rpc:
@@ -511,9 +517,12 @@ class AgentRegistry:
                 kernels.c.cpu_set,
                 kernels.c.gpu_set,
             )
-            kernel = await self.get_session(sess_id, access_key, extra_cols)
-            await self.set_session_status(sess_id, access_key,
-                                          KernelStatus.RESTARTING)
+            async with self.dbpool.acquire() as conn, conn.begin():
+                kernel = await self.get_session(sess_id, access_key, extra_cols,
+                                                db_connection=conn)
+                await self.set_session_status(sess_id, access_key,
+                                              KernelStatus.RESTARTING,
+                                              db_connection=conn)
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 # TODO: read from vfolders attachment table
                 mounts = []
