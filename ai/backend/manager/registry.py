@@ -556,50 +556,52 @@ class AgentRegistry:
             # The agent aggregates at most 2 seconds of outputs
             # if the kernel runs for a long time.
             async with RPCContext(kernel['agent_addr'], 300) as rpc:
-                exec_coro = rpc.call.execute(api_version, str(kernel['id']),
-                                             run_id, mode, code, opts)
-                if exec_coro is None:
-                    raise RuntimeError('execute cancelled')
-                try:
-                    return await exec_coro
-                except TypeError as e:
-                    log.exception('typeerror????')
+                coro = rpc.call.execute(api_version, str(kernel['id']),
+                                        run_id, mode, code, opts)
+                if coro is None:
+                    log.warning('execute cancelled')
+                    return None
+                return await coro
 
     async def interrupt_session(self, sess_id, access_key):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], 5) as rpc:
-                exec_coro = rpc.call.interrupt_kernel(str(kernel['id']))
-                if exec_coro is None:
-                    raise RuntimeError('interrupt cancelled')
-                return await exec_coro
+                coro = rpc.call.interrupt_kernel(str(kernel['id']))
+                if coro is None:
+                    log.warning('interrupt cancelled')
+                    return None
+                return await coro
 
     async def get_completions(self, sess_id, access_key, mode, text, opts):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], 5) as rpc:
-                exec_coro = rpc.call.get_completions(str(kernel['id']), mode,
-                                                     text, opts)
-                if exec_coro is None:
-                    raise RuntimeError('get_completions cancelled')
-                return await exec_coro
+                coro = rpc.call.get_completions(str(kernel['id']), mode, text, opts)
+                if coro is None:
+                    log.warning('get_completions cancelled')
+                    return None
+                return await coro
 
     async def upload_file(self, sess_id, access_key, filename, payload):
         async with self.handle_kernel_exception('upload_file', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], 180) as rpc:
-                result = \
-                    await rpc.call.upload_file(str(kernel['id']), filename, payload)
-                return result
+                coro = rpc.call.upload_file(str(kernel['id']), filename, payload)
+                if coro is None:
+                    log.warning('upload_file cancelled')
+                    return None
+                return await coro
 
     async def get_logs(self, sess_id, access_key):
         async with self.handle_kernel_exception('get_logs', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], 5) as rpc:
-                exec_coro = rpc.call.get_logs(str(kernel['id']))
-                if exec_coro is None:
-                    raise RuntimeError('get_logs cancelled')
-                return await exec_coro
+                coro = rpc.call.get_logs(str(kernel['id']))
+                if coro is None:
+                    log.warning('get_logs cancelled')
+                    return None
+                return await coro
 
     async def update_session(self, sess_id, access_key, updated_fields, conn=None):
         async with reenter_txn(self.dbpool, conn) as conn:
