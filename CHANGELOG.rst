@@ -1,6 +1,14 @@
 Changes
 =======
 
+1.3.5 (2018-03-23)
+------------------
+
+- Further improve synchronization when destroying and restarting kernels.
+
+- Change the agent load balancer to favor CPUs first to spread kernels evenly.
+  (In the future versions, this will be made configurable and customizable.)
+
 1.3.4 (2018-03-23)
 ------------------
 
