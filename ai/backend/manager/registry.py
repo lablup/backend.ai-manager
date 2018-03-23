@@ -225,8 +225,10 @@ class AgentRegistry:
                 raise KernelNotFound
             return row
 
-    async def get_session(self, sess_id: str, access_key: str,
-                          field=None, allow_stale=False,
+    async def get_session(self, sess_id: str, access_key: str, *,
+                          field=None,
+                          allow_stale=False,
+                          for_update=False,
                           db_connection=None):
         '''
         Retreive the kernel information from the session ID (client-side
@@ -250,14 +252,14 @@ class AgentRegistry:
             cols.append(sa.column(field))
         async with reenter_txn(self.dbpool, db_connection) as conn:
             if allow_stale:
-                query = (sa.select(cols)
+                query = (sa.select(cols, for_update=for_update)
                            .select_from(kernels)
                            .where((kernels.c.sess_id == sess_id) &
                                   (kernels.c.access_key == access_key) &
                                   (kernels.c.role == 'master'))
                            .limit(1).offset(0))
             else:
-                query = (sa.select(cols)
+                query = (sa.select(cols, for_update=for_update)
                            .select_from(kernels.join(agents))
                            .where((kernels.c.sess_id == sess_id) &
                                   (kernels.c.access_key == access_key) &
@@ -496,6 +498,7 @@ class AgentRegistry:
             try:
                 async with self.dbpool.acquire() as conn, conn.begin():
                     kernel = await self.get_session(sess_id, access_key,
+                                                    for_update=True,
                                                     db_connection=conn)
                     await self.set_session_status(sess_id, access_key,
                                                   KernelStatus.TERMINATING,
@@ -518,7 +521,9 @@ class AgentRegistry:
                 kernels.c.gpu_set,
             )
             async with self.dbpool.acquire() as conn, conn.begin():
-                kernel = await self.get_session(sess_id, access_key, extra_cols,
+                kernel = await self.get_session(sess_id, access_key,
+                                                field=extra_cols,
+                                                for_update=True,
                                                 db_connection=conn)
                 await self.set_session_status(sess_id, access_key,
                                               KernelStatus.RESTARTING,
