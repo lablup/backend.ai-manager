@@ -391,7 +391,7 @@ class AgentRegistry:
 
             # load-balance
             if avail_slots:
-                agent_id = (max(avail_slots, key=lambda s: (s.gpu, s.mem, s.cpu))).id
+                agent_id = (max(avail_slots, key=lambda s: (s.gpu, s.cpu, s.mem))).id
             else:
                 raise InstanceNotAvailable
 
