@@ -138,7 +138,7 @@ async def update_instance_usage(app, inst_id):
     if not affected_keys:
         return
 
-    async with app['dbpool'].acquire() as conn:
+    async with app['dbpool'].acquire() as conn, conn.begin():
         log.debug(f'update_instance_usage({inst_id})')
         for kern in all_sessions:
             if kern is None:
@@ -221,7 +221,7 @@ async def datadog_update(app):
             in app['registry'].enumerate_instances()]
         statsd.gauge('ai.backend.gateway.agent_instances', len(all_inst_ids))
 
-        async with app['dbpool'].acquire() as conn:
+        async with app['dbpool'].acquire() as conn, conn.begin():
             query = (sa.select([sa.func.sum(keypairs.c.concurrency_used)])
                        .select_from(keypairs))
             n = await conn.scalar(query)

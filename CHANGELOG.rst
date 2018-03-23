@@ -4,6 +4,13 @@ Changes
 1.4.0 (to be released)
 ----------------------
 
+1.3.4 (2018-03-23)
+------------------
+
+- Improve synchronization when executing codes right after creating kernels by
+  ensuring all DB operations (incl. read-only ops) to be inside (nested)
+  transactions.
+
 1.3.3 (2018-03-20)
 ------------------
 
