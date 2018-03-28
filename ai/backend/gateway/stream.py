@@ -9,6 +9,7 @@ import json
 import logging
 import secrets
 from urllib.parse import urlparse
+import weakref
 
 import aiohttp
 from aiohttp import web
@@ -82,7 +83,7 @@ async def stream_pty(request) -> web.Response:
                             # AttributeError occurs when stdin_sock._transport
                             # is None because it's already closed somewhere
                             # else.
-                            app['stream_stdin_socks'][stream_key].remove(socks[0])
+                            app['stream_stdin_socks'][stream_key].discard(socks[0])
                             socks[1].close()
                             kernel = await registry.get_session(
                                 sess_id, access_key, field=extra_fields)
@@ -170,8 +171,8 @@ async def stream_pty(request) -> web.Response:
         app['sentry'].captureException()
         log.exception(f'stream_pty({stream_key}): unexpected error')
     finally:
-        app['stream_pty_handlers'][stream_key].remove(asyncio.Task.current_task())
-        app['stream_stdin_socks'][stream_key].remove(socks[0])
+        app['stream_pty_handlers'][stream_key].discard(asyncio.Task.current_task())
+        app['stream_stdin_socks'][stream_key].discard(socks[0])
         stdout_task.cancel()
         await stdout_task
     return ws
@@ -185,23 +186,25 @@ async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
         return
     if kernel.role == 'master':
         stream_key = (kernel['sess_id'], kernel['access_key'])
-        for handler in app['stream_pty_handlers'][stream_key].copy():
-            handler.cancel()
-            await handler
+        for handler in list(app['stream_pty_handlers'].get(stream_key, [])):
+            if not handler.done():
+                handler.cancel()
+                await handler
         # TODO: reconnect if restarting?
 
 
 async def init(app):
-    app['stream_pty_handlers'] = defaultdict(set)
-    app['stream_stdin_socks'] = defaultdict(set)
+    app['stream_pty_handlers'] = defaultdict(weakref.WeakSet)
+    app['stream_stdin_socks'] = defaultdict(weakref.WeakSet)
     app['event_dispatcher'].add_handler('kernel_terminated', app, kernel_terminated)
 
 
 async def shutdown(app):
     for per_kernel_handlers in app['stream_pty_handlers'].values():
-        for handler in per_kernel_handlers.copy():
-            handler.cancel()
-            await handler
+        for handler in list(per_kernel_handlers):
+            if not handler.done():
+                handler.cancel()
+                await handler
 
 
 def create_app():
