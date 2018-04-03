@@ -111,7 +111,7 @@ class TestAdminQuery:
                                        user_keypair):
         app, client = await create_app_and_client(modules=['auth', 'admin'])
 
-        query = '''{ keypair(access_key: "AKIANOTADMIN7EXAMPLE") {
+        query = '''{ keypair(access_key: "AKIANABBDUSEREXAMPLE") {
     access_key secret_key is_active is_admin
 } }'''
         req_bytes = json.dumps({'query': query}).encode()

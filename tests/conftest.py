@@ -239,7 +239,7 @@ async def default_keypair(event_loop, app):
 
 @pytest.fixture
 async def user_keypair(event_loop, app):
-    access_key = 'AKIANOTADMIN7EXAMPLE'
+    access_key = 'AKIANABBDUSEREXAMPLE'
     config = app['config']
     pool = await create_engine(
         host=config.db_addr[0], port=config.db_addr[1],
