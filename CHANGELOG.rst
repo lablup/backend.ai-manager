@@ -1,6 +1,13 @@
 Changes
 =======
 
+1.3.6 (2018-04-04)
+------------------
+
+- Further SQL transaction fixes
+
+- Change the access key string of the non-admin example keypair
+
 1.3.5 (2018-03-23)
 ------------------
 
