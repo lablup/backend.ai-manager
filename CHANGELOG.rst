@@ -4,6 +4,27 @@ Changes
 1.4.0 (to be released)
 ----------------------
 
+1.3.7 (2018-04-04)
+------------------
+
+- Improve database initialization during setup by auto-detecting existing or fresh
+  new databases in the CLI's "schema oneshot" command. (#69)
+
+1.3.6 (2018-04-04)
+------------------
+
+- Further SQL transaction fixes
+
+- Change the access key string of the non-admin example keypair
+
+1.3.5 (2018-03-23)
+------------------
+
+- Further improve synchronization when destroying and restarting kernels.
+
+- Change the agent load balancer to favor CPUs first to spread kernels evenly.
+  (In the future versions, this will be made configurable and customizable.)
+
 1.3.4 (2018-03-23)
 ------------------
 

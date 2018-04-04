@@ -182,7 +182,8 @@ class AgentRegistry:
                 await error_callback()
             raise
 
-    async def get_kernel(self, kern_id: uuid.UUID, field=None, allow_stale=False):
+    async def get_kernel(self, kern_id: uuid.UUID, field=None, allow_stale=False,
+                         db_connection=None):
         '''
         Retreive the kernel information from the given kernel ID.
         This ID is unique for all individual agent-spawned containers.
@@ -203,7 +204,7 @@ class AgentRegistry:
             cols.append(field)
         elif isinstance(field, str):
             cols.append(sa.column(field))
-        async with self.dbpool.acquire() as conn, conn.begin():
+        async with reenter_txn(self.dbpool, db_connection) as conn:
             if allow_stale:
                 query = (sa.select(cols)
                            .select_from(kernels)
@@ -224,8 +225,11 @@ class AgentRegistry:
                 raise KernelNotFound
             return row
 
-    async def get_session(self, sess_id: str, access_key: str,
-                          field=None, allow_stale=False):
+    async def get_session(self, sess_id: str, access_key: str, *,
+                          field=None,
+                          allow_stale=False,
+                          for_update=False,
+                          db_connection=None):
         '''
         Retreive the kernel information from the session ID (client-side
         session token).  If the kernel is composed of multiple containers, it
@@ -246,16 +250,16 @@ class AgentRegistry:
             cols.append(field)
         elif isinstance(field, str):
             cols.append(sa.column(field))
-        async with self.dbpool.acquire() as conn, conn.begin():
+        async with reenter_txn(self.dbpool, db_connection) as conn:
             if allow_stale:
-                query = (sa.select(cols)
+                query = (sa.select(cols, for_update=for_update)
                            .select_from(kernels)
                            .where((kernels.c.sess_id == sess_id) &
                                   (kernels.c.access_key == access_key) &
                                   (kernels.c.role == 'master'))
                            .limit(1).offset(0))
             else:
-                query = (sa.select(cols)
+                query = (sa.select(cols, for_update=for_update)
                            .select_from(kernels.join(agents))
                            .where((kernels.c.sess_id == sess_id) &
                                   (kernels.c.access_key == access_key) &
@@ -270,7 +274,8 @@ class AgentRegistry:
                 raise KernelNotFound
             return row
 
-    async def get_sessions(self, sess_ids, field=None, allow_stale=False):
+    async def get_sessions(self, sess_ids, field=None, allow_stale=False,
+                           db_connection=None):
         '''
         Batched version of :meth:`get_session() <AgentRegistry.get_session>`.
         The order of the returend array is same to the order of ``sess_ids``.
@@ -286,7 +291,7 @@ class AgentRegistry:
             cols.append(field)
         elif isinstance(field, str):
             cols.append(sa.column(field))
-        async with self.dbpool.acquire() as conn, conn.begin():
+        async with reenter_txn(self.dbpool, db_connection) as conn:
             if allow_stale:
                 query = (sa.select(cols)
                            .select_from(kernels)
@@ -391,7 +396,7 @@ class AgentRegistry:
 
             # load-balance
             if avail_slots:
-                agent_id = (max(avail_slots, key=lambda s: (s.gpu, s.mem, s.cpu))).id
+                agent_id = (max(avail_slots, key=lambda s: (s.gpu, s.cpu, s.mem))).id
             else:
                 raise InstanceNotAvailable
 
@@ -491,9 +496,13 @@ class AgentRegistry:
         async with self.handle_kernel_exception(
                 'destroy_session', sess_id, access_key, set_error=True):
             try:
-                kernel = await self.get_session(sess_id, access_key)
-                await self.set_session_status(sess_id, access_key,
-                                              KernelStatus.TERMINATING)
+                async with self.dbpool.acquire() as conn, conn.begin():
+                    kernel = await self.get_session(sess_id, access_key,
+                                                    for_update=True,
+                                                    db_connection=conn)
+                    await self.set_session_status(sess_id, access_key,
+                                                  KernelStatus.TERMINATING,
+                                                  db_connection=conn)
             except KernelNotFound:
                 return
             async with RPCContext(kernel['agent_addr'], 10) as rpc:
@@ -511,9 +520,14 @@ class AgentRegistry:
                 kernels.c.cpu_set,
                 kernels.c.gpu_set,
             )
-            kernel = await self.get_session(sess_id, access_key, extra_cols)
-            await self.set_session_status(sess_id, access_key,
-                                          KernelStatus.RESTARTING)
+            async with self.dbpool.acquire() as conn, conn.begin():
+                kernel = await self.get_session(sess_id, access_key,
+                                                field=extra_cols,
+                                                for_update=True,
+                                                db_connection=conn)
+                await self.set_session_status(sess_id, access_key,
+                                              KernelStatus.RESTARTING,
+                                              db_connection=conn)
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 # TODO: read from vfolders attachment table
                 mounts = []
@@ -556,50 +570,52 @@ class AgentRegistry:
             # The agent aggregates at most 2 seconds of outputs
             # if the kernel runs for a long time.
             async with RPCContext(kernel['agent_addr'], 300) as rpc:
-                exec_coro = rpc.call.execute(api_version, str(kernel['id']),
-                                             run_id, mode, code, opts)
-                if exec_coro is None:
-                    raise RuntimeError('execute cancelled')
-                try:
-                    return await exec_coro
-                except TypeError as e:
-                    log.exception('typeerror????')
+                coro = rpc.call.execute(api_version, str(kernel['id']),
+                                        run_id, mode, code, opts)
+                if coro is None:
+                    log.warning('execute cancelled')
+                    return None
+                return await coro
 
     async def interrupt_session(self, sess_id, access_key):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], 5) as rpc:
-                exec_coro = rpc.call.interrupt_kernel(str(kernel['id']))
-                if exec_coro is None:
-                    raise RuntimeError('interrupt cancelled')
-                return await exec_coro
+                coro = rpc.call.interrupt_kernel(str(kernel['id']))
+                if coro is None:
+                    log.warning('interrupt cancelled')
+                    return None
+                return await coro
 
     async def get_completions(self, sess_id, access_key, mode, text, opts):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], 5) as rpc:
-                exec_coro = rpc.call.get_completions(str(kernel['id']), mode,
-                                                     text, opts)
-                if exec_coro is None:
-                    raise RuntimeError('get_completions cancelled')
-                return await exec_coro
+                coro = rpc.call.get_completions(str(kernel['id']), mode, text, opts)
+                if coro is None:
+                    log.warning('get_completions cancelled')
+                    return None
+                return await coro
 
     async def upload_file(self, sess_id, access_key, filename, payload):
         async with self.handle_kernel_exception('upload_file', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], 180) as rpc:
-                result = \
-                    await rpc.call.upload_file(str(kernel['id']), filename, payload)
-                return result
+                coro = rpc.call.upload_file(str(kernel['id']), filename, payload)
+                if coro is None:
+                    log.warning('upload_file cancelled')
+                    return None
+                return await coro
 
     async def get_logs(self, sess_id, access_key):
         async with self.handle_kernel_exception('get_logs', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], 5) as rpc:
-                exec_coro = rpc.call.get_logs(str(kernel['id']))
-                if exec_coro is None:
-                    raise RuntimeError('get_logs cancelled')
-                return await exec_coro
+                coro = rpc.call.get_logs(str(kernel['id']))
+                if coro is None:
+                    log.warning('get_logs cancelled')
+                    return None
+                return await coro
 
     async def update_session(self, sess_id, access_key, updated_fields, conn=None):
         async with reenter_txn(self.dbpool, conn) as conn:

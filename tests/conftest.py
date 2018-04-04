@@ -239,7 +239,7 @@ async def default_keypair(event_loop, app):
 
 @pytest.fixture
 async def user_keypair(event_loop, app):
-    access_key = 'AKIANOTADMIN7EXAMPLE'
+    access_key = 'AKIANABBDUSEREXAMPLE'
     config = app['config']
     pool = await create_engine(
         host=config.db_addr[0], port=config.db_addr[1],
@@ -431,7 +431,7 @@ async def create_app_and_client(request, test_id, test_ns,
 
 @pytest.fixture(scope='session')
 def prepare_docker_images():
-    event_loop = asyncio.get_event_loop()
+    _loop = asyncio.new_event_loop()
 
     async def pull():
         docker = aiodocker.Docker()
@@ -447,4 +447,7 @@ def prepare_docker_images():
                 await docker.pull(img)
         await docker.close()
 
-    event_loop.run_until_complete(pull())
+    try:
+        _loop.run_until_complete(pull())
+    finally:
+        _loop.close()

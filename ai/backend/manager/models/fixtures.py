@@ -21,7 +21,7 @@ example_keypair = [
             {
                 # Non-admin user example key
                 'user_id': 3,
-                'access_key': 'AKIANOTADMIN7EXAMPLE',
+                'access_key': 'AKIANABBDUSEREXAMPLE',
                 'secret_key': 'C8qnIo29EZvXkPK_MXcuAakYTy4NYrxwmCEyNPlf',
                 'is_active': True,
                 'billing_plan': 'free',

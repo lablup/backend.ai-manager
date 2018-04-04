@@ -118,7 +118,7 @@ async def create(request) -> web.Response:
         request.app['sentry'].captureException()
         log.exception('GET_OR_CREATE: unexpected error!')
         raise InternalServerError
-    return web.json_response(resp, status=201, dumps=json.dumps)
+    return web.json_response(resp, status=201)
 
 
 async def update_instance_usage(app, inst_id):
@@ -281,7 +281,7 @@ async def destroy(request) -> web.Response:
         resp = {
             'stats': last_stat,
         }
-        return web.json_response(resp, status=200, dumps=json.dumps)
+        return web.json_response(resp, status=200)
 
 
 @auth_required
@@ -315,7 +315,7 @@ async def get_info(request) -> web.Response:
     except BackendError:
         log.exception('GETINFO: exception')
         raise
-    return web.json_response(resp, status=200, dumps=json.dumps)
+    return web.json_response(resp, status=200)
 
 
 @auth_required
@@ -382,6 +382,18 @@ async def execute(request) -> web.Response:
             raw_result = await registry.execute(
                 sess_id, access_key,
                 api_version, run_id, mode, code, opts)
+            if raw_result is None:
+                # the kernel may have terminated from its side,
+                # or there was interruption of agents.
+                resp['result'] = {
+                    'status': 'finished',
+                    'runId': run_id,
+                    'exitCode': 130,
+                    'options': {},
+                    'files': [],
+                    'console': [],
+                }
+                return web.json_response(resp, status=200)
             # Keep internal/public API compatilibty
             result = {
                 'status': raw_result['status'],
@@ -404,7 +416,7 @@ async def execute(request) -> web.Response:
     except BackendError:
         log.exception('EXECUTE: exception')
         raise
-    return web.json_response(resp, status=200, dumps=json.dumps)
+    return web.json_response(resp, status=200)
 
 
 @auth_required
@@ -428,7 +440,10 @@ async def interrupt(request) -> web.Response:
 @server_ready_required
 @atomic
 async def complete(request) -> web.Response:
-    resp = {}
+    resp = {'result': {
+        'status': 'finished',
+        'completions': [],
+    }}
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
@@ -451,7 +466,7 @@ async def complete(request) -> web.Response:
     except BackendError:
         log.exception('COMPLETE: exception')
         raise
-    return web.json_response(resp, status=200, dumps=json.dumps)
+    return web.json_response(resp, status=200)
 
 
 @auth_required
@@ -493,7 +508,7 @@ async def upload_files(request) -> web.Response:
 @server_ready_required
 @atomic
 async def get_logs(request) -> web.Response:
-    resp = {}
+    resp = {'result': {'logs': ''}}
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
@@ -505,7 +520,7 @@ async def get_logs(request) -> web.Response:
     except BackendError:
         log.exception('GETLOG: exception')
         raise
-    return web.json_response(resp, status=200, dumps=json.dumps)
+    return web.json_response(resp, status=200)
 
 
 async def init(app):
