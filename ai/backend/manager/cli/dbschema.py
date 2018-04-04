@@ -3,8 +3,8 @@ import subprocess
 
 from alembic.config import Config
 from alembic import command
-from alembic.runtime.environment import EnvironmentContext
 from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 import sqlalchemy as sa
 
 from . import register_command
@@ -58,7 +58,15 @@ def show(args):
     alembic_cfg = Config(args.config)
     sa_url = alembic_cfg.get_main_option('sqlalchemy.url')
     engine = sa.create_engine(sa_url)
-    command.current(alembic_cfg)
+    with engine.begin() as connection:
+        context = MigrationContext.configure(connection)
+        current_rev = context.get_current_revision()
+
+    script = ScriptDirectory.from_config(alembic_cfg)
+    heads = script.get_heads()
+    head_rev = heads[0] if len(heads) > 0 else None
+    print(f'Current database revision: {current_rev}')
+    print(f'The head revision of available migrations: {head_rev}')
 
 
 show.add('-f', '--config', default='alembic.ini', metavar='PATH',
