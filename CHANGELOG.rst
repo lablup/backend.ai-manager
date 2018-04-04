@@ -5,7 +5,7 @@ Changes
 ------------------
 
 - Improve database initialization during setup by auto-detecting existing or fresh
-  new databases in the CLI's "schema oneshot" command.
+  new databases in the CLI's "schema oneshot" command. (#69)
 
 1.3.6 (2018-04-04)
 ------------------
