@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from ai.backend.gateway.etcd import ConfigServer
+from ai.backend.gateway.exceptions import ImageNotFound
 
 
 @pytest.fixture
@@ -14,8 +15,8 @@ async def config_server(app):
 
 @pytest.fixture
 async def image_metadata(config_server, tmpdir):
-    content = '''images:
-
+    content = '''
+images:
   - name: test-python
     syntax: python
     tags:
@@ -24,45 +25,44 @@ async def image_metadata(config_server, tmpdir):
     slots: &default
       cpu: 1    # cores
       mem: 1.0  # GiB
-      gpu: 0    # fraction of GPU device'''
-
-    p = tmpdir.join('test-image-metadata.yml')
-    p.write(content)
+      gpu: 0    # fraction of GPU device
+'''
+    p = Path(tmpdir) / 'test-image-metadata.yml'
+    p.write_text(content)
 
     yield p
 
-    await config_server.etcd.delete_prefix(f'images/test-python')
+    await config_server.etcd.delete_prefix('images/test-python')
 
 
 @pytest.fixture
 async def image_aliases(config_server, tmpdir):
-    content = '''aliases:
-
-  - ['test-python',     'python:latest']
-  - ['test-python:3.6', 'python:3.6-debian']  # preferred'''
-
-    p = tmpdir.join('test-image-aliases.yml')
-    p.write(content)
+    content = '''
+aliases:
+  - ['python',     'test-python:latest']
+  - ['python:3.6', 'test-python:3.6-debian']  # preferred
+'''
+    p = Path(tmpdir) / 'test-image-aliases.yml'
+    p.write_text(content)
 
     yield p
 
-    await config_server.etcd.delete_prefix('images/_aliases/test-python')
-    await config_server.etcd.delete_prefix('images/_aliases/test-python:3.6')
+    await config_server.etcd.delete_prefix('images/_aliases/')
 
 
 @pytest.fixture
 async def volumes(config_server, tmpdir):
-    content = '''volumes:
-
+    content = '''
+volumes:
   - name: test-aws-shard-1
     mount:
       at: requested
       fstype: nfs
       path: "...efs...."
-      options: "..."'''
-
-    p = tmpdir.join('test-image-aliases.yml')
-    p.write(content)
+      options: "..."
+'''
+    p = Path(tmpdir) / 'test-image-aliases.yml'
+    p.write_text(content)
 
     yield p
 
@@ -90,13 +90,11 @@ class TestConfigServer:
     @pytest.mark.asyncio
     async def test_update_kernel_images_from_file(self, config_server,
                                                   image_metadata):
-        fpath = Path(image_metadata)
         name = 'test-python'
-
         img_data = list(await config_server.etcd.get_prefix(f'images/{name}'))
         assert 0 == len(img_data)
 
-        await config_server.update_kernel_images_from_file(fpath)
+        await config_server.update_kernel_images_from_file(image_metadata)
 
         img_data = list(await config_server.etcd.get_prefix(f'images/{name}'))
         assert (f'images/{name}', '1') in img_data
@@ -108,15 +106,9 @@ class TestConfigServer:
 
     @pytest.mark.asyncio
     async def test_update_aliases_from_file(self, config_server, image_aliases):
-        fpath = Path(image_aliases)
-
-        assert not await config_server.etcd.get('images/_aliases/test-python')
-        assert not await config_server.etcd.get('images/_aliases/test-python:3.6')
-
-        await config_server.update_aliases_from_file(fpath)
-
-        assert await config_server.etcd.get('images/_aliases/test-python')
-        assert await config_server.etcd.get('images/_aliases/test-python:3.6')
+        await config_server.update_aliases_from_file(Path(image_aliases))
+        assert await config_server.etcd.get('images/_aliases/python') is not None
+        assert await config_server.etcd.get('images/_aliases/python:3.6') is not None
 
     @pytest.mark.asyncio
     async def test_update_volumes_from_file(self, config_server, volumes):
@@ -158,16 +150,24 @@ class TestConfigServer:
         assert ret.gpu == 0
 
     @pytest.mark.asyncio
-    async def test_resolve_image_name(self, config_server):
-        name = 'test-python'
-        tag = '3.6'
-        await config_server.etcd.put(f'images/{name}/tags/{tag}', 'ca7b9f52b6c')
-
-        try:
-            ret = await config_server.resolve_image_name('test-python:3.6')
-            print(ret)
-        finally:
-            await config_server.etcd.delete_prefix(f'images/{name}')
-
-        assert ret[0] == name
-        assert ret[1] == tag
+    async def test_resolve_image_name(self, config_server,
+                                      image_metadata, image_aliases):
+        await config_server.update_kernel_images_from_file(image_metadata)
+        await config_server.update_aliases_from_file(image_aliases)
+        # lookup with metadata
+        ret = await config_server.resolve_image_name('test-python')
+        assert ret == ('test-python', 'latest')
+        ret = await config_server.resolve_image_name('test-python:3.6-debian')
+        assert ret == ('test-python', '3.6-debian')
+        ret = await config_server.resolve_image_name('test-python:latest')
+        assert ret == ('test-python', 'latest')
+        # lookup with aliases
+        ret = await config_server.resolve_image_name('python')
+        assert ret == ('test-python', 'latest')
+        ret = await config_server.resolve_image_name('python:3.6')
+        assert ret == ('test-python', '3.6-debian')
+        # lookup with non-existent name/tags
+        with pytest.raises(ImageNotFound):
+            await config_server.resolve_image_name('test-python:xyz')
+        with pytest.raises(ImageNotFound):
+            await config_server.resolve_image_name('python:xyz')
