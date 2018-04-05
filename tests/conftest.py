@@ -102,6 +102,9 @@ def prepare_and_cleanup_databases(request, test_ns, test_db, folder_mount):
         conn = pg.connect(db_url)
         conn.set_isolation_level(pg.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
         cur = conn.cursor()
+        cur.execute(f'REVOKE CONNECT ON DATABASE "{test_db}" FROM public;')
+        cur.execute('SELECT pg_terminate_backend(pid) FROM pg_stat_activity '
+                    'WHERE pid <> pg_backend_pid();')
         cur.execute(f'DROP DATABASE "{test_db}";')
         cur.close()
         conn.close()
