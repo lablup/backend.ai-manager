@@ -40,16 +40,16 @@ images:
 async def image_aliases(config_server, tmpdir):
     content = '''
 aliases:
-  - ['python',     'test-python:latest']
-  - ['python:3.6', 'test-python:3.6-debian']  # preferred
+  - ['my-python',     'test-python:latest']
+  - ['my-python:3.6', 'test-python:3.6-debian']  # preferred
 '''
     p = Path(tmpdir) / 'test-image-aliases.yml'
     p.write_text(content)
 
     yield p
 
-    await config_server.etcd.delete('images/_aliases/python')
-    await config_server.etcd.delete('images/_aliases/python:3.6')
+    await config_server.etcd.delete('images/_aliases/my-python')
+    await config_server.etcd.delete('images/_aliases/my-python:3.6')
 
 
 @pytest.fixture
@@ -111,8 +111,8 @@ class TestConfigServer:
     async def test_update_aliases_from_file(self, config_server, image_aliases):
         await config_server.update_aliases_from_file(Path(image_aliases))
         alias_data = list(await config_server.etcd.get_prefix('images/_aliases'))
-        assert ('images/_aliases/python', 'test-python:latest') in alias_data
-        assert ('images/_aliases/python:3.6', 'test-python:3.6-debian') in alias_data
+        assert ('images/_aliases/my-python', 'test-python:latest') in alias_data
+        assert ('images/_aliases/my-python:3.6', 'test-python:3.6-debian') in alias_data  # noqa
 
     @pytest.mark.asyncio
     async def test_update_volumes_from_file(self, config_server, volumes):
@@ -165,12 +165,12 @@ class TestConfigServer:
         ret = await config_server.resolve_image_name('test-python:latest')
         assert ret == ('test-python', '3.6-debian')
         # lookup with aliases
-        ret = await config_server.resolve_image_name('python')
+        ret = await config_server.resolve_image_name('my-python')
         assert ret == ('test-python', '3.6-debian')
-        ret = await config_server.resolve_image_name('python:3.6')
+        ret = await config_server.resolve_image_name('my-python:3.6')
         assert ret == ('test-python', '3.6-debian')
         # lookup with non-existent name/tags
         with pytest.raises(ImageNotFound):
             await config_server.resolve_image_name('test-python:xyz')
         with pytest.raises(ImageNotFound):
-            await config_server.resolve_image_name('python:xyz')
+            await config_server.resolve_image_name('my-python:xyz')
