@@ -144,11 +144,10 @@ class TestConfigServer:
 
         try:
             ret = await config_server.get_image_required_slots(name, tag)
-            print(ret)
         finally:
             await config_server.etcd.delete_prefix(f'images/{name}')
 
-        assert ret.cpu == 1.0
+        assert ret.cpu == 1
         assert ret.mem == 1024
         assert ret.gpu == 0
 

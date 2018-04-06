@@ -158,7 +158,6 @@ class ConfigServer:
 
         async def resolve_alias(alias_key):
             alias_target = None
-            ret = list(await self.etcd.get_prefix('images/_aliases'))
             while True:
                 prev_alias_key = alias_key
                 alias_key = await self.etcd.get(f'images/_aliases/{alias_key}')
