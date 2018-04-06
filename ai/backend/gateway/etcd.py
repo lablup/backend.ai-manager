@@ -48,11 +48,15 @@ class ConfigServer:
             name = image['name']
             print(f"Updating {name}")
 
-            tags = {tag: hash for tag, hash in image['tags']}
-            for tag, hash in tags.items():
+            inserted_aliases = []
+            for tag, hash in image['tags']:
                 assert hash
-                if hash.startswith(':'):
-                    tags[tag] = tags[hash[1:]]
+                if hash.startswith(':'):  # tag-level alias
+                    inserted_aliases.append(
+                        (f'images/_aliases/{name}:{tag}', f'{name}:{hash[1:]}')
+                    )
+            if inserted_aliases:
+                await self.etcd.put_multi(*zip(*inserted_aliases))
 
             cpu_count = image['slots']['cpu']
             mem_mbytes = int(image['slots']['mem'] * 1024)
@@ -67,12 +71,9 @@ class ConfigServer:
                  '{0:d}'.format(mem_mbytes),
                  '{0:.2f}'.format(gpu_fraction)])
 
-            ks = []
-            vs = []
-            for tag, hash in tags.items():
-                ks.append(f'images/{name}/tags/{tag}')
-                vs.append(hash)
-            await self.etcd.put_multi(ks, vs)
+            inserted_tags = [(f'images/{name}/tags/{tag}', hash)
+                             for tag, hash in image['tags']]
+            await self.etcd.put_multi(*zip(*inserted_tags))
         log.info('Done.')
 
     async def update_aliases_from_file(self, file: Path):
@@ -154,12 +155,22 @@ class ConfigServer:
 
     @aiotools.lru_cache()
     async def resolve_image_name(self, name_or_alias):
-        orig_name = await self.etcd.get(f'images/_aliases/{name_or_alias}')
-        if orig_name is None:
-            orig_name = name_or_alias  # try the given one as-is
-        name, _, tag = orig_name.partition(':')
-        if not tag:
-            tag = 'latest'
+
+        async def resolve_alias(alias_key):
+            alias_target = None
+            while True:
+                prev_alias_key = alias_key
+                alias_key = await self.etcd.get(f'images/_aliases/{alias_key}')
+                if alias_key is None:
+                    alias_target = prev_alias_key
+                    break
+            return alias_target
+
+        alias_target = await resolve_alias(name_or_alias)
+        if alias_target == name_or_alias and name_or_alias.rfind(':') == -1:
+            alias_target = await resolve_alias(f'{name_or_alias}:latest')
+        assert alias_target is not None
+        name, _, tag = alias_target.partition(':')
         hash = await self.etcd.get(f'images/{name}/tags/{tag}')
         if hash is None:
             raise ImageNotFound(f'{name_or_alias}: Unregistered image '

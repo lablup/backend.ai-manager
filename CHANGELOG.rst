@@ -4,6 +4,11 @@ Changes
 1.4.0 (to be released)
 ----------------------
 
+1.3.8 (2018-04-06)
+------------------
+
+- Fix bugs in resolving image tags and aliases (#71)
+
 1.3.7 (2018-04-04)
 ------------------
 
