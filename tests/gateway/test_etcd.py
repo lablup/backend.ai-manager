@@ -33,6 +33,7 @@ images:
     yield p
 
     await config_server.etcd.delete_prefix('images/test-python')
+    await config_server.etcd.delete('images/_aliases/test-python:latest')
 
 
 @pytest.fixture
@@ -47,7 +48,8 @@ aliases:
 
     yield p
 
-    await config_server.etcd.delete_prefix('images/_aliases/')
+    await config_server.etcd.delete('images/_aliases/python')
+    await config_server.etcd.delete('images/_aliases/python:3.6')
 
 
 @pytest.fixture
@@ -101,24 +103,25 @@ class TestConfigServer:
         assert (f'images/{name}/cpu', '1') in img_data
         assert (f'images/{name}/mem', '1024') in img_data
         assert (f'images/{name}/gpu', '0.00') in img_data
-        assert (f'images/{name}/tags/latest', 'ca7b9f52b6c2') in img_data
         assert (f'images/{name}/tags/3.6-debian', 'ca7b9f52b6c2') in img_data
+        alias_data = list(await config_server.etcd.get_prefix(f'images/_aliases'))
+        assert (f'images/_aliases/{name}:latest', f'{name}:3.6-debian') in alias_data
 
     @pytest.mark.asyncio
     async def test_update_aliases_from_file(self, config_server, image_aliases):
         await config_server.update_aliases_from_file(Path(image_aliases))
-        assert await config_server.etcd.get('images/_aliases/python') is not None
-        assert await config_server.etcd.get('images/_aliases/python:3.6') is not None
+        alias_data = list(await config_server.etcd.get_prefix('images/_aliases'))
+        assert ('images/_aliases/python', 'test-python:latest') in alias_data
+        assert ('images/_aliases/python:3.6', 'test-python:3.6-debian') in alias_data
 
     @pytest.mark.asyncio
     async def test_update_volumes_from_file(self, config_server, volumes):
-        fpath = Path(volumes)
         name = 'test-aws-shard-1'
 
         img_data = list(await config_server.etcd.get_prefix(f'volumes/{name}/mount'))
         assert 0 == len(img_data)
 
-        await config_server.update_volumes_from_file(fpath)
+        await config_server.update_volumes_from_file(volumes)
 
         img_data = list(await config_server.etcd.get_prefix(f'volumes/{name}/mount'))
         assert 4 == len(img_data)
@@ -156,14 +159,14 @@ class TestConfigServer:
         await config_server.update_aliases_from_file(image_aliases)
         # lookup with metadata
         ret = await config_server.resolve_image_name('test-python')
-        assert ret == ('test-python', 'latest')
+        assert ret == ('test-python', '3.6-debian')
         ret = await config_server.resolve_image_name('test-python:3.6-debian')
         assert ret == ('test-python', '3.6-debian')
         ret = await config_server.resolve_image_name('test-python:latest')
-        assert ret == ('test-python', 'latest')
+        assert ret == ('test-python', '3.6-debian')
         # lookup with aliases
         ret = await config_server.resolve_image_name('python')
-        assert ret == ('test-python', 'latest')
+        assert ret == ('test-python', '3.6-debian')
         ret = await config_server.resolve_image_name('python:3.6')
         assert ret == ('test-python', '3.6-debian')
         # lookup with non-existent name/tags
