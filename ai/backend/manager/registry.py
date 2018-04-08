@@ -140,6 +140,7 @@ class AgentRegistry:
             'destroy_session': KernelDestructionFailed,
             'execute': KernelExecutionFailed,
             'upload_file': KernelExecutionFailed,
+            'list_files': KernelExecutionFailed,
             'get_logs': KernelExecutionFailed,
         }
         exc_class = op_exc[op]
@@ -604,6 +605,16 @@ class AgentRegistry:
                 coro = rpc.call.upload_file(str(kernel['id']), filename, payload)
                 if coro is None:
                     log.warning('upload_file cancelled')
+                    return None
+                return await coro
+
+    async def list_files(self, sess_id, access_key, path):
+        async with self.handle_kernel_exception('list_files', sess_id, access_key):
+            kernel = await self.get_session(sess_id, access_key)
+            async with RPCContext(kernel['agent_addr'], 5) as rpc:
+                coro = rpc.call.list_files(str(kernel['id']), path)
+                if coro is None:
+                    log.warning('list_files cancelled')
                     return None
                 return await coro
 

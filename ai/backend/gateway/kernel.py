@@ -506,6 +506,37 @@ async def upload_files(request) -> web.Response:
 
 @auth_required
 @server_ready_required
+async def list_files(request) -> web.Response:
+    try:
+        access_key = request['keypair']['access_key']
+        sess_id = request.match_info['sess_id']
+        with _timeout(2):
+            params = await request.json(loads=json.loads)
+        path = params.get('path', '.')
+        log.info(f'LIST_FILES (u:{access_key}, token:{sess_id})')
+    except (asyncio.TimeoutError, AssertionError,
+            json.decoder.JSONDecodeError) as e:
+        log.warning(f'LIST_FILES: invalid/missing parameters, {e!r}')
+        raise InvalidAPIParameters(extra_msg=str(e.args[0]))
+    resp = {}
+    try:
+        registry = request.app['registry']
+        await registry.increment_session_usage(sess_id, access_key)
+        result = await registry.list_files(sess_id, access_key, path)
+        resp.update(result)
+        log.debug(f'container file list for {path} retrieved')
+    except BackendError:
+        log.exception('LIST_FILES: exception')
+        raise
+    except Exception:
+        request.app['sentry'].captureException()
+        log.exception('LIST_FILES: unexpected error!')
+        raise InternalServerError
+    return web.json_response(resp, status=200)
+
+
+@auth_required
+@server_ready_required
 @atomic
 async def get_logs(request) -> web.Response:
     resp = {'result': {'logs': ''}}
@@ -568,4 +599,5 @@ def create_app():
     app.router.add_route('POST',   r'/{sess_id}/interrupt', interrupt)
     app.router.add_route('POST',   r'/{sess_id}/complete', complete)
     app.router.add_route('POST',   r'/{sess_id}/upload', upload_files)
+    app.router.add_route('POST',   r'/{sess_id}/files', list_files)
     return app, []
