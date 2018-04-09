@@ -5,6 +5,7 @@ import shutil
 import uuid
 
 from aiohttp import web
+import aiotools
 import sqlalchemy as sa
 import psycopg2
 
@@ -125,10 +126,7 @@ async def upload(request):
         folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
         reader = await request.multipart()
         file_count = 0
-        while True:
-            file = await reader.next()
-            if file is None:
-                break
+        async for file in aiotools.aiter(reader.next, None):
             # TODO: impose limits on file size and count
             file_count += 1
             file_dir = (folder_path / file.filename).parent
