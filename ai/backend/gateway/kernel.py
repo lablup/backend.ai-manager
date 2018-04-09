@@ -506,6 +506,42 @@ async def upload_files(request) -> web.Response:
 
 @auth_required
 @server_ready_required
+async def download_file(request) -> web.Response:
+    try:
+        registry = request.app['registry']
+        sess_id = request.match_info['sess_id']
+        access_key = request['keypair']['access_key']
+        with _timeout(2):
+            params = await request.json(loads=json.loads)
+        assert params.get('file'), 'no file specified!'
+        file = params.get('file')
+        log.info(f'DOWNLOAD_FILE (u:{access_key}, token:{sess_id})')
+    except (asyncio.TimeoutError, AssertionError,
+            json.decoder.JSONDecodeError) as e:
+        log.warning(f'DOWNLOAD_FILE: invalid/missing parameters, {e!r}')
+        raise InvalidAPIParameters(extra_msg=str(e.args[0]))
+
+    loop = asyncio.get_event_loop()
+    try:
+        await registry.increment_session_usage(sess_id, access_key)
+        t = loop.create_task(registry.download_file(sess_id, access_key, file))
+        result = await t
+        data = result['data']
+        log.debug(f'file {file} inside container retrieved')
+    except BackendError:
+        log.exception('DOWNLOAD_FILE: exception')
+        raise
+    except Exception:
+        request.app['sentry'].captureException()
+        log.exception('DOWNLOAD_FILE: unexpected error!')
+        raise InternalServerError
+
+    headers = {'Content-Disposition': result['path'].split('/')[-1]}
+    return web.Response(body=data, status=200, headers=headers)
+
+
+@auth_required
+@server_ready_required
 async def list_files(request) -> web.Response:
     try:
         access_key = request['keypair']['access_key']
@@ -599,5 +635,6 @@ def create_app():
     app.router.add_route('POST',   r'/{sess_id}/interrupt', interrupt)
     app.router.add_route('POST',   r'/{sess_id}/complete', complete)
     app.router.add_route('POST',   r'/{sess_id}/upload', upload_files)
+    app.router.add_route('POST',   r'/{sess_id}/download', download_file)
     app.router.add_route('POST',   r'/{sess_id}/files', list_files)
     return app, []
