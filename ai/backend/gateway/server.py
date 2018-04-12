@@ -218,11 +218,12 @@ async def gw_init(app):
 
 
 async def gw_shutdown(app):
-    await app['registry'].shutdown()
-
     app['event_subscriber'].cancel()
     await app['event_subscriber']
 
+
+async def gw_cleanup(app):
+    await app['registry'].shutdown()
     app['redis_image'].close()
     await app['redis_image'].wait_closed()
     app['redis_stat'].close()
@@ -295,6 +296,9 @@ async def server_main(loop, pidx, _args):
         app.add_subapp(r'/v{version:\d+}/' + prefix, subapp)
         app.middlewares.extend(global_middlewares)
 
+    app.on_shutdown.append(gw_shutdown)
+    app.on_cleanup.append(gw_cleanup)
+
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(
@@ -313,10 +317,12 @@ async def server_main(loop, pidx, _args):
     finally:
         log.info('shutting down...')
         await runner.cleanup()
-        await gw_shutdown(app)
 
 
 def gw_args(parser):
+    parser.add('-n', '--num-proc', env_var='BACKEND_GATEWAY_NPROC',
+               type=int, default=min(os.cpu_count(), 4),
+               help='The number of worker processes to handle API requests.')
     parser.add('--heartbeat-timeout', env_var='BACKEND_HEARTBEAT_TIMEOUT',
                type=float, default=5.0,
                help='The timeout for agent heartbeats.')
@@ -335,24 +341,22 @@ def gw_args(parser):
                help='The TCP port number where the event server listens on.')
     parser.add('--service-ip', env_var='BACKEND_SERVICE_IP',
                type=ipaddr, default=ip_address('0.0.0.0'),
-               help='The IP where the API gateway server listens on. '
-                    '(default: 0.0.0.0)')
+               help='The IP where the API gateway server listens on.')
     parser.add('--service-port', env_var='BACKEND_SERVICE_PORT',
                type=port_no, default=0,
                help='The TCP port number where the API gateway server listens on. '
-                    '(default: 8080, 8443 when SSL is enabled) '
+                    '(if unpsecified, it becomes 8080 and 8443 when SSL is enabled) '
                     'To run in production, you need the root privilege '
-                    'to use the standard 80/443 ports.')
+                    'to use the standard 80/443 ports or use a reverse-proxy '
+                    'such as nginx.')
     parser.add('--ssl-cert', env_var='BACKEND_SSL_CERT',
                type=path, default=None,
                help='The path to an SSL certificate file. '
-                    'It may contain inter/root CA certificates as well. '
-                    '(default: None)')
+                    'It may contain inter/root CA certificates as well.')
     parser.add('--ssl-key', env_var='BACKEND_SSL_KEY',
                type=path, default=None,
                help='The path to the private key used to make requests '
-                    'for the SSL certificate. '
-                    '(default: None)')
+                    'for the SSL certificate.')
     if datadog_available:
         parser.add('--datadog-api-key', env_var='DATADOG_API_KEY',
                    type=str, default=None,
@@ -387,9 +391,8 @@ def main():
             aiohttp.log.access_logger.setLevel('WARNING')
 
         asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-        num_workers = os.cpu_count()
         try:
-            aiotools.start_server(server_main, num_workers=num_workers,
+            aiotools.start_server(server_main, num_workers=config.num_proc,
                                   extra_procs=[event_router],
                                   args=(config,))
         finally:

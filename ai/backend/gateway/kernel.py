@@ -481,12 +481,9 @@ async def upload_files(request) -> web.Response:
         await registry.increment_session_usage(sess_id, access_key)
         file_count = 0
         upload_tasks = []
-        while True:
+        async for file in aiotools.aiter(reader.next, None):
             if file_count == 20:
                 raise InvalidAPIParameters('Too many files')
-            file = await reader.next()
-            if file is None:
-                break
             file_count += 1
             # This API handles only small files, so let's read it at once.
             chunk = await file.read_chunk(size=1048576)

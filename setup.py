@@ -17,7 +17,7 @@ requires = [
     'aiojobs>=0.1',
     'aiopg~=0.13.0',
     'aioredis~=1.0.0',
-    'aiotools>=0.5.4',
+    'aiotools>=0.6.0',
     'aiozmq>=0.7',
     'alembic~=0.9.8',
     'ConfigArgParse==0.12',

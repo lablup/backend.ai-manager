@@ -85,7 +85,9 @@ async def event_subscriber(dispatcher):
             await dispatcher.dispatch(event_name, agent_id, args)
     except asyncio.CancelledError:
         pass
-    except:
+    except aiozmq.ZmqStreamClosed:
+        pass
+    except Exception:
         log.exception('unexpected error')
     finally:
         event_sock.close()
