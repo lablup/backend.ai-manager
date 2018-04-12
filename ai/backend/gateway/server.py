@@ -218,11 +218,12 @@ async def gw_init(app):
 
 
 async def gw_shutdown(app):
-    await app['registry'].shutdown()
-
     app['event_subscriber'].cancel()
     await app['event_subscriber']
 
+
+async def gw_cleanup(app):
+    await app['registry'].shutdown()
     app['redis_image'].close()
     await app['redis_image'].wait_closed()
     app['redis_stat'].close()
@@ -295,6 +296,9 @@ async def server_main(loop, pidx, _args):
         app.add_subapp(r'/v{version:\d+}/' + prefix, subapp)
         app.middlewares.extend(global_middlewares)
 
+    app.on_shutdown.append(gw_shutdown)
+    app.on_cleanup.append(gw_cleanup)
+
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(
@@ -313,7 +317,6 @@ async def server_main(loop, pidx, _args):
     finally:
         log.info('shutting down...')
         await runner.cleanup()
-        await gw_shutdown(app)
 
 
 def gw_args(parser):
