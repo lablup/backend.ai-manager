@@ -1,6 +1,17 @@
 Changes
 =======
 
+1.3.9 (2018-04-12)
+------------------
+
+- Limit the default number of worker processes to avoid unnecessarily many workers in
+  many-core systems and database connection exhaustion errors (lablup/backend.ai#17)
+
+- Upgrade aiotools to v0.6.0 release.
+
+- Ensure aiohttp's shutdown handlers to have access to databases during their
+  execution, by moving connection pool cleanups to the aiohttp's cleanup handler.
+
 1.3.8 (2018-04-06)
 ------------------
 
