@@ -39,12 +39,12 @@ jobs:
         - cd ${HOME}/build/lablup
         - git clone https://github.com/lablup/backend.ai-agent.git
         - cd backend.ai-agent
-        - pip install -U -e .
+        - pip install -U --upgrade-strategy=eager -e .
         - cd ../backend.ai-manager
         # install manager requirements
         - if [[ $TRAVIS_BRANCH == "develop" ]]; then BRANCH="develop"; else BRANCH="master"; fi
         - sed -i'' -e "s/{BRANCH}/$BRANCH/g" requirements-ci.txt
-        - pip install -U -r requirements-ci.txt
+        - pip install -U --upgrade-strategy=eager -r requirements-ci.txt
       before_script:
         # etcd
         - mkdir -p /tmp/etcd/vroot

@@ -523,8 +523,7 @@ async def download_file(request) -> web.Response:
         await registry.increment_session_usage(sess_id, access_key)
         t = loop.create_task(registry.download_file(sess_id, access_key, file))
         result = await t
-        data = result['data']
-        log.debug(f'file {file} inside container retrieved')
+        log.debug(f'file inside container retrieved')
     except BackendError:
         log.exception('DOWNLOAD_FILE: exception')
         raise
@@ -533,8 +532,9 @@ async def download_file(request) -> web.Response:
         log.exception('DOWNLOAD_FILE: unexpected error!')
         raise InternalServerError
 
-    headers = {'Content-Disposition': result['path'].split('/')[-1]}
-    return web.Response(body=data, status=200, headers=headers)
+    filename = secrets.token_urlsafe(10) + '.tar'
+    headers = {'Content-Disposition': f'attachment; filename={filename}'}
+    return web.Response(body=result, status=200, headers=headers)
 
 
 @auth_required
