@@ -32,15 +32,15 @@ requires = [
     'pyzmq>=17.0',
     'SQLAlchemy~=1.1.14',
     'uvloop~=0.8.0',
-    'backend.ai-common~=1.3.0',
+    'backend.ai-common',
 ]
 build_requires = [
-    'wheel',
-    'twine',
+    'wheel>=0.31.0',
+    'twine>=1.11.0',
 ]
 test_requires = [
     'aiodocker',
-    'pytest>=3.4.0',
+    'pytest>=3.5.0',
     'pytest-asyncio>=0.8.0',
     'pytest-aiohttp',
     'pytest-cov',
@@ -57,7 +57,8 @@ monitor_requires = [
     'raven>=6.1',
 ]
 dependency_links = [
-    'git+https://github.com/achimnol/aiohttp@dynamic-subapp-prefix#egg=aiohttp-3.1.0+git.245be6',
+    ('git+https://github.com/achimnol/aiohttp' +
+     '@dynamic-subapp-prefix#egg=aiohttp-3.1.0+git.245be6'),
 ]
 
 
@@ -65,7 +66,8 @@ setup(
     name='backend.ai-manager',
     version=read_src_version(),
     description='Backend.AI Manager',
-    long_description=Path('README.rst').read_text(),
+    long_description=Path('README.md').read_text(),
+    long_description_content_type='text/markdown',
     url='https://github.com/lablup/backend.ai-manager',
     author='Lablup Inc.',
     author_email='joongi@lablup.com',
@@ -92,6 +94,7 @@ setup(
     ],
     python_requires='>=3.6',
     install_requires=requires,
+    setup_requires=['setuptools>=38.6.0'],
     extras_require={
         'build': build_requires,
         'test': test_requires,
@@ -101,4 +104,9 @@ setup(
     },
     dependency_links=dependency_links,
     data_files=[],
+    entry_points={
+        'console_scripts': [
+            'backend.ai-manager = ai.backend.manager.cli.__main__:main',
+        ],
+    },
 )
