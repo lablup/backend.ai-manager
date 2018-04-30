@@ -1,5 +1,6 @@
 import asyncio
 import json
+import secrets
 import time
 
 import aiohttp
@@ -9,47 +10,37 @@ from ai.backend.gateway.exceptions import KernelNotFound
 
 
 @pytest.fixture
-async def prepare_kernel(request, create_app_and_client, get_headers, event_loop,
-                         default_keypair):
-    clientSessionToken = 'test-token-0000'
+async def prepare_kernel(request, create_app_and_client,
+                         get_headers, default_keypair):
+    sess_id = f'test-kernel-session-{secrets.token_hex(8)}'
     app, client = await create_app_and_client(
         modules=['etcd', 'events', 'auth', 'vfolder',
                  'admin', 'ratelimit', 'kernel', 'stream'],
         spawn_agent=True,
         ev_router=True)
 
-    async def create_kernel():
+    async def create_kernel(lang='lua:5.3-alpine'):
         url = '/v3/kernel/'
         req_bytes = json.dumps({
-            'lang': 'lua:latest',
-            'clientSessionToken': clientSessionToken,
+            'lang': lang,
+            'clientSessionToken': sess_id,
         }).encode()
         headers = get_headers('POST', url, req_bytes)
-        ret = await client.post(url, data=req_bytes, headers=headers)
+        response = await client.post(url, data=req_bytes, headers=headers)
+        return await response.json()
 
-        assert ret.status == 201
-        rsp_json = await ret.json()
-        assert rsp_json['kernelId'] == clientSessionToken
+    yield app, client, create_kernel
 
-        return rsp_json
-
-    def finalizer():
-        async def fin():
-            sess_id = clientSessionToken
-            access_key = default_keypair['access_key']
-            try:
-                await app['registry'].destroy_session(sess_id, access_key)
-            except Exception:
-                pass
-        event_loop.run_until_complete(fin())
-
-    request.addfinalizer(finalizer)
-    return app, client, create_kernel
+    access_key = default_keypair['access_key']
+    try:
+        await app['registry'].destroy_session(sess_id, access_key)
+    except Exception:
+        pass
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_kernel_create(prepare_kernel):
+async def test_create_kernel(prepare_kernel):
     app, client, create_kernel = prepare_kernel
     kernel_info = await create_kernel()
 
@@ -262,7 +253,7 @@ async def test_get_info(prepare_kernel, get_headers):
 
     assert ret.status == 200
     rsp_json = await ret.json()
-    assert rsp_json['lang'] == 'lua:latest'
+    assert rsp_json['lang'] == 'lua:5.3-alpine'
 
 
 @pytest.mark.integration
