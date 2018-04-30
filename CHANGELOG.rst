@@ -4,6 +4,11 @@ Changes
 1.4.0 (to be released)
 ----------------------
 
+1.3.10 (2018-05-01)
+-------------------
+
+- Fix a regression bug when restarting kernels.
+
 1.3.9 (2018-04-12)
 ------------------
 

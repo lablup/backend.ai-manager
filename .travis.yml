@@ -65,7 +65,7 @@ jobs:
            --auto-compaction-retention 1
         # load agent server
         - mkdir -p /tmp/scratches
-        - docker pull lablup/kernel-lua:latest
+        - docker pull lablup/kernel-lua:5.3-alpine
       script:
         - python -m flake8 ai/backend tests
         - python -m pytest tests -m 'not integration' -v --cov=ai/backend
