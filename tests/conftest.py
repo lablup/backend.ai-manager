@@ -1,4 +1,5 @@
 from argparse import Namespace
+import asyncio
 from datetime import datetime
 import hashlib, hmac
 from importlib import import_module
@@ -17,7 +18,7 @@ import aiohttp
 from aiohttp import web
 import aiojobs.aiohttp
 from aiopg.sa import create_engine
-import asyncio
+from async_timeout import timeout
 from dateutil.tz import tzutc
 import sqlalchemy as sa
 import psycopg2 as pg
@@ -28,6 +29,7 @@ from ai.backend.gateway.config import load_config
 from ai.backend.gateway.events import event_router
 from ai.backend.gateway.server import (
     gw_init, gw_shutdown, gw_args,
+    exception_middleware, api_middleware,
     PUBLIC_INTERFACES)
 from ai.backend.manager import models
 from ai.backend.manager.models import fixtures, agents, kernels, keypairs, vfolders
@@ -189,7 +191,10 @@ class Client:
 async def app(event_loop, test_ns, test_db, unused_tcp_port):
     """ For tests that do not require actual server running.
     """
-    app = web.Application(loop=event_loop)
+    app = web.Application(loop=event_loop, middlewares=[
+        exception_middleware,
+        api_middleware,
+    ])
     app['config'] = load_config(argv=[], extra_args_funcs=(gw_args,))
 
     # Override basic settings.
@@ -361,7 +366,7 @@ async def create_app_and_client(request, test_id, test_ns,
                 '--etcd-addr', str(etcd_addr),
                 '--namespace', test_ns,
                 '--scratch-root', f'/tmp/backend.ai/scratches-{test_id}',
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ])
 
             def finalize_agent():
                 agent_proc.terminate()
@@ -381,7 +386,8 @@ async def create_app_and_client(request, test_id, test_ns,
                         break
                     await asyncio.sleep(0.2)
             task = event_loop.create_task(wait_for_agent())
-            await task
+            with timeout(10.0):
+                await task
 
         port = app['config'].service_port
         if app.get('sslctx'):
@@ -389,47 +395,47 @@ async def create_app_and_client(request, test_id, test_ns,
             client_params['connector'] = aiohttp.TCPConnector(verify_ssl=False)
         else:
             url = f'http://localhost:{port}'
-        client = Client(aiohttp.ClientSession(loop=event_loop, **client_params), url)
+        http_session = aiohttp.ClientSession(
+            loop=event_loop, **client_params)
+        client = Client(http_session, url)
         return app, client
 
-    try:
-        yield maker
-    finally:
+    yield maker
 
-        dbpool = app.get('dbpool')
-        if dbpool is not None:
-            # Clean DB tables for subsequent tests.
-            async with dbpool.acquire() as conn, conn.begin():
-                await conn.execute((vfolders.delete()))
-                await conn.execute((kernels.delete()))
-                await conn.execute((agents.delete()))
-                access_key = default_keypair['access_key']
-                query = (sa.update(keypairs)
-                           .values({
-                               'concurrency_used': 0,
-                               'num_queries': 0,
-                           })
-                           .where(keypairs.c.access_key == access_key))
-                await conn.execute(query)
-                access_key = user_keypair['access_key']
-                query = (sa.update(keypairs)
-                           .values({
-                               'concurrency_used': 0,
-                               'num_queries': 0,
-                           })
-                           .where(keypairs.c.access_key == access_key))
-                await conn.execute(query)
+    dbpool = app.get('dbpool')
+    if dbpool is not None:
+        # Clean DB tables for subsequent tests.
+        async with dbpool.acquire() as conn, conn.begin():
+            await conn.execute((vfolders.delete()))
+            await conn.execute((kernels.delete()))
+            await conn.execute((agents.delete()))
+            access_key = default_keypair['access_key']
+            query = (sa.update(keypairs)
+                       .values({
+                           'concurrency_used': 0,
+                           'num_queries': 0,
+                       })
+                       .where(keypairs.c.access_key == access_key))
+            await conn.execute(query)
+            access_key = user_keypair['access_key']
+            query = (sa.update(keypairs)
+                       .values({
+                           'concurrency_used': 0,
+                           'num_queries': 0,
+                       })
+                       .where(keypairs.c.access_key == access_key))
+            await conn.execute(query)
 
-        # Terminate client and servers
-        if client:
-            await client.close()
-        if runner:
-            await runner.cleanup()
-        await gw_shutdown(app)
+    # Terminate client and servers
+    if client:
+        await client.close()
+    if runner:
+        await runner.cleanup()
+    await gw_shutdown(app)
 
-        if extra_proc:
-            os.kill(extra_proc.pid, signal.SIGINT)
-            extra_proc.join()
+    if extra_proc:
+        os.kill(extra_proc.pid, signal.SIGINT)
+        extra_proc.join()
 
 
 @pytest.fixture(scope='session')

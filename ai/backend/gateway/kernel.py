@@ -329,8 +329,6 @@ async def restart(request) -> web.Response:
     try:
         await registry.increment_session_usage(sess_id, access_key)
         await registry.restart_session(sess_id, access_key)
-        for sock in request.app['stream_stdin_socks'][sess_id]:
-            sock.close()
     except BackendError:
         log.exception('RESTART: exception')
         raise
