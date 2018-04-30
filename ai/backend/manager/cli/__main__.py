@@ -12,7 +12,12 @@ def init_app_args(parser):
     import ai.backend.manager.cli.etcd      # noqa
 
 
-config = load_config(extra_args_funcs=(init_app_args, Logger.update_log_args))
-logger = Logger(config)
-with logger:
-    config.function(config)
+def main():
+    config = load_config(extra_args_funcs=(init_app_args, Logger.update_log_args))
+    logger = Logger(config)
+    with logger:
+        config.function(config)
+
+
+if __name__ == '__main__':
+    main()
