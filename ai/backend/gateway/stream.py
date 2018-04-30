@@ -184,7 +184,10 @@ async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
     except KernelNotFound:
         return
     if kernel.role == 'master':
-        stream_key = (kernel['sess_id'], kernel['access_key'])
+        sess_id = kernel['sess_id']
+        stream_key = (sess_id, kernel['access_key'])
+        for sock in app['stream_stdin_socks'][sess_id]:
+            sock.close()
         for handler in app['stream_pty_handlers'][stream_key].copy():
             handler.cancel()
             await handler
