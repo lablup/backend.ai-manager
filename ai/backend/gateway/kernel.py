@@ -530,9 +530,12 @@ async def download_file(request) -> web.Response:
         log.exception('DOWNLOAD_FILE: unexpected error!')
         raise InternalServerError
 
-    filename = secrets.token_urlsafe(10) + '.tar'
+    filename = secrets.token_urlsafe(16) + '.tar'
     headers = {'Content-Disposition': f'attachment; filename={filename}'}
-    return web.Response(body=result, status=200, headers=headers)
+    resp = web.StreamResponse(status=200, reason='OK', headers=headers)
+    await resp.prepare(request)
+    await resp.write(result)
+    return resp
 
 
 @auth_required
