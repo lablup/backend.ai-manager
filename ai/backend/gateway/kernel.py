@@ -2,6 +2,7 @@
 REST-style kernel session management APIs.
 '''
 
+import aiohttp
 import asyncio
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -501,27 +502,27 @@ async def upload_files(request) -> web.Response:
 
 @auth_required
 @server_ready_required
-async def download_file(request) -> web.Response:
+async def download_files(request) -> web.Response:
     try:
         registry = request.app['registry']
         sess_id = request.match_info['sess_id']
         access_key = request['keypair']['access_key']
         with _timeout(2):
             params = await request.json(loads=json.loads)
-        assert params.get('file'), 'no file specified!'
-        file = params.get('file')
+        assert params.get('files'), 'no file(s) specified!'
+        files = params.get('files')
         log.info(f'DOWNLOAD_FILE (u:{access_key}, token:{sess_id})')
-    except (asyncio.TimeoutError, AssertionError,
-            json.decoder.JSONDecodeError) as e:
+    except (asyncio.TimeoutError, AssertionError, json.decoder.JSONDecodeError) as e:
         log.warning(f'DOWNLOAD_FILE: invalid/missing parameters, {e!r}')
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
 
-    loop = asyncio.get_event_loop()
     try:
+        assert len(files) <= 5, 'Too many files'
         await registry.increment_session_usage(sess_id, access_key)
-        t = loop.create_task(registry.download_file(sess_id, access_key, file))
-        result = await t
-        log.debug(f'file inside container retrieved')
+        # TODO: Read all download file contents. Need to fix by using chuncking, etc.
+        results = await asyncio.gather(*map(
+            functools.partial(registry.download_file, sess_id, access_key), files))
+        log.debug(f'file(s) inside container retrieved')
     except BackendError:
         log.exception('DOWNLOAD_FILE: exception')
         raise
@@ -530,12 +531,10 @@ async def download_file(request) -> web.Response:
         log.exception('DOWNLOAD_FILE: unexpected error!')
         raise InternalServerError
 
-    filename = secrets.token_urlsafe(16) + '.tar'
-    headers = {'Content-Disposition': f'attachment; filename={filename}'}
-    resp = web.StreamResponse(status=200, reason='OK', headers=headers)
-    await resp.prepare(request)
-    await resp.write(result)
-    return resp
+    with aiohttp.MultipartWriter('mixed') as mpwriter:
+        for tarbytes in results:
+            mpwriter.append(tarbytes)
+        return web.Response(body=mpwriter, status=200)
 
 
 @auth_required
@@ -633,6 +632,6 @@ def create_app():
     app.router.add_route('POST',   r'/{sess_id}/interrupt', interrupt)
     app.router.add_route('POST',   r'/{sess_id}/complete', complete)
     app.router.add_route('POST',   r'/{sess_id}/upload', upload_files)
-    app.router.add_route('POST',   r'/{sess_id}/download', download_file)
+    app.router.add_route('POST',   r'/{sess_id}/download', download_files)
     app.router.add_route('POST',   r'/{sess_id}/files', list_files)
     return app, []
