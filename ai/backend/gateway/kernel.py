@@ -632,6 +632,6 @@ def create_app():
     app.router.add_route('POST',   r'/{sess_id}/interrupt', interrupt)
     app.router.add_route('POST',   r'/{sess_id}/complete', complete)
     app.router.add_route('POST',   r'/{sess_id}/upload', upload_files)
-    app.router.add_route('POST',   r'/{sess_id}/download', download_files)
-    app.router.add_route('POST',   r'/{sess_id}/files', list_files)
+    app.router.add_route('GET',    r'/{sess_id}/download', download_files)
+    app.router.add_route('GET',    r'/{sess_id}/files', list_files)
     return app, []
