@@ -1,7 +1,10 @@
+import json
 import logging
+import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import uuid
 
 from aiohttp import web
@@ -139,6 +142,51 @@ async def upload(request):
 
 
 @auth_required
+async def list_files(request):
+    dbpool = request.app['dbpool']
+    folder_name = request.match_info['name']
+    access_key = request['keypair']['access_key']
+    params = await request.json()
+    log.info(f"VFOLDER.LIST_FILES (u:{access_key}, f:{folder_name})")
+    async with dbpool.acquire() as conn:
+        query = (sa.select('*')
+                   .select_from(vfolders)
+                   .where((vfolders.c.belongs_to == access_key) &
+                          (vfolders.c.name == folder_name)))
+        try:
+            result = await conn.execute(query)
+        except psycopg2.DataError as e:
+            raise InvalidAPIParameters
+        row = await result.first()
+        if row is None:
+            raise FolderNotFound()
+        base_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+        folder_path = base_path / params['path'] if 'path' in params else base_path
+        if not str(folder_path).startswith(str(base_path)):
+            resp = {'error_msg': 'No such file or directory'}
+            return web.json_response(resp, status=404)
+        files = []
+        for f in os.scandir(folder_path):
+            fstat = f.stat()
+            ctime = fstat.st_ctime  # TODO: way to get concrete create time?
+            mtime = fstat.st_mtime
+            atime = fstat.st_atime
+            files.append({
+                'mode': stat.filemode(fstat.st_mode),
+                'size': fstat.st_size,
+                'ctime': ctime,
+                'mtime': mtime,
+                'atime': atime,
+                'filename': f.name,
+            })
+        resp = {
+            'files': json.dumps(files),
+            'folder_path': str(folder_path),
+        }
+    return web.json_response(resp, status=200)
+
+
+@auth_required
 async def delete(request):
     dbpool = request.app['dbpool']
     folder_name = request.match_info['name']
@@ -190,4 +238,5 @@ def create_app():
     app.router.add_route('GET',    r'/{name}', get_info)
     app.router.add_route('DELETE', r'/{name}', delete)
     app.router.add_route('POST',   r'/{name}/upload', upload)
+    app.router.add_route('GET',    r'/{name}/files', list_files)
     return app, []
