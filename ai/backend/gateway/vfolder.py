@@ -7,8 +7,11 @@ import shutil
 import stat
 import uuid
 
+import aiohttp
 from aiohttp import web
 import aiotools
+import asyncio
+import functools
 import sqlalchemy as sa
 import psycopg2
 
@@ -142,6 +145,38 @@ async def upload(request):
 
 
 @auth_required
+async def download(request):
+    dbpool = request.app['dbpool']
+    folder_name = request.match_info['name']
+    access_key = request['keypair']['access_key']
+    params = await request.json()
+    assert params.get('files'), 'no file(s) specified!'
+    files = params.get('files')
+    log.info(f"VFOLDER.LIST_FILES (u:{access_key}, f:{folder_name})")
+    async with dbpool.acquire() as conn:
+        query = (sa.select('*')
+                   .select_from(vfolders)
+                   .where((vfolders.c.belongs_to == access_key) &
+                          (vfolders.c.name == folder_name)))
+        try:
+            result = await conn.execute(query)
+        except psycopg2.DataError as e:
+            raise InvalidAPIParameters
+        row = await result.first()
+        if row is None:
+            raise FolderNotFound()
+        folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+
+        async def append_file(writer, file):
+            writer.append(open(folder_path / file, 'rb'))
+
+        with aiohttp.MultipartWriter('mixed') as mpwriter:
+            await asyncio.gather(*map(functools.partial(append_file, mpwriter),
+                                      files))
+            return web.Response(body=mpwriter, status=200)
+
+
+@auth_required
 async def list_files(request):
     dbpool = request.app['dbpool']
     folder_name = request.match_info['name']
@@ -238,5 +273,6 @@ def create_app():
     app.router.add_route('GET',    r'/{name}', get_info)
     app.router.add_route('DELETE', r'/{name}', delete)
     app.router.add_route('POST',   r'/{name}/upload', upload)
+    app.router.add_route('GET',    r'/{name}/download', download)
     app.router.add_route('GET',    r'/{name}/files', list_files)
     return app, []
