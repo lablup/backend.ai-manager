@@ -39,7 +39,7 @@ class _Infinity(numbers.Number):
         return float('inf')
 
     def __int__(self):
-        return 1 << 64  # a practical 64-bit maximum
+        return 0xffff_ffff_ffff_ffff  # a practical 64-bit maximum
 
 
 numbers.Number.register(_Infinity)
