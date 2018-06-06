@@ -4,6 +4,16 @@ Changes
 1.4.0 (to be released)
 ----------------------
 
+1.3.11 (2018-06-07)
+-------------------
+
+- Drop custom-patched aiohttp and update it to official v3.3 release.
+
+- Fix intermittent failures in streaming uploads of small files.
+
+- Fix an internal "infinity integer" representation to have correct 64-bit maximum
+  unsgined value.
+
 1.3.10 (2018-05-01)
 -------------------
 

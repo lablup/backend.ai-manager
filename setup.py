@@ -13,13 +13,16 @@ def read_src_version():
 requires = [
     'aioconsole>=0.1.3',
     'aiodataloader',
-    'aiohttp~=3.1.0',
+    'aiohttp~=3.3.0',
     'aiojobs>=0.1',
     'aiopg~=0.13.0',
     'aioredis~=1.0.0',
     'aiotools>=0.6.0',
     'aiozmq>=0.7',
     'alembic~=0.9.8',
+    'async_timeout~=3.0',  # to avoid pip 10 resolver issue
+    'attrs>=18.0',         # to avoid pip 10 resolver issue
+    'coloredlogs>=5.2',
     'ConfigArgParse==0.12',
     'dataclasses; python_version<"3.7"',
     'graphene~=2.0.1',
@@ -102,7 +105,10 @@ setup(
         'ci': ci_requires,
         'monitor': monitor_requires,
     },
+<<<<<<< HEAD
     dependency_links=dependency_links,
+=======
+>>>>>>> 1.3
     data_files=[],
     entry_points={
         'console_scripts': [

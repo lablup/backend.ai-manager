@@ -95,10 +95,12 @@ async def api_middleware(request, handler):
     if ex is not None:
         # handled by exception_middleware
         raise ex
-    version = int(request.match_info.get('version', 3))
+    version = request.get('api_version', None)
+    if version is None:
+        version = int(request.match_info.get('version', 3))
+        request['api_version'] = version
     if version < 1 or version > 3:
         raise GenericBadRequest('Unsupported API major version.')
-    request['api_version'] = version
     resp = (await _handler(request))
     return resp
 
@@ -248,6 +250,23 @@ def handle_loop_error(app, loop, context):
             app['sentry'].captureException(exc_info)
 
 
+def _get_legacy_handler(handler, app, api_version):
+
+    @functools.wraps(handler)
+    async def _wrapped_handler(request):
+        request['api_version'] = api_version
+        # This is a hack to support legacy routes without altering aiohttp core.
+        m = web.UrlMappingMatchInfo(request._match_info,
+                                    request._match_info.route)
+        m['version'] = api_version
+        m.add_app(app)
+        m.freeze()
+        request._match_info = m
+        return await handler(request)
+
+    return _wrapped_handler
+
+
 @aiotools.actxmgr
 async def server_main(loop, pidx, _args):
 
@@ -284,6 +303,8 @@ async def server_main(loop, pidx, _args):
     aiojobs.aiohttp.setup(app, **scheduler_opts)
     await gw_init(app)
     for pkgname in subapp_pkgs:
+        if pidx == 0:
+            log.info('Loading module: %s', pkgname[1:])
         subapp_mod = importlib.import_module(pkgname, 'ai.backend.gateway')
         subapp, global_middlewares = getattr(subapp_mod, 'create_app')()
         assert isinstance(subapp, web.Application)
@@ -293,8 +314,18 @@ async def server_main(loop, pidx, _args):
             subapp[key] = app[key]
         prefix = subapp.get('prefix', pkgname.split('.')[-1].replace('_', '-'))
         aiojobs.aiohttp.setup(subapp, **scheduler_opts)
-        app.add_subapp(r'/v{version:\d+}/' + prefix, subapp)
+        app.add_subapp('/' + prefix, subapp)
         app.middlewares.extend(global_middlewares)
+
+        # Add legacy version-prefixed routes to the root app with some hacks
+        for r in subapp.router.routes():
+            for version in subapp['api_versions']:
+                subpath = r.resource.canonical
+                if subpath == f'/{prefix}':
+                    subpath += '/'
+                legacy_path = f'/v{version}{subpath}'
+                handler = _get_legacy_handler(r.handler, subapp, version)
+                app.router.add_route(r.method, legacy_path, handler)
 
     app.on_shutdown.append(gw_shutdown)
     app.on_cleanup.append(gw_cleanup)

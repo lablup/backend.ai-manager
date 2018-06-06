@@ -485,11 +485,19 @@ async def upload_files(request) -> web.Response:
                 raise InvalidAPIParameters('Too many files')
             file_count += 1
             # This API handles only small files, so let's read it at once.
-            chunk = await file.read_chunk(size=1048576)
-            if not file.at_eof():
-                raise InvalidAPIParameters('Too large file')
-            data = file.decode(chunk)
-            log.debug(f'received file: {file.filename} ({len(data):,} bytes)')
+            chunks = []
+            recv_size = 0
+            while True:
+                chunk = await file.read_chunk(size=1048576)
+                if not chunk:
+                    break
+                chunk_size = len(chunk)
+                if recv_size + chunk_size >= 1048576:
+                    raise InvalidAPIParameters('Too large file')
+                chunks.append(chunk)
+                recv_size += chunk_size
+            data = file.decode(b''.join(chunks))
+            log.debug(f'received file: {file.filename} ({recv_size:,} bytes)')
             t = loop.create_task(
                 registry.upload_file(sess_id, access_key, file.filename, data))
             upload_tasks.append(t)
