@@ -30,6 +30,7 @@ from ai.backend.gateway.events import event_router
 from ai.backend.gateway.server import (
     gw_init, gw_shutdown, gw_args,
     exception_middleware, api_middleware,
+    _get_legacy_handler,
     PUBLIC_INTERFACES)
 from ai.backend.manager import models
 from ai.backend.manager.models import fixtures, agents, kernels, keypairs, vfolders
@@ -331,8 +332,20 @@ async def create_app_and_client(request, test_id, test_ns,
                 subapp[key] = app[key]
             prefix = subapp.get('prefix', mod.replace('_', '-'))
             aiojobs.aiohttp.setup(subapp, **scheduler_opts)
-            app.add_subapp(r'/v{version:\d+}/' + prefix, subapp)
+            app.add_subapp('/' + prefix, subapp)
             app.middlewares.extend(mw)
+
+            # TODO: refactor to avoid duplicates with gateway.server
+
+            # Add legacy version-prefixed routes to the root app with some hacks
+            for r in subapp.router.routes():
+                for version in subapp['api_versions']:
+                    subpath = r.resource.canonical
+                    if subpath == f'/{prefix}':
+                        subpath += '/'
+                    legacy_path = f'/v{version}{subpath}'
+                    handler = _get_legacy_handler(r.handler, subapp, version)
+                    app.router.add_route(r.method, legacy_path, handler)
 
         server_params = {}
         client_params = {}

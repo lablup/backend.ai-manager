@@ -98,6 +98,7 @@ async def api_middleware(request, handler):
     version = request.get('api_version', None)
     if version is None:
         version = int(request.match_info.get('version', 3))
+        request['api_version'] = version
     if version < 1 or version > 3:
         raise GenericBadRequest('Unsupported API major version.')
     resp = (await _handler(request))
@@ -314,6 +315,7 @@ async def server_main(loop, pidx, _args):
         prefix = subapp.get('prefix', pkgname.split('.')[-1].replace('_', '-'))
         aiojobs.aiohttp.setup(subapp, **scheduler_opts)
         app.add_subapp('/' + prefix, subapp)
+        app.middlewares.extend(global_middlewares)
 
         # Add legacy version-prefixed routes to the root app with some hacks
         for r in subapp.router.routes():
@@ -324,7 +326,6 @@ async def server_main(loop, pidx, _args):
                 legacy_path = f'/v{version}{subpath}'
                 handler = _get_legacy_handler(r.handler, subapp, version)
                 app.router.add_route(r.method, legacy_path, handler)
-        app.middlewares.extend(global_middlewares)
 
     app.on_shutdown.append(gw_shutdown)
     app.on_cleanup.append(gw_cleanup)
