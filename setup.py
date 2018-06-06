@@ -13,14 +13,14 @@ def read_src_version():
 requires = [
     'aioconsole>=0.1.3',
     'aiodataloader',
-    'aiohttp~=3.2.0',
+    'aiohttp~=3.3.0',
     'aiojobs>=0.1',
     'aiopg~=0.13.0',
     'aioredis~=1.0.0',
     'aiotools>=0.6.0',
     'aiozmq>=0.7',
     'alembic~=0.9.2',
-    'async_timeout>=3.0',  # to avoid pip 10 resolver issue
+    'async_timeout~=3.0',  # to avoid pip 10 resolver issue
     'attrs>=18.0',         # to avoid pip 10 resolver issue
     'coloredlogs>=5.2',
     'ConfigArgParse==0.12',
@@ -100,8 +100,5 @@ setup(
         'ci': ci_requires,
         'monitor': monitor_requires,
     },
-    dependency_links=[
-        'git+https://github.com/achimnol/aiohttp@dynamic-subapp-prefix#egg=aiohttp',
-    ],
     data_files=[],
 )
