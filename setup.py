@@ -59,10 +59,6 @@ monitor_requires = [
     'datadog>=0.16.0',
     'raven>=6.1',
 ]
-dependency_links = [
-    ('git+https://github.com/achimnol/aiohttp' +
-     '@dynamic-subapp-prefix#egg=aiohttp-3.1.0+git.245be6'),
-]
 
 
 setup(
@@ -105,10 +101,6 @@ setup(
         'ci': ci_requires,
         'monitor': monitor_requires,
     },
-<<<<<<< HEAD
-    dependency_links=dependency_links,
-=======
->>>>>>> 1.3
     data_files=[],
     entry_points={
         'console_scripts': [
