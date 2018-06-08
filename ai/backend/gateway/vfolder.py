@@ -166,13 +166,13 @@ async def download(request):
         if row is None:
             raise FolderNotFound()
         folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
-
-        async def append_file(writer, file):
-            writer.append(open(folder_path / file, 'rb'))
-
         with aiohttp.MultipartWriter('mixed') as mpwriter:
-            await asyncio.gather(*map(functools.partial(append_file, mpwriter),
-                                      files))
+            # TODO: enable compression (how to calculate total response length?)
+            # headers = {'Content-Encoding': 'gzip'}
+            for file in files:
+                data = open(folder_path / file, 'rb')
+                # mpwriter.append(data, headers)
+                mpwriter.append(data)
             return web.Response(body=mpwriter, status=200)
 
 
