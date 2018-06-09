@@ -197,12 +197,16 @@ async def download(request):
             raise FolderNotFound()
         folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
         with aiohttp.MultipartWriter('mixed') as mpwriter:
-            # TODO: enable compression (how to calculate total response length?)
-            # headers = {'Content-Encoding': 'gzip'}
-            for file in files:
-                data = open(folder_path / file, 'rb')
-                # mpwriter.append(data, headers)
-                mpwriter.append(data)
+            total_payloads_length = 0
+            headers = {'Content-Encoding': 'gzip'}
+            try:
+                for file in files:
+                    data = open(folder_path / file, 'rb')
+                    payload = mpwriter.append(data, headers)
+                    total_payloads_length += payload.size
+            except FileNotFoundError:
+                return web.Response(status=404, reason='File not found')
+            mpwriter._headers['X-TOTAL-PAYLOADS-LENGTH'] = str(total_payloads_length)
             return web.Response(body=mpwriter, status=200)
 
 
