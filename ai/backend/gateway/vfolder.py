@@ -307,7 +307,7 @@ def create_app():
     app.router.add_route('GET',    r'/{name}', get_info)
     app.router.add_route('DELETE', r'/{name}', delete)
     app.router.add_route('POST',   r'/{name}/upload', upload)
-    app.router.add_route('GET',    r'/{name}/delete_files', delete_files)
+    app.router.add_route('DELETE',    r'/{name}/delete_files', delete_files)
     app.router.add_route('GET',    r'/{name}/download', download)
     app.router.add_route('GET',    r'/{name}/files', list_files)
     return app, []
