@@ -34,7 +34,7 @@ requires = [
     'PyYAML',
     'pyzmq>=17.0',
     'SQLAlchemy~=1.1.14',
-    'uvloop~=0.8.0',
+    'uvloop~=0.10.0',
     'backend.ai-common',
 ]
 build_requires = [
@@ -43,7 +43,7 @@ build_requires = [
 ]
 test_requires = [
     'aiodocker',
-    'pytest>=3.5.0',
+    'pytest>=3.6.0',
     'pytest-asyncio>=0.8.0',
     'pytest-aiohttp',
     'pytest-cov',
