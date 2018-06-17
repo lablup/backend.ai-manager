@@ -6,6 +6,8 @@ Changes
 
 - Support download and deletion of files in virtual folders. (#70)
 
+- Support listing files in the session's main container. (#63)
+
 - All API endpoints are now available *without* version prefixes, as we migrate
   to the vanilla aiohttp v3.3 release. (#78)
 
