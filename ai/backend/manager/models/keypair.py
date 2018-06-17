@@ -36,6 +36,7 @@ keypairs = sa.Table(
 
 
 class KeyPair(graphene.ObjectType):
+    user_id = graphene.String()
     access_key = graphene.String()
     secret_key = graphene.String()
     is_active = graphene.Boolean()
@@ -59,6 +60,7 @@ class KeyPair(graphene.ObjectType):
         if row is None:
             return None
         return cls(
+            user_id=row['user_id'],
             access_key=row['access_key'],
             secret_key=row['secret_key'],
             is_active=row['is_active'],
@@ -132,7 +134,7 @@ class KeyPairInput(graphene.InputObjectType):
 class CreateKeyPair(graphene.Mutation):
 
     class Arguments:
-        user_id = graphene.Int(required=True)
+        user_id = graphene.String(required=True)
         props = KeyPairInput(required=True)
 
     ok = graphene.Boolean()
