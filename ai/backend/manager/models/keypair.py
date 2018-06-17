@@ -121,11 +121,11 @@ class KeyPair(graphene.ObjectType):
 
 
 class KeyPairInput(graphene.InputObjectType):
-    is_active = graphene.Boolean()
-    is_admin = graphene.Boolean()
-    resource_policy = graphene.String()
-    concurrency_limit = graphene.Int()
-    rate_limit = graphene.Int()
+    is_active = graphene.Boolean(required=False, default=True)
+    is_admin = graphene.Boolean(required=False, default=False)
+    resource_policy = graphene.String(required=False, default=None)
+    concurrency_limit = graphene.Int(required=True)
+    rate_limit = graphene.Int(required=True)
 
     # When creating, you MUST set all fields.
     # When modifying, set the field to "None" to skip setting the value.
