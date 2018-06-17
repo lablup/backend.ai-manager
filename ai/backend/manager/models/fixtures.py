@@ -7,7 +7,7 @@ example_keypair = [
         [
             {
                 # Admin user example key
-                'user_id': 2,  # 1: anonymouse user, 2: default super user
+                'user_id': 'admin@lablup.com',
                 'access_key': 'AKIAIOSFODNN7EXAMPLE',
                 'secret_key': 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
                 'is_active': True,
@@ -20,7 +20,7 @@ example_keypair = [
             },
             {
                 # Non-admin user example key
-                'user_id': 3,
+                'user_id': 'user@lablup.com',
                 'access_key': 'AKIANABBDUSEREXAMPLE',
                 'secret_key': 'C8qnIo29EZvXkPK_MXcuAakYTy4NYrxwmCEyNPlf',
                 'is_active': True,

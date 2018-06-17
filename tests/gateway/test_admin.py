@@ -130,7 +130,7 @@ class TestAdminQuery:
                                   default_keypair, user_keypair):
         app, client = await create_app_and_client(modules=['auth', 'admin'])
 
-        query = '{ keypairs(user_id: 2) { access_key secret_key } }'
+        query = '{ keypairs(user_id: "admin@lablup.com") { access_key secret_key } }'
         req_bytes = json.dumps({'query': query}).encode()
         headers = get_headers('POST', self.url, req_bytes)
         ret = await client.post(self.url, data=req_bytes, headers=headers)
@@ -140,7 +140,7 @@ class TestAdminQuery:
         assert rsp_json['keypairs'][0]['access_key'] == default_keypair['access_key']
         assert rsp_json['keypairs'][0]['secret_key'] == default_keypair['secret_key']
 
-        query = '{ keypairs(user_id: 3) { access_key secret_key } }'
+        query = '{ keypairs(user_id: "user@lablup.com") { access_key secret_key } }'
         req_bytes = json.dumps({'query': query}).encode()
         headers = get_headers('POST', self.url, req_bytes)
         ret = await client.post(self.url, data=req_bytes, headers=headers)
