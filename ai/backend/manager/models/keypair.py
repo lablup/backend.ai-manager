@@ -18,7 +18,7 @@ __all__ = (
 
 keypairs = sa.Table(
     'keypairs', metadata,
-    sa.Column('user_id', sa.Integer(), index=True),  # foreign key
+    sa.Column('user_id', sa.String(length=256), index=True),
     sa.Column('access_key', sa.String(length=20), primary_key=True),
     sa.Column('secret_key', sa.String(length=40)),
     sa.Column('is_active', sa.Boolean, index=True),
