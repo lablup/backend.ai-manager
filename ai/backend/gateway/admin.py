@@ -113,7 +113,7 @@ class QueryForAdmin(graphene.ObjectType):
 
     keypairs = graphene.List(
         KeyPair,
-        user_id=graphene.Int(required=True),
+        user_id=graphene.String(required=True),
         is_active=graphene.Boolean())
 
     vfolders = graphene.List(
