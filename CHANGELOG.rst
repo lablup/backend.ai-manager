@@ -4,10 +4,22 @@ Changes
 1.4.0 (to be released)
 ----------------------
 
+- Support download and deletion of files in virtual folders. (#70)
+
+- All API endpoints are now available *without* version prefixes, as we migrate
+  to the vanilla aiohttp v3.3 release. (#78)
+
+- Change `user_id` column type of `keypairs` model from integer to string.
+  Now it can be used to store the user emails, UUIDs, or whatever identifiers
+  depending on the operator's environment.
+
+  Clients must be upgrade to 1.3.7 or higher to use string `user_id` properly.
+  (The client will auto-detect the type by trying type casting.)
+
 1.3.11 (2018-06-07)
 -------------------
 
-- Drop custom-patched aiohttp and update it to official v3.3 release.
+- Drop custom-patched aiohttp and update it to official v3.3 release. (#78)
 
 - Fix intermittent failures in streaming uploads of small files.
 
