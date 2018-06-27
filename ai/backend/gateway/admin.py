@@ -125,6 +125,10 @@ class QueryForAdmin(graphene.ObjectType):
         access_key=graphene.String(),
         status=graphene.String())
 
+    compute_session = graphene.Field(
+        ComputeSession,
+        sess_id=graphene.String())
+
     compute_workers = graphene.List(
         ComputeWorker,
         sess_id=graphene.String(required=True),
@@ -176,6 +180,14 @@ class QueryForAdmin(graphene.ObjectType):
         return await loader.load(access_key)
 
     @staticmethod
+    async def resolve_compute_session(executor, info, sess_id, status=None):
+        manager = info.context['dlmgr']
+        if status is not None:
+            status = KernelStatus[status]
+        loader = manager.get_loader('ComputeSession.detail', status=status)
+        return await loader.load(sess_id)
+
+    @staticmethod
     async def resolve_compute_workers(executor, info, sess_id, status=None):
         manager = info.context['dlmgr']
         if status is not None:
@@ -197,6 +209,10 @@ class QueryForUser(graphene.ObjectType):
     compute_sessions = graphene.List(
         ComputeSession,
         status=graphene.String())
+
+    compute_session = graphene.Field(
+        ComputeSession,
+        sess_id=graphene.String())
 
     compute_workers = graphene.List(
         ComputeWorker,
@@ -227,6 +243,16 @@ class QueryForUser(graphene.ObjectType):
             status = KernelStatus[status]
         loader = manager.get_loader('ComputeSession', status=status)
         return await loader.load(access_key)
+
+    @staticmethod
+    async def resolve_compute_session(executor, info, sess_id, status=None):
+        manager = info.context['dlmgr']
+        access_key = info.context['access_key']
+        if status is not None:
+            status = KernelStatus[status]
+        loader = manager.get_loader('ComputeSession.detail', access_key=access_key,
+                                    status=status)
+        return await loader.load(sess_id)
 
     @staticmethod
     async def resolve_compute_workers(executor, info, sess_id, status=None):

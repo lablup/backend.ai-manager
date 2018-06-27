@@ -119,6 +119,8 @@ class SessionCommons:
     io_cur_scratch_size = graphene.Int()
 
     async def resolve_cpu_used(self, info):
+        if not hasattr(self, 'status'):
+            return None
         if self.status not in LIVE_STATUS:
             return zero_if_none(self.cpu_used)
         rs = info.context['redis_stat']
@@ -126,6 +128,8 @@ class SessionCommons:
         return float(ret) if ret is not None else 0
 
     async def resolve_mem_max_bytes(self, info):
+        if not hasattr(self, 'status'):
+            return None
         if self.status not in LIVE_STATUS:
             return zero_if_none(self.mem_max_bytes)
         rs = info.context['redis_stat']
@@ -133,6 +137,8 @@ class SessionCommons:
         return int(ret) if ret is not None else 0
 
     async def resolve_mem_cur_bytes(self, info):
+        if not hasattr(self, 'status'):
+            return None
         if self.status not in LIVE_STATUS:
             return 0
         rs = info.context['redis_stat']
@@ -140,6 +146,8 @@ class SessionCommons:
         return int(ret) if ret is not None else 0
 
     async def resolve_net_rx_bytes(self, info):
+        if not hasattr(self, 'status'):
+            return None
         if self.status not in LIVE_STATUS:
             return zero_if_none(self.net_rx_bytes)
         rs = info.context['redis_stat']
@@ -147,6 +155,8 @@ class SessionCommons:
         return int(ret) if ret is not None else 0
 
     async def resolve_net_tx_bytes(self, info):
+        if not hasattr(self, 'status'):
+            return None
         if self.status not in LIVE_STATUS:
             return zero_if_none(self.net_tx_bytes)
         rs = info.context['redis_stat']
@@ -154,6 +164,8 @@ class SessionCommons:
         return int(ret) if ret is not None else 0
 
     async def resolve_io_read_bytes(self, info):
+        if not hasattr(self, 'status'):
+            return None
         if self.status not in LIVE_STATUS:
             return zero_if_none(self.io_read_bytes)
         rs = info.context['redis_stat']
@@ -161,6 +173,8 @@ class SessionCommons:
         return int(ret) if ret is not None else 0
 
     async def resolve_io_write_bytes(self, info):
+        if not hasattr(self, 'status'):
+            return None
         if self.status not in LIVE_STATUS:
             return zero_if_none(self.io_write_bytes)
         rs = info.context['redis_stat']
@@ -168,6 +182,8 @@ class SessionCommons:
         return int(ret) if ret is not None else 0
 
     async def resolve_io_max_scratch_size(self, info):
+        if not hasattr(self, 'status'):
+            return None
         if self.status not in LIVE_STATUS:
             return zero_if_none(self.io_max_scratch_size)
         rs = info.context['redis_stat']
@@ -175,6 +191,8 @@ class SessionCommons:
         return int(ret) if ret is not None else 0
 
     async def resolve_io_cur_scratch_size(self, info):
+        if not hasattr(self, 'status'):
+            return None
         if self.status not in LIVE_STATUS:
             return 0
         rs = info.context['redis_stat']
@@ -252,6 +270,33 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 o = ComputeSession.from_row(row)
                 objs_per_key[row.access_key].append(o)
         return tuple(objs_per_key.values())
+
+    @staticmethod
+    async def batch_load_detail(dbpool, sess_ids, *, access_key=None, status=None):
+        async with dbpool.acquire() as conn:
+            # TODO: Extend to return terminated sessions (we need unique identifier).
+            status = KernelStatus[status] if status else KernelStatus['RUNNING']
+            query = (sa.select('*')
+                       .select_from(kernels)
+                       .where((kernels.c.role == 'master') &
+                              (kernels.c.status == status) &
+                              (kernels.c.sess_id.in_(sess_ids))))
+            if access_key is not None:
+                query = query.where(kernels.c.access_key == access_key)
+            sess_info = []
+            async for row in conn.execute(query):
+                o = ComputeSession.from_row(row)
+                sess_info.append(o)
+        if len(sess_info) != 0:
+            return tuple(sess_info)
+        else:
+            sess_info = OrderedDict()
+            for s in sess_ids:
+                sess_info[s] = list()
+            async for row in conn.execute(query):
+                o = ComputeSession.from_row(row)
+                sess_info[row.sess_id].append(o)
+            return tuple(sess_info.values())
 
 
 class ComputeWorker(SessionCommons, graphene.ObjectType):
