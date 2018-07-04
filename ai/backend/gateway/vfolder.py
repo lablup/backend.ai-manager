@@ -267,6 +267,7 @@ async def invite(request):
     assert len(user_ids) > 0, 'no user ids'
     log.info(f"VFOLDER.INVITE (u:{access_key}, f:{folder_name})")
     async with dbpool.acquire() as conn:
+        # Get virtual folder.
         query = (sa.select('*')
                    .select_from(vfolders)
                    .where((vfolders.c.belongs_to == access_key) &
@@ -279,15 +280,28 @@ async def invite(request):
         if vf is None:
             raise FolderNotFound()
 
+        # Get keypair of virtual folder owner.
         query = (sa.select('*')
                    .select_from(keypairs)
-                   .where(keypairs.c.user_id.in_(user_ids)))
+                   .where(keypairs.c.access_key == access_key))
+        try:
+            result = await conn.execute(query)
+        except psycopg2.DataError as e:
+            raise InvalidAPIParameters
+        kp = await result.first()
+
+        # Get invited user's keypairs except vfolder owner.
+        query = (sa.select('*')
+                   .select_from(keypairs)
+                   .where(keypairs.c.user_id.in_(user_ids))
+                   .where(keypairs.c.user_id != kp.user_id))
         try:
             result = await conn.execute(query)
         except psycopg2.DataError as e:
             raise InvalidAPIParameters
         kps = await result.fetchall()
 
+        # Create invitation.
         invitees = [kp.user_id for kp in kps]
         invited_ids = []
         for invitee in set(invitees):
