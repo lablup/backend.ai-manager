@@ -280,21 +280,11 @@ async def invite(request):
         if vf is None:
             raise FolderNotFound()
 
-        # Get keypair of virtual folder owner.
-        query = (sa.select('*')
-                   .select_from(keypairs)
-                   .where(keypairs.c.access_key == access_key))
-        try:
-            result = await conn.execute(query)
-        except psycopg2.DataError as e:
-            raise InvalidAPIParameters
-        kp = await result.first()
-
         # Get invited user's keypairs except vfolder owner.
         query = (sa.select('*')
                    .select_from(keypairs)
                    .where(keypairs.c.user_id.in_(user_ids))
-                   .where(keypairs.c.user_id != kp.user_id))
+                   .where(keypairs.c.user_id != request['user']['id']))
         try:
             result = await conn.execute(query)
         except psycopg2.DataError as e:
