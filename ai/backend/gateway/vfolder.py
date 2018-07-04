@@ -15,7 +15,7 @@ import psycopg2
 
 from .auth import auth_required
 from .exceptions import FolderNotFound, InvalidAPIParameters
-from ..manager.models import vfolders
+from ..manager.models import keypairs, vfolders, vfolder_invitations
 
 log = logging.getLogger('ai.backend.gateway.vfolder')
 
@@ -256,6 +256,62 @@ async def list_files(request):
 
 
 @auth_required
+async def invite(request):
+    dbpool = request.app['dbpool']
+    folder_name = request.match_info['name']
+    access_key = request['keypair']['access_key']
+    params = await request.json()
+    perm = params.get('perm', 'rw')
+    user_ids = params.get('user_ids', [])
+    assert perm in ['ro', 'rw']
+    assert len(user_ids) > 0, 'no user ids'
+    log.info(f"VFOLDER.INVITE (u:{access_key}, f:{folder_name})")
+    async with dbpool.acquire() as conn:
+        query = (sa.select('*')
+                   .select_from(vfolders)
+                   .where((vfolders.c.belongs_to == access_key) &
+                          (vfolders.c.name == folder_name)))
+        try:
+            result = await conn.execute(query)
+        except psycopg2.DataError as e:
+            raise InvalidAPIParameters
+        vf = await result.first()
+        if vf is None:
+            raise FolderNotFound()
+
+        query = (sa.select('*')
+                   .select_from(keypairs)
+                   .where(keypairs.c.user_id.in_(user_ids)))
+        try:
+            result = await conn.execute(query)
+        except psycopg2.DataError as e:
+            raise InvalidAPIParameters
+        kps = await result.fetchall()
+
+        invitees = [kp.user_id for kp in kps]
+        invited_ids = []
+        for invitee in set(invitees):
+            # TODO: insert multiple values with one query.
+            #       insert().values([{}, {}, ...]) does not work:
+            #       sqlalchemy.exc.CompileError: The 'default' dialect with current
+            #       database version settings does not support in-place multirow
+            #       inserts.
+            query = (vfolder_invitations.insert().values({
+                'id': uuid.uuid4().hex,
+                'permission': perm,
+                'vfolder': vf.id,
+                'invitee': invitee,
+            }))
+            try:
+                await conn.execute(query)
+                invited_ids.append(invitee)
+            except psycopg2.DataError as e:
+                pass
+    resp = {'invited_ids': invited_ids}
+    return web.json_response(resp, status=201)
+
+
+@auth_required
 async def delete(request):
     dbpool = request.app['dbpool']
     folder_name = request.match_info['name']
@@ -307,7 +363,8 @@ def create_app():
     app.router.add_route('GET',    r'/{name}', get_info)
     app.router.add_route('DELETE', r'/{name}', delete)
     app.router.add_route('POST',   r'/{name}/upload', upload)
-    app.router.add_route('DELETE',    r'/{name}/delete_files', delete_files)
+    app.router.add_route('DELETE', r'/{name}/delete_files', delete_files)
     app.router.add_route('GET',    r'/{name}/download', download)
     app.router.add_route('GET',    r'/{name}/files', list_files)
+    app.router.add_route('POST',   r'/{name}/invite', invite)
     return app, []

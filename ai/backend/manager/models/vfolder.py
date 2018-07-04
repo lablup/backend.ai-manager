@@ -8,6 +8,7 @@ from .base import metadata, GUID, IDColumn
 
 __all__ = (
     'vfolders',
+    'vfolder_invitations',
     'VirtualFolder',
 )
 
@@ -38,6 +39,18 @@ vfolder_attachment = sa.Table(
               sa.ForeignKey('kernels.id', onupdate='CASCADE', ondelete='CASCADE'),
               nullable=False),
     sa.PrimaryKeyConstraint('vfolder', 'kernel'),
+)
+
+
+vfolder_invitations = sa.Table(
+    'vfolder_invitations', metadata,
+    IDColumn('id'),
+    # permission: ro (read-only), rw (read-write)
+    sa.Column('permission', sa.String(length=2), default='rw'),
+    sa.Column('invitee', sa.String(length=256), nullable=False),
+    sa.Column('vfolder', GUID,
+              sa.ForeignKey('vfolders.id', onupdate='CASCADE', ondelete='CASCADE'),
+              nullable=False),
 )
 
 
