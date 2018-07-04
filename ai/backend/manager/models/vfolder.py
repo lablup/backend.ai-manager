@@ -47,6 +47,7 @@ vfolder_invitations = sa.Table(
     IDColumn('id'),
     # permission: ro (read-only), rw (read-write)
     sa.Column('permission', sa.String(length=2), default='rw'),
+    sa.Column('inviter', sa.String(length=256)),
     sa.Column('invitee', sa.String(length=256), nullable=False),
     sa.Column('vfolder', GUID,
               sa.ForeignKey('vfolders.id', onupdate='CASCADE', ondelete='CASCADE'),

@@ -304,6 +304,7 @@ async def invite(request):
                 'id': uuid.uuid4().hex,
                 'permission': perm,
                 'vfolder': vf.id,
+                'inviter': request['user']['id'],
                 'invitee': invitee,
             }))
             try:
@@ -313,6 +314,31 @@ async def invite(request):
                 pass
     resp = {'invited_ids': invited_ids}
     return web.json_response(resp, status=201)
+
+
+@auth_required
+async def invitations(request):
+    dbpool = request.app['dbpool']
+    access_key = request['keypair']['access_key']
+    log.info(f"VFOLDER.INVITATION (u:{access_key})")
+    async with dbpool.acquire() as conn:
+        query = (sa.select('*')
+                   .select_from(vfolder_invitations)
+                   .where(vfolder_invitations.c.invitee == request['user']['id']))
+        try:
+            result = await conn.execute(query)
+        except psycopg2.DataError as e:
+            raise InvalidAPIParameters
+        invitations = await result.fetchall()
+    invs_info = []
+    for inv in invitations:
+        invs_info.append({
+            'inviter': inv.inviter,
+            'perm': inv.permission,
+            'vfolder_id': str(inv.vfolder),
+        })
+    resp = {'invitations': invs_info}
+    return web.json_response(resp, status=200)
 
 
 @auth_required
@@ -371,4 +397,5 @@ def create_app():
     app.router.add_route('GET',    r'/{name}/download', download)
     app.router.add_route('GET',    r'/{name}/files', list_files)
     app.router.add_route('POST',   r'/{name}/invite', invite)
+    app.router.add_route('GET',    r'/invitations/list', invitations)
     return app, []
