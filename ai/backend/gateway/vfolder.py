@@ -333,11 +333,44 @@ async def invitations(request):
     invs_info = []
     for inv in invitations:
         invs_info.append({
+            'id': str(inv.id),
             'inviter': inv.inviter,
             'perm': inv.permission,
             'vfolder_id': str(inv.vfolder),
         })
     resp = {'invitations': invs_info}
+    return web.json_response(resp, status=200)
+
+
+@auth_required
+async def accept_invitation(request):
+    # TODO: implement accept invitation process.
+    return web.json_response({}, status=204)
+
+
+@auth_required
+async def delete_invitation(request):
+    dbpool = request.app['dbpool']
+    access_key = request['keypair']['access_key']
+    params = await request.json()
+    inv_id = params['inv_id']
+    log.info(f"VFOLDER.DELETE_INVITATION (u:{access_key})")
+    async with dbpool.acquire() as conn:
+        query = (sa.select('*')
+                   .select_from(vfolder_invitations)
+                   .where(vfolder_invitations.c.id == inv_id))
+        try:
+            result = await conn.execute(query)
+        except psycopg2.DataError as e:
+            raise InvalidAPIParameters
+        row = await result.first()
+        if row is None:
+            resp = {'msg': 'No such invitation found.'}
+            return web.json_response(resp, status=404)
+        query = (vfolder_invitations.delete()
+                                    .where(vfolder_invitations.c.id == inv_id))
+        await conn.execute(query)
+    resp = {'msg': f'Vfolder invitation is deleted: {inv_id}.'}
     return web.json_response(resp, status=200)
 
 
@@ -398,4 +431,6 @@ def create_app():
     app.router.add_route('GET',    r'/{name}/files', list_files)
     app.router.add_route('POST',   r'/{name}/invite', invite)
     app.router.add_route('GET',    r'/invitations/list', invitations)
+    app.router.add_route('POST',   r'/invitations/accept', accept_invitation)
+    app.router.add_route('DELETE', r'/invitations/delete', delete_invitation)
     return app, []
