@@ -15,7 +15,8 @@ import psycopg2
 
 from .auth import auth_required
 from .exceptions import FolderNotFound, InvalidAPIParameters
-from ..manager.models import keypairs, vfolders, vfolder_invitations
+from ..manager.models import (keypairs, vfolders, vfolder_invitations,
+                              vfolder_permissions)
 
 log = logging.getLogger('ai.backend.gateway.vfolder')
 
@@ -344,8 +345,55 @@ async def invitations(request):
 
 @auth_required
 async def accept_invitation(request):
-    # TODO: implement accept invitation process.
-    return web.json_response({}, status=204)
+    dbpool = request.app['dbpool']
+    access_key = request['keypair']['access_key']
+    params = await request.json()
+    inv_id = params['inv_id']
+    inv_ak = params['inv_ak']
+    log.info(f"VFOLDER.ACCEPT_INVITATION (u:{access_key})")
+    async with dbpool.acquire() as conn:
+        # Get invitation.
+        query = (sa.select('*')
+                   .select_from(vfolder_invitations)
+                   .where(vfolder_invitations.c.id == inv_id))
+        try:
+            result = await conn.execute(query)
+        except psycopg2.DataError as e:
+            raise InvalidAPIParameters
+        invitation = await result.first()
+        if invitation is None:
+            resp = {'msg': 'No such invitation found.'}
+            return web.json_response(resp, status=404)
+
+        # Check the access_key is valid by comparing with invitation info.
+        query = (sa.select('*')
+                   .select_from(keypairs)
+                   .where(keypairs.c.access_key == inv_ak))
+        try:
+            result = await conn.execute(query)
+        except psycopg2.DataError as e:
+            raise InvalidAPIParameters
+        row = await result.first()
+        if row is None:
+            invitation = {'msg': 'Invalid invitee access_key'}
+            return web.json_response(resp, status=404)
+        assert row.user_id == invitation.invitee
+
+        # Create permission relation between the vfolder and the invitee.
+        query = (vfolder_permissions.insert().values({
+            'permission': invitation.permission,
+            'vfolder': invitation.vfolder,
+            'access_key': inv_ak,
+        }))
+        await conn.execute(query)
+
+        # Clear used invitation.
+        query = (vfolder_invitations.delete()
+                                    .where(vfolder_invitations.c.id == inv_id))
+        await conn.execute(query)
+    msg = (f'Access key ({inv_ak} by {invitation.invitee}) now can access '
+           f'vfolder {invitation.vfolder}.')
+    return web.json_response({'msg': msg}, status=201)
 
 
 @auth_required

@@ -9,6 +9,7 @@ from .base import metadata, GUID, IDColumn
 __all__ = (
     'vfolders',
     'vfolder_invitations',
+    'vfolder_permissions',
     'VirtualFolder',
 )
 
@@ -52,6 +53,17 @@ vfolder_invitations = sa.Table(
     sa.Column('vfolder', GUID,
               sa.ForeignKey('vfolders.id', onupdate='CASCADE', ondelete='CASCADE'),
               nullable=False),
+)
+
+
+vfolder_permissions = sa.Table(
+    'vfolder_permissions', metadata,
+    sa.Column('permission', sa.String(length=2), default='rw'),
+    sa.Column('vfolder', GUID,
+              sa.ForeignKey('vfolders.id', onupdate='CASCADE', ondelete='CASCADE'),
+              nullable=False),
+    sa.Column('access_key', sa.String(length=20),
+              sa.ForeignKey('keypairs.access_key'), nullable=False)
 )
 
 
