@@ -1,8 +1,13 @@
 import json
 import shutil
+import uuid
+import zlib
 
-import pytest
 import aiohttp
+import pytest
+import sqlalchemy as sa
+
+from ai.backend.manager.models import vfolder_invitations, vfolder_permissions
 
 
 @pytest.fixture
@@ -145,3 +150,189 @@ async def test_delete_vfolder(prepare_vfolder, get_headers,
 
     assert ret.status == 204
     assert not folder_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_download(prepare_vfolder, get_headers, folder_mount, folder_host):
+    app, client, create_vfolder = prepare_vfolder
+
+    folder_info = await create_vfolder()
+    folder_path = (folder_mount / folder_host / folder_info['id'])
+    with open(folder_path / 'hello.txt', 'w') as f:
+        f.write('hello vfolder!')
+    assert (folder_path / 'hello.txt').exists()
+
+    url = f'/v3/folders/{folder_info["name"]}/download'
+    req_bytes = json.dumps({'files': ['hello.txt']}).encode()
+    headers = get_headers('GET', url, req_bytes)
+    ret = await client.get(url, data=req_bytes, headers=headers)
+
+    # Decode multipart response. Here, there's only one part.
+    reader = aiohttp.MultipartReader.from_response(ret)
+    part = await reader.next()
+    encoding = part.headers['Content-Encoding']
+    zlib_mode = (16 + zlib.MAX_WBITS
+                     if encoding == 'gzip'
+                     else -zlib.MAX_WBITS)
+    decompressor = zlib.decompressobj(wbits=zlib_mode)
+    content = decompressor.decompress(await part.read())
+
+    assert content == b'hello vfolder!'
+    assert ret.status == 200
+
+
+@pytest.mark.asyncio
+async def test_list_files(prepare_vfolder, get_headers, folder_mount, folder_host):
+    app, client, create_vfolder = prepare_vfolder
+
+    folder_info = await create_vfolder()
+    folder_path = (folder_mount / folder_host / folder_info['id'])
+    with open(folder_path / 'hello.txt', 'w') as f:
+        f.write('hello vfolder!')
+    assert (folder_path / 'hello.txt').exists()
+
+    url = f'/v3/folders/{folder_info["name"]}/files'
+    req_bytes = json.dumps({'path': '.'}).encode()
+    headers = get_headers('GET', url, req_bytes)
+    ret = await client.get(url, data=req_bytes, headers=headers)
+    rsp_json = await ret.json()
+    files = json.loads(rsp_json['files'])
+
+    assert files[0]['filename'] == 'hello.txt'
+    assert rsp_json['folder_path'] == str(folder_path)
+
+
+@pytest.mark.asyncio
+async def test_invite(prepare_vfolder, get_headers, folder_mount, folder_host):
+    app, client, create_vfolder = prepare_vfolder
+
+    folder_info = await create_vfolder()
+
+    url = f'/v3/folders/{folder_info["name"]}/invite'
+    req_bytes = json.dumps({'perm': 'rw', 'user_ids': ['user@lablup.com']}).encode()
+    headers = get_headers('POST', url, req_bytes)
+    ret = await client.post(url, data=req_bytes, headers=headers)
+    rsp_json = await ret.json()
+
+    async with app['dbpool'].acquire() as conn:
+        query = (sa.select('*')
+                   .select_from(vfolder_invitations)
+                   .where(vfolder_invitations.c.invitee == 'user@lablup.com'))
+        result = await conn.execute(query)
+        invitation = await result.first()
+
+    assert invitation.permission == 'rw'
+    assert invitation.inviter == 'admin@lablup.com'
+    assert rsp_json['invited_ids'][0] == 'user@lablup.com'
+
+
+@pytest.mark.asyncio
+async def test_invitations(prepare_vfolder, get_headers, folder_mount, folder_host,
+                           user_keypair):
+    app, client, create_vfolder = prepare_vfolder
+
+    folder_info = await create_vfolder()
+
+    async with app['dbpool'].acquire() as conn:
+        query = (vfolder_invitations.insert().values({
+            'id': uuid.uuid4().hex,
+            'permission': 'ro',
+            'vfolder': folder_info['id'],
+            'inviter': 'admin@lablup.com',
+            'invitee': 'user@lablup.com',
+        }))
+        await conn.execute(query)
+
+    url = f'/v3/folders/invitations/list'
+    req_bytes = json.dumps({}).encode()
+    headers = get_headers('GET', url, req_bytes, keypair=user_keypair)
+    ret = await client.get(url, data=req_bytes, headers=headers)
+    rsp_json = await ret.json()
+
+    assert len(rsp_json['invitations']) == 1
+    assert rsp_json['invitations'][0]['inviter'] == 'admin@lablup.com'
+
+
+@pytest.mark.asyncio
+async def test_accept_invitation(prepare_vfolder, get_headers, folder_mount,
+                                 folder_host, user_keypair):
+    app, client, create_vfolder = prepare_vfolder
+
+    folder_info = await create_vfolder()
+
+    inv_id = uuid.uuid4().hex
+    async with app['dbpool'].acquire() as conn:
+        query = (vfolder_invitations.insert().values({
+            'id': inv_id,
+            'permission': 'ro',
+            'vfolder': folder_info['id'],
+            'inviter': 'admin@lablup.com',
+            'invitee': 'user@lablup.com',
+        }))
+        await conn.execute(query)
+
+    url = f'/v3/folders/invitations/accept'
+    req_bytes = json.dumps({'inv_id': inv_id,
+                            'inv_ak': user_keypair['access_key']}).encode()
+    headers = get_headers('POST', url, req_bytes, keypair=user_keypair)
+    ret = await client.post(url, data=req_bytes, headers=headers)
+
+    async with app['dbpool'].acquire() as conn:
+        query = (sa.select('*')
+                   .select_from(vfolder_permissions)
+                   .where(vfolder_permissions.c.access_key ==
+                          user_keypair['access_key']))
+        result = await conn.execute(query)
+        perm = await result.first()
+
+        query = (sa.select('*')
+                   .select_from(vfolder_invitations)
+                   .where(vfolder_invitations.c.invitee == 'user@lablup.com'))
+        result = await conn.execute(query)
+        invitations = await result.fetchall()
+
+    assert ret.status == 201
+    assert perm.permission == 'ro'
+    assert len(invitations) == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_invitation(prepare_vfolder, get_headers, folder_mount,
+                                 folder_host, user_keypair):
+    app, client, create_vfolder = prepare_vfolder
+
+    folder_info = await create_vfolder()
+
+    inv_id = uuid.uuid4().hex
+    async with app['dbpool'].acquire() as conn:
+        query = (vfolder_invitations.insert().values({
+            'id': inv_id,
+            'permission': 'ro',
+            'vfolder': folder_info['id'],
+            'inviter': 'admin@lablup.com',
+            'invitee': 'user@lablup.com',
+        }))
+        await conn.execute(query)
+
+    url = f'/v3/folders/invitations/delete'
+    req_bytes = json.dumps({'inv_id': inv_id}).encode()
+    headers = get_headers('DELETE', url, req_bytes, keypair=user_keypair)
+    ret = await client.delete(url, data=req_bytes, headers=headers)
+
+    async with app['dbpool'].acquire() as conn:
+        query = (sa.select('*')
+                   .select_from(vfolder_permissions)
+                   .where(vfolder_permissions.c.access_key ==
+                          user_keypair['access_key']))
+        result = await conn.execute(query)
+        perms = await result.fetchall()
+
+        query = (sa.select('*')
+                   .select_from(vfolder_invitations)
+                   .where(vfolder_invitations.c.invitee == 'user@lablup.com'))
+        result = await conn.execute(query)
+        invitations = await result.fetchall()
+
+    assert ret.status == 200
+    assert len(perms) == 0
+    assert len(invitations) == 0
