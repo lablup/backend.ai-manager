@@ -74,6 +74,24 @@ async def list_folders(request):
             resp.append({
                 'name': row.name,
                 'id': row.id.hex,
+                'is_owner': True,
+            })
+
+        # Append joined vfolders (not owned).
+        j = sa.join(vfolders, vfolder_permissions,
+                    vfolders.c.id == vfolder_permissions.c.vfolder)
+        query = (sa.select('*')
+                   .select_from(j)
+                   .where(vfolder_permissions.c.access_key == access_key))
+        try:
+            result = await conn.execute(query)
+        except psycopg2.DataError as e:
+            raise InvalidAPIParameters
+        async for row in result:
+            resp.append({
+                'name': row.name,
+                'id': row.id.hex,
+                'is_owner': False,
             })
     return web.json_response(resp, status=200)
 
@@ -95,6 +113,20 @@ async def get_info(request):
         except psycopg2.DataError as e:
             raise InvalidAPIParameters
         row = await result.first()
+        is_owner = True
+        if row is None:
+            # Query joined vfolders.
+            j = sa.join(vfolders, vfolder_permissions,
+                        vfolders.c.id == vfolder_permissions.c.vfolder)
+            query = (sa.select('*')
+                       .select_from(j)
+                       .where(vfolder_permissions.c.access_key == access_key))
+            try:
+                result = await conn.execute(query)
+            except psycopg2.DataError as e:
+                raise InvalidAPIParameters
+            row = await result.first()
+            is_owner = False
         if row is None:
             raise FolderNotFound()
         # TODO: handle nested directory structure
@@ -105,6 +137,7 @@ async def get_info(request):
             'id': row.id.hex,
             'numFiles': num_files,
             'created': str(row.created_at),
+            'is_owner': is_owner,
         }
     return web.json_response(resp, status=200)
 
@@ -125,6 +158,20 @@ async def upload(request):
         except psycopg2.DataError as e:
             raise InvalidAPIParameters
         row = await result.first()
+        if row is None:
+            # Query joined vfolders.
+            j = sa.join(vfolders, vfolder_permissions,
+                        vfolders.c.id == vfolder_permissions.c.vfolder)
+            query = (sa.select('*')
+                       .select_from(j)
+                       .where((vfolder_permissions.c.access_key == access_key) &
+                              (vfolder_permissions.c.permission == 'rw') &
+                              (vfolders.c.name == folder_name)))
+            try:
+                result = await conn.execute(query)
+            except psycopg2.DataError as e:
+                raise InvalidAPIParameters
+            row = await result.first()
         if row is None:
             log.error('why here')
             raise FolderNotFound()
@@ -163,6 +210,20 @@ async def delete_files(request):
             raise InvalidAPIParameters
         row = await result.first()
         if row is None:
+            # Query joined vfolders.
+            j = sa.join(vfolders, vfolder_permissions,
+                        vfolders.c.id == vfolder_permissions.c.vfolder)
+            query = (sa.select('*')
+                       .select_from(j)
+                       .where((vfolder_permissions.c.access_key == access_key) &
+                              (vfolder_permissions.c.permission == 'rw') &
+                              (vfolders.c.name == folder_name)))
+            try:
+                result = await conn.execute(query)
+            except psycopg2.DataError as e:
+                raise InvalidAPIParameters
+            row = await result.first()
+        if row is None:
             raise FolderNotFound()
         folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
         for file in files:
@@ -194,6 +255,19 @@ async def download(request):
         except psycopg2.DataError as e:
             raise InvalidAPIParameters
         row = await result.first()
+        if row is None:
+            # Query joined vfolders.
+            j = sa.join(vfolders, vfolder_permissions,
+                        vfolders.c.id == vfolder_permissions.c.vfolder)
+            query = (sa.select('*')
+                       .select_from(j)
+                       .where((vfolder_permissions.c.access_key == access_key) &
+                              (vfolders.c.name == folder_name)))
+            try:
+                result = await conn.execute(query)
+            except psycopg2.DataError as e:
+                raise InvalidAPIParameters
+            row = await result.first()
         if row is None:
             raise FolderNotFound()
         folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
@@ -228,6 +302,19 @@ async def list_files(request):
         except psycopg2.DataError as e:
             raise InvalidAPIParameters
         row = await result.first()
+        if row is None:
+            # Query joined vfolders.
+            j = sa.join(vfolders, vfolder_permissions,
+                        vfolders.c.id == vfolder_permissions.c.vfolder)
+            query = (sa.select('*')
+                       .select_from(j)
+                       .where((vfolder_permissions.c.access_key == access_key) &
+                              (vfolders.c.name == folder_name)))
+            try:
+                result = await conn.execute(query)
+            except psycopg2.DataError as e:
+                raise InvalidAPIParameters
+            row = await result.first()
         if row is None:
             raise FolderNotFound()
         base_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
