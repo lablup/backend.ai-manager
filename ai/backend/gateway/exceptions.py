@@ -109,6 +109,11 @@ class FolderNotFound(web.HTTPNotFound, BackendError):
     error_title = 'No such virtual folder.'
 
 
+class FolderAlreadyExists(web.HTTPBadRequest, BackendError):
+    error_type  = 'https://api.backend.ai/probs/folder-already-exists'
+    error_title = 'The virtual folder already exists with the same name.'
+
+
 class QuotaExceeded(web.HTTPPreconditionFailed, BackendError):
     error_type  = 'https://api.backend.ai/probs/quota-exceeded'
     error_title = 'You have reached your resource limit.'

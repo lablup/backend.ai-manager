@@ -7,7 +7,8 @@ import aiohttp
 import pytest
 import sqlalchemy as sa
 
-from ai.backend.manager.models import vfolder_invitations, vfolder_permissions
+from ai.backend.manager.models import (vfolders, vfolder_invitations,
+                                       vfolder_permissions)
 
 
 @pytest.fixture
@@ -56,6 +57,25 @@ async def test_create_vfolder(prepare_vfolder, get_headers):
 
     assert 'id' in folder_info
     assert 'name' in folder_info
+
+
+@pytest.mark.asyncio
+async def test_cannot_create_vfolder_with_duplicated_name(prepare_vfolder,
+                                                          get_headers):
+    app, client, create_vfolder = prepare_vfolder
+    folder_info = await create_vfolder()
+
+    url = '/v3/folders/'
+    req_bytes = json.dumps({'name': folder_info['name']}).encode()
+    headers = get_headers('POST', url, req_bytes)
+    ret = await client.post(url, data=req_bytes, headers=headers)
+
+    async with app['dbpool'].acquire() as conn:
+        query = (sa.select('*').select_from(vfolders))
+        result = await conn.execute(query)
+
+    assert ret.status == 400
+    assert result.rowcount == 1
 
 
 @pytest.mark.asyncio
@@ -488,6 +508,61 @@ class TestInvitation:
         assert invitations[0]['state'] == 'accepted'
 
     @pytest.mark.asyncio
+    async def test_cannot_accept_invitation_with_duplicated_vfolder_name(
+            self, prepare_vfolder, get_headers, folder_mount, folder_host,
+            user_keypair):
+        app, client, create_vfolder = prepare_vfolder
+
+        folder_info = await create_vfolder()
+
+        inv_id = uuid.uuid4().hex
+        async with app['dbpool'].acquire() as conn:
+            query = (vfolder_invitations.insert().values({
+                'id': inv_id,
+                'permission': 'ro',
+                'vfolder': folder_info['id'],
+                'inviter': 'admin@lablup.com',
+                'invitee': 'user@lablup.com',
+                'state': 'pending',
+            }))
+            await conn.execute(query)
+
+            # Invitee already has vfolder with the same name as invitation.
+            query = (vfolders.insert().values({
+                'id': uuid.uuid4().hex,
+                'name': folder_info['name'],
+                'host': 'azure-shard01',
+                'last_used': None,
+                'belongs_to': user_keypair['access_key'],
+            }))
+            await conn.execute(query)
+
+        url = f'/v3/folders/invitations/accept'
+        req_bytes = json.dumps({'inv_id': inv_id,
+                                'inv_ak': user_keypair['access_key']}).encode()
+        headers = get_headers('POST', url, req_bytes, keypair=user_keypair)
+        ret = await client.post(url, data=req_bytes, headers=headers)
+
+        async with app['dbpool'].acquire() as conn:
+            query = (sa.select('*')
+                       .select_from(vfolder_permissions)
+                       .where(vfolder_permissions.c.access_key ==
+                              user_keypair['access_key']))
+            result = await conn.execute(query)
+            perm = await result.fetchall()
+
+            query = (sa.select('*')
+                       .select_from(vfolder_invitations)
+                       .where(vfolder_invitations.c.invitee == 'user@lablup.com'))
+            result = await conn.execute(query)
+            invitations = await result.fetchall()
+
+        assert ret.status == 400
+        assert len(perm) == 0
+        assert len(invitations) == 1
+        assert invitations[0]['state'] == 'pending'
+
+    @pytest.mark.asyncio
     async def test_delete_invitation(self, prepare_vfolder, get_headers,
                                      folder_mount, folder_host, user_keypair):
         app, client, create_vfolder = prepare_vfolder
@@ -534,13 +609,42 @@ class TestInvitation:
 class TestJoinedVfolderManipulations:
 
     @pytest.mark.asyncio
+    async def test_cannot_create_vfolder_when_joined_vfolder_has_duplicated_name(
+            self, prepare_vfolder, get_headers, user_keypair):
+        app, client, create_vfolder = prepare_vfolder
+
+        # Create admin's vfolder.
+        folder_info = await create_vfolder()
+
+        # Create vfolder_permission.
+        async with app['dbpool'].acquire() as conn:
+            query = (vfolder_permissions.insert().values({
+                'permission': 'ro',
+                'vfolder': folder_info['id'],
+                'access_key': user_keypair['access_key']
+            }))
+            await conn.execute(query)
+
+        url = '/v3/folders/'
+        req_bytes = json.dumps({'name': folder_info['name']}).encode()
+        headers = get_headers('POST', url, req_bytes, keypair=user_keypair)
+        ret = await client.post(url, data=req_bytes, headers=headers)
+
+        async with app['dbpool'].acquire() as conn:
+            query = (sa.select('*').select_from(vfolders))
+            result = await conn.execute(query)
+
+        assert ret.status == 400
+        assert result.rowcount == 1
+
+    @pytest.mark.asyncio
     async def test_list_vfolders(self, prepare_vfolder, get_headers, user_keypair):
         app, client, create_vfolder = prepare_vfolder
 
         # Create admin's vfolder.
         folder_info = await create_vfolder()
 
-        # Create vfolder_permissions.
+        # Create vfolder_permission.
         async with app['dbpool'].acquire() as conn:
             query = (vfolder_permissions.insert().values({
                 'permission': 'ro',

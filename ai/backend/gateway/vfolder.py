@@ -14,7 +14,7 @@ import sqlalchemy as sa
 import psycopg2
 
 from .auth import auth_required
-from .exceptions import FolderNotFound, InvalidAPIParameters
+from .exceptions import FolderNotFound, FolderAlreadyExists, InvalidAPIParameters
 from ..manager.models import (keypairs, vfolders, vfolder_invitations,
                               vfolder_permissions)
 
@@ -32,6 +32,25 @@ async def create(request):
     log.info(f"VFOLDER.CREATE (u:{access_key})")
     assert _rx_slug.search(params['name']) is not None
     async with dbpool.acquire() as conn:
+        # Prevent creation of vfolder with duplicated name.
+        query = (sa.select('*')
+                   .select_from(vfolders)
+                   .where((vfolders.c.belongs_to == access_key) &
+                          (vfolders.c.name == params['name'])))
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            raise FolderAlreadyExists
+
+        j = sa.join(vfolders, vfolder_permissions,
+                    vfolders.c.id == vfolder_permissions.c.vfolder)
+        query = (sa.select('*')
+                   .select_from(j)
+                   .where((vfolder_permissions.c.access_key == access_key) &
+                          (vfolders.c.name == params['name'])))
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            raise FolderAlreadyExists
+
         folder_id = uuid.uuid4().hex
         # TODO: make this configurable
         folder_host = 'azure-shard01'
@@ -454,11 +473,38 @@ async def accept_invitation(request):
                    .select_from(vfolder_invitations)
                    .where((vfolder_invitations.c.id == inv_id) &
                           (vfolder_invitations.c.state == 'pending')))
-        try:
-            result = await conn.execute(query)
-        except psycopg2.DataError as e:
-            raise InvalidAPIParameters
+        result = await conn.execute(query)
         invitation = await result.first()
+
+        # Get target virtual folder.
+        query = (sa.select('*')
+                   .select_from(vfolders)
+                   .where(vfolders.c.id == invitation.vfolder))
+        result = await conn.execute(query)
+        target_vfolder = await result.first()
+        if target_vfolder is None:
+            resp = {'msg': 'No such virtual folder found.'}
+            return web.json_response(resp, status=404)
+
+        # Prevent accepting vfolder with duplicated name.
+        query = (sa.select('*')
+                   .select_from(vfolders)
+                   .where((vfolders.c.belongs_to == inv_ak) &
+                          (vfolders.c.name == target_vfolder.name)))
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            raise FolderAlreadyExists
+
+        j = sa.join(vfolders, vfolder_permissions,
+                    vfolders.c.id == vfolder_permissions.c.vfolder)
+        query = (sa.select('*')
+                   .select_from(j)
+                   .where((vfolder_permissions.c.access_key == inv_ak) &
+                          (vfolders.c.name == target_vfolder.name)))
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            raise FolderAlreadyExists
+
         if invitation is None:
             resp = {'msg': 'No such invitation found.'}
             return web.json_response(resp, status=404)
