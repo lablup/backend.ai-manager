@@ -400,6 +400,7 @@ async def invite(request):
                 'vfolder': vf.id,
                 'inviter': request['user']['id'],
                 'invitee': invitee,
+                'state': 'pending',
             }))
             try:
                 await conn.execute(query)
@@ -418,7 +419,8 @@ async def invitations(request):
     async with dbpool.acquire() as conn:
         query = (sa.select('*')
                    .select_from(vfolder_invitations)
-                   .where(vfolder_invitations.c.invitee == request['user']['id']))
+                   .where((vfolder_invitations.c.invitee == request['user']['id']) &
+                          (vfolder_invitations.c.state == 'pending')))
         try:
             result = await conn.execute(query)
         except psycopg2.DataError as e:
@@ -430,6 +432,8 @@ async def invitations(request):
             'id': str(inv.id),
             'inviter': inv.inviter,
             'perm': inv.permission,
+            'state': inv.state,
+            'created_at': str(inv.created_at),
             'vfolder_id': str(inv.vfolder),
         })
     resp = {'invitations': invs_info}
@@ -448,7 +452,8 @@ async def accept_invitation(request):
         # Get invitation.
         query = (sa.select('*')
                    .select_from(vfolder_invitations)
-                   .where(vfolder_invitations.c.id == inv_id))
+                   .where((vfolder_invitations.c.id == inv_id) &
+                          (vfolder_invitations.c.state == 'pending')))
         try:
             result = await conn.execute(query)
         except psycopg2.DataError as e:
@@ -481,8 +486,9 @@ async def accept_invitation(request):
         await conn.execute(query)
 
         # Clear used invitation.
-        query = (vfolder_invitations.delete()
-                                    .where(vfolder_invitations.c.id == inv_id))
+        query = (vfolder_invitations.update()
+                                    .where(vfolder_invitations.c.id == inv_id)
+                                    .values(state='accepted'))
         await conn.execute(query)
     msg = (f'Access key ({inv_ak} by {invitation.invitee}) now can access '
            f'vfolder {invitation.vfolder}.')
@@ -499,7 +505,8 @@ async def delete_invitation(request):
     async with dbpool.acquire() as conn:
         query = (sa.select('*')
                    .select_from(vfolder_invitations)
-                   .where(vfolder_invitations.c.id == inv_id))
+                   .where((vfolder_invitations.c.id == inv_id) &
+                          (vfolder_invitations.c.state == 'pending')))
         try:
             result = await conn.execute(query)
         except psycopg2.DataError as e:
@@ -508,10 +515,11 @@ async def delete_invitation(request):
         if row is None:
             resp = {'msg': 'No such invitation found.'}
             return web.json_response(resp, status=404)
-        query = (vfolder_invitations.delete()
-                                    .where(vfolder_invitations.c.id == inv_id))
+        query = (vfolder_invitations.update()
+                                    .where(vfolder_invitations.c.id == inv_id)
+                                    .values(state='rejected'))
         await conn.execute(query)
-    resp = {'msg': f'Vfolder invitation is deleted: {inv_id}.'}
+    resp = {'msg': f'Vfolder invitation is rejected: {inv_id}.'}
     return web.json_response(resp, status=200)
 
 

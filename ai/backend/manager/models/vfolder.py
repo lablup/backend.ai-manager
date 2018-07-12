@@ -50,6 +50,10 @@ vfolder_invitations = sa.Table(
     sa.Column('permission', sa.String(length=2), default='rw'),
     sa.Column('inviter', sa.String(length=256)),
     sa.Column('invitee', sa.String(length=256), nullable=False),
+    # State of the infitation: pending, accepted, rejected
+    sa.Column('state', sa.String(length=10), default='pending'),
+    sa.Column('created_at', sa.DateTime(timezone=True),
+              server_default=sa.func.now()),
     sa.Column('vfolder', GUID,
               sa.ForeignKey('vfolders.id', onupdate='CASCADE', ondelete='CASCADE'),
               nullable=False),

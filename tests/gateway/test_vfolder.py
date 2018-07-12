@@ -385,6 +385,7 @@ class TestInvitation:
 
         assert invitation.permission == 'rw'
         assert invitation.inviter == 'admin@lablup.com'
+        assert invitation.state == 'pending'
         assert rsp_json['invited_ids'][0] == 'user@lablup.com'
 
     @pytest.mark.asyncio
@@ -401,6 +402,7 @@ class TestInvitation:
                 'vfolder': folder_info['id'],
                 'inviter': 'admin@lablup.com',
                 'invitee': 'user@lablup.com',
+                'state': 'pending',
             }))
             await conn.execute(query)
 
@@ -412,6 +414,34 @@ class TestInvitation:
 
         assert len(rsp_json['invitations']) == 1
         assert rsp_json['invitations'][0]['inviter'] == 'admin@lablup.com'
+        assert rsp_json['invitations'][0]['state'] == 'pending'
+
+    @pytest.mark.asyncio
+    async def test_not_list_finished_invitations(
+            self, prepare_vfolder, get_headers, folder_mount,
+            folder_host, user_keypair):
+        app, client, create_vfolder = prepare_vfolder
+
+        folder_info = await create_vfolder()
+
+        async with app['dbpool'].acquire() as conn:
+            query = (vfolder_invitations.insert().values({
+                'id': uuid.uuid4().hex,
+                'permission': 'ro',
+                'vfolder': folder_info['id'],
+                'inviter': 'admin@lablup.com',
+                'invitee': 'user@lablup.com',
+                'state': 'rejected',
+            }))
+            await conn.execute(query)
+
+        url = f'/v3/folders/invitations/list'
+        req_bytes = json.dumps({}).encode()
+        headers = get_headers('GET', url, req_bytes, keypair=user_keypair)
+        ret = await client.get(url, data=req_bytes, headers=headers)
+        rsp_json = await ret.json()
+
+        assert len(rsp_json['invitations']) == 0
 
     @pytest.mark.asyncio
     async def test_accept_invitation(self, prepare_vfolder, get_headers,
@@ -428,6 +458,7 @@ class TestInvitation:
                 'vfolder': folder_info['id'],
                 'inviter': 'admin@lablup.com',
                 'invitee': 'user@lablup.com',
+                'state': 'pending',
             }))
             await conn.execute(query)
 
@@ -453,7 +484,8 @@ class TestInvitation:
 
         assert ret.status == 201
         assert perm.permission == 'ro'
-        assert len(invitations) == 0
+        assert len(invitations) == 1
+        assert invitations[0]['state'] == 'accepted'
 
     @pytest.mark.asyncio
     async def test_delete_invitation(self, prepare_vfolder, get_headers,
@@ -470,6 +502,7 @@ class TestInvitation:
                 'vfolder': folder_info['id'],
                 'inviter': 'admin@lablup.com',
                 'invitee': 'user@lablup.com',
+                'state': 'pending',
             }))
             await conn.execute(query)
 
@@ -494,7 +527,8 @@ class TestInvitation:
 
         assert ret.status == 200
         assert len(perms) == 0
-        assert len(invitations) == 0
+        assert len(invitations) == 1
+        assert invitations[0]['state'] == 'rejected'
 
 
 class TestJoinedVfolderManipulations:
