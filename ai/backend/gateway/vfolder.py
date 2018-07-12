@@ -75,6 +75,7 @@ async def list_folders(request):
                 'name': row.name,
                 'id': row.id.hex,
                 'is_owner': True,
+                'permission': 'rw',
             })
 
         # Append joined vfolders (not owned).
@@ -88,10 +89,12 @@ async def list_folders(request):
         except psycopg2.DataError as e:
             raise InvalidAPIParameters
         async for row in result:
+            print(row)
             resp.append({
                 'name': row.name,
                 'id': row.id.hex,
                 'is_owner': False,
+                'permission': row.permission,
             })
     return web.json_response(resp, status=200)
 
@@ -114,6 +117,7 @@ async def get_info(request):
             raise InvalidAPIParameters
         row = await result.first()
         is_owner = True
+        permission = 'rw'
         if row is None:
             # Query joined vfolders.
             j = sa.join(vfolders, vfolder_permissions,
@@ -127,6 +131,7 @@ async def get_info(request):
                 raise InvalidAPIParameters
             row = await result.first()
             is_owner = False
+            permission = row.permission if row else 'rw'
         if row is None:
             raise FolderNotFound()
         # TODO: handle nested directory structure
@@ -138,6 +143,7 @@ async def get_info(request):
             'numFiles': num_files,
             'created': str(row.created_at),
             'is_owner': is_owner,
+            'permission': permission,
         }
     return web.json_response(resp, status=200)
 

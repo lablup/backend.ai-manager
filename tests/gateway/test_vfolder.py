@@ -83,6 +83,7 @@ async def test_list_vfolders(prepare_vfolder, get_headers):
     assert rsp_json[0]['id'] == folder_info['id']
     assert rsp_json[0]['name'] == folder_info['name']
     assert rsp_json[0]['is_owner']
+    assert rsp_json[0]['permission'] == 'rw'
 
 
 @pytest.mark.asyncio
@@ -119,6 +120,7 @@ async def test_get_info(prepare_vfolder, get_headers):
     assert rsp_json['name'] == folder_info['name']
     assert rsp_json['numFiles'] == 0
     assert rsp_json['is_owner']
+    assert rsp_json['permission'] == 'rw'
 
 
 @pytest.mark.asyncio
@@ -524,6 +526,7 @@ class TestJoinedVfolderManipulations:
         assert rsp_json[0]['id'] == folder_info['id']
         assert rsp_json[0]['name'] == folder_info['name']
         assert not rsp_json[0]['is_owner']
+        assert rsp_json[0]['permission'] == 'ro'
 
     @pytest.mark.asyncio
     async def test_get_info(self, prepare_vfolder, get_headers, user_keypair):
@@ -547,6 +550,7 @@ class TestJoinedVfolderManipulations:
         assert rsp_json['id'] == folder_info['id']
         assert rsp_json['name'] == folder_info['name']
         assert not rsp_json['is_owner']
+        assert rsp_json['permission'] == 'ro'
         assert rsp_json['numFiles'] == 0
 
     @pytest.mark.asyncio

@@ -26,7 +26,8 @@ from .exceptions import (InvalidAPIParameters, QuotaExceeded,
 from . import GatewayStatus
 from .auth import auth_required
 from .utils import catch_unexpected, server_ready_required
-from ..manager.models import keypairs, kernels, vfolders, AgentStatus, KernelStatus
+from ..manager.models import (keypairs, kernels, vfolders, AgentStatus, KernelStatus,
+                              vfolder_permissions)
 
 log = logging.getLogger('ai.backend.gateway.kernel')
 
@@ -92,6 +93,16 @@ async def create(request) -> web.Response:
                                        (vfolders.c.name == mount)))
                     result = await conn.execute(query)
                     row = await result.first()
+                    if row is None:
+                        # Query joined vfolders.
+                        j = sa.join(vfolders, vfolder_permissions,
+                                    vfolders.c.id == vfolder_permissions.c.vfolder)
+                        query = (sa.select('*')
+                                   .select_from(j)
+                                   .where(vfolder_permissions.c.access_key == \
+                                          access_key))
+                        result = await conn.execute(query)
+                        row = await result.first()
                     if row is None:
                         raise FolderNotFound
                     else:
