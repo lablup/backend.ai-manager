@@ -99,7 +99,7 @@ async def create(request) -> web.Response:
                                     vfolders.c.id == vfolder_permissions.c.vfolder)
                         query = (sa.select('*')
                                    .select_from(j)
-                                   .where(vfolder_permissions.c.access_key == \
+                                   .where(vfolder_permissions.c.access_key ==
                                           access_key))
                         result = await conn.execute(query)
                         row = await result.first()
