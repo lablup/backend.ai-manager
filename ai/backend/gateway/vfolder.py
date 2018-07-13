@@ -33,19 +33,12 @@ async def create(request):
     assert _rx_slug.search(params['name']) is not None
     async with dbpool.acquire() as conn:
         # Prevent creation of vfolder with duplicated name.
-        query = (sa.select('*')
-                   .select_from(vfolders)
-                   .where((vfolders.c.belongs_to == access_key) &
-                          (vfolders.c.name == params['name'])))
-        result = await conn.execute(query)
-        if result.rowcount > 0:
-            raise FolderAlreadyExists
-
         j = sa.join(vfolders, vfolder_permissions,
-                    vfolders.c.id == vfolder_permissions.c.vfolder)
+                    vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
         query = (sa.select('*')
                    .select_from(j)
-                   .where((vfolder_permissions.c.access_key == access_key) &
+                   .where(((vfolders.c.belongs_to == access_key) |
+                           (vfolder_permissions.c.access_key == access_key)) &
                           (vfolders.c.name == params['name'])))
         result = await conn.execute(query)
         if result.rowcount > 0:
@@ -82,38 +75,22 @@ async def list_folders(request):
     access_key = request['keypair']['access_key']
     log.info(f"VFOLDER.LIST (u:{access_key})")
     async with dbpool.acquire() as conn:
-        query = (sa.select('*')
-                   .select_from(vfolders)
-                   .where(vfolders.c.belongs_to == access_key))
-        try:
-            result = await conn.execute(query)
-        except psycopg2.DataError as e:
-            raise InvalidAPIParameters
-        async for row in result:
-            resp.append({
-                'name': row.name,
-                'id': row.id.hex,
-                'is_owner': True,
-                'permission': 'rw',
-            })
-
-        # Append joined vfolders (not owned).
         j = sa.join(vfolders, vfolder_permissions,
-                    vfolders.c.id == vfolder_permissions.c.vfolder)
+                    vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
         query = (sa.select('*')
                    .select_from(j)
-                   .where(vfolder_permissions.c.access_key == access_key))
+                   .where(((vfolders.c.belongs_to == access_key) |
+                           (vfolder_permissions.c.access_key == access_key))))
         try:
             result = await conn.execute(query)
         except psycopg2.DataError as e:
             raise InvalidAPIParameters
         async for row in result:
-            print(row)
             resp.append({
                 'name': row.name,
                 'id': row.id.hex,
-                'is_owner': False,
-                'permission': row.permission,
+                'is_owner': False if row.permission else True,
+                'permission': row.permission if row.permission else 'rw',
             })
     return web.json_response(resp, status=200)
 
@@ -126,33 +103,22 @@ async def get_info(request):
     access_key = request['keypair']['access_key']
     log.info(f"VFOLDER.GETINFO (u:{access_key}, f:{folder_name})")
     async with dbpool.acquire() as conn:
+        j = sa.join(vfolders, vfolder_permissions,
+                    vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
         query = (sa.select('*')
-                   .select_from(vfolders)
-                   .where((vfolders.c.belongs_to == access_key) &
+                   .select_from(j)
+                   .where(((vfolders.c.belongs_to == access_key) |
+                           (vfolder_permissions.c.access_key == access_key)) &
                           (vfolders.c.name == folder_name)))
         try:
             result = await conn.execute(query)
         except psycopg2.DataError as e:
             raise InvalidAPIParameters
         row = await result.first()
-        is_owner = True
-        permission = 'rw'
-        if row is None:
-            # Query joined vfolders.
-            j = sa.join(vfolders, vfolder_permissions,
-                        vfolders.c.id == vfolder_permissions.c.vfolder)
-            query = (sa.select('*')
-                       .select_from(j)
-                       .where(vfolder_permissions.c.access_key == access_key))
-            try:
-                result = await conn.execute(query)
-            except psycopg2.DataError as e:
-                raise InvalidAPIParameters
-            row = await result.first()
-            is_owner = False
-            permission = row.permission if row else 'rw'
         if row is None:
             raise FolderNotFound()
+        is_owner = False if row.permission else True
+        permission = row.permission if row.permission else 'rw'
         # TODO: handle nested directory structure
         folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
         num_files = len(list(folder_path.iterdir()))
@@ -174,29 +140,19 @@ async def upload(request):
     access_key = request['keypair']['access_key']
     log.info(f"VFOLDER.UPLOAD (u:{access_key}, f:{folder_name})")
     async with dbpool.acquire() as conn:
+        j = sa.join(vfolders, vfolder_permissions,
+                    vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
         query = (sa.select('*')
-                   .select_from(vfolders)
-                   .where((vfolders.c.belongs_to == access_key) &
+                   .select_from(j)
+                   .where(((vfolders.c.belongs_to == access_key) |
+                           ((vfolder_permissions.c.access_key == access_key) &
+                            (vfolder_permissions.c.permission == 'rw'))) &
                           (vfolders.c.name == folder_name)))
         try:
             result = await conn.execute(query)
         except psycopg2.DataError as e:
             raise InvalidAPIParameters
         row = await result.first()
-        if row is None:
-            # Query joined vfolders.
-            j = sa.join(vfolders, vfolder_permissions,
-                        vfolders.c.id == vfolder_permissions.c.vfolder)
-            query = (sa.select('*')
-                       .select_from(j)
-                       .where((vfolder_permissions.c.access_key == access_key) &
-                              (vfolder_permissions.c.permission == 'rw') &
-                              (vfolders.c.name == folder_name)))
-            try:
-                result = await conn.execute(query)
-            except psycopg2.DataError as e:
-                raise InvalidAPIParameters
-            row = await result.first()
         if row is None:
             log.error('why here')
             raise FolderNotFound()
@@ -225,29 +181,19 @@ async def delete_files(request):
     files = params.get('files')
     log.info(f"VFOLDER.DELETE_FILES (u:{access_key}, f:{folder_name})")
     async with dbpool.acquire() as conn:
+        j = sa.join(vfolders, vfolder_permissions,
+                    vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
         query = (sa.select('*')
-                   .select_from(vfolders)
-                   .where((vfolders.c.belongs_to == access_key) &
+                   .select_from(j)
+                   .where(((vfolders.c.belongs_to == access_key) |
+                           ((vfolder_permissions.c.access_key == access_key) &
+                            (vfolder_permissions.c.permission == 'rw'))) &
                           (vfolders.c.name == folder_name)))
         try:
             result = await conn.execute(query)
         except psycopg2.DataError as e:
             raise InvalidAPIParameters
         row = await result.first()
-        if row is None:
-            # Query joined vfolders.
-            j = sa.join(vfolders, vfolder_permissions,
-                        vfolders.c.id == vfolder_permissions.c.vfolder)
-            query = (sa.select('*')
-                       .select_from(j)
-                       .where((vfolder_permissions.c.access_key == access_key) &
-                              (vfolder_permissions.c.permission == 'rw') &
-                              (vfolders.c.name == folder_name)))
-            try:
-                result = await conn.execute(query)
-            except psycopg2.DataError as e:
-                raise InvalidAPIParameters
-            row = await result.first()
         if row is None:
             raise FolderNotFound()
         folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
@@ -271,28 +217,18 @@ async def download(request):
     files = params.get('files')
     log.info(f"VFOLDER.DOWNLOAD (u:{access_key}, f:{folder_name})")
     async with dbpool.acquire() as conn:
+        j = sa.join(vfolders, vfolder_permissions,
+                    vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
         query = (sa.select('*')
-                   .select_from(vfolders)
-                   .where((vfolders.c.belongs_to == access_key) &
+                   .select_from(j)
+                   .where(((vfolders.c.belongs_to == access_key) |
+                           (vfolder_permissions.c.access_key == access_key)) &
                           (vfolders.c.name == folder_name)))
         try:
             result = await conn.execute(query)
         except psycopg2.DataError as e:
             raise InvalidAPIParameters
         row = await result.first()
-        if row is None:
-            # Query joined vfolders.
-            j = sa.join(vfolders, vfolder_permissions,
-                        vfolders.c.id == vfolder_permissions.c.vfolder)
-            query = (sa.select('*')
-                       .select_from(j)
-                       .where((vfolder_permissions.c.access_key == access_key) &
-                              (vfolders.c.name == folder_name)))
-            try:
-                result = await conn.execute(query)
-            except psycopg2.DataError as e:
-                raise InvalidAPIParameters
-            row = await result.first()
         if row is None:
             raise FolderNotFound()
         folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
@@ -318,28 +254,18 @@ async def list_files(request):
     params = await request.json()
     log.info(f"VFOLDER.LIST_FILES (u:{access_key}, f:{folder_name})")
     async with dbpool.acquire() as conn:
+        j = sa.join(vfolders, vfolder_permissions,
+                    vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
         query = (sa.select('*')
-                   .select_from(vfolders)
-                   .where((vfolders.c.belongs_to == access_key) &
+                   .select_from(j)
+                   .where(((vfolders.c.belongs_to == access_key) |
+                           (vfolder_permissions.c.access_key == access_key)) &
                           (vfolders.c.name == folder_name)))
         try:
             result = await conn.execute(query)
         except psycopg2.DataError as e:
             raise InvalidAPIParameters
         row = await result.first()
-        if row is None:
-            # Query joined vfolders.
-            j = sa.join(vfolders, vfolder_permissions,
-                        vfolders.c.id == vfolder_permissions.c.vfolder)
-            query = (sa.select('*')
-                       .select_from(j)
-                       .where((vfolder_permissions.c.access_key == access_key) &
-                              (vfolders.c.name == folder_name)))
-            try:
-                result = await conn.execute(query)
-            except psycopg2.DataError as e:
-                raise InvalidAPIParameters
-            row = await result.first()
         if row is None:
             raise FolderNotFound()
         base_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
@@ -487,19 +413,12 @@ async def accept_invitation(request):
             return web.json_response(resp, status=404)
 
         # Prevent accepting vfolder with duplicated name.
-        query = (sa.select('*')
-                   .select_from(vfolders)
-                   .where((vfolders.c.belongs_to == inv_ak) &
-                          (vfolders.c.name == target_vfolder.name)))
-        result = await conn.execute(query)
-        if result.rowcount > 0:
-            raise FolderAlreadyExists
-
         j = sa.join(vfolders, vfolder_permissions,
-                    vfolders.c.id == vfolder_permissions.c.vfolder)
+                    vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
         query = (sa.select('*')
                    .select_from(j)
-                   .where((vfolder_permissions.c.access_key == inv_ak) &
+                   .where(((vfolders.c.belongs_to == inv_ak) |
+                           (vfolder_permissions.c.access_key == inv_ak)) &
                           (vfolders.c.name == target_vfolder.name)))
         result = await conn.execute(query)
         if result.rowcount > 0:
