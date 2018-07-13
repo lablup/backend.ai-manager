@@ -334,6 +334,18 @@ async def invite(request):
         invitees = [kp.user_id for kp in kps]
         invited_ids = []
         for invitee in set(invitees):
+            inviter = request['user']['id']
+            # Do not create invitation if already exists.
+            query = (sa.select('*')
+                       .select_from(vfolder_invitations)
+                       .where((vfolder_invitations.c.inviter == inviter) &
+                              (vfolder_invitations.c.invitee == invitee) &
+                              (vfolder_invitations.c.vfolder == vf.id) &
+                              (vfolder_invitations.c.state == 'pending')))
+            result = await conn.execute(query)
+            if result.rowcount > 0:
+                continue
+
             # TODO: insert multiple values with one query.
             #       insert().values([{}, {}, ...]) does not work:
             #       sqlalchemy.exc.CompileError: The 'default' dialect with current
@@ -343,7 +355,7 @@ async def invite(request):
                 'id': uuid.uuid4().hex,
                 'permission': perm,
                 'vfolder': vf.id,
-                'inviter': request['user']['id'],
+                'inviter': inviter,
                 'invitee': invitee,
                 'state': 'pending',
             }))
