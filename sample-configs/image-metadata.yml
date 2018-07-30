@@ -12,6 +12,16 @@ images:
       cpu: 1    # cores
       mem: 1.0  # GiB
       gpu: 0    # fraction of GPU device
+  - name: python-tester
+    # image for unit-testing student submissions
+    syntax: python
+    tags:
+      - ["latest",     ":3.6-debian"]
+      - ["3.6-debian", "2ac49fbe2104"]
+    slots:
+      cpu: 1    # cores
+      mem: 0.3  # GiB
+      gpu: 0    # fraction of GPU device
   - name: python-tensorflow
     syntax: python
     tags:
@@ -78,14 +88,30 @@ images:
     syntax: c
     tags:
       - ["latest",        ":gcc6.3-alpine"]
-      - ["gcc6.3-alpine", "0e251dfb5109"]
+      - ["gcc6.3-alpine", "21fa07452935"]
+    slots:
+      <<: *default
+  - name: c-tester
+    # image for unit-testing student submissions
+    syntax: c
+    tags:
+      - ["latest",        ":gcc6.3-alpine"]
+      - ["gcc6.3-alpine", "5935cf5ef658"]
     slots:
       <<: *default
   - name: cpp
     syntax: cpp
     tags:
       - ["latest",        ":gcc6.3-alpine"]
-      - ["gcc6.3-alpine", "a5b52501b789"]
+      - ["gcc6.3-alpine", "57d856b3aaff"]
+    slots:
+      <<: *default
+  - name: cpp-tester
+    # image for unit-testing student submissions
+    syntax: cpp
+    tags:
+      - ["latest",        ":gcc6.3-alpine"]
+      - ["gcc6.3-alpine", "93d85b2d9711"]
     slots:
       <<: *default
   - name: go
