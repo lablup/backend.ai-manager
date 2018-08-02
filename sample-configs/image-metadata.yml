@@ -145,6 +145,14 @@ images:
       - ["8-alpine", "940ad16f3414"]
     slots:
       <<: *default
+  - name: java-tester
+    # image for unit-testing student submissions
+    syntax: java
+    tags:
+      - ["latest",   ":8-alpine"]
+      - ["8-alpine", "e5da92062a68"]
+    slots:
+      <<: *default
   - name: php
     syntax: php
     tags:
