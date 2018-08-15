@@ -35,7 +35,7 @@ script_location = alembic
 # are written from script.py.mako
 # output_encoding = utf-8
 
-sqlalchemy.url = postgresql://postgres:develove@localhost:5442/backend
+sqlalchemy.url = postgresql://postgres:develove@localhost:8100/backend
 
 
 # Logging configuration
