@@ -51,12 +51,19 @@ put.add('value', type=str, help='The value.')
 def get(args):
     '''Get the value of a key in the configured etcd namespace.'''
     with etcd_ctx(args) as (loop, etcd):
-        val = loop.run_until_complete(etcd.get(args.key))
-        print(val)
+        if args.prefix:
+            val = loop.run_until_complete(etcd.get_prefix(args.key))
+            #print('value count : [%i]'% sum(1 for x in val))
+            for x in val:
+                print(x)
+        else:
+            val = loop.run_until_complete(etcd.get(args.key))
+            print(val)
 
 
 get.add('key', type=str, help='The key.')
-
+get.add('--prefix', action='store_true', default=False,
+         help='get key prefixed.')
 
 @etcd.register_command
 def delete(args):
