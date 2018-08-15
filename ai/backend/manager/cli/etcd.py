@@ -53,7 +53,6 @@ def get(args):
     with etcd_ctx(args) as (loop, etcd):
         if args.prefix:
             val = loop.run_until_complete(etcd.get_prefix(args.key))
-            #print('value count : [%i]'% sum(1 for x in val))
             for x in val:
                 print(x)
         else:
@@ -62,8 +61,8 @@ def get(args):
 
 
 get.add('key', type=str, help='The key.')
-get.add('--prefix', action='store_true', default=False,
-         help='get key prefixed.')
+get.add('--prefix', action='store_true', default=False, help='get key prefixed.')
+
 
 @etcd.register_command
 def delete(args):
