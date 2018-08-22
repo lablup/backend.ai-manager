@@ -68,7 +68,7 @@ jobs:
         - docker pull lablup/kernel-lua:5.3-alpine
       script:
         - python -m flake8 src tests
-        - python -m pytest -m 'not integration' -v --cov=ai/backend
+        - python -m pytest -m 'not integration' -v --cov=src
       after_success:
         - codecov
 
