@@ -67,8 +67,8 @@ jobs:
         - mkdir -p /tmp/scratches
         - docker pull lablup/kernel-lua:5.3-alpine
       script:
-        - python -m flake8 ai/backend tests
-        - python -m pytest tests -m 'not integration' -v --cov=ai/backend
+        - python -m flake8 src tests
+        - python -m pytest -m 'not integration' -v --cov=ai/backend
       after_success:
         - codecov
 
