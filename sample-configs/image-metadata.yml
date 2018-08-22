@@ -35,6 +35,8 @@ images:
       - ["1.4-py36-dense-gpu", "c5f63f2e5320"]
       - ["1.5-py36-dense",     "2af9e0898ef5"]
       - ["1.5-py36-dense-gpu", "b4eb715f32fc"]
+      - ["1.7-py36", "x"]
+      - ["1.8-py36", "x"]
     slots: &for_computing
       cpu: 4     # cores
       mem: 8.0   # GiB
