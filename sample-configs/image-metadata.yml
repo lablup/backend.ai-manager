@@ -183,3 +183,10 @@ images:
       - ["ghc8.2-debian", "b376929b9af7"]
     slots:
       <<: *default
+  - name: scheme
+    syntax: scheme
+    tags:
+      - ["latest",     ":9.2-alpine"]
+      - ["9.2-alpine", "3b093127533b"]
+    slots:
+      <<: *default
