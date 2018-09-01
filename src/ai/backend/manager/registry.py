@@ -1,4 +1,5 @@
 import asyncio
+from decimal import Decimal
 from datetime import datetime
 import logging
 import sys
@@ -693,9 +694,12 @@ class AgentRegistry:
             result = await conn.execute(query)
             row = await result.first()
             ob_factors = await self.config_server.get_overbook_factors()
-            reported_mem_slots = int(agent_info['mem_slots'] * ob_factors['mem'])
-            reported_cpu_slots = int(agent_info['cpu_slots'] * ob_factors['cpu'])
-            reported_gpu_slots = int(agent_info['gpu_slots'] * ob_factors['gpu'])
+            reported_mem_slots = int(Decimal(agent_info['mem_slots']) *
+                                     Decimal(ob_factors['mem']))
+            reported_cpu_slots = int(Decimal(agent_info['cpu_slots']) *
+                                     Decimal(ob_factors['cpu']))
+            reported_gpu_slots = int(Decimal(agent_info['gpu_slots']) *
+                                     Decimal(ob_factors['gpu']))
             if row is None or row.status is None:
                 # new agent detected!
                 log.info(f'agent {agent_id} joined!')
