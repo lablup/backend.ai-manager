@@ -1,3 +1,4 @@
+import functools
 import json
 import logging
 import os
@@ -15,12 +16,113 @@ import psycopg2
 
 from .auth import auth_required
 from .exceptions import FolderNotFound, FolderAlreadyExists, InvalidAPIParameters
-from ..manager.models import (keypairs, vfolders, vfolder_invitations,
-                              vfolder_permissions)
+from ..manager.models import (
+    keypairs, vfolders, vfolder_invitations, vfolder_permissions,
+    VFolderPermission)
 
 log = logging.getLogger('ai.backend.gateway.vfolder')
 
 _rx_slug = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$')
+
+
+def vfolder_permission_required(perm: VFolderPermission):
+    '''
+    Checks if the target vfolder exists and is either:
+    - owned by the current access key, or
+    - allowed accesses by the access key under the specified permission.
+
+    The decorated handler should accept an extra "row" argument
+    which contains the matched VirtualFolder table row.
+    '''
+
+    def _wrapper(handler):
+
+        @functools.wraps(handler)
+        async def _wrapped(request):
+            dbpool = request.app['dbpool']
+            access_key = request['keypair']['access_key']
+            folder_name = request.match_info['name']
+            if perm == VFolderPermission.READ_ONLY:
+                # if READ_ONLY is requested, any permission accepts.
+                perm_cond = (vfolder_permissions.c.permission in (
+                    VFolderPermission.READ_ONLY,
+                    VFolderPermission.READ_WRITE,
+                    VFolderPermission.RW_DELETE,
+                ))
+            elif perm == VFolderPermission.READ_WRITE:
+                # if READ_WRITE is requested, both READ_WRITE and RW_DELETE accepts.
+                perm_cond = (vfolder_permissions.c.permission in (
+                    VFolderPermission.READ_WRITE,
+                    VFolderPermission.RW_DELETE,
+                ))
+            elif perm == VFolderPermission.RW_DELETE:
+                # If RW_DELETE is requested, only RW_DELETE accepts.
+                perm_cond = (
+                    vfolder_permissions.c.permission == VFolderPermission.RW_DELETE
+                )
+            else:
+                # Otherwise, just compare it as-is (for future compatibility).
+                perm_cond = (vfolder_permissions.c.permission == perm)
+            async with dbpool.acquire() as conn:
+                j = sa.join(
+                    vfolders, vfolder_permissions,
+                    vfolders.c.id == vfolder_permissions.c.vfolder,
+                    isouter=True)
+                query = (
+                    sa.select('*')
+                    .select_from(j)
+                    .where(((vfolders.c.belongs_to == access_key) |
+                            ((vfolder_permissions.c.access_key == access_key) &
+                             perm_cond)) &
+                           (vfolders.c.name == folder_name)))
+                try:
+                    result = await conn.execute(query)
+                except psycopg2.DataError as e:
+                    raise InvalidAPIParameters
+                row = await result.first()
+                if row is None:
+                    raise FolderNotFound()
+                return await handler(request, row=row)
+
+        return _wrapped
+
+    return _wrapper
+
+
+def vfolder_check_exists(handler):
+    '''
+    Checks if the target vfolder exists and is owned
+    by the current access key.
+
+    The decorated handler should accept an extra "row" argument
+    which contains the matched VirtualFolder table row.
+    '''
+
+    @functools.wraps(handler)
+    async def _wrapped(request):
+        dbpool = request.app['dbpool']
+        access_key = request['keypair']['access_key']
+        folder_name = request.match_info['name']
+        async with dbpool.acquire() as conn:
+            j = sa.join(
+                vfolders, vfolder_permissions,
+                vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
+            query = (
+                sa.select('*')
+                .select_from(j)
+                .where(((vfolders.c.belongs_to == access_key) |
+                        (vfolder_permissions.c.access_key == access_key)) &
+                       (vfolders.c.name == folder_name)))
+            try:
+                result = await conn.execute(query)
+            except psycopg2.DataError as e:
+                raise InvalidAPIParameters
+            row = await result.first()
+            if row is None:
+                raise FolderNotFound()
+            return await handler(request, row=row)
+
+    return _wrapped
 
 
 @auth_required
@@ -96,201 +198,148 @@ async def list_folders(request):
 
 
 @auth_required
-async def get_info(request):
+@vfolder_permission_required(VFolderPermission.READ_WRITE)
+async def get_info(request, row):
     resp = {}
-    dbpool = request.app['dbpool']
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     log.info(f"VFOLDER.GETINFO (u:{access_key}, f:{folder_name})")
-    async with dbpool.acquire() as conn:
-        j = sa.join(vfolders, vfolder_permissions,
-                    vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
-        query = (sa.select('*')
-                   .select_from(j)
-                   .where(((vfolders.c.belongs_to == access_key) |
-                           (vfolder_permissions.c.access_key == access_key)) &
-                          (vfolders.c.name == folder_name)))
-        try:
-            result = await conn.execute(query)
-        except psycopg2.DataError as e:
-            raise InvalidAPIParameters
-        row = await result.first()
-        if row is None:
-            raise FolderNotFound()
-        is_owner = False if row.permission else True
-        permission = row.permission if row.permission else 'rw'
-        # TODO: handle nested directory structure
-        folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
-        num_files = len(list(folder_path.iterdir()))
-        resp = {
-            'name': row.name,
-            'id': row.id.hex,
-            'numFiles': num_files,
-            'created': str(row.created_at),
-            'is_owner': is_owner,
-            'permission': permission,
-        }
+    is_owner = False if row.permission else True
+    permission = row.permission if row.permission else 'rw'
+    # TODO: handle nested directory structure
+    folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+    num_files = len(list(folder_path.iterdir()))
+    resp = {
+        'name': row.name,
+        'id': row.id.hex,
+        'numFiles': num_files,
+        'created': str(row.created_at),
+        'is_owner': is_owner,
+        'permission': permission,
+    }
     return web.json_response(resp, status=200)
 
 
 @auth_required
-async def upload(request):
-    dbpool = request.app['dbpool']
+@vfolder_permission_required(VFolderPermission.READ_WRITE)
+async def mkdir(request, row):
+    folder_name = request.match_info['name']
+    access_key = request['keypair']['access_key']
+    params = await request.json()
+    path = params.get('path')
+    assert path, 'path not specified!'
+    path = Path(path)
+    log.info(f"VFOLDER.UPLOAD (u:{access_key}, f:{folder_name})")
+    folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+    assert not path.is_absolute(), 'path must be relative.'
+    (folder_path / path).mkdir(parents=True, exist_ok=True)
+    return web.Response(status=204)
+
+
+@auth_required
+@vfolder_permission_required(VFolderPermission.READ_WRITE)
+async def upload(request, row):
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     log.info(f"VFOLDER.UPLOAD (u:{access_key}, f:{folder_name})")
-    async with dbpool.acquire() as conn:
-        j = sa.join(vfolders, vfolder_permissions,
-                    vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
-        query = (sa.select('*')
-                   .select_from(j)
-                   .where(((vfolders.c.belongs_to == access_key) |
-                           ((vfolder_permissions.c.access_key == access_key) &
-                            (vfolder_permissions.c.permission == 'rw'))) &
-                          (vfolders.c.name == folder_name)))
-        try:
-            result = await conn.execute(query)
-        except psycopg2.DataError as e:
-            raise InvalidAPIParameters
-        row = await result.first()
-        if row is None:
-            log.error('why here')
-            raise FolderNotFound()
-        folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
-        reader = await request.multipart()
-        file_count = 0
-        async for file in aiotools.aiter(reader.next, None):
-            # TODO: impose limits on file size and count
-            file_count += 1
-            file_dir = (folder_path / file.filename).parent
-            file_dir.mkdir(parents=True, exist_ok=True)
-            with open(folder_path / file.filename, 'wb') as f:
-                while not file.at_eof():
-                    chunk = await file.read_chunk(size=8192)
-                    f.write(file.decode(chunk))
+    folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+    reader = await request.multipart()
+    file_count = 0
+    async for file in aiotools.aiter(reader.next, None):
+        # TODO: impose limits on file size and count
+        file_count += 1
+        file_dir = (folder_path / file.filename).parent
+        file_dir.mkdir(parents=True, exist_ok=True)
+        with open(folder_path / file.filename, 'wb') as f:
+            while not file.at_eof():
+                chunk = await file.read_chunk(size=8192)
+                f.write(file.decode(chunk))
     return web.Response(status=201)
 
 
 @auth_required
-async def delete_files(request):
-    dbpool = request.app['dbpool']
+@vfolder_permission_required(VFolderPermission.RW_DELETE)
+async def delete_files(request, row):
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     params = await request.json()
-    assert params.get('files'), 'no file(s) specified!'
     files = params.get('files')
+    assert files, 'no file(s) specified!'
+    recursive = params.get('recursive', False)
     log.info(f"VFOLDER.DELETE_FILES (u:{access_key}, f:{folder_name})")
-    async with dbpool.acquire() as conn:
-        j = sa.join(vfolders, vfolder_permissions,
-                    vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
-        query = (sa.select('*')
-                   .select_from(j)
-                   .where(((vfolders.c.belongs_to == access_key) |
-                           ((vfolder_permissions.c.access_key == access_key) &
-                            (vfolder_permissions.c.permission == 'rw'))) &
-                          (vfolders.c.name == folder_name)))
-        try:
-            result = await conn.execute(query)
-        except psycopg2.DataError as e:
-            raise InvalidAPIParameters
-        row = await result.first()
-        if row is None:
-            raise FolderNotFound()
-        folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
-        for file in files:
-            file_path = folder_path / file
-            if file_path.is_dir():
-                shutil.rmtree(file_path)
-            elif file_path.is_file():
-                os.unlink(file_path)
+    folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+    ops = []
+    for file in files:
+        file_path = folder_path / file
+        if file_path.is_dir():
+            if recursive:
+                ops.append(functools.partial(shutil.rmtree, file_path))
+            else:
+                raise InvalidAPIParameters(
+                    f'"{file_path}" is a directory. '
+                    'Set recursive option to remove it.')
+        elif file_path.is_file():
+            ops.append(functools.partial(os.unlink, file_path))
+    for op in ops:
+        op()
     resp = {}
     return web.json_response(resp, status=200)
 
 
 @auth_required
-async def download(request):
-    dbpool = request.app['dbpool']
+@vfolder_permission_required(VFolderPermission.READ_ONLY)
+async def download(request, row):
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     params = await request.json()
     assert params.get('files'), 'no file(s) specified!'
     files = params.get('files')
     log.info(f"VFOLDER.DOWNLOAD (u:{access_key}, f:{folder_name})")
-    async with dbpool.acquire() as conn:
-        j = sa.join(vfolders, vfolder_permissions,
-                    vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
-        query = (sa.select('*')
-                   .select_from(j)
-                   .where(((vfolders.c.belongs_to == access_key) |
-                           (vfolder_permissions.c.access_key == access_key)) &
-                          (vfolders.c.name == folder_name)))
+    folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+    with aiohttp.MultipartWriter('mixed') as mpwriter:
+        total_payloads_length = 0
+        headers = {'Content-Encoding': 'gzip'}
         try:
-            result = await conn.execute(query)
-        except psycopg2.DataError as e:
-            raise InvalidAPIParameters
-        row = await result.first()
-        if row is None:
-            raise FolderNotFound()
-        folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
-        with aiohttp.MultipartWriter('mixed') as mpwriter:
-            total_payloads_length = 0
-            headers = {'Content-Encoding': 'gzip'}
-            try:
-                for file in files:
-                    data = open(folder_path / file, 'rb')
-                    payload = mpwriter.append(data, headers)
-                    total_payloads_length += payload.size
-            except FileNotFoundError:
-                return web.Response(status=404, reason='File not found')
-            mpwriter._headers['X-TOTAL-PAYLOADS-LENGTH'] = str(total_payloads_length)
-            return web.Response(body=mpwriter, status=200)
+            for file in files:
+                data = open(folder_path / file, 'rb')
+                payload = mpwriter.append(data, headers)
+                total_payloads_length += payload.size
+        except FileNotFoundError:
+            return web.Response(status=404, reason='File not found')
+        mpwriter._headers['X-TOTAL-PAYLOADS-LENGTH'] = str(total_payloads_length)
+        return web.Response(body=mpwriter, status=200)
 
 
 @auth_required
-async def list_files(request):
-    dbpool = request.app['dbpool']
+@vfolder_permission_required(VFolderPermission.READ_ONLY)
+async def list_files(request, row):
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     params = await request.json()
     log.info(f"VFOLDER.LIST_FILES (u:{access_key}, f:{folder_name})")
-    async with dbpool.acquire() as conn:
-        j = sa.join(vfolders, vfolder_permissions,
-                    vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
-        query = (sa.select('*')
-                   .select_from(j)
-                   .where(((vfolders.c.belongs_to == access_key) |
-                           (vfolder_permissions.c.access_key == access_key)) &
-                          (vfolders.c.name == folder_name)))
-        try:
-            result = await conn.execute(query)
-        except psycopg2.DataError as e:
-            raise InvalidAPIParameters
-        row = await result.first()
-        if row is None:
-            raise FolderNotFound()
-        base_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
-        folder_path = base_path / params['path'] if 'path' in params else base_path
-        if not str(folder_path).startswith(str(base_path)):
-            resp = {'error_msg': 'No such file or directory'}
-            return web.json_response(resp, status=404)
-        files = []
-        for f in os.scandir(folder_path):
-            fstat = f.stat()
-            ctime = fstat.st_ctime  # TODO: way to get concrete create time?
-            mtime = fstat.st_mtime
-            atime = fstat.st_atime
-            files.append({
-                'mode': stat.filemode(fstat.st_mode),
-                'size': fstat.st_size,
-                'ctime': ctime,
-                'mtime': mtime,
-                'atime': atime,
-                'filename': f.name,
-            })
-        resp = {
-            'files': json.dumps(files),
-            'folder_path': str(folder_path),
-        }
+    base_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+    folder_path = base_path / params['path'] if 'path' in params else base_path
+    if not str(folder_path).startswith(str(base_path)):
+        resp = {'error_msg': 'No such file or directory'}
+        return web.json_response(resp, status=404)
+    files = []
+    for f in os.scandir(folder_path):
+        fstat = f.stat()
+        ctime = fstat.st_ctime  # TODO: way to get concrete create time?
+        mtime = fstat.st_mtime
+        atime = fstat.st_atime
+        files.append({
+            'mode': stat.filemode(fstat.st_mode),
+            'size': fstat.st_size,
+            'ctime': ctime,
+            'mtime': mtime,
+            'atime': atime,
+            'filename': f.name,
+        })
+    resp = {
+        'files': json.dumps(files),
+        'folder_path': str(folder_path),
+    }
     return web.json_response(resp, status=200)
 
 
@@ -300,9 +349,9 @@ async def invite(request):
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     params = await request.json()
-    perm = params.get('perm', 'rw')
+    perm = params.get('perm', VFolderPermission.READ_WRITE.value)
+    perm = VFolderPermission(perm)
     user_ids = params.get('user_ids', [])
-    assert perm in ['ro', 'rw']
     assert len(user_ids) > 0, 'no user ids'
     log.info(f"VFOLDER.INVITE (u:{access_key}, f:{folder_name})")
     async with dbpool.acquire() as conn:
@@ -551,6 +600,7 @@ def create_app():
     app.router.add_route('GET',    r'', list_folders)
     app.router.add_route('GET',    r'/{name}', get_info)
     app.router.add_route('DELETE', r'/{name}', delete)
+    app.router.add_route('POST',   r'/{name}/mkdir', upload)
     app.router.add_route('POST',   r'/{name}/upload', upload)
     app.router.add_route('DELETE', r'/{name}/delete_files', delete_files)
     app.router.add_route('GET',    r'/{name}/download', download)

@@ -32,6 +32,8 @@ class EnumType(TypeDecorator, SchemaType):
     '''
     A stripped-down version of Spoqa's sqlalchemy-enum34.
     It also handles postgres-specific enum type creation.
+
+    The actual postgres enum choices are taken from the Python enum names.
     '''
 
     impl = ENUM
@@ -59,6 +61,41 @@ class EnumType(TypeDecorator, SchemaType):
 
     def copy(self):
         return EnumType(self._enum_cls, **self._opts)
+
+
+class EnumValueType(TypeDecorator, SchemaType):
+    '''
+    A stripped-down version of Spoqa's sqlalchemy-enum34.
+    It also handles postgres-specific enum type creation.
+
+    The actual postgres enum choices are taken from the Python enum values.
+    '''
+
+    impl = ENUM
+
+    def __init__(self, enum_cls, **opts):
+        assert issubclass(enum_cls, enum.Enum)
+        if 'name' not in opts:
+            opts['name'] = enum_cls.__name__.lower()
+        self._opts = opts
+        self._enum_cls = enum_cls
+        enums = (m.value for m in enum_cls)
+        super().__init__(*enums, **opts)
+
+    def _set_parent(self, column):
+        self.impl._set_parent(column)
+
+    def _set_table(self, table, column):
+        self.impl._set_table(table, column)
+
+    def process_bind_param(self, value, dialect):
+        return value if value else None
+
+    def process_result_value(self, value: str, dialect):
+        return self._enum_cls(value) if value else None
+
+    def copy(self):
+        return EnumValueType(self._enum_cls, **self._opts)
 
 
 class CurrencyTypes(enum.Enum):

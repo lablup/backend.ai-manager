@@ -1,17 +1,29 @@
 from collections import OrderedDict
+import enum
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 
-from .base import metadata, GUID, IDColumn
+from .base import metadata, EnumValueType, GUID, IDColumn
 
 __all__ = (
     'vfolders',
     'vfolder_invitations',
     'vfolder_permissions',
     'VirtualFolder',
+    'VFolderPermission',
 )
+
+
+class VFolderPermission(enum.Enum):
+    '''
+    Permissions for a virtual folder given to a specific access key.
+    RW_DELETE includes READ_WRITE and READ_WRITE includes READ_ONLY.
+    '''
+    READ_ONLY = 'ro'
+    READ_WRITE = 'rw'
+    RW_DELETE = 'wd'
 
 
 vfolders = sa.Table(
@@ -46,8 +58,8 @@ vfolder_attachment = sa.Table(
 vfolder_invitations = sa.Table(
     'vfolder_invitations', metadata,
     IDColumn('id'),
-    # permission: ro (read-only), rw (read-write)
-    sa.Column('permission', sa.String(length=2), default='rw'),
+    sa.Column('permission', EnumValueType(VFolderPermission),
+              default=VFolderPermission.READ_WRITE),
     sa.Column('inviter', sa.String(length=256)),
     sa.Column('invitee', sa.String(length=256), nullable=False),
     # State of the infitation: pending, accepted, rejected
@@ -55,19 +67,25 @@ vfolder_invitations = sa.Table(
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
     sa.Column('vfolder', GUID,
-              sa.ForeignKey('vfolders.id', onupdate='CASCADE', ondelete='CASCADE'),
+              sa.ForeignKey('vfolders.id',
+                            onupdate='CASCADE',
+                            ondelete='CASCADE'),
               nullable=False),
 )
 
 
 vfolder_permissions = sa.Table(
     'vfolder_permissions', metadata,
-    sa.Column('permission', sa.String(length=2), default='rw'),
+    sa.Column('permission', EnumValueType(VFolderPermission),
+              default=VFolderPermission.READ_WRITE),
     sa.Column('vfolder', GUID,
-              sa.ForeignKey('vfolders.id', onupdate='CASCADE', ondelete='CASCADE'),
+              sa.ForeignKey('vfolders.id',
+                            onupdate='CASCADE',
+                            ondelete='CASCADE'),
               nullable=False),
     sa.Column('access_key', sa.String(length=20),
-              sa.ForeignKey('keypairs.access_key'), nullable=False)
+              sa.ForeignKey('keypairs.access_key'),
+              nullable=False)
 )
 
 
