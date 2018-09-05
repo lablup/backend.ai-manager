@@ -44,17 +44,17 @@ def vfolder_permission_required(perm: VFolderPermission):
             folder_name = request.match_info['name']
             if perm == VFolderPermission.READ_ONLY:
                 # if READ_ONLY is requested, any permission accepts.
-                perm_cond = (vfolder_permissions.c.permission in (
+                perm_cond = vfolder_permissions.c.permission.in_([
                     VFolderPermission.READ_ONLY,
                     VFolderPermission.READ_WRITE,
                     VFolderPermission.RW_DELETE,
-                ))
+                ])
             elif perm == VFolderPermission.READ_WRITE:
                 # if READ_WRITE is requested, both READ_WRITE and RW_DELETE accepts.
-                perm_cond = (vfolder_permissions.c.permission in (
+                perm_cond = vfolder_permissions.c.permission.in_([
                     VFolderPermission.READ_WRITE,
                     VFolderPermission.RW_DELETE,
-                ))
+                ])
             elif perm == VFolderPermission.RW_DELETE:
                 # If RW_DELETE is requested, only RW_DELETE accepts.
                 perm_cond = (
@@ -81,7 +81,8 @@ def vfolder_permission_required(perm: VFolderPermission):
                     raise InvalidAPIParameters
                 row = await result.first()
                 if row is None:
-                    raise FolderNotFound()
+                    raise FolderNotFound(
+                        'Your operation may be permission denied.')
                 return await handler(request, row=row)
 
         return _wrapped
