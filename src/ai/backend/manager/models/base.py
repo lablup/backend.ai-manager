@@ -89,7 +89,7 @@ class EnumValueType(TypeDecorator, SchemaType):
         self.impl._set_table(table, column)
 
     def process_bind_param(self, value, dialect):
-        return value if value else None
+        return value.value if value else None
 
     def process_result_value(self, value: str, dialect):
         return self._enum_cls(value) if value else None
