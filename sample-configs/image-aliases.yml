@@ -48,6 +48,16 @@ aliases:
   - ['python-tensorflow:1.5-gpu',      'python-tensorflow:1.5-py36-dense-gpu'] # preferred
   - ['python-tensorflow:1.5-py36',     'python-tensorflow:1.5-py36-dense']     # preferred
   - ['python-tensorflow:1.5-py36-gpu', 'python-tensorflow:1.5-py36-dense-gpu'] # preferred
+  - ['python-tensorflow:1.6',          'python-tensorflow:1.6-py36']     # preferred
+  - ['python-tensorflow:1.6-gpu',      'python-tensorflow:1.6-py36-gpu'] # preferred
+  - ['python-tensorflow:1.7',          'python-tensorflow:1.7-py36']     # preferred
+  - ['python-tensorflow:1.7-gpu',      'python-tensorflow:1.7-py36-gpu'] # preferred
+  - ['python-tensorflow:1.8',          'python-tensorflow:1.8-py36']     # preferred
+  - ['python-tensorflow:1.8-gpu',      'python-tensorflow:1.8-py36-gpu'] # preferred
+  - ['python-tensorflow:1.9',          'python-tensorflow:1.9-py36']     # preferred
+  - ['python-tensorflow:1.9-gpu',      'python-tensorflow:1.9-py36-gpu'] # preferred
+  - ['python-tensorflow:1.10',         'python-tensorflow:1.10-py36']     # preferred
+  - ['python-tensorflow:1.10-gpu',     'python-tensorflow:1.10-py36-gpu'] # preferred
   - ['tensorflow',                     'python-tensorflow:latest-dense']
   - ['tensorflow-gpu',                 'python-tensorflow:latest-dense-gpu']
   - ['tensorflow-python',              'python-tensorflow:latest-dense']
@@ -64,6 +74,16 @@ aliases:
   - ['tensorflow:1.5-gpu',             'python-tensorflow:1.5-py36-dense-gpu'] # preferred
   - ['tensorflow:1.5-py36',            'python-tensorflow:1.5-py36-dense']     # preferred
   - ['tensorflow:1.5-py36-gpu',        'python-tensorflow:1.5-py36-dense-gpu'] # preferred
+  - ['tensorflow:1.6',                 'python-tensorflow:1.6-py36']     # preferred
+  - ['tensorflow:1.6-gpu',             'python-tensorflow:1.6-py36-gpu'] # preferred
+  - ['tensorflow:1.7',                 'python-tensorflow:1.7-py36']     # preferred
+  - ['tensorflow:1.7-gpu',             'python-tensorflow:1.7-py36-gpu'] # preferred
+  - ['tensorflow:1.8',                 'python-tensorflow:1.8-py36']     # preferred
+  - ['tensorflow:1.8-gpu',             'python-tensorflow:1.8-py36-gpu'] # preferred
+  - ['tensorflow:1.9',                 'python-tensorflow:1.9-py36']     # preferred
+  - ['tensorflow:1.9-gpu',             'python-tensorflow:1.9-py36-gpu'] # preferred
+  - ['tensorflow:1.10',                'python-tensorflow:1.10-py36']     # preferred
+  - ['tensorflow:1.10-gpu',            'python-tensorflow:1.10-py36-gpu'] # preferred
 
   - ['keras',        'python-tensorflow:latest-dense']
   - ['keras-gpu',    'python-tensorflow:latest-dense-gpu']
