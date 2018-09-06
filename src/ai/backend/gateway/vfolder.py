@@ -251,15 +251,21 @@ async def upload(request, row):
     reader = await request.multipart()
     file_count = 0
     async for file in aiotools.aiter(reader.next, None):
-        # TODO: impose limits on file size and count
+        if file_count == 10:  # TODO: make it configurable
+            raise InvalidAPIParameters('Too many files!')
         file_count += 1
-        file_dir = (folder_path / file.filename).parent
-        file_dir.mkdir(parents=True, exist_ok=True)
         file_path = folder_path / file.filename
         if file_path.exists() and not file_path.is_file():
             raise InvalidAPIParameters(
                 f'Cannot overwrite "{file.filename}" because '
                 'it already exists and not a regular file.')
+        file_dir = (folder_path / file.filename).parent
+        try:
+            file_dir.mkdir(parents=True, exist_ok=True)
+        except FileExistsError as e:
+            raise InvalidAPIParameters(
+                'Failed to create parent directories. '
+                f'"{e.filename}" already exists and is not a directory.')
         with open(file_path, 'wb') as f:
             while not file.at_eof():
                 chunk = await file.read_chunk(size=8192)
