@@ -230,7 +230,7 @@ async def mkdir(request, row):
     path = params.get('path')
     assert path, 'path not specified!'
     path = Path(path)
-    log.info(f"VFOLDER.UPLOAD (u:{access_key}, f:{folder_name})")
+    log.info(f"VFOLDER.MKDIR (u:{access_key}, f:{folder_name})")
     folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
     assert not path.is_absolute(), 'path must be relative.'
     (folder_path / path).mkdir(parents=True, exist_ok=True)
