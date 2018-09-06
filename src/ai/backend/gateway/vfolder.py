@@ -233,7 +233,11 @@ async def mkdir(request, row):
     log.info(f"VFOLDER.MKDIR (u:{access_key}, f:{folder_name})")
     folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
     assert not path.is_absolute(), 'path must be relative.'
-    (folder_path / path).mkdir(parents=True, exist_ok=True)
+    try:
+        (folder_path / path).mkdir(parents=True, exist_ok=True)
+    except FileExistsError as e:
+        raise InvalidAPIParameters(
+            f'"{e.filename}" already exists and is not a directory.')
     return web.Response(status=204)
 
 
@@ -251,7 +255,12 @@ async def upload(request, row):
         file_count += 1
         file_dir = (folder_path / file.filename).parent
         file_dir.mkdir(parents=True, exist_ok=True)
-        with open(folder_path / file.filename, 'wb') as f:
+        file_path = folder_path / file.filename
+        if file_path.exists() and not file_path.is_file():
+            raise InvalidAPIParameters(
+                f'Cannot overwrite "{file.filename}" because '
+                'it already exists and not a regular file.')
+        with open(file_path, 'wb') as f:
             while not file.at_eof():
                 chunk = await file.read_chunk(size=8192)
                 f.write(file.decode(chunk))
