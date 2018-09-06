@@ -238,7 +238,7 @@ async def mkdir(request, row):
     except FileExistsError as e:
         raise InvalidAPIParameters(
             f'"{e.filename}" already exists and is not a directory.')
-    return web.Response(status=204)
+    return web.Response(status=201)
 
 
 @auth_required
