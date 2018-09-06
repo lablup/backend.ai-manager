@@ -358,7 +358,6 @@ async def list_files(request, row):
         })
     resp = {
         'files': json.dumps(files),
-        'folder_path': str(folder_path),
     }
     return web.json_response(resp, status=200)
 
