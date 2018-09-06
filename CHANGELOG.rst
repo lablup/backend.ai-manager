@@ -4,7 +4,14 @@ Changes
 1.4.0 (to be released)
 ----------------------
 
-- Support download and deletion of files in virtual folders. (#70)
+- Expanded virtual folder APIs
+
+  - Downloading and uploading large files from virtual folders via streaming (#70)
+  - Inviting other users and accepting such invitations with three-level permissions
+    (read-only, read-write, read-write-delete) for collaboration via virtual folders
+    (#80)
+  - Now it requires explicit "recursive" option to remove directories (#89)
+  - New "mkdir" API to create empty directories (#89)
 
 - Support listing files in the session's main container. (#63)
 
