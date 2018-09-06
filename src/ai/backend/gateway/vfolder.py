@@ -297,6 +297,10 @@ async def download(request, row):
     files = params.get('files')
     log.info(f"VFOLDER.DOWNLOAD (u:{access_key}, f:{folder_name})")
     folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+    for file in files:
+        if not (folder_path / file).is_file():
+            raise InvalidAPIParameters(
+                f'You cannot download "{file}" because it is not a regular file.')
     with aiohttp.MultipartWriter('mixed') as mpwriter:
         total_payloads_length = 0
         headers = {'Content-Encoding': 'gzip'}
