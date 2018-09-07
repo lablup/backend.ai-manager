@@ -48,7 +48,7 @@ images:
     slots: &for_computing
       cpu: 4     # cores
       mem: 8.0   # GiB
-      gpu: 0.32  # fraction of GPU device
+      gpu: null  # max.fraction of GPU device (nil means no limit)
       # NOTE: gpu slot is only used for the images tagged with "-gpu".
   - name: python-caffe
     syntax: python
