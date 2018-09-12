@@ -1,3 +1,4 @@
+from decimal import Decimal
 import logging
 from pathlib import Path
 
@@ -58,18 +59,18 @@ class ConfigServer:
             if inserted_aliases:
                 await self.etcd.put_multi(*zip(*inserted_aliases))
 
-            cpu_count = image['slots']['cpu']
-            mem_mbytes = int(image['slots']['mem'] * 1024)
-            gpu_fraction = image['slots']['gpu']
+            cpu_share = image['slots']['cpu']
+            cpu_share = 'null' if cpu_share is None else f'{cpu_share:.2f}'
+            mem_share = image['slots']['mem']
+            mem_share = 'null' if mem_share is None else f'{mem_share:.2f}'
+            gpu_share = image['slots']['gpu']
+            gpu_share = 'null' if gpu_share is None else f'{gpu_share:.2f}'
             await self.etcd.put_multi(
                 [f'images/{name}',
                  f'images/{name}/cpu',
                  f'images/{name}/mem',
                  f'images/{name}/gpu'],
-                ['1',
-                 '{0:d}'.format(cpu_count),
-                 '{0:d}'.format(mem_mbytes),
-                 '{0:.2f}'.format(gpu_fraction)])
+                ['1', cpu_share, mem_share, gpu_share])
 
             inserted_tags = [(f'images/{name}/tags/{tag}', hash)
                              for tag, hash in image['tags']]
@@ -141,17 +142,16 @@ class ConfigServer:
         installed = await self.etcd.get(f'images/{name}')
         if installed is None:
             raise RuntimeError('Image metadata is not available!')
-        mem = await self.etcd.get(f'images/{name}/mem')
         cpu = await self.etcd.get(f'images/{name}/cpu')
+        cpu = None if cpu == 'null' else Decimal(cpu)
+        mem = await self.etcd.get(f'images/{name}/mem')
+        mem = None if mem == 'null' else Decimal(mem)
         if 'gpu' in tag:
             gpu = await self.etcd.get(f'images/{name}/gpu')
+            gpu = None if gpu == 'null' else Decimal(gpu)
         else:
-            gpu = 0
-        return ResourceSlot(
-            mem=int(mem),
-            cpu=float(cpu),
-            gpu=float(gpu),
-        )
+            gpu = Decimal(0)
+        return ResourceSlot(mem=mem, cpu=cpu, gpu=gpu)
 
     @aiotools.lru_cache()
     async def resolve_image_name(self, name_or_alias):

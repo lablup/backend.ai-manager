@@ -17,7 +17,7 @@ import zmq
 
 from ai.backend.common import msgpack
 from ..gateway.exceptions import (
-    BackendError,
+    BackendError, InvalidAPIParameters,
     InstanceNotAvailable, InstanceNotFound,
     KernelNotFound, KernelAlreadyExists,
     KernelCreationFailed, KernelDestructionFailed,
@@ -27,7 +27,6 @@ from .models import (
     agents, kernels, keypairs,
     ResourceSlot, AgentStatus, KernelStatus
 )
-from ..gateway.utils import Infinity
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
 
@@ -57,6 +56,16 @@ async def RPCContext(addr, timeout=10):
         if issubclass(exc_type, GenericError):
             e = AgentError(exc.args[0], exc.args[1])
             raise e.with_traceback(tb)
+        elif issubclass(exc_type, TypeError):
+            if exc.args[0] == "'NoneType' object is not iterable":
+                log.warning('The agent has cancelled the operation '
+                            'or the kernel has terminated too quickly.')
+                # In this case, you may need to use "--debug-skip-container-deletion"
+                # CLI option in the agent and check out the container logs via
+                # "docker logs" command to see what actually happened.
+            else:
+                e = AgentError(exc_type, exc.args)
+                raise e.with_traceback(tb)
         elif issubclass(exc_type, preserved_exceptions):
             raise
         else:
@@ -354,21 +363,46 @@ class AgentRegistry:
         environ = creation_config.get('environ') or {}
 
         name, tag = await self.config_server.resolve_image_name(lang)
-        required_slot = await self.config_server.get_image_required_slots(name, tag)
+        max_allowed_slot = \
+            await self.config_server.get_image_required_slots(name, tag)
+        print(max_allowed_slot)
+        print(creation_config)
+
+        try:
+            cpu_share = Decimal(0)
+            if max_allowed_slot.cpu is not None:
+                cpu_share = min(
+                    max_allowed_slot.cpu,
+                    Decimal(creation_config.get('instanceCores') or Decimal('inf')),
+                )
+            else:
+                cpu_share = Decimal(creation_config['instanceCores'])
+
+            mem_share = Decimal(0)
+            if max_allowed_slot.mem is not None:
+                mem_share = min(
+                    max_allowed_slot.mem,
+                    Decimal(creation_config.get('instanceMemory') or Decimal('inf')),
+                )
+            else:
+                mem_share = Decimal(creation_config['instanceMemory'])
+
+            gpu_share = Decimal(0)
+            if max_allowed_slot.gpu is not None:
+                gpu_share = min(
+                    max_allowed_slot.gpu,
+                    Decimal(creation_config.get('instanceGPUs') or Decimal('inf')),
+                )
+            else:
+                gpu_share = Decimal(creation_config['instanceGPUs'])
+        except KeyError:
+            raise InvalidAPIParameters('You should specify resource limits.')
+
         required_slot = ResourceSlot(
             id=None,
-            mem=min(
-                required_slot.mem,
-                int(creation_config.get('instanceMemory') or Infinity),
-            ),
-            cpu=min(
-                required_slot.cpu,
-                float(creation_config.get('instanceCores') or Infinity),
-            ),
-            gpu=min(
-                required_slot.gpu,
-                float(creation_config.get('instanceGPUs') or Infinity),
-            ),
+            cpu=cpu_share,
+            mem=mem_share,
+            gpu=gpu_share,
         )
         lang = f'{name}:{tag}'
         runnable_agents = frozenset(await self.redis_image.smembers(lang))
@@ -455,9 +489,9 @@ class AgentRegistry:
                     config = {
                         'lang': lang,
                         'limits': {
-                            'mem_slot': required_slot.mem,
-                            'cpu_slot': required_slot.cpu,
-                            'gpu_slot': required_slot.gpu,
+                            'mem_slot': str(required_slot.mem),
+                            'cpu_slot': str(required_slot.cpu),
+                            'gpu_slot': str(required_slot.gpu),
                         },
                         'mounts': mounts,
                         'environ': environ,
