@@ -27,7 +27,6 @@ from .models import (
     agents, kernels, keypairs,
     ResourceSlot, AgentStatus, KernelStatus
 )
-from ..gateway.utils import Infinity
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
 
@@ -57,6 +56,16 @@ async def RPCContext(addr, timeout=10):
         if issubclass(exc_type, GenericError):
             e = AgentError(exc.args[0], exc.args[1])
             raise e.with_traceback(tb)
+        elif issubclass(exc_type, TypeError):
+            if exc.args[0] == "'NoneType' object is not iterable":
+                log.warning('The agent has cancelled the operation '
+                            'or the kernel has terminated too quickly.')
+                # In this case, you may need to use "--debug-skip-container-deletion"
+                # CLI option in the agent and check out the container logs via
+                # "docker logs" command to see what actually happened.
+            else:
+                e = AgentError(exc_type, exc.args)
+                raise e.with_traceback(tb)
         elif issubclass(exc_type, preserved_exceptions):
             raise
         else:
