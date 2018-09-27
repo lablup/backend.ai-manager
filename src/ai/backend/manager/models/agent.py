@@ -1,4 +1,5 @@
 from collections import OrderedDict
+from decimal import Decimal
 import enum
 from typing import NamedTuple, Optional
 
@@ -16,9 +17,10 @@ __all__ = (
 
 class ResourceSlot(NamedTuple):
     id: Optional[str] = None
-    mem: int = 0      # MiBytes
-    cpu: float = 0.0  # fraction of CPU cores
-    gpu: float = 0.0  # fraction of GPU devices
+    # following slots ( = shares) may be fractional.
+    mem: Decimal = Decimal(0)  # multiple of GiBytes
+    cpu: Decimal = Decimal(0)  # multiple of CPU cores
+    gpu: Decimal = Decimal(0)  # multiple of GPU devices
 
 
 class AgentStatus(enum.Enum):
