@@ -197,6 +197,7 @@ async def app(event_loop, test_ns, test_db, unused_tcp_port):
         api_middleware,
     ])
     app['config'] = load_config(argv=[], extra_args_funcs=(gw_args,))
+    app['config'].debug = True
 
     # Override basic settings.
     # Change these configs if local servers have different port numbers.
