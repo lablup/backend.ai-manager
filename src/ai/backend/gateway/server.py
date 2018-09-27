@@ -10,6 +10,7 @@ import logging
 import os
 import ssl
 import sys
+import traceback
 
 import aiohttp
 from aiohttp import web
@@ -135,7 +136,10 @@ async def exception_middleware(request, handler):
     except Exception as ex:
         app['sentry'].captureException()
         log.exception('Uncaught exception in HTTP request handlers')
-        raise InternalServerError
+        if app['config'].debug:
+            raise InternalServerError(traceback.format_exc())
+        else:
+            raise InternalServerError()
     else:
         app['datadog'].statsd.increment(
             f'ai.backend.gateway.api.status.{resp.status}')

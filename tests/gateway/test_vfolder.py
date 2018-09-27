@@ -7,8 +7,10 @@ import aiohttp
 import pytest
 import sqlalchemy as sa
 
-from ai.backend.manager.models import (vfolders, vfolder_invitations,
-                                       vfolder_permissions)
+from ai.backend.manager.models import (
+    vfolders, vfolder_invitations, vfolder_permissions,
+    VFolderPermission,
+)
 
 
 @pytest.fixture
@@ -103,7 +105,7 @@ async def test_list_vfolders(prepare_vfolder, get_headers):
     assert rsp_json[0]['id'] == folder_info['id']
     assert rsp_json[0]['name'] == folder_info['name']
     assert rsp_json[0]['is_owner']
-    assert rsp_json[0]['permission'] == 'rw'
+    assert rsp_json[0]['permission'] == VFolderPermission.OWNER_PERM.value
 
 
 @pytest.mark.asyncio
@@ -140,7 +142,7 @@ async def test_get_info(prepare_vfolder, get_headers):
     assert rsp_json['name'] == folder_info['name']
     assert rsp_json['numFiles'] == 0
     assert rsp_json['is_owner']
-    assert rsp_json['permission'] == 'rw'
+    assert rsp_json['permission'] == VFolderPermission.OWNER_PERM.value
 
 
 @pytest.mark.asyncio
@@ -320,7 +322,6 @@ class TestFiles:
         files = json.loads(rsp_json['files'])
 
         assert files[0]['filename'] == 'hello.txt'
-        assert rsp_json['folder_path'] == str(folder_path)
 
     @pytest.mark.asyncio
     async def test_cannot_list_other_vfolder_files(
@@ -390,7 +391,7 @@ class TestInvitation:
         folder_info = await create_vfolder()
 
         url = f'/v3/folders/{folder_info["name"]}/invite'
-        req_bytes = json.dumps({'perm': 'rw',
+        req_bytes = json.dumps({'perm': VFolderPermission.READ_WRITE,
                                 'user_ids': ['user@lablup.com']}).encode()
         headers = get_headers('POST', url, req_bytes)
         ret = await client.post(url, data=req_bytes, headers=headers)
@@ -403,7 +404,7 @@ class TestInvitation:
             result = await conn.execute(query)
             invitation = await result.first()
 
-        assert invitation.permission == 'rw'
+        assert invitation.permission == VFolderPermission.READ_WRITE
         assert invitation.inviter == 'admin@lablup.com'
         assert invitation.state == 'pending'
         assert rsp_json['invited_ids'][0] == 'user@lablup.com'
@@ -418,7 +419,7 @@ class TestInvitation:
         async with app['dbpool'].acquire() as conn:
             query = (vfolder_invitations.insert().values({
                 'id': uuid.uuid4().hex,
-                'permission': 'ro',
+                'permission': VFolderPermission.READ_ONLY,
                 'vfolder': folder_info['id'],
                 'inviter': 'admin@lablup.com',
                 'invitee': 'user@lablup.com',
@@ -447,7 +448,7 @@ class TestInvitation:
         async with app['dbpool'].acquire() as conn:
             query = (vfolder_invitations.insert().values({
                 'id': uuid.uuid4().hex,
-                'permission': 'ro',
+                'permission': VFolderPermission.READ_ONLY,
                 'vfolder': folder_info['id'],
                 'inviter': 'admin@lablup.com',
                 'invitee': 'user@lablup.com',
@@ -474,7 +475,7 @@ class TestInvitation:
         async with app['dbpool'].acquire() as conn:
             query = (vfolder_invitations.insert().values({
                 'id': inv_id,
-                'permission': 'ro',
+                'permission': VFolderPermission.READ_ONLY,
                 'vfolder': folder_info['id'],
                 'inviter': 'admin@lablup.com',
                 'invitee': 'user@lablup.com',
@@ -503,7 +504,7 @@ class TestInvitation:
             invitations = await result.fetchall()
 
         assert ret.status == 201
-        assert perm.permission == 'ro'
+        assert perm.permission == VFolderPermission.READ_ONLY
         assert len(invitations) == 1
         assert invitations[0]['state'] == 'accepted'
 
@@ -519,7 +520,7 @@ class TestInvitation:
         async with app['dbpool'].acquire() as conn:
             query = (vfolder_invitations.insert().values({
                 'id': inv_id,
-                'permission': 'ro',
+                'permission': VFolderPermission.READ_ONLY,
                 'vfolder': folder_info['id'],
                 'inviter': 'admin@lablup.com',
                 'invitee': 'user@lablup.com',
@@ -573,7 +574,7 @@ class TestInvitation:
         async with app['dbpool'].acquire() as conn:
             query = (vfolder_invitations.insert().values({
                 'id': inv_id,
-                'permission': 'ro',
+                'permission': VFolderPermission.READ_ONLY,
                 'vfolder': folder_info['id'],
                 'inviter': 'admin@lablup.com',
                 'invitee': 'user@lablup.com',
@@ -619,7 +620,7 @@ class TestJoinedVfolderManipulations:
         # Create vfolder_permission.
         async with app['dbpool'].acquire() as conn:
             query = (vfolder_permissions.insert().values({
-                'permission': 'ro',
+                'permission': VFolderPermission.READ_ONLY,
                 'vfolder': folder_info['id'],
                 'access_key': user_keypair['access_key']
             }))
@@ -647,7 +648,7 @@ class TestJoinedVfolderManipulations:
         # Create vfolder_permission.
         async with app['dbpool'].acquire() as conn:
             query = (vfolder_permissions.insert().values({
-                'permission': 'ro',
+                'permission': VFolderPermission.READ_ONLY,
                 'vfolder': folder_info['id'],
                 'access_key': user_keypair['access_key']
             }))
@@ -664,7 +665,7 @@ class TestJoinedVfolderManipulations:
         assert rsp_json[0]['id'] == folder_info['id']
         assert rsp_json[0]['name'] == folder_info['name']
         assert not rsp_json[0]['is_owner']
-        assert rsp_json[0]['permission'] == 'ro'
+        assert rsp_json[0]['permission'] == VFolderPermission.READ_ONLY.value
 
     @pytest.mark.asyncio
     async def test_get_info(self, prepare_vfolder, get_headers, user_keypair):
@@ -672,7 +673,7 @@ class TestJoinedVfolderManipulations:
         folder_info = await create_vfolder()
         async with app['dbpool'].acquire() as conn:
             query = (vfolder_permissions.insert().values({
-                'permission': 'ro',
+                'permission': VFolderPermission.READ_ONLY,
                 'vfolder': folder_info['id'],
                 'access_key': user_keypair['access_key']
             }))
@@ -688,7 +689,7 @@ class TestJoinedVfolderManipulations:
         assert rsp_json['id'] == folder_info['id']
         assert rsp_json['name'] == folder_info['name']
         assert not rsp_json['is_owner']
-        assert rsp_json['permission'] == 'ro'
+        assert rsp_json['permission'] == VFolderPermission.READ_ONLY.value
         assert rsp_json['numFiles'] == 0
 
     @pytest.mark.asyncio
@@ -698,7 +699,7 @@ class TestJoinedVfolderManipulations:
         folder_info = await create_vfolder()
         async with app['dbpool'].acquire() as conn:
             query = (vfolder_permissions.insert().values({
-                'permission': 'rw',
+                'permission': VFolderPermission.READ_WRITE,
                 'vfolder': folder_info['id'],
                 'access_key': user_keypair['access_key']
             }))
@@ -732,7 +733,7 @@ class TestJoinedVfolderManipulations:
         folder_info = await create_vfolder()
         async with app['dbpool'].acquire() as conn:
             query = (vfolder_permissions.insert().values({
-                'permission': 'ro',
+                'permission': VFolderPermission.READ_ONLY,
                 'vfolder': folder_info['id'],
                 'access_key': user_keypair['access_key']
             }))
@@ -767,7 +768,7 @@ class TestJoinedVfolderManipulations:
             f.write('hello vfolder!')
         async with app['dbpool'].acquire() as conn:
             query = (vfolder_permissions.insert().values({
-                'permission': 'ro',
+                'permission': VFolderPermission.READ_ONLY,
                 'vfolder': folder_info['id'],
                 'access_key': user_keypair['access_key']
             }))
@@ -803,7 +804,7 @@ class TestJoinedVfolderManipulations:
             f.write('hello vfolder!')
         async with app['dbpool'].acquire() as conn:
             query = (vfolder_permissions.insert().values({
-                'permission': 'ro',
+                'permission': VFolderPermission.READ_ONLY,
                 'vfolder': folder_info['id'],
                 'access_key': user_keypair['access_key']
             }))
@@ -817,7 +818,6 @@ class TestJoinedVfolderManipulations:
         files = json.loads(rsp_json['files'])
 
         assert files[0]['filename'] == 'hello.txt'
-        assert rsp_json['folder_path'] == str(folder_path)
 
     @pytest.mark.asyncio
     async def test_delete_files(self, prepare_vfolder, get_headers, folder_mount,
@@ -829,7 +829,7 @@ class TestJoinedVfolderManipulations:
             f.write('hello vfolder!')
         async with app['dbpool'].acquire() as conn:
             query = (vfolder_permissions.insert().values({
-                'permission': 'rw',
+                'permission': VFolderPermission.RW_DELETE,
                 'vfolder': folder_info['id'],
                 'access_key': user_keypair['access_key']
             }))
@@ -857,7 +857,7 @@ class TestJoinedVfolderManipulations:
             f.write('hello vfolder!')
         async with app['dbpool'].acquire() as conn:
             query = (vfolder_permissions.insert().values({
-                'permission': 'ro',
+                'permission': VFolderPermission.READ_ONLY,
                 'vfolder': folder_info['id'],
                 'access_key': user_keypair['access_key']
             }))
