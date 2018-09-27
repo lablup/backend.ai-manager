@@ -137,8 +137,7 @@ async def exception_middleware(request, handler):
         app['sentry'].captureException()
         log.exception('Uncaught exception in HTTP request handlers')
         if app['config'].debug:
-            extra = str(ex.args) + '\n\n' + traceback.format_exc()
-            raise InternalServerError(extra)
+            raise InternalServerError(traceback.format_exc())
         else:
             raise InternalServerError()
     else:
