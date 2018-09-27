@@ -16,7 +16,7 @@ __all__ = (
 )
 
 
-class VFolderPermission(enum.Enum):
+class VFolderPermission(str, enum.Enum):
     '''
     Permissions for a virtual folder given to a specific access key.
     RW_DELETE includes READ_WRITE and READ_WRITE includes READ_ONLY.
@@ -24,6 +24,15 @@ class VFolderPermission(enum.Enum):
     READ_ONLY = 'ro'
     READ_WRITE = 'rw'
     RW_DELETE = 'wd'
+
+
+'''
+This is the default permission when the vfolder is owned by the requesting user.
+(In such cases there is no explicit vfolder_permissions table entry!)
+It is added after creation of the VFolderPermission class to avoid becoming
+one of the regular enumeration entries.
+'''
+VFolderPermission.OWNER_PERM = VFolderPermission.RW_DELETE
 
 
 vfolders = sa.Table(

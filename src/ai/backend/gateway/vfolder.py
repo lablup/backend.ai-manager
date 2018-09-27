@@ -189,24 +189,34 @@ async def list_folders(request):
         except psycopg2.DataError as e:
             raise InvalidAPIParameters
         async for row in result:
+            if row.permission is None:
+                is_owner = True
+                permission = VFolderPermission.OWNER_PERM
+            else:
+                is_owner = False
+                permission = row.permission
             resp.append({
                 'name': row.name,
                 'id': row.id.hex,
-                'is_owner': False if row.permission else True,
-                'permission': row.permission if row.permission else 'rw',
+                'is_owner': is_owner,
+                'permission': permission,
             })
     return web.json_response(resp, status=200)
 
 
 @auth_required
-@vfolder_permission_required(VFolderPermission.READ_WRITE)
+@vfolder_permission_required(VFolderPermission.READ_ONLY)
 async def get_info(request, row):
     resp = {}
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     log.info(f"VFOLDER.GETINFO (u:{access_key}, f:{folder_name})")
-    is_owner = False if row.permission else True
-    permission = row.permission if row.permission else 'rw'
+    if row.permission is None:
+        is_owner = True
+        permission = VFolderPermission.OWNER_PERM
+    else:
+        is_owner = False
+        permission = row.permission
     # TODO: handle nested directory structure
     folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
     num_files = len(list(folder_path.iterdir()))
@@ -524,7 +534,7 @@ async def accept_invitation(request):
 
         # Create permission relation between the vfolder and the invitee.
         query = (vfolder_permissions.insert().values({
-            'permission': invitation.permission,
+            'permission': VFolderPermission(invitation.permission),
             'vfolder': invitation.vfolder,
             'access_key': inv_ak,
         }))
