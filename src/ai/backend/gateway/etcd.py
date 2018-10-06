@@ -1,6 +1,7 @@
 from decimal import Decimal
 import logging
 from pathlib import Path
+from collections import defaultdict
 
 from aiohttp import web
 import aiotools
@@ -152,6 +153,42 @@ class ConfigServer:
         else:
             gpu = Decimal(0)
         return ResourceSlot(mem=mem, cpu=cpu, gpu=gpu)
+
+    @aiotools.lru_cache()
+    async def get_image_metadata(self):
+        image_metadata_list = list(await self.etcd.get_prefix('images'))
+        image_metadata = defaultdict(dict)
+        for key, metadata in image_metadata_list:
+            key_tokens = key.split('/')
+            if key_tokens[1] == '_aliases':
+                # e.g. key, metadata = \
+                #   ('images/_aliases/python3.6', 'python:3.6-debian')
+                image_alias = key_tokens[2]
+                image_real_name = metadata
+                image_metadata['aliases'][image_alias] = image_real_name
+            else:
+                image_name = key_tokens[1]
+                if len(key_tokens) == 2:
+                    # e.g. key, metadata = ('images/python', '1')
+                    image_metadata[image_name]['tag'] = {}
+                elif key_tokens[2] == 'tags':
+                    # e.g. key, metadata = \
+                    #   ('images/python/tags/3.6-debian', 'ca7b9f52b6c2')
+                    image_tag = key_tokens[3]
+                    image_hash = metadata
+                    if image_hash == 'x':
+                        # Some images does not have image hash.
+                        continue
+                    image_hash_dict = image_metadata[image_name].get('tag', None)
+                    assert image_hash_dict is not None, image_name
+                    image_hash_dict[image_tag] = image_hash
+                else:
+                    # e.g. key, metadata = ('images/python/cpu', '1.00')
+                    resource_type = key_tokens[2]
+                    resource_slot = metadata
+                    image_metadata[image_name][resource_type] = resource_slot
+
+        return image_metadata
 
     @aiotools.lru_cache()
     async def resolve_image_name(self, name_or_alias):

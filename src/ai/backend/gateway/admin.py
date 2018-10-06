@@ -55,6 +55,7 @@ async def handle_gql(request: web.Request) -> web.Response:
         variable_values=body['variables'],
         context_value={
             'dlmgr': dlmanager,
+            'config_server': request.app['config_server'],
             'access_key': request['keypair']['access_key'],
             'dbpool': request.app['dbpool'],
             'redis_stat': request.app['redis_stat'],
@@ -134,6 +135,8 @@ class QueryForAdmin(graphene.ObjectType):
         sess_id=graphene.String(required=True),
         status=graphene.String())
 
+    image_metadata = graphene.types.json.JSONString()
+
     @staticmethod
     async def resolve_agent(executor, info, agent_id):
         manager = info.context['dlmgr']
@@ -195,6 +198,11 @@ class QueryForAdmin(graphene.ObjectType):
         loader = manager.get_loader('ComputeWorker', status=status)
         return await loader.load(sess_id)
 
+    @staticmethod
+    async def resolve_image_metadata(executor, info):
+        config_server = info.context['config_server']
+        return await config_server.get_image_metadata()
+
 
 class QueryForUser(graphene.ObjectType):
     '''
@@ -218,6 +226,8 @@ class QueryForUser(graphene.ObjectType):
         ComputeWorker,
         sess_id=graphene.String(required=True),
         status=graphene.String())
+
+    image_metadata = graphene.types.json.JSONString()
 
     @staticmethod
     async def resolve_keypair(executor, info):
@@ -263,6 +273,11 @@ class QueryForUser(graphene.ObjectType):
         loader = manager.get_loader(
             'ComputeWorker', status=status, access_key=access_key)
         return await loader.load(sess_id)
+
+    @staticmethod
+    async def resolve_image_metadata(executor, info):
+        config_server = info.context['config_server']
+        return await config_server.get_image_metadata()
 
 
 async def init(app):
