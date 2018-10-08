@@ -1,5 +1,6 @@
 import json
 import uuid
+from decimal import Decimal
 
 import pytest
 
@@ -500,3 +501,49 @@ class TestUserQuery:
         rsp_json = await ret.json()
         assert len(rsp_json) == 1
         assert rsp_json['compute_workers'][0]['role'] == 'worker'
+
+    @pytest.mark.asyncio
+    async def test_query_image_metadata_all(self, create_app_and_client,
+                                            get_headers, user_keypair,
+                                            image_metadata):
+        app, client = await create_app_and_client(modules=['auth', 'admin'])
+
+        # Add test image metadata to etcd config server
+        await app['config_server'].update_kernel_images_from_file(image_metadata)
+
+        query = '{ image_metadata }'
+        payload = json.dumps({'query': query}).encode()
+        headers = get_headers('POST', self.url, payload, keypair=user_keypair)
+        ret = await client.post(self.url, data=payload, headers=headers)
+
+        assert ret.status == 200
+        rsp_json = await ret.json()
+        metadata = json.loads(rsp_json['image_metadata'])
+        assert 'test-python' in metadata
+        assert Decimal(metadata['test-python']['cpu']) == Decimal('1')
+        assert Decimal(metadata['test-python']['mem']) == Decimal('1')
+        assert Decimal(metadata['test-python']['gpu']) == Decimal('0')
+        assert metadata['test-python']['hash']['3.6-debian'] == 'ca7b9f52b6c2'
+
+    @pytest.mark.asyncio
+    async def test_query_image_metadata_one(self, create_app_and_client,
+                                            get_headers, user_keypair,
+                                            image_metadata):
+        app, client = await create_app_and_client(modules=['auth', 'admin'])
+
+        # Add test image metadata to etcd config server
+        await app['config_server'].update_kernel_images_from_file(image_metadata)
+
+        query = '{ image_metadata(image_name: "test-python") }'
+        payload = json.dumps({'query': query}).encode()
+        headers = get_headers('POST', self.url, payload, keypair=user_keypair)
+        ret = await client.post(self.url, data=payload, headers=headers)
+
+        assert ret.status == 200
+        rsp_json = await ret.json()
+        metadata = json.loads(rsp_json['image_metadata'])
+        assert Decimal(metadata['cpu']) == Decimal('1')
+        assert Decimal(metadata['mem']) == Decimal('1')
+        assert Decimal(metadata['gpu']) == Decimal('0')
+        assert metadata['hash']['3.6-debian'] == 'ca7b9f52b6c2'
+        assert len(metadata['hash']) == 1

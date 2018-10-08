@@ -32,6 +32,7 @@ from ai.backend.gateway.server import (
     exception_middleware, api_middleware,
     _get_legacy_handler,
     PUBLIC_INTERFACES)
+from ai.backend.gateway.etcd import ConfigServer
 from ai.backend.manager import models
 from ai.backend.manager.models import fixtures, agents, kernels, keypairs, vfolders
 from ai.backend.manager.cli.etcd import delete, put, update_images, update_aliases
@@ -474,3 +475,33 @@ def prepare_docker_images():
         _loop.run_until_complete(pull())
     finally:
         _loop.close()
+
+
+@pytest.fixture
+async def config_server(app):
+    server = ConfigServer(app['config'].etcd_addr, app['config'].namespace)
+    yield server
+    await server.etcd.delete_prefix('nodes/manager')
+
+
+@pytest.fixture
+async def image_metadata(config_server, tmpdir):
+    content = '''
+images:
+  - name: test-python
+    syntax: python
+    tags:
+      - ["latest",     ":3.6-debian"]
+      - ["3.6-debian", "ca7b9f52b6c2"]
+    slots: &default
+      cpu: 1    # cores
+      mem: 1.0  # GiB
+      gpu: 0    # fraction of GPU device
+'''
+    p = Path(tmpdir) / 'test-image-metadata.yml'
+    p.write_text(content)
+
+    yield p
+
+    await config_server.etcd.delete_prefix('images/test-python')
+    await config_server.etcd.delete('images/_aliases/test-python:latest')

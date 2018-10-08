@@ -8,36 +8,6 @@ from ai.backend.gateway.exceptions import ImageNotFound
 
 
 @pytest.fixture
-async def config_server(app):
-    server = ConfigServer(app['config'].etcd_addr, app['config'].namespace)
-    yield server
-    await server.etcd.delete_prefix('nodes/manager')
-
-
-@pytest.fixture
-async def image_metadata(config_server, tmpdir):
-    content = '''
-images:
-  - name: test-python
-    syntax: python
-    tags:
-      - ["latest",     ":3.6-debian"]
-      - ["3.6-debian", "ca7b9f52b6c2"]
-    slots: &default
-      cpu: 1    # cores
-      mem: 1.0  # GiB
-      gpu: 0    # fraction of GPU device
-'''
-    p = Path(tmpdir) / 'test-image-metadata.yml'
-    p.write_text(content)
-
-    yield p
-
-    await config_server.etcd.delete_prefix('images/test-python')
-    await config_server.etcd.delete('images/_aliases/test-python:latest')
-
-
-@pytest.fixture
 async def image_aliases(config_server, tmpdir):
     content = '''
 aliases:
@@ -151,6 +121,40 @@ class TestConfigServer:
         assert ret.cpu == Decimal('1')
         assert ret.mem == Decimal('1')
         assert ret.gpu == Decimal('0')
+
+    @pytest.mark.asyncio
+    async def test_get_image_metadata_all(self, config_server,
+                                          image_metadata):
+        name = 'test-python'
+        tag = '3.6-debian'
+        await config_server.update_kernel_images_from_file(image_metadata)
+
+        metadata = await config_server.get_image_metadata()
+        assert name in metadata
+        assert Decimal(metadata[name]['cpu']) == Decimal('1')
+        assert Decimal(metadata[name]['mem']) == Decimal('1')
+        assert Decimal(metadata[name]['gpu']) == Decimal('0')
+        assert metadata[name]['hash'][tag] == 'ca7b9f52b6c2'
+
+    @pytest.mark.asyncio
+    async def test_get_image_metadata_one(self, config_server,
+                                          image_metadata):
+        wrong_name = 'not-existing-image-name'
+        name = 'test-python'
+        tag = '3.6-debian'
+        await config_server.update_kernel_images_from_file(image_metadata)
+
+        try:
+            metadata = await config_server.get_image_metadata(wrong_name)
+        except ImageNotFound:
+            pass
+
+        metadata = await config_server.get_image_metadata(name)
+        assert Decimal(metadata['cpu']) == Decimal('1')
+        assert Decimal(metadata['mem']) == Decimal('1')
+        assert Decimal(metadata['gpu']) == Decimal('0')
+        assert metadata['hash'][tag] == 'ca7b9f52b6c2'
+        assert len(metadata['hash'].keys()) == 1
 
     @pytest.mark.asyncio
     async def test_resolve_image_name(self, config_server,
