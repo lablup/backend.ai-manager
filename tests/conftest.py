@@ -459,7 +459,7 @@ def prepare_docker_images():
     async def pull():
         docker = aiodocker.Docker()
         images_to_pull = [
-            'lablup/kernel-lua:latest',
+            'lablup/kernel-lua:5.3-alpine',
         ]
         for img in images_to_pull:
             try:
