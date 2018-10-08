@@ -134,6 +134,16 @@ async def create(request):
     params = await request.json()
     log.info(f"VFOLDER.CREATE (u:{access_key})")
     assert _rx_slug.search(params['name']) is not None
+    # Resolve host for the new virtual folder.
+    folder_host = params.get('host', None)
+    if not folder_host:
+        folder_host = \
+            await request.app['config_server'].etcd.get('volumes/_default_host')
+        if not folder_host:
+            raise InvalidAPIParameters
+    if not (request.app['VFOLDER_MOUNT'] / folder_host).is_dir():
+        raise InvalidAPIParameters
+
     async with dbpool.acquire() as conn:
         # Prevent creation of vfolder with duplicated name.
         j = sa.join(vfolders, vfolder_permissions,
@@ -142,14 +152,13 @@ async def create(request):
                    .select_from(j)
                    .where(((vfolders.c.belongs_to == access_key) |
                            (vfolder_permissions.c.access_key == access_key)) &
-                          (vfolders.c.name == params['name'])))
+                          ((vfolders.c.name == params['name']) &
+                           (vfolders.c.host == folder_host))))
         result = await conn.execute(query)
         if result.rowcount > 0:
             raise FolderAlreadyExists
 
         folder_id = uuid.uuid4().hex
-        # TODO: make this configurable
-        folder_host = 'azure-shard01'
         folder_path = (request.app['VFOLDER_MOUNT'] / folder_host / folder_id)
         folder_path.mkdir(parents=True, exist_ok=True)
         query = (vfolders.insert().values({
@@ -162,6 +171,7 @@ async def create(request):
         resp = {
             'id': folder_id,
             'name': params['name'],
+            'host': folder_host,
         }
         try:
             result = await conn.execute(query)
@@ -198,6 +208,7 @@ async def list_folders(request):
             resp.append({
                 'name': row.name,
                 'id': row.id.hex,
+                'host': row.host,
                 'is_owner': is_owner,
                 'permission': permission,
             })
@@ -223,6 +234,7 @@ async def get_info(request, row):
     resp = {
         'name': row.name,
         'id': row.id.hex,
+        'host': row.host,
         'numFiles': num_files,
         'created': str(row.created_at),
         'is_owner': is_owner,
