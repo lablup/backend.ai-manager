@@ -155,40 +155,53 @@ class ConfigServer:
         return ResourceSlot(mem=mem, cpu=cpu, gpu=gpu)
 
     @aiotools.lru_cache()
-    async def get_image_metadata(self):
-        image_metadata_list = list(await self.etcd.get_prefix('images'))
-        image_metadata = defaultdict(dict)
-        for key, metadata in image_metadata_list:
+    async def get_image_metadata(self, image_name=None, private=False):
+        if private:
+            raise NotImplementedError
+
+        def append_metadata(metadata, key_tokens, val, tag=None):
+            if len(key_tokens) == 2:
+                # e.g. key, val = ('images/python', '1')
+                metadata['hash'] = {}
+            elif key_tokens[2] == 'tags':
+                # e.g. key, val = \
+                #   ('images/python/tags/3.6-debian', 'ca7b9f52b6c2')
+                if tag and key_tokens[3] != tag:
+                    return
+                tag = key_tokens[3]
+                hash = val
+                if hash == 'x':
+                    # Some images do not exist.
+                    return
+                metadata['hash'][tag] = hash
+            else:
+                # e.g. key, metadata = ('images/python/cpu', '1.00')
+                resource_type = key_tokens[2]
+                resource_slot = val
+                metadata[resource_type] = resource_slot
+
+        if image_name:
+            name, tag = await self.resolve_image_name(image_name)
+            metadata_pairs = await self.etcd.get_prefix(f'images/{name}/')
+            metadata = {'hash': {}}
+        else:
+            metadata_pairs = list(await self.etcd.get_prefix('images/'))
+            metadata = defaultdict(dict)
+
+        for key, val in metadata_pairs:
             key_tokens = key.split('/')
             if key_tokens[1] == '_aliases':
-                # e.g. key, metadata = \
-                #   ('images/_aliases/python3.6', 'python:3.6-debian')
-                image_alias = key_tokens[2]
-                image_real_name = metadata
-                image_metadata['aliases'][image_alias] = image_real_name
+                pass
             else:
-                image_name = key_tokens[1]
-                if len(key_tokens) == 2:
-                    # e.g. key, metadata = ('images/python', '1')
-                    image_metadata[image_name]['tag'] = {}
-                elif key_tokens[2] == 'tags':
-                    # e.g. key, metadata = \
-                    #   ('images/python/tags/3.6-debian', 'ca7b9f52b6c2')
-                    image_tag = key_tokens[3]
-                    image_hash = metadata
-                    if image_hash == 'x':
-                        # Some images does not have image hash.
-                        continue
-                    image_hash_dict = image_metadata[image_name].get('tag', None)
-                    assert image_hash_dict is not None, image_name
-                    image_hash_dict[image_tag] = image_hash
+                name = key_tokens[1]
+                if image_name:
+                    metadata_param = metadata
+                    tag_param = tag
                 else:
-                    # e.g. key, metadata = ('images/python/cpu', '1.00')
-                    resource_type = key_tokens[2]
-                    resource_slot = metadata
-                    image_metadata[image_name][resource_type] = resource_slot
-
-        return image_metadata
+                    metadata_param = metadata[name]
+                    tag_param = None
+                append_metadata(metadata_param, key_tokens, val, tag_param)
+        return metadata
 
     @aiotools.lru_cache()
     async def resolve_image_name(self, name_or_alias):

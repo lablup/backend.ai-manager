@@ -135,7 +135,9 @@ class QueryForAdmin(graphene.ObjectType):
         sess_id=graphene.String(required=True),
         status=graphene.String())
 
-    image_metadata = graphene.types.json.JSONString()
+    image_metadata = graphene.types.json.JSONString(
+        image_name=graphene.String(),
+        private=graphene.Boolean())
 
     @staticmethod
     async def resolve_agent(executor, info, agent_id):
@@ -199,9 +201,9 @@ class QueryForAdmin(graphene.ObjectType):
         return await loader.load(sess_id)
 
     @staticmethod
-    async def resolve_image_metadata(executor, info):
+    async def resolve_image_metadata(executor, info, image_name=None, private=False):
         config_server = info.context['config_server']
-        return await config_server.get_image_metadata()
+        return await config_server.get_image_metadata(image_name, private)
 
 
 class QueryForUser(graphene.ObjectType):
@@ -227,7 +229,9 @@ class QueryForUser(graphene.ObjectType):
         sess_id=graphene.String(required=True),
         status=graphene.String())
 
-    image_metadata = graphene.types.json.JSONString()
+    image_metadata = graphene.types.json.JSONString(
+        image_name=graphene.String(),
+        private=graphene.Boolean())
 
     @staticmethod
     async def resolve_keypair(executor, info):
@@ -275,9 +279,9 @@ class QueryForUser(graphene.ObjectType):
         return await loader.load(sess_id)
 
     @staticmethod
-    async def resolve_image_metadata(executor, info):
+    async def resolve_image_metadata(executor, info, image_name=None, private=False):
         config_server = info.context['config_server']
-        return await config_server.get_image_metadata()
+        return await config_server.get_image_metadata(image_name, private)
 
 
 async def init(app):
