@@ -15,7 +15,9 @@ import sqlalchemy as sa
 import psycopg2
 
 from .auth import auth_required
-from .exceptions import FolderNotFound, FolderAlreadyExists, InvalidAPIParameters, VFolderCreationFailed
+from .exceptions import (
+    VFolderCreationFailed, FolderNotFound, FolderAlreadyExists,
+    InvalidAPIParameters)
 from ..manager.models import (
     keypairs, vfolders, vfolder_invitations, vfolder_permissions,
     VFolderPermission)
