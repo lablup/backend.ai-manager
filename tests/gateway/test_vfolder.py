@@ -94,6 +94,22 @@ async def test_create_vfolder_with_same_name_in_other_host(prepare_vfolder,
 
 
 @pytest.mark.asyncio
+async def test_cannot_create_vfolder_in_not_existing_host(prepare_vfolder,
+                                                          get_headers):
+    app, client, create_vfolder = prepare_vfolder
+
+    url = '/v3/folders/'
+    req_bytes = json.dumps({
+        'name': 'test-vfolder',
+        'host': 'not-existing-host',
+    }).encode()
+    headers = get_headers('POST', url, req_bytes)
+    ret = await client.post(url, data=req_bytes, headers=headers)
+
+    assert ret.status == 503
+
+
+@pytest.mark.asyncio
 async def test_cannot_create_vfolder_with_duplicated_name(prepare_vfolder,
                                                           get_headers):
     app, client, create_vfolder = prepare_vfolder

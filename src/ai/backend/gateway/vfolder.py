@@ -15,7 +15,7 @@ import sqlalchemy as sa
 import psycopg2
 
 from .auth import auth_required
-from .exceptions import FolderNotFound, FolderAlreadyExists, InvalidAPIParameters
+from .exceptions import FolderNotFound, FolderAlreadyExists, InvalidAPIParameters, VFolderCreationFailed
 from ..manager.models import (
     keypairs, vfolders, vfolder_invitations, vfolder_permissions,
     VFolderPermission)
@@ -140,9 +140,9 @@ async def create(request):
         folder_host = \
             await request.app['config_server'].etcd.get('volumes/_default_host')
         if not folder_host:
-            raise InvalidAPIParameters
+            raise VFolderCreationFailed
     if not (request.app['VFOLDER_MOUNT'] / folder_host).is_dir():
-        raise InvalidAPIParameters
+        raise VFolderCreationFailed
 
     async with dbpool.acquire() as conn:
         # Prevent creation of vfolder with duplicated name.
