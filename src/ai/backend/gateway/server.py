@@ -335,7 +335,11 @@ async def server_main(loop, pidx, _args):
         init_subapp(getattr(subapp_mod, 'create_app'))
 
     app_plugin_entry_prefix = 'backendai_app_v10'
+    if app['config'].disable_plugins:
+        app['config'].disable_plugins = app['config'].disable_plugins.split(',')
     for entrypoint in pkg_resources.iter_entry_points(app_plugin_entry_prefix):
+        if entrypoint.name in app['config'].disable_plugins:
+            continue
         if pidx == 0:
             log.info(f'Loading app plugin: {entrypoint.module_name}')
         plugin = entrypoint.load()

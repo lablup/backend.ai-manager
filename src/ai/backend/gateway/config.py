@@ -37,6 +37,9 @@ def load_config(argv=None, extra_args_funcs=()):
     parser.add('--db-password', env_var='BACKEND_DB_PASSWORD',
                type=str, default='develove',
                help='The password to authenticate to the database server.')
+    parser.add('--disable-plugins', env_var='BACKEND_DISABLE_PLUGINS',
+               type=str, default='',
+               help='A comma-separated blacklist of app plugins not to use.')
     for func in extra_args_funcs:
         func(parser)
     args = parser.parse_args(args=argv)
