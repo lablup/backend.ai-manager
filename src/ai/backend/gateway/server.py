@@ -334,7 +334,7 @@ async def server_main(loop, pidx, _args):
         subapp_mod = importlib.import_module(pkgname, 'ai.backend.gateway')
         init_subapp(getattr(subapp_mod, 'create_app'))
 
-    app_plugin_entry_prefix = 'backendai_app_v10'
+    app_plugin_entry_prefix = 'backendai_webapp_v10'
     if app['config'].disable_plugins:
         app['config'].disable_plugins = app['config'].disable_plugins.split(',')
     for entrypoint in pkg_resources.iter_entry_points(app_plugin_entry_prefix):
