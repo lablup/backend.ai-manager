@@ -1,6 +1,11 @@
 Changes
 =======
 
+1.3.12 (2018-10-17)
+-------------------
+
+- Add CORS support (Hotfix #99 backported from v1.4 and master)
+
 1.3.11 (2018-06-07)
 -------------------
 
