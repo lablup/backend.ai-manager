@@ -463,7 +463,7 @@ def prepare_docker_images():
         ]
         for img in images_to_pull:
             try:
-                await docker.images.get(img)
+                await docker.images.inspect(img)
             except aiodocker.exceptions.DockerError as e:
                 assert e.status == 404
                 print(f'Pulling image "{img}" for testing...')

@@ -81,7 +81,9 @@ async def sign_request(sign_method, request, secret_key) -> str:
         assert hash_type in hashlib.algorithms_guaranteed, \
                'Unsupported request signing method (hash type)'
 
-        if request.has_body and not request.content_type == 'multipart/form-data':
+        if (request.can_read_body and
+            not request.content_type == 'multipart/form-data'):
+            # read the whole body if neither streaming nor bodyless
             body = await request.read()
         else:
             body = b''
