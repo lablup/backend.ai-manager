@@ -146,6 +146,10 @@ async def exception_middleware(request, handler):
         return resp
 
 
+async def legacy_auth_test_redirect(request):
+    raise web.HTTPFound('/v3/auth/test')
+
+
 async def gw_init(app):
     # should be done in create_app() in other modules.
     app.router.add_route('GET', r'', hello)
@@ -153,7 +157,7 @@ async def gw_init(app):
 
     # legacy redirects
     app.router.add_route('GET', '/v{version:\d+}/authorize',
-                         lambda request: web.HTTPFound('/v3/auth/test'))
+                         legacy_auth_test_redirect)
 
     # populate public interfaces
     app['config_server'] = ConfigServer(
