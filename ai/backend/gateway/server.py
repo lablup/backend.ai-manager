@@ -13,6 +13,7 @@ import sys
 
 import aiohttp
 from aiohttp import web
+import aiohttp_cors
 import aiojobs.aiohttp
 import aioredis
 import aiotools
@@ -274,6 +275,12 @@ async def server_main(loop, pidx, _args):
         exception_middleware,
         api_middleware,
     ])
+    cors_options = {
+        '*': aiohttp_cors.ResourceOptions(
+            allow_credentials=False,
+            expose_headers="*", allow_headers="*"),
+    }
+    cors = aiohttp_cors.setup(app, defaults=cors_options)
     app['config'] = _args[0]
     app['sslctx'] = None
     if app['config'].ssl_cert and app['config'].ssl_key:
@@ -302,6 +309,9 @@ async def server_main(loop, pidx, _args):
     loop.set_exception_handler(global_exception_handler)
     aiojobs.aiohttp.setup(app, **scheduler_opts)
     await gw_init(app)
+    for route in app.router.routes():
+        cors.add(route)
+
     for pkgname in subapp_pkgs:
         if pidx == 0:
             log.info('Loading module: %s', pkgname[1:])
@@ -310,6 +320,7 @@ async def server_main(loop, pidx, _args):
         assert isinstance(subapp, web.Application)
         # Allow subapp's access to the root app properties.
         # These are the public APIs exposed to extensions as well.
+        subcors = aiohttp_cors.setup(subapp)
         for key in PUBLIC_INTERFACES:
             subapp[key] = app[key]
         prefix = subapp.get('prefix', pkgname.split('.')[-1].replace('_', '-'))
@@ -319,13 +330,15 @@ async def server_main(loop, pidx, _args):
 
         # Add legacy version-prefixed routes to the root app with some hacks
         for r in subapp.router.routes():
+            subcors.add(r, cors_options)
             for version in subapp['api_versions']:
                 subpath = r.resource.canonical
                 if subpath == f'/{prefix}':
                     subpath += '/'
                 legacy_path = f'/v{version}{subpath}'
                 handler = _get_legacy_handler(r.handler, subapp, version)
-                app.router.add_route(r.method, legacy_path, handler)
+                legacy_route = app.router.add_route(r.method, legacy_path, handler)
+                subcors.add(legacy_route, cors_options)
 
     app.on_shutdown.append(gw_shutdown)
     app.on_cleanup.append(gw_cleanup)

@@ -113,7 +113,14 @@ class ConfigServer:
             await self.etcd.put_multi(ks, vs)
         log.info('done')
 
-    @aiotools.lru_cache(maxsize=1)
+    @aiotools.lru_cache(maxsize=1, expire_after=60.0)
+    async def get_allowed_origins(self):
+        origins = await self.etcd.get('config/api/allow-origins')
+        if origins is None:
+            origins = '*'
+        return origins
+
+    @aiotools.lru_cache(maxsize=1, expire_after=60.0)
     async def get_overbook_factors(self):
         '''
         Retrieves the overbook parameters which is used to
@@ -136,7 +143,7 @@ class ConfigServer:
             'gpu': gpu,
         }
 
-    @aiotools.lru_cache()
+    @aiotools.lru_cache(expire_after=60.0)
     async def get_image_required_slots(self, name, tag):
         installed = await self.etcd.get(f'images/{name}')
         if installed is None:
@@ -153,7 +160,7 @@ class ConfigServer:
             gpu=float(gpu),
         )
 
-    @aiotools.lru_cache()
+    @aiotools.lru_cache(expire_after=60.0)
     async def resolve_image_name(self, name_or_alias):
 
         async def resolve_alias(alias_key):

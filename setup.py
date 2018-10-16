@@ -14,10 +14,11 @@ requires = [
     'aioconsole>=0.1.3',
     'aiodataloader',
     'aiohttp~=3.3.0',
+    'aiohttp_cors~=0.7',
     'aiojobs>=0.1',
     'aiopg~=0.13.0',
     'aioredis~=1.0.0',
-    'aiotools>=0.6.0',
+    'aiotools>=0.7.3',
     'aiozmq>=0.7',
     'alembic~=0.9.2',
     'async_timeout~=3.0',  # to avoid pip 10 resolver issue
