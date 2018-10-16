@@ -8,6 +8,7 @@ import importlib
 from ipaddress import ip_address
 import logging
 import os
+import pkg_resources
 import ssl
 import sys
 import traceback
@@ -293,8 +294,6 @@ async def server_main(loop, pidx, _args):
         '.auth', '.ratelimit',
         '.vfolder', '.admin',
         '.kernel', '.stream',
-    ] + [
-        ext_name for ext_name in app['config'].extensions
     ]
 
     global_exception_handler = functools.partial(handle_loop_error, app)
@@ -306,11 +305,9 @@ async def server_main(loop, pidx, _args):
     loop.set_exception_handler(global_exception_handler)
     aiojobs.aiohttp.setup(app, **scheduler_opts)
     await gw_init(app)
-    for pkgname in subapp_pkgs:
-        if pidx == 0:
-            log.info('Loading module: %s', pkgname[1:])
-        subapp_mod = importlib.import_module(pkgname, 'ai.backend.gateway')
-        subapp, global_middlewares = getattr(subapp_mod, 'create_app')()
+
+    def init_subapp(create_subapp):
+        subapp, global_middlewares = create_subapp()
         assert isinstance(subapp, web.Application)
         # Allow subapp's access to the root app properties.
         # These are the public APIs exposed to extensions as well.
@@ -330,6 +327,23 @@ async def server_main(loop, pidx, _args):
                 legacy_path = f'/v{version}{subpath}'
                 handler = _get_legacy_handler(r.handler, subapp, version)
                 app.router.add_route(r.method, legacy_path, handler)
+
+    for pkgname in subapp_pkgs:
+        if pidx == 0:
+            log.info('Loading module: %s', pkgname[1:])
+        subapp_mod = importlib.import_module(pkgname, 'ai.backend.gateway')
+        init_subapp(getattr(subapp_mod, 'create_app'))
+
+    app_plugin_entry_prefix = 'backendai_webapp_v10'
+    if app['config'].disable_plugins:
+        app['config'].disable_plugins = app['config'].disable_plugins.split(',')
+    for entrypoint in pkg_resources.iter_entry_points(app_plugin_entry_prefix):
+        if entrypoint.name in app['config'].disable_plugins:
+            continue
+        if pidx == 0:
+            log.info(f'Loading app plugin: {entrypoint.module_name}')
+        plugin = entrypoint.load()
+        init_subapp(getattr(plugin, 'create_app'))
 
     app.on_shutdown.append(gw_shutdown)
     app.on_cleanup.append(gw_cleanup)
