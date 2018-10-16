@@ -192,7 +192,7 @@ class Client:
 async def app(event_loop, test_ns, test_db, unused_tcp_port):
     """ For tests that do not require actual server running.
     """
-    app = web.Application(loop=event_loop, middlewares=[
+    app = web.Application(middlewares=[
         exception_middleware,
         api_middleware,
     ])
