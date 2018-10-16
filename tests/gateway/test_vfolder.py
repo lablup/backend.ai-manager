@@ -106,7 +106,7 @@ async def test_cannot_create_vfolder_in_not_existing_host(prepare_vfolder,
     headers = get_headers('POST', url, req_bytes)
     ret = await client.post(url, data=req_bytes, headers=headers)
 
-    assert ret.status == 503
+    assert ret.status == 400
 
 
 @pytest.mark.asyncio

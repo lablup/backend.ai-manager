@@ -104,6 +104,11 @@ class KernelAlreadyExists(web.HTTPBadRequest, BackendError):
                   'a different runtime type (language).'
 
 
+class VFolderCreationFailed(web.HTTPBadRequest, BackendError):
+    error_type  = 'https://api.backend.ai/probs/vfolder-creation-failed'
+    error_title = 'Virtual folder creation has failed.'
+
+
 class FolderNotFound(web.HTTPNotFound, BackendError):
     error_type  = 'https://api.backend.ai/probs/folder-not-found'
     error_title = 'No such virtual folder.'
@@ -222,8 +227,3 @@ class KernelRestartFailed(web.HTTPInternalServerError, BackendAgentError):
 class KernelExecutionFailed(web.HTTPInternalServerError, BackendAgentError):
     error_type  = 'https://api.backend.ai/probs/kernel-execution-failed'
     error_title = 'Executing user code in the kernel has failed.'
-
-
-class VFolderCreationFailed(web.HTTPServiceUnavailable, BackendError):
-    error_type  = 'https://api.backend.ai/probs/vfolder-creation-failed'
-    error_title = 'VFolder creation has failed.'

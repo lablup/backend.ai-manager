@@ -142,9 +142,11 @@ async def create(request):
         folder_host = \
             await request.app['config_server'].etcd.get('volumes/_default_host')
         if not folder_host:
-            raise VFolderCreationFailed
+            raise VFolderCreationFailed(
+                'You must specify the vfolder host '
+                'because the default host is not configured.')
     if not (request.app['VFOLDER_MOUNT'] / folder_host).is_dir():
-        raise VFolderCreationFailed
+        raise VFolderCreationFailed(f'Invalid vfolder host: {folder_host}')
 
     async with dbpool.acquire() as conn:
         # Prevent creation of vfolder with duplicated name.
