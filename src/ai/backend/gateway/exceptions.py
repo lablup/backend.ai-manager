@@ -109,13 +109,13 @@ class VFolderCreationFailed(web.HTTPBadRequest, BackendError):
     error_title = 'Virtual folder creation has failed.'
 
 
-class FolderNotFound(web.HTTPNotFound, BackendError):
-    error_type  = 'https://api.backend.ai/probs/folder-not-found'
+class VFolderNotFound(web.HTTPNotFound, BackendError):
+    error_type  = 'https://api.backend.ai/probs/vfolder-not-found'
     error_title = 'No such virtual folder.'
 
 
-class FolderAlreadyExists(web.HTTPBadRequest, BackendError):
-    error_type  = 'https://api.backend.ai/probs/folder-already-exists'
+class VFolderAlreadyExists(web.HTTPBadRequest, BackendError):
+    error_type  = 'https://api.backend.ai/probs/vfolder-already-exists'
     error_title = 'The virtual folder already exists with the same name.'
 
 
