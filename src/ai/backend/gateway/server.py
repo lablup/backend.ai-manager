@@ -103,6 +103,9 @@ async def api_middleware(request, handler):
     if version < 1 or version > 3:
         raise GenericBadRequest('Unsupported API major version.')
     resp = (await _handler(request))
+    origins = await request.app['config_server'].get_allowed_origins()
+    resp.headers['Access-Control-Allow-Origin'] = origins
+    resp.headers['Access-Control-Allow-Credentials'] = 'true'
     return resp
 
 
