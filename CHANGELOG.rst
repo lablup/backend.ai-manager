@@ -1,8 +1,11 @@
 Changes
 =======
 
-1.4.0 (to be released)
+1.5.0 (to be released)
 ----------------------
+
+1.4.0 (2018-09-30)
+------------------
 
 - Expanded virtual folder APIs
 
@@ -16,7 +19,7 @@ Changes
 - Support listing files in the session's main container. (#63)
 
 - All API endpoints are now available *without* version prefixes, as we migrate
-  to the vanilla aiohttp v3.3 release. (#78)
+  to the vanilla aiohttp v3.4 release. (#78)
 
 - Change `user_id` column type of `keypairs` model from integer to string.
   Now it can be used to store the user emails, UUIDs, or whatever identifiers

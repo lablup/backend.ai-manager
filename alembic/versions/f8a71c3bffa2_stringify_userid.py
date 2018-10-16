@@ -35,7 +35,7 @@ def upgrade():
 
     op.alter_column('keypairs', 'user_id',
                     existing_type=sa.Integer(),
-                    type_=sa.String())
+                    type_=sa.String(length=256))
 
     # NOTE: We do the data migration after converting column type.
 
@@ -69,4 +69,4 @@ def upgrade():
 def downgrade():
     op.alter_column('keypairs', 'user_id',
                     existing_type=sa.Integer(),
-                    type_=sa.String())
+                    type_=sa.String(length=256))
