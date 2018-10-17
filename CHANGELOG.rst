@@ -1,6 +1,18 @@
 Changes
 =======
 
+1.4.1 (2018-10-17)
+------------------
+
+- Support CORS (cross-origin resource sharing) for browser-based API clients (#99).
+
+- Fix the agent revival detection routine to update agent's address and region
+  for movable demo devices (#100).
+
+- Update use of deprecate APIs in our dependencies such as aiohttp and aiodocker.
+
+- Let the config server to refresh configuration values from etcd once a minute.
+
 1.4.0 (2018-09-30)
 ------------------
 
