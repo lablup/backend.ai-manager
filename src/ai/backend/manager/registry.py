@@ -771,6 +771,8 @@ class AgentRegistry:
                 query = (sa.update(agents)
                            .values({
                                'status': AgentStatus.ALIVE,
+                               'region': agent_info['region'],
+                               'addr': agent_info['addr'],
                                'lost_at': None,
                                'mem_slots': reported_mem_slots,
                                'cpu_slots': reported_cpu_slots,
