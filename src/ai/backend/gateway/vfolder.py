@@ -15,7 +15,9 @@ import sqlalchemy as sa
 import psycopg2
 
 from .auth import auth_required
-from .exceptions import FolderNotFound, FolderAlreadyExists, InvalidAPIParameters
+from .exceptions import (
+    VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
+    InvalidAPIParameters)
 from ..manager.models import (
     keypairs, vfolders, vfolder_invitations, vfolder_permissions,
     VFolderPermission)
@@ -81,7 +83,7 @@ def vfolder_permission_required(perm: VFolderPermission):
                     raise InvalidAPIParameters
                 row = await result.first()
                 if row is None:
-                    raise FolderNotFound(
+                    raise VFolderNotFound(
                         'Your operation may be permission denied.')
                 return await handler(request, row=row)
 
@@ -120,7 +122,7 @@ def vfolder_check_exists(handler):
                 raise InvalidAPIParameters
             row = await result.first()
             if row is None:
-                raise FolderNotFound()
+                raise VFolderNotFound()
             return await handler(request, row=row)
 
     return _wrapped
@@ -134,6 +136,18 @@ async def create(request):
     params = await request.json()
     log.info(f"VFOLDER.CREATE (u:{access_key})")
     assert _rx_slug.search(params['name']) is not None
+    # Resolve host for the new virtual folder.
+    folder_host = params.get('host', None)
+    if not folder_host:
+        folder_host = \
+            await request.app['config_server'].etcd.get('volumes/_default_host')
+        if not folder_host:
+            raise VFolderCreationFailed(
+                'You must specify the vfolder host '
+                'because the default host is not configured.')
+    if not (request.app['VFOLDER_MOUNT'] / folder_host).is_dir():
+        raise VFolderCreationFailed(f'Invalid vfolder host: {folder_host}')
+
     async with dbpool.acquire() as conn:
         # Prevent creation of vfolder with duplicated name.
         j = sa.join(vfolders, vfolder_permissions,
@@ -142,14 +156,13 @@ async def create(request):
                    .select_from(j)
                    .where(((vfolders.c.belongs_to == access_key) |
                            (vfolder_permissions.c.access_key == access_key)) &
-                          (vfolders.c.name == params['name'])))
+                          ((vfolders.c.name == params['name']) &
+                           (vfolders.c.host == folder_host))))
         result = await conn.execute(query)
         if result.rowcount > 0:
-            raise FolderAlreadyExists
+            raise VFolderAlreadyExists
 
         folder_id = uuid.uuid4().hex
-        # TODO: make this configurable
-        folder_host = 'azure-shard01'
         folder_path = (request.app['VFOLDER_MOUNT'] / folder_host / folder_id)
         folder_path.mkdir(parents=True, exist_ok=True)
         query = (vfolders.insert().values({
@@ -162,6 +175,7 @@ async def create(request):
         resp = {
             'id': folder_id,
             'name': params['name'],
+            'host': folder_host,
         }
         try:
             result = await conn.execute(query)
@@ -198,6 +212,7 @@ async def list_folders(request):
             resp.append({
                 'name': row.name,
                 'id': row.id.hex,
+                'host': row.host,
                 'is_owner': is_owner,
                 'permission': permission,
             })
@@ -223,6 +238,7 @@ async def get_info(request, row):
     resp = {
         'name': row.name,
         'id': row.id.hex,
+        'host': row.host,
         'numFiles': num_files,
         'created': str(row.created_at),
         'is_owner': is_owner,
@@ -395,7 +411,7 @@ async def invite(request):
             raise InvalidAPIParameters
         vf = await result.first()
         if vf is None:
-            raise FolderNotFound()
+            raise VFolderNotFound()
 
         # Get invited user's keypairs except vfolder owner.
         query = (sa.select('*')
@@ -512,7 +528,7 @@ async def accept_invitation(request):
                           (vfolders.c.name == target_vfolder.name)))
         result = await conn.execute(query)
         if result.rowcount > 0:
-            raise FolderAlreadyExists
+            raise VFolderAlreadyExists
 
         if invitation is None:
             resp = {'msg': 'No such invitation found.'}
@@ -595,7 +611,7 @@ async def delete(request):
             raise InvalidAPIParameters
         row = await result.first()
         if row is None:
-            raise FolderNotFound()
+            raise VFolderNotFound()
         folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
         try:
             shutil.rmtree(folder_path)

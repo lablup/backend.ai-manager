@@ -14,31 +14,25 @@ from ai.backend.manager.models import (
 
 
 @pytest.fixture
-def folder_host():
-    # FIXME: generalize this
-    return 'azure-shard01'
-
-
-@pytest.fixture
 async def prepare_vfolder(event_loop, request, create_app_and_client, get_headers,
-                          folder_mount):
+                          folder_mount, folder_host):
     app, client = await create_app_and_client(modules=['etcd', 'auth', 'vfolder'])
 
     folder_name = 'test-folder'
     folder_id = None
 
-    folder_mount.mkdir(parents=True, exist_ok=True)
+    (folder_mount / folder_host).mkdir(parents=True, exist_ok=True)
 
     def _remove_folder_mount():
         shutil.rmtree(folder_mount)
 
     request.addfinalizer(_remove_folder_mount)
 
-    async def create_vfolder():
+    async def create_vfolder(host=None):
         nonlocal folder_id
 
         url = '/v3/folders/'
-        req_bytes = json.dumps({'name': folder_name}).encode()
+        req_bytes = json.dumps({'name': folder_name, 'host': host}).encode()
         headers = get_headers('POST', url, req_bytes)
         ret = await client.post(url, data=req_bytes, headers=headers)
 
@@ -52,13 +46,67 @@ async def prepare_vfolder(event_loop, request, create_app_and_client, get_header
     return app, client, create_vfolder
 
 
+@pytest.fixture
+async def other_host(folder_mount):
+    other_host = 'other-host'
+    other_host_path = folder_mount / other_host
+    other_host_path.mkdir(exist_ok=True)
+
+    return other_host
+
+
 @pytest.mark.asyncio
-async def test_create_vfolder(prepare_vfolder, get_headers):
+async def test_create_vfolder_in_default_host(prepare_vfolder, folder_host):
     app, client, create_vfolder = prepare_vfolder
     folder_info = await create_vfolder()
 
     assert 'id' in folder_info
     assert 'name' in folder_info
+    assert folder_info.get('host', None) == folder_host
+
+
+@pytest.mark.asyncio
+async def test_create_vfolder_in_user_specified_host(prepare_vfolder, folder_mount):
+    app, client, create_vfolder = prepare_vfolder
+
+    # prepare for user-specified mount folder.
+    user_specified_host = 'user-specified-host'
+    (folder_mount / user_specified_host).mkdir(exist_ok=True)
+
+    folder_info = await create_vfolder(user_specified_host)
+
+    assert 'id' in folder_info
+    assert 'name' in folder_info
+    assert folder_info.get('host', None) == user_specified_host
+
+
+@pytest.mark.asyncio
+async def test_create_vfolder_with_same_name_in_other_host(prepare_vfolder,
+                                                           other_host):
+    app, client, create_vfolder = prepare_vfolder
+
+    await create_vfolder()
+    folder_info = await create_vfolder(other_host)
+
+    assert 'id' in folder_info
+    assert 'name' in folder_info
+    assert folder_info.get('host', None) == other_host
+
+
+@pytest.mark.asyncio
+async def test_cannot_create_vfolder_in_not_existing_host(prepare_vfolder,
+                                                          get_headers):
+    app, client, create_vfolder = prepare_vfolder
+
+    url = '/v3/folders/'
+    req_bytes = json.dumps({
+        'name': 'test-vfolder',
+        'host': 'not-existing-host',
+    }).encode()
+    headers = get_headers('POST', url, req_bytes)
+    ret = await client.post(url, data=req_bytes, headers=headers)
+
+    assert ret.status == 400
 
 
 @pytest.mark.asyncio
@@ -81,7 +129,7 @@ async def test_cannot_create_vfolder_with_duplicated_name(prepare_vfolder,
 
 
 @pytest.mark.asyncio
-async def test_list_vfolders(prepare_vfolder, get_headers):
+async def test_list_vfolders(prepare_vfolder, get_headers, other_host):
     app, client, create_vfolder = prepare_vfolder
 
     # Ensure there's no test folders
@@ -94,18 +142,29 @@ async def test_list_vfolders(prepare_vfolder, get_headers):
     assert len(await ret.json()) == 0
 
     # Create a vfolder
-    folder_info = await create_vfolder()
+    folder_info1 = await create_vfolder()
+    folder_info2 = await create_vfolder(other_host)
 
     headers = get_headers('GET', url, req_bytes)
     ret = await client.get(url, data=req_bytes, headers=headers)
 
     assert ret.status == 200
     rsp_json = await ret.json()
-    assert len(rsp_json) == 1
-    assert rsp_json[0]['id'] == folder_info['id']
-    assert rsp_json[0]['name'] == folder_info['name']
-    assert rsp_json[0]['is_owner']
-    assert rsp_json[0]['permission'] == VFolderPermission.OWNER_PERM.value
+    assert len(rsp_json) == 2
+    rsp_info_pairs = []
+    if rsp_json[0]['id'] == folder_info1['id']:
+        rsp_info_pairs.append((rsp_json[0], folder_info1))
+        rsp_info_pairs.append((rsp_json[1], folder_info2))
+    else:
+        rsp_info_pairs.append((rsp_json[0], folder_info2))
+        rsp_info_pairs.append((rsp_json[1], folder_info1))
+
+    for rsp_json, folder_info in rsp_info_pairs:
+        assert rsp_json['id'] == folder_info['id']
+        assert rsp_json['name'] == folder_info['name']
+        assert rsp_json['is_owner']
+        assert rsp_json['permission'] == VFolderPermission.OWNER_PERM.value
+        assert rsp_json['host'] == folder_info['host']
 
 
 @pytest.mark.asyncio
@@ -127,9 +186,9 @@ async def test_cannot_list_other_users_vfolders(prepare_vfolder, get_headers,
 
 
 @pytest.mark.asyncio
-async def test_get_info(prepare_vfolder, get_headers):
+async def test_get_info(prepare_vfolder, get_headers, other_host):
     app, client, create_vfolder = prepare_vfolder
-    folder_info = await create_vfolder()
+    folder_info = await create_vfolder(other_host)
 
     url = f'/v3/folders/{folder_info["name"]}'
     req_bytes = json.dumps({}).encode()
@@ -140,6 +199,7 @@ async def test_get_info(prepare_vfolder, get_headers):
     rsp_json = await ret.json()
     assert rsp_json['id'] == folder_info['id']
     assert rsp_json['name'] == folder_info['name']
+    assert rsp_json['host'] == folder_info['host']
     assert rsp_json['numFiles'] == 0
     assert rsp_json['is_owner']
     assert rsp_json['permission'] == VFolderPermission.OWNER_PERM.value
@@ -532,7 +592,7 @@ class TestInvitation:
             query = (vfolders.insert().values({
                 'id': uuid.uuid4().hex,
                 'name': folder_info['name'],
-                'host': 'azure-shard01',
+                'host': 'local',
                 'last_used': None,
                 'belongs_to': user_keypair['access_key'],
             }))

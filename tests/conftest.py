@@ -60,8 +60,15 @@ def folder_mount(test_id):
     return Path(f'/tmp/backend.ai/vfolders-{test_id}')
 
 
+@pytest.fixture(scope='session')
+def folder_host():
+    # FIXME: generalize this
+    return 'local'
+
+
 @pytest.fixture(scope='session', autouse=True)
-def prepare_and_cleanup_databases(request, test_ns, test_db, folder_mount):
+def prepare_and_cleanup_databases(request, test_ns, test_db,
+                                  folder_mount, folder_host):
     os.environ['BACKEND_NAMESPACE'] = test_ns
     os.environ['BACKEND_DB_NAME'] = test_db
 
@@ -75,6 +82,9 @@ def prepare_and_cleanup_databases(request, test_ns, test_db, folder_mount):
                      etcd_addr=etcd_addr, namespace=test_ns)
     update_aliases(args)
     args = Namespace(key='volumes/_mount', value=str(folder_mount),
+                     etcd_addr=etcd_addr, namespace=test_ns)
+    put(args)
+    args = Namespace(key='volumes/_default_host', value=str(folder_host),
                      etcd_addr=etcd_addr, namespace=test_ns)
     put(args)
 

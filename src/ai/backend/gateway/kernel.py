@@ -21,7 +21,7 @@ import sqlalchemy as sa
 from sqlalchemy.sql.expression import true, null
 
 from .exceptions import (InvalidAPIParameters, QuotaExceeded,
-                         KernelNotFound, FolderNotFound,
+                         KernelNotFound, VFolderNotFound,
                          BackendError, InternalServerError)
 from . import GatewayStatus
 from .auth import auth_required
@@ -104,7 +104,7 @@ async def create(request) -> web.Response:
                         result = await conn.execute(query)
                         row = await result.first()
                     if row is None:
-                        raise FolderNotFound
+                        raise VFolderNotFound
                     else:
                         mount_details.append([
                             row.name,
