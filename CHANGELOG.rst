@@ -1,8 +1,24 @@
 Changes
 =======
 
-1.4.0 (to be released)
+
+1.5.0 (to be released)
 ----------------------
+
+1.4.1 (2018-10-17)
+------------------
+
+- Support CORS (cross-origin resource sharing) for browser-based API clients (#99).
+
+- Fix the agent revival detection routine to update agent's address and region
+  for movable demo devices (#100).
+
+- Update use of deprecate APIs in our dependencies such as aiohttp and aiodocker.
+
+- Let the config server to refresh configuration values from etcd once a minute.
+
+1.4.0 (2018-09-30)
+------------------
 
 - Expanded virtual folder APIs
 
@@ -16,7 +32,7 @@ Changes
 - Support listing files in the session's main container. (#63)
 
 - All API endpoints are now available *without* version prefixes, as we migrate
-  to the vanilla aiohttp v3.3 release. (#78)
+  to the vanilla aiohttp v3.4 release. (#78)
 
 - Change `user_id` column type of `keypairs` model from integer to string.
   Now it can be used to store the user emails, UUIDs, or whatever identifiers
@@ -24,6 +40,11 @@ Changes
 
   Clients must be upgrade to 1.3.7 or higher to use string `user_id` properly.
   (The client will auto-detect the type by trying type casting.)
+
+1.3.12 (2018-10-17)
+-------------------
+
+- Add CORS support (Hotfix #99 backported from v1.4 and master)
 
 1.3.11 (2018-06-07)
 -------------------

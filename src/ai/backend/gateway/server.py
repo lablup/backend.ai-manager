@@ -8,12 +8,14 @@ import importlib
 from ipaddress import ip_address
 import logging
 import os
+import pkg_resources
 import ssl
 import sys
 import traceback
 
 import aiohttp
 from aiohttp import web
+import aiohttp_cors
 import aiojobs.aiohttp
 import aioredis
 import aiotools
@@ -146,6 +148,10 @@ async def exception_middleware(request, handler):
         return resp
 
 
+async def legacy_auth_test_redirect(request):
+    raise web.HTTPFound('/v3/auth/test')
+
+
 async def gw_init(app):
     # should be done in create_app() in other modules.
     app.router.add_route('GET', r'', hello)
@@ -153,7 +159,7 @@ async def gw_init(app):
 
     # legacy redirects
     app.router.add_route('GET', '/v{version:\d+}/authorize',
-                         lambda request: web.HTTPFound('/v3/auth/test'))
+                         legacy_auth_test_redirect)
 
     # populate public interfaces
     app['config_server'] = ConfigServer(
@@ -278,6 +284,12 @@ async def server_main(loop, pidx, _args):
         exception_middleware,
         api_middleware,
     ])
+    cors_options = {
+        '*': aiohttp_cors.ResourceOptions(
+            allow_credentials=False,
+            expose_headers="*", allow_headers="*"),
+    }
+    cors = aiohttp_cors.setup(app, defaults=cors_options)
     app['config'] = _args[0]
     app['sslctx'] = None
     if app['config'].ssl_cert and app['config'].ssl_key:
@@ -293,8 +305,6 @@ async def server_main(loop, pidx, _args):
         '.auth', '.ratelimit',
         '.vfolder', '.admin',
         '.kernel', '.stream',
-    ] + [
-        ext_name for ext_name in app['config'].extensions
     ]
 
     global_exception_handler = functools.partial(handle_loop_error, app)
@@ -306,14 +316,15 @@ async def server_main(loop, pidx, _args):
     loop.set_exception_handler(global_exception_handler)
     aiojobs.aiohttp.setup(app, **scheduler_opts)
     await gw_init(app)
-    for pkgname in subapp_pkgs:
-        if pidx == 0:
-            log.info('Loading module: %s', pkgname[1:])
-        subapp_mod = importlib.import_module(pkgname, 'ai.backend.gateway')
-        subapp, global_middlewares = getattr(subapp_mod, 'create_app')()
+    for route in app.router.routes():
+        cors.add(route)
+
+    def init_subapp(create_subapp):
+        subapp, global_middlewares = create_subapp()
         assert isinstance(subapp, web.Application)
         # Allow subapp's access to the root app properties.
         # These are the public APIs exposed to extensions as well.
+        subcors = aiohttp_cors.setup(subapp)
         for key in PUBLIC_INTERFACES:
             subapp[key] = app[key]
         prefix = subapp.get('prefix', pkgname.split('.')[-1].replace('_', '-'))
@@ -323,13 +334,32 @@ async def server_main(loop, pidx, _args):
 
         # Add legacy version-prefixed routes to the root app with some hacks
         for r in subapp.router.routes():
+            subcors.add(r, cors_options)
             for version in subapp['api_versions']:
                 subpath = r.resource.canonical
                 if subpath == f'/{prefix}':
                     subpath += '/'
                 legacy_path = f'/v{version}{subpath}'
                 handler = _get_legacy_handler(r.handler, subapp, version)
-                app.router.add_route(r.method, legacy_path, handler)
+                legacy_route = app.router.add_route(r.method, legacy_path, handler)
+                subcors.add(legacy_route, cors_options)
+
+    for pkgname in subapp_pkgs:
+        if pidx == 0:
+            log.info('Loading module: %s', pkgname[1:])
+        subapp_mod = importlib.import_module(pkgname, 'ai.backend.gateway')
+        init_subapp(getattr(subapp_mod, 'create_app'))
+
+    app_plugin_entry_prefix = 'backendai_webapp_v10'
+    if app['config'].disable_plugins:
+        app['config'].disable_plugins = app['config'].disable_plugins.split(',')
+    for entrypoint in pkg_resources.iter_entry_points(app_plugin_entry_prefix):
+        if entrypoint.name in app['config'].disable_plugins:
+            continue
+        if pidx == 0:
+            log.info(f'Loading app plugin: {entrypoint.module_name}')
+        plugin = entrypoint.load()
+        init_subapp(getattr(plugin, 'create_app'))
 
     app.on_shutdown.append(gw_shutdown)
     app.on_cleanup.append(gw_cleanup)

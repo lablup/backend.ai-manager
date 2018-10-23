@@ -202,7 +202,7 @@ class Client:
 async def app(event_loop, test_ns, test_db, unused_tcp_port):
     """ For tests that do not require actual server running.
     """
-    app = web.Application(loop=event_loop, middlewares=[
+    app = web.Application(middlewares=[
         exception_middleware,
         api_middleware,
     ])
@@ -473,7 +473,7 @@ def prepare_docker_images():
         ]
         for img in images_to_pull:
             try:
-                await docker.images.get(img)
+                await docker.images.inspect(img)
             except aiodocker.exceptions.DockerError as e:
                 assert e.status == 404
                 print(f'Pulling image "{img}" for testing...')
