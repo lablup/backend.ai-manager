@@ -16,7 +16,7 @@ def load_config(argv=None, extra_args_funcs=()):
                default=HostPortPair(ip_address('127.0.0.1'), 2379),
                help='The host:port pair of the etcd cluster or its proxy.')
     parser.add('--docker-registry', env_var='BACKEND_DOCKER_REGISTRY',
-               type=str, metavar='URL', default=None,
+               type=str, metavar='URL', default='lablup',
                help='The host:port pair of the private docker registry '
                     'that caches the kernel images')
     parser.add('--agent-port', env_var='BACKEND_AGENT_PORT',
