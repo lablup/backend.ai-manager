@@ -52,8 +52,9 @@ async def create(request) -> web.Response:
                'clientSessionToken is too short or long (4 to 64 bytes required)!'
         assert _rx_sess_token.fullmatch(sess_id), \
                'clientSessionToken contains invalid characters.'
-        log.info('GET_OR_CREATE (u:{0}, lang:{1}, token:{2})',
-                 request['keypair']['access_key'], params['lang'], sess_id)
+        log.info('GET_OR_CREATE (u:{0}, lang:{1}, tag:{2}, token:{3})',
+                 request['keypair']['access_key'], params['lang'],
+                 params.get('tag', None), sess_id)
     except (asyncio.TimeoutError, AssertionError,
             json.decoder.JSONDecodeError) as e:
         log.warning('GET_OR_CREATE: invalid/missing parameters, {0!r}', e)
@@ -115,7 +116,7 @@ async def create(request) -> web.Response:
             kernel, created = await request.app['registry'].get_or_create_session(
                 sess_id, access_key,
                 params['lang'], creation_config,
-                conn=conn)
+                conn=conn, tag=params.get('tag', None))
             resp['kernelId'] = str(kernel['sess_id'])
             resp['created'] = bool(created)
             if created:

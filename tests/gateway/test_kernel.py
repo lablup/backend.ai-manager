@@ -19,10 +19,11 @@ async def prepare_kernel(request, create_app_and_client,
         spawn_agent=True,
         ev_router=True)
 
-    async def create_kernel(lang='lua:5.3-alpine'):
+    async def create_kernel(lang='lua:5.3-alpine', tag=None):
         url = '/v3/kernel/'
         req_bytes = json.dumps({
             'lang': lang,
+            'tag': tag,
             'clientSessionToken': sess_id,
         }).encode()
         headers = get_headers('POST', url, req_bytes)
@@ -46,6 +47,25 @@ async def test_create_kernel(prepare_kernel):
 
     assert 'kernelId' in kernel_info
     assert kernel_info['created']
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_create_kernel_with_tag(prepare_kernel, get_headers):
+    app, client, create_kernel = prepare_kernel
+    test_tag = 'test-tag'
+    kernel_info = await create_kernel(tag=test_tag)
+
+    assert 'kernelId' in kernel_info
+    assert kernel_info['created']
+
+    url = '/v3/kernel/' + kernel_info['kernelId']
+    headers = get_headers('GET', url)
+    ret = await client.get(url, headers=headers)
+
+    assert ret.status == 200
+    resp_json = await ret.json()
+    assert resp_json.get('tag', None) == test_tag
 
 
 @pytest.mark.integration
