@@ -33,8 +33,10 @@ class ConfigServer:
             instance_ip = await get_instance_ip()
         event_addr = f'{instance_ip}:{app_config.events_port}'
         await self.etcd.put_multi(
-            ['nodes/manager', 'nodes/redis', 'nodes/manager/event_addr'],
-            [instance_id, app_config.redis_addr, event_addr])
+            ['nodes/manager', 'nodes/redis',
+             'nodes/manager/event_addr', 'nodes/docker_registry'],
+            [instance_id, app_config.redis_addr,
+             event_addr, app_config.docker_registry])
 
     async def deregister_myself(self):
         await self.etcd.delete_prefix('nodes/manager')

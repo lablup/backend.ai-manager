@@ -81,6 +81,7 @@ class TestConfigServer:
         assert await config_server.etcd.get('nodes/manager')
         assert await config_server.etcd.get('nodes/redis')
         assert await config_server.etcd.get('nodes/manager/event_addr')
+        assert (await config_server.etcd.get('nodes/docker_registry')) == 'lablup'
 
     @pytest.mark.asyncio
     async def test_deregister_myself(self, app, config_server):
