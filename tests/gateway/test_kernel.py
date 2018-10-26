@@ -60,7 +60,8 @@ async def test_create_kernel_with_tag(prepare_kernel, get_headers):
     assert kernel_info['created']
 
     url = '/v3/kernel/' + kernel_info['kernelId']
-    headers = get_headers('GET', url)
+    req_bytes = b''
+    headers = get_headers('GET', url, req_bytes)
     ret = await client.get(url, headers=headers)
 
     assert ret.status == 200
@@ -78,7 +79,7 @@ async def test_destroy_kernel(prepare_kernel, get_headers, default_keypair):
                                              default_keypair['access_key'])
 
     url = '/v3/kernel/' + kernel_info['kernelId']
-    req_bytes = json.dumps({}).encode('utf-8')
+    req_bytes = b''
     headers = get_headers('DELETE', url, req_bytes)
     ret = await client.delete(url, data=req_bytes, headers=headers)
 
@@ -100,7 +101,7 @@ async def test_restart_kernel(prepare_kernel, get_headers, default_keypair):
     original_cid = kern.container_id
 
     url = '/v3/kernel/' + kernel_info['kernelId']
-    req_bytes = json.dumps({}).encode()
+    req_bytes = b''
     headers = get_headers('PATCH', url, req_bytes)
     ret = await client.patch(url, data=req_bytes, headers=headers)
 

@@ -87,6 +87,9 @@ def prepare_and_cleanup_databases(request, test_ns, test_db,
     args = Namespace(key='volumes/_default_host', value=str(folder_host),
                      etcd_addr=etcd_addr, namespace=test_ns)
     put(args)
+    args = Namespace(key='nodes/docker_registry', value='lablup',
+                     etcd_addr=etcd_addr, namespace=test_ns)
+    put(args)
 
     def finalize_etcd():
         args = Namespace(key='', prefix=True,
