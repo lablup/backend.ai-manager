@@ -16,6 +16,7 @@ from yarl import URL
 import zmq
 
 from ai.backend.common import msgpack
+from ai.backend.common.logging import BraceStyleAdapter
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
     InstanceNotAvailable, InstanceNotFound,
@@ -30,7 +31,7 @@ from .models import (
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
 
-log = logging.getLogger('ai.backend.manager.registry')
+log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.registry'))
 
 
 @aiotools.actxmgr
@@ -171,7 +172,7 @@ class AgentRegistry:
             raise
         except AgentError as e:
             if not issubclass(e.args[0], AssertionError):
-                log.exception(f'{op}: agent-side error')
+                log.exception('{0}: agent-side error', op)
             # TODO: wrap some assertion errors as "invalid requests"
             if set_error:
                 await self.set_session_status(sess_id, access_key,
@@ -184,7 +185,7 @@ class AgentRegistry:
             # silently re-raise to make them handled by gateway http handlers
             raise
         except:
-            log.exception(f'{op}: other error')
+            log.exception('{0}: other error', op)
             # TODO: raven.captureException()
             if set_error:
                 await self.set_session_status(sess_id, access_key,
@@ -500,8 +501,8 @@ class AgentRegistry:
                                                                 config)
                 if created_info is None:
                     raise KernelCreationFailed('ooops')
-                log.debug(f'create_session("{sess_id}", "{access_key}") -> '
-                          f'created on {agent_id}\n{created_info!r}')
+                log.debug('create_session("{0}", "{1}") -> created on {2}\n{3!r}',
+                          sess_id, access_key, agent_id, created_info)
                 assert str(kernel_id) == created_info['id']
                 agent_host = URL(agent_addr).host
                 kernel_host = created_info.get('kernel_host', agent_host)
@@ -736,7 +737,7 @@ class AgentRegistry:
                                      Decimal(ob_factors['gpu']))
             if row is None or row.status is None:
                 # new agent detected!
-                log.info(f'agent {agent_id} joined!')
+                log.info('agent {0} joined!', agent_id)
                 query = agents.insert().values({
                     'id': agent_id,
                     'status': AgentStatus.ALIVE,
@@ -767,7 +768,7 @@ class AgentRegistry:
                                .where(agents.c.id == agent_id))
                     await conn.execute(query)
             elif row.status in (AgentStatus.LOST, AgentStatus.TERMINATED):
-                log.warning(f'agent {agent_id} revived!')
+                log.warning('agent {0} revived!', agent_id)
                 query = (sa.update(agents)
                            .values({
                                'status': AgentStatus.ALIVE,
@@ -781,7 +782,7 @@ class AgentRegistry:
                            .where(agents.c.id == agent_id))
                 await conn.execute(query)
             else:
-                log.error(f'should not reach here! {type(row.status)}')
+                log.error('should not reach here! {0}', type(row.status))
 
         # Update the mapping of kernel images to agents.
         images = msgpack.unpackb(snappy.decompress(agent_info['images']))
@@ -817,9 +818,9 @@ class AgentRegistry:
                 return
 
             if status == AgentStatus.LOST:
-                log.warning(f'agent {agent_id} heartbeat timeout detected.')
+                log.warning('agent {0} heartbeat timeout detected.', agent_id)
             elif status == AgentStatus.TERMINATED:
-                log.info(f'agent {agent_id} has terminated.')
+                log.info('agent {0} has terminated.', agent_id)
             query = (sa.update(agents)
                        .values({
                            'status': status,

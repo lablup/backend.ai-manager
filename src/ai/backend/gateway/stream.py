@@ -17,12 +17,14 @@ import aiozmq
 from aiozmq import create_zmq_stream as aiozmq_sock
 import zmq
 
+from ai.backend.common.logging import BraceStyleAdapter
+
 from .auth import auth_required
 from .exceptions import KernelNotFound
 from .utils import not_impl_stub
 from ..manager.models import kernels
 
-log = logging.getLogger('ai.backend.gateway.stream')
+log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.stream'))
 
 
 @auth_required
@@ -54,11 +56,11 @@ async def stream_pty(request) -> web.Response:
         else:
             kernel_host = kernel.kernel_host
         stdin_addr = f'tcp://{kernel_host}:{kernel.stdin_port}'
-        log.debug(f'stream_pty({stream_key}): stdin: {stdin_addr}')
+        log.debug('stream_pty({0}): stdin: {1}', stream_key, stdin_addr)
         stdin_sock = await aiozmq_sock(zmq.PUB, connect=stdin_addr)
         stdin_sock.transport.setsockopt(zmq.LINGER, 100)
         stdout_addr = f'tcp://{kernel_host}:{kernel.stdout_port}'
-        log.debug(f'stream_pty({stream_key}): stdout: {stdout_addr}')
+        log.debug('stream_pty({0}): stdout: {1}', stream_key, stdout_addr)
         stdout_sock = await aiozmq_sock(zmq.SUB, connect=stdout_addr)
         stdout_sock.transport.setsockopt(zmq.LINGER, 100)
         stdout_sock.transport.subscribe(b'')
@@ -92,8 +94,8 @@ async def stream_pty(request) -> web.Response:
                             socks[1] = stdout_sock
                             app['stream_stdin_socks'][stream_key].add(socks[0])
                             socks[0].write([raw_data])
-                            log.debug(f'stream_stdin({stream_key}): '
-                                      'zmq stream reset')
+                            log.debug('stream_stdin({0}): zmq stream reset',
+                                      stream_key)
                             stream_sync.set()
                             continue
                     else:
@@ -118,26 +120,27 @@ async def stream_pty(request) -> web.Response:
                                 await registry.restart_session(sess_id, access_key)
                                 socks[0].close()
                             else:
-                                log.warning(f'stream_stdin({stream_key}): '
+                                log.warning('stream_stdin({0}): '
                                             'duplicate kernel restart request; '
-                                            'ignoring it.')
+                                            'ignoring it.',
+                                            stream_key)
                 elif msg.type == aiohttp.WSMsgType.ERROR:
-                    log.warning(f'stream_stdin({stream_key}): '
-                                f'connection closed ({ws.exception()})')
+                    log.warning('stream_stdin({0}): connection closed ({1})',
+                                stream_key, ws.exception())
         except asyncio.CancelledError:
             # Agent or kernel is terminated.
             pass
         except:
             app['sentry'].captureException()
-            log.exception(f'stream_stdin({stream_key}): unexpected error')
+            log.exception('stream_stdin({0}): unexpected error', stream_key)
         finally:
-            log.debug(f'stream_stdin({stream_key}): terminated')
+            log.debug('stream_stdin({0}): terminated', stream_key)
             if not socks[0].at_closing():
                 socks[0].close()
 
     async def stream_stdout():
         nonlocal socks
-        log.debug(f'stream_stdout({stream_key}): started')
+        log.debug('stream_stdout({0}): started', stream_key)
         try:
             while True:
                 try:
@@ -145,7 +148,7 @@ async def stream_pty(request) -> web.Response:
                 except aiozmq.ZmqStreamClosed:
                     await stream_sync.wait()
                     stream_sync.clear()
-                    log.debug(f'stream_stdout({stream_key}): zmq stream reset')
+                    log.debug('stream_stdout({0}): zmq stream reset', stream_key)
                     continue
                 if ws.closed:
                     break
@@ -157,9 +160,9 @@ async def stream_pty(request) -> web.Response:
             pass
         except:
             app['sentry'].captureException()
-            log.exception(f'stream_stdout({stream_key}): unexpected error')
+            log.exception('stream_stdout({0}): unexpected error', stream_key)
         finally:
-            log.debug(f'stream_stdout({stream_key}): terminated')
+            log.debug('stream_stdout({0}): terminated', stream_key)
             socks[1].close()
 
     # According to aiohttp docs, reading ws must be done inside this task.
@@ -169,7 +172,7 @@ async def stream_pty(request) -> web.Response:
         await stream_stdin()
     except:
         app['sentry'].captureException()
-        log.exception(f'stream_pty({stream_key}): unexpected error')
+        log.exception('stream_pty({0}): unexpected error', stream_key)
     finally:
         app['stream_pty_handlers'][stream_key].discard(asyncio.Task.current_task())
         app['stream_stdin_socks'][stream_key].discard(socks[0])

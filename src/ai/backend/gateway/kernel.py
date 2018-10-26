@@ -52,11 +52,11 @@ async def create(request) -> web.Response:
                'clientSessionToken is too short or long (4 to 64 bytes required)!'
         assert _rx_sess_token.fullmatch(sess_id), \
                'clientSessionToken contains invalid characters.'
-        log.info(f"GET_OR_CREATE (u:{request['keypair']['access_key']}, "
-                 f"lang:{params['lang']}, token:{sess_id})")
+        log.info('GET_OR_CREATE (u:{0}, lang:{1}, token:{2})',
+                 request['keypair']['access_key'], params['lang'], sess_id)
     except (asyncio.TimeoutError, AssertionError,
             json.decoder.JSONDecodeError) as e:
-        log.warning(f'GET_OR_CREATE: invalid/missing parameters, {e!r}')
+        log.warning('GET_OR_CREATE: invalid/missing parameters, {0!r}', e)
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
     resp = {}
     try:
@@ -67,8 +67,8 @@ async def create(request) -> web.Response:
                        .select_from(keypairs)
                        .where(keypairs.c.access_key == access_key))
             concurrency_used = await conn.scalar(query)
-            log.debug(f'access_key: {access_key} '
-                      f'({concurrency_used} / {concurrency_limit})')
+            log.debug('access_key: {1} ({2} / {3})',
+                      access_key, concurrency_used, concurrency_limit)
             if concurrency_used >= concurrency_limit:
                 raise QuotaExceeded
             creation_config = {
@@ -144,14 +144,14 @@ async def update_instance_usage(app, inst_id):
     for ak in filter(lambda ak: ak is not None, affected_keys):
         per_key_counts[ak] += 1
     per_key_counts_str = ', '.join(f'{k}:{v}' for k, v in per_key_counts.items())
-    log.info(f'-> cleaning {sess_ids!r}')
-    log.info(f'-> per-key usage: {per_key_counts_str}')
+    log.info('-> cleaning {0!r}', sess_ids)
+    log.info('-> per-key usage: {0}', per_key_counts_str)
 
     if not affected_keys:
         return
 
     async with app['dbpool'].acquire() as conn, conn.begin():
-        log.debug(f'update_instance_usage({inst_id})')
+        log.debug('update_instance_usage({0})', inst_id)
         for kern in all_sessions:
             if kern is None:
                 continue
@@ -190,7 +190,7 @@ async def instance_terminated(app, agent_id, reason):
     if reason == 'agent-lost':
         await app['registry'].mark_agent_terminated(agent_id, AgentStatus.LOST)
     elif reason == 'agent-restart':
-        log.info(f'agent@{agent_id} restarting for maintenance.')
+        log.info('agent@{0} restarting for maintenance.', agent_id)
         await app['registry'].update_instance(agent_id, {
             'status': AgentStatus.RESTARTING,
         })
@@ -283,7 +283,7 @@ async def destroy(request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
-    log.info(f"DESTROY (u:{access_key}, k:{sess_id})")
+    log.info('DESTROY (u:{0}, k:{1})', access_key, sess_id)
     try:
         last_stat = await registry.destroy_session(sess_id, access_key)
     except BackendError:
@@ -305,7 +305,7 @@ async def get_info(request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
-    log.info(f"GETINFO (u:{access_key}, k:{sess_id})")
+    log.info('GETINFO (u:{0}, k:{1})', access_key, sess_id)
     try:
         await registry.increment_session_usage(sess_id, access_key)
         kern = await registry.get_session(sess_id, access_key, field='*')
@@ -323,7 +323,7 @@ async def get_info(request) -> web.Response:
         resp['idle']          = -1  # deprecated
         resp['memoryUsed']    = -1  # deprecated
         resp['cpuCreditUsed'] = kern.cpu_used
-        log.info(f'information retrieved: {resp!r}')
+        log.info('information retrieved: {0!r}', resp)
     except BackendError:
         log.exception('GETINFO: exception')
         raise
@@ -337,7 +337,7 @@ async def restart(request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
-    log.info(f"RESTART (u:{access_key}, k:{sess_id})")
+    log.info('RESTART (u:{0}, k:{1})', access_key, sess_id)
     try:
         await registry.increment_session_usage(sess_id, access_key)
         await registry.restart_session(sess_id, access_key)
@@ -361,7 +361,7 @@ async def execute(request) -> web.Response:
     try:
         with _timeout(2):
             params = await request.json(loads=json.loads)
-        log.info(f"EXECUTE(u:{access_key}, k:{sess_id})")
+        log.info('EXECUTE(u:{0}, k:{1})', access_key, sess_id)
     except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
         log.warning('EXECUTE: invalid/missing parameters')
         raise InvalidAPIParameters
@@ -421,7 +421,7 @@ async def execute(request) -> web.Response:
                 result['console'] = raw_result.get('console')
             resp['result'] = result
     except AssertionError as e:
-        log.warning(f'EXECUTE: invalid/missing parameters: {e}')
+        log.warning('EXECUTE: invalid/missing parameters: {0!r}', e)
         raise InvalidAPIParameters(extra_msg=e.args[0])
     except BackendError:
         log.exception('EXECUTE: exception')
@@ -436,7 +436,7 @@ async def interrupt(request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
-    log.info(f"INTERRUPT(u:{access_key}, k:{sess_id})")
+    log.info('INTERRUPT(u:{0}, k:{1})', access_key, sess_id)
     try:
         await registry.increment_session_usage(sess_id, access_key)
         await registry.interrupt_session(sess_id, access_key)
@@ -460,7 +460,7 @@ async def complete(request) -> web.Response:
     try:
         with _timeout(2):
             params = await request.json(loads=json.loads)
-        log.info(f"COMPLETE(u:{access_key}, k:{sess_id})")
+        log.info('COMPLETE(u:{0}, k:{1})', access_key, sess_id)
     except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
         log.warning('COMPLETE: invalid/missing parameters')
         raise InvalidAPIParameters
@@ -508,7 +508,7 @@ async def upload_files(request) -> web.Response:
                 chunks.append(chunk)
                 recv_size += chunk_size
             data = file.decode(b''.join(chunks))
-            log.debug(f'received file: {file.filename} ({recv_size:,} bytes)')
+            log.debug('received file: {0} ({1:,} bytes)', file.filename, recv_size)
             t = loop.create_task(
                 registry.upload_file(sess_id, access_key, file.filename, data))
             upload_tasks.append(t)
@@ -530,9 +530,9 @@ async def download_files(request) -> web.Response:
             params = await request.json(loads=json.loads)
         assert params.get('files'), 'no file(s) specified!'
         files = params.get('files')
-        log.info(f'DOWNLOAD_FILE (u:{access_key}, token:{sess_id})')
+        log.info('DOWNLOAD_FILE (u:{0}, token:{1})', access_key, sess_id)
     except (asyncio.TimeoutError, AssertionError, json.decoder.JSONDecodeError) as e:
-        log.warning(f'DOWNLOAD_FILE: invalid/missing parameters, {e!r}')
+        log.warning('DOWNLOAD_FILE: invalid/missing parameters, {0!r}', e)
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
 
     try:
@@ -541,7 +541,7 @@ async def download_files(request) -> web.Response:
         # TODO: Read all download file contents. Need to fix by using chuncking, etc.
         results = await asyncio.gather(*map(
             functools.partial(registry.download_file, sess_id, access_key), files))
-        log.debug(f'file(s) inside container retrieved')
+        log.debug('file(s) inside container retrieved')
     except BackendError:
         log.exception('DOWNLOAD_FILE: exception')
         raise
@@ -565,10 +565,10 @@ async def list_files(request) -> web.Response:
         with _timeout(2):
             params = await request.json(loads=json.loads)
         path = params.get('path', '.')
-        log.info(f'LIST_FILES (u:{access_key}, token:{sess_id})')
+        log.info('LIST_FILES (u:{0}, token:{1})', access_key, sess_id)
     except (asyncio.TimeoutError, AssertionError,
             json.decoder.JSONDecodeError) as e:
-        log.warning(f'LIST_FILES: invalid/missing parameters, {e!r}')
+        log.warning('LIST_FILES: invalid/missing parameters, {0!r}', e)
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
     resp = {}
     try:
@@ -576,7 +576,7 @@ async def list_files(request) -> web.Response:
         await registry.increment_session_usage(sess_id, access_key)
         result = await registry.list_files(sess_id, access_key, path)
         resp.update(result)
-        log.debug(f'container file list for {path} retrieved')
+        log.debug('container file list for {0} retrieved', path)
     except BackendError:
         log.exception('LIST_FILES: exception')
         raise
@@ -595,11 +595,11 @@ async def get_logs(request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
-    log.info(f"GETLOG (u:{request['keypair']['access_key']}, k:{sess_id})")
+    log.info('GETLOG (u:{0}, k:{1})', request['keypair']['access_key'], sess_id)
     try:
         await registry.increment_session_usage(sess_id, access_key)
         resp['result'] = await registry.get_logs(sess_id, access_key)
-        log.info(f'container log retrieved: {resp!r}')
+        log.info('container log retrieved: {0!r}', resp)
     except BackendError:
         log.exception('GETLOG: exception')
         raise
@@ -616,7 +616,7 @@ async def init(app):
 
     # Scan ALIVE agents
     if app['pidx'] == 0:
-        log.debug(f'initializing agent status checker at proc:{app["pidx"]}')
+        log.debug('initializing agent status checker at proc:{0}', app['pidx'])
         app['agent_lost_checker'] = aiotools.create_timer(
             functools.partial(check_agent_lost, app), 1.0)
 

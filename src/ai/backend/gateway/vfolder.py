@@ -14,6 +14,8 @@ import aiotools
 import sqlalchemy as sa
 import psycopg2
 
+from ai.backend.common.logging import BraceStyleAdapter
+
 from .auth import auth_required
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
@@ -22,7 +24,7 @@ from ..manager.models import (
     keypairs, vfolders, vfolder_invitations, vfolder_permissions,
     VFolderPermission)
 
-log = logging.getLogger('ai.backend.gateway.vfolder')
+log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
 
 _rx_slug = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$')
 
@@ -79,7 +81,7 @@ def vfolder_permission_required(perm: VFolderPermission):
                            (vfolders.c.name == folder_name)))
                 try:
                     result = await conn.execute(query)
-                except psycopg2.DataError as e:
+                except psycopg2.DataError:
                     raise InvalidAPIParameters
                 row = await result.first()
                 if row is None:
@@ -118,7 +120,7 @@ def vfolder_check_exists(handler):
                        (vfolders.c.name == folder_name)))
             try:
                 result = await conn.execute(query)
-            except psycopg2.DataError as e:
+            except psycopg2.DataError:
                 raise InvalidAPIParameters
             row = await result.first()
             if row is None:
@@ -134,7 +136,7 @@ async def create(request):
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
     params = await request.json()
-    log.info(f"VFOLDER.CREATE (u:{access_key})")
+    log.info('VFOLDER.CREATE (u:{0})', access_key)
     assert _rx_slug.search(params['name']) is not None
     # Resolve host for the new virtual folder.
     folder_host = params.get('host', None)
@@ -179,7 +181,7 @@ async def create(request):
         }
         try:
             result = await conn.execute(query)
-        except psycopg2.DataError as e:
+        except psycopg2.DataError:
             raise InvalidAPIParameters
         assert result.rowcount == 1
     return web.json_response(resp, status=201)
@@ -190,7 +192,7 @@ async def list_folders(request):
     resp = []
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
-    log.info(f"VFOLDER.LIST (u:{access_key})")
+    log.info('VFOLDER.LIST (u:{0})', access_key)
     async with dbpool.acquire() as conn:
         j = sa.join(vfolders, vfolder_permissions,
                     vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
@@ -200,7 +202,7 @@ async def list_folders(request):
                            (vfolder_permissions.c.access_key == access_key))))
         try:
             result = await conn.execute(query)
-        except psycopg2.DataError as e:
+        except psycopg2.DataError:
             raise InvalidAPIParameters
         async for row in result:
             if row.permission is None:
@@ -225,7 +227,7 @@ async def get_info(request, row):
     resp = {}
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
-    log.info(f"VFOLDER.GETINFO (u:{access_key}, f:{folder_name})")
+    log.info('VFOLDER.GETINFO (u:{0}, f:{1})', access_key, folder_name)
     if row.permission is None:
         is_owner = True
         permission = VFolderPermission.OWNER_PERM
@@ -256,7 +258,7 @@ async def mkdir(request, row):
     path = params.get('path')
     assert path, 'path not specified!'
     path = Path(path)
-    log.info(f"VFOLDER.MKDIR (u:{access_key}, f:{folder_name})")
+    log.info('VFOLDER.MKDIR (u:{0}, f:{1})', access_key, folder_name)
     folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
     assert not path.is_absolute(), 'path must be relative.'
     try:
@@ -272,7 +274,7 @@ async def mkdir(request, row):
 async def upload(request, row):
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
-    log.info(f"VFOLDER.UPLOAD (u:{access_key}, f:{folder_name})")
+    log.info('VFOLDER.UPLOAD (u:{0}, f:{1})', access_key, folder_name)
     folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
     reader = await request.multipart()
     file_count = 0
@@ -308,7 +310,7 @@ async def delete_files(request, row):
     files = params.get('files')
     assert files, 'no file(s) specified!'
     recursive = params.get('recursive', False)
-    log.info(f"VFOLDER.DELETE_FILES (u:{access_key}, f:{folder_name})")
+    log.info('VFOLDER.DELETE_FILES (u:{0}, f:{1})', access_key, folder_name)
     folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
     ops = []
     for file in files:
@@ -336,7 +338,7 @@ async def download(request, row):
     params = await request.json()
     assert params.get('files'), 'no file(s) specified!'
     files = params.get('files')
-    log.info(f"VFOLDER.DOWNLOAD (u:{access_key}, f:{folder_name})")
+    log.info('VFOLDER.DOWNLOAD (u:{0}, f:{1})', access_key, folder_name)
     folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
     for file in files:
         if not (folder_path / file).is_file():
@@ -362,7 +364,7 @@ async def list_files(request, row):
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     params = await request.json()
-    log.info(f"VFOLDER.LIST_FILES (u:{access_key}, f:{folder_name})")
+    log.info('VFOLDER.LIST_FILES (u:{0}, f:{1})', access_key, folder_name)
     base_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
     folder_path = base_path / params['path'] if 'path' in params else base_path
     if not str(folder_path).startswith(str(base_path)):
@@ -398,7 +400,7 @@ async def invite(request):
     perm = VFolderPermission(perm)
     user_ids = params.get('user_ids', [])
     assert len(user_ids) > 0, 'no user ids'
-    log.info(f"VFOLDER.INVITE (u:{access_key}, f:{folder_name})")
+    log.info('VFOLDER.INVITE (u:{0}, f:{1})', access_key, folder_name)
     async with dbpool.acquire() as conn:
         # Get virtual folder.
         query = (sa.select('*')
@@ -407,7 +409,7 @@ async def invite(request):
                           (vfolders.c.name == folder_name)))
         try:
             result = await conn.execute(query)
-        except psycopg2.DataError as e:
+        except psycopg2.DataError:
             raise InvalidAPIParameters
         vf = await result.first()
         if vf is None:
@@ -420,7 +422,7 @@ async def invite(request):
                    .where(keypairs.c.user_id != request['user']['id']))
         try:
             result = await conn.execute(query)
-        except psycopg2.DataError as e:
+        except psycopg2.DataError:
             raise InvalidAPIParameters
         kps = await result.fetchall()
 
@@ -456,7 +458,7 @@ async def invite(request):
             try:
                 await conn.execute(query)
                 invited_ids.append(invitee)
-            except psycopg2.DataError as e:
+            except psycopg2.DataError:
                 pass
     resp = {'invited_ids': invited_ids}
     return web.json_response(resp, status=201)
@@ -466,7 +468,7 @@ async def invite(request):
 async def invitations(request):
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
-    log.info(f"VFOLDER.INVITATION (u:{access_key})")
+    log.info('VFOLDER.INVITATION (u:{0})', access_key)
     async with dbpool.acquire() as conn:
         query = (sa.select('*')
                    .select_from(vfolder_invitations)
@@ -474,7 +476,7 @@ async def invitations(request):
                           (vfolder_invitations.c.state == 'pending')))
         try:
             result = await conn.execute(query)
-        except psycopg2.DataError as e:
+        except psycopg2.DataError:
             raise InvalidAPIParameters
         invitations = await result.fetchall()
     invs_info = []
@@ -498,7 +500,7 @@ async def accept_invitation(request):
     params = await request.json()
     inv_id = params['inv_id']
     inv_ak = params['inv_ak']
-    log.info(f"VFOLDER.ACCEPT_INVITATION (u:{access_key})")
+    log.info('VFOLDER.ACCEPT_INVITATION (u:{0})', access_key)
     async with dbpool.acquire() as conn:
         # Get invitation.
         query = (sa.select('*')
@@ -540,7 +542,7 @@ async def accept_invitation(request):
                    .where(keypairs.c.access_key == inv_ak))
         try:
             result = await conn.execute(query)
-        except psycopg2.DataError as e:
+        except psycopg2.DataError:
             raise InvalidAPIParameters
         row = await result.first()
         if row is None:
@@ -572,7 +574,7 @@ async def delete_invitation(request):
     access_key = request['keypair']['access_key']
     params = await request.json()
     inv_id = params['inv_id']
-    log.info(f"VFOLDER.DELETE_INVITATION (u:{access_key})")
+    log.info('VFOLDER.DELETE_INVITATION (u:{0})', access_key)
     async with dbpool.acquire() as conn:
         query = (sa.select('*')
                    .select_from(vfolder_invitations)
@@ -580,7 +582,7 @@ async def delete_invitation(request):
                           (vfolder_invitations.c.state == 'pending')))
         try:
             result = await conn.execute(query)
-        except psycopg2.DataError as e:
+        except psycopg2.DataError:
             raise InvalidAPIParameters
         row = await result.first()
         if row is None:
@@ -599,7 +601,7 @@ async def delete(request):
     dbpool = request.app['dbpool']
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
-    log.info(f"VFOLDER.DELETE (u:{access_key}, f:{folder_name})")
+    log.info('VFOLDER.DELETE (u:{0}, f:{1})', access_key, folder_name)
     async with dbpool.acquire() as conn, conn.begin():
         query = (sa.select('*', for_update=True)
                    .select_from(vfolders)
@@ -607,7 +609,7 @@ async def delete(request):
                           (vfolders.c.name == folder_name)))
         try:
             result = await conn.execute(query)
-        except psycopg2.DataError as e:
+        except psycopg2.DataError:
             raise InvalidAPIParameters
         row = await result.first()
         if row is None:

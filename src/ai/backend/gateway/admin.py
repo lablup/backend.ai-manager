@@ -11,6 +11,8 @@ import graphene
 from graphql.execution.executors.asyncio import AsyncioExecutor
 from graphql.error.located_error import GraphQLLocatedError
 
+from ai.backend.common.logging import BraceStyleAdapter
+
 from .exceptions import InvalidAPIParameters, BackendError
 from .auth import auth_required
 from ..manager.models.base import DataLoaderManager
@@ -21,7 +23,7 @@ from ..manager.models import (
     VirtualFolder,
 )
 
-log = logging.getLogger('ai.backend.gateway.admin')
+log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
 
 
 @auth_required
@@ -70,7 +72,7 @@ async def handle_gql(request: web.Request) -> web.Response:
                             e.original_error,
                             e.original_error.__traceback__)
                 tb_text = ''.join(traceback.format_exception(*exc_info))
-                log.error(f'GraphQL located error:\n{tb_text}')
+                log.error('GraphQL located error:\n{0}', tb_text)
                 request.app['sentry'].captureException(exc_info)
                 has_internal_errors = True
         if has_internal_errors:

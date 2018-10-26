@@ -7,10 +7,12 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 import sqlalchemy as sa
 
+from ai.backend.common.logging import BraceStyleAdapter
+
 from . import register_command
 from ..models.base import metadata
 
-log = logging.getLogger(__name__)
+log = BraceStyleAdapter(logging.getLogger(__name__))
 
 
 @register_command
@@ -101,12 +103,12 @@ def oneshot(args):
         with engine.begin() as connection:
             alembic_cfg.attributes['connection'] = connection
             metadata.create_all(engine, checkfirst=False)
-            log.info(f'Stamping alembic version to {args.schema_version}...')
+            log.info('Stamping alembic version to {0}...', args.schema_version)
             command.stamp(alembic_cfg, args.schema_version)
     else:
         # If alembic version info is already available, perform incremental upgrade.
         log.info('Detected an existing database.')
-        log.info(f'Performing schema upgrade to {args.schema_version}...')
+        log.info('Performing schema upgrade to {0}...', args.schema_version)
         with engine.begin() as connection:
             alembic_cfg.attributes['connection'] = connection
             command.upgrade(alembic_cfg, "head")

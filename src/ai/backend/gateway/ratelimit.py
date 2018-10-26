@@ -6,10 +6,12 @@ import time
 from aiohttp import web
 import aioredis
 
+from ai.backend.common.logging import BraceStyleAdapter
+
 from .defs import REDIS_RLIM_DB
 from .exceptions import RateLimitExceeded
 
-log = logging.getLogger('ai.backend.gateway.ratelimit')
+log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.ratelimit'))
 
 _time_prec = Decimal('1e-3')  # msec
 _rlim_window = 60 * 15

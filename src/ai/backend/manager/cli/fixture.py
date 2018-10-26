@@ -2,11 +2,13 @@ import logging
 
 import sqlalchemy as sa
 
+from ai.backend.common.logging import BraceStyleAdapter
+
 from . import register_command
 from .. import models
 from ..models import fixtures
 
-log = logging.getLogger(__name__)
+log = BraceStyleAdapter(logging.getLogger(__name__))
 
 
 @register_command
@@ -18,7 +20,7 @@ def fixture(args):
 @fixture.register_command
 def populate(args):
     '''Populate fixtures.'''
-    log.info(f"populating fixture '{args.fixture_name}'")
+    log.info("populating fixture '{0}'", args.fixture_name)
     try:
         fixture = getattr(fixtures, args.fixture_name)
     except AttributeError:

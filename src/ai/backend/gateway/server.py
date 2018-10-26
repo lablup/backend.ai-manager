@@ -37,7 +37,7 @@ from ai.backend.common.argparse import (
 )
 from ai.backend.common.utils import env_info
 from ai.backend.common.monitor import DummyDatadog, DummySentry
-from ai.backend.common.logging import Logger
+from ai.backend.common.logging import Logger, BraceStyleAdapter
 from ..manager import __version__
 from ..manager.registry import AgentRegistry
 from . import GatewayStatus
@@ -56,7 +56,7 @@ VALID_VERSIONS = frozenset([
 ])
 LATEST_API_VERSION = 'v3.20170615'
 
-log = logging.getLogger('ai.backend.gateway.server')
+log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 
 PUBLIC_INTERFACES = [
     'pidx',
@@ -128,16 +128,16 @@ async def exception_middleware(request, handler):
             raise GenericNotFound
         if ex.status_code == 405:
             raise MethodNotAllowed
-        log.warning(f'Bad request: {ex!r}')
+        log.warning('Bad request: {0!r}', ex)
         raise GenericBadRequest
     except asyncio.CancelledError:
         # The server is closing or the client has disconnected in the middle of
         # request.  Atomic requests are still executed to their ends.
-        log.warning(f'Request cancelled ({request.method} {request.rel_url})')
+        log.warning('Request cancelled ({0} {1})', request.method, request.rel_url)
         return web.Response(text='Request cancelled.', status=408)
-    except Exception as ex:
+    except Exception as e:
         app['sentry'].captureException()
-        log.exception('Uncaught exception in HTTP request handlers')
+        log.exception('Uncaught exception in HTTP request handlers {0!r}', e)
         if app['config'].debug:
             raise InternalServerError(traceback.format_exc())
         else:
@@ -158,7 +158,7 @@ async def gw_init(app):
     app.on_response_prepare.append(on_prepare)
 
     # legacy redirects
-    app.router.add_route('GET', '/v{version:\d+}/authorize',
+    app.router.add_route('GET', r'/v{version:\d+}/authorize',
                          legacy_auth_test_redirect)
 
     # populate public interfaces
@@ -252,11 +252,11 @@ def handle_loop_error(app, loop, context):
     if exception is not None:
         app['sentry'].user_context(context)
         if sys.exc_info()[0] is not None:
-            log.exception(f"Error inside event loop: {msg}")
+            log.exception('Error inside event loop: {0}', msg)
             app['sentry'].captureException(True)
         else:
             exc_info = (type(exception), exception, exception.__traceback__)
-            log.error(f"Error inside event loop: {msg}", exc_info=exc_info)
+            log.error('Error inside event loop: {0}', msg, exc_info=exc_info)
             app['sentry'].captureException(exc_info)
 
 
@@ -346,7 +346,7 @@ async def server_main(loop, pidx, _args):
 
     for pkgname in subapp_pkgs:
         if pidx == 0:
-            log.info('Loading module: %s', pkgname[1:])
+            log.info('Loading module: {0}', pkgname[1:])
         subapp_mod = importlib.import_module(pkgname, 'ai.backend.gateway')
         init_subapp(getattr(subapp_mod, 'create_app'))
 
@@ -357,7 +357,7 @@ async def server_main(loop, pidx, _args):
         if entrypoint.name in app['config'].disable_plugins:
             continue
         if pidx == 0:
-            log.info(f'Loading app plugin: {entrypoint.module_name}')
+            log.info('Loading app plugin: {0}', entrypoint.module_name)
         plugin = entrypoint.load()
         init_subapp(getattr(plugin, 'create_app'))
 
@@ -444,8 +444,8 @@ def main():
     logger.add_pkg('ai.backend')
 
     with logger:
-        log.info(f'Backend.AI Gateway {__version__}')
-        log.info(f'runtime: {env_info()}')
+        log.info('Backend.AI Gateway {0}', __version__)
+        log.info('runtime: {0}', env_info())
         log_config = logging.getLogger('ai.backend.gateway.config')
         log_config.debug('debug mode enabled.')
         if config.debug:

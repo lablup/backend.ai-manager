@@ -7,10 +7,11 @@ import aiotools
 import yaml
 
 from ai.backend.common.identity import get_instance_id, get_instance_ip
+from ai.backend.common.logging import BraceStyleAdapter
 from ..manager.models.agent import ResourceSlot
 from .exceptions import ImageNotFound
 
-log = logging.getLogger('ai.backend.gateway.etcd')
+log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
 
 
 class ConfigServer:
@@ -24,7 +25,7 @@ class ConfigServer:
         instance_id = await get_instance_id()
         if app_config.advertised_manager_host:
             instance_ip = app_config.advertised_manager_host
-            log.info(f'manually set advertised manager host: {instance_ip}')
+            log.info('manually set advertised manager host: {0}', instance_ip)
         else:
             # fall back 1: read private IP from cloud instance metadata
             # fall back 2: read hostname and resolve it
@@ -39,11 +40,11 @@ class ConfigServer:
         await self.etcd.delete_prefix('nodes/manager')
 
     async def update_kernel_images_from_file(self, file: Path):
-        log.info(f'Loading kernel image data from "{file}"')
+        log.info('Loading kernel image data from "{0}"', file)
         try:
             data = yaml.load(open(file, 'rb'))
         except IOError:
-            log.error(f'Cannot open "{file}".')
+            log.error('Cannot open "{0}".', file)
             return
         for image in data['images']:
             name = image['name']
@@ -78,11 +79,11 @@ class ConfigServer:
         log.info('Done.')
 
     async def update_aliases_from_file(self, file: Path):
-        log.info(f'Updating image aliases from "{file}"')
+        log.info('Updating image aliases from "{0}"', file)
         try:
             data = yaml.load(open(file, 'rb'))
         except IOError:
-            log.error(f'Cannot open "{file}".')
+            log.error('Cannot open "{0}".', file)
             return
         for item in data['aliases']:
             alias = item[0]
@@ -92,17 +93,17 @@ class ConfigServer:
         log.info('Done.')
 
     async def update_kernel_images_from_registry(self, registry_addr):
-        log.info(f'Scanning kernel image versions from "{registry_addr}"')
+        log.info('Scanning kernel image versions from "{0}"', registry_addr)
         # TODO: a method to scan docker hub and update kernel image versions
         # TODO: a cli command to execute the above method
         raise NotImplementedError
 
     async def update_volumes_from_file(self, file: Path):
-        log.info(f'Updating network volumes from "{file}"')
+        log.info('Updating network volumes from "{0}"', file)
         try:
             data = yaml.load(open(file, 'rb'))
         except IOError:
-            log.error(f'Cannot open "{file}".')
+            log.error('Cannot open "{0}".', file)
             return
         for item in data['volumes']:
             name = item['name']

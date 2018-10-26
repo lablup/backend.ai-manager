@@ -3,9 +3,11 @@ import logging
 from aioconsole.events import run_console
 from aiopg.sa import create_engine
 
+from ai.backend.common.logging import BraceStyleAdapter
+
 from . import register_command
 
-log = logging.getLogger(__name__)
+log = BraceStyleAdapter(logging.getLogger(__name__))
 _args = None
 
 

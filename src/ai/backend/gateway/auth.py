@@ -11,13 +11,13 @@ from aiojobs.aiohttp import atomic
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
 
-from ai.backend.common.logging import Logger
+from ai.backend.common.logging import Logger, BraceStyleAdapter
 from .exceptions import InvalidAuthParameters, AuthorizationFailed
 from .config import load_config
 from ..manager.models import keypairs
 from .utils import TZINFOS, set_handler_attr, get_handler_attr
 
-log = logging.getLogger('ai.backend.gateway.auth')
+log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.auth'))
 
 
 def _extract_auth_params(request):

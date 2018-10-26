@@ -12,8 +12,9 @@ import aiozmq
 import zmq
 
 from ai.backend.common import msgpack
+from ai.backend.common.logging import BraceStyleAdapter
 
-log = logging.getLogger('ai.backend.gateway.events')
+log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.events'))
 
 if sys.platform == 'darwin':
     EVENT_IPC_ADDR = 'ipc://ai.backend.agent-events'
@@ -62,7 +63,7 @@ class EventDispatcher:
         self.handlers[event_name].append(EventHandler(app, callback))
 
     async def dispatch(self, event_name, agent_id, args=tuple()):
-        log.debug(f"DISPATCH({event_name}/{agent_id})")
+        log.debug('DISPATCH({0}/{1})', event_name, agent_id)
         scheduler = get_scheduler_from_app(self.root_app)
         for handler in self.handlers[event_name]:
             cb = handler.callback
