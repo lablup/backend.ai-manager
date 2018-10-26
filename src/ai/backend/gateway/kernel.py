@@ -313,6 +313,7 @@ async def get_info(request) -> web.Response:
         await registry.increment_session_usage(sess_id, access_key)
         kern = await registry.get_session(sess_id, access_key, field='*')
         resp['lang'] = kern.lang
+        resp['tag'] = kern.tag
         age = datetime.now(tzutc()) - kern.created_at
         resp['age'] = age.total_seconds() * 1000
         # Resource limits collected from agent heartbeats
