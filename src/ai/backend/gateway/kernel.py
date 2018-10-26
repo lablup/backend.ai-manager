@@ -70,7 +70,7 @@ async def create(request) -> web.Response:
                        .select_from(keypairs)
                        .where(keypairs.c.access_key == access_key))
             concurrency_used = await conn.scalar(query)
-            log.debug('access_key: {1} ({2} / {3})',
+            log.debug('access_key: {0} ({1} / {2})',
                       access_key, concurrency_used, concurrency_limit)
             if concurrency_used >= concurrency_limit:
                 raise QuotaExceeded
