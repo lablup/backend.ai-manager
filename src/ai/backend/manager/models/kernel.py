@@ -41,7 +41,7 @@ kernels = sa.Table(
     sa.Column('agent_addr', sa.String(length=128), nullable=False),
     sa.Column('access_key', sa.String(length=20),
               sa.ForeignKey('keypairs.access_key')),
-    sa.Column('lang', sa.String(length=64)),
+    sa.Column('lang', sa.String(length=512)),
     sa.Column('tag', sa.String(length=64), nullable=True),
 
     # Resource occupation
