@@ -20,6 +20,8 @@ from dateutil.tz import tzutc
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import true, null
 
+from ai.backend.common.logging import BraceStyleAdapter
+
 from .exceptions import (InvalidAPIParameters, QuotaExceeded,
                          KernelNotFound, VFolderNotFound,
                          BackendError, InternalServerError)
@@ -29,7 +31,7 @@ from .utils import catch_unexpected, server_ready_required
 from ..manager.models import (keypairs, kernels, vfolders, AgentStatus, KernelStatus,
                               vfolder_permissions)
 
-log = logging.getLogger('ai.backend.gateway.kernel')
+log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.kernel'))
 
 grace_events = []
 

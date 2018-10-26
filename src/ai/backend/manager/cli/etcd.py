@@ -3,10 +3,12 @@ import contextlib
 import logging
 from pathlib import Path
 
+from ai.backend.common.logging import BraceStyleAdapter
+
 from . import register_command
 from ...gateway.etcd import ConfigServer
 
-log = logging.getLogger(__name__)
+log = BraceStyleAdapter(logging.getLogger(__name__))
 
 
 @register_command

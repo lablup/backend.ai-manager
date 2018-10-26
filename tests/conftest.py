@@ -217,6 +217,7 @@ async def app(event_loop, test_ns, test_db, unused_tcp_port):
     app['config'].redis_addr = host_port_pair(os.environ['BACKEND_REDIS_ADDR'])
     app['config'].db_addr = host_port_pair(os.environ['BACKEND_DB_ADDR'])
     app['config'].db_name = test_db
+    app['config'].docker_registry = 'lablup'
 
     # Override extra settings
     app['config'].namespace = test_ns
