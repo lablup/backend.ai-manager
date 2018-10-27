@@ -338,7 +338,7 @@ class AgentRegistry:
 
     async def get_or_create_session(self, sess_id, access_key,
                                     lang, creation_config,
-                                    conn=None):
+                                    conn=None, tag=None):
         try:
             kern = await self.get_session(sess_id, access_key)
             canonical_lang = await self.config_server.resolve_image_name(lang)
@@ -350,14 +350,14 @@ class AgentRegistry:
             kern = await self.create_session(
                 sess_id, access_key,
                 lang, creation_config,
-                conn=conn)
+                conn=conn, session_tag=tag)
             created = True
         assert kern is not None
         return kern, created
 
     async def create_session(self, sess_id, access_key,
                              lang, creation_config,
-                             conn=None):
+                             conn=None, session_tag=None):
         agent_id = None
         created_info = None
         mounts = creation_config.get('mounts') or []
@@ -469,6 +469,7 @@ class AgentRegistry:
                 'agent_addr': agent_addr,
                 'access_key': access_key,
                 'lang': lang,
+                'tag': session_tag,
                 'mem_slot': required_slot.mem,
                 'cpu_slot': required_slot.cpu,
                 'gpu_slot': required_slot.gpu,

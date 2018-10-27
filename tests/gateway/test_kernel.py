@@ -19,10 +19,11 @@ async def prepare_kernel(request, create_app_and_client,
         spawn_agent=True,
         ev_router=True)
 
-    async def create_kernel(lang='lua:5.3-alpine'):
+    async def create_kernel(lang='lua:5.3-alpine', tag=None):
         url = '/v3/kernel/'
         req_bytes = json.dumps({
             'lang': lang,
+            'tag': tag,
             'clientSessionToken': sess_id,
         }).encode()
         headers = get_headers('POST', url, req_bytes)
@@ -50,6 +51,26 @@ async def test_create_kernel(prepare_kernel):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_create_kernel_with_tag(prepare_kernel, get_headers):
+    app, client, create_kernel = prepare_kernel
+    test_tag = 'test-tag'
+    kernel_info = await create_kernel(tag=test_tag)
+
+    assert 'kernelId' in kernel_info
+    assert kernel_info['created']
+
+    url = '/v3/kernel/' + kernel_info['kernelId']
+    req_bytes = b''
+    headers = get_headers('GET', url, req_bytes)
+    ret = await client.get(url, headers=headers)
+
+    assert ret.status == 200
+    resp_json = await ret.json()
+    assert resp_json.get('tag', None) == test_tag
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_destroy_kernel(prepare_kernel, get_headers, default_keypair):
     app, client, create_kernel = prepare_kernel
     kernel_info = await create_kernel()
@@ -58,7 +79,7 @@ async def test_destroy_kernel(prepare_kernel, get_headers, default_keypair):
                                              default_keypair['access_key'])
 
     url = '/v3/kernel/' + kernel_info['kernelId']
-    req_bytes = json.dumps({}).encode('utf-8')
+    req_bytes = b''
     headers = get_headers('DELETE', url, req_bytes)
     ret = await client.delete(url, data=req_bytes, headers=headers)
 
@@ -80,7 +101,7 @@ async def test_restart_kernel(prepare_kernel, get_headers, default_keypair):
     original_cid = kern.container_id
 
     url = '/v3/kernel/' + kernel_info['kernelId']
-    req_bytes = json.dumps({}).encode()
+    req_bytes = b''
     headers = get_headers('PATCH', url, req_bytes)
     ret = await client.patch(url, data=req_bytes, headers=headers)
 

@@ -213,6 +213,7 @@ class TestAdminQuery:
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
                 'lang': 'lua:latest',
+                'tag': 'test-tag',
                 'access_key': default_keypair['access_key'],
                 'mem_slot': 1,
                 'cpu_slot': 1,
@@ -227,7 +228,7 @@ class TestAdminQuery:
             })
             await conn.execute(query)
 
-        query = '{ compute_sessions { sess_id role agent lang } }'
+        query = '{ compute_sessions { sess_id role agent lang tag } }'
         payload = json.dumps({'query': query}).encode()
         headers = get_headers('POST', self.url, payload)
         ret = await client.post(self.url, data=payload, headers=headers)
@@ -238,6 +239,7 @@ class TestAdminQuery:
         assert rsp_json['compute_sessions'][0]['role'] == 'master'
         assert rsp_json['compute_sessions'][0]['agent'] == 'test-agent-id'
         assert rsp_json['compute_sessions'][0]['lang'] == 'lua:latest'
+        assert rsp_json['compute_sessions'][0]['tag'] == 'test-tag'
 
     @pytest.mark.asyncio
     async def test_query_compute_worker(self, create_app_and_client, get_headers,
@@ -271,6 +273,7 @@ class TestAdminQuery:
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
                 'lang': 'lua:latest',
+                'tag': 'test-tag',
                 'access_key': default_keypair['access_key'],
                 'mem_slot': 1,
                 'cpu_slot': 1,
@@ -397,6 +400,7 @@ class TestUserQuery:
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
                 'lang': 'lua:latest',
+                'tag': 'test-tag',
                 'access_key': user_keypair['access_key'],
                 'mem_slot': 1,
                 'cpu_slot': 1,
@@ -411,7 +415,7 @@ class TestUserQuery:
             })
             await conn.execute(query)
 
-        query = '{ compute_sessions { sess_id role agent lang } }'
+        query = '{ compute_sessions { sess_id role agent lang tag } }'
         payload = json.dumps({'query': query}).encode()
         headers = get_headers('POST', self.url, payload, keypair=user_keypair)
         ret = await client.post(self.url, data=payload, headers=headers)
@@ -422,6 +426,7 @@ class TestUserQuery:
         assert rsp_json['compute_sessions'][0]['role'] == 'master'
         assert rsp_json['compute_sessions'][0]['agent'] == 'test-agent-id'
         assert rsp_json['compute_sessions'][0]['lang'] == 'lua:latest'
+        assert rsp_json['compute_sessions'][0]['tag'] == 'test-tag'
 
     @pytest.mark.asyncio
     async def test_query_compute_worker(self, create_app_and_client, get_headers,
@@ -455,6 +460,7 @@ class TestUserQuery:
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
                 'lang': 'lua:latest',
+                'tag': 'test-tag',
                 'access_key': user_keypair['access_key'],
                 'mem_slot': 1,
                 'cpu_slot': 1,

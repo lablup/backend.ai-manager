@@ -42,6 +42,7 @@ kernels = sa.Table(
     sa.Column('access_key', sa.String(length=20),
               sa.ForeignKey('keypairs.access_key')),
     sa.Column('lang', sa.String(length=64)),
+    sa.Column('tag', sa.String(length=64), nullable=True),
 
     # Resource occupation
     sa.Column('container_id', sa.String(length=64)),
@@ -200,10 +201,9 @@ class SessionCommons:
         return int(ret) if ret is not None else 0
 
     @classmethod
-    def from_row(cls, row):
-        if row is None:
-            return None
-        props = {
+    def parse_row(cls, row):
+        assert row is not None
+        return {
             'sess_id': row['sess_id'],
             'id': row['id'],
             'role': row['role'],
@@ -230,6 +230,12 @@ class SessionCommons:
             'io_max_scratch_size': row['io_max_scratch_size'],
             'io_cur_scratch_size': 0,
         }
+
+    @classmethod
+    def from_row(cls, row):
+        if row is None:
+            return None
+        props = cls.parse_row(row)
         return cls(**props)
 
 
@@ -237,6 +243,8 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
     '''
     Represents a master session.
     '''
+
+    tag = graphene.String()  # Only for ComputeSession
 
     workers = graphene.List(
         lambda: ComputeWorker,
@@ -297,6 +305,11 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 o = ComputeSession.from_row(row)
                 sess_info[row.sess_id].append(o)
             return tuple(sess_info.values())
+
+    @classmethod
+    def parse_row(cls, row):
+        common_props = super().parse_row(row)
+        return {**common_props, 'tag': row['tag']}
 
 
 class ComputeWorker(SessionCommons, graphene.ObjectType):
