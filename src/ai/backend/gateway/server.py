@@ -305,6 +305,7 @@ async def server_main(loop, pidx, _args):
         '.auth', '.ratelimit',
         '.vfolder', '.admin',
         '.kernel', '.stream',
+        '.manager',
     ]
 
     global_exception_handler = functools.partial(handle_loop_error, app)

@@ -8,8 +8,10 @@ import yaml
 
 from ai.backend.common.identity import get_instance_id, get_instance_ip
 from ai.backend.common.logging import BraceStyleAdapter
+
 from ..manager.models.agent import ResourceSlot
 from .exceptions import ImageNotFound
+from .manager import ManagerStatus
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
 
@@ -116,6 +118,18 @@ class ConfigServer:
                 vs.append(v)
             await self.etcd.put_multi(ks, vs)
         log.info('done')
+
+    async def manager_status_update(self):
+        async for ev in self.etcd.watch('manager/status'):
+            yield ev
+
+    async def update_manager_status(self, status):
+        await self.etcd.put('manager/status', status)
+
+    @aiotools.lru_cache(maxsize=1)
+    async def get_manager_status(self):
+        status = await self.etcd.get('manager/status')
+        return ManagerStatus(status)
 
     @aiotools.lru_cache(maxsize=1, expire_after=60.0)
     async def get_allowed_origins(self):
