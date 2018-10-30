@@ -1,6 +1,7 @@
 import asyncio
 import enum
 import functools
+import json
 import logging
 import sqlalchemy as sa
 
@@ -87,11 +88,14 @@ async def fetch_manager_status(request):
 
 
 async def update_manager_status(request):
-    params = await request.json()
     try:
+        params = await request.json()
         status = params.get('status', None)
+        print(status)
         assert status, 'status is missing or empty!'
         assert ManagerStatus.is_member(status), f'Invalid status: {status}'
+    except json.JSONDecodeError:
+        raise InvalidAPIParameters(extra_msg='No request body!')
     except AssertionError as e:
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
 

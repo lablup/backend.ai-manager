@@ -182,6 +182,12 @@ class Client:
         url = self._url + path
         return self._session.post(url, **kwargs)
 
+    def put(self, path, **kwargs):
+        while path.startswith('/'):
+            path = path[1:]
+        url = self._url + path
+        return self._session.put(url, **kwargs)
+
     def patch(self, path, **kwargs):
         while path.startswith('/'):
             path = path[1:]

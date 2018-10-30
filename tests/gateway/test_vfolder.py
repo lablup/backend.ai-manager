@@ -16,7 +16,8 @@ from ai.backend.manager.models import (
 @pytest.fixture
 async def prepare_vfolder(event_loop, request, create_app_and_client, get_headers,
                           folder_mount, folder_host):
-    app, client = await create_app_and_client(modules=['etcd', 'auth', 'vfolder'])
+    app, client = await create_app_and_client(
+        modules=['etcd', 'auth', 'vfolder', 'manager'])
 
     folder_name = 'test-folder'
     folder_id = None
