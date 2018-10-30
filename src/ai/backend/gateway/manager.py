@@ -60,11 +60,12 @@ def server_unfrozen_required(*args, **kwargs):
 
 
 async def detect_status_update(app):
-    async for _ in app['config_server'].manager_status_update():
-        app['config_server'].get_manager_status.cache_clear()
-        updated_status = await app['config_server'].get_manager_status()
-        log.debug('Process-{0} detected manager status update: {1}',
-                  app['pidx'], updated_status)
+    async for ev in app['config_server'].manager_status_update():
+        if ev.event == 'put':
+            app['config_server'].get_manager_status.cache_clear()
+            updated_status = await app['config_server'].get_manager_status()
+            log.debug('Process-{0} detected manager status update: {1}',
+                      app['pidx'], updated_status)
 
 
 async def fetch_manager_status(request):
