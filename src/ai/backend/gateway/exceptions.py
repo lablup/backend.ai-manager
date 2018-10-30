@@ -134,6 +134,11 @@ class InstanceNotAvailable(web.HTTPServiceUnavailable, BackendError):
     error_title = 'There is no available instance.'
 
 
+class ServerFrozen(web.HTTPServiceUnavailable, BackendError):
+    error_type  = 'https://api.backend.ai/probs/server-frozen'
+    error_title = 'The server is in frozen status.'
+
+
 class AgentError(RuntimeError):
     '''
     A dummy exception class to distinguish agent-side errors passed via

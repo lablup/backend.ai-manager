@@ -1,9 +1,16 @@
 import asyncio
 import enum
+import functools
+import logging
 
 from aiohttp import web
 
-from ai.backend.gateway.exceptions import InvalidAPIParameters
+from ai.backend.common.logging import BraceStyleAdapter
+
+from .exceptions import InvalidAPIParameters, ServerFrozen
+
+
+log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.manager'))
 
 
 class ManagerStatus(enum.Enum):
@@ -13,6 +20,40 @@ class ManagerStatus(enum.Enum):
     @classmethod
     def is_member(cls, value):
         return any(value == item.value for item in cls)
+
+
+def server_unfrozen_required(*args, **kwargs):
+
+    def wrapper(handler, gql=False):
+
+        @functools.wraps(handler)
+        async def _wrapped(request):
+            if gql:
+                # Check if server is frozen only for mutation queries.
+                try:
+                    params = await request.json()
+                    query = params['query']
+                    if not query.startswith('mutation'):
+                        return await handler(request)
+                except:
+                    # Delegate error handling to the original handler.
+                    return await handler(request)
+
+            status = await request.app['config_server'].get_manager_status()
+            if status == ManagerStatus.FROZEN:
+                raise ServerFrozen
+
+            return await handler(request)
+
+        return _wrapped
+
+    if len(args) == 1:
+        return wrapper(args[0])
+    elif len(args) == 0 and 'gql' in kwargs:
+        return lambda _handler: wrapper(_handler, gql=kwargs['gql'])
+    else:
+        log.error('Invalid usage of @server_unfrozen_required decorator!')
+        raise ValueError('Invalid usage')
 
 
 async def detect_status_update(app):

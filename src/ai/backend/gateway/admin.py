@@ -13,6 +13,7 @@ from graphql.error.located_error import GraphQLLocatedError
 
 from ai.backend.common.logging import BraceStyleAdapter
 
+from .manager import server_unfrozen_required
 from .exceptions import InvalidAPIParameters, BackendError
 from .auth import auth_required
 from ..manager.models.base import DataLoaderManager
@@ -26,6 +27,7 @@ from ..manager.models import (
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
 
 
+@server_unfrozen_required(gql=True)
 @auth_required
 @atomic
 async def handle_gql(request: web.Request) -> web.Response:
