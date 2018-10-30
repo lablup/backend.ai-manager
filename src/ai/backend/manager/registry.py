@@ -427,7 +427,7 @@ class AgentRegistry:
 
             # check minimum requirement
             avail_slots = [s for s in avail_slots
-                           if s.mem >= required_slot.mem and
+                           if s.mem >= (required_slot.mem * 1024) and
                               s.cpu >= required_slot.cpu and
                               s.gpu >= required_slot.gpu]
 
@@ -443,7 +443,7 @@ class AgentRegistry:
             gpu_col = agents.c.used_gpu_slots
             query = (sa.update(agents)
                        .values({
-                           'used_mem_slots': mem_col + required_slot.mem,
+                           'used_mem_slots': mem_col + required_slot.mem * 1024,
                            'used_cpu_slots': cpu_col + required_slot.cpu,
                            'used_gpu_slots': gpu_col + required_slot.gpu,
                        })
@@ -881,7 +881,7 @@ class AgentRegistry:
             gpu_col = agents.c.used_gpu_slots
             query = (sa.update(agents)
                        .values({
-                           'used_mem_slots': mem_col - kernel['mem_slot'],
+                           'used_mem_slots': mem_col - kernel['mem_slot'] * 1024,
                            'used_cpu_slots': cpu_col - kernel['cpu_slot'],
                            'used_gpu_slots': gpu_col - kernel['gpu_slot'],
                        })
