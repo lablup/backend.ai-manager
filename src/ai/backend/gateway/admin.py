@@ -73,7 +73,7 @@ async def handle_gql(request: web.Request) -> web.Response:
                             e.original_error.__traceback__)
                 tb_text = ''.join(traceback.format_exception(*exc_info))
                 log.error('GraphQL located error:\n{0}', tb_text)
-                request.app['sentry'].captureException(exc_info)
+                request.app['error_monitor'].capture_exception(exc_info)
                 has_internal_errors = True
         if has_internal_errors:
             raise BackendError(str(result.errors[0]))

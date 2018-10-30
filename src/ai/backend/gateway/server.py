@@ -36,7 +36,7 @@ from ai.backend.common.argparse import (
     ipaddr, path, port_no,
 )
 from ai.backend.common.utils import env_info
-from ai.backend.common.monitor import DummyDatadog, DummySentry
+from ai.backend.common.monitor import DummyStatsMonitor, DummyErrorMonitor
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from ..manager import __version__
 from ..manager.registry import AgentRegistry
@@ -69,8 +69,8 @@ PUBLIC_INTERFACES = [
     'redis_stat',
     'redis_image',
     'event_dispatcher',
-    'datadog',
-    'sentry',
+    'stats_monitor',
+    'error_monitor',
 ]
 
 
@@ -112,18 +112,21 @@ async def api_middleware(request, handler):
 async def exception_middleware(request, handler):
     app = request.app
     try:
-        app['datadog'].statsd.increment('ai.backend.gateway.api.requests')
+        app['stats_monitor'].report_stats(
+            'increment', 'ai.backend.gateway.api.requests')
         resp = (await handler(request))
     except BackendError as ex:
-        app['sentry'].captureException()
-        statsd = app['datadog'].statsd
-        statsd.increment('ai.backend.gateway.api.failures')
-        statsd.increment(f'ai.backend.gateway.api.status.{ex.status_code}')
+        app['error_monitor'].capture_exception()
+        app['stats_monitor'].report_stats(
+            'increment', 'ai.backend.gateway.api.failures')
+        app['stats_monitor'].report_stats(
+            'increment', f'ai.backend.gateway.api.status.{ex.status_code}')
         raise
     except web.HTTPException as ex:
-        statsd = app['datadog'].statsd
-        statsd.increment('ai.backend.gateway.api.failures')
-        statsd.increment(f'ai.backend.gateway.api.status.{ex.status_code}')
+        app['stats_monitor'].report_stats(
+            'increment', 'ai.backend.gateway.api.failures')
+        app['stats_monitor'].report_stats(
+            'increment', f'ai.backend.gateway.api.status.{ex.status_code}')
         if ex.status_code == 404:
             raise GenericNotFound
         if ex.status_code == 405:
@@ -136,15 +139,15 @@ async def exception_middleware(request, handler):
         log.warning('Request cancelled ({0} {1})', request.method, request.rel_url)
         return web.Response(text='Request cancelled.', status=408)
     except Exception as e:
-        app['sentry'].captureException()
+        app['error_monitor'].capture_exception()
         log.exception('Uncaught exception in HTTP request handlers {0!r}', e)
         if app['config'].debug:
             raise InternalServerError(traceback.format_exc())
         else:
             raise InternalServerError()
     else:
-        app['datadog'].statsd.increment(
-            f'ai.backend.gateway.api.status.{resp.status}')
+        app['stats_monitor'].report_stats(
+            'increment', f'ai.backend.gateway.api.status.{resp.status}')
         return resp
 
 
@@ -164,31 +167,6 @@ async def gw_init(app):
     # populate public interfaces
     app['config_server'] = ConfigServer(
         app['config'].etcd_addr, app['config'].namespace)
-
-    app['status'] = GatewayStatus.STARTING
-    app['datadog'] = DummyDatadog()
-    app['sentry'] = DummySentry()
-    app['datadog.enabled'] = False
-    app['sentry.enabled'] = False
-    if datadog_available:
-        if app['config'].datadog_api_key is None:
-            log.warning('Datadog logging is disabled (missing API key).')
-        else:
-            datadog.initialize(
-                api_key=app['config'].datadog_api_key,
-                app_key=app['config'].datadog_app_key)
-            app['datadog'] = datadog
-            app['datadog.enabled'] = True
-            log.info('Datadog logging is enabled.')
-    if raven_available:
-        if app['config'].raven_uri is None:
-            log.warning('Sentry error reporting is disabled (missing DSN URI).')
-        else:
-            app['sentry'] = raven.Client(
-                app['config'].raven_uri,
-                release=raven.fetch_package_version('backend.ai-manager'))
-            app['sentry.enabled'] = True
-            log.info('Sentry error reporting is enabled.')
 
     app['dbpool'] = await create_engine(
         host=app['config'].db_addr[0], port=app['config'].db_addr[1],
@@ -228,6 +206,29 @@ async def gw_init(app):
         app['redis_image'])
     await app['registry'].init()
 
+    # Detect and install monitoring plugins.
+    app['status'] = GatewayStatus.STARTING
+    app['stats_monitor'] = DummyStatsMonitor()
+    app['error_monitor'] = DummyErrorMonitor()
+    app['stats_monitor.enabled'] = False
+    app['error_monitor.enabled'] = False
+
+    plugins = [
+        'stats_monitor',
+        'error_monitor',
+    ]
+    for plugin_name in plugins:
+        plugin_group = f'backendai_{plugin_name}_v10'
+        for entrypoint in pkg_resources.iter_entry_points(plugin_group):
+            if app['pidx'] != 0:
+                continue
+            log.info('Loading app plugin: {0}.{1}', plugin_group, entrypoint.name)
+            plugin_module = entrypoint.load()
+            plugin = getattr(plugin_module, 'get_plugin')(app['config'],
+                                                          app='backend.ai-manager')
+            app[plugin_name] = plugin
+            app[f'{plugin_name}.enabled'] = True
+
 
 async def gw_shutdown(app):
     app['event_subscriber'].cancel()
@@ -250,14 +251,14 @@ def handle_loop_error(app, loop, context):
     exception = context.get('exception')
     msg = context.get('message', '(empty message)')
     if exception is not None:
-        app['sentry'].user_context(context)
+        app['error_monitor'].set_context(context)
         if sys.exc_info()[0] is not None:
             log.exception('Error inside event loop: {0}', msg)
-            app['sentry'].captureException(True)
+            app['error_monitor'].capture_exception(True)
         else:
             exc_info = (type(exception), exception, exception.__traceback__)
             log.error('Error inside event loop: {0}', msg, exc_info=exc_info)
-            app['sentry'].captureException(exc_info)
+            app['error_monitor'].capture_exception(exc_info)
 
 
 def _get_legacy_handler(handler, app, api_version):
