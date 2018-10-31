@@ -1,42 +1,11 @@
 import asyncio
 import json
-import secrets
 import time
 
 import aiohttp
 import pytest
 
 from ai.backend.gateway.exceptions import KernelNotFound
-
-
-@pytest.fixture
-async def prepare_kernel(request, create_app_and_client,
-                         get_headers, default_keypair):
-    sess_id = f'test-kernel-session-{secrets.token_hex(8)}'
-    app, client = await create_app_and_client(
-        modules=['etcd', 'events', 'auth', 'vfolder',
-                 'admin', 'ratelimit', 'kernel', 'stream', 'manager'],
-        spawn_agent=True,
-        ev_router=True)
-
-    async def create_kernel(lang='lua:5.3-alpine', tag=None):
-        url = '/v3/kernel/'
-        req_bytes = json.dumps({
-            'lang': lang,
-            'tag': tag,
-            'clientSessionToken': sess_id,
-        }).encode()
-        headers = get_headers('POST', url, req_bytes)
-        response = await client.post(url, data=req_bytes, headers=headers)
-        return await response.json()
-
-    yield app, client, create_kernel
-
-    access_key = default_keypair['access_key']
-    try:
-        await app['registry'].destroy_session(sess_id, access_key)
-    except Exception:
-        pass
 
 
 @pytest.mark.integration

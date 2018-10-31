@@ -3,6 +3,7 @@ import asyncio
 from datetime import datetime
 import hashlib, hmac
 from importlib import import_module
+import json
 import multiprocessing as mp
 import os
 from pathlib import Path
@@ -400,6 +401,7 @@ async def create_app_and_client(request, test_id, test_ns,
                 '--etcd-addr', str(etcd_addr),
                 '--namespace', test_ns,
                 '--scratch-root', f'/tmp/backend.ai/scratches-{test_id}',
+                '--idle-timeout', '30',
             ])
 
             def finalize_agent():
@@ -494,3 +496,33 @@ def prepare_docker_images():
         _loop.run_until_complete(pull())
     finally:
         _loop.close()
+
+
+@pytest.fixture
+async def prepare_kernel(request, create_app_and_client,
+                         get_headers, default_keypair):
+    sess_id = f'test-kernel-session-{secrets.token_hex(8)}'
+    app, client = await create_app_and_client(
+        modules=['etcd', 'events', 'auth', 'vfolder',
+                 'admin', 'ratelimit', 'kernel', 'stream', 'manager'],
+        spawn_agent=True,
+        ev_router=True)
+
+    async def create_kernel(lang='lua:5.3-alpine', tag=None):
+        url = '/v3/kernel/'
+        req_bytes = json.dumps({
+            'lang': lang,
+            'tag': tag,
+            'clientSessionToken': sess_id,
+        }).encode()
+        headers = get_headers('POST', url, req_bytes)
+        response = await client.post(url, data=req_bytes, headers=headers)
+        return await response.json()
+
+    yield app, client, create_kernel
+
+    access_key = default_keypair['access_key']
+    try:
+        await app['registry'].destroy_session(sess_id, access_key)
+    except Exception:
+        pass

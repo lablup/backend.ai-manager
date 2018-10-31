@@ -710,6 +710,25 @@ class AgentRegistry:
                 return tuple()
             return rows
 
+    async def kill_all_sessions_in_agent(self, agent_addr):
+        async with RPCContext(agent_addr, 5) as rpc:
+            coro = rpc.call.clean_all_kernels('manager-freeze-force-kill')
+            if coro is None:
+                log.warning('kill_all_sessions_in_agent cancelled')
+                return None
+            return await coro
+
+    async def kill_all_sessions(self, conn=None):
+        async with reenter_txn(self.dbpool, conn) as conn:
+            query = (sa.select([agents.c.addr])
+                       .where(agents.c.status == AgentStatus.ALIVE))
+            result = await conn.execute(query)
+            alive_agent_addrs = [row.addr for row in result]
+            log.debug(str(alive_agent_addrs))
+            tasks = [self.kill_all_sessions_in_agent(agent_addr)
+                     for agent_addr in alive_agent_addrs]
+            await asyncio.gather(*tasks)
+
     async def handle_heartbeat(self, agent_id, agent_info):
 
         now = datetime.now(tzutc())

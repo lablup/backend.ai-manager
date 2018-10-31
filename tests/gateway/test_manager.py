@@ -95,8 +95,8 @@ async def test_gql_mutation_unfrozen_required_middleware():
 
 
 @pytest.mark.asyncio
-async def test_fetch_manager_status(prepare_manager, get_headers):
-    app, client = prepare_manager
+async def test_fetch_manager_status(prepare_kernel, get_headers):
+    app, client, create_kernel = prepare_kernel
 
     url = '/manager/status'
     req_bytes = b''
@@ -107,6 +107,17 @@ async def test_fetch_manager_status(prepare_manager, get_headers):
     rsp_json = await ret.json()
     assert rsp_json.get('status', None) == ManagerStatus.RUNNING.value
     assert rsp_json.get('active_sessions', None) == 0
+
+    kernel_info = await create_kernel()
+
+    assert 'kernelId' in kernel_info
+    assert kernel_info.get('created', None)
+
+    ret = await client.get(url, data=req_bytes, headers=headers)
+
+    rsp_json = await ret.json()
+    assert rsp_json.get('status', None) == ManagerStatus.RUNNING.value
+    assert rsp_json.get('active_sessions', None) == 1
 
 
 @pytest.mark.asyncio
@@ -131,6 +142,37 @@ async def test_update_manager_status(prepare_manager, get_headers):
 
     status = await app['config_server'].get_manager_status()
     assert status == ManagerStatus.RUNNING
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_update_manager_status_opt_force_kill(prepare_kernel, get_headers):
+    app, client, create_kernel = prepare_kernel
+
+    kernel_info = await create_kernel()
+
+    assert 'kernelId' in kernel_info
+    assert kernel_info.get('created', None)
+
+    url = '/manager/status'
+    req_bytes = json.dumps({'status': 'frozen', 'force_kill': True}).encode()
+    headers = get_headers('PUT', url, req_bytes)
+    ret = await client.put(url, data=req_bytes, headers=headers)
+
+    assert ret.status == 204
+
+    status = await app['config_server'].get_manager_status()
+    assert status == ManagerStatus.FROZEN
+
+    url = '/manager/status'
+    req_bytes = b''
+    headers = get_headers('GET', url, req_bytes)
+    ret = await client.get(url, data=req_bytes, headers=headers)
+
+    assert ret.status == 200
+    rsp_json = await ret.json()
+    assert rsp_json.get('status', None) == ManagerStatus.FROZEN.value
+    assert rsp_json.get('active_sessions', None) == 0
 
 
 @pytest.mark.asyncio

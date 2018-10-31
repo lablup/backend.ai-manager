@@ -76,7 +76,7 @@ async def update_manager_status(request):
     try:
         params = await request.json()
         status = params.get('status', None)
-        print(status)
+        force_kill = params.get('force_kill', None)
         assert status, 'status is missing or empty!'
         status = ManagerStatus(status)
     except json.JSONDecodeError:
@@ -84,6 +84,8 @@ async def update_manager_status(request):
     except (AssertionError, ValueError) as e:
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
 
+    if force_kill:
+        await request.app['registry'].kill_all_sessions()
     await request.app['config_server'].update_manager_status(status)
 
     return web.Response(status=204)
