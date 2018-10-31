@@ -136,7 +136,7 @@ class InstanceNotAvailable(web.HTTPServiceUnavailable, BackendError):
 
 class ServerFrozen(web.HTTPServiceUnavailable, BackendError):
     error_type  = 'https://api.backend.ai/probs/server-frozen'
-    error_title = 'The server is in frozen status.'
+    error_title = 'The server is frozen due to maintenance. Please try again later.'
 
 
 class AgentError(RuntimeError):
