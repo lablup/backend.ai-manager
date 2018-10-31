@@ -210,9 +210,9 @@ async def gw_init(app):
     for plugin_name in plugins:
         plugin_group = f'backendai_{plugin_name}_v10'
         for entrypoint in pkg_resources.iter_entry_points(plugin_group):
-            if app['pidx'] != 0:
-                continue
-            log.info('Loading app plugin: {0}.{1}', plugin_group, entrypoint.name)
+            if app['pidx'] == 0:
+                log.info('Loading app plugin: {0}.{1}',
+                         plugin_group, entrypoint.name)
             plugin_module = entrypoint.load()
             plugin = getattr(plugin_module, 'get_plugin')(app['config'],
                                                           app='backend.ai-manager')
