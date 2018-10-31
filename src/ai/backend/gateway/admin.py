@@ -13,7 +13,7 @@ from graphql.error.located_error import GraphQLLocatedError
 
 from ai.backend.common.logging import BraceStyleAdapter
 
-from .manager import server_unfrozen_required, GQLMutationUnfrozenRequiredMiddleware
+from .manager import GQLMutationUnfrozenRequiredMiddleware
 from .exceptions import InvalidAPIParameters, BackendError
 from .auth import auth_required
 from ..manager.models.base import DataLoaderManager

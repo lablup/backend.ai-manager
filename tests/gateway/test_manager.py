@@ -94,6 +94,7 @@ async def test_gql_mutation_unfrozen_required_middleware():
         middleware.resolve(lambda root, info: print(root, info), None, mock_info)
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_fetch_manager_status(prepare_kernel, get_headers):
     app, client, create_kernel = prepare_kernel
