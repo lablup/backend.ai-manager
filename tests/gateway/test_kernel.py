@@ -15,7 +15,7 @@ async def prepare_kernel(request, create_app_and_client,
     sess_id = f'test-kernel-session-{secrets.token_hex(8)}'
     app, client = await create_app_and_client(
         modules=['etcd', 'events', 'auth', 'vfolder',
-                 'admin', 'ratelimit', 'kernel', 'stream'],
+                 'admin', 'ratelimit', 'kernel', 'stream', 'manager'],
         spawn_agent=True,
         ev_router=True)
 
