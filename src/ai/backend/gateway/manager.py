@@ -20,10 +20,6 @@ class ManagerStatus(enum.Enum):
     RUNNING = 'running'
     FROZEN = 'frozen'
 
-    @classmethod
-    def is_member(cls, value):
-        return any(value == item.value for item in cls)
-
 
 def server_unfrozen_required(*args, **kwargs):
 
@@ -94,10 +90,10 @@ async def update_manager_status(request):
         status = params.get('status', None)
         print(status)
         assert status, 'status is missing or empty!'
-        assert ManagerStatus.is_member(status), f'Invalid status: {status}'
+        status = ManagerStatus(status)
     except json.JSONDecodeError:
         raise InvalidAPIParameters(extra_msg='No request body!')
-    except AssertionError as e:
+    except (AssertionError, ValueError) as e:
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
 
     await request.app['config_server'].update_manager_status(status)
@@ -109,7 +105,7 @@ async def init(app):
     loop = asyncio.get_event_loop()
     app['status_watch_task'] = loop.create_task(detect_status_update(app))
     if app['pidx'] == 0:
-        await app['config_server'].update_manager_status('running')
+        await app['config_server'].update_manager_status(ManagerStatus.RUNNING)
 
 
 async def shutdown(app):

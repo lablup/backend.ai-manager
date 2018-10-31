@@ -124,7 +124,7 @@ class ConfigServer:
             yield ev
 
     async def update_manager_status(self, status):
-        await self.etcd.put('manager/status', status)
+        await self.etcd.put('manager/status', status.value)
 
     @aiotools.lru_cache(maxsize=1)
     async def get_manager_status(self):

@@ -11,15 +11,6 @@ from ai.backend.gateway.manager import server_unfrozen_required, ManagerStatus
 from ai.backend.manager.cli.etcd import put
 
 
-def test_manager_status_is_member():
-    assert ManagerStatus.is_member('running')
-    assert ManagerStatus.is_member('frozen')
-    assert not ManagerStatus.is_member('freeze')
-    assert not ManagerStatus.is_member('stop')
-    assert not ManagerStatus.is_member('terminated')
-    assert not ManagerStatus.is_member('')
-
-
 @pytest.fixture
 def dirty_etcd(test_ns):
     etcd_addr = host_port_pair(os.environ['BACKEND_ETCD_ADDR'])
@@ -48,7 +39,7 @@ async def prepare_manager(create_app_and_client):
 async def test_server_unfrozen_required(prepare_manager):
     app, client = prepare_manager
 
-    await app['config_server'].update_manager_status('frozen')
+    await app['config_server'].update_manager_status(ManagerStatus.FROZEN)
 
     @server_unfrozen_required
     async def _dummy_handler(request):
@@ -61,7 +52,7 @@ async def test_server_unfrozen_required(prepare_manager):
     with pytest.raises(ServerFrozen):
         await _dummy_handler(DummyRequest(app))
 
-    await app['config_server'].update_manager_status('running')
+    await app['config_server'].update_manager_status(ManagerStatus.RUNNING)
     await asyncio.sleep(0.5)  # Wait until manager detects status update
 
     result = await _dummy_handler(DummyRequest(app))
@@ -72,7 +63,7 @@ async def test_server_unfrozen_required(prepare_manager):
 async def test_server_unfrozen_required_gql(prepare_manager):
     app, client = prepare_manager
 
-    await app['config_server'].update_manager_status('frozen')
+    await app['config_server'].update_manager_status(ManagerStatus.FROZEN)
 
     @server_unfrozen_required(gql=True)
     async def _dummy_handler(request):
@@ -97,7 +88,7 @@ async def test_server_unfrozen_required_gql(prepare_manager):
     with pytest.raises(ServerFrozen):
         await _dummy_handler(DummyMutationRequest(app))
 
-    await app['config_server'].update_manager_status('running')
+    await app['config_server'].update_manager_status(ManagerStatus.RUNNING)
     await asyncio.sleep(0.5)  # Wait until manager detects status update
 
     result = await _dummy_handler(DummyQueryRequest(app))
