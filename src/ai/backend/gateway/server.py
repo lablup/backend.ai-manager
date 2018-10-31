@@ -21,16 +21,6 @@ import aioredis
 import aiotools
 from aiopg.sa import create_engine
 import uvloop
-try:
-    import datadog
-    datadog_available = True
-except ImportError:
-    datadog_available = False
-try:
-    import raven
-    raven_available = True
-except ImportError:
-    raven_available = False
 
 from ai.backend.common.argparse import (
     ipaddr, path, port_no,
@@ -423,17 +413,17 @@ def gw_args(parser):
                type=path, default=None,
                help='The path to the private key used to make requests '
                     'for the SSL certificate.')
-    if datadog_available:
-        parser.add('--datadog-api-key', env_var='DATADOG_API_KEY',
-                   type=str, default=None,
-                   help='The API key for Datadog monitoring agent.')
-        parser.add('--datadog-app-key', env_var='DATADOG_APP_KEY',
-                   type=str, default=None,
-                   help='The application key for Datadog monitoring agent.')
-    if raven_available:
-        parser.add('--raven-uri', env_var='RAVEN_URI',
-                   type=str, default=None,
-                   help='The sentry.io event report URL with DSN.')
+
+    plugins = [
+        'backendai_stats_monitor_v10',
+        'backendai_error_monitor_v10',
+    ]
+    for plugin_group in plugins:
+        for entrypoint in pkg_resources.iter_entry_points(plugin_group):
+            plugin_module = entrypoint.load()
+            add_plugin_args = getattr(plugin_module, 'add_plugin_args', None)
+            if add_plugin_args:
+                add_plugin_args(parser)
 
 
 def main():
