@@ -2,12 +2,14 @@ from argparse import Namespace
 import asyncio
 import json
 import os
+from unittest import mock
 
 import pytest
 
 from ai.backend.common.argparse import host_port_pair
 from ai.backend.gateway.exceptions import ServerFrozen
-from ai.backend.gateway.manager import server_unfrozen_required, ManagerStatus
+from ai.backend.gateway.manager import (
+    server_unfrozen_required, GQLMutationUnfrozenRequiredMiddleware, ManagerStatus)
 from ai.backend.manager.cli.etcd import put
 
 
@@ -60,49 +62,36 @@ async def test_server_unfrozen_required(prepare_manager):
 
 
 @pytest.mark.asyncio
-async def test_server_unfrozen_required_gql(prepare_manager):
-    app, client = prepare_manager
+async def test_gql_mutation_unfrozen_required_middleware():
+    middleware = GQLMutationUnfrozenRequiredMiddleware()
+    mock_operation = mock.MagicMock(operation='query')
+    mock_info = mock.MagicMock(
+        operation=mock_operation,
+        context={'manager_status': ManagerStatus.RUNNING}
+    )
+    middleware.resolve(lambda root, info: print(root, info), None, mock_info)
 
-    await app['config_server'].update_manager_status(ManagerStatus.FROZEN)
+    mock_operation = mock.MagicMock(operation='mutation')
+    mock_info = mock.MagicMock(
+        operation=mock_operation,
+        context={'manager_status': ManagerStatus.RUNNING}
+    )
+    middleware.resolve(lambda root, info: print(root, info), None, mock_info)
 
-    @server_unfrozen_required(gql=True)
-    async def _dummy_handler(request):
-        return 'dummy-response'
+    mock_operation = mock.MagicMock(operation='query')
+    mock_info = mock.MagicMock(
+        operation=mock_operation,
+        context={'manager_status': ManagerStatus.FROZEN}
+    )
+    middleware.resolve(lambda root, info: print(root, info), None, mock_info)
 
-    class DummyQueryRequest:
-        def __init__(self, app):
-            self.app = app
-
-        async def json(self):
-            return {'query': 'query() {}'}
-
-    class DummyMutationRequest:
-        def __init__(self, app):
-            self.app = app
-
-        async def json(self):
-            return {'query': 'mutation() {}'}
-
-    result = await _dummy_handler(DummyQueryRequest(app))
-    assert result == 'dummy-response'
+    mock_operation = mock.MagicMock(operation='mutation')
+    mock_info = mock.MagicMock(
+        operation=mock_operation,
+        context={'manager_status': ManagerStatus.FROZEN}
+    )
     with pytest.raises(ServerFrozen):
-        await _dummy_handler(DummyMutationRequest(app))
-
-    await app['config_server'].update_manager_status(ManagerStatus.RUNNING)
-    await asyncio.sleep(0.5)  # Wait until manager detects status update
-
-    result = await _dummy_handler(DummyQueryRequest(app))
-    assert result == 'dummy-response'
-    result = await _dummy_handler(DummyMutationRequest(app))
-    assert result == 'dummy-response'
-
-
-@pytest.mark.asyncio
-async def test_server_unfrozen_required_invalid_usage():
-    with pytest.raises(ValueError):
-        @server_unfrozen_required()
-        async def _dummy_handler(request):
-            return 'dummy-response'
+        middleware.resolve(lambda root, info: print(root, info), None, mock_info)
 
 
 @pytest.mark.asyncio

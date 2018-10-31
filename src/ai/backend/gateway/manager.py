@@ -21,38 +21,26 @@ class ManagerStatus(enum.Enum):
     FROZEN = 'frozen'
 
 
-def server_unfrozen_required(*args, **kwargs):
+def server_unfrozen_required(handler):
 
-    def wrapper(handler, gql=False):
+    @functools.wraps(handler)
+    async def _wrapped(request):
+        status = await request.app['config_server'].get_manager_status()
+        if status == ManagerStatus.FROZEN:
+            raise ServerFrozen
 
-        @functools.wraps(handler)
-        async def _wrapped(request):
-            if gql:
-                # Check if server is frozen only for mutation queries.
-                try:
-                    params = await request.json()
-                    query = params['query']
-                    if not query.startswith('mutation'):
-                        return await handler(request)
-                except:
-                    # Delegate error handling to the original handler.
-                    return await handler(request)
+        return await handler(request)
 
-            status = await request.app['config_server'].get_manager_status()
-            if status == ManagerStatus.FROZEN:
-                raise ServerFrozen
+    return _wrapped
 
-            return await handler(request)
 
-        return _wrapped
+class GQLMutationUnfrozenRequiredMiddleware:
 
-    if len(args) == 1:
-        return wrapper(args[0])
-    elif len(args) == 0 and 'gql' in kwargs:
-        return lambda _handler: wrapper(_handler, gql=kwargs['gql'])
-    else:
-        log.error('Invalid usage of @server_unfrozen_required decorator!')
-        raise ValueError('Invalid usage')
+    def resolve(self, next, root, info, **args):
+        if info.operation.operation == 'mutation' and \
+                info.context['manager_status'] == ManagerStatus.FROZEN:
+            raise ServerFrozen
+        return next(root, info, **args)
 
 
 async def detect_status_update(app):
