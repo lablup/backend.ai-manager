@@ -8,7 +8,6 @@ import importlib
 from ipaddress import ip_address
 import logging
 import os
-import pkg_resources
 import ssl
 import sys
 import traceback
@@ -28,6 +27,8 @@ from ai.backend.common.argparse import (
 from ai.backend.common.utils import env_info
 from ai.backend.common.monitor import DummyStatsMonitor, DummyErrorMonitor
 from ai.backend.common.logging import Logger, BraceStyleAdapter
+from ai.backend.common.plugin import (
+    discover_entrypoints, install_plugins, add_plugin_args)
 from ..manager import __version__
 from ..manager.registry import AgentRegistry
 from . import GatewayStatus
@@ -207,17 +208,7 @@ async def gw_init(app):
         'stats_monitor',
         'error_monitor',
     ]
-    for plugin_name in plugins:
-        plugin_group = f'backendai_{plugin_name}_v10'
-        for entrypoint in pkg_resources.iter_entry_points(plugin_group):
-            if app['pidx'] == 0:
-                log.info('Loading app plugin: {0}.{1}',
-                         plugin_group, entrypoint.name)
-            plugin_module = entrypoint.load()
-            plugin = getattr(plugin_module, 'get_plugin')(app['config'],
-                                                          app='backend.ai-manager')
-            app[plugin_name] = plugin
-            app[f'{plugin_name}.enabled'] = True
+    install_plugins(plugins, app, 'dict', app['config'])
 
 
 async def gw_shutdown(app):
@@ -282,6 +273,11 @@ async def server_main(loop, pidx, _args):
     }
     cors = aiohttp_cors.setup(app, defaults=cors_options)
     app['config'] = _args[0]
+    app['config'].app_name = 'backend.ai-manager'
+    if app['config'].disable_plugins:
+        app['config'].disable_plugins = app['config'].disable_plugins.split(',')
+    else:
+        app['config'].disable_plugins = []
     app['sslctx'] = None
     if app['config'].ssl_cert and app['config'].ssl_key:
         app['sslctx'] = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
@@ -341,12 +337,12 @@ async def server_main(loop, pidx, _args):
         subapp_mod = importlib.import_module(pkgname, 'ai.backend.gateway')
         init_subapp(getattr(subapp_mod, 'create_app'))
 
-    app_plugin_entry_prefix = 'backendai_webapp_v10'
-    if app['config'].disable_plugins:
-        app['config'].disable_plugins = app['config'].disable_plugins.split(',')
-    for entrypoint in pkg_resources.iter_entry_points(app_plugin_entry_prefix):
-        if entrypoint.name in app['config'].disable_plugins:
-            continue
+    plugins = [
+        'webapp',
+    ]
+    for plugin_info in discover_entrypoints(
+            plugins, disable_plugins=app['config'].disable_plugins):
+        plugin_group, plugin_name, entrypoint = plugin_info
         if pidx == 0:
             log.info('Loading app plugin: {0}', entrypoint.module_name)
         plugin = entrypoint.load()
@@ -415,15 +411,10 @@ def gw_args(parser):
                     'for the SSL certificate.')
 
     plugins = [
-        'backendai_stats_monitor_v10',
-        'backendai_error_monitor_v10',
+        'stats_monitor',
+        'error_monitor',
     ]
-    for plugin_group in plugins:
-        for entrypoint in pkg_resources.iter_entry_points(plugin_group):
-            plugin_module = entrypoint.load()
-            add_plugin_args = getattr(plugin_module, 'add_plugin_args', None)
-            if add_plugin_args:
-                add_plugin_args(parser)
+    add_plugin_args(parser, plugins)
 
 
 def main():
