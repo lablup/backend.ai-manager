@@ -268,7 +268,8 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                        .select_from(kernels)
                        .where((kernels.c.access_key.in_(access_keys)) &
                               (kernels.c.role == 'master'))
-                       .order_by(sa.desc(kernels.c.created_at)))
+                       .order_by(sa.desc(kernels.c.created_at))
+                       .limit(100))
             if status is not None:
                 query = query.where(kernels.c.status == status)
             objs_per_key = OrderedDict()
