@@ -1,8 +1,11 @@
 Changes
 =======
 
-1.5.0 (to be released)
-----------------------
+18.12.0 (to be released)
+------------------------
+
+- Version numbers now follow year.month releases like Docker.
+  We plan to release stable versions on every 3 months (e.g., 18.12, 19.03, ...).
 
 1.4.2 (2018-11-01)
 ------------------
