@@ -11,7 +11,7 @@ _subparsers = dict()
 
 
 def register_command(handler: Callable[[argparse.Namespace], None],
-                     outer_parser: Optional[ArgParserType]=None) \
+                     outer_parser: Optional[ArgParserType] = None) \
                      -> Callable[[argparse.Namespace], None]:
     if outer_parser is None:
         outer_parser = fallback_global_argparser

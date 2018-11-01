@@ -77,7 +77,7 @@ def vfolder_permission_required(perm: VFolderPermission):
                            (vfolders.c.name == folder_name)))
                 try:
                     result = await conn.execute(query)
-                except psycopg2.DataError as e:
+                except psycopg2.DataError:
                     raise InvalidAPIParameters
                 row = await result.first()
                 if row is None:
@@ -116,7 +116,7 @@ def vfolder_check_exists(handler):
                        (vfolders.c.name == folder_name)))
             try:
                 result = await conn.execute(query)
-            except psycopg2.DataError as e:
+            except psycopg2.DataError:
                 raise InvalidAPIParameters
             row = await result.first()
             if row is None:
@@ -165,7 +165,7 @@ async def create(request):
         }
         try:
             result = await conn.execute(query)
-        except psycopg2.DataError as e:
+        except psycopg2.DataError:
             raise InvalidAPIParameters
         assert result.rowcount == 1
     return web.json_response(resp, status=201)
@@ -186,7 +186,7 @@ async def list_folders(request):
                            (vfolder_permissions.c.access_key == access_key))))
         try:
             result = await conn.execute(query)
-        except psycopg2.DataError as e:
+        except psycopg2.DataError:
             raise InvalidAPIParameters
         async for row in result:
             if row.permission is None:
@@ -391,7 +391,7 @@ async def invite(request):
                           (vfolders.c.name == folder_name)))
         try:
             result = await conn.execute(query)
-        except psycopg2.DataError as e:
+        except psycopg2.DataError:
             raise InvalidAPIParameters
         vf = await result.first()
         if vf is None:
@@ -404,7 +404,7 @@ async def invite(request):
                    .where(keypairs.c.user_id != request['user']['id']))
         try:
             result = await conn.execute(query)
-        except psycopg2.DataError as e:
+        except psycopg2.DataError:
             raise InvalidAPIParameters
         kps = await result.fetchall()
 
@@ -440,7 +440,7 @@ async def invite(request):
             try:
                 await conn.execute(query)
                 invited_ids.append(invitee)
-            except psycopg2.DataError as e:
+            except psycopg2.DataError:
                 pass
     resp = {'invited_ids': invited_ids}
     return web.json_response(resp, status=201)
@@ -458,7 +458,7 @@ async def invitations(request):
                           (vfolder_invitations.c.state == 'pending')))
         try:
             result = await conn.execute(query)
-        except psycopg2.DataError as e:
+        except psycopg2.DataError:
             raise InvalidAPIParameters
         invitations = await result.fetchall()
     invs_info = []
@@ -524,7 +524,7 @@ async def accept_invitation(request):
                    .where(keypairs.c.access_key == inv_ak))
         try:
             result = await conn.execute(query)
-        except psycopg2.DataError as e:
+        except psycopg2.DataError:
             raise InvalidAPIParameters
         row = await result.first()
         if row is None:
@@ -564,7 +564,7 @@ async def delete_invitation(request):
                           (vfolder_invitations.c.state == 'pending')))
         try:
             result = await conn.execute(query)
-        except psycopg2.DataError as e:
+        except psycopg2.DataError:
             raise InvalidAPIParameters
         row = await result.first()
         if row is None:
@@ -591,7 +591,7 @@ async def delete(request):
                           (vfolders.c.name == folder_name)))
         try:
             result = await conn.execute(query)
-        except psycopg2.DataError as e:
+        except psycopg2.DataError:
             raise InvalidAPIParameters
         row = await result.first()
         if row is None:

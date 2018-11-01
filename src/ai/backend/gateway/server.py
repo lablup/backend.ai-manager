@@ -134,7 +134,7 @@ async def exception_middleware(request, handler):
         # request.  Atomic requests are still executed to their ends.
         log.warning(f'Request cancelled ({request.method} {request.rel_url})')
         return web.Response(text='Request cancelled.', status=408)
-    except Exception as ex:
+    except Exception:
         app['sentry'].captureException()
         log.exception('Uncaught exception in HTTP request handlers')
         if app['config'].debug:
@@ -157,7 +157,7 @@ async def gw_init(app):
     app.on_response_prepare.append(on_prepare)
 
     # legacy redirects
-    app.router.add_route('GET', '/v{version:\d+}/authorize',
+    app.router.add_route('GET', r'/v{version:\d+}/authorize',
                          legacy_auth_test_redirect)
 
     # populate public interfaces
