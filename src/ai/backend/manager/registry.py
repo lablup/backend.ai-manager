@@ -398,7 +398,8 @@ class AgentRegistry:
         except KeyError:
             raise InvalidAPIParameters('You should specify resource limits.')
 
-        required_slot = ResourceSlot(
+        # units: share
+        required_shares = ResourceSlot(
             id=None,
             cpu=cpu_share,
             mem=mem_share,
@@ -427,9 +428,9 @@ class AgentRegistry:
 
             # check minimum requirement
             avail_slots = [s for s in avail_slots
-                           if s.mem >= (required_slot.mem * 1024) and
-                              s.cpu >= required_slot.cpu and
-                              s.gpu >= required_slot.gpu]
+                           if s.mem >= (required_shares.mem * 1024) and
+                              s.cpu >= required_shares.cpu and
+                              s.gpu >= required_shares.gpu]
 
             # load-balance
             if avail_slots:
@@ -443,9 +444,9 @@ class AgentRegistry:
             gpu_col = agents.c.used_gpu_slots
             query = (sa.update(agents)
                        .values({
-                           'used_mem_slots': mem_col + required_slot.mem * 1024,
-                           'used_cpu_slots': cpu_col + required_slot.cpu,
-                           'used_gpu_slots': gpu_col + required_slot.gpu,
+                           'used_mem_slots': mem_col + required_shares.mem * 1024,
+                           'used_cpu_slots': cpu_col + required_shares.cpu,
+                           'used_gpu_slots': gpu_col + required_shares.gpu,
                        })
                        .where(agents.c.id == agent_id))
             result = await conn.execute(query)
@@ -468,9 +469,10 @@ class AgentRegistry:
                 'agent_addr': agent_addr,
                 'access_key': access_key,
                 'lang': lang,
-                'mem_slot': required_slot.mem,
-                'cpu_slot': required_slot.cpu,
-                'gpu_slot': required_slot.gpu,
+                # units: absolute
+                'mem_slot': required_shares.mem * 1024,
+                'cpu_slot': required_shares.cpu,
+                'gpu_slot': required_shares.gpu,
                 'environ': [f'{k}={v}' for k, v in environ.items()],
                 'cpu_set': [],
                 'gpu_set': [],
@@ -489,9 +491,10 @@ class AgentRegistry:
                     config = {
                         'lang': lang,
                         'limits': {
-                            'mem_slot': str(required_slot.mem),
-                            'cpu_slot': str(required_slot.cpu),
-                            'gpu_slot': str(required_slot.gpu),
+                            # units: share
+                            'mem_slot': str(required_shares.mem),
+                            'cpu_slot': str(required_shares.cpu),
+                            'gpu_slot': str(required_shares.gpu),
                         },
                         'mounts': mounts,
                         'environ': environ,
@@ -569,9 +572,10 @@ class AgentRegistry:
                 # TODO: read from vfolders attachment table
                 mounts = []
                 limits = {
+                    # units: share
                     'cpu_slot': kernel['cpu_slot'],
                     'gpu_slot': kernel['gpu_slot'],
-                    'mem_slot': kernel['mem_slot'],
+                    'mem_slot': kernel['mem_slot'] / 1024,
                 }
                 environ = {
                      k: v for k, v in
@@ -866,6 +870,7 @@ class AgentRegistry:
             await conn.execute(query)
 
             # release resource slots
+            # units: absolute
             query = (sa.select([sa.column('agent'),
                                 sa.column('mem_slot'),
                                 sa.column('cpu_slot'),
@@ -876,12 +881,13 @@ class AgentRegistry:
             kernel = await result.first()
             if kernel is None:
                 return
+            # units: absolute
             mem_col = agents.c.used_mem_slots
             cpu_col = agents.c.used_cpu_slots
             gpu_col = agents.c.used_gpu_slots
             query = (sa.update(agents)
                        .values({
-                           'used_mem_slots': mem_col - kernel['mem_slot'] * 1024,
+                           'used_mem_slots': mem_col - kernel['mem_slot'],
                            'used_cpu_slots': cpu_col - kernel['cpu_slot'],
                            'used_gpu_slots': gpu_col - kernel['gpu_slot'],
                        })
