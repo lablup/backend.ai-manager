@@ -12,23 +12,43 @@ images:
       cpu: 1    # cores
       mem: 1.0  # GiB
       gpu: 0    # fraction of GPU device
+  - name: python-tester
+    # image for unit-testing student submissions
+    syntax: python
+    tags:
+      - ["latest",     ":3.6-debian"]
+      - ["3.6-debian", "2ac49fbe2104"]
+    slots:
+      cpu: 1    # cores
+      mem: 0.3  # GiB
+      gpu: 0    # fraction of GPU device
   - name: python-tensorflow
     syntax: python
     tags:
-      - ["latest",             ":1.5-py36-dense"]
-      - ["latest-gpu",         ":1.5-py36-dense-gpu"]
-      - ["latest-dense",       ":1.5-py36-dense"]
-      - ["latest-dense-gpu",   ":1.5-py36-dense-gpu"]
-      - ["1.3-py36-dense",     "3c1d4b4626af"]
-      - ["1.3-py36-dense-gpu", "a7b9070ef8a1"]
-      - ["1.4-py36-dense",     "96cd362cac2a"]
-      - ["1.4-py36-dense-gpu", "c5f63f2e5320"]
-      - ["1.5-py36-dense",     "2af9e0898ef5"]
-      - ["1.5-py36-dense-gpu", "b4eb715f32fc"]
+      - ["latest",             ":1.11-py36"]
+      - ["latest-gpu",         ":1.11-py36-gpu"]
+      - ["1.3-py36",     "3c1d4b4626af"]
+      - ["1.3-py36-gpu", "a7b9070ef8a1"]
+      - ["1.4-py36",     "96cd362cac2a"]
+      - ["1.4-py36-gpu", "c5f63f2e5320"]
+      - ["1.5-py36",     "2af9e0898ef5"]
+      - ["1.5-py36-gpu", "b4eb715f32fc"]
+      - ["1.6-py36", "x"]
+      - ["1.6-py36-gpu", "x"]
+      - ["1.7-py36", "x"]
+      - ["1.7-py36-gpu", "x"]
+      - ["1.8-py36", "x"]
+      - ["1.8-py36-gpu", "x"]
+      - ["1.9-py36", "x"]
+      - ["1.9-py36-gpu", "x"]
+      - ["1.10-py36", "x"]
+      - ["1.10-py36-gpu", "x"]
+      - ["1.11-py36", "x"]
+      - ["1.11-py36-gpu", "x"]
     slots: &for_computing
       cpu: 4     # cores
       mem: 8.0   # GiB
-      gpu: 0.32  # fraction of GPU device
+      gpu: null  # max.fraction of GPU device (nil means no limit)
       # NOTE: gpu slot is only used for the images tagged with "-gpu".
   - name: python-caffe
     syntax: python
@@ -78,14 +98,30 @@ images:
     syntax: c
     tags:
       - ["latest",        ":gcc6.3-alpine"]
-      - ["gcc6.3-alpine", "0e251dfb5109"]
+      - ["gcc6.3-alpine", "21fa07452935"]
+    slots:
+      <<: *default
+  - name: c-tester
+    # image for unit-testing student submissions
+    syntax: c
+    tags:
+      - ["latest",        ":gcc6.3-alpine"]
+      - ["gcc6.3-alpine", "5935cf5ef658"]
     slots:
       <<: *default
   - name: cpp
     syntax: cpp
     tags:
       - ["latest",        ":gcc6.3-alpine"]
-      - ["gcc6.3-alpine", "a5b52501b789"]
+      - ["gcc6.3-alpine", "57d856b3aaff"]
+    slots:
+      <<: *default
+  - name: cpp-tester
+    # image for unit-testing student submissions
+    syntax: cpp
+    tags:
+      - ["latest",        ":gcc6.3-alpine"]
+      - ["gcc6.3-alpine", "93d85b2d9711"]
     slots:
       <<: *default
   - name: go
@@ -119,6 +155,14 @@ images:
       - ["8-alpine", "940ad16f3414"]
     slots:
       <<: *default
+  - name: java-tester
+    # image for unit-testing student submissions
+    syntax: java
+    tags:
+      - ["latest",   ":8-alpine"]
+      - ["8-alpine", "e5da92062a68"]
+    slots:
+      <<: *default
   - name: php
     syntax: php
     tags:
@@ -145,5 +189,12 @@ images:
     tags:
       - ["latest",        ":ghc8.2-debian"]
       - ["ghc8.2-debian", "b376929b9af7"]
+    slots:
+      <<: *default
+  - name: scheme
+    syntax: scheme
+    tags:
+      - ["latest",     ":9.2-alpine"]
+      - ["9.2-alpine", "3b093127533b"]
     slots:
       <<: *default

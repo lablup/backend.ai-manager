@@ -33,9 +33,9 @@ class TestAdminQuery:
             await conn.execute(query)
 
         query = '{ agent(agent_id: "test-agent-id") { status region addr } }'
-        req_bytes = json.dumps({'query': query}).encode()
-        headers = get_headers('POST', self.url, req_bytes)
-        ret = await client.post(self.url, data=req_bytes, headers=headers)
+        payload = json.dumps({'query': query}).encode()
+        headers = get_headers('POST', self.url, payload)
+        ret = await client.post(self.url, data=payload, headers=headers)
 
         assert ret.status == 200
         rsp_json = await ret.json()
@@ -66,9 +66,9 @@ class TestAdminQuery:
                 await conn.execute(query)
 
         query = '{ agents { status region addr } }'
-        req_bytes = json.dumps({'query': query}).encode()
-        headers = get_headers('POST', self.url, req_bytes)
-        ret = await client.post(self.url, data=req_bytes, headers=headers)
+        payload = json.dumps({'query': query}).encode()
+        headers = get_headers('POST', self.url, payload)
+        ret = await client.post(self.url, data=payload, headers=headers)
 
         assert ret.status == 200
         rsp_json = await ret.json()
@@ -81,9 +81,9 @@ class TestAdminQuery:
 
         # query with status
         query = '{ agents(status: "LOST") { status region addr } }'
-        req_bytes = json.dumps({'query': query}).encode()
-        headers = get_headers('POST', self.url, req_bytes)
-        ret = await client.post(self.url, data=req_bytes, headers=headers)
+        payload = json.dumps({'query': query}).encode()
+        headers = get_headers('POST', self.url, payload)
+        ret = await client.post(self.url, data=payload, headers=headers)
 
         assert ret.status == 200
         rsp_json = await ret.json()
@@ -95,9 +95,9 @@ class TestAdminQuery:
         app, client = await create_app_and_client(modules=['auth', 'admin'])
 
         query = '{ keypair { access_key secret_key is_active is_admin } }'
-        req_bytes = json.dumps({'query': query}).encode()
-        headers = get_headers('POST', self.url, req_bytes)
-        ret = await client.post(self.url, data=req_bytes, headers=headers)
+        payload = json.dumps({'query': query}).encode()
+        headers = get_headers('POST', self.url, payload)
+        ret = await client.post(self.url, data=payload, headers=headers)
 
         assert ret.status == 200
         rsp_json = await ret.json()
@@ -114,9 +114,9 @@ class TestAdminQuery:
         query = '''{ keypair(access_key: "AKIANABBDUSEREXAMPLE") {
     access_key secret_key is_active is_admin
 } }'''
-        req_bytes = json.dumps({'query': query}).encode()
-        headers = get_headers('POST', self.url, req_bytes)
-        ret = await client.post(self.url, data=req_bytes, headers=headers)
+        payload = json.dumps({'query': query}).encode()
+        headers = get_headers('POST', self.url, payload)
+        ret = await client.post(self.url, data=payload, headers=headers)
 
         assert ret.status == 200
         rsp_json = await ret.json()
@@ -130,20 +130,25 @@ class TestAdminQuery:
                                   default_keypair, user_keypair):
         app, client = await create_app_and_client(modules=['auth', 'admin'])
 
-        query = '{ keypairs(user_id: 2) { access_key secret_key } }'
-        req_bytes = json.dumps({'query': query}).encode()
-        headers = get_headers('POST', self.url, req_bytes)
-        ret = await client.post(self.url, data=req_bytes, headers=headers)
+        # directly embed value inside the query
+        query = '{ keypairs(user_id: "admin@lablup.com") { access_key secret_key } }'
+        payload = json.dumps({'query': query}).encode()
+        headers = get_headers('POST', self.url, payload)
+        ret = await client.post(self.url, data=payload, headers=headers)
 
         assert ret.status == 200
         rsp_json = await ret.json()
         assert rsp_json['keypairs'][0]['access_key'] == default_keypair['access_key']
         assert rsp_json['keypairs'][0]['secret_key'] == default_keypair['secret_key']
 
-        query = '{ keypairs(user_id: 3) { access_key secret_key } }'
-        req_bytes = json.dumps({'query': query}).encode()
-        headers = get_headers('POST', self.url, req_bytes)
-        ret = await client.post(self.url, data=req_bytes, headers=headers)
+        # use a parametrized query.
+        query = 'query($uid: String!) {\n' \
+                '  keypairs(user_id: $uid) { access_key secret_key }\n' \
+                '}'
+        variables = {'uid': 'user@lablup.com'}
+        payload = json.dumps({'query': query, 'variables': variables}).encode()
+        headers = get_headers('POST', self.url, payload)
+        ret = await client.post(self.url, data=payload, headers=headers)
 
         assert ret.status == 200
         rsp_json = await ret.json()
@@ -165,9 +170,9 @@ class TestAdminQuery:
             await conn.execute(query)
 
         query = '{ vfolders { host name max_files max_size } }'
-        req_bytes = json.dumps({'query': query}).encode()
-        headers = get_headers('POST', self.url, req_bytes)
-        ret = await client.post(self.url, data=req_bytes, headers=headers)
+        payload = json.dumps({'query': query}).encode()
+        headers = get_headers('POST', self.url, payload)
+        ret = await client.post(self.url, data=payload, headers=headers)
 
         assert ret.status == 200
         rsp_json = await ret.json()
@@ -208,6 +213,7 @@ class TestAdminQuery:
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
                 'lang': 'lua:latest',
+                'tag': 'test-tag',
                 'access_key': default_keypair['access_key'],
                 'mem_slot': 1,
                 'cpu_slot': 1,
@@ -222,10 +228,10 @@ class TestAdminQuery:
             })
             await conn.execute(query)
 
-        query = '{ compute_sessions { sess_id role agent lang } }'
-        req_bytes = json.dumps({'query': query}).encode()
-        headers = get_headers('POST', self.url, req_bytes)
-        ret = await client.post(self.url, data=req_bytes, headers=headers)
+        query = '{ compute_sessions { sess_id role agent lang tag } }'
+        payload = json.dumps({'query': query}).encode()
+        headers = get_headers('POST', self.url, payload)
+        ret = await client.post(self.url, data=payload, headers=headers)
 
         assert ret.status == 200
         rsp_json = await ret.json()
@@ -233,6 +239,7 @@ class TestAdminQuery:
         assert rsp_json['compute_sessions'][0]['role'] == 'master'
         assert rsp_json['compute_sessions'][0]['agent'] == 'test-agent-id'
         assert rsp_json['compute_sessions'][0]['lang'] == 'lua:latest'
+        assert rsp_json['compute_sessions'][0]['tag'] == 'test-tag'
 
     @pytest.mark.asyncio
     async def test_query_compute_worker(self, create_app_and_client, get_headers,
@@ -266,6 +273,7 @@ class TestAdminQuery:
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
                 'lang': 'lua:latest',
+                'tag': 'test-tag',
                 'access_key': default_keypair['access_key'],
                 'mem_slot': 1,
                 'cpu_slot': 1,
@@ -303,9 +311,9 @@ class TestAdminQuery:
             await conn.execute(query)
 
         query = '{ compute_workers(sess_id: "test-sess-id") { role agent lang } }'
-        req_bytes = json.dumps({'query': query}).encode()
-        headers = get_headers('POST', self.url, req_bytes)
-        ret = await client.post(self.url, data=req_bytes, headers=headers)
+        payload = json.dumps({'query': query}).encode()
+        headers = get_headers('POST', self.url, payload)
+        ret = await client.post(self.url, data=payload, headers=headers)
 
         assert ret.status == 200
         rsp_json = await ret.json()
@@ -322,9 +330,9 @@ class TestUserQuery:
         app, client = await create_app_and_client(modules=['auth', 'admin'])
 
         query = '{ keypair { access_key secret_key is_active is_admin } }'
-        req_bytes = json.dumps({'query': query}).encode()
-        headers = get_headers('POST', self.url, req_bytes, keypair=user_keypair)
-        ret = await client.post(self.url, data=req_bytes, headers=headers)
+        payload = json.dumps({'query': query}).encode()
+        headers = get_headers('POST', self.url, payload, keypair=user_keypair)
+        ret = await client.post(self.url, data=payload, headers=headers)
 
         assert ret.status == 200
         rsp_json = await ret.json()
@@ -348,9 +356,9 @@ class TestUserQuery:
             await conn.execute(query)
 
         query = '{ vfolders { host name max_files max_size } }'
-        req_bytes = json.dumps({'query': query}).encode()
-        headers = get_headers('POST', self.url, req_bytes, keypair=user_keypair)
-        ret = await client.post(self.url, data=req_bytes, headers=headers)
+        payload = json.dumps({'query': query}).encode()
+        headers = get_headers('POST', self.url, payload, keypair=user_keypair)
+        ret = await client.post(self.url, data=payload, headers=headers)
 
         assert ret.status == 200
         rsp_json = await ret.json()
@@ -392,6 +400,7 @@ class TestUserQuery:
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
                 'lang': 'lua:latest',
+                'tag': 'test-tag',
                 'access_key': user_keypair['access_key'],
                 'mem_slot': 1,
                 'cpu_slot': 1,
@@ -406,10 +415,10 @@ class TestUserQuery:
             })
             await conn.execute(query)
 
-        query = '{ compute_sessions { sess_id role agent lang } }'
-        req_bytes = json.dumps({'query': query}).encode()
-        headers = get_headers('POST', self.url, req_bytes, keypair=user_keypair)
-        ret = await client.post(self.url, data=req_bytes, headers=headers)
+        query = '{ compute_sessions { sess_id role agent lang tag } }'
+        payload = json.dumps({'query': query}).encode()
+        headers = get_headers('POST', self.url, payload, keypair=user_keypair)
+        ret = await client.post(self.url, data=payload, headers=headers)
 
         assert ret.status == 200
         rsp_json = await ret.json()
@@ -417,6 +426,7 @@ class TestUserQuery:
         assert rsp_json['compute_sessions'][0]['role'] == 'master'
         assert rsp_json['compute_sessions'][0]['agent'] == 'test-agent-id'
         assert rsp_json['compute_sessions'][0]['lang'] == 'lua:latest'
+        assert rsp_json['compute_sessions'][0]['tag'] == 'test-tag'
 
     @pytest.mark.asyncio
     async def test_query_compute_worker(self, create_app_and_client, get_headers,
@@ -450,6 +460,7 @@ class TestUserQuery:
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
                 'lang': 'lua:latest',
+                'tag': 'test-tag',
                 'access_key': user_keypair['access_key'],
                 'mem_slot': 1,
                 'cpu_slot': 1,
@@ -487,9 +498,9 @@ class TestUserQuery:
             await conn.execute(query)
 
         query = '{ compute_workers(sess_id: "test-sess-id") { role agent lang } }'
-        req_bytes = json.dumps({'query': query}).encode()
-        headers = get_headers('POST', self.url, req_bytes, keypair=user_keypair)
-        ret = await client.post(self.url, data=req_bytes, headers=headers)
+        payload = json.dumps({'query': query}).encode()
+        headers = get_headers('POST', self.url, payload, keypair=user_keypair)
+        ret = await client.post(self.url, data=payload, headers=headers)
 
         assert ret.status == 200
         rsp_json = await ret.json()

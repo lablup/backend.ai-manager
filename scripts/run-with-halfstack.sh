@@ -7,4 +7,4 @@ export BACKEND_DB_USER=postgres
 export BACKEND_DB_PASSWORD=develove
 export BACKEND_DB_NAME=backend
 
-exec $@
+exec "$@"

@@ -1,3 +1,4 @@
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -80,6 +81,7 @@ class TestConfigServer:
         assert await config_server.etcd.get('nodes/manager')
         assert await config_server.etcd.get('nodes/redis')
         assert await config_server.etcd.get('nodes/manager/event_addr')
+        assert (await config_server.etcd.get('nodes/docker_registry')) == 'lablup'
 
     @pytest.mark.asyncio
     async def test_deregister_myself(self, app, config_server):
@@ -100,8 +102,8 @@ class TestConfigServer:
 
         img_data = list(await config_server.etcd.get_prefix(f'images/{name}'))
         assert (f'images/{name}', '1') in img_data
-        assert (f'images/{name}/cpu', '1') in img_data
-        assert (f'images/{name}/mem', '1024') in img_data
+        assert (f'images/{name}/cpu', '1.00') in img_data
+        assert (f'images/{name}/mem', '1.00') in img_data
         assert (f'images/{name}/gpu', '0.00') in img_data
         assert (f'images/{name}/tags/3.6-debian', 'ca7b9f52b6c2') in img_data
         alias_data = list(await config_server.etcd.get_prefix(f'images/_aliases'))
@@ -138,8 +140,8 @@ class TestConfigServer:
         name = 'test-python'
         tag = ''
         await config_server.etcd.put(f'images/{name}', 1)
-        await config_server.etcd.put(f'images/{name}/cpu', '1')
-        await config_server.etcd.put(f'images/{name}/mem', '1024')
+        await config_server.etcd.put(f'images/{name}/cpu', '1.00')
+        await config_server.etcd.put(f'images/{name}/mem', '1.00')
         await config_server.etcd.put(f'images/{name}/gpu', '0.00')
 
         try:
@@ -147,9 +149,9 @@ class TestConfigServer:
         finally:
             await config_server.etcd.delete_prefix(f'images/{name}')
 
-        assert ret.cpu == 1
-        assert ret.mem == 1024
-        assert ret.gpu == 0
+        assert ret.cpu == Decimal('1')
+        assert ret.mem == Decimal('1')
+        assert ret.gpu == Decimal('0')
 
     @pytest.mark.asyncio
     async def test_resolve_image_name(self, config_server,

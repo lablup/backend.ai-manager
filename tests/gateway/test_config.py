@@ -43,7 +43,7 @@ def test_args_parse_by_load_config():
     assert args.namespace == namespace
     assert args.etcd_addr == host_port_pair(etcd_addr)
     assert args.events_port == port_no(events_port)
-    assert args.docker_registry is None
+    assert args.docker_registry == 'lablup'
     assert args.heartbeat_timeout == 5.0
     assert args.service_ip == ip_address('0.0.0.0')
     assert args.service_port == 0

@@ -1,2 +1,1 @@
--e git+https://github.com/achimnol/aiohttp@dynamic-subapp-prefix#egg=aiohttp
 -e .

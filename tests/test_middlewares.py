@@ -13,9 +13,9 @@ async def test_api_method_override(test_client):
         observed_method = request.method
         return web.Response(body=b'test')
 
-    app.router.add_route('POST', '/v{version:\d+}/test',
+    app.router.add_route('POST', r'/v{version:\d+}/test',
                          method_placeholder('REPORT'))
-    app.router.add_route('REPORT', '/v{version:\d+}/test',
+    app.router.add_route('REPORT', r'/v{version:\d+}/test',
                          service_handler)
     app.middlewares.append(api_middleware)
     client = await test_client(app)
@@ -62,8 +62,8 @@ async def test_api_method_override_with_different_ops(test_client):
         observed_method = request.method
         return web.Response(body=b'op2')
 
-    app.router.add_route('POST', '/v{version:\d+}/test', op1_handler)
-    app.router.add_route('REPORT', '/v{version:\d+}/test', op2_handler)
+    app.router.add_route('POST', r'/v{version:\d+}/test', op1_handler)
+    app.router.add_route('REPORT', r'/v{version:\d+}/test', op2_handler)
     app.middlewares.append(api_middleware)
     client = await test_client(app)
 
@@ -108,7 +108,7 @@ async def test_api_ver(test_client):
         inner_request = request
         return web.Response(body=b'test')
 
-    app.router.add_post('/v{version:\d+}/test', dummy_handler)
+    app.router.add_post(r'/v{version:\d+}/test', dummy_handler)
     app.middlewares.append(api_middleware)
     client = await test_client(app)
 

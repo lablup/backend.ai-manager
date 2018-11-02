@@ -1,8 +1,79 @@
 Changes
 =======
 
-1.4.0 (to be released)
-----------------------
+18.12.0 (to be released)
+------------------------
+
+- Version numbers now follow year.month releases like Docker.
+  We plan to release stable versions on every 3 months (e.g., 18.12, 19.03, ...).
+
+1.4.2 (2018-11-01)
+------------------
+
+- Fix a critical regression bug of tracking available memory (RAM) of agents due to
+  changes to relative resource shares from absolute resource amounts.
+
+- Backport a temporary patch to limit the maximum number of kernel execution records
+  returned by the admin GraphQL API (until we have a proper pagination support).
+
+- Update the list of our public kernel images as we add support for latest TensorFlow
+  versions including v1.10 and v1.11 series.  More to come!
+
+1.4.1 (2018-10-17)
+------------------
+
+- Support CORS (cross-origin resource sharing) for browser-based API clients (#99).
+
+- Fix the agent revival detection routine to update agent's address and region
+  for movable demo devices (#100).
+
+- Update use of deprecate APIs in our dependencies such as aiohttp and aiodocker.
+
+- Let the config server to refresh configuration values from etcd once a minute.
+
+1.4.0 (2018-09-30)
+------------------
+
+- Expanded virtual folder APIs
+
+  - Downloading and uploading large files from virtual folders via streaming (#70)
+  - Inviting other users and accepting such invitations with three-level permissions
+    (read-only, read-write, read-write-delete) for collaboration via virtual folders
+    (#80)
+  - Now it requires explicit "recursive" option to remove directories (#89)
+  - New "mkdir" API to create empty directories (#89)
+
+- Support listing files in the session's main container. (#63)
+
+- All API endpoints are now available *without* version prefixes, as we migrate
+  to the vanilla aiohttp v3.4 release. (#78)
+
+- Change `user_id` column type of `keypairs` model from integer to string.
+  Now it can be used to store the user emails, UUIDs, or whatever identifiers
+  depending on the operator's environment.
+
+  Clients must be upgrade to 1.3.7 or higher to use string `user_id` properly.
+  (The client will auto-detect the type by trying type casting.)
+
+1.3.12 (2018-10-17)
+-------------------
+
+- Add CORS support (Hotfix #99 backported from v1.4 and master)
+
+1.3.11 (2018-06-07)
+-------------------
+
+- Drop custom-patched aiohttp and update it to official v3.3 release. (#78)
+
+- Fix intermittent failures in streaming uploads of small files.
+
+- Fix an internal "infinity integer" representation to have correct 64-bit maximum
+  unsgined value.
+
+1.3.10 (2018-05-01)
+-------------------
+
+- Fix a regression bug when restarting kernels.
 
 1.3.9 (2018-04-12)
 ------------------
