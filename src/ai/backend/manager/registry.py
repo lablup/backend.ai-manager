@@ -364,7 +364,9 @@ class AgentRegistry:
         environ = creation_config.get('environ') or {}
 
         if '/' in lang:
-            docker_registry, lang = lang.split('/')
+            tokens = lang.split('/')
+            docker_registry = '/'.join(tokens[:-1])
+            lang = tokens[-1]
         else:
             docker_registry = await self.config_server.get_docker_registry()
         name, tag = await self.config_server.resolve_image_name(lang)
@@ -411,7 +413,7 @@ class AgentRegistry:
             gpu=gpu_share,
         )
         lang = f'{docker_registry}/{name}:{tag}'
-        image_name = lang.replace('/', '/kernel-')
+        image_name = f'{docker_registry}/kernel-{name}:{tag}'
         runnable_agents = frozenset(await self.redis_image.smembers(image_name))
 
         async with reenter_txn(self.dbpool, conn) as conn:
