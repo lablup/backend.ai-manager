@@ -1,9 +1,23 @@
 Changes
 =======
 
+18.12.0 (to be released)
+------------------------
 
-1.5.0 (to be released)
-----------------------
+- Version numbers now follow year.month releases like Docker.
+  We plan to release stable versions on every 3 months (e.g., 18.12, 19.03, ...).
+
+1.4.2 (2018-11-01)
+------------------
+
+- Fix a critical regression bug of tracking available memory (RAM) of agents due to
+  changes to relative resource shares from absolute resource amounts.
+
+- Backport a temporary patch to limit the maximum number of kernel execution records
+  returned by the admin GraphQL API (until we have a proper pagination support).
+
+- Update the list of our public kernel images as we add support for latest TensorFlow
+  versions including v1.10 and v1.11 series.  More to come!
 
 1.4.1 (2018-10-17)
 ------------------
