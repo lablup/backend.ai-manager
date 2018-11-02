@@ -5,8 +5,8 @@ images:
     # The clients should use Python 3-compatibile syntax highlights
     # and leave Python 2 only codes as legacy.
     tags:
-      - ["latest",     ":3.6-debian"]
-      - ["3.6-debian", "ca7b9f52b6c2"]
+      - ["latest",     ":3.6-ubuntu"]
+      - ["3.6-ubuntu", "ca7b9f52b6c2"]
       # TODO: update kernel runner for ["2.7-debian", ""]
     slots: &default
       cpu: 1    # cores
