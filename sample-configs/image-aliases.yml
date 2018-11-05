@@ -26,10 +26,10 @@ aliases:
   - ['python2.7',  'python:2.7-debian']  # CodeOnWeb legacy
   - ['python:2',   'python:2.7-debian']  # preferred
   - ['python:2.7', 'python:2.7-debian']  # preferred
-  - ['python3',    'python:3.6-debian']  # CodeOnWeb legacy
-  - ['python3.6',  'python:3.6-debian']  # CodeOnWeb legacy
-  - ['python:3',   'python:3.6-debian']  # preferred
-  - ['python:3.6', 'python:3.6-debian']  # preferred
+  - ['python3',    'python:3.6-ubuntu']  # CodeOnWeb legacy
+  - ['python3.6',  'python:3.6-ubuntu']  # CodeOnWeb legacy
+  - ['python:3',   'python:3.6-ubuntu']  # preferred
+  - ['python:3.6', 'python:3.6-ubuntu']  # preferred
 
   - ['python3-deeplearning',     'python-tensorflow:latest-dense']      # CodeOnWeb lagecy
   - ['python3-deeplearning-gpu', 'python-tensorflow:latest-dense-gpu']  # CodeOnWeb lagecy

@@ -366,8 +366,6 @@ class AgentRegistry:
         name, tag = await self.config_server.resolve_image_name(lang)
         max_allowed_slot = \
             await self.config_server.get_image_required_slots(name, tag)
-        print(max_allowed_slot)
-        print(creation_config)
 
         try:
             cpu_share = Decimal(0)
@@ -377,6 +375,7 @@ class AgentRegistry:
                     Decimal(creation_config.get('instanceCores') or Decimal('inf')),
                 )
             else:
+                assert creation_config['instanceCores'] is not None
                 cpu_share = Decimal(creation_config['instanceCores'])
 
             mem_share = Decimal(0)
@@ -386,6 +385,7 @@ class AgentRegistry:
                     Decimal(creation_config.get('instanceMemory') or Decimal('inf')),
                 )
             else:
+                assert creation_config['instanceMemory'] is not None
                 mem_share = Decimal(creation_config['instanceMemory'])
 
             gpu_share = Decimal(0)
@@ -395,9 +395,13 @@ class AgentRegistry:
                     Decimal(creation_config.get('instanceGPUs') or Decimal('inf')),
                 )
             else:
+                assert creation_config['instanceGPUs'] is not None
                 gpu_share = Decimal(creation_config['instanceGPUs'])
-        except KeyError:
-            raise InvalidAPIParameters('You should specify resource limits.')
+        except (AssertionError, KeyError):
+            msg = ('You have missing resource limits that must be specified. '
+                   'If the server does not have default resource configurations, '
+                   'you must specify all resource limits by yourself.')
+            raise InvalidAPIParameters(msg)
 
         # units: share
         required_shares = ResourceSlot(
