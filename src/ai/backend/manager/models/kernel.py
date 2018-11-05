@@ -1,6 +1,8 @@
 from collections import OrderedDict
+from datetime import datetime
 import enum
 
+import attr
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
@@ -30,6 +32,12 @@ class KernelStatus(enum.Enum):
 
 
 LIVE_STATUS = frozenset(['BUILDING', 'RUNNING'])
+
+
+@attr.s(auto_attribs=True, slots=True)
+class SessionCreationRequest:
+    created_at: datetime
+    image: str
 
 
 kernels = sa.Table(
