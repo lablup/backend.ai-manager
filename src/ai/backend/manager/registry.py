@@ -365,8 +365,6 @@ class AgentRegistry:
         name, tag = await self.config_server.resolve_image_name(lang)
         max_allowed_slot = \
             await self.config_server.get_image_required_slots(name, tag)
-        print(max_allowed_slot)
-        print(creation_config)
 
         try:
             cpu_share = Decimal(0)

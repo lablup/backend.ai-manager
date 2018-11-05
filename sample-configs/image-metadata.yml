@@ -48,7 +48,7 @@ images:
     slots: &for_computing
       cpu: 4     # cores
       mem: 8.0   # GiB
-      gpu: null  # max.fraction of GPU device (nil means no limit)
+      gpu: 0.5   # max.fraction of GPU device
       # NOTE: gpu slot is only used for the images tagged with "-gpu".
   - name: python-caffe
     syntax: python
@@ -57,7 +57,6 @@ images:
       - ["1.0-py36", "9c5384df6631"]
     slots:
       <<: *for_computing
-      gpu: 1.0  # requires a full GPU if used
   - name: python-torch
     syntax: python
     tags:
@@ -67,7 +66,6 @@ images:
       - ["0.2-py36-gpu", "92c4d8d7e2f4"]
     slots:
       <<: *for_computing
-      gpu: 1.0   # requires a full GPU if used
   - name: julia
     syntax: julia
     tags:
