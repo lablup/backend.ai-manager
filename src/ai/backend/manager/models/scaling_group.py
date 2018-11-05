@@ -1,6 +1,7 @@
 from abc import ABCMeta, abstractmethod
+import asyncio
+from decimal import Decimal
 import enum
-from typing import Iterable
 
 import attr
 import sqlalchemy as sa
@@ -8,6 +9,7 @@ from sqlalchemy.sql.expression import true
 
 from .base import metadata
 from .kernel import SessionCreationRequest
+from .agent import agents, ResourceSlot
 
 
 '''
@@ -26,6 +28,9 @@ Some design sketches:
 '''
 
 
+__all__ = ('ScalingEventType', 'ScalingGroup', 'AWSDefaultScalingDriver')
+
+
 class ScalingEventType(enum.Enum):
     SESSION_CREATED = 1
     SESSION_TERMINATED = 2
@@ -33,7 +38,7 @@ class ScalingEventType(enum.Enum):
     AGENT_LEFT = 4
 
 
-@attr.s(auto_atrribs=True, slots=True)
+@attr.s(auto_attribs=True, slots=True)
 class ScalingEvent:
     type: ScalingEventType
     session_id: str = None
@@ -42,19 +47,75 @@ class ScalingEvent:
 
 class ScalingGroup:
 
-    def __init__(self, config, scaling_driver, job_scheduler):
-        self.config = config
+    def __init__(self, group_id, registry, scaling_driver=None, job_scheduler=None):
+        self.group_id = group_id
+        self.registry = registry
+        if not scaling_driver:
+            scaling_driver = AWSDefaultScalingDriver()
         self.scaling_driver = scaling_driver
+        if not job_scheduler:
+            job_scheduler = SimpleFIFOJobScheduler()
         self.job_scheduler = job_scheduler
+        # TODO: set resource_margin
+        # TODO: create instances fit to resource_margin
 
-    async def current_available_shares(self):
-        raise NotImplementedError  # noqa
+    async def get_pending_requests(self):
+        # TODO: get pending kernels from DB
+        return []
+
+    async def register_request(self, request: SessionCreationRequest):
+        # TODO: save pending kernel DB
+        return {
+            'id': '',
+            'sess_id': request.sess_id,
+            'agent': None,
+            'agent_addr': None,
+            'kernel_host': None,
+            'lang': request.lang,
+        }
+
+    async def get_belonging_agents(self):
+        # TODO: get agents from DB
+        return []
+
+    async def get_available_shares(self):
+        async with self.registry.dbpool.acquire() as conn, conn.begin():
+            cols = [agents.c.id, agents.c.mem_slots, agents.c.used_mem_slots,
+                    agents.c.cpu_slots, agents.c.used_cpu_slots,
+                    agents.c.gpu_slots, agents.c.used_gpu_slots]
+            query = (sa.select(cols)
+                       .select_from(agents)
+                       .where(agents.c.scaling_group == self.group_id))
+
+            available_shares = []
+
+            async for row in conn.execute(query):
+                available_shares.append(ResourceSlot(
+                    id=row.id,
+                    mem=row.mem_slots - row.used_mem_slots,
+                    cpu=row.cpu_slots - row.used_cpu_slots,
+                    gpu=row.gpu_slots - row.used_gpu_slots,
+                ))
+            return available_shares
+
+    async def get_required_shares(self, lang):
+        # TODO: return proper required shares depending on lang.
+        return ResourceSlot()
 
     async def minimum_prepared_shares(self):
-        raise NotImplementedError  # noqa
+        return ResourceSlot(
+            mem=Decimal(0),
+            cpu=Decimal(0),
+            gpu=Decimal(0),
+        )
 
     async def schedule(self):
-        raise NotImplementedError  # noqa
+        scheduled_requests = await self.job_scheduler.schedule(self)
+        await asyncio.gather(*[self._process_request(agent_id, request)
+                               for agent_id, request in scheduled_requests])
+
+    async def _process_request(self, agent_id, request):
+        await self.registry.create_session(agent_id, request)
 
 
 class AbstractScalingDriver(metaclass=ABCMeta):
@@ -76,7 +137,7 @@ class AWSDefaultScalingDriver(AbstractScalingDriver):
 
     def __init__(self, config_server):
         super().__init__(config_server)
-        self.config = config_server
+        self.config_server = config_server
 
         # prevent race-condition of asynchronous agent launches
         # and scale-up decisions *during* scaling
@@ -85,7 +146,6 @@ class AWSDefaultScalingDriver(AbstractScalingDriver):
         # (instead of simple flag)
         self._pending_scaling = False
 
-    @abstractmethod
     async def scale(self, event: ScalingEvent,
                     pending_requests: Iterable[SessionCreationRequest],
                     scaling_group: ScalingGroup):
@@ -100,7 +160,7 @@ class AWSDefaultScalingDriver(AbstractScalingDriver):
                     self._pending_scaling = False
             return
 
-        available_shares = await scaling_group.current_available_shares()
+        available_shares = await scaling_group.get_available_shares()
         minimum_prepared_shares = await scaling_group.minimum_prepared_shares()
         remaining_shares = available_shares - minimum_prepared_shares
 
@@ -118,9 +178,9 @@ class AWSDefaultScalingDriver(AbstractScalingDriver):
             # just an example.......
             requested_shares = sum(map(lambda rqst: rqst.required_resource,
                                        pending_requests))
-            if requested_shares > available_shares + some_margin:
+            if requested_shares > remaining_shares:
                 agent_type = self.choose_agent_type(
-                    available_shares - requested_shares)
+                    remaining_shares - requested_shares)
                 self._pending_scaling = True
                 await self.add_agents(agent_type, count)
 
@@ -147,8 +207,7 @@ class AbstractJobScheduler(metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    async def schedule(self, pending_requests: Iterable[SessionCreationRequest],
-                       scaling_group: ScalingGroup):
+    async def schedule(self, scaling_group: ScalingGroup):
         '''
         This callback method is invoked when there are new session creation requests,
         terminated sessions, and increases of the scaling group resources.
@@ -161,14 +220,15 @@ class AbstractJobScheduler(metaclass=ABCMeta):
 
 class SimpleFIFOJobScheduler(AbstractJobScheduler):
 
-    async def schedule(self, pending_requests, scaling_group):
+    async def schedule(self, scaling_group):
         # pseudo-code
+        pending_requests = await scaling_group.get_pending_requests()
         schedulable_requests = []
-        remaining_resource = scaling_group.current_available_shares()
+        available_shares = scaling_group.get_available_shares()
         for rqst in pending_requests.order_by('created_at', desc=True):
-            if rqst.can_run_with(remaining_resource):
+            if rqst.can_run_with(available_shares):
                 schedulable_requests.append(rqst)
-                remaining_resource -= rqst.required_resource
+                available_shares -= rqst.required_resource
         return schedulable_requests
 
 

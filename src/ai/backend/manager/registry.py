@@ -26,7 +26,8 @@ from ..gateway.exceptions import (
     AgentError)
 from .models import (
     agents, kernels, keypairs,
-    ResourceSlot, AgentStatus, KernelStatus
+    ResourceSlot, AgentStatus, KernelStatus,
+    ScalingGroup, SessionCreationRequest,
 )
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
@@ -112,6 +113,11 @@ class AgentRegistry:
 
     async def shutdown(self):
         pass
+
+    async def get_scaling_group(self, agent_id=None, scaling_group=None):
+        # TODO: return scaling group by scaling_group
+        #       or to which agent with agent_id belongs.
+        return ScalingGroup(self)
 
     async def get_instance(self, inst_id, field=None):
         async with self.dbpool.acquire() as conn, conn.begin():
@@ -338,7 +344,7 @@ class AgentRegistry:
 
     async def get_or_create_session(self, sess_id, access_key,
                                     lang, creation_config,
-                                    conn=None, tag=None):
+                                    conn=None, tag=None, scaling_group=None):
         try:
             kern = await self.get_session(sess_id, access_key)
             canonical_lang = await self.config_server.resolve_image_name(lang)
@@ -347,143 +353,217 @@ class AgentRegistry:
                 raise KernelAlreadyExists
             created = False
         except KernelNotFound:
-            kern = await self.create_session(
+        #     kern = await self.create_session(
+        #         sess_id, access_key,
+        #         lang, creation_config,
+        #         conn=conn, session_tag=tag, scaling_group=scaling_group)
+        #     created = True
+        # assert kern is not None
+        # return kern, created
+            kern = await self.enqueue_session(
                 sess_id, access_key,
                 lang, creation_config,
-                conn=conn, session_tag=tag)
+                conn=conn, session_tag=tag, scaling_group=scaling_group)
             created = True
         assert kern is not None
         return kern, created
 
-    async def create_session(self, sess_id, access_key,
-                             lang, creation_config,
-                             conn=None, session_tag=None):
-        agent_id = None
-        created_info = None
+    async def enqueue_session(self, sess_id, access_key,
+                              lang, creation_config,
+                              conn=None, session_tag=None, scaling_group=None):
+        if scaling_group is None:
+            scaling_group = 'default'
+        scaling_group = await self.get_scaling_group(scaling_group=scaling_group)
+
+        name, tag = await self.config_server.resolve_image_name(lang)
+        lang = f'{name}:{tag}'
+
+        kernel_id = uuid.uuid4()
+
+        request = SessionCreationRequest(
+            sess_id=sess_id,
+            kernel_id=kernel_id,
+            access_key=access_key,
+            lang=lang,
+            session_tag=session_tag,
+            creation_config=creation_config,
+        )
+        kernel_access_info = await scaling_group.register_request(request)
+        await scaling_group.schedule()
+        return kernel_access_info
+
+        # TODO: move to ScalingGroup.register_request().
+        # TODO: since now we should maintain creation_config
+        #       until self.create_session is called,
+        #       we should save it into DB.
+        # async with reenter_txn(self.dbpool, conn) as conn:
+        #     # Register kernel.
+        #     kernel_id = uuid.uuid4()
+        #     query = kernels.insert().values({
+        #         'id': kernel_id,
+        #         'status': KernelStatus.PENDING,
+        #         'sess_id': sess_id,
+        #         'role': 'master',
+        #         'agent': None,
+        #         'agent_addr': '',
+        #         'access_key': access_key,
+        #         'lang': lang,
+        #         'tag': session_tag,
+        #         # units: absolute
+        #         'mem_slot': 0,
+        #         'cpu_slot': 0,
+        #         'gpu_slot': 0,
+        #         'environ': [],
+        #         'cpu_set': [],
+        #         'gpu_set': [],
+        #         'kernel_host': None,
+        #         'repl_in_port': 0,
+        #         'repl_out_port': 0,
+        #         'stdin_port': 0,
+        #         'stdout_port': 0,
+        #     })
+        #     result = await conn.execute(query)
+        #     assert result.rowcount == 1
+        #
+        #     scaling_group.register_request(sess_id, kernel_id, creation_config)
+        #     self.loop.create_task(scaling_group.schedule())
+        #
+        #     kernel_access_info = {
+        #         'id': kernel_id,
+        #         'sess_id': sess_id,
+        #         'agent': None,
+        #         'agent_addr': None,
+        #         'kernel_host': None,
+        #         'lang': lang,
+        #     }
+        #     return kernel_access_info
+
+    async def create_session(self, agent_id, request: SessionCreationRequest,
+                             conn=None):
+        sess_id = request.sess_id
+        kernel_id = request.kernel_id
+        creation_config = request.creation_config
+
         mounts = creation_config.get('mounts') or []
         environ = creation_config.get('environ') or {}
 
-        name, tag = await self.config_server.resolve_image_name(lang)
-        max_allowed_slot = \
-            await self.config_server.get_image_required_slots(name, tag)
-        print(max_allowed_slot)
-        print(creation_config)
-
-        try:
-            cpu_share = Decimal(0)
-            if max_allowed_slot.cpu is not None:
-                cpu_share = min(
-                    max_allowed_slot.cpu,
-                    Decimal(creation_config.get('instanceCores') or Decimal('inf')),
-                )
-            else:
-                cpu_share = Decimal(creation_config['instanceCores'])
-
-            mem_share = Decimal(0)
-            if max_allowed_slot.mem is not None:
-                mem_share = min(
-                    max_allowed_slot.mem,
-                    Decimal(creation_config.get('instanceMemory') or Decimal('inf')),
-                )
-            else:
-                mem_share = Decimal(creation_config['instanceMemory'])
-
-            gpu_share = Decimal(0)
-            if max_allowed_slot.gpu is not None:
-                gpu_share = min(
-                    max_allowed_slot.gpu,
-                    Decimal(creation_config.get('instanceGPUs') or Decimal('inf')),
-                )
-            else:
-                gpu_share = Decimal(creation_config['instanceGPUs'])
-        except KeyError:
-            raise InvalidAPIParameters('You should specify resource limits.')
-
-        # units: share
-        required_shares = ResourceSlot(
-            id=None,
-            cpu=cpu_share,
-            mem=mem_share,
-            gpu=gpu_share,
-        )
-        lang = f'{name}:{tag}'
-        runnable_agents = frozenset(await self.redis_image.smembers(lang))
+        # TODO: move below to JobScheduler.schedule()
+        # name, tag = await self.config_server.resolve_image_name(lang)
+        # max_allowed_slot = \
+        #     await self.config_server.get_image_required_slots(name, tag)
+        # print(max_allowed_slot)
+        # print(creation_config)
+        #
+        # try:
+        #     cpu_share = Decimal(0)
+        #     if max_allowed_slot.cpu is not None:
+        #         cpu_share = min(
+        #             max_allowed_slot.cpu,
+        #             Decimal(creation_config.get('instanceCores') or Decimal('inf')),
+        #         )
+        #     else:
+        #         cpu_share = Decimal(creation_config['instanceCores'])
+        #
+        #     mem_share = Decimal(0)
+        #     if max_allowed_slot.mem is not None:
+        #         mem_share = min(
+        #             max_allowed_slot.mem,
+        #             Decimal(creation_config.get('instanceMemory') or Decimal('inf')),
+        #         )
+        #     else:
+        #         mem_share = Decimal(creation_config['instanceMemory'])
+        #
+        #     gpu_share = Decimal(0)
+        #     if max_allowed_slot.gpu is not None:
+        #         gpu_share = min(
+        #             max_allowed_slot.gpu,
+        #             Decimal(creation_config.get('instanceGPUs') or Decimal('inf')),
+        #         )
+        #     else:
+        #         gpu_share = Decimal(creation_config['instanceGPUs'])
+        # except KeyError:
+        #     raise InvalidAPIParameters('You should specify resource limits.')
+        #
+        # # units: share
+        # required_shares = ResourceSlot(
+        #     id=None,
+        #     cpu=cpu_share,
+        #     mem=mem_share,
+        #     gpu=gpu_share,
+        # )
+        # lang = f'{name}:{tag}'
+        # runnable_agents = frozenset(await self.redis_image.smembers(lang))
 
         async with reenter_txn(self.dbpool, conn) as conn:
 
-            # scan available slots from alive agents
-            avail_slots = []
-            query = (sa.select([agents], for_update=True)
-                       .where(agents.c.status == AgentStatus.ALIVE))
-
-            async for row in conn.execute(query):
-                if row['id'] not in runnable_agents:
-                    continue
-                sdiff = ResourceSlot(
-                    id=row['id'],
-                    mem=row['mem_slots'] - row['used_mem_slots'],
-                    cpu=row['cpu_slots'] - row['used_cpu_slots'],
-                    gpu=row['gpu_slots'] - row['used_gpu_slots'],
-                )
-                avail_slots.append(sdiff)
-
-            # check minimum requirement
-            avail_slots = [s for s in avail_slots
-                           if s.mem >= (required_shares.mem * 1024) and
-                              s.cpu >= required_shares.cpu and
-                              s.gpu >= required_shares.gpu]
-
-            # load-balance
-            if avail_slots:
-                agent_id = (max(avail_slots, key=lambda s: (s.gpu, s.cpu, s.mem))).id
-            else:
-                raise InstanceNotAvailable
-
-            # reserve slots
-            mem_col = agents.c.used_mem_slots
-            cpu_col = agents.c.used_cpu_slots
-            gpu_col = agents.c.used_gpu_slots
-            query = (sa.update(agents)
-                       .values({
-                           'used_mem_slots': mem_col + required_shares.mem * 1024,
-                           'used_cpu_slots': cpu_col + required_shares.cpu,
-                           'used_gpu_slots': gpu_col + required_shares.gpu,
-                       })
-                       .where(agents.c.id == agent_id))
-            result = await conn.execute(query)
-            assert result.rowcount == 1
+            # TODO: move below to JobScheduler::schedule()
+            # # scan available slots from alive agents
+            # avail_slots = []
+            # query = (sa.select([agents], for_update=True)
+            #            .where(agents.c.status == AgentStatus.ALIVE))
+            #
+            # async for row in conn.execute(query):
+            #     if row['id'] not in runnable_agents:
+            #         continue
+            #     sdiff = ResourceSlot(
+            #         id=row['id'],
+            #         mem=row['mem_slots'] - row['used_mem_slots'],
+            #         cpu=row['cpu_slots'] - row['used_cpu_slots'],
+            #         gpu=row['gpu_slots'] - row['used_gpu_slots'],
+            #     )
+            #     avail_slots.append(sdiff)
+            #
+            # # check minimum requirement
+            # avail_slots = [s for s in avail_slots
+            #                if s.mem >= (required_shares.mem * 1024) and
+            #                   s.cpu >= required_shares.cpu and
+            #                   s.gpu >= required_shares.gpu]
+            #
+            # # load-balance
+            # if avail_slots:
+            #     agent_id = (max(avail_slots, key=lambda s: (s.gpu, s.cpu, s.mem))).id
+            # else:
+            #     raise InstanceNotAvailable
+            #
+            # # reserve slots
+            # mem_col = agents.c.used_mem_slots
+            # cpu_col = agents.c.used_cpu_slots
+            # gpu_col = agents.c.used_gpu_slots
+            # query = (sa.update(agents)
+            #            .values({
+            #                'used_mem_slots': mem_col + required_shares.mem * 1024,
+            #                'used_cpu_slots': cpu_col + required_shares.cpu,
+            #                'used_gpu_slots': gpu_col + required_shares.gpu,
+            #            })
+            #            .where(agents.c.id == agent_id))
+            # result = await conn.execute(query)
+            # assert result.rowcount == 1
 
             # Create kernel by invoking the agent on the instance.
-            query = (sa.select([agents.c.addr])
+            query = (sa.select('*')
                        .where(agents.c.id == agent_id))
-            agent_addr = await conn.scalar(query)
+            result = await conn.execute(query)
+            row = result.first()
+            access_key = row.access_key
+            required_shares = ResourceSlot(
+                id=agent_id,
+                mem=row.mem_slot,
+                cpu=row.cpu_slot,
+                gpu=row.gpu_slot,
+            )
+            lang = row.lang
+            agent_addr = row.agent_addr
             assert agent_addr is not None
 
-            # Prepare kernel.
-            kernel_id = uuid.uuid4()
-            query = kernels.insert().values({
-                'id': kernel_id,
-                'status': KernelStatus.PREPARING,
-                'sess_id': sess_id,
-                'role': 'master',
-                'agent': agent_id,
-                'agent_addr': agent_addr,
-                'access_key': access_key,
-                'lang': lang,
-                'tag': session_tag,
-                # units: absolute
-                'mem_slot': required_shares.mem * 1024,
-                'cpu_slot': required_shares.cpu,
-                'gpu_slot': required_shares.gpu,
-                'environ': [f'{k}={v}' for k, v in environ.items()],
-                'cpu_set': [],
-                'gpu_set': [],
-                'kernel_host': None,
-                'repl_in_port': 0,
-                'repl_out_port': 0,
-                'stdin_port': 0,
-                'stdout_port': 0,
-            })
+            # Update kernel status.
+            query = (kernels.update()
+                            .values({
+                                'status': KernelStatus.PREPARING,
+                                'agent': agent_id,
+                                'agent_addr': agent_addr,
+                                'environ': [f'{k}={v}' for k, v in environ.items()],
+                            })
+                            .where(kernels.c.id == kernel_id))
             result = await conn.execute(query)
             assert result.rowcount == 1
 
@@ -895,6 +975,9 @@ class AgentRegistry:
                        })
                        .where(agents.c.id == kernel['agent']))
             await conn.execute(query)
+
+            scaling_group = await self.get_scaling_group(agent_id=kernel['agent'])
+            self.loop.create_task(scaling_group.schedule())
 
     async def mark_session_terminated(self, sess_id, access_key):
         '''

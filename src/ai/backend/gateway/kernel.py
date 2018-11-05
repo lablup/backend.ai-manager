@@ -118,7 +118,8 @@ async def create(request) -> web.Response:
             kernel, created = await request.app['registry'].get_or_create_session(
                 sess_id, access_key,
                 params['lang'], creation_config,
-                conn=conn, tag=params.get('tag', None))
+                conn=conn, tag=params.get('tag', None),
+                scaling_group=params.get('scaling_group', None))
             resp['kernelId'] = str(kernel['sess_id'])
             resp['created'] = bool(created)
             if created:

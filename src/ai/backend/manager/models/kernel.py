@@ -1,6 +1,8 @@
 from collections import OrderedDict
 from datetime import datetime
 import enum
+from typing import Optional
+from uuid import UUID
 
 import attr
 import graphene
@@ -12,11 +14,14 @@ from .base import metadata, zero_if_none, EnumType, IDColumn
 __all__ = (
     'kernels', 'KernelStatus',
     'ComputeSession', 'ComputeWorker', 'Computation',
+    'SessionCreationRequest',
 )
 
 
 class KernelStatus(enum.Enum):
     # values are only meaningful inside the gateway
+    PENDING = 0
+    # ---
     PREPARING = 10
     # ---
     BUILDING = 20
@@ -36,8 +41,13 @@ LIVE_STATUS = frozenset(['BUILDING', 'RUNNING'])
 
 @attr.s(auto_attribs=True, slots=True)
 class SessionCreationRequest:
-    created_at: datetime
-    image: str
+    sess_id: str
+    kernel_id: UUID
+    access_key: str
+    lang: str
+    session_tag: str
+    creation_config: dict
+    created_at: Optional[datetime] = datetime.now()
 
 
 kernels = sa.Table(
