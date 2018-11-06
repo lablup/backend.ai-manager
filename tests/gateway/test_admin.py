@@ -219,7 +219,7 @@ class TestAdminQuery:
                 'role': 'master',
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
-                'lang': 'lua:latest',
+                'lang': 'lablup/lua:latest',
                 'tag': 'test-tag',
                 'access_key': default_keypair['access_key'],
                 'mem_slot': 1,
@@ -245,7 +245,7 @@ class TestAdminQuery:
         assert rsp_json['compute_sessions'][0]['sess_id'] == 'test-sess-id'
         assert rsp_json['compute_sessions'][0]['role'] == 'master'
         assert rsp_json['compute_sessions'][0]['agent'] == 'test-agent-id'
-        assert rsp_json['compute_sessions'][0]['lang'] == 'lua:latest'
+        assert rsp_json['compute_sessions'][0]['lang'] == 'lablup/lua:latest'
         assert rsp_json['compute_sessions'][0]['tag'] == 'test-tag'
 
     @pytest.mark.asyncio
@@ -280,7 +280,7 @@ class TestAdminQuery:
                 'role': 'master',
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
-                'lang': 'lua:latest',
+                'lang': 'lablup/lua:latest',
                 'tag': 'test-tag',
                 'access_key': default_keypair['access_key'],
                 'mem_slot': 1,
@@ -303,7 +303,7 @@ class TestAdminQuery:
                 'role': 'worker',
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
-                'lang': 'lua:latest',
+                'lang': 'lablup/lua:latest',
                 'access_key': default_keypair['access_key'],
                 'mem_slot': 1,
                 'cpu_slot': 1,
@@ -410,7 +410,7 @@ class TestUserQuery:
                 'role': 'master',
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
-                'lang': 'lua:latest',
+                'lang': 'lablup/lua:latest',
                 'tag': 'test-tag',
                 'access_key': user_keypair['access_key'],
                 'mem_slot': 1,
@@ -436,7 +436,7 @@ class TestUserQuery:
         assert rsp_json['compute_sessions'][0]['sess_id'] == 'test-sess-id'
         assert rsp_json['compute_sessions'][0]['role'] == 'master'
         assert rsp_json['compute_sessions'][0]['agent'] == 'test-agent-id'
-        assert rsp_json['compute_sessions'][0]['lang'] == 'lua:latest'
+        assert rsp_json['compute_sessions'][0]['lang'] == 'lablup/lua:latest'
         assert rsp_json['compute_sessions'][0]['tag'] == 'test-tag'
 
     @pytest.mark.asyncio
@@ -471,7 +471,7 @@ class TestUserQuery:
                 'role': 'master',
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
-                'lang': 'lua:latest',
+                'lang': 'lablup/lua:latest',
                 'tag': 'test-tag',
                 'access_key': user_keypair['access_key'],
                 'mem_slot': 1,
@@ -494,7 +494,7 @@ class TestUserQuery:
                 'role': 'worker',
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
-                'lang': 'lua:latest',
+                'lang': 'lablup/lua:latest',
                 'access_key': user_keypair['access_key'],
                 'mem_slot': 1,
                 'cpu_slot': 1,

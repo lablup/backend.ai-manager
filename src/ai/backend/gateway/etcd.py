@@ -138,6 +138,11 @@ class ConfigServer:
             origins = '*'
         return origins
 
+    @aiotools.lru_cache(maxsize=1)
+    async def get_docker_registry(self):
+        docker_registry = await self.etcd.get('nodes/docker_registry')
+        return docker_registry
+
     @aiotools.lru_cache(maxsize=1, expire_after=60.0)
     async def get_overbook_factors(self):
         '''
@@ -172,7 +177,7 @@ class ConfigServer:
         mem = None if mem == 'null' else Decimal(mem)
         if 'gpu' in tag:
             gpu = await self.etcd.get(f'images/{name}/gpu')
-            gpu = None if gpu == 'null' else Decimal(gpu)
+            gpu = Decimal(0) if gpu == 'null' else Decimal(gpu)
         else:
             gpu = Decimal(0)
         return ResourceSlot(mem=mem, cpu=cpu, gpu=gpu)

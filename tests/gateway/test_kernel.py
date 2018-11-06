@@ -243,7 +243,7 @@ async def test_get_info(prepare_kernel, get_headers):
 
     assert ret.status == 200
     rsp_json = await ret.json()
-    assert rsp_json['lang'] == 'lua:5.3-alpine'
+    assert rsp_json['lang'] == 'lablup/lua:5.3-alpine'
 
 
 @pytest.mark.integration
