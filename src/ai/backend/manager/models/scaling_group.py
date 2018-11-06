@@ -117,6 +117,9 @@ class ScalingGroup:
     async def _process_request(self, agent_id, request):
         await self.registry.create_session(agent_id, request)
 
+    async def scale(self, event):
+        await self.scaling_driver.scale(event, self)
+
 
 class AbstractScalingDriver(metaclass=ABCMeta):
 
@@ -125,7 +128,6 @@ class AbstractScalingDriver(metaclass=ABCMeta):
 
     @abstractmethod
     async def scale(self, event: ScalingEvent,
-                    pending_requests: Iterable[SessionCreationRequest],
                     scaling_group: ScalingGroup):
         '''
         This callback method is invoked.
@@ -147,8 +149,9 @@ class AWSDefaultScalingDriver(AbstractScalingDriver):
         self._pending_scaling = False
 
     async def scale(self, event: ScalingEvent,
-                    pending_requests: Iterable[SessionCreationRequest],
                     scaling_group: ScalingGroup):
+
+        pending_requests = await scaling_group.get_pending_requests()
 
         # pseudo-code
         if self._pending_scaling:

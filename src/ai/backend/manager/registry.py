@@ -27,8 +27,7 @@ from ..gateway.exceptions import (
 from .models import (
     agents, kernels, keypairs,
     ResourceSlot, AgentStatus, KernelStatus,
-    ScalingGroup, SessionCreationRequest,
-)
+    ScalingGroup, ScalingEventType, SessionCreationRequest)
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
 
@@ -389,6 +388,7 @@ class AgentRegistry:
             creation_config=creation_config,
         )
         kernel_access_info = await scaling_group.register_request(request)
+        await scaling_group.scale(ScalingEventType.SESSION_CREATED)
         await scaling_group.schedule()
         return kernel_access_info
 
@@ -807,7 +807,8 @@ class AgentRegistry:
             query = (sa.select([agents.c.status,
                                 agents.c.mem_slots,
                                 agents.c.cpu_slots,
-                                agents.c.gpu_slots],
+                                agents.c.gpu_slots,
+                                agents.c.scaling_group],
                                for_update=True)
                        .select_from(agents)
                        .where(agents.c.id == agent_id))
@@ -820,13 +821,18 @@ class AgentRegistry:
                                      Decimal(ob_factors['cpu']))
             reported_gpu_slots = int(Decimal(agent_info['gpu_slots']) *
                                      Decimal(ob_factors['gpu']))
+            scaling_group = agent_info['scaling_group']
+            agent_created = False
             if row is None or row.status is None:
                 # new agent detected!
-                log.info('agent {0} joined!', agent_id)
+                agent_created = True
+                log.info('agent {0} joined! (scaling group: {1})',
+                         agent_id, scaling_group)
                 query = agents.insert().values({
                     'id': agent_id,
                     'status': AgentStatus.ALIVE,
                     'region': agent_info['region'],
+                    'scaling_group': scaling_group,
                     'mem_slots': reported_mem_slots,
                     'cpu_slots': reported_cpu_slots,
                     'gpu_slots': reported_gpu_slots,
@@ -841,6 +847,14 @@ class AgentRegistry:
                 assert result.rowcount == 1
             elif row.status == AgentStatus.ALIVE:
                 changed_cols = {}
+                if scaling_group != row.scaling_group:
+                    # Scaling group of an agent cannot be changed when it is running,
+                    # so updated scaling group implies the agent has been terminated
+                    # and then started and assigned to different scaling group.
+                    agent_created = True
+                    log.warning('agent {0} revived! (scaling group: {1})',
+                                agent_id, scaling_group)
+                    changed_cols['scaling_group'] = scaling_group
                 if row.mem_slots != reported_mem_slots:
                     changed_cols['mem_slots'] = reported_mem_slots
                 if row.cpu_slots != reported_cpu_slots:
@@ -853,11 +867,14 @@ class AgentRegistry:
                                .where(agents.c.id == agent_id))
                     await conn.execute(query)
             elif row.status in (AgentStatus.LOST, AgentStatus.TERMINATED):
-                log.warning('agent {0} revived!', agent_id)
+                agent_created = True
+                log.warning('agent {0} revived! (scaling_group: {1})',
+                            agent_id, scaling_group)
                 query = (sa.update(agents)
                            .values({
                                'status': AgentStatus.ALIVE,
                                'region': agent_info['region'],
+                               'scaling_group': scaling_group,
                                'addr': agent_info['addr'],
                                'lost_at': None,
                                'mem_slots': reported_mem_slots,
@@ -868,6 +885,12 @@ class AgentRegistry:
                 await conn.execute(query)
             else:
                 log.error('should not reach here! {0}', type(row.status))
+
+            if agent_created:
+                scaling_group = await self.get_scaling_group(
+                    scaling_group=scaling_group)
+                await scaling_group.scale(ScalingEventType.AGENT_JOINED)
+                await scaling_group.schedule()
 
         # Update the mapping of kernel images to agents.
         images = msgpack.unpackb(snappy.decompress(agent_info['images']))
@@ -913,6 +936,9 @@ class AgentRegistry:
                        })
                        .where(agents.c.id == agent_id))
             await conn.execute(query)
+
+            scaling_group = await self.get_scaling_group(agent_id=agent_id)
+            await scaling_group.scale(ScalingEventType.AGENT_LEFT)
 
     async def mark_kernel_terminated(self, kernel_id, conn=None):
         '''
@@ -977,7 +1003,11 @@ class AgentRegistry:
             await conn.execute(query)
 
             scaling_group = await self.get_scaling_group(agent_id=kernel['agent'])
-            self.loop.create_task(scaling_group.schedule())
+            # We need to scale first, and then schedule requests.
+            # This is to prevent scheduler from assigning kernels to
+            # agents that can be terminated by scaling-in process.
+            await scaling_group.scale(ScalingEventType.SESSION_TERMINATED)
+            await scaling_group.schedule()
 
     async def mark_session_terminated(self, sess_id, access_key):
         '''
