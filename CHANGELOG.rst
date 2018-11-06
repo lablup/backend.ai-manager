@@ -7,6 +7,15 @@ Changes
 - Version numbers now follow year.month releases like Docker.
   We plan to release stable versions on every 3 months (e.g., 18.12, 19.03, ...).
 
+1.4.3 (2018-11-06)
+------------------
+
+- Fix creation of GPU sessions with GPU resource limits unspecified in the
+  client-side.  The problem was due to a combination of misconfiguration
+  (image-metadata.yml) and mishandling of "None" values with valid dictionary keys.
+
+- Update coding style rules and the flake8 package.
+
 1.4.2 (2018-11-01)
 ------------------
 

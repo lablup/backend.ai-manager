@@ -59,7 +59,7 @@ To develop and debug, configure the manager as follows:
 ~/manager (venv-manager) $ cp alembic.ini.sample alembic.ini
 ~/manager (venv-manager) $ edit alembic.ini  # match the config with the halfstack
 ~/manager (venv-manager) $ scripts/run-with-halfstack.sh backend.ai-manager schema oneshot head
-~/manager (venv-manager) $ scripts/run-with-halfstack.sh backend.ai-manager fixture populate example_keypairs
+~/manager (venv-manager) $ scripts/run-with-halfstack.sh backend.ai-manager fixture populate example_keypair
 ```
 
 To run tests:

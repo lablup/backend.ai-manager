@@ -44,6 +44,7 @@ class SessionCreationRequest:
     sess_id: str
     kernel_id: UUID
     access_key: str
+    docker_registry: str
     lang: str
     session_tag: str
     creation_config: dict
@@ -59,7 +60,7 @@ kernels = sa.Table(
     sa.Column('agent_addr', sa.String(length=128), nullable=False),
     sa.Column('access_key', sa.String(length=20),
               sa.ForeignKey('keypairs.access_key')),
-    sa.Column('lang', sa.String(length=64)),
+    sa.Column('lang', sa.String(length=512)),
     sa.Column('tag', sa.String(length=64), nullable=True),
 
     # Resource occupation

@@ -374,6 +374,12 @@ class AgentRegistry:
             scaling_group = 'default'
         scaling_group = await self.get_scaling_group(scaling_group=scaling_group)
 
+        if '/' in lang:
+            tokens = lang.split('/')
+            docker_registry = '/'.join(tokens[:-1])
+            lang = tokens[-1]
+        else:
+            docker_registry = await self.config_server.get_docker_registry()
         name, tag = await self.config_server.resolve_image_name(lang)
         lang = f'{name}:{tag}'
 
@@ -383,6 +389,7 @@ class AgentRegistry:
             sess_id=sess_id,
             kernel_id=kernel_id,
             access_key=access_key,
+            docker_registry=docker_registry,
             lang=lang,
             session_tag=session_tag,
             creation_config=creation_config,
@@ -448,11 +455,11 @@ class AgentRegistry:
         environ = creation_config.get('environ') or {}
 
         # TODO: move below to JobScheduler.schedule()
-        # name, tag = await self.config_server.resolve_image_name(lang)
+        # docker_registry = request.docker_registry
+        # lang = request.lang
+        # name, tag = lang.split(':')
         # max_allowed_slot = \
         #     await self.config_server.get_image_required_slots(name, tag)
-        # print(max_allowed_slot)
-        # print(creation_config)
         #
         # try:
         #     cpu_share = Decimal(0)
@@ -462,6 +469,7 @@ class AgentRegistry:
         #             Decimal(creation_config.get('instanceCores') or Decimal('inf')),
         #         )
         #     else:
+        #         assert creation_config['instanceCores'] is not None
         #         cpu_share = Decimal(creation_config['instanceCores'])
         #
         #     mem_share = Decimal(0)
@@ -471,6 +479,7 @@ class AgentRegistry:
         #             Decimal(creation_config.get('instanceMemory') or Decimal('inf')),
         #         )
         #     else:
+        #         assert creation_config['instanceMemory'] is not None
         #         mem_share = Decimal(creation_config['instanceMemory'])
         #
         #     gpu_share = Decimal(0)
@@ -480,9 +489,13 @@ class AgentRegistry:
         #             Decimal(creation_config.get('instanceGPUs') or Decimal('inf')),
         #         )
         #     else:
+        #         assert creation_config['instanceGPUs'] is not None
         #         gpu_share = Decimal(creation_config['instanceGPUs'])
-        # except KeyError:
-        #     raise InvalidAPIParameters('You should specify resource limits.')
+        # except (AssertionError, KeyError):
+        #     msg = ('You have missing resource limits that must be specified. '
+        #            'If the server does not have default resource configurations, '
+        #            'you must specify all resource limits by yourself.')
+        #     raise InvalidAPIParameters(msg)
         #
         # # units: share
         # required_shares = ResourceSlot(
@@ -491,8 +504,9 @@ class AgentRegistry:
         #     mem=mem_share,
         #     gpu=gpu_share,
         # )
-        # lang = f'{name}:{tag}'
-        # runnable_agents = frozenset(await self.redis_image.smembers(lang))
+        # lang = f'{docker_registry}/{name}:{tag}'
+        # image_name = f'{docker_registry}/kernel-{name}:{tag}'
+        # runnable_agents = frozenset(await self.redis_image.smembers(image_name))
 
         async with reenter_txn(self.dbpool, conn) as conn:
 
