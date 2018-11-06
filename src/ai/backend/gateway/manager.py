@@ -9,6 +9,7 @@ from aiohttp import web
 
 from ai.backend.common.logging import BraceStyleAdapter
 
+from .auth import admin_required
 from .exceptions import InvalidAPIParameters, ServerFrozen
 from ..manager.models import kernels, KernelStatus
 
@@ -72,6 +73,7 @@ async def fetch_manager_status(request):
         raise
 
 
+@admin_required
 async def update_manager_status(request):
     try:
         params = await request.json()
