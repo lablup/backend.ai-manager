@@ -28,7 +28,8 @@ Some design sketches:
 '''
 
 
-__all__ = ('ScalingEventType', 'ScalingGroup', 'AWSDefaultScalingDriver')
+__all__ = ('ScalingEventType', 'ScalingEvent',
+           'ScalingGroup', 'AWSDefaultScalingDriver')
 
 
 class ScalingEventType(enum.Enum):
@@ -41,7 +42,7 @@ class ScalingEventType(enum.Enum):
 @attr.s(auto_attribs=True, slots=True)
 class ScalingEvent:
     type: ScalingEventType
-    session_id: str = None
+    sess_id: str = None
     agent_id: str = None
 
 
@@ -117,7 +118,7 @@ class ScalingGroup:
     async def _process_request(self, agent_id, request):
         await self.registry.create_session(agent_id, request)
 
-    async def scale(self, event):
+    async def scale(self, event: ScalingEvent):
         await self.scaling_driver.scale(event, self)
 
 

@@ -27,7 +27,7 @@ from ..gateway.exceptions import (
 from .models import (
     agents, kernels, keypairs,
     ResourceSlot, AgentStatus, KernelStatus,
-    ScalingGroup, ScalingEventType, SessionCreationRequest)
+    ScalingGroup, ScalingEvent, ScalingEventType, SessionCreationRequest)
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
 
@@ -395,7 +395,11 @@ class AgentRegistry:
             creation_config=creation_config,
         )
         kernel_access_info = await scaling_group.register_request(request)
-        await scaling_group.scale(ScalingEventType.SESSION_CREATED)
+        await scaling_group.scale(
+            ScalingEvent(
+                type=ScalingEventType.SESSION_CREATED
+            )
+        )
         await scaling_group.schedule()
         return kernel_access_info
 
@@ -903,7 +907,12 @@ class AgentRegistry:
             if agent_created:
                 scaling_group = await self.get_scaling_group(
                     scaling_group=scaling_group)
-                await scaling_group.scale(ScalingEventType.AGENT_JOINED)
+                await scaling_group.scale(
+                    ScalingEvent(
+                        type=ScalingEventType.AGENT_JOINED,
+                        agent_id='agent_id'
+                    )
+                )
                 await scaling_group.schedule()
 
         # Update the mapping of kernel images to agents.
@@ -952,7 +961,12 @@ class AgentRegistry:
             await conn.execute(query)
 
             scaling_group = await self.get_scaling_group(agent_id=agent_id)
-            await scaling_group.scale(ScalingEventType.AGENT_LEFT)
+            await scaling_group.scale(
+                ScalingEvent(
+                    type=ScalingEventType.AGENT_LEFT,
+                    agent_id=agent_id
+                )
+            )
 
     async def mark_kernel_terminated(self, kernel_id, conn=None):
         '''
@@ -1020,7 +1034,11 @@ class AgentRegistry:
             # We need to scale first, and then schedule requests.
             # This is to prevent scheduler from assigning kernels to
             # agents that can be terminated by scaling-in process.
-            await scaling_group.scale(ScalingEventType.SESSION_TERMINATED)
+            await scaling_group.scale(
+                ScalingEvent(
+                    type=ScalingEventType.SESSION_TERMINATED,
+                )
+            )
             await scaling_group.schedule()
 
     async def mark_session_terminated(self, sess_id, access_key):
