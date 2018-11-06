@@ -363,6 +363,12 @@ class AgentRegistry:
         mounts = creation_config.get('mounts') or []
         environ = creation_config.get('environ') or {}
 
+        if '/' in lang:
+            tokens = lang.split('/')
+            docker_registry = '/'.join(tokens[:-1])
+            lang = tokens[-1]
+        else:
+            docker_registry = await self.config_server.get_docker_registry()
         name, tag = await self.config_server.resolve_image_name(lang)
         max_allowed_slot = \
             await self.config_server.get_image_required_slots(name, tag)
@@ -410,8 +416,9 @@ class AgentRegistry:
             mem=mem_share,
             gpu=gpu_share,
         )
-        lang = f'{name}:{tag}'
-        runnable_agents = frozenset(await self.redis_image.smembers(lang))
+        lang = f'{docker_registry}/{name}:{tag}'
+        image_name = f'{docker_registry}/kernel-{name}:{tag}'
+        runnable_agents = frozenset(await self.redis_image.smembers(image_name))
 
         async with reenter_txn(self.dbpool, conn) as conn:
 

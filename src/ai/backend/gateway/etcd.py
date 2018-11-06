@@ -124,6 +124,11 @@ class ConfigServer:
             origins = '*'
         return origins
 
+    @aiotools.lru_cache(maxsize=1)
+    async def get_docker_registry(self):
+        docker_registry = await self.etcd.get('nodes/docker_registry')
+        return docker_registry
+
     @aiotools.lru_cache(maxsize=1, expire_after=60.0)
     async def get_overbook_factors(self):
         '''
