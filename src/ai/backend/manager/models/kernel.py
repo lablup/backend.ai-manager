@@ -1,7 +1,6 @@
 from collections import OrderedDict
 from datetime import datetime
 import enum
-from typing import Optional
 from uuid import UUID
 
 import attr
@@ -48,7 +47,52 @@ class SessionCreationRequest:
     lang: str
     session_tag: str
     creation_config: dict
-    created_at: Optional[datetime] = datetime.now()
+    created_at: datetime = datetime.now()
+
+    def serialize(self):
+
+        return {
+            'id': self.kernel_id,
+            'sess_id': self.sess_id,
+            'access_key': self.access_key,
+            'lang': f'{self.docker_registry}/{self.lang}',
+            'tag': self.session_tag,
+            'mounts': self.creation_config.get('mounts'),
+            'environ': [f'{k}={v}'
+                        for k, v in self.creation_config.get('environ', []).items()],
+            'created_at': self.created_at,
+            'cpu_slot': self.creation_config['cpu_slot'],
+            'mem_slot': self.creation_config['mem_slot'],
+            'gpu_slot': self.creation_config['gpu_slot'],
+        }
+
+    @staticmethod
+    def from_row(row):
+        assert row is not None and row.status == KernelStatus.PENDING
+
+        tokens = row.lang.split('/')
+        docker_registry = '/'.join(tokens[:-1])
+        lang = tokens[-1]
+
+        creation_config = {
+            'mounts': row.mounts,
+            'environ': {k: v
+                        for k, v in map(lambda x: x.split('='), row.environ)},
+            'cpu_slot': row.cpu_slot,
+            'mem_slot': row.mem_slot,
+            'gpu_slot': row.gpu_slot,
+        }
+
+        return SessionCreationRequest(
+            sess_id=row.sess_id,
+            kernel_id=row.id,
+            access_key=row.access_key,
+            docker_registry=docker_registry,
+            lang=lang,
+            session_tag=row.tag,
+            creation_config=creation_config,
+            created_at=row.created_at
+        )
 
 
 kernels = sa.Table(
@@ -70,6 +114,7 @@ kernels = sa.Table(
     sa.Column('mem_slot', sa.BigInteger(), nullable=False),
     sa.Column('cpu_slot', sa.Float(), nullable=False),
     sa.Column('gpu_slot', sa.Float(), nullable=False),
+    sa.Column('mounts', sa.ARRAY(sa.String), nullable=True),
     sa.Column('environ', sa.ARRAY(sa.String), nullable=True),
 
     # Port mappings
