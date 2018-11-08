@@ -20,6 +20,7 @@ from .auth import auth_required
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
     InvalidAPIParameters)
+from .manager import server_unfrozen_required
 from ..manager.models import (
     keypairs, vfolders, vfolder_invitations, vfolder_permissions,
     VFolderPermission)
@@ -130,6 +131,7 @@ def vfolder_check_exists(handler):
     return _wrapped
 
 
+@server_unfrozen_required
 @auth_required
 async def create(request):
     resp = {}

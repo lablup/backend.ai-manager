@@ -12,6 +12,7 @@ import logging
 import re
 import secrets
 
+from ai.backend.gateway.manager import server_unfrozen_required
 from aiohttp import web
 import aiotools
 from aiojobs.aiohttp import atomic
@@ -38,6 +39,7 @@ grace_events = []
 _rx_sess_token = re.compile(r'\w[\w.-]*\w', re.ASCII)
 
 
+@server_unfrozen_required
 @auth_required
 @server_ready_required
 @atomic

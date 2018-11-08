@@ -13,6 +13,7 @@ from graphql.error.located_error import GraphQLLocatedError
 
 from ai.backend.common.logging import BraceStyleAdapter
 
+from .manager import GQLMutationUnfrozenRequiredMiddleware
 from .exceptions import InvalidAPIParameters, BackendError
 from .auth import auth_required
 from ..manager.models.base import DataLoaderManager
@@ -51,6 +52,8 @@ async def handle_gql(request: web.Request) -> web.Response:
             body['variables'] = None
     except AssertionError as e:
         raise InvalidAPIParameters(e.args[0])
+
+    manager_status = await request.app['config_server'].get_manager_status()
     dlmanager = DataLoaderManager(request.app['dbpool'])
     result = schema.execute(
         body['query'], executor,
@@ -60,7 +63,9 @@ async def handle_gql(request: web.Request) -> web.Response:
             'access_key': request['keypair']['access_key'],
             'dbpool': request.app['dbpool'],
             'redis_stat': request.app['redis_stat'],
+            'manager_status': manager_status,
         },
+        middleware=[GQLMutationUnfrozenRequiredMiddleware()],
         return_promise=True)
     if inspect.isawaitable(result):
         result = await result
