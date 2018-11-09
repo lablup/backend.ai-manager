@@ -1,6 +1,11 @@
 Changes
 =======
 
+1.4.4 (2018-11-09)
+------------------
+
+- Update the default image metadata/aliases to include latest deep learning kernels.
+
 1.4.3 (2018-11-06)
 ------------------
 
