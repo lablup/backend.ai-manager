@@ -18,8 +18,7 @@ import zmq
 from ai.backend.common import msgpack
 from ai.backend.common.logging import BraceStyleAdapter
 from ..gateway.exceptions import (
-    BackendError, InvalidAPIParameters,
-    InstanceNotFound,
+    BackendError, InstanceNotFound,
     KernelNotFound, KernelAlreadyExists,
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
@@ -27,7 +26,7 @@ from ..gateway.exceptions import (
 from .models import (
     agents, kernels, keypairs,
     ResourceSlot, AgentStatus, KernelStatus,
-    ScalingGroup, SessionCreationRequest)
+    ScalingGroup, SessionCreationRequest, SessionCreationJob)
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
 
@@ -398,45 +397,6 @@ class AgentRegistry:
         name, tag = await self.config_server.resolve_image_name(lang)
         lang = f'{name}:{tag}'
 
-        max_allowed_slot = \
-            await self.config_server.get_image_required_slots(name, tag)
-
-        try:
-            cpu_share = Decimal(0)
-            if max_allowed_slot.cpu is not None:
-                cpu_share = min(
-                    max_allowed_slot.cpu,
-                    Decimal(creation_config.get('instanceCores') or Decimal('inf')),
-                )
-            else:
-                assert creation_config['instanceCores'] is not None
-                cpu_share = Decimal(creation_config['instanceCores'])
-
-            mem_share = Decimal(0)
-            if max_allowed_slot.mem is not None:
-                mem_share = min(
-                    max_allowed_slot.mem,
-                    Decimal(creation_config.get('instanceMemory') or Decimal('inf')),
-                )
-            else:
-                assert creation_config['instanceMemory'] is not None
-                mem_share = Decimal(creation_config['instanceMemory'])
-
-            gpu_share = Decimal(0)
-            if max_allowed_slot.gpu is not None:
-                gpu_share = min(
-                    max_allowed_slot.gpu,
-                    Decimal(creation_config.get('instanceGPUs') or Decimal('inf')),
-                )
-            else:
-                assert creation_config['instanceGPUs'] is not None
-                gpu_share = Decimal(creation_config['instanceGPUs'])
-        except (AssertionError, KeyError):
-            msg = ('You have missing resource limits that must be specified. '
-                   'If the server does not have default resource configurations, '
-                   'you must specify all resource limits by yourself.')
-            raise InvalidAPIParameters(msg)
-
         kernel_id = uuid.uuid4()
 
         request = SessionCreationRequest(
@@ -446,26 +406,19 @@ class AgentRegistry:
             docker_registry=docker_registry,
             lang=lang,
             session_tag=session_tag,
-            creation_config={
-                'mounts': creation_config.get('mounts', []),
-                'environ': creation_config.get('environ', {}),
-                'cpu_slot': cpu_share,
-                'mem_slot': mem_share,
-                'gpu_slot': gpu_share,
-            },
+            creation_config=creation_config,
         )
         kernel_access_info = await scaling_group.register_request(request)
         await scaling_group.schedule()
         return kernel_access_info
 
-    async def create_session(self, agent_id, request: SessionCreationRequest,
-                             conn=None):
-        sess_id = request.sess_id
-        kernel_id = request.kernel_id
-        creation_config = request.creation_config
-
-        mounts = creation_config.get('mounts') or []
-        environ = creation_config.get('environ') or {}
+    async def create_session(self, agent_id, kernel_id, conn=None):
+        # sess_id = request.sess_id
+        # kernel_id = request.kernel_id
+        # creation_config = request.creation_config
+        #
+        # mounts = creation_config.get('mounts') or []
+        # environ = creation_config.get('environ') or {}
 
         async with reenter_txn(self.dbpool, conn) as conn:
 
@@ -517,6 +470,7 @@ class AgentRegistry:
                        .where(kernels.c.id == kernel_id))
             result = await conn.execute(query)
             row = result.first()
+            sess_id = row.sess_id
             access_key = row.access_key
             required_shares = ResourceSlot(
                 mem=row.mem_slot,
@@ -525,6 +479,9 @@ class AgentRegistry:
             )
             lang = row.lang
             agent_addr = row.agent_addr
+            mounts = row.mounts,
+            environ = {k: v
+                       for k, v in map(lambda x: x.split('='), row.environ)},
             assert agent_addr is not None
 
             # Update kernel status.

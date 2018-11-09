@@ -1,7 +1,9 @@
 from abc import ABCMeta, abstractmethod
 import asyncio
+from collections import defaultdict
 from decimal import Decimal
 import enum
+from functools import reduce
 import math
 from typing import Iterable, List, Tuple
 import uuid
@@ -13,6 +15,7 @@ from sqlalchemy.sql.expression import true
 from .base import metadata
 from .kernel import kernels, KernelStatus, SessionCreationRequest
 from .agent import agents, ResourceSlot
+from ...gateway.exceptions import InvalidAPIParameters
 
 
 '''
@@ -31,7 +34,7 @@ Some design sketches:
 '''
 
 
-__all__ = ('ScalingEventType', 'ScalingEvent',
+__all__ = ('ScalingEventType', 'ScalingEvent', 'SessionCreationJob',
            'ScalingGroup', 'AWSDefaultScalingDriver')
 
 
@@ -49,6 +52,12 @@ class ScalingEvent:
     agent_id: str = None
 
 
+@attr.s(auto_attribs=True, slots=True)
+class SessionCreationJob:
+    kernel_id: str
+    resources: ResourceSlot  # TODO: change into a new data structure type.
+
+
 class ScalingGroup:
 
     def __init__(self, group_id, registry, scaling_driver=None, job_scheduler=None):
@@ -61,25 +70,71 @@ class ScalingGroup:
             job_scheduler = SimpleFIFOJobScheduler()
         self.job_scheduler = job_scheduler
 
-    async def get_pending_requests(self):
+    async def get_pending_jobs(self):
         async with self.registry.dbpool.acquire() as conn, conn.begin():
             query = (sa.select('*')
                      .select_from(kernels)
                      .where(kernels.c.status == KernelStatus.PENDING))
 
-            requests = []
+            jobs = []
             async for row in await conn.execute(query):
-                request = SessionCreationRequest.from_row(row)
-                requests.append(request)
+                job = SessionCreationJob(
+                    kernel_id=row.id,
+                    resources=ResourceSlot(
+                        cpu=row.cpu_slot,
+                        mem=row.mem_slot,
+                        gpu=row.gpu_slot,
+                    )
+                )
+                jobs.append(job)
 
-            return requests
+            return jobs
 
     async def register_request(self, request: SessionCreationRequest):
         async with self.registry.dbpool.acquire() as conn, conn.begin():
-            # Register kernel.
-            kernel_id = uuid.uuid4()
-            request.kernel_id = kernel_id
 
+            # Apply resource limits.
+            name, tag = request.lang.split(':')
+            max_allowed_slot = \
+                await self.registry.config_server.get_image_required_slots(name, tag)
+            creation_config = request.creation_config
+            try:
+                cpu_share = Decimal(0)
+                if max_allowed_slot.cpu is not None:
+                    cpu_share = min(
+                        max_allowed_slot.cpu,
+                        Decimal(creation_config.get('instanceCores') or Decimal('inf')),
+                    )
+                else:
+                    assert creation_config['instanceCores'] is not None
+                    cpu_share = Decimal(creation_config['instanceCores'])
+
+                mem_share = Decimal(0)
+                if max_allowed_slot.mem is not None:
+                    mem_share = min(
+                        max_allowed_slot.mem,
+                        Decimal(creation_config.get('instanceMemory') or Decimal('inf')),
+                    )
+                else:
+                    assert creation_config['instanceMemory'] is not None
+                    mem_share = Decimal(creation_config['instanceMemory'])
+
+                gpu_share = Decimal(0)
+                if max_allowed_slot.gpu is not None:
+                    gpu_share = min(
+                        max_allowed_slot.gpu,
+                        Decimal(creation_config.get('instanceGPUs') or Decimal('inf')),
+                    )
+                else:
+                    assert creation_config['instanceGPUs'] is not None
+                    gpu_share = Decimal(creation_config['instanceGPUs'])
+            except (AssertionError, KeyError):
+                msg = ('You have missing resource limits that must be specified. '
+                       'If the server does not have default resource configurations, '
+                       'you must specify all resource limits by yourself.')
+                raise InvalidAPIParameters(msg)
+
+            # Register request.
             kernel_info_base = {
                 'kernel_id'
                 'status': KernelStatus.PENDING,
@@ -96,6 +151,11 @@ class ScalingGroup:
             }
 
             kernel_info = request.serialize()
+            kernel_info.update({
+                'cpu_slot': cpu_share,
+                'mem_slot': mem_share,
+                'gpu_slot': gpu_share,
+            })
             kernel_info.update(kernel_info_base)
             query = kernels.insert().values(kernel_info)
             result = await conn.execute(query)
@@ -155,26 +215,27 @@ class ScalingGroup:
         return await self.registry.config_server.get_image_required_slots(name, tag)
 
     async def schedule(self):
-        pending_requests = await self.get_pending_requests()
-        schedule_info = await self.job_scheduler.schedule(self, pending_requests)
-        scheduled_requests = map(lambda x: x[1], schedule_info)
-        remaining_requests = set(pending_requests) - set(scheduled_requests)
+        # Planning Scheduling
+        pending_jobs = await self.get_pending_jobs()
+        schedule_info = await self.job_scheduler.schedule(self, pending_jobs)
 
         # Scaling
         #
-        # It is possible that scaling driver re-schedule requests
+        # It is possible that scaling driver re-schedule jobs
         # by optimizing utilization of agents.
+        scheduled_jobs = map(lambda x: x[1], schedule_info)
+        remaining_jobs = set(pending_jobs) - set(scheduled_jobs)
         schedule_info = await self.scaling_driver.scale(
-            self, schedule_info, remaining_requests)
+            self, schedule_info, remaining_jobs)
 
-        # Scheduling
+        # Process scheduled jobs
         if schedule_info:
-            await asyncio.gather(*[self._process_request(agent_id, request)
-                                   for agent_id, request in schedule_info],
+            await asyncio.gather(*[self._process_job(agent_id, job)
+                                   for agent_id, job in schedule_info],
                                  return_exceptions=True)
 
-    async def _process_request(self, agent_id, request):
-        return await self.registry.create_session(agent_id, request)
+    async def _process_job(self, agent_id, job):
+        return await self.registry.create_session(agent_id, job.kernel_id)
 
 
 class AbstractScalingDriver(metaclass=ABCMeta):
@@ -184,9 +245,9 @@ class AbstractScalingDriver(metaclass=ABCMeta):
 
     @abstractmethod
     async def scale(self, scaling_group: ScalingGroup,
-                    schedule_info: Iterable[Tuple[str, SessionCreationRequest]]
+                    schedule_info: Iterable[Tuple[str, SessionCreationJob]]
                     = None,
-                    pending_requests: Iterable[SessionCreationRequest] = None):
+                    pending_jobs: Iterable[SessionCreationJob] = None):
         '''
         This callback method is invoked.
         '''
@@ -205,72 +266,127 @@ class AWSDefaultScalingDriver(AbstractScalingDriver):
         # please propose a good design for this!
         # (instead of simple flag)
         self._pending_scaling = False
+        self.available_instances: List[Tuple[str, ResourceSlot]] = [
+            ('t2.2xlarge', ResourceSlot(
+                cpu=Decimal(8),
+                mem=Decimal(32.0),
+                gpu=Decimal(0),
+            )),
+            ('p2.xlarge', ResourceSlot(
+                cpu=Decimal(4),
+                mem=Decimal(61,0),
+                gpu=Decimal(1),
+            ))
+        ]
 
-    async def minimum_prepared_shares(self):
-        shares_unit = ResourceSlot(
+        self.resource_precedence = ['gpu', 'cpu', 'mem']
+
+        cpu_shares_unit = ResourceSlot(
             cpu=Decimal(1),
             mem=Decimal(1.0),
             gpu=Decimal(0),
         )
-        required_unit_count = 3
-        return [(shares_unit, required_unit_count)]
+        cpu_required_unit_count = 3
+        gpu_shares_unit = ResourceSlot(
+            cpu=Decimal(1),
+            mem=Decimal(1.0),
+            gpu=Decimal(1),
+        )
+        gpu_required_unit_count = 1
+        self.min_prepared_shares = [(cpu_shares_unit, cpu_required_unit_count),
+                                    (gpu_shares_unit, gpu_required_unit_count)]
+
+    @property
+    def instance_info(self):
+        instance_info = defaultdict(list)
+        for instance in self.available_instances:
+            if instance[1].gpu != 0:
+                instance_info['gpu'].append(instance)
+            else:
+                instance_info['cpu'].append(instance)
+                instance_info['mem'].append(instance)
+        for resource_type in instance_info.keys():
+            instance_info[resource_type].sort(
+                key=lambda o: getattr(o[1], resource_type))
+        return instance_info
+
+    def get_required_buffer_jobs(self):
+        buffer_jobs = []
+        for share_unit, min_count in self.min_prepared_shares:
+            for _ in range(min_count):
+                job = SessionCreationJob(
+                    kernel_id=uuid.uuid4().hex,
+                    resources=ResourceSlot(
+                        cpu=share_unit.cpu,
+                        mem=share_unit.mem,
+                        gpu=share_unit.gpu,
+                    )
+                )
+                buffer_jobs.append(job)
+        return buffer_jobs
 
     async def scale(self, scaling_group: ScalingGroup,
-                    schedule_info: Iterable[Tuple[str, SessionCreationRequest]]
-                    = None,
-                    pending_requests: Iterable[SessionCreationRequest] = None):
+                    schedule_info: Iterable[Tuple[str, SessionCreationJob]] = None,
+                    pending_jobs: Iterable[SessionCreationJob] = None):
+
         if schedule_info is None:
             schedule_info = []
-        if pending_requests is None:
-            pending_requests = []
+        if pending_jobs is None:
+            pending_jobs = []
 
-        if not pending_requests:
-            schedule_info = await self.scale_in(scaling_group,
-                                                schedule_info)
+        required_buffer_jobs = self.get_required_buffer_jobs()
+
+        if pending_jobs:
+            await self.scale_out(pending_jobs + required_buffer_jobs)
         else:
-            await self.scale_out(scaling_group, pending_requests)
+            # Assert that minimum prepared shares condition is satisfied.
+            curr_buffer_jobs = await scaling_group.job_scheduler.schedule(
+                scaling_group, required_buffer_jobs)
+            curr_buffer_jobs = map(lambda x: x[1], curr_buffer_jobs)
+            deficient_buffer_jobs = set(required_buffer_jobs) - set(curr_buffer_jobs)
+            if deficient_buffer_jobs:
+                await self.scale_out(deficient_buffer_jobs)
+            else:
+                schedule_info = await self.scale_in(scaling_group, schedule_info)
 
         return schedule_info
 
-    async def scale_out(self, scaling_group: ScalingGroup,
-                        pending_requests: Iterable[SessionCreationRequest]):
-        assert pending_requests is not None
-        scale_out_info = await self.get_scale_out_info(scaling_group,
-                                                       pending_requests)
+    async def scale_out(self, pending_jobs: Iterable[SessionCreationJob]):
+        # 1. Assume that no # limit of instances,
+        # only t2.2xlarge & p2.xlarge, and only cpu, mem, gpu.
+        assert pending_jobs is not None
+
+        scale_out_info = []
+        for resource_type in self.resource_precedence:
+            target_jobs = filter(lambda job: job.resources.gpu != 0, pending_jobs)
+            instance_type, instance_spec = self.instance_info[resource_type][0]
+
+            def _acc_resources(acc: ResourceSlot, job: SessionCreationJob):
+                return ResourceSlot(
+                    cpu=acc.cpu + job.resources.cpu,
+                    mem=acc.mem + job.resources.mem,
+                    gpu=acc.gpu + job.resources.gpu,
+                )
+
+            resource_sum = reduce(_acc_resources, target_jobs,
+                                  initial=ResourceSlot())
+            instance_num = max(math.ceil(resource_sum.cpu / instance_spec[1].cpu),
+                               math.ceil(resource_sum.mem / instance_spec[1].mem),
+                               math.ceil(resource_sum.gpu / instance_spec[1].gpu))
+
+            scale_out_info.append((instance_type, instance_num))
+
         await self.add_agents(scale_out_info)
+        # 2, Now consider multiple instances for each resource types.
+        # 3. Now consider # limit of instances.
+        # 4. Now consider other types of resources, e.g. tpu.
+        # 5. Now consider "marked-to-be-terminated" agents if exists.
 
     async def scale_in(self, scaling_group: ScalingGroup,
-                       schedule_info: Iterable[Tuple[str, SessionCreationRequest]]):
+                       schedule_info: Iterable[Tuple[str, SessionCreationJob]]):
+
         assert schedule_info is not None
-        agents_to_terminate = self.get_agents_to_remove(schedule_info,
-                                                        scaling_group)
-        await self.remove_agents(agents_to_terminate)
-        return schedule_info
 
-    async def get_scale_out_info(self, scaling_group, pending_requests):
-        # TODO: enhance get_scale_out_info logic.
-        # pseudo-code
-        available_shares = await scaling_group.get_available_shares()
-        minimum_prepared_shares = await scaling_group.minimum_prepared_shares()
-        remaining_shares = available_shares - minimum_prepared_shares
-
-        required_shares = await asyncio.gather(
-            *[scaling_group.get_required_shares(rqst.lang)
-              for rqst in pending_requests]
-        )
-        required_shares = sum(required_shares)
-        required_shares -= remaining_shares
-
-        if required_shares > SOME_THRESHOLD:
-            instance_type = 'p2.xlarge'
-            instance_shares = ResourceSlot()
-        else:
-            instance_type = 't2.2xlarge'
-            instance_shares = ResourceSlot()
-        count = math.ceil(required_shares / instance_shares)
-        return [(instance_type, count)]
-
-    async def get_agents_to_remove(self, schedule_info, scaling_group):
         # TODO: enhance get_agents_to_remove logic.
         #       scale_in() currently terminates only idle agents, but
         #       this logic can be enhanced in many ways.
@@ -283,7 +399,9 @@ class AWSDefaultScalingDriver(AbstractScalingDriver):
         # pseudo-code
         idle_agents = await scaling_group.get_belonging_agents(idle=True)
         agents_to_remove = set(idle_agents) - set(map(lambda x: x[0], schedule_info))
-        return agents_to_remove
+        await self.remove_agents(agents_to_remove)
+
+        return schedule_info
 
     async def add_agents(self, scale_out_info: List[Tuple[str, int]]):
         # Just an example.
@@ -315,7 +433,7 @@ class AbstractJobScheduler(metaclass=ABCMeta):
 
     @abstractmethod
     async def schedule(self, scaling_group: ScalingGroup,
-                       pending_requests: Iterable[SessionCreationRequest]):
+                       pending_jobs: Iterable[SessionCreationJob]):
         '''
         This callback method is invoked when there are new session creation requests,
         terminated sessions, and increases of the scaling group resources.
@@ -328,15 +446,15 @@ class AbstractJobScheduler(metaclass=ABCMeta):
 
 class SimpleFIFOJobScheduler(AbstractJobScheduler):
 
-    async def schedule(self, scaling_group, pending_requests):
+    async def schedule(self, scaling_group, pending_jobs):
         # pseudo-code
-        schedulable_requests = []
+        schedulable_jobs = []
         available_shares = scaling_group.get_available_shares()
-        for rqst in pending_requests.order_by('created_at', desc=True):
+        for rqst in pending_jobs.order_by('created_at', desc=True):
             if rqst.can_run_with(available_shares):
-                schedulable_requests.append(rqst)
+                schedulable_jobs.append(rqst)
                 available_shares -= rqst.required_resource
-        return schedulable_requests
+        return schedulable_jobs
 
 
 scaling_groups = sa.Table(
