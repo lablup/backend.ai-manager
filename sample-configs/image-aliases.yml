@@ -93,16 +93,18 @@ aliases:
 
   - ['python3-pytorch',        'python-pytorch:latest']      # CodeOnWeb legacy
   - ['python3-pytorch-gpu',    'python-pytorch:latest-gpu']  # CodeOnWeb legacy
+  - ['python3-torch',        'python-pytorch:latest']        # CodeOnWeb legacy
+  - ['python3-torch-gpu',    'python-pytorch:latest-gpu']    # CodeOnWeb legacy
   - ['python-pytorch',         'python-pytorch:latest']
   - ['python-pytorch-gpu',     'python-pytorch:latest-gpu']
-  - ['python-pytorch:0.2',     'python-pytorch:0.2']      # preferred
-  - ['python-pytorch:0.2-gpu', 'python-pytorch:0.2-gpu']  # preferred
-  - ['python-pytorch:0.3',     'python-pytorch:0.3']      # preferred
-  - ['python-pytorch:0.3-gpu', 'python-pytorch:0.3-gpu']  # preferred
-  - ['python-pytorch:0.4',     'python-pytorch:0.4']      # preferred
-  - ['python-pytorch:0.4-gpu', 'python-pytorch:0.4-gpu']  # preferred
-  - ['python-pytorch:1.0',     'python-pytorch:1.0']      # preferred
-  - ['python-pytorch:1.0-gpu', 'python-pytorch:1.0-gpu']  # preferred
+  - ['python-torch',         'python-pytorch:latest']
+  - ['python-torch-gpu',     'python-pytorch:latest-gpu']
+  - ['python-pytorch:0.2',     'python-pytorch:0.2-py36']      # preferred
+  - ['python-pytorch:0.2-gpu', 'python-pytorch:0.2-py36-gpu']  # preferred
+  - ['python-pytorch:0.3',     'python-pytorch:0.3-py36']      # preferred
+  - ['python-pytorch:0.3-gpu', 'python-pytorch:0.3-py36-gpu']  # preferred
+  - ['python-pytorch:0.4',     'python-pytorch:0.4-py36']      # preferred
+  - ['python-pytorch:0.4-gpu', 'python-pytorch:0.4-py36-gpu']  # preferred
   # TODO: "torch-lua"
   - ['torch-python',     'python-pytorch:latest']
   - ['torch-python-gpu', 'python-pytorch:latest-gpu']
