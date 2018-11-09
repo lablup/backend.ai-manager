@@ -45,6 +45,8 @@ images:
       - ["1.10-py36-gpu", "x"]
       - ["1.11-py36", "x"]
       - ["1.11-py36-gpu", "x"]
+      - ["1.12-py36", "x"]
+      - ["1.12-py36-gpu", "x"]      
     slots: &for_computing
       cpu: 4     # cores
       mem: 8.0   # GiB
@@ -62,8 +64,14 @@ images:
     tags:
       - ["latest",     ":0.2-py36"]
       - ["latest-gpu", ":0.2-py36-gpu"]
-      - ["0.2-py36",     "bf6f0eb94d61"]
-      - ["0.2-py36-gpu", "92c4d8d7e2f4"]
+      - ["0.2-py36",     "x"]
+      - ["0.2-py36-gpu", "x"]
+      - ["0.3-py36",     "x"]
+      - ["0.3-py36-gpu", "x"]
+      - ["0.4-py36",     "x"]
+      - ["0.4-py36-gpu", "x"]
+      - ["1.0-py36",     "x"]
+      - ["1.0-py36-gpu", "x"]      
     slots:
       <<: *for_computing
   - name: julia
