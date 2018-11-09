@@ -7,6 +7,11 @@ Changes
 - Version numbers now follow year.month releases like Docker.
   We plan to release stable versions on every 3 months (e.g., 18.12, 19.03, ...).
 
+1.4.4 (2018-11-09)
+------------------
+
+- Update the default image metadata/aliases to include latest deep learning kernels.
+
 1.4.3 (2018-11-06)
 ------------------
 

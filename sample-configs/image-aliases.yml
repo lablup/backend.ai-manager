@@ -101,8 +101,8 @@ aliases:
   - ['python-pytorch:0.3-gpu', 'python-pytorch:0.3-gpu']  # preferred
   - ['python-pytorch:0.4',     'python-pytorch:0.4']      # preferred
   - ['python-pytorch:0.4-gpu', 'python-pytorch:0.4-gpu']  # preferred
-  - ['python-pytorch:1.0',     'python-pytorch:latest']      # preferred
-  - ['python-pytorch:1.0-gpu', 'python-pytorch:latest-gpu']  # preferred  
+  - ['python-pytorch:1.0',     'python-pytorch:1.0']      # preferred
+  - ['python-pytorch:1.0-gpu', 'python-pytorch:1.0-gpu']  # preferred
   # TODO: "torch-lua"
   - ['torch-python',     'python-pytorch:latest']
   - ['torch-python-gpu', 'python-pytorch:latest-gpu']
@@ -115,7 +115,7 @@ aliases:
   - ['pytorch:0.4',      'python-pytorch:0.4-py36']     # preferred
   - ['pytorch:0.4-gpu',  'python-pytorch:0.4-py36-gpu'] # preferred
   - ['pytorch:1.0',      'python-pytorch:1.0-py36']     # preferred
-  - ['pytorch:1.0-gpu',  'python-pytorch:1.0-py36-gpu'] # preferred  
+  - ['pytorch:1.0-gpu',  'python-pytorch:1.0-py36-gpu'] # preferred
   #- ['theano-python3',         'python-theano:']
 
   - ['c',          'c:latest']
