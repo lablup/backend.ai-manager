@@ -1,6 +1,7 @@
 from abc import ABCMeta, abstractmethod
 import asyncio
 from collections import defaultdict
+from datetime import datetime
 from decimal import Decimal
 import enum
 from functools import reduce
@@ -58,6 +59,7 @@ class ScalingEvent:
 class SessionCreationJob:
     kernel_id: str
     resources: ResourceSlot  # TODO: change into a new data structure type.
+    created_at: datetime
 
 
 class ScalingGroup:
@@ -75,8 +77,8 @@ class ScalingGroup:
     async def get_pending_jobs(self):
         async with self.registry.dbpool.acquire() as conn, conn.begin():
             query = (sa.select('*')
-                     .select_from(kernels)
-                     .where(kernels.c.status == KernelStatus.PENDING))
+                       .select_from(kernels)
+                       .where(kernels.c.status == KernelStatus.PENDING))
 
             jobs = []
             async for row in await conn.execute(query):
@@ -86,7 +88,8 @@ class ScalingGroup:
                         cpu=row.cpu_slot,
                         mem=row.mem_slot,
                         gpu=row.gpu_slot,
-                    )
+                    ),
+                    created_at=row.created_at,
                 )
                 jobs.append(job)
 
@@ -307,7 +310,8 @@ class BasicScalingDriver(AbstractScalingDriver):
                         cpu=share_unit.cpu,
                         mem=share_unit.mem,
                         gpu=share_unit.gpu,
-                    )
+                    ),
+                    created_at=datetime.now(),
                 )
                 buffer_jobs.append(job)
         return buffer_jobs
