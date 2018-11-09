@@ -6,8 +6,10 @@ import enum
 from functools import reduce
 import math
 from typing import Iterable, List, Tuple
+import os
 import uuid
 
+import aiobotocore
 import attr
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import true
@@ -254,30 +256,15 @@ class AbstractScalingDriver(metaclass=ABCMeta):
         raise NotImplementedError  # noqa
 
 
-class AWSDefaultScalingDriver(AbstractScalingDriver):
+class BasicScalingDriver(AbstractScalingDriver):
 
-    def __init__(self, config_server):
-        super().__init__(config_server)
-        self.config_server = config_server
-
+    def __init__(self):
         # prevent race-condition of asynchronous agent launches
         # and scale-up decisions *during* scaling
 
         # please propose a good design for this!
         # (instead of simple flag)
         self._pending_scaling = False
-        self.available_instances: List[Tuple[str, ResourceSlot]] = [
-            ('t2.2xlarge', ResourceSlot(
-                cpu=Decimal(8),
-                mem=Decimal(32.0),
-                gpu=Decimal(0),
-            )),
-            ('p2.xlarge', ResourceSlot(
-                cpu=Decimal(4),
-                mem=Decimal(61,0),
-                gpu=Decimal(1),
-            ))
-        ]
 
         self.resource_precedence = ['gpu', 'cpu', 'mem']
 
@@ -403,27 +390,78 @@ class AWSDefaultScalingDriver(AbstractScalingDriver):
 
         return schedule_info
 
+
+class AbstractVendorScalingDriverMixin:
+
+    @abstractmethod
     async def add_agents(self, scale_out_info: List[Tuple[str, int]]):
-        # Just an example.
-        ec2 = boto3.resource('ec2')
-        for instance_type, count in scale_out_info:
-            ami_id = self.get_ami_id(instance_type)
-            ec2.create_instances(ImageId=ami_id, MinCount=1, MaxCount=1)
+        raise NotImplementedError
+
+    @abstractmethod
+    async def remove_agents(self, agents_to_remove: List[Tuple[str, int]]):
+        raise NotImplementedError
+
+
+aws_access_key = os.environ.get('AWS_ACCESS_KEY_ID', 'dummy-access-key')
+aws_secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY', 'dummy-secret-key')
+aws_region = os.environ.get('AWS_REGION', 'ap-northeast-1')
+aws_launch_template_name_format = os.environ.get('AWS_LAUNCH_TEMPLATE_NAME_FORMAT',
+                                                 'backend.ai/agent/{}/v1.4')
+
+
+class AWSScalingDriverMixin(AbstractVendorScalingDriverMixin):
+
+    available_instances: List[Tuple[str, ResourceSlot]] = [
+        ('t2.2xlarge', ResourceSlot(
+            cpu=Decimal(8),
+            mem=Decimal(32.0),
+            gpu=Decimal(0),
+        )),
+        ('p2.xlarge', ResourceSlot(
+            cpu=Decimal(4),
+            mem=Decimal(61.0),
+            gpu=Decimal(1),
+        ))
+    ]
+
+    async def add_agents(self, scale_out_info: List[Tuple[str, int]]):
+        session = aiobotocore.get_session()
+        async with session.create_client('ec2', region_name=aws_region,
+                                         aws_secret_access_key=aws_secret_key,
+                                         aws_access_key_id=aws_access_key) as client:
+            tasks = []
+            for instance_type, instance_num in scale_out_info:
+                launch_template_name = self.get_launch_template_name(instance_type)
+                launch_template = {
+                    'LaunchTemplateName': launch_template_name,
+                }
+                coro = client.run_instances(LaunchTemplate=launch_template,
+                                            MinCount=instance_num,
+                                            MaxCount=instance_num)
+                tasks.append(coro)
+            # TODO: handle exceptions
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def remove_agents(self, agents_to_remove):
-        # Just an example.
-        ec2 = boto3.client('ec2')
-        ec2.stop_instances(InstanceIds=[agents_to_remove], DryRun=True)
+        session = aiobotocore.get_session()
+        async with session.create_client('ec2', region_name=aws_region,
+                                         aws_secret_access_key=aws_secret_key,
+                                         aws_access_key_id=aws_access_key) as client:
+            # TODO: handle exceptions
+            await client.run_instances(InstanceIds=agents_to_remove)
 
-    async def get_ami_id(self, instance_type):
-        # Just an example.
-        ami_id_map = {
-            'p2.xlarge': 'p2.xlarge-ami-id',
-            't2.2xlarge': 't2.2xlarge-ami-id',
-        }
-        assert instance_type in ami_id_map, \
-            f'Not supported instance type: {instance_type}'
-        return ami_id_map[instance_type]
+    def get_launch_template_name(self, instance_type):
+        if instance_type == 't2.2xlarge':
+            resource_type = 'cpu'
+        elif instance_type == 'p2.xlarge':
+            resource_type = 'gpu'
+        else:
+            raise ValueError(f'Invalid instance type: {instance_type}')
+        return aws_launch_template_name_format.format(resource_type)
+
+
+class AWSDefaultScalingDriver(AWSScalingDriverMixin, BasicScalingDriver):
+    pass
 
 
 class AbstractJobScheduler(metaclass=ABCMeta):
