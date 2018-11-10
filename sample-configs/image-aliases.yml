@@ -95,10 +95,10 @@ aliases:
   - ['python3-pytorch-gpu',    'python-pytorch:latest-gpu']  # CodeOnWeb legacy
   - ['python3-torch',        'python-pytorch:latest']        # CodeOnWeb legacy
   - ['python3-torch-gpu',    'python-pytorch:latest-gpu']    # CodeOnWeb legacy
-  - ['python-pytorch',         'python-pytorch:latest']
-  - ['python-pytorch-gpu',     'python-pytorch:latest-gpu']
   - ['python-torch',         'python-pytorch:latest']
   - ['python-torch-gpu',     'python-pytorch:latest-gpu']
+  - ['python-pytorch',         'python-pytorch:latest']
+  - ['python-pytorch-gpu',     'python-pytorch:latest-gpu']
   - ['python-pytorch:0.2',     'python-pytorch:0.2-py36']      # preferred
   - ['python-pytorch:0.2-gpu', 'python-pytorch:0.2-py36-gpu']  # preferred
   - ['python-pytorch:0.3',     'python-pytorch:0.3-py36']      # preferred
