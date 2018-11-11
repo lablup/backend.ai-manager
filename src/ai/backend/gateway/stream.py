@@ -213,7 +213,7 @@ async def stream_execute(request) -> web.Response:
         if ws.closed:
             log.warning('STREAM_EXECUTE: client disconnected (cancelled)')
             return
-        params = await ws.recv_json()
+        params = await ws.receive_json()
         assert params.get('mode'), 'mode is missing or empty!'
         mode = params['mode']
         assert mode in {'query', 'batch'}, 'mode has an invalid value.'
@@ -247,7 +247,7 @@ async def stream_execute(request) -> web.Response:
                 'files': raw_result.get('files'),
             })
             if raw_result['status'] == 'waiting-input':
-                code = await ws.recv_text()
+                code = await ws.receive_str()
             elif raw_result['status'] == 'finished':
                 break
             else:
