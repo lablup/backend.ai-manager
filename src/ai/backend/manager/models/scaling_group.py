@@ -490,13 +490,37 @@ class SimpleFIFOJobScheduler(AbstractJobScheduler):
 
     async def schedule(self, scaling_group, pending_jobs):
         # pseudo-code
-        schedulable_jobs = []
-        available_shares = scaling_group.get_available_shares()
-        for rqst in pending_jobs.order_by('created_at', desc=True):
-            if rqst.can_run_with(available_shares):
-                schedulable_jobs.append(rqst)
-                available_shares -= rqst.required_resource
-        return schedulable_jobs
+        scheduled_jobs = []
+        available_agent_infos = await scaling_group.get_available_shares()
+        list(pending_jobs).sort(key=lambda _job: _job.created_by, reverse=True)
+
+        async with scaling_group.registry.dbpool.acquire() as conn, conn.begin():
+            curr_agent_info = available_agent_infos.pop(0)
+            for job in pending_jobs:
+                while curr_agent_info.cpu < job.resources.cpu or \
+                        curr_agent_info.mem < job.resources.mem or \
+                        curr_agent_info.gpu or job.resources.gpu:
+                    if not available_agent_infos:
+                        return scheduled_jobs
+                    curr_agent_info = available_agent_infos.pop(0)
+                agent_id = curr_agent_info.id
+                updates = {
+                    'used_cpu_slots': agents.c.used_cpu_slots + job.resources.cpu,
+                    'used_mem_slots': agents.c.used_mem_slots + job.resources.mem,
+                    'used_gpu_slots': agents.c.used_gpu_slots + job.resources.gpu,
+                }
+                query = (sa.update(agents)
+                           .values(updates)
+                           .where(agents.c.id == agent_id))
+                await conn.execute(query)
+
+                curr_agent_info.cpu -= job.resources.cpu
+                curr_agent_info.mem -= job.resources.mem
+                curr_agent_info.gpu -= job.resources.gpu
+
+                scheduled_jobs.append((agent_id, job))
+
+            raise RuntimeError('Should not reach here!')
 
 
 scaling_groups = sa.Table(
