@@ -493,11 +493,12 @@ async def execute_ws(request) -> web.Response:
                 code = incoming('')
             elif raw_result['status'] == 'finished':
                 break
-            # repeat until we get finished
-            await asyncio.sleep(1.0)
-            mode = 'continue'
-            code = ''
-            opts.clear()
+            else:
+                # repeat until we get finished
+                await asyncio.sleep(0.5)
+                mode = 'continue'
+                code = ''
+                opts.clear()
     except (json.decoder.JSONDecodeError, AssertionError) as e:
         log.warning('EXECUTE_WS: invalid/missing parameters: {0!r}', e)
         if not ws.closed:
