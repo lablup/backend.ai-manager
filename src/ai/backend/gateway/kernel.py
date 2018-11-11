@@ -45,8 +45,7 @@ _rx_sess_token = re.compile(r'\w[\w.-]*\w', re.ASCII)
 @atomic
 async def create(request) -> web.Response:
     try:
-        with _timeout(2):
-            params = await request.json(loads=json.loads)
+        params = await request.json(loads=json.loads)
         assert params.get('lang'), \
                'lang is missing or empty!'
         assert params.get('clientSessionToken'), \
@@ -59,8 +58,7 @@ async def create(request) -> web.Response:
         log.info('GET_OR_CREATE (u:{0}, lang:{1}, tag:{2}, token:{3})',
                  request['keypair']['access_key'], params['lang'],
                  params.get('tag', None), sess_id)
-    except (asyncio.TimeoutError, AssertionError,
-            json.decoder.JSONDecodeError) as e:
+    except (json.decoder.JSONDecodeError, AssertionError) as e:
         log.warning('GET_OR_CREATE: invalid/missing parameters, {0!r}', e)
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
     resp = {}
@@ -365,10 +363,9 @@ async def execute(request) -> web.Response:
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
     try:
-        with _timeout(2):
-            params = await request.json(loads=json.loads)
+        params = await request.json(loads=json.loads)
         log.info('EXECUTE(u:{0}, k:{1})', access_key, sess_id)
-    except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
+    except json.decoder.JSONDecodeError:
         log.warning('EXECUTE: invalid/missing parameters')
         raise InvalidAPIParameters
     try:
@@ -433,6 +430,94 @@ async def execute(request) -> web.Response:
         log.exception('EXECUTE: exception')
         raise
     return web.json_response(resp, status=200)
+
+
+@auth_required
+@server_ready_required
+async def execute_ws(request) -> web.Response:
+    '''
+    WebSocket-version of execute().
+    '''
+    registry = request.app['registry']
+    sess_id = request.match_info['sess_id']
+    access_key = request['keypair']['access_key']
+    log.info('EXECUTE_WS(u:{0}, k:{1})', access_key, sess_id)
+
+    await registry.increment_session_usage(sess_id, access_key)
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
+    # This websocket connection itself is a "run".
+    run_id = secrets.token_hex(8)
+
+    try:
+        if ws.closed:
+            log.warning('EXECUTE_WS: client disconnected')
+            await registry.interrupt_session(sess_id, access_key)
+            return
+        params = await ws.recv_json()
+        assert params.get('mode'), 'mode is missing or empty!'
+        mode = params['mode']
+        assert mode in {'query', 'batch'}, 'mode has an invalid value.'
+        code = params.get('code', '')
+        opts = params.get('options', None) or {}
+
+        while True:
+            # TODO: implement execute_stream and update agent impl.
+            raw_result = await registry.execute(
+                sess_id, access_key,
+                2, run_id, mode, code, opts)
+            if ws.closed:
+                log.warning('EXECUTE_WS: client disconnected')
+                await registry.interrupt_session(sess_id, access_key)
+                break
+            if raw_result is None:
+                # the kernel may have terminated from its side,
+                # or there was interruption of agents.
+                await ws.send_json({
+                    'status': 'finished',
+                    'exitCode': 130,
+                    'options': {},
+                    'files': [],
+                    'console': [],
+                })
+            await ws.send_json({
+                'status': raw_result['status'],
+                'console': raw_result.get('console'),
+                'exitCode': raw_result.get('exitCode'),
+                'options': raw_result.get('options'),
+                'files': raw_result.get('files'),
+            })
+            if raw_result['status'] == 'waiting-input':
+                incoming = await ws.recv_json()
+                code = incoming('')
+            elif raw_result['status'] == 'finished':
+                break
+            # repeat until we get finished
+            await asyncio.sleep(1.0)
+            mode = 'continue'
+            code = ''
+            opts.clear()
+    except (json.decoder.JSONDecodeError, AssertionError) as e:
+        log.warning('EXECUTE_WS: invalid/missing parameters: {0!r}', e)
+        if not ws.closed:
+            await ws.send_json({
+                'status': 'error',
+                'msg': f'Invalid API parameters: {e!r}',
+            })
+    except BackendError as e:
+        log.exception('EXECUTE_WS: exception')
+        if not ws.closed:
+            await ws.send_json({
+                'status': 'error',
+                'msg': f'BackendError: {e!r}',
+            })
+        raise
+    else:
+        if not ws.closed:
+            await ws.close()
+    finally:
+        return ws
 
 
 @auth_required

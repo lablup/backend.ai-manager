@@ -42,8 +42,6 @@ async def stream_pty(request) -> web.Response:
         raise
 
     await registry.increment_session_usage(sess_id, access_key)
-
-    # Upgrade connection to WebSocket.
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
