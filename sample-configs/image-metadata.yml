@@ -45,6 +45,8 @@ images:
       - ["1.10-py36-gpu", "x"]
       - ["1.11-py36", "x"]
       - ["1.11-py36-gpu", "x"]
+      - ["1.12-py36", "x"]
+      - ["1.12-py36-gpu", "x"]
     slots: &for_computing
       cpu: 4     # cores
       mem: 8.0   # GiB
@@ -57,13 +59,17 @@ images:
       - ["1.0-py36", "9c5384df6631"]
     slots:
       <<: *for_computing
-  - name: python-torch
+  - name: python-pytorch
     syntax: python
     tags:
-      - ["latest",     ":0.2-py36"]
-      - ["latest-gpu", ":0.2-py36-gpu"]
-      - ["0.2-py36",     "bf6f0eb94d61"]
-      - ["0.2-py36-gpu", "92c4d8d7e2f4"]
+      - ["latest",     ":0.4-py36"]
+      - ["latest-gpu", ":0.4-py36-gpu"]
+      - ["0.2-py36",     "x"]
+      - ["0.2-py36-gpu", "x"]
+      - ["0.3-py36",     "x"]
+      - ["0.3-py36-gpu", "x"]
+      - ["0.4-py36",     "x"]
+      - ["0.4-py36-gpu", "x"]
     slots:
       <<: *for_computing
   - name: julia
@@ -133,8 +139,10 @@ images:
   - name: nodejs
     syntax: javascript
     tags:
-      - ["latest",   ":6-alpine"]
+      - ["latest",   ":10-alpine"]
       - ["6-alpine", "2c75ac2a5827"]
+      - ["8-alpine", "x"]
+      - ["10-alpine", "x"]
     slots:
       <<: *default
   - name: lua

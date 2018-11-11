@@ -764,10 +764,10 @@ class AgentRegistry:
             ob_factors = await self.config_server.get_overbook_factors()
             reported_mem_slots = int(Decimal(agent_info['mem_slots']) *
                                      Decimal(ob_factors['mem']))
-            reported_cpu_slots = int(Decimal(agent_info['cpu_slots']) *
-                                     Decimal(ob_factors['cpu']))
-            reported_gpu_slots = int(Decimal(agent_info['gpu_slots']) *
-                                     Decimal(ob_factors['gpu']))
+            reported_cpu_slots = float(Decimal(agent_info['cpu_slots']) *
+                                       Decimal(ob_factors['cpu']))
+            reported_gpu_slots = float(Decimal(agent_info['gpu_slots']) *
+                                       Decimal(ob_factors['gpu']))
             scaling_group = agent_info['scaling_group']
             agent_created = False
             if row is None or row.status is None:
