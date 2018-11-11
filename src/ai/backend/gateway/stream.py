@@ -21,14 +21,15 @@ from ai.backend.common.logging import BraceStyleAdapter
 
 from .auth import auth_required
 from .exceptions import KernelNotFound, BackendError
-from .utils import not_impl_stub, server_ready_required
+from .manager import READ_ALLOWED, server_status_required
+from .utils import not_impl_stub
 from ..manager.models import kernels
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.stream'))
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 async def stream_pty(request) -> web.Response:
     app = request.app
     registry = app['registry']
@@ -181,8 +182,8 @@ async def stream_pty(request) -> web.Response:
     return ws
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 async def stream_execute(request) -> web.Response:
     '''
     WebSocket-version of gateway.kernel.execute().
@@ -210,8 +211,7 @@ async def stream_execute(request) -> web.Response:
 
     try:
         if ws.closed:
-            log.warning('STREAM_EXECUTE: client disconnected')
-            await registry.interrupt_session(sess_id, access_key)
+            log.warning('STREAM_EXECUTE: client disconnected (cancelled)')
             return
         params = await ws.recv_json()
         assert params.get('mode'), 'mode is missing or empty!'
@@ -226,7 +226,7 @@ async def stream_execute(request) -> web.Response:
                 sess_id, access_key,
                 2, run_id, mode, code, opts)
             if ws.closed:
-                log.warning('STREAM_EXECUTE: client disconnected')
+                log.warning('STREAM_EXECUTE: client disconnected (interrupted)')
                 await registry.interrupt_session(sess_id, access_key)
                 break
             if raw_result is None:
@@ -275,8 +275,8 @@ async def stream_execute(request) -> web.Response:
         if not ws.closed:
             await ws.send_json({
                 'status': 'server-restarting',
-                'msg': 'The manager server is restarted for maintenance. '
-                       'Please try again later.',
+                'msg': 'The API server is going to restart for maintenance. '
+                       'Please connect again with the same run ID.',
             })
     finally:
         if not ws.closed:
