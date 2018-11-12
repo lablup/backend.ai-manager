@@ -37,7 +37,7 @@ agent_peers = {}
 
 
 @aiotools.actxmgr
-async def RPCContext(addr, timeout=10):
+async def RPCContext(addr, timeout=None):
     preserved_exceptions = (
         NotFoundError,
         ParametersError,
@@ -46,15 +46,15 @@ async def RPCContext(addr, timeout=10):
         asyncio.InvalidStateError,
     )
     global agent_peers
+    peer = agent_peers.get(addr, None)
+    if peer is None:
+        peer = await aiozmq.rpc.connect_rpc(
+            connect=addr, error_table={
+                'concurrent.futures._base.TimeoutError': asyncio.TimeoutError,
+            })
+        peer.transport.setsockopt(zmq.LINGER, 1000)
+        agent_peers[addr] = peer
     try:
-        peer = agent_peers.get(addr, None)
-        if peer is None:
-            peer = await aiozmq.rpc.connect_rpc(
-                connect=addr, error_table={
-                    'concurrent.futures._base.TimeoutError': asyncio.TimeoutError,
-                })
-            peer.transport.setsockopt(zmq.LINGER, 1000)
-            agent_peers[addr] = peer
         with _timeout(timeout):
             yield peer
     except Exception:

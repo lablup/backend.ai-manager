@@ -223,25 +223,22 @@ async def stream_execute(request) -> web.Response:
         opts = params.get('options', None) or {}
 
         while True:
-            # TODO: implement execute_stream and update agent impl.
+            # TODO: rewrite agent and kernel-runner for unbuffered streaming.
             raw_result = await registry.execute(
                 sess_id, access_key,
                 2, run_id, mode, code, opts,
-                flush_timeout=0.1)
+                flush_timeout=0.2)
             if ws.closed:
                 log.warning('STREAM_EXECUTE: client disconnected (interrupted)')
                 await registry.interrupt_session(sess_id, access_key)
                 break
             if raw_result is None:
-                # the kernel may have terminated from its side,
-                # or there was interruption of agents.
-                await ws.send_json({
-                    'status': 'finished',
-                    'exitCode': 130,
-                    'options': {},
-                    'files': [],
-                    'console': [],
-                })
+                # repeat until we get finished
+                log.debug('STREAM_EXECUTE: none returned, continuing...')
+                mode = 'continue'
+                code = ''
+                opts.clear()
+                continue
             await ws.send_json({
                 'status': raw_result['status'],
                 'console': raw_result.get('console'),
@@ -281,8 +278,6 @@ async def stream_execute(request) -> web.Response:
                        'Please connect again with the same run ID.',
             })
     finally:
-        if not ws.closed:
-            await ws.close()
         app['stream_execute_handlers'][stream_key].discard(myself)
         return ws
 
