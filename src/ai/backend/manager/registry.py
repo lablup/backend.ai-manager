@@ -33,6 +33,8 @@ __all__ = ['AgentRegistry', 'InstanceNotFound']
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.registry'))
 
+agent_peers = {}
+
 
 @aiotools.actxmgr
 async def RPCContext(addr, timeout=10):
@@ -43,15 +45,18 @@ async def RPCContext(addr, timeout=10):
         asyncio.CancelledError,
         asyncio.InvalidStateError,
     )
-    server = None
+    global agent_peers
     try:
-        server = await aiozmq.rpc.connect_rpc(
-            connect=addr, error_table={
-                'concurrent.futures._base.TimeoutError': asyncio.TimeoutError,
-            })
-        server.transport.setsockopt(zmq.LINGER, 3000)
+        peer = agent_peers.get(addr, None)
+        if peer is None:
+            peer = await aiozmq.rpc.connect_rpc(
+                connect=addr, error_table={
+                    'concurrent.futures._base.TimeoutError': asyncio.TimeoutError,
+                })
+            peer.transport.setsockopt(zmq.LINGER, 1000)
+            agent_peers[addr] = peer
         with _timeout(timeout):
-            yield server
+            yield peer
     except Exception:
         exc_type, exc, tb = sys.exc_info()
         if issubclass(exc_type, GenericError):
@@ -72,10 +77,6 @@ async def RPCContext(addr, timeout=10):
         else:
             e = AgentError(exc_type, exc.args)
             raise e.with_traceback(tb)
-    finally:
-        if server:
-            server.close()
-            await server.wait_closed()
 
 
 @aiotools.actxmgr
@@ -111,7 +112,12 @@ class AgentRegistry:
         pass
 
     async def shutdown(self):
-        pass
+        global agent_peers
+        closing_tasks = []
+        for addr, peer in agent_peers.items():
+            peer.close()
+            closing_tasks.append(peer.wait_closed())
+        await asyncio.gather(*closing_tasks)
 
     async def get_instance(self, inst_id, field=None):
         async with self.dbpool.acquire() as conn, conn.begin():
@@ -837,6 +843,8 @@ class AgentRegistry:
         #  TODO: define behavior when agent reuse running instances upon revive
         # await app['registry'].forget_all_kernels_in_instance(agent_id)
 
+        global agent_peers
+
         await self.redis_live.hdel('last_seen', agent_id)
 
         pipe = self.redis_image.pipeline()
@@ -846,11 +854,16 @@ class AgentRegistry:
 
         async with reenter_txn(self.dbpool, conn) as conn:
 
-            query = (sa.select([agents.c.status], for_update=True)
+            query = (sa.select([agents.c.status, agents.c.addr], for_update=True)
                        .select_from(agents)
                        .where(agents.c.id == agent_id))
             result = await conn.execute(query)
-            prev_status = await result.scalar()
+            row = await result.first()
+            peer = agent_peers.pop(row['addr'], None)
+            if peer is not None:
+                peer.close()
+                await peer.wait_closed()
+            prev_status = row['status']
             if prev_status in (None, AgentStatus.LOST, AgentStatus.TERMINATED):
                 return
 
