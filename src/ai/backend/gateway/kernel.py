@@ -392,7 +392,8 @@ async def execute(request) -> web.Response:
         else:
             raw_result = await registry.execute(
                 sess_id, access_key,
-                api_version, run_id, mode, code, opts)
+                api_version, run_id, mode, code, opts,
+                flush_timeout=2.0)
             if raw_result is None:
                 # the kernel may have terminated from its side,
                 # or there was interruption of agents.

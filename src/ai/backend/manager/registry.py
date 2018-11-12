@@ -618,14 +618,16 @@ class AgentRegistry:
                 )
 
     async def execute(self, sess_id, access_key,
-                      api_version, run_id, mode, code, opts):
+                      api_version, run_id, mode, code, opts, *,
+                      flush_timeout=None):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
             # The agent aggregates at most 2 seconds of outputs
             # if the kernel runs for a long time.
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 coro = rpc.call.execute(api_version, str(kernel['id']),
-                                        run_id, mode, code, opts)
+                                        run_id, mode, code, opts,
+                                        flush_timeout)
                 if coro is None:
                     log.warning('execute cancelled')
                     return None

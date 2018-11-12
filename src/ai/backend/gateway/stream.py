@@ -107,11 +107,13 @@ async def stream_pty(request) -> web.Response:
                             code = f"%resize {data['rows']} {data['cols']}"
                             await registry.execute(
                                 sess_id, access_key,
-                                api_version, run_id, 'query', code, {})
+                                api_version, run_id, 'query', code, {},
+                                flush_timeout=None)
                         elif data['type'] == 'ping':
                             await registry.execute(
                                 sess_id, access_key,
-                                api_version, run_id, 'query', '%ping', {})
+                                api_version, run_id, 'query', '%ping', {},
+                                flush_timeout=None)
                         elif data['type'] == 'restart':
                             # Close existing zmq sockets and let stream
                             # handlers get a new one with changed stdin/stdout
@@ -224,7 +226,8 @@ async def stream_execute(request) -> web.Response:
             # TODO: implement execute_stream and update agent impl.
             raw_result = await registry.execute(
                 sess_id, access_key,
-                2, run_id, mode, code, opts)
+                2, run_id, mode, code, opts,
+                flush_timeout=0.1)
             if ws.closed:
                 log.warning('STREAM_EXECUTE: client disconnected (interrupted)')
                 await registry.interrupt_session(sess_id, access_key)
