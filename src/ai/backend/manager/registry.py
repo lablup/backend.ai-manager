@@ -49,7 +49,7 @@ async def RPCContext(addr, timeout=10):
             connect=addr, error_table={
                 'concurrent.futures._base.TimeoutError': asyncio.TimeoutError,
             })
-        server.transport.setsockopt(zmq.LINGER, 50)
+        server.transport.setsockopt(zmq.LINGER, 3000)
         with _timeout(timeout):
             yield server
     except Exception:
@@ -500,7 +500,7 @@ class AgentRegistry:
 
             async with self.handle_kernel_exception(
                     'create_session', sess_id, access_key):
-                async with RPCContext(agent_addr, 3) as rpc:
+                async with RPCContext(agent_addr, 30) as rpc:
                     config = {
                         'lang': lang,
                         'limits': {
@@ -558,7 +558,7 @@ class AgentRegistry:
                                                   db_connection=conn)
             except KernelNotFound:
                 return
-            async with RPCContext(kernel['agent_addr'], 10) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 return await rpc.call.destroy_kernel(str(kernel['id']))
 
     async def restart_session(self, sess_id, access_key):
@@ -623,7 +623,7 @@ class AgentRegistry:
             kernel = await self.get_session(sess_id, access_key)
             # The agent aggregates at most 2 seconds of outputs
             # if the kernel runs for a long time.
-            async with RPCContext(kernel['agent_addr'], 300) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 coro = rpc.call.execute(api_version, str(kernel['id']),
                                         run_id, mode, code, opts)
                 if coro is None:
@@ -634,7 +634,7 @@ class AgentRegistry:
     async def interrupt_session(self, sess_id, access_key):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 5) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 coro = rpc.call.interrupt_kernel(str(kernel['id']))
                 if coro is None:
                     log.warning('interrupt cancelled')
@@ -644,7 +644,7 @@ class AgentRegistry:
     async def get_completions(self, sess_id, access_key, mode, text, opts):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 5) as rpc:
+            async with RPCContext(kernel['agent_addr'], 10) as rpc:
                 coro = rpc.call.get_completions(str(kernel['id']), mode, text, opts)
                 if coro is None:
                     log.warning('get_completions cancelled')
@@ -654,7 +654,7 @@ class AgentRegistry:
     async def upload_file(self, sess_id, access_key, filename, payload):
         async with self.handle_kernel_exception('upload_file', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 180) as rpc:
+            async with RPCContext(kernel['agent_addr'], None) as rpc:
                 coro = rpc.call.upload_file(str(kernel['id']), filename, payload)
                 if coro is None:
                     log.warning('upload_file cancelled')
@@ -665,7 +665,7 @@ class AgentRegistry:
         async with self.handle_kernel_exception('download_file', sess_id,
                                                 access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 180) as rpc:
+            async with RPCContext(kernel['agent_addr'], None) as rpc:
                 coro = rpc.call.download_file(str(kernel['id']), filepath)
                 if coro is None:
                     log.warning('download_file cancelled')
@@ -675,7 +675,7 @@ class AgentRegistry:
     async def list_files(self, sess_id, access_key, path):
         async with self.handle_kernel_exception('list_files', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 5) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 coro = rpc.call.list_files(str(kernel['id']), path)
                 if coro is None:
                     log.warning('list_files cancelled')
@@ -685,7 +685,7 @@ class AgentRegistry:
     async def get_logs(self, sess_id, access_key):
         async with self.handle_kernel_exception('get_logs', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 5) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 coro = rpc.call.get_logs(str(kernel['id']))
                 if coro is None:
                     log.warning('get_logs cancelled')
@@ -726,7 +726,7 @@ class AgentRegistry:
             return rows
 
     async def kill_all_sessions_in_agent(self, agent_addr):
-        async with RPCContext(agent_addr, 5) as rpc:
+        async with RPCContext(agent_addr, 30) as rpc:
             coro = rpc.call.clean_all_kernels('manager-freeze-force-kill')
             if coro is None:
                 log.warning('kill_all_sessions_in_agent cancelled')
