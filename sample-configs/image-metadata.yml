@@ -12,6 +12,7 @@ images:
       cpu: 1    # cores
       mem: 1.0  # GiB
       gpu: 0    # fraction of GPU device
+      tpu: 0    # fraction of TPU device
   - name: python-tester
     # image for unit-testing student submissions
     syntax: python
@@ -22,6 +23,7 @@ images:
       cpu: 1    # cores
       mem: 0.3  # GiB
       gpu: 0    # fraction of GPU device
+      tpu: 0    # fraction of TPU device
   - name: python-tensorflow
     syntax: python
     tags:
@@ -47,11 +49,14 @@ images:
       - ["1.11-py36-gpu", "x"]
       - ["1.12-py36", "x"]
       - ["1.12-py36-gpu", "x"]
+      - ["1.12-py36-tpu", "x"]
     slots: &for_computing
       cpu: 4     # cores
       mem: 8.0   # GiB
       gpu: 0.5   # max.fraction of GPU device
+      tpu: 1     # max fraction of TPU device
       # NOTE: gpu slot is only used for the images tagged with "-gpu".
+      # NOTE: tpu slot is only used for the images tagged with "-tpu".
   - name: python-caffe
     syntax: python
     tags:

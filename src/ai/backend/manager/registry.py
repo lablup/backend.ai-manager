@@ -403,6 +403,16 @@ class AgentRegistry:
             else:
                 assert creation_config['instanceGPUs'] is not None
                 gpu_share = Decimal(creation_config['instanceGPUs'])
+
+            tpu_share = Decimal(0)
+            if max_allowed_slot.tpu is not None:
+                tpu_share = min(
+                    max_allowed_slot.tpu,
+                    Decimal(creation_config.get('instancetpus') or Decimal('inf')),
+                )
+            else:
+                assert creation_config['instancetpus'] is not None
+                tpu_share = Decimal(creation_config['instancetpus'])
         except (AssertionError, KeyError):
             msg = ('You have missing resource limits that must be specified. '
                    'If the server does not have default resource configurations, '
@@ -415,6 +425,7 @@ class AgentRegistry:
             cpu=cpu_share,
             mem=mem_share,
             gpu=gpu_share,
+            tpu=tpu_share,
         )
         lang = f'{docker_registry}/{name}:{tag}'
         image_name = f'{docker_registry}/kernel-{name}:{tag}'
@@ -435,6 +446,7 @@ class AgentRegistry:
                     mem=row['mem_slots'] - row['used_mem_slots'],
                     cpu=row['cpu_slots'] - row['used_cpu_slots'],
                     gpu=row['gpu_slots'] - row['used_gpu_slots'],
+                    tpu=row['tpu_slots'] - row['used_tpu_slots'],
                 )
                 avail_slots.append(sdiff)
 
@@ -442,11 +454,13 @@ class AgentRegistry:
             avail_slots = [s for s in avail_slots
                            if s.mem >= (required_shares.mem * 1024) and
                               s.cpu >= required_shares.cpu and
-                              s.gpu >= required_shares.gpu]
+                              s.gpu >= required_shares.gpu and
+                              s.tpu >= required_shares.tpu]
 
             # load-balance
             if avail_slots:
-                agent_id = (max(avail_slots, key=lambda s: (s.gpu, s.cpu, s.mem))).id
+                agent_id = (max(avail_slots,
+                                key=lambda s: (s.gpu, s.cpu, s.mem, s.tpu))).id
             else:
                 raise InstanceNotAvailable
 
@@ -454,11 +468,13 @@ class AgentRegistry:
             mem_col = agents.c.used_mem_slots
             cpu_col = agents.c.used_cpu_slots
             gpu_col = agents.c.used_gpu_slots
+            tpu_col = agents.c.used_tpu_slots
             query = (sa.update(agents)
                        .values({
                            'used_mem_slots': mem_col + required_shares.mem * 1024,
                            'used_cpu_slots': cpu_col + required_shares.cpu,
                            'used_gpu_slots': gpu_col + required_shares.gpu,
+                           'used_tpu_slots': tpu_col + required_shares.tpu,
                        })
                        .where(agents.c.id == agent_id))
             result = await conn.execute(query)
@@ -486,9 +502,11 @@ class AgentRegistry:
                 'mem_slot': required_shares.mem * 1024,
                 'cpu_slot': required_shares.cpu,
                 'gpu_slot': required_shares.gpu,
+                # 'tpu_slot': required_shares.tpu,
                 'environ': [f'{k}={v}' for k, v in environ.items()],
                 'cpu_set': [],
                 'gpu_set': [],
+                # 'tpu_set': [],
                 'kernel_host': None,
                 'repl_in_port': 0,
                 'repl_out_port': 0,
@@ -508,6 +526,7 @@ class AgentRegistry:
                             'mem_slot': str(required_shares.mem),
                             'cpu_slot': str(required_shares.cpu),
                             'gpu_slot': str(required_shares.gpu),
+                            'tpu_slot': str(required_shares.tpu),
                         },
                         'mounts': mounts,
                         'environ': environ,
@@ -534,6 +553,7 @@ class AgentRegistry:
                                     'container_id': created_info['container_id'],
                                     'cpu_set': [],  # TODO: revamp with resource_spec
                                     'gpu_set': [],  # TODO: revamp with resource_spec
+                                    # 'tpu_set': [],  # TODO: revamp with resource_spec
                                     'kernel_host': kernel_host,
                                     'repl_in_port': created_info['repl_in_port'],
                                     'repl_out_port': created_info['repl_out_port'],
@@ -569,6 +589,7 @@ class AgentRegistry:
                 kernels.c.mem_slot,
                 kernels.c.cpu_slot,
                 kernels.c.gpu_slot,
+                kernels.c.tpu_slot,
                 kernels.c.environ,
                 kernels.c.cpu_set,
                 kernels.c.gpu_set,
@@ -588,6 +609,7 @@ class AgentRegistry:
                     # units: share
                     'cpu_slot': kernel['cpu_slot'],
                     'gpu_slot': kernel['gpu_slot'],
+                    'tpu_slot': kernel['tpu_slot'],
                     'mem_slot': kernel['mem_slot'] / 1024,
                 }
                 environ = {
@@ -757,7 +779,8 @@ class AgentRegistry:
             query = (sa.select([agents.c.status,
                                 agents.c.mem_slots,
                                 agents.c.cpu_slots,
-                                agents.c.gpu_slots],
+                                agents.c.gpu_slots,
+                                agents.c.tpu_slots],
                                for_update=True)
                        .select_from(agents)
                        .where(agents.c.id == agent_id))
@@ -770,6 +793,8 @@ class AgentRegistry:
                                        Decimal(ob_factors['cpu']))
             reported_gpu_slots = float(Decimal(agent_info['gpu_slots']) *
                                        Decimal(ob_factors['gpu']))
+            reported_tpu_slots = float(Decimal(agent_info['tpu_slots']) *
+                                       Decimal(ob_factors['tpu']))
             if row is None or row.status is None:
                 # new agent detected!
                 log.info('agent {0} joined!', agent_id)
@@ -780,9 +805,11 @@ class AgentRegistry:
                     'mem_slots': reported_mem_slots,
                     'cpu_slots': reported_cpu_slots,
                     'gpu_slots': reported_gpu_slots,
+                    'tpu_slots': reported_tpu_slots,
                     'used_mem_slots': 0,
                     'used_cpu_slots': 0,
                     'used_gpu_slots': 0,
+                    'used_tpu_slots': 0,
                     'addr': agent_info['addr'],
                     'first_contact': now,
                     'lost_at': None,
@@ -797,6 +824,8 @@ class AgentRegistry:
                     changed_cols['cpu_slots'] = reported_cpu_slots
                 if row.gpu_slots != reported_gpu_slots:
                     changed_cols['gpu_slots'] = reported_gpu_slots
+                if row.tpu_slots != reported_tpu_slots:
+                    changed_cols['tpu_slots'] = reported_tpu_slots
                 if changed_cols:
                     query = (sa.update(agents)
                                .values(changed_cols)
@@ -813,6 +842,7 @@ class AgentRegistry:
                                'mem_slots': reported_mem_slots,
                                'cpu_slots': reported_cpu_slots,
                                'gpu_slots': reported_gpu_slots,
+                               'tpu_slots': reported_tpu_slots,
                            })
                            .where(agents.c.id == agent_id))
                 await conn.execute(query)
@@ -906,7 +936,8 @@ class AgentRegistry:
             query = (sa.select([sa.column('agent'),
                                 sa.column('mem_slot'),
                                 sa.column('cpu_slot'),
-                                sa.column('gpu_slot')])
+                                sa.column('gpu_slot'),
+                                sa.column('tpu_slot')])
                        .select_from(kernels)
                        .where(kernels.c.id == kernel_id))
             result = await conn.execute(query)
@@ -917,11 +948,13 @@ class AgentRegistry:
             mem_col = agents.c.used_mem_slots
             cpu_col = agents.c.used_cpu_slots
             gpu_col = agents.c.used_gpu_slots
+            tpu_col = agents.c.used_tpu_slots
             query = (sa.update(agents)
                        .values({
                            'used_mem_slots': mem_col - kernel['mem_slot'],
                            'used_cpu_slots': cpu_col - kernel['cpu_slot'],
                            'used_gpu_slots': gpu_col - kernel['gpu_slot'],
+                           'used_tpu_slots': tpu_col - kernel['tpu_slot'],
                        })
                        .where(agents.c.id == kernel['agent']))
             await conn.execute(query)
