@@ -553,7 +553,7 @@ class AgentRegistry:
                                     'container_id': created_info['container_id'],
                                     'cpu_set': [],  # TODO: revamp with resource_spec
                                     'gpu_set': [],  # TODO: revamp with resource_spec
-                                    # 'tpu_set': [],  # TODO: revamp with resource_spec
+                                    'tpu_set': [],  # TODO: revamp with resource_spec
                                     'kernel_host': kernel_host,
                                     'repl_in_port': created_info['repl_in_port'],
                                     'repl_out_port': created_info['repl_out_port'],
