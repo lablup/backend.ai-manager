@@ -255,7 +255,6 @@ async def stream_execute(request) -> web.Response:
                 break
             else:
                 # repeat until we get finished
-                await asyncio.sleep(0.5)
                 mode = 'continue'
                 code = ''
                 opts.clear()
