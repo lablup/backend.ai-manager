@@ -64,8 +64,8 @@ class SessionCreationJob:
 
 class ScalingGroup:
 
-    def __init__(self, group_id, registry, scaling_driver=None, job_scheduler=None):
-        self.group_id = group_id
+    def __init__(self, name, registry, scaling_driver=None, job_scheduler=None):
+        self.name = name
         self.registry = registry
         if not scaling_driver:
             scaling_driver = AWSDefaultScalingDriver(registry.config_server)
@@ -181,12 +181,12 @@ class ScalingGroup:
                             agents.c.id == kernels.c.agent, isouter=True)
                 query = (sa.select([agents.c.id])
                            .select_from(j)
-                           .where((agents.c.scaling_group == self.group_id) &
+                           .where((agents.c.scaling_group == self.name) &
                                   kernels.c.id.is_(None)))
             else :
                 query = (sa.select([agents.c.id])
                            .select_from(agents)
-                           .where(agents.c.scaling_group == self.group_id))
+                           .where(agents.c.scaling_group == self.name))
 
             agent_ids = []
             async for row in conn.execute(query):
@@ -201,7 +201,7 @@ class ScalingGroup:
                     agents.c.gpu_slots, agents.c.used_gpu_slots]
             query = (sa.select(cols)
                        .select_from(agents)
-                       .where(agents.c.scaling_group == self.group_id))
+                       .where(agents.c.scaling_group == self.name))
 
             available_shares = []
             async for row in conn.execute(query):

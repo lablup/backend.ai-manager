@@ -116,20 +116,20 @@ class AgentRegistry:
         async with reenter_txn(self.dbpool, conn) as conn:
             if agent_id:
                 j = sa.join(scaling_groups, agents,
-                            scaling_groups.c.id == agents.c.scaling_group,
-                            outer_join=True)
-                query = (sa.select([scaling_groups.c.id])
+                            scaling_groups.c.name == agents.c.scaling_group,
+                            isouter=True)
+                query = (sa.select([scaling_groups.c.name])
                            .select_from(j)
                            .where(agents.c.id == agent_id))
             else:
-                query = (sa.select([scaling_groups.c.id])
-                           .select_from(scaling_group)
+                query = (sa.select([scaling_groups.c.name])
+                           .select_from(scaling_groups)
                            .where(scaling_groups.c.name == scaling_group))
             result = await conn.execute(query)
             row = result.first()
             if row is None:
                 raise ValueError('Scaling group not found')
-            return ScalingGroup(row.id, self)
+            return ScalingGroup(row.name, self)
 
     async def get_instance(self, inst_id, field=None):
         async with self.dbpool.acquire() as conn, conn.begin():

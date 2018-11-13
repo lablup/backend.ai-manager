@@ -36,6 +36,8 @@ agents = sa.Table(
     sa.Column('status', EnumType(AgentStatus), nullable=False, index=True,
               default=AgentStatus.ALIVE),
     sa.Column('region', sa.String(length=64), index=True, nullable=False),
+    sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True,
+              nullable=False, server_default='default', default='default'),
 
     sa.Column('mem_slots', sa.BigInteger(), nullable=False),  # MiBytes
     sa.Column('cpu_slots', sa.Float(), nullable=False),  # number of CPU cores
