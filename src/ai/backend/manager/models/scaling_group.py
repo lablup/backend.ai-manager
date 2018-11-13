@@ -19,6 +19,7 @@ from .base import metadata
 from .kernel import kernels, KernelStatus, SessionCreationRequest
 from .agent import agents, ResourceSlot
 from ...gateway.exceptions import InvalidAPIParameters
+from ...gateway.utils import reenter_txn
 
 
 '''
@@ -38,7 +39,7 @@ Some design sketches:
 
 
 __all__ = ('ScalingEventType', 'ScalingEvent', 'SessionCreationJob',
-           'ScalingGroup', 'AWSDefaultScalingDriver')
+           'ScalingGroup', 'AWSDefaultScalingDriver', 'scaling_groups')
 
 
 class ScalingEventType(enum.Enum):
@@ -68,7 +69,7 @@ class ScalingGroup:
         self.name = name
         self.registry = registry
         if not scaling_driver:
-            scaling_driver = AWSDefaultScalingDriver(registry.config_server)
+            scaling_driver = AWSDefaultScalingDriver()
         self.scaling_driver = scaling_driver
         if not job_scheduler:
             job_scheduler = SimpleFIFOJobScheduler()
@@ -85,9 +86,9 @@ class ScalingGroup:
                 job = SessionCreationJob(
                     kernel_id=row.id,
                     resources=ResourceSlot(
-                        cpu=row.cpu_slot,
-                        mem=row.mem_slot,
-                        gpu=row.gpu_slot,
+                        cpu=Decimal(row.cpu_slot),
+                        mem=Decimal(row.mem_slot),
+                        gpu=Decimal(row.gpu_slot),
                     ),
                     created_at=row.created_at,
                 )
@@ -140,7 +141,6 @@ class ScalingGroup:
 
             # Register request.
             kernel_info_base = {
-                'kernel_id'
                 'status': KernelStatus.PENDING,
                 'role': 'master',
                 'agent': None,
@@ -166,7 +166,7 @@ class ScalingGroup:
             assert result.rowcount == 1
 
             return {
-                'id': '',
+                'id': request.kernel_id,
                 'sess_id': request.sess_id,
                 'agent': None,
                 'agent_addr': None,
@@ -207,9 +207,9 @@ class ScalingGroup:
             async for row in conn.execute(query):
                 available_shares.append(ResourceSlot(
                     id=row.id,
-                    mem=row.mem_slots - row.used_mem_slots,
-                    cpu=row.cpu_slots - row.used_cpu_slots,
-                    gpu=row.gpu_slots - row.used_gpu_slots,
+                    mem=Decimal(row.mem_slots - row.used_mem_slots),
+                    cpu=Decimal(row.cpu_slots - row.used_cpu_slots),
+                    gpu=Decimal(row.gpu_slots - row.used_gpu_slots),
                 ))
             return available_shares
 
@@ -227,8 +227,9 @@ class ScalingGroup:
         #
         # It is possible that scaling driver re-schedule jobs
         # by optimizing utilization of agents.
-        scheduled_jobs = map(lambda x: x[1], schedule_info)
-        remaining_jobs = set(pending_jobs) - set(scheduled_jobs)
+        scheduled_job_ids = map(lambda x: x[1].kernel_id, schedule_info)
+        remaining_jobs = [job for job in pending_jobs
+                          if job.kernel_id not in scheduled_job_ids]
         schedule_info = await self.scaling_driver.scale(
             self, schedule_info, remaining_jobs, conn=conn)
 
@@ -334,8 +335,11 @@ class BasicScalingDriver(AbstractScalingDriver):
             # Assert that minimum prepared shares condition is satisfied.
             curr_buffer_jobs = await scaling_group.job_scheduler.schedule(
                 scaling_group, required_buffer_jobs, conn=conn)
-            curr_buffer_jobs = map(lambda x: x[1], curr_buffer_jobs)
-            deficient_buffer_jobs = set(required_buffer_jobs) - set(curr_buffer_jobs)
+            curr_buffer_job_ids = set(map(lambda x: x[1].kernel_id,
+                                          curr_buffer_jobs))
+            deficient_buffer_jobs = [job for job in required_buffer_jobs
+                                     if job.kernel_id not in curr_buffer_job_ids]
+
             if deficient_buffer_jobs:
                 await self.scale_out(deficient_buffer_jobs)
             else:
@@ -442,6 +446,10 @@ class AWSScalingDriverMixin(AbstractVendorScalingDriverMixin):
                 launch_template = {
                     'LaunchTemplateName': launch_template_name,
                 }
+                # TODO: set tags
+                # refs: https://botocore.amazonaws.com/v1/documentation/api/latest
+                #       /reference/services/ec2.html#EC2.Client.run_instances,
+                #       'TagSpecifications' kwargs
                 coro = client.run_instances(LaunchTemplate=launch_template,
                                             MinCount=instance_num,
                                             MaxCount=instance_num)
@@ -494,6 +502,8 @@ class SimpleFIFOJobScheduler(AbstractJobScheduler):
 
     async def schedule(self, scaling_group, pending_jobs, conn=None):
         available_agent_infos = await scaling_group.get_available_shares(conn=conn)
+        if not available_agent_infos:
+            return []
         list(pending_jobs).sort(key=lambda _job: _job.created_at, reverse=True)
 
         async with reenter_txn(scaling_group.registry.dbpool, conn) as conn:
@@ -504,7 +514,7 @@ class SimpleFIFOJobScheduler(AbstractJobScheduler):
                         curr_agent_info.mem < job.resources.mem or \
                         curr_agent_info.gpu or job.resources.gpu:
                     if not available_agent_infos:
-                        return scheduled_jobs
+                        break
                     curr_agent_info = available_agent_infos.pop(0)
                 agent_id = curr_agent_info.id
                 updates = {
@@ -517,13 +527,28 @@ class SimpleFIFOJobScheduler(AbstractJobScheduler):
                            .where(agents.c.id == agent_id))
                 await conn.execute(query)
 
-                curr_agent_info.cpu -= job.resources.cpu
-                curr_agent_info.mem -= job.resources.mem
-                curr_agent_info.gpu -= job.resources.gpu
+                query = (sa.select([agents.c.addr])
+                           .select_from(agents)
+                           .where(agents.c.id == agent_id))
+                result = await conn.execute(query)
+                row = await result.first()
+                agent_addr = row.addr
+
+                query = (kernels.update()
+                                .values(agent_addr=agent_addr)
+                                .where(kernels.c.id == job.kernel_id))
+                await conn.execute(query)
+
+                curr_agent_info = ResourceSlot(
+                    id=curr_agent_info.id,
+                    cpu=Decimal(curr_agent_info.cpu - job.resources.cpu),
+                    mem=Decimal(curr_agent_info.mem - job.resources.mem),
+                    gpu=Decimal(curr_agent_info.gpu - job.resources.gpu),
+                )
 
                 scheduled_jobs.append((agent_id, job))
 
-            raise RuntimeError('Should not reach here!')
+            return scheduled_jobs
 
 
 scaling_groups = sa.Table(

@@ -61,9 +61,9 @@ class SessionCreationRequest:
             'environ': [f'{k}={v}'
                         for k, v in self.creation_config.get('environ', []).items()],
             'created_at': self.created_at,
-            'cpu_slot': self.creation_config['cpu_slot'],
-            'mem_slot': self.creation_config['mem_slot'],
-            'gpu_slot': self.creation_config['gpu_slot'],
+            'cpu_slot': self.creation_config['instanceCores'],
+            'mem_slot': self.creation_config['instanceMemory'],
+            'gpu_slot': self.creation_config['instanceGPUs'],
         }
 
     @staticmethod

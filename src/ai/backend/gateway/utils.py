@@ -6,6 +6,7 @@ import re
 import traceback
 
 from aiohttp import web
+import aiotools
 from dateutil.tz import gettz
 import pytz
 
@@ -130,3 +131,13 @@ def server_ready_required(handler):
 
 async def not_impl_stub(request) -> web.Response:
     raise QueryNotImplemented
+
+
+@aiotools.actxmgr
+async def reenter_txn(pool, conn):
+    if conn is None:
+        async with pool.acquire() as conn, conn.begin():
+            yield conn
+    else:
+        async with conn.begin_nested():
+            yield conn

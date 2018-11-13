@@ -23,10 +23,11 @@ from ..gateway.exceptions import (
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
     AgentError)
+from ..gateway.utils import reenter_txn
 from .models import (
     agents, kernels, keypairs,
     ResourceSlot, AgentStatus, KernelStatus,
-    ScalingGroup, SessionCreationRequest, SessionCreationJob)
+    scaling_groups, ScalingGroup, SessionCreationRequest)
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
 
@@ -77,16 +78,6 @@ async def RPCContext(addr, timeout=10):
             await server.wait_closed()
 
 
-@aiotools.actxmgr
-async def reenter_txn(pool, conn):
-    if conn is None:
-        async with pool.acquire() as conn, conn.begin():
-            yield conn
-    else:
-        async with conn.begin_nested():
-            yield conn
-
-
 class AgentRegistry:
     '''
     Provide a high-level API to create, destroy, and query the computation
@@ -126,7 +117,7 @@ class AgentRegistry:
                            .select_from(scaling_groups)
                            .where(scaling_groups.c.name == scaling_group))
             result = await conn.execute(query)
-            row = result.first()
+            row = await result.first()
             if row is None:
                 raise ValueError('Scaling group not found')
             return ScalingGroup(row.name, self)
@@ -468,9 +459,10 @@ class AgentRegistry:
 
             # Create kernel by invoking the agent on the instance.
             query = (sa.select('*')
+                       .select_from(kernels)
                        .where(kernels.c.id == kernel_id))
             result = await conn.execute(query)
-            row = result.first()
+            row = await result.first()
             sess_id = row.sess_id
             access_key = row.access_key
             required_shares = ResourceSlot(
@@ -480,9 +472,9 @@ class AgentRegistry:
             )
             lang = row.lang
             agent_addr = row.agent_addr
-            mounts = row.mounts,
+            mounts = row.mounts
             environ = {k: v
-                       for k, v in map(lambda x: x.split('='), row.environ)},
+                       for k, v in map(lambda x: x.split('='), row.environ)}
             assert agent_addr is not None
 
             # Update kernel status.
@@ -769,7 +761,19 @@ class AgentRegistry:
                                        Decimal(ob_factors['cpu']))
             reported_gpu_slots = float(Decimal(agent_info['gpu_slots']) *
                                        Decimal(ob_factors['gpu']))
-            scaling_group = agent_info['scaling_group']
+            try:
+                scaling_group = agent_info.get('scaling_group', None)
+                assert scaling_group is not None
+                query = (sa.select('*')
+                           .select_from(scaling_groups)
+                           .where(scaling_groups.c.name == scaling_group))
+                result = await conn.execute(query)
+                assert await result.first()
+            except AssertionError:
+                log.warning('agent with invalid scaling group sends heartbeat '
+                            '(agent id: {0}, scaling group: {1})',
+                            agent_id, scaling_group)
+                return
             agent_created = False
             if row is None or row.status is None:
                 # new agent detected!
@@ -950,9 +954,10 @@ class AgentRegistry:
                        .where(agents.c.id == kernel['agent']))
             await conn.execute(query)
 
-            scaling_group = await self.get_scaling_group(
-                agent_id=kernel['agent'], conn=conn)
-            await scaling_group.schedule(conn=conn)
+            if kernel['agent'] and prev_status == KernelStatus.RESIZING:
+                scaling_group = await self.get_scaling_group(
+                    agent_id=kernel['agent'], conn=conn)
+                await scaling_group.schedule(conn=conn)
 
     async def mark_session_terminated(self, sess_id, access_key, conn=None):
         '''
