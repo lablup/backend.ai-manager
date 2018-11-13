@@ -12,7 +12,6 @@ import logging
 import re
 import secrets
 
-from ai.backend.gateway.manager import server_unfrozen_required
 from aiohttp import web
 import aiotools
 from aiojobs.aiohttp import atomic
@@ -25,10 +24,11 @@ from ai.backend.common.logging import BraceStyleAdapter
 
 from .exceptions import (InvalidAPIParameters, QuotaExceeded,
                          KernelNotFound, VFolderNotFound,
-                         BackendError, InternalServerError)
+                         BackendError, InternalServerError, InstanceNotAvailable)
 from . import GatewayStatus
 from .auth import auth_required
 from .utils import catch_unexpected, server_ready_required
+from .manager import server_unfrozen_required
 from ..manager.models import (keypairs, kernels, vfolders, AgentStatus, KernelStatus,
                               vfolder_permissions)
 
@@ -59,6 +59,7 @@ async def create(request) -> web.Response:
         log.info('GET_OR_CREATE (u:{0}, lang:{1}, tag:{2}, token:{3})',
                  request['keypair']['access_key'], params['lang'],
                  params.get('tag', None), sess_id)
+        creation_timeout = params.get('timeout', 30)
     except (asyncio.TimeoutError, AssertionError,
             json.decoder.JSONDecodeError) as e:
         log.warning('GET_OR_CREATE: invalid/missing parameters, {0!r}', e)
@@ -129,9 +130,27 @@ async def create(request) -> web.Response:
                            .values(concurrency_used=keypairs.c.concurrency_used + 1)
                            .where(keypairs.c.access_key == access_key))
                 await conn.execute(query)
+                try:
+                    with _timeout(creation_timeout):
+                        while True:
+                            try:
+                                _ = await request.app['registry'].get_session(
+                                    sess_id, access_key, db_connection=conn)
+                            except KernelNotFound:
+                                pass
+                            else:
+                                break
+                            await asyncio.sleep(2)
+                except asyncio.TimeoutError:
+                    log.warning('GET_OR_CREATE: creation timeout')
+                    await request.app['registry'].mark_kernel_terminated(
+                        str(kernel['id']), conn=conn)
+                    await request.app['registry'].mark_session_terminated(
+                        sess_id, access_key, conn=conn)
+                    raise InstanceNotAvailable
     except BackendError:
         log.exception('GET_OR_CREATE: exception')
-        raise
+        raise InstanceNotAvailable
     except Exception:
         request.app['sentry'].captureException()
         log.exception('GET_OR_CREATE: unexpected error!')
