@@ -112,8 +112,8 @@ class AgentRegistry:
     async def shutdown(self):
         pass
 
-    async def get_scaling_group(self, agent_id=None, scaling_group=None):
-        async with self.dbpool.acquire() as conn, conn.begin():
+    async def get_scaling_group(self, agent_id=None, scaling_group=None, conn=None):
+        async with reenter_txn(self.dbpool, conn) as conn:
             if agent_id:
                 j = sa.join(scaling_groups, agents,
                             scaling_groups.c.id == agents.c.scaling_group,
@@ -385,7 +385,8 @@ class AgentRegistry:
                               conn=None, session_tag=None, scaling_group=None):
         if scaling_group is None:
             scaling_group = 'default'
-        scaling_group = await self.get_scaling_group(scaling_group=scaling_group)
+        scaling_group = await self.get_scaling_group(scaling_group=scaling_group,
+                                                     conn=conn)
 
         # Parse input and create SessionCreateRequest.
         if '/' in lang:
@@ -408,8 +409,8 @@ class AgentRegistry:
             session_tag=session_tag,
             creation_config=creation_config,
         )
-        kernel_access_info = await scaling_group.register_request(request)
-        await scaling_group.schedule()
+        kernel_access_info = await scaling_group.register_request(request, conn=conn)
+        await scaling_group.schedule(conn=conn)
         return kernel_access_info
 
     async def create_session(self, agent_id, kernel_id, conn=None):
@@ -835,8 +836,8 @@ class AgentRegistry:
 
             if agent_created:
                 scaling_group = await self.get_scaling_group(
-                    scaling_group=scaling_group)
-                await scaling_group.schedule()
+                    scaling_group=scaling_group, conn=conn)
+                await scaling_group.schedule(conn=conn)
 
         # Update the mapping of kernel images to agents.
         images = msgpack.unpackb(snappy.decompress(agent_info['images']))
@@ -883,8 +884,9 @@ class AgentRegistry:
                        .where(agents.c.id == agent_id))
             await conn.execute(query)
 
-            scaling_group = await self.get_scaling_group(agent_id=agent_id)
-            await scaling_group.schedule()
+            scaling_group = await self.get_scaling_group(
+                agent_id=agent_id, conn=conn)
+            await scaling_group.schedule(conn=conn)
 
     async def mark_kernel_terminated(self, kernel_id, conn=None):
         '''
@@ -948,16 +950,17 @@ class AgentRegistry:
                        .where(agents.c.id == kernel['agent']))
             await conn.execute(query)
 
-            scaling_group = await self.get_scaling_group(agent_id=kernel['agent'])
-            await scaling_group.schedule()
+            scaling_group = await self.get_scaling_group(
+                agent_id=kernel['agent'], conn=conn)
+            await scaling_group.schedule(conn=conn)
 
-    async def mark_session_terminated(self, sess_id, access_key):
+    async def mark_session_terminated(self, sess_id, access_key, conn=None):
         '''
         Mark the compute session terminated and restore the concurrency limit
         of the owner access key.  Releasing resource limits is handled by
         func:`mark_kernel_terminated`.
         '''
-        async with self.dbpool.acquire() as conn, conn.begin():
+        async with reenter_txn(self.dbpool, conn) as conn:
             # concurrency is per session.
             query = (sa.update(keypairs)
                        .values({

@@ -74,8 +74,8 @@ class ScalingGroup:
             job_scheduler = SimpleFIFOJobScheduler()
         self.job_scheduler = job_scheduler
 
-    async def get_pending_jobs(self):
-        async with self.registry.dbpool.acquire() as conn, conn.begin():
+    async def get_pending_jobs(self, conn=None):
+        async with reenter_txn(self.registry.dbpool, conn) as conn:
             query = (sa.select('*')
                        .select_from(kernels)
                        .where(kernels.c.status == KernelStatus.PENDING))
@@ -95,9 +95,8 @@ class ScalingGroup:
 
             return jobs
 
-    async def register_request(self, request: SessionCreationRequest):
-        async with self.registry.dbpool.acquire() as conn, conn.begin():
-
+    async def register_request(self, request: SessionCreationRequest, conn=None):
+        async with reenter_txn(self.registry.dbpool, conn) as conn:
             # Apply resource limits.
             name, tag = request.lang.split(':')
             max_allowed_slot = \
@@ -175,8 +174,8 @@ class ScalingGroup:
                 'lang': kernel_info['lang'],
             }
 
-    async def get_belonging_agents(self, idle=False):
-        async with self.registry.dbpool.acquire() as conn, conn.begin():
+    async def get_belonging_agents(self, idle=False, conn=None):
+        async with reenter_txn(self.registry.dbpool, conn) as conn:
             if idle:
                 j = sa.join(agents, kernels,
                             agents.c.id == kernels.c.agent, isouter=True)
@@ -195,8 +194,8 @@ class ScalingGroup:
 
             return agent_ids
 
-    async def get_available_shares(self):
-        async with self.registry.dbpool.acquire() as conn, conn.begin():
+    async def get_available_shares(self, conn=None):
+        async with reenter_txn(self.registry.dbpool, conn) as conn:
             cols = [agents.c.id, agents.c.mem_slots, agents.c.used_mem_slots,
                     agents.c.cpu_slots, agents.c.used_cpu_slots,
                     agents.c.gpu_slots, agents.c.used_gpu_slots]
@@ -219,11 +218,11 @@ class ScalingGroup:
         name, tag = tokens[-1].split(':')
         return await self.registry.config_server.get_image_required_slots(name, tag)
 
-    async def schedule(self):
+    async def schedule(self, conn=None):
         # Planning Scheduling
-        pending_jobs = await self.get_pending_jobs()
-        schedule_info = await self.job_scheduler.schedule(self, pending_jobs)
-
+        pending_jobs = await self.get_pending_jobs(conn=conn)
+        schedule_info = await self.job_scheduler.schedule(self, pending_jobs,
+                                                          conn=conn)
         # Scaling
         #
         # It is possible that scaling driver re-schedule jobs
@@ -231,16 +230,16 @@ class ScalingGroup:
         scheduled_jobs = map(lambda x: x[1], schedule_info)
         remaining_jobs = set(pending_jobs) - set(scheduled_jobs)
         schedule_info = await self.scaling_driver.scale(
-            self, schedule_info, remaining_jobs)
+            self, schedule_info, remaining_jobs, conn=conn)
 
         # Process scheduled jobs
         if schedule_info:
-            await asyncio.gather(*[self._process_job(agent_id, job)
+            await asyncio.gather(*[self._process_job(agent_id, job, conn=conn)
                                    for agent_id, job in schedule_info],
                                  return_exceptions=True)
 
-    async def _process_job(self, agent_id, job):
-        return await self.registry.create_session(agent_id, job.kernel_id)
+    async def _process_job(self, agent_id, job, conn=None):
+        return await self.registry.create_session(agent_id, job.kernel_id, conn=conn)
 
 
 class AbstractScalingDriver(metaclass=ABCMeta):
@@ -252,7 +251,8 @@ class AbstractScalingDriver(metaclass=ABCMeta):
     async def scale(self, scaling_group: ScalingGroup,
                     schedule_info: Iterable[Tuple[str, SessionCreationJob]]
                     = None,
-                    pending_jobs: Iterable[SessionCreationJob] = None):
+                    pending_jobs: Iterable[SessionCreationJob] = None,
+                    conn=None):
         '''
         This callback method is invoked.
         '''
@@ -318,7 +318,8 @@ class BasicScalingDriver(AbstractScalingDriver):
 
     async def scale(self, scaling_group: ScalingGroup,
                     schedule_info: Iterable[Tuple[str, SessionCreationJob]] = None,
-                    pending_jobs: Iterable[SessionCreationJob] = None):
+                    pending_jobs: Iterable[SessionCreationJob] = None,
+                    conn=None):
 
         if schedule_info is None:
             schedule_info = []
@@ -332,13 +333,14 @@ class BasicScalingDriver(AbstractScalingDriver):
         else:
             # Assert that minimum prepared shares condition is satisfied.
             curr_buffer_jobs = await scaling_group.job_scheduler.schedule(
-                scaling_group, required_buffer_jobs)
+                scaling_group, required_buffer_jobs, conn=conn)
             curr_buffer_jobs = map(lambda x: x[1], curr_buffer_jobs)
             deficient_buffer_jobs = set(required_buffer_jobs) - set(curr_buffer_jobs)
             if deficient_buffer_jobs:
                 await self.scale_out(deficient_buffer_jobs)
             else:
-                schedule_info = await self.scale_in(scaling_group, schedule_info)
+                schedule_info = await self.scale_in(scaling_group, schedule_info,
+                                                    conn=conn)
 
         return schedule_info
 
@@ -374,7 +376,8 @@ class BasicScalingDriver(AbstractScalingDriver):
         # 5. Now consider "marked-to-be-terminated" agents if exists.
 
     async def scale_in(self, scaling_group: ScalingGroup,
-                       schedule_info: Iterable[Tuple[str, SessionCreationJob]]):
+                       schedule_info: Iterable[Tuple[str, SessionCreationJob]],
+                       conn=None):
 
         assert schedule_info is not None
 
@@ -388,7 +391,7 @@ class BasicScalingDriver(AbstractScalingDriver):
         #       that agent as soon as all kernels running in the agent is
         #       terminated.
         # pseudo-code
-        idle_agents = await scaling_group.get_belonging_agents(idle=True)
+        idle_agents = await scaling_group.get_belonging_agents(idle=True, conn=conn)
         agents_to_remove = set(idle_agents) - set(map(lambda x: x[0], schedule_info))
         await self.remove_agents(agents_to_remove)
 
@@ -475,7 +478,8 @@ class AbstractJobScheduler(metaclass=ABCMeta):
 
     @abstractmethod
     async def schedule(self, scaling_group: ScalingGroup,
-                       pending_jobs: Iterable[SessionCreationJob]):
+                       pending_jobs: Iterable[SessionCreationJob],
+                       conn=None):
         '''
         This callback method is invoked when there are new session creation requests,
         terminated sessions, and increases of the scaling group resources.
@@ -488,13 +492,12 @@ class AbstractJobScheduler(metaclass=ABCMeta):
 
 class SimpleFIFOJobScheduler(AbstractJobScheduler):
 
-    async def schedule(self, scaling_group, pending_jobs):
-        # pseudo-code
-        scheduled_jobs = []
-        available_agent_infos = await scaling_group.get_available_shares()
-        list(pending_jobs).sort(key=lambda _job: _job.created_by, reverse=True)
+    async def schedule(self, scaling_group, pending_jobs, conn=None):
+        available_agent_infos = await scaling_group.get_available_shares(conn=conn)
+        list(pending_jobs).sort(key=lambda _job: _job.created_at, reverse=True)
 
-        async with scaling_group.registry.dbpool.acquire() as conn, conn.begin():
+        async with reenter_txn(scaling_group.registry.dbpool, conn) as conn:
+            scheduled_jobs = []
             curr_agent_info = available_agent_infos.pop(0)
             for job in pending_jobs:
                 while curr_agent_info.cpu < job.resources.cpu or \
