@@ -79,7 +79,7 @@ class ScalingGroup:
         async with reenter_txn(self.registry.dbpool, conn) as conn:
             query = (sa.select('*')
                        .select_from(kernels)
-                       .where(kernels.c.status == KernelStatus.PENDING))
+                       .where(kernels.c.status == KernelStatus.RESIZING))
 
             jobs = []
             async for row in await conn.execute(query):
@@ -141,7 +141,7 @@ class ScalingGroup:
 
             # Register request.
             kernel_info_base = {
-                'status': KernelStatus.PENDING,
+                'status': KernelStatus.RESIZING,
                 'role': 'master',
                 'agent': None,
                 'agent_addr': '',
@@ -351,6 +351,7 @@ class BasicScalingDriver(AbstractScalingDriver):
     async def scale_out(self, pending_jobs: Iterable[SessionCreationJob]):
         # 1. Assume that no # limit of instances,
         # only t2.2xlarge & p2.xlarge, and only cpu, mem, gpu.
+        raise RuntimeError
         assert pending_jobs is not None
 
         scale_out_info = []
@@ -383,6 +384,7 @@ class BasicScalingDriver(AbstractScalingDriver):
                        schedule_info: Iterable[Tuple[str, SessionCreationJob]],
                        conn=None):
 
+        return schedule_info
         assert schedule_info is not None
 
         # TODO: enhance get_agents_to_remove logic.
@@ -560,7 +562,7 @@ scaling_groups = sa.Table(
               server_default=sa.func.now()),
     sa.Column('driver', sa.String(length=64), nullable=False),
     sa.Column('job_scheduler', sa.String(length=64), nullable=False),
-    sa.Column('params', sa.JSONB(), nullable=False),
+    # sa.Column('params', sa.JSONB(), nullable=False),
 )
 
 

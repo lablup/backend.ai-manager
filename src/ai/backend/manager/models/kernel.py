@@ -68,7 +68,7 @@ class SessionCreationRequest:
 
     @staticmethod
     def from_row(row):
-        assert row is not None and row.status == KernelStatus.PENDING
+        assert row is not None and row.status == KernelStatus.RESIZING
 
         tokens = row.lang.split('/')
         docker_registry = '/'.join(tokens[:-1])
