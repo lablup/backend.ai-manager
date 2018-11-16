@@ -36,6 +36,7 @@ aliases:
 
   - ['python3-tensorflow',             'python-tensorflow:latest']      # CodeOnWeb legacy
   - ['python3-tensorflow-gpu',         'python-tensorflow:latest-gpu']  # CodeOnWeb legacy
+  - ['python-tensorflow:1.3-gpu',      'python-tensorflow:1.3-py36-cuda8'] # preferred
   - ['python-tensorflow:1.4-gpu',      'python-tensorflow:1.4-py36-cuda8'] # preferred
   - ['python-tensorflow:1.5',          'python-tensorflow:1.5-py36']     # preferred
   - ['python-tensorflow:1.5-gpu',      'python-tensorflow:1.5-py36-cuda9'] # preferred
@@ -50,13 +51,16 @@ aliases:
   - ['python-tensorflow:1.10',         'python-tensorflow:1.10-py36']     # preferred
   - ['python-tensorflow:1.10-gpu',     'python-tensorflow:1.10-py36-cuda9'] # preferred
   - ['python-tensorflow:1.11',         'python-tensorflow:1.11-py36']     # preferred
+  - ['python-tensorflow:1.11-tpu',     'python-tensorflow:1.11-py36-tpu']  # preferred
   - ['python-tensorflow:1.11-gpu',     'python-tensorflow:1.11-py36-cuda9'] # preferred
   - ['python-tensorflow:1.12',         'python-tensorflow:1.12-py36']     # preferred
+  - ['python-tensorflow:1.12-tpu',     'python-tensorflow:1.12-py36-tpu']  # preferred
   - ['python-tensorflow:1.12-gpu',     'python-tensorflow:1.12-py36-cuda9'] # preferred
   - ['tensorflow',                     'python-tensorflow:latest']
   - ['tensorflow-gpu',                 'python-tensorflow:latest-gpu']
   - ['tensorflow-python',              'python-tensorflow:latest']
   - ['tensorflow-python-gpu',          'python-tensorflow:latest-gpu']
+  - ['tensorflow:1.3-gpu',             'python-tensorflow:1.3-py36-cuda8'] # preferred
   - ['tensorflow:1.4-gpu',             'python-tensorflow:1.4-py36-cuda8'] # preferred
   - ['tensorflow:1.5',                 'python-tensorflow:1.5-py36']     # preferred
   - ['tensorflow:1.5-gpu',             'python-tensorflow:1.5-py36-cuda9'] # preferred
@@ -71,8 +75,10 @@ aliases:
   - ['tensorflow:1.10',                'python-tensorflow:1.10-py36']     # preferred
   - ['tensorflow:1.10-gpu',            'python-tensorflow:1.10-py36-cuda9'] # preferred
   - ['tensorflow:1.11',                'python-tensorflow:1.11-py36']     # preferred
+  - ['tensorflow:1.11-tpu',                'python-tensorflow:1.11-py36-tpu']     # preferred
   - ['tensorflow:1.11-gpu',            'python-tensorflow:1.11-py36-cuda9'] # preferred
   - ['tensorflow:1.12',                'python-tensorflow:1.12-py36']     # preferred
+  - ['tensorflow:1.12-tpu',                'python-tensorflow:1.12-py36-tpu']     # preferred
   - ['tensorflow:1.12-gpu',            'python-tensorflow:1.12-py36-cuda9'] # preferred
 
   - ['keras',        'python-tensorflow:latest-dense']
