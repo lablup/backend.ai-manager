@@ -59,6 +59,7 @@ class Agent(graphene.ObjectType):
     id = graphene.String()
     status = graphene.String()
     region = graphene.String()
+    scaling_group = graphene.String()
     mem_slots = graphene.Int()
     cpu_slots = graphene.Float()
     gpu_slots = graphene.Float()
@@ -81,6 +82,7 @@ class Agent(graphene.ObjectType):
             id=row['id'],
             status=row['status'],
             region=row['region'],
+            scaling_group=row['scaling_group'],
             mem_slots=row['mem_slots'],
             cpu_slots=row['cpu_slots'],
             gpu_slots=row['gpu_slots'],
