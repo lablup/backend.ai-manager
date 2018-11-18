@@ -46,6 +46,7 @@ kernels = sa.Table(
 
     # Resource occupation
     sa.Column('container_id', sa.String(length=64)),
+    sa.Column('network_id', sa.String(length=64), nullable=True),
     sa.Column('cpu_set', sa.ARRAY(sa.Integer)),
     sa.Column('gpu_set', sa.ARRAY(sa.Integer)),
     sa.Column('mem_slot', sa.BigInteger(), nullable=False),

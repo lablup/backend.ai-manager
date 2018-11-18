@@ -5,6 +5,7 @@ import logging
 import sys
 import uuid
 
+import aiodocker
 import aiozmq, aiozmq.rpc
 from aiozmq.rpc.base import GenericError, NotFoundError, ParametersError
 import aiotools
@@ -107,6 +108,7 @@ class AgentRegistry:
         self.redis_stat = redis_stat
         self.redis_live = redis_live
         self.redis_image = redis_image
+        self.docker = aiodocker.Docker()
 
     async def init(self):
         pass
@@ -118,6 +120,7 @@ class AgentRegistry:
             peer.close()
             closing_tasks.append(peer.wait_closed())
         await asyncio.gather(*closing_tasks)
+        await self.docker.close()
 
     async def get_instance(self, inst_id, field=None):
         async with self.dbpool.acquire() as conn, conn.begin():
@@ -213,7 +216,7 @@ class AgentRegistry:
         owner instance.
         '''
 
-        cols = [kernels.c.id, kernels.c.sess_id,
+        cols = [kernels.c.id, kernels.c.sess_id, kernels.c.network_id,
                 kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.access_key]
         if field == '*':
             cols = '*'
@@ -302,7 +305,7 @@ class AgentRegistry:
         positions without raising KernelNotFound exception.
         '''
 
-        cols = [kernels.c.id, kernels.c.sess_id,
+        cols = [kernels.c.id, kernels.c.sess_id, kernels.c.network_id,
                 kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.access_key]
         if isinstance(field, (tuple, list)):
             cols.extend(field)
@@ -368,6 +371,7 @@ class AgentRegistry:
         created_info = None
         mounts = creation_config.get('mounts') or []
         environ = creation_config.get('environ') or {}
+        cluster_size = creation_config.get('clusterSize', 1)
 
         if '/' in lang:
             tokens = lang.split('/')
@@ -426,130 +430,169 @@ class AgentRegistry:
         image_name = f'{docker_registry}/kernel-{name}:{tag}'
         runnable_agents = frozenset(await self.redis_image.smembers(image_name))
 
+        if cluster_size > 1:
+            # TODO: check docker swarm initialization
+            network = self.docker.networks.create(config={
+                "Name": f'{access_key}.{sess_id}',
+                "CheckDuplicate": False,
+                "Driver": "overlay",
+                "EnableIPv6": False,
+                "IPAM": {
+                    "Driver": "default",
+                    "Config": [
+                        {
+                            "Subnet": "192.168.9.0/16",
+                            "IPRange": "192.168.9.0/24",
+                            "Gateway": "192.168.9.1"
+                        },
+                    ],
+                },
+                "Internal": True,
+                "Attachable": True,  # to allow containers connection
+                "Ingress": False,
+                "Options": {
+                },
+            })
+            network_id = network.id
+        else:
+            network = None
+            network_id = None
+
         async with reenter_txn(self.dbpool, conn) as conn:
 
-            # scan available slots from alive agents
-            avail_slots = []
-            query = (sa.select([agents], for_update=True)
-                       .where(agents.c.status == AgentStatus.ALIVE))
+            for kern_idx in range(cluster_size):
 
-            async for row in conn.execute(query):
-                if row['id'] not in runnable_agents:
-                    continue
-                sdiff = ResourceSlot(
-                    id=row['id'],
-                    mem=row['mem_slots'] - row['used_mem_slots'],
-                    cpu=row['cpu_slots'] - row['used_cpu_slots'],
-                    gpu=row['gpu_slots'] - row['used_gpu_slots'],
-                )
-                avail_slots.append(sdiff)
+                # scan available slots from alive agents
+                avail_slots = []
+                query = (sa.select([agents], for_update=True)
+                           .where(agents.c.status == AgentStatus.ALIVE))
 
-            # check minimum requirement
-            avail_slots = [s for s in avail_slots
-                           if s.mem >= (required_shares.mem * 1024) and
-                              s.cpu >= required_shares.cpu and
-                              s.gpu >= required_shares.gpu]
+                async for row in conn.execute(query):
+                    if row['id'] not in runnable_agents:
+                        continue
+                    sdiff = ResourceSlot(
+                        id=row['id'],
+                        mem=row['mem_slots'] - row['used_mem_slots'],
+                        cpu=row['cpu_slots'] - row['used_cpu_slots'],
+                        gpu=row['gpu_slots'] - row['used_gpu_slots'],
+                    )
+                    avail_slots.append(sdiff)
 
-            # load-balance
-            if avail_slots:
-                agent_id = (max(avail_slots, key=lambda s: (s.gpu, s.cpu, s.mem))).id
-            else:
-                raise InstanceNotAvailable
+                # check minimum requirement
+                avail_slots = [s for s in avail_slots
+                               if s.mem >= (required_shares.mem * 1024) and
+                                  s.cpu >= required_shares.cpu and
+                                  s.gpu >= required_shares.gpu]
 
-            # reserve slots
-            mem_col = agents.c.used_mem_slots
-            cpu_col = agents.c.used_cpu_slots
-            gpu_col = agents.c.used_gpu_slots
-            query = (sa.update(agents)
-                       .values({
-                           'used_mem_slots': mem_col + required_shares.mem * 1024,
-                           'used_cpu_slots': cpu_col + required_shares.cpu,
-                           'used_gpu_slots': gpu_col + required_shares.gpu,
-                       })
-                       .where(agents.c.id == agent_id))
-            result = await conn.execute(query)
-            assert result.rowcount == 1
+                # load-balance
+                if avail_slots:
+                    agent_id = (max(
+                        avail_slots,
+                        key=lambda s: (s.gpu, s.cpu, s.mem))).id
+                else:
+                    raise InstanceNotAvailable
 
-            # Create kernel by invoking the agent on the instance.
-            query = (sa.select([agents.c.addr])
-                       .where(agents.c.id == agent_id))
-            agent_addr = await conn.scalar(query)
-            assert agent_addr is not None
-
-            # Prepare kernel.
-            kernel_id = uuid.uuid4()
-            query = kernels.insert().values({
-                'id': kernel_id,
-                'status': KernelStatus.PREPARING,
-                'sess_id': sess_id,
-                'role': 'master',
-                'agent': agent_id,
-                'agent_addr': agent_addr,
-                'access_key': access_key,
-                'lang': lang,
-                'tag': session_tag,
-                # units: absolute
-                'mem_slot': required_shares.mem * 1024,
-                'cpu_slot': required_shares.cpu,
-                'gpu_slot': required_shares.gpu,
-                'environ': [f'{k}={v}' for k, v in environ.items()],
-                'cpu_set': [],
-                'gpu_set': [],
-                'kernel_host': None,
-                'repl_in_port': 0,
-                'repl_out_port': 0,
-                'stdin_port': 0,
-                'stdout_port': 0,
-            })
-            result = await conn.execute(query)
-            assert result.rowcount == 1
-
-            async with self.handle_kernel_exception(
-                    'create_session', sess_id, access_key):
-                async with RPCContext(agent_addr, 30) as rpc:
-                    config = {
-                        'lang': lang,
-                        'limits': {
-                            # units: share
-                            'mem_slot': str(required_shares.mem),
-                            'cpu_slot': str(required_shares.cpu),
-                            'gpu_slot': str(required_shares.gpu),
-                        },
-                        'mounts': mounts,
-                        'environ': environ,
-                    }
-                    created_info = await rpc.call.create_kernel(str(kernel_id),
-                                                                config)
-                if created_info is None:
-                    raise KernelCreationFailed('ooops')
-                log.debug('create_session("{0}", "{1}") -> created on {2}\n{3!r}',
-                          sess_id, access_key, agent_id, created_info)
-                assert str(kernel_id) == created_info['id']
-                agent_host = URL(agent_addr).host
-                kernel_host = created_info.get('kernel_host', agent_host)
-                kernel_access_info = {
-                    'id': kernel_id,
-                    'sess_id': sess_id,
-                    'agent': agent_id,
-                    'agent_addr': agent_addr,
-                    'kernel_host': kernel_host,
-                }
-                query = (kernels.update()
-                                .values({
-                                    'status': KernelStatus.RUNNING,
-                                    'container_id': created_info['container_id'],
-                                    'cpu_set': [],  # TODO: revamp with resource_spec
-                                    'gpu_set': [],  # TODO: revamp with resource_spec
-                                    'kernel_host': kernel_host,
-                                    'repl_in_port': created_info['repl_in_port'],
-                                    'repl_out_port': created_info['repl_out_port'],
-                                    'stdin_port': created_info['stdin_port'],
-                                    'stdout_port': created_info['stdout_port'],
-                                })
-                                .where(kernels.c.id == kernel_id))
+                # reserve slots
+                mem_col = agents.c.used_mem_slots
+                cpu_col = agents.c.used_cpu_slots
+                gpu_col = agents.c.used_gpu_slots
+                query = (sa.update(agents)
+                           .values({
+                               'used_mem_slots': mem_col + required_shares.mem * 1024,  # noqa
+                               'used_cpu_slots': cpu_col + required_shares.cpu,
+                               'used_gpu_slots': gpu_col + required_shares.gpu,
+                           })
+                           .where(agents.c.id == agent_id))
                 result = await conn.execute(query)
                 assert result.rowcount == 1
-                return kernel_access_info
+
+                # Create kernel by invoking the agent on the instance.
+                query = (sa.select([agents.c.addr])
+                           .where(agents.c.id == agent_id))
+                agent_addr = await conn.scalar(query)
+                assert agent_addr is not None
+
+                # Prepare kernel.
+                kernel_id = uuid.uuid4()
+                query = kernels.insert().values({
+                    'id': kernel_id,
+                    'status': KernelStatus.PREPARING,
+                    'sess_id': sess_id,
+                    'role': 'master' if kern_idx == 0 else 'worker',
+                    'network_id': network_id,
+                    'agent': agent_id,
+                    'agent_addr': agent_addr,
+                    'access_key': access_key,
+                    'lang': lang,
+                    'tag': session_tag,
+                    # units: absolute
+                    'mem_slot': required_shares.mem * 1024,
+                    'cpu_slot': required_shares.cpu,
+                    'gpu_slot': required_shares.gpu,
+                    'environ': [f'{k}={v}' for k, v in environ.items()],
+                    'cpu_set': [],
+                    'gpu_set': [],
+                    'kernel_host': None,
+                    'repl_in_port': 0,
+                    'repl_out_port': 0,
+                    'stdin_port': 0,
+                    'stdout_port': 0,
+                })
+                result = await conn.execute(query)
+                assert result.rowcount == 1
+
+                async with self.handle_kernel_exception(
+                        'create_session', sess_id, access_key):
+                    async with RPCContext(agent_addr, 30) as rpc:
+                        config = {
+                            'lang': lang,
+                            'limits': {
+                                # units: share
+                                'mem_slot': str(required_shares.mem),
+                                'cpu_slot': str(required_shares.cpu),
+                                'gpu_slot': str(required_shares.gpu),
+                            },
+                            'mounts': mounts,
+                            'environ': environ,
+                            'network': network_id,
+                        }
+                        created_info = await rpc.call.create_kernel(str(kernel_id),
+                                                                    config)
+                    if created_info is None:
+                        raise KernelCreationFailed('ooops')
+                    assert str(kernel_id) == created_info['id']
+                    log.debug('create_kernel("{0}", "{1}") -> '
+                              'created on {2}\n{3!r} as {4}',
+                              sess_id, access_key,
+                              agent_id, created_info, kernel_id)
+                    agent_host = URL(agent_addr).host
+                    kernel_host = created_info.get('kernel_host', agent_host)
+                    kernel_access_info = {
+                        'id': kernel_id,
+                        'sess_id': sess_id,
+                        'agent': agent_id,
+                        'agent_addr': agent_addr,
+                        'kernel_host': kernel_host,
+                    }
+                    query = (kernels.update()
+                                    .values({
+                                        'status': KernelStatus.RUNNING,
+                                        'container_id': created_info['container_id'],
+                                        'cpu_set': [],  # TODO: revamp with resource_spec
+                                        'gpu_set': [],  # TODO: revamp with resource_spec
+                                        'kernel_host': kernel_host,
+                                        'repl_in_port': created_info['repl_in_port'],
+                                        'repl_out_port': created_info['repl_out_port'],
+                                        'stdin_port': created_info['stdin_port'],
+                                        'stdout_port': created_info['stdout_port'],
+                                    })
+                                    .where(kernels.c.id == kernel_id))
+                    result = await conn.execute(query)
+                    assert result.rowcount == 1
+                    return kernel_access_info
+
+                log.debug('create_session("{0}", "{1}") -> created on {2}\n{3!r}',
+                          sess_id, access_key, agent_id, created_info)
 
     async def destroy_session(self, sess_id, access_key):
         async with self.handle_kernel_exception(
@@ -565,7 +608,8 @@ class AgentRegistry:
             except KernelNotFound:
                 return
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
-                return await rpc.call.destroy_kernel(str(kernel['id']))
+                ret = await rpc.call.destroy_kernel(str(kernel['id']))
+                return ret
 
     async def restart_session(self, sess_id, access_key):
         async with self.handle_kernel_exception(
@@ -956,6 +1000,10 @@ class AgentRegistry:
                        })
                        .where(keypairs.c.access_key == access_key))
             await conn.execute(query)
+
+            # TODO: get network ID
+            network = aiodocker.DockerNetwork(self.docker, kernel['network'])
+            await network.delete()
 
     async def forget_instance(self, inst_id):
         async with self.dbpool.acquire() as conn, conn.begin():
