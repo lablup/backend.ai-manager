@@ -431,6 +431,7 @@ class AgentRegistry:
         image_name = f'{docker_registry}/kernel-{name}:{tag}'
         runnable_agents = frozenset(await self.redis_image.smembers(image_name))
 
+        assert 1 <= cluster_size < 253
         if cluster_size > 1:
             # TODO: check docker swarm initialization
             network = self.docker.networks.create(config={
@@ -442,7 +443,7 @@ class AgentRegistry:
                     "Driver": "default",
                     "Config": [
                         {
-                            "Subnet": "192.168.9.0/16",
+                            "Subnet": "192.168.9.0/24",
                             "IPRange": "192.168.9.0/24",
                             "Gateway": "192.168.9.1"
                         },
@@ -455,6 +456,11 @@ class AgentRegistry:
                 },
             })
             network_id = network.id
+            network_hosts = {
+                'master',
+                *(f'worker-{idx:03d}'
+                  for idx in range(cluster_size - 1)),
+            }
         else:
             network = None
             network_id = None
@@ -559,6 +565,18 @@ class AgentRegistry:
                             'environ': environ,
                             'network': network_id,
                         }
+                        if network_id is not None:
+                            if kern_idx == 0:
+                                network_alias = 'master'
+                            else:
+                                network_alias = f'worker-{kern_idx:03d}'
+                            network_links = network_hosts.copy()
+                            network_links.remove(network_alias)
+                            config.update({
+                                'network_local_ip': f'192.168.9.{2 + kern_idx}',
+                                'network_links': network_links,
+                                'network_aliases': [network_alias],
+                            })
                         created_info = await rpc.call.create_kernel(str(kernel_id),
                                                                     config)
                     if created_info is None:
