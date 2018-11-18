@@ -10,6 +10,7 @@ import sqlalchemy as sa
 
 from .base import metadata, zero_if_none, EnumType, IDColumn
 
+
 __all__ = (
     'kernels', 'KernelStatus',
     'ComputeSession', 'ComputeWorker', 'Computation',
@@ -102,6 +103,8 @@ kernels = sa.Table(
     sa.Column('role', sa.String(length=16), nullable=False, default='master'),
     sa.Column('agent', sa.String(length=64), sa.ForeignKey('agents.id')),
     sa.Column('agent_addr', sa.String(length=128), nullable=False),
+    sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True,
+              nullable=False, server_default='default', default='default'),
     sa.Column('access_key', sa.String(length=20),
               sa.ForeignKey('keypairs.access_key')),
     sa.Column('lang', sa.String(length=512)),
@@ -166,6 +169,7 @@ class SessionCommons:
     terminated_at = GQLDateTime()
 
     agent = graphene.String()
+    scaling_group = graphene.String()
     container_id = graphene.String()
 
     mem_slot = graphene.Int()
@@ -277,6 +281,7 @@ class SessionCommons:
             'created_at': row['created_at'],
             'terminated_at': row['terminated_at'],
             'agent': row['agent'],
+            'scaling_group': row['scaling_group'],
             'container_id': row['container_id'],
             'mem_slot': row['mem_slot'],
             'cpu_slot': row['cpu_slot'],

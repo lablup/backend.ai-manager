@@ -537,7 +537,10 @@ class SimpleFIFOJobScheduler(AbstractJobScheduler):
                 agent_addr = row.addr
 
                 query = (kernels.update()
-                                .values(agent_addr=agent_addr)
+                                .values({
+                                    'agent_addr': agent_addr,
+                                    'scaling_group': scaling_group.name,
+                                })
                                 .where(kernels.c.id == job.kernel_id))
                 await conn.execute(query)
 

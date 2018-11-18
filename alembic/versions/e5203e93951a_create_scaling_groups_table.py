@@ -79,6 +79,9 @@ def upgrade():
     op.create_index(op.f('ix_agents_scaling_group'), 'agents', ['scaling_group'], unique=False)
     op.create_foreign_key(op.f('fk_agents_scaling_group_scaling_groups'), 'agents', 'scaling_groups', ['scaling_group'], ['name'])
     op.add_column('kernels', sa.Column('mounts', sa.ARRAY(sa.String()), nullable=True))
+    op.add_column('kernels', sa.Column('scaling_group', sa.String(length=64), server_default='default', nullable=False))
+    op.create_index(op.f('ix_kernels_scaling_group'), 'kernels', ['scaling_group'], unique=False)
+    op.create_foreign_key(op.f('fk_kernels_scaling_group_scaling_groups'), 'kernels', 'scaling_groups', ['scaling_group'], ['name'])
     # op.alter_column('kernels', column_name='status', type_=sa.Enum(*curr_kernelstatus_choices, name='kernelstatus'),
     #                 postgresql_using='status::text::kernelstatus')
     # op.alter_column('kernels', 'status',
@@ -106,6 +109,9 @@ def downgrade():
     op.drop_constraint(op.f('fk_agents_scaling_group_scaling_groups'), 'agents', type_='foreignkey')
     op.drop_index(op.f('ix_agents_scaling_group'), table_name='agents')
     op.drop_column('agents', 'scaling_group')
+    op.drop_constraint(op.f('fk_kernels_scaling_group_scaling_groups'), 'kernels', type_='foreignkey')
+    op.drop_index(op.f('ix_kernels_scaling_group'), table_name='kernels')
+    op.drop_column('kernels', 'scaling_group')
     op.drop_index(op.f('ix_scaling_groups_name'), table_name='scaling_groups')
     op.drop_index(op.f('ix_scaling_groups_is_active'), table_name='scaling_groups')
     op.drop_table('scaling_groups')
