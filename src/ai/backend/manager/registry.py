@@ -263,8 +263,11 @@ class AgentRegistry:
         true, it skips checking validity of the kernel owner instance.
         '''
 
-        cols = [kernels.c.id, kernels.c.sess_id, kernels.c.access_key,
-                kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.lang]
+        cols = [kernels.c.id, kernels.c.sess_id,
+                kernels.c.bundle_id, kernels.c.network_id,
+                kernels.c.access_key,
+                kernels.c.agent_addr, kernels.c.kernel_host,
+                kernels.c.lang]
         if field == '*':
             cols = '*'
         elif isinstance(field, (tuple, list)):
@@ -306,8 +309,11 @@ class AgentRegistry:
         positions without raising KernelNotFound exception.
         '''
 
-        cols = [kernels.c.id, kernels.c.sess_id, kernels.c.network_id,
-                kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.access_key]
+        cols = [kernels.c.id, kernels.c.sess_id,
+                kernels.c.bundle_id, kernels.c.network_id,
+                kernels.c.access_key,
+                kernels.c.agent_addr, kernels.c.kernel_host,
+                kernels.c.lang]
         if isinstance(field, (tuple, list)):
             cols.extend(field)
         elif isinstance(field, (sa.Column, sa.sql.elements.ColumnClause)):
@@ -468,6 +474,7 @@ class AgentRegistry:
 
         async with reenter_txn(self.dbpool, conn) as conn:
 
+            # TODO: use asyncio.gather for parallel creation
             for kern_idx in range(cluster_size):
 
                 # scan available slots from alive agents
@@ -618,6 +625,7 @@ class AgentRegistry:
     async def destroy_session(self, sess_id, access_key):
         async with self.handle_kernel_exception(
                 'destroy_session', sess_id, access_key, set_error=True):
+            bundled_kernels = []
             try:
                 async with self.dbpool.acquire() as conn, conn.begin():
                     kernel = await self.get_session(sess_id, access_key,
@@ -626,11 +634,25 @@ class AgentRegistry:
                     await self.set_session_status(sess_id, access_key,
                                                   KernelStatus.TERMINATING,
                                                   db_connection=conn)
+                    # TODO: refactor as "get_bundled_kernels"
+                    query = (sa.select([kernels.c.id,
+                                        kernels.c.agent_addr,
+                                        kernels.c.role])
+                               .select_from(kernels)
+                               .where(kernels.c.bundle_id == kernel['bundle_id']))
+                    result = await conn.execute(query)
+                    async for row in result:
+                        bundled_kernels.append(row)
             except KernelNotFound:
                 return
-            async with RPCContext(kernel['agent_addr'], 30) as rpc:
-                ret = await rpc.call.destroy_kernel(str(kernel['id']))
-                return ret
+            master_ret = None
+            for kernel in bundled_kernels:
+                # TODO: use asyncio.gather for parallel destruction
+                async with RPCContext(kernel['agent_addr'], 30) as rpc:
+                    ret = await rpc.call.destroy_kernel(kernel['id'])
+                    if kernel['role'] == 'master':
+                        master_ret = ret
+            return master_ret
 
     async def restart_session(self, sess_id, access_key):
         async with self.handle_kernel_exception(
@@ -674,6 +696,7 @@ class AgentRegistry:
                     'gpu_set': kernel['gpu_set'],
                 }
                 # TODO: restart all kernels in the same bundle
+                # TODO: provide network config
                 kernel_info = await rpc.call.restart_kernel(str(kernel['id']),
                                                             new_config)
                 # TODO: what if prev status was "building" or others?
