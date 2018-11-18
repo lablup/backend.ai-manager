@@ -642,7 +642,7 @@ class AgentRegistry:
             for kernel in bundled_kernels:
                 # TODO: use asyncio.gather for parallel destruction
                 async with RPCContext(kernel['agent_addr'], 30) as rpc:
-                    ret = await rpc.call.destroy_kernel(kernel['id'])
+                    ret = await rpc.call.destroy_kernel(str(kernel['id']))
                     if kernel['role'] == 'master':
                         master_ret = ret
             return master_ret
@@ -1001,13 +1001,13 @@ class AgentRegistry:
             await conn.execute(query)
 
             # Check if we can delete the overlay network for this bundle.
-            query = (sa.select([sa.func.count(kernels.c.id)], for_update=True)
+            query = (sa.select([sa.func.count(kernels.c.id)])
                        .select_from(kernels)
                        .where((kernels.c.bundle_id == kern_info['bundle_id']) &
                               (kernels.c.status == KernelStatus.TERMINATED)))
             result = await conn.execute(query)
             terminated_count = await result.scalar()
-            query = (sa.select([sa.func.count(kernels.c.id)], for_update=True)
+            query = (sa.select([sa.func.count(kernels.c.id)])
                        .select_from(kernels)
                        .where((kernels.c.bundle_id == kern_info['bundle_id'])))
             result = await conn.execute(query)
