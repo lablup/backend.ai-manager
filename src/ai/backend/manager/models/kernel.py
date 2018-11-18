@@ -45,7 +45,7 @@ kernels = sa.Table(
     sa.Column('tag', sa.String(length=64), nullable=True),
 
     # Multi-container session support
-    sa.Column('bundle_id', sa.String(length=64), nullable=True),
+    sa.Column('bundle_id', sa.String(length=64), nullable=True, index=True),
     sa.Column('network_id', sa.String(length=64), nullable=True),
 
     # Resource occupation
