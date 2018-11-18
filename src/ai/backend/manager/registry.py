@@ -438,39 +438,35 @@ class AgentRegistry:
         runnable_agents = frozenset(await self.redis_image.smembers(image_name))
 
         assert 1 <= cluster_size < 253
+        bundle_id = secrets.token_hex(8)
         if cluster_size > 1:
             # TODO: check docker swarm initialization
-            network = self.docker.networks.create(config={
-                "Name": f'{access_key}.{sess_id}',
+            log.debug('creating overlay network: {0}', bundle_id)
+            network = await self.docker.networks.create(config={
+                "Name": bundle_id,  # must be valid as a DNS component
                 "CheckDuplicate": False,
                 "Driver": "overlay",
                 "EnableIPv6": False,
                 "IPAM": {
                     "Driver": "default",
+                    "Options": {},
                     "Config": [
                         {
-                            "Subnet": "192.168.9.0/24",
-                            "IPRange": "192.168.9.0/24",
-                            "Gateway": "192.168.9.1"
+                            "Subnet": "10.0.9.0/24",
+                            "Gateway": "10.0.9.1"
                         },
                     ],
                 },
                 "Internal": True,
                 "Attachable": True,  # to allow containers connection
                 "Ingress": False,
-                "Options": {
-                },
+                "Options": {},
+                "Labels": {},
             })
             network_id = network.id
-            network_hosts = {
-                'master',
-                *(f'worker-{idx:03d}'
-                  for idx in range(cluster_size - 1)),
-            }
         else:
             network = None
             network_id = None
-        bundle_id = secrets.token_hex(16)
 
         async with reenter_txn(self.dbpool, conn) as conn:
 
@@ -577,11 +573,8 @@ class AgentRegistry:
                                 network_alias = 'master'
                             else:
                                 network_alias = f'worker-{kern_idx:03d}'
-                            network_links = network_hosts.copy()
-                            network_links.remove(network_alias)
                             config.update({
-                                'network_local_ip': f'192.168.9.{2 + kern_idx}',
-                                'network_links': network_links,
+                                'network_ip': f'10.0.9.{2 + kern_idx}',
                                 'network_aliases': [network_alias],
                             })
                         created_info = await rpc.call.create_kernel(str(kernel_id),

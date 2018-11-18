@@ -22,6 +22,11 @@ class ConfigServer:
         # WARNING: importing etcd3/grpc must be done after forks.
         from ai.backend.common.etcd import AsyncEtcd
         self.etcd = AsyncEtcd(etcd_addr, namespace)
+        self._namespace = namespace
+
+    @property
+    def namespace(self):
+        return self._namespace
 
     async def register_myself(self, app_config):
         instance_id = await get_instance_id()
