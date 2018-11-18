@@ -12,7 +12,6 @@ import logging
 import re
 import secrets
 
-from ai.backend.gateway.manager import server_unfrozen_required
 from aiohttp import web
 import aiotools
 from aiojobs.aiohttp import atomic
@@ -26,9 +25,9 @@ from ai.backend.common.logging import BraceStyleAdapter
 from .exceptions import (InvalidAPIParameters, QuotaExceeded,
                          KernelNotFound, VFolderNotFound,
                          BackendError, InternalServerError)
-from . import GatewayStatus
 from .auth import auth_required
-from .utils import catch_unexpected, server_ready_required
+from .utils import catch_unexpected
+from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (keypairs, kernels, vfolders, AgentStatus, KernelStatus,
                               vfolder_permissions)
 
@@ -39,14 +38,12 @@ grace_events = []
 _rx_sess_token = re.compile(r'\w[\w.-]*\w', re.ASCII)
 
 
-@server_unfrozen_required
+@server_status_required(ALL_ALLOWED)
 @auth_required
-@server_ready_required
 @atomic
 async def create(request) -> web.Response:
     try:
-        with _timeout(2):
-            params = await request.json(loads=json.loads)
+        params = await request.json(loads=json.loads)
         assert params.get('lang'), \
                'lang is missing or empty!'
         assert params.get('clientSessionToken'), \
@@ -59,8 +56,7 @@ async def create(request) -> web.Response:
         log.info('GET_OR_CREATE (u:{0}, lang:{1}, tag:{2}, token:{3})',
                  request['keypair']['access_key'], params['lang'],
                  params.get('tag', None), sess_id)
-    except (asyncio.TimeoutError, AssertionError,
-            json.decoder.JSONDecodeError) as e:
+    except (json.decoder.JSONDecodeError, AssertionError) as e:
         log.warning('GET_OR_CREATE: invalid/missing parameters, {0!r}', e)
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
     resp = {}
@@ -281,8 +277,8 @@ async def datadog_update_timer(app):
             break
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 @atomic
 async def destroy(request) -> web.Response:
     registry = request.app['registry']
@@ -301,8 +297,8 @@ async def destroy(request) -> web.Response:
         return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 @atomic
 async def get_info(request) -> web.Response:
     # NOTE: This API should be replaced with GraphQL version.
@@ -336,8 +332,8 @@ async def get_info(request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 @atomic
 async def restart(request) -> web.Response:
     registry = request.app['registry']
@@ -357,18 +353,17 @@ async def restart(request) -> web.Response:
     return web.Response(status=204)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 async def execute(request) -> web.Response:
     resp = {}
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
     try:
-        with _timeout(2):
-            params = await request.json(loads=json.loads)
+        params = await request.json(loads=json.loads)
         log.info('EXECUTE(u:{0}, k:{1})', access_key, sess_id)
-    except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
+    except json.decoder.JSONDecodeError:
         log.warning('EXECUTE: invalid/missing parameters')
         raise InvalidAPIParameters
     try:
@@ -397,7 +392,8 @@ async def execute(request) -> web.Response:
         else:
             raw_result = await registry.execute(
                 sess_id, access_key,
-                api_version, run_id, mode, code, opts)
+                api_version, run_id, mode, code, opts,
+                flush_timeout=2.0)
             if raw_result is None:
                 # the kernel may have terminated from its side,
                 # or there was interruption of agents.
@@ -435,8 +431,8 @@ async def execute(request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 @atomic
 async def interrupt(request) -> web.Response:
     registry = request.app['registry']
@@ -452,8 +448,8 @@ async def interrupt(request) -> web.Response:
     return web.Response(status=204)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 @atomic
 async def complete(request) -> web.Response:
     resp = {'result': {
@@ -485,8 +481,8 @@ async def complete(request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 async def upload_files(request) -> web.Response:
     loop = asyncio.get_event_loop()
     reader = await request.multipart()
@@ -525,8 +521,8 @@ async def upload_files(request) -> web.Response:
     return web.Response(status=204)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 async def download_files(request) -> web.Response:
     try:
         registry = request.app['registry']
@@ -562,8 +558,8 @@ async def download_files(request) -> web.Response:
         return web.Response(body=mpwriter, status=200)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 async def list_files(request) -> web.Response:
     try:
         access_key = request['keypair']['access_key']
@@ -593,8 +589,8 @@ async def list_files(request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 @atomic
 async def get_logs(request) -> web.Response:
     resp = {'result': {'logs': ''}}
@@ -625,8 +621,6 @@ async def init(app):
         log.debug('initializing agent status checker at proc:{0}', app['pidx'])
         app['agent_lost_checker'] = aiotools.create_timer(
             functools.partial(check_agent_lost, app), 1.0)
-
-    app['status'] = GatewayStatus.RUNNING
 
 
 async def shutdown(app):

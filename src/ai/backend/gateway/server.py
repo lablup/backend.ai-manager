@@ -40,7 +40,6 @@ from ai.backend.common.monitor import DummyDatadog, DummySentry
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from ..manager import __version__
 from ..manager.registry import AgentRegistry
-from . import GatewayStatus
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
 from .etcd import ConfigServer
 from .events import EventDispatcher, event_subscriber
@@ -48,6 +47,7 @@ from .exceptions import (BackendError, MethodNotAllowed, GenericNotFound,
                          GenericBadRequest, InternalServerError)
 from .config import load_config
 from .events import event_router
+from . import ManagerStatus
 
 VALID_VERSIONS = frozenset([
     'v1.20160915',
@@ -60,7 +60,6 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 
 PUBLIC_INTERFACES = [
     'pidx',
-    'status',
     'config',
     'config_server',
     'dbpool',
@@ -164,8 +163,9 @@ async def gw_init(app):
     # populate public interfaces
     app['config_server'] = ConfigServer(
         app['config'].etcd_addr, app['config'].namespace)
+    if app['pidx'] == 0:
+        await app['config_server'].update_manager_status(ManagerStatus.PREPARING)
 
-    app['status'] = GatewayStatus.STARTING
     app['datadog'] = DummyDatadog()
     app['sentry'] = DummySentry()
     app['datadog.enabled'] = False
