@@ -12,6 +12,20 @@ images:
       cpu: 1    # cores
       mem: 1.0  # GiB
       gpu: 0    # fraction of GPU device
+  - name: app-jupyter
+    syntax: python
+    tags:
+      - ["latest",     ":3.6-ubuntu"]
+      - ["3.6-ubuntu", "6ea6d6307c91"]
+    slots:
+      <<: *default
+  - name: app-tensorboard
+    syntax: python
+    tags:
+      - ["latest",     ":beta"]
+      - ["beta", "0a071f043470"]
+    slots:
+      <<: *default
   - name: python-tester
     # image for unit-testing student submissions
     syntax: python

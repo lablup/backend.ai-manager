@@ -175,7 +175,7 @@ class ConfigServer:
         cpu = None if cpu == 'null' else Decimal(cpu)
         mem = await self.etcd.get(f'images/{name}/mem')
         mem = None if mem == 'null' else Decimal(mem)
-        if 'gpu' in tag:
+        if '-gpu' in tag or '-cuda' in tag:
             gpu = await self.etcd.get(f'images/{name}/gpu')
             gpu = Decimal(0) if gpu == 'null' else Decimal(gpu)
         else:
