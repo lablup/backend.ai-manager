@@ -2,6 +2,7 @@ import asyncio
 from decimal import Decimal
 from datetime import datetime
 import logging
+import secrets
 import sys
 import uuid
 
@@ -457,6 +458,7 @@ class AgentRegistry:
         else:
             network = None
             network_id = None
+        bundle_id = secrets.token_hex(16)
 
         async with reenter_txn(self.dbpool, conn) as conn:
 
@@ -519,6 +521,7 @@ class AgentRegistry:
                     'status': KernelStatus.PREPARING,
                     'sess_id': sess_id,
                     'role': 'master' if kern_idx == 0 else 'worker',
+                    'bundle_id': bundle_id,
                     'network_id': network_id,
                     'agent': agent_id,
                     'agent_addr': agent_addr,
@@ -652,6 +655,7 @@ class AgentRegistry:
                     'cpu_set': kernel['cpu_set'],
                     'gpu_set': kernel['gpu_set'],
                 }
+                # TODO: restart all kernels in the same bundle
                 kernel_info = await rpc.call.restart_kernel(str(kernel['id']),
                                                             new_config)
                 # TODO: what if prev status was "building" or others?
@@ -930,12 +934,14 @@ class AgentRegistry:
         '''
         async with reenter_txn(self.dbpool, conn) as conn:
             # check if already terminated
-            query = (sa.select([kernels.c.status], for_update=True)
+            query = (sa.select([kernels.c.status,
+                                kernels.c.bundle_id,
+                                kernels.c.network_id], for_update=True)
                        .select_from(kernels)
                        .where(kernels.c.id == kernel_id))
             result = await conn.execute(query)
-            prev_status = await result.scalar()
-            if prev_status in (None, KernelStatus.TERMINATED):
+            kern_info = await result.first()
+            if kern_info['status'] in (None, KernelStatus.TERMINATED):
                 return
 
             # change the status to TERMINATED
@@ -959,6 +965,24 @@ class AgentRegistry:
                        .values(kern_data)
                        .where(kernels.c.id == kernel_id))
             await conn.execute(query)
+
+            # Check if we can delete the overlay network for this bundle.
+            query = (sa.select([sa.func.count(kernels.c.id)], for_update=True)
+                       .select_from(kernels)
+                       .where((kernels.c.bundle_id == kern_info['bundle_id']) &
+                              (kernels.c.status == KernelStatus.TERMINATED)))
+            result = await conn.execute(query)
+            terminated_count = await result.scalar()
+            query = (sa.select([sa.func.count(kernels.c.id)], for_update=True)
+                       .select_from(kernels)
+                       .where((kernels.c.bundle_id == kern_info['bundle_id'])))
+            result = await conn.execute(query)
+            bundle_size = await result.scalar()
+            all_terminated = (terminated_count == bundle_size)
+            if kern_info['network_id'] is not None and all_terminated:
+                network = aiodocker.DockerNetwork(self.docker,
+                                                  kern_info['network_id'])
+                await network.delete()
 
             # release resource slots
             # units: absolute
@@ -1000,10 +1024,6 @@ class AgentRegistry:
                        })
                        .where(keypairs.c.access_key == access_key))
             await conn.execute(query)
-
-            # TODO: get network ID
-            network = aiodocker.DockerNetwork(self.docker, kernel['network'])
-            await network.delete()
 
     async def forget_instance(self, inst_id):
         async with self.dbpool.acquire() as conn, conn.begin():

@@ -44,9 +44,12 @@ kernels = sa.Table(
     sa.Column('lang', sa.String(length=512)),
     sa.Column('tag', sa.String(length=64), nullable=True),
 
+    # Multi-container session support
+    sa.Column('bundle_id', sa.String(length=64), nullable=True),
+    sa.Column('network_id', sa.String(length=64), nullable=True),
+
     # Resource occupation
     sa.Column('container_id', sa.String(length=64)),
-    sa.Column('network_id', sa.String(length=64), nullable=True),
     sa.Column('cpu_set', sa.ARRAY(sa.Integer)),
     sa.Column('gpu_set', sa.ARRAY(sa.Integer)),
     sa.Column('mem_slot', sa.BigInteger(), nullable=False),
