@@ -464,9 +464,11 @@ class AgentRegistry:
                 "Labels": {},
             })
             network_id = network.id
+            network_name = bundle_id
         else:
             network = None
             network_id = None
+            network_name = None
 
         async with reenter_txn(self.dbpool, conn) as conn:
 
@@ -566,9 +568,9 @@ class AgentRegistry:
                             },
                             'mounts': mounts,
                             'environ': environ,
-                            'network': network_id,
+                            'network': network_name,
                         }
-                        if network_id is not None:
+                        if network_name is not None:
                             if kern_idx == 0:
                                 network_alias = 'master'
                             else:
