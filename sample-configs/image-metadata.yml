@@ -77,6 +77,12 @@ images:
       - ["0.4-py36-gpu", "x"]
     slots:
       <<: *for_computing
+  - name: python-cntk
+    syntax: python
+    tags:
+      - ["latest",      ":2.6-py36"]
+      - ["2.2-py36",    "x"]
+      - ["2.6-py36",    "x"]
   - name: julia
     syntax: julia
     tags:
