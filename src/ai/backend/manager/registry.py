@@ -573,13 +573,11 @@ class AgentRegistry:
                         }
                         if network_name is not None:
                             if kern_idx == 0:
-                                network_alias = 'master'
+                                network_hostname = 'master'
                             else:
-                                network_alias = f'worker-{kern_idx:03d}'
+                                network_hostname = f'worker-{kern_idx:03d}'
                             config.update({
-                                'network_ip': f'10.0.9.{2 + kern_idx}',
-                                'network_hostname': network_alias,
-                                'network_aliases': [network_alias],
+                                'network_hostname': network_hostname,
                             })
                         created_info = await rpc.call.create_kernel(str(kernel_id),
                                                                     config)
