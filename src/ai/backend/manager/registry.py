@@ -458,7 +458,7 @@ class AgentRegistry:
                         },
                     ],
                 },
-                "Internal": True,
+                "Internal": False,   # to allow external access
                 "Attachable": True,  # to allow containers connection
                 "Ingress": False,
                 "Options": {},
@@ -569,7 +569,7 @@ class AgentRegistry:
                             },
                             'mounts': mounts,
                             'environ': environ,
-                            'network': network_name,
+                            'network_name': network_name,
                         }
                         if network_name is not None:
                             if kern_idx == 0:
@@ -578,6 +578,7 @@ class AgentRegistry:
                                 network_alias = f'worker-{kern_idx:03d}'
                             config.update({
                                 'network_ip': f'10.0.9.{2 + kern_idx}',
+                                'network_hostname': network_alias,
                                 'network_aliases': [network_alias],
                             })
                         created_info = await rpc.call.create_kernel(str(kernel_id),
@@ -591,13 +592,14 @@ class AgentRegistry:
                               agent_id, created_info, kernel_id)
                     agent_host = URL(agent_addr).host
                     kernel_host = created_info.get('kernel_host', agent_host)
-                    kernel_access_info = {
-                        'id': kernel_id,
-                        'sess_id': sess_id,
-                        'agent': agent_id,
-                        'agent_addr': agent_addr,
-                        'kernel_host': kernel_host,
-                    }
+                    if kern_idx == 0:
+                        master_kernel_access_info = {
+                            'id': kernel_id,
+                            'sess_id': sess_id,
+                            'agent': agent_id,
+                            'agent_addr': agent_addr,
+                            'kernel_host': kernel_host,
+                        }
                     query = (
                         kernels.update()
                         .values({
@@ -615,10 +617,10 @@ class AgentRegistry:
                     )
                     result = await conn.execute(query)
                     assert result.rowcount == 1
-                    return kernel_access_info
 
                 log.debug('create_session("{0}", "{1}") -> created on {2}\n{3!r}',
                           sess_id, access_key, agent_id, created_info)
+            return master_kernel_access_info
 
     async def destroy_session(self, sess_id, access_key):
         async with self.handle_kernel_exception(
