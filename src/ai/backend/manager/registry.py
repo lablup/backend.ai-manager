@@ -598,19 +598,21 @@ class AgentRegistry:
                         'agent_addr': agent_addr,
                         'kernel_host': kernel_host,
                     }
-                    query = (kernels.update()
-                                    .values({
-                                        'status': KernelStatus.RUNNING,
-                                        'container_id': created_info['container_id'],
-                                        'cpu_set': [],  # TODO: revamp with resource_spec
-                                        'gpu_set': [],  # TODO: revamp with resource_spec
-                                        'kernel_host': kernel_host,
-                                        'repl_in_port': created_info['repl_in_port'],
-                                        'repl_out_port': created_info['repl_out_port'],
-                                        'stdin_port': created_info['stdin_port'],
-                                        'stdout_port': created_info['stdout_port'],
-                                    })
-                                    .where(kernels.c.id == kernel_id))
+                    query = (
+                        kernels.update()
+                        .values({
+                            'status': KernelStatus.RUNNING,
+                            'container_id': created_info['container_id'],
+                            'cpu_set': [],  # TODO: revamp with resource_spec
+                            'gpu_set': [],  # TODO: revamp with resource_spec
+                            'kernel_host': kernel_host,
+                            'repl_in_port': created_info['repl_in_port'],
+                            'repl_out_port': created_info['repl_out_port'],
+                            'stdin_port': created_info['stdin_port'],
+                            'stdout_port': created_info['stdout_port'],
+                        })
+                        .where(kernels.c.id == kernel_id)
+                    )
                     result = await conn.execute(query)
                     assert result.rowcount == 1
                     return kernel_access_info
