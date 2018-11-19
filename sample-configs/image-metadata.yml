@@ -56,10 +56,10 @@ images:
       - ["1.10-py36", "x"]
       - ["1.10-py36-cuda9", "x"]
       - ["1.11-py36", "x"]
-      - ["1.11-py36-tpu", "x"]      
+      - ["1.11-py36-tpu", "x"]
       - ["1.11-py36-cuda9", "x"]
       - ["1.12-py36", "x"]
-      - ["1.12-py36-tpu", "x"]      
+      - ["1.12-py36-tpu", "x"]
       - ["1.12-py36-cuda9", "x"]
     slots: &for_computing
       cpu: 4     # cores
@@ -71,6 +71,7 @@ images:
     tags:
       - ["latest",   ":1.0-py36"]
       - ["1.0-py36", "9c5384df6631"]
+      - ["2.0-py36", "x"]
     slots:
       <<: *for_computing
   - name: python-pytorch
@@ -84,8 +85,17 @@ images:
       - ["0.3-py36-gpu", "x"]
       - ["0.4-py36",     "x"]
       - ["0.4-py36-gpu", "x"]
+      - ["1.0-py36",     "x"]
+      - ["1.0-py36-gpu", "x"]
     slots:
       <<: *for_computing
+  - name: python-cntk
+    syntax: python
+    tags:
+      - ["latest",          ":2.2-py36"]
+      - ["2.2-py36",        "x"]
+      - ["2.2-py36-cuda9",  "x"]
+      - ["2.6-py36",        "x"]
   - name: julia
     syntax: julia
     tags:
