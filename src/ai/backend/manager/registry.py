@@ -7,6 +7,7 @@ import sys
 import uuid
 
 import aiodocker
+from aiodocker.networks import DockerNetwork
 import aiozmq, aiozmq.rpc
 from aiozmq.rpc.base import GenericError, NotFoundError, ParametersError
 import aiotools
@@ -1016,8 +1017,8 @@ class AgentRegistry:
             bundle_size = await result.scalar()
             all_terminated = (terminated_count == bundle_size)
             if kern_info['network_id'] is not None and all_terminated:
-                network = aiodocker.DockerNetwork(self.docker,
-                                                  kern_info['network_id'])
+                network = DockerNetwork(self.docker,
+                                        kern_info['network_id'])
                 await network.delete()
 
             # release resource slots
