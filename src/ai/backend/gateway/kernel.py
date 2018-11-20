@@ -383,7 +383,7 @@ async def execute(request) -> web.Response:
             if mode in {'continue', 'input'}:
                 assert run_id is not None, 'continuation requires explicit run ID'
             code = params.get('code', '')
-            opts = params.get('options', None) or {}
+            opts = params.get('options', {})
         if mode == 'complete':
             # For legacy
             resp['result'] = await registry.get_completions(
