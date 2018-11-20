@@ -1018,9 +1018,13 @@ class AgentRegistry:
             result = await conn.execute(query)
             bundle_size = await result.scalar()
             all_terminated = (terminated_count == bundle_size)
+            if all_terminated:
+                log.info('bundled session terminated (sess:{}, bundle:{})',
+                         kern_info['sess_id'], kern_info['bundle_id'])
             if kern_info['network_id'] is not None and all_terminated:
                 network = DockerNetwork(self.docker,
                                         kern_info['network_id'])
+                await asyncio.sleep(0.5)
                 await network.delete()
 
             # release resource slots
