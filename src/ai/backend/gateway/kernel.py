@@ -371,8 +371,8 @@ async def execute(request) -> web.Response:
         if api_version == 1:
             run_id = params.get('runId', secrets.token_hex(8))
             mode = 'query'
-            code = params.get('code', '')
-            opts = {}
+            code = params.get('code', None)
+            opts = None
         elif api_version >= 2:
             assert 'runId' in params, 'runId is missing!'
             run_id = params['runId']  # maybe None
@@ -382,8 +382,11 @@ async def execute(request) -> web.Response:
                    'mode has an invalid value.'
             if mode in {'continue', 'input'}:
                 assert run_id is not None, 'continuation requires explicit run ID'
-            code = params.get('code', '')
-            opts = params.get('options', {})
+            code = params.get('code', None)
+            opts = params.get('options', None)
+        # handle cases when some params are deliberately set to None
+        if code is None: code = ''  # noqa
+        if opts is None: opts = {}  # noqa
         if mode == 'complete':
             # For legacy
             resp['result'] = await registry.get_completions(
