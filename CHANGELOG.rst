@@ -1,6 +1,20 @@
 Changes
 =======
 
+1.4.5 (2018-11-22)
+------------------
+
+- backport: Accept API v4 requests (lablup/backend.ai#30)
+  In API v4, the authentication signature always uses an emtpy string
+  as the request body element to allow easier implementation of streaming
+  and proxies.
+
+- Fix handling of empty/unspecified execute API options (#116)
+
+- Fix storing of fractional resources reported by agents
+
+- Update image metadata/aliases for TensorFlow 1.12 and PyTorch
+
 1.4.4 (2018-11-09)
 ------------------
 
