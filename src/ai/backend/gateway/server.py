@@ -53,6 +53,7 @@ VALID_VERSIONS = frozenset([
     'v1.20160915',
     'v2.20170315',
     'v3.20170615',
+    'v4.20181215',
 ])
 LATEST_API_VERSION = 'v3.20170615'
 
@@ -99,9 +100,9 @@ async def api_middleware(request, handler):
         raise ex
     version = request.get('api_version', None)
     if version is None:
-        version = int(request.match_info.get('version', 3))
+        version = int(request.match_info.get('version', 4))
         request['api_version'] = version
-    if version < 1 or version > 3:
+    if version < 1 or version > 4:
         raise GenericBadRequest('Unsupported API major version.')
     resp = (await _handler(request))
     return resp

@@ -148,6 +148,6 @@ def create_app():
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     app['prefix'] = 'wsproxy'
-    app['api_versions'] = (2, 3)
+    app['api_versions'] = (2, 3, 4)
     app.router.add_route('GET', r'/{sess_id}/stream', ws_proxy)
     return app, []

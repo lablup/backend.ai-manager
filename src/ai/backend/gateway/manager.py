@@ -114,7 +114,7 @@ async def shutdown(app):
 
 def create_app():
     app = web.Application()
-    app['api_versions'] = (2, 3)
+    app['api_versions'] = (2, 3, 4)
     app.router.add_route('GET', r'/status', fetch_manager_status)
     app.router.add_route('PUT', r'/status', update_manager_status)
     app.on_startup.append(init)
