@@ -622,7 +622,7 @@ async def shutdown(app):
 def create_app():
     app = web.Application()
     app['prefix'] = 'folders'
-    app['api_versions'] = (2, 3)
+    app['api_versions'] = (2, 3, 4)
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     app.router.add_route('POST',   r'', create)

@@ -286,7 +286,7 @@ def create_app():
     app = web.Application()
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
-    app['api_versions'] = (2, 3)
+    app['api_versions'] = (2, 3, 4)
     app.router.add_route('POST', r'/graphql', handle_gql)
     return app, []
 
