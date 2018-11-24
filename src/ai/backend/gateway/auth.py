@@ -208,9 +208,9 @@ def generate_keypair():
 
 def create_app():
     app = web.Application()
-    app['prefix'] = 'auth/'  # slashed to distinguish with "/vN/authorize"
+    app['prefix'] = 'auth'  # slashed to distinguish with "/vN/authorize"
     app['api_versions'] = (1, 2, 3, 4)
-    res = app.router.add_resource(r'/test')
+    res = app.router.add_resource(r'')
     res.add_route('GET', auth_test)
     res.add_route('POST', auth_test)
     return app, [auth_middleware]
