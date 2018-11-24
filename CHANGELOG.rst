@@ -1,6 +1,11 @@
 Changes
 =======
 
+1.4.7 (2018-11-24)
+------------------
+
+- Technical release to fix an internal merge error.
+
 1.4.6 (2018-11-24)
 ------------------
 
