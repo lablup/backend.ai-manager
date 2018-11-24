@@ -614,9 +614,9 @@ class AgentRegistry:
             kernel = await self.get_session(sess_id, access_key)
             # The agent aggregates at most 2 seconds of outputs
             # if the kernel runs for a long time.
-            async with RPCContext(kernel['agent_addr'], 30) as rpc:
             if api_version == 4:  # manager-agent protocol is same.
                 api_version = 3
+            async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 coro = rpc.call.execute(api_version, str(kernel['id']),
                                         run_id, mode, code, opts)
                 if coro is None:
