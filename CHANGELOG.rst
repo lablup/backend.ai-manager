@@ -1,6 +1,16 @@
 Changes
 =======
 
+1.4.6 (2018-11-24)
+------------------
+
+- Fix various bugs.
+
+  - Fix kernel restart regression bug.
+  - Fix code execution with API v4 requests.
+  - Fix auth test URLs.
+  - Fix Server response headers in subapps.
+
 1.4.5 (2018-11-22)
 ------------------
 
