@@ -53,8 +53,9 @@ VALID_VERSIONS = frozenset([
     'v1.20160915',
     'v2.20170315',
     'v3.20170615',
+    'v4.20181215',
 ])
-LATEST_API_VERSION = 'v3.20170615'
+LATEST_API_VERSION = 'v4.20181215'
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 
@@ -99,9 +100,9 @@ async def api_middleware(request, handler):
         raise ex
     version = request.get('api_version', None)
     if version is None:
-        version = int(request.match_info.get('version', 3))
+        version = int(request.match_info.get('version', 4))
         request['api_version'] = version
-    if version < 1 or version > 3:
+    if version < 1 or version > 4:
         raise GenericBadRequest('Unsupported API major version.')
     resp = (await _handler(request))
     return resp
@@ -154,7 +155,6 @@ async def legacy_auth_test_redirect(request):
 async def gw_init(app):
     # should be done in create_app() in other modules.
     app.router.add_route('GET', r'', hello)
-    app.on_response_prepare.append(on_prepare)
 
     # legacy redirects
     app.router.add_route('GET', r'/v{version:\d+}/authorize',
@@ -289,6 +289,7 @@ async def server_main(loop, pidx, _args):
             allow_credentials=False,
             expose_headers="*", allow_headers="*"),
     }
+    app.on_response_prepare.append(on_prepare)
     cors = aiohttp_cors.setup(app, defaults=cors_options)
     app['config'] = _args[0]
     app['sslctx'] = None
@@ -323,6 +324,7 @@ async def server_main(loop, pidx, _args):
     def init_subapp(create_subapp):
         subapp, global_middlewares = create_subapp()
         assert isinstance(subapp, web.Application)
+        subapp.on_response_prepare.append(on_prepare)
         # Allow subapp's access to the root app properties.
         # These are the public APIs exposed to extensions as well.
         subcors = aiohttp_cors.setup(subapp)

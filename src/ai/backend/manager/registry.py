@@ -702,8 +702,8 @@ class AgentRegistry:
                     sess_id, access_key,
                     KernelStatus.RUNNING,
                     container_id=kernel_info['container_id'],
-                    cpu_set=list(kernel_info['cpu_set']),
-                    gpu_set=list(kernel_info['gpu_set']),
+                    cpu_set=[],
+                    gpu_set=[],
                     repl_in_port=kernel_info['repl_in_port'],
                     repl_out_port=kernel_info['repl_out_port'],
                     stdin_port=kernel_info['stdin_port'],
@@ -717,6 +717,8 @@ class AgentRegistry:
             kernel = await self.get_session(sess_id, access_key)
             # The agent aggregates at most 2 seconds of outputs
             # if the kernel runs for a long time.
+            if api_version == 4:  # manager-agent protocol is same.
+                api_version = 3
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 coro = rpc.call.execute(api_version, str(kernel['id']),
                                         run_id, mode, code, opts,
