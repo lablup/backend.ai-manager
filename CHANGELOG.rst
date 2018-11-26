@@ -7,6 +7,40 @@ Changes
 - Version numbers now follow year.month releases like Docker.
   We plan to release stable versions on every 3 months (e.g., 18.12, 19.03, ...).
 
+1.4.7 (2018-11-24)
+------------------
+
+- Technical release to fix an internal merge error.
+
+1.4.6 (2018-11-24)
+------------------
+
+- Fix various bugs.
+
+  - Fix kernel restart regression bug.
+  - Fix code execution with API v4 requests.
+  - Fix auth test URLs.
+  - Fix Server response headers in subapps.
+
+1.4.5 (2018-11-22)
+------------------
+
+- backport: Accept API v4 requests (lablup/backend.ai#30)
+  In API v4, the authentication signature always uses an emtpy string
+  as the request body element to allow easier implementation of streaming
+  and proxies.
+
+- Fix handling of empty/unspecified execute API options (#116)
+
+- Fix storing of fractional resources reported by agents
+
+- Update image metadata/aliases for TensorFlow 1.12 and PyTorch
+
+1.4.4 (2018-11-09)
+------------------
+
+- Update the default image metadata/aliases to include latest deep learning kernels.
+
 1.4.3 (2018-11-06)
 ------------------
 

@@ -87,7 +87,7 @@ async def shutdown(app):
 
 def create_app():
     app = web.Application()
-    app['api_versions'] = (1, 2, 3)
+    app['api_versions'] = (1, 2, 3, 4)
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     # middleware must be wrapped by web.middleware at the outermost level.

@@ -8,8 +8,10 @@ import yaml
 
 from ai.backend.common.identity import get_instance_id, get_instance_ip
 from ai.backend.common.logging import BraceStyleAdapter
+
 from ..manager.models.agent import ResourceSlot
 from .exceptions import ImageNotFound
+from .manager import ManagerStatus
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
 
@@ -117,6 +119,18 @@ class ConfigServer:
             await self.etcd.put_multi(ks, vs)
         log.info('done')
 
+    async def manager_status_update(self):
+        async for ev in self.etcd.watch('manager/status'):
+            yield ev
+
+    async def update_manager_status(self, status):
+        await self.etcd.put('manager/status', status.value)
+
+    @aiotools.lru_cache(maxsize=1)
+    async def get_manager_status(self):
+        status = await self.etcd.get('manager/status')
+        return ManagerStatus(status)
+
     @aiotools.lru_cache(maxsize=1, expire_after=60.0)
     async def get_allowed_origins(self):
         origins = await self.etcd.get('config/api/allow-origins')
@@ -161,7 +175,7 @@ class ConfigServer:
         cpu = None if cpu == 'null' else Decimal(cpu)
         mem = await self.etcd.get(f'images/{name}/mem')
         mem = None if mem == 'null' else Decimal(mem)
-        if 'gpu' in tag:
+        if '-gpu' in tag or '-cuda' in tag:
             gpu = await self.etcd.get(f'images/{name}/gpu')
             gpu = Decimal(0) if gpu == 'null' else Decimal(gpu)
         else:
@@ -207,7 +221,7 @@ async def shutdown(app):
 
 def create_app():
     app = web.Application()
-    app['api_versions'] = (3,)
+    app['api_versions'] = (3, 4)
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     return app, []

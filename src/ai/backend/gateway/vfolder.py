@@ -20,6 +20,9 @@ from .auth import auth_required
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
     InvalidAPIParameters)
+from .manager import (
+    READ_ALLOWED, ALL_ALLOWED,
+    server_status_required)
 from ..manager.models import (
     keypairs, vfolders, vfolder_invitations, vfolder_permissions,
     VFolderPermission)
@@ -130,6 +133,7 @@ def vfolder_check_exists(handler):
     return _wrapped
 
 
+@server_status_required(ALL_ALLOWED)
 @auth_required
 async def create(request):
     resp = {}
@@ -187,6 +191,7 @@ async def create(request):
     return web.json_response(resp, status=201)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
 async def list_folders(request):
     resp = []
@@ -221,6 +226,7 @@ async def list_folders(request):
     return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
 async def get_info(request, row):
@@ -249,6 +255,7 @@ async def get_info(request, row):
     return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_WRITE)
 async def mkdir(request, row):
@@ -269,6 +276,7 @@ async def mkdir(request, row):
     return web.Response(status=201)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_WRITE)
 async def upload(request, row):
@@ -301,6 +309,7 @@ async def upload(request, row):
     return web.Response(status=201)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.RW_DELETE)
 async def delete_files(request, row):
@@ -330,6 +339,7 @@ async def delete_files(request, row):
     return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
 async def download(request, row):
@@ -358,6 +368,7 @@ async def download(request, row):
         return web.Response(body=mpwriter, status=200)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
 async def list_files(request, row):
@@ -390,6 +401,7 @@ async def list_files(request, row):
     return web.json_response(resp, status=200)
 
 
+@server_status_required(ALL_ALLOWED)
 @auth_required
 async def invite(request):
     dbpool = request.app['dbpool']
@@ -464,6 +476,7 @@ async def invite(request):
     return web.json_response(resp, status=201)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
 async def invitations(request):
     dbpool = request.app['dbpool']
@@ -493,6 +506,7 @@ async def invitations(request):
     return web.json_response(resp, status=200)
 
 
+@server_status_required(ALL_ALLOWED)
 @auth_required
 async def accept_invitation(request):
     dbpool = request.app['dbpool']
@@ -568,6 +582,7 @@ async def accept_invitation(request):
     return web.json_response({'msg': msg}, status=201)
 
 
+@server_status_required(ALL_ALLOWED)
 @auth_required
 async def delete_invitation(request):
     dbpool = request.app['dbpool']
@@ -596,6 +611,7 @@ async def delete_invitation(request):
     return web.json_response(resp, status=200)
 
 
+@server_status_required(ALL_ALLOWED)
 @auth_required
 async def delete(request):
     dbpool = request.app['dbpool']
@@ -640,7 +656,7 @@ async def shutdown(app):
 def create_app():
     app = web.Application()
     app['prefix'] = 'folders'
-    app['api_versions'] = (2, 3)
+    app['api_versions'] = (2, 3, 4)
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     app.router.add_route('POST',   r'', create)
