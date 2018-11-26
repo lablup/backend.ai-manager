@@ -198,7 +198,6 @@ async def gw_init(app):
     await app['registry'].init()
 
     # Detect and install monitoring plugins.
-    app['status'] = GatewayStatus.STARTING
     app['stats_monitor'] = DummyStatsMonitor()
     app['error_monitor'] = DummyErrorMonitor()
     app['stats_monitor.enabled'] = False
