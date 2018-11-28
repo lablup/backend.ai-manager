@@ -59,6 +59,7 @@ aliases:
   - ['python-tensorflow:1.12',         'python-tensorflow:1.12-py36']     # preferred
   - ['python-tensorflow:1.12-tpu',     'python-tensorflow:1.12-py36-tpu']  # preferred
   - ['python-tensorflow:1.12-gpu',     'python-tensorflow:1.12-py36-cuda9'] # preferred
+  - ['python-tensorflow:1.12-srv',     'python-tensorflow:1.12-py36-srv']  # preferred
   - ['tensorflow',                     'python-tensorflow:latest']
   - ['tensorflow-gpu',                 'python-tensorflow:latest-gpu']
   - ['tensorflow-python',              'python-tensorflow:latest']
@@ -86,6 +87,7 @@ aliases:
   - ['tensorflow:1.12',                'python-tensorflow:1.12-py36']     # preferred
   - ['tensorflow:1.12-tpu',            'python-tensorflow:1.12-py36-tpu']     # preferred
   - ['tensorflow:1.12-gpu',            'python-tensorflow:1.12-py36-cuda9'] # preferred
+  - ['tensorflow:1.12-srv',            'python-tensorflow:1.12-py36-srv'] # preferred
 
   - ['keras',         'python-tensorflow:latest-dense']
   - ['keras-gpu',     'python-tensorflow:latest-dense-gpu']
