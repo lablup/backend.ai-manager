@@ -349,6 +349,7 @@ class AgentRegistry:
             kern = await self.get_session(sess_id, access_key)
             canonical_lang = await self.config_server.resolve_image_name(lang)
             kernel_lang = tuple(kern.lang.split(':'))
+            kernel_lang = (kernel_lang[0][kernel_lang[0].find('/')+1:] if kernel_lang[0].find('/') else kernel_lang[0], kernel_lang[1])
             if canonical_lang != kernel_lang:
                 raise KernelAlreadyExists
             created = False
