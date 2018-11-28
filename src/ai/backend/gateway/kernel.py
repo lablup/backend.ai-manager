@@ -83,7 +83,7 @@ async def create(request) -> web.Response:
             if request['api_version'] == 1:
                 # custom resource limit unsupported
                 pass
-            elif request['api_version'] in (2, 3):
+            elif request['api_version'] >= 2:
                 creation_config.update(params.get('config', {}))
             # sanity check for vfolders
             if creation_config['mounts']:
