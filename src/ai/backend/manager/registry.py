@@ -57,6 +57,11 @@ async def RPCContext(addr, timeout=None):
     try:
         with _timeout(timeout):
             yield peer
+    except asyncio.TimeoutError:
+        log.warning('timeout while connecting to agent at {}', addr)
+        raise
+    except preserved_exceptions:
+        raise
     except Exception:
         exc_type, exc, tb = sys.exc_info()
         if issubclass(exc_type, GenericError):
@@ -72,8 +77,6 @@ async def RPCContext(addr, timeout=None):
             else:
                 e = AgentError(exc_type, exc.args)
                 raise e.with_traceback(tb)
-        elif issubclass(exc_type, preserved_exceptions):
-            raise
         else:
             e = AgentError(exc_type, exc.args)
             raise e.with_traceback(tb)
