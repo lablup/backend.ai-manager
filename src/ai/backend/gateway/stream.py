@@ -247,6 +247,7 @@ async def stream_execute(request) -> web.Response:
                 'files': raw_result.get('files'),
             })
             if raw_result['status'] == 'waiting-input':
+                mode = 'input'
                 code = await ws.receive_str()
             elif raw_result['status'] == 'finished':
                 break
