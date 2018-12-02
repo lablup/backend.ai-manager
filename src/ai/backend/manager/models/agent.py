@@ -27,7 +27,8 @@ class AgentStatus(enum.Enum):
     ALIVE = 0
     LOST = 1
     RESTARTING = 2
-    TERMINATED = 3
+    MARK_TERMINATED = 3
+    TERMINATED = 4
 
 
 agents = sa.Table(

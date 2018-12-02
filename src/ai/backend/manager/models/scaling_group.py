@@ -17,7 +17,7 @@ from sqlalchemy.sql.expression import true
 
 from .base import metadata
 from .kernel import kernels, KernelStatus, SessionCreationRequest
-from .agent import agents, ResourceSlot
+from .agent import agents, ResourceSlot, AgentStatus
 from ...gateway.exceptions import InvalidAPIParameters
 from ...gateway.utils import reenter_txn
 
@@ -182,11 +182,13 @@ class ScalingGroup:
                 query = (sa.select([agents.c.id])
                            .select_from(j)
                            .where((agents.c.scaling_group == self.name) &
+                                  (agents.c.status == AgentStatus.ALIVE) &
                                   kernels.c.id.is_(None)))
-            else :
+            else:
                 query = (sa.select([agents.c.id])
                            .select_from(agents)
-                           .where(agents.c.scaling_group == self.name))
+                           .where((agents.c.scaling_group == self.name) &
+                                  (agents.c.status == AgentStatus.ALIVE)))
 
             agent_ids = []
             async for row in conn.execute(query):
@@ -201,7 +203,8 @@ class ScalingGroup:
                     agents.c.gpu_slots, agents.c.used_gpu_slots]
             query = (sa.select(cols)
                        .select_from(agents)
-                       .where(agents.c.scaling_group == self.name))
+                       .where((agents.c.scaling_group == self.name) &
+                              (agents.c.status == AgentStatus.ALIVE)))
 
             available_shares = []
             async for row in conn.execute(query):
@@ -351,7 +354,6 @@ class BasicScalingDriver(AbstractScalingDriver):
     async def scale_out(self, pending_jobs: Iterable[SessionCreationJob]):
         # 1. Assume that no # limit of instances,
         # only t2.2xlarge & p2.xlarge, and only cpu, mem, gpu.
-        raise RuntimeError
         assert pending_jobs is not None
 
         scale_out_info = []
@@ -384,7 +386,6 @@ class BasicScalingDriver(AbstractScalingDriver):
                        schedule_info: Iterable[Tuple[str, SessionCreationJob]],
                        conn=None):
 
-        return schedule_info
         assert schedule_info is not None
 
         # TODO: enhance get_agents_to_remove logic.
@@ -399,6 +400,13 @@ class BasicScalingDriver(AbstractScalingDriver):
         # pseudo-code
         idle_agents = await scaling_group.get_belonging_agents(idle=True, conn=conn)
         agents_to_remove = set(idle_agents) - set(map(lambda x: x[0], schedule_info))
+
+        async with reenter_txn(scaling_group.registry.dbpool, conn) as conn:
+            query = (agents.update()
+                           .values(status=AgentStatus.MARK_TERMINATED)
+                           .where(agents.c.id in agents_to_remove))
+            await conn.execute(query)
+
         await self.remove_agents(agents_to_remove)
 
         return schedule_info
