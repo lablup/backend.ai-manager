@@ -27,7 +27,8 @@ from ..gateway.utils import reenter_txn
 from .models import (
     agents, kernels, keypairs,
     ResourceSlot, AgentStatus, KernelStatus,
-    scaling_groups, ScalingGroup, SessionCreationRequest)
+    scaling_groups, ScalingGroup, SessionCreationRequest,
+    remove_scaling)
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
 
@@ -840,6 +841,20 @@ class AgentRegistry:
                 log.error('should not reach here! {0}', type(row.status))
 
             if agent_created:
+                # Remove pending scaling if exists.
+                query = (sa.select([scaling_groups.c.pending_scalings], for_update=True)
+                         .select_from(scaling_groups)
+                         .where(scaling_groups.c.name == scaling_group))
+                result = await conn.execute(query)
+                pending_scalings = (await result.first()).pending_scalings
+                instance_type = agent_info['type']
+                pending_scalings, changed = remove_scaling(pending_scalings, instance_type)
+                if changed:
+                    query = (scaling_groups.update()
+                             .values(pending_scalings=pending_scalings)
+                             .where(scaling_groups.c.name == scaling_group))
+                    await conn.execute(query)
+
                 scaling_group = await self.get_scaling_group(
                     scaling_group=scaling_group, conn=conn)
                 await scaling_group.schedule(conn=conn)

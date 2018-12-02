@@ -39,7 +39,8 @@ Some design sketches:
 
 
 __all__ = ('ScalingEventType', 'ScalingEvent', 'SessionCreationJob',
-           'ScalingGroup', 'AWSDefaultScalingDriver', 'scaling_groups')
+           'ScalingGroup', 'AWSDefaultScalingDriver', 'scaling_groups',
+           'remove_scaling')
 
 
 class ScalingEventType(enum.Enum):
@@ -61,6 +62,45 @@ class SessionCreationJob:
     kernel_id: str
     resources: ResourceSlot  # TODO: change into a new data structure type.
     created_at: datetime
+
+
+def _scalings_to_dict(scalings):
+    if not scalings:
+        return {}
+
+    scalings_dict = {}
+    for scaling in scalings:
+        instance_type, instance_info = scaling.split(':')
+        scalings_dict[instance_type] = instance_info
+    return scalings_dict
+
+
+def merge_scalings(s1, s2):
+    s1 = _scalings_to_dict(s1)
+    s2 = _scalings_to_dict(s2)
+    s = {}
+    for k, v in s1.items():
+        s[k] = v
+    for k, v in s2.items():
+        if k in s:
+            s[k] += v
+        else:
+            s[k] = v
+    return [f'{k}:{v}' for k, v in s.items()]
+
+
+def remove_scaling(scalings, instance_type):
+    changed = False
+    if not scalings:
+        return [], changed
+
+    scalings_dict = _scalings_to_dict(scalings)
+    if instance_type in scalings_dict:
+        scalings_dict[instance_type] -= 1
+        if not scalings_dict[instance_type]:
+            scalings_dict.pop(instance_type)
+        changed = True
+    return [f'{k}:{v}' for k, v in scalings_dict.items()], changed
 
 
 class ScalingGroup:
@@ -216,6 +256,40 @@ class ScalingGroup:
                 ))
             return available_shares
 
+    async def get_pending_scaling_shares(self, conn=None):
+        async with reenter_txn(self.registry.dbpool, conn) as conn:
+            query = (sa.select([scaling_groups.c.pending_scalings])
+                       .select_from(scaling_groups)
+                       .where(scaling_groups.c.name == self.name))
+            result = await conn.execute(query)
+            pending_scalings = (await result.first()).pending_scalings
+            if not pending_scalings:
+                pending_scaling_shares = []
+            else:
+                pending_scalings = map(lambda x: x.split(':'), pending_scalings)
+
+                def _calculate_shares(pending_scaling):
+                    instance_type, instance_num = pending_scaling
+                    available_instances = self.scaling_driver.available_instances
+                    _, instance_shares = next(x for x in available_instances
+                                              if x[0] == instance_type)
+                    shares = []
+                    for _ in range(instance_num):
+                        fake_agent_id = uuid.uuid4().hex
+                        fake_instance_shares = ResourceSlot(
+                            id=fake_agent_id,
+                            cpu=instance_shares.cpu,
+                            mem=instance_shares.mem,
+                            gpu=instance_shares.gpu,
+                        )
+                        shares.append(fake_instance_shares)
+                    return shares
+
+                pending_scaling_shares = reduce(lambda acc, x: acc + x,
+                                                map(_calculate_shares, pending_scalings),
+                                                [])
+            return pending_scaling_shares
+
     async def get_required_shares(self, lang):
         tokens = lang.split('/')
         name, tag = tokens[-1].split(':')
@@ -332,28 +406,32 @@ class BasicScalingDriver(AbstractScalingDriver):
 
         required_buffer_jobs = self.get_required_buffer_jobs()
 
-        if pending_jobs:
-            await self.scale_out(pending_jobs + required_buffer_jobs)
+        # Although pending_jobs is not empty, it is possible that
+        # there already exists pending scaling requests and
+        # all pending_jobs can be scheduled in those to-be-ready agents.
+        # So we need to check for pending scaling requests.
+        # Consider minimum prepared shares.
+        pending_jobs += required_buffer_jobs
+        schedulable_jobs = await scaling_group.job_scheduler.schedule(
+                scaling_group, pending_jobs, conn=conn, use_pending_scalings=True)
+        schedulable_job_ids = set(map(lambda x: x[1].kernel_id,
+                                      schedulable_jobs))
+        unschedulable_jobs = [job for job in required_buffer_jobs
+                          if job.kernel_id not in schedulable_job_ids]
+        if unschedulable_jobs:
+            await self.scale_out(scaling_group, unschedulable_jobs, conn=conn)
         else:
-            # Assert that minimum prepared shares condition is satisfied.
-            curr_buffer_jobs = await scaling_group.job_scheduler.schedule(
-                scaling_group, required_buffer_jobs, conn=conn)
-            curr_buffer_job_ids = set(map(lambda x: x[1].kernel_id,
-                                          curr_buffer_jobs))
-            deficient_buffer_jobs = [job for job in required_buffer_jobs
-                                     if job.kernel_id not in curr_buffer_job_ids]
-
-            if deficient_buffer_jobs:
-                await self.scale_out(deficient_buffer_jobs)
-            else:
-                schedule_info = await self.scale_in(scaling_group, schedule_info,
-                                                    conn=conn)
+            schedule_info = await self.scale_in(scaling_group, schedule_info,
+                                                conn=conn)
 
         return schedule_info
 
-    async def scale_out(self, pending_jobs: Iterable[SessionCreationJob]):
+    async def scale_out(self, scaling_group,
+                        pending_jobs: Iterable[SessionCreationJob],
+                        conn=None):
         # 1. Assume that no # limit of instances,
         # only t2.2xlarge & p2.xlarge, and only cpu, mem, gpu.
+        return
         assert pending_jobs is not None
 
         scale_out_info = []
@@ -376,6 +454,19 @@ class BasicScalingDriver(AbstractScalingDriver):
 
             scale_out_info.append((instance_type, instance_num))
 
+        async with reenter_txn(scaling_group.registry.dbpool, conn) as conn:
+            query = (sa.select([scaling_groups.c.pending_scalings], for_update=True)
+                       .select_from(scaling_groups)
+                       .where(scaling_groups.c.name == scaling_group.name))
+            pending_scalings = (await conn.execute(query)).pending_scalings
+            new_scalings = list(map(lambda x: f'{x[0]}:{x[1]}', scale_out_info))
+            pending_scalings = merge_scalings(pending_scalings, new_scalings)
+
+            query = (scaling_groups.update()
+                                   .values(pending_scalings=pending_scalings)
+                                   .where(scaling_groups.c.name == scaling_group.name))
+            await conn.execute(query)
+
         await self.add_agents(scale_out_info)
         # 2, Now consider multiple instances for each resource types.
         # 3. Now consider # limit of instances.
@@ -385,7 +476,7 @@ class BasicScalingDriver(AbstractScalingDriver):
     async def scale_in(self, scaling_group: ScalingGroup,
                        schedule_info: Iterable[Tuple[str, SessionCreationJob]],
                        conn=None):
-
+        # return schedule_info
         assert schedule_info is not None
 
         # TODO: enhance get_agents_to_remove logic.
@@ -497,7 +588,7 @@ class AbstractJobScheduler(metaclass=ABCMeta):
     @abstractmethod
     async def schedule(self, scaling_group: ScalingGroup,
                        pending_jobs: Iterable[SessionCreationJob],
-                       conn=None):
+                       conn=None, use_pending_scalings=False):
         '''
         This callback method is invoked when there are new session creation requests,
         terminated sessions, and increases of the scaling group resources.
@@ -510,8 +601,12 @@ class AbstractJobScheduler(metaclass=ABCMeta):
 
 class SimpleFIFOJobScheduler(AbstractJobScheduler):
 
-    async def schedule(self, scaling_group, pending_jobs, conn=None):
+    async def schedule(self, scaling_group, pending_jobs, conn=None,
+                       use_pending_scalings=False):
         available_agent_infos = await scaling_group.get_available_shares(conn=conn)
+        if use_pending_scalings:
+            available_agent_infos += \
+                await scaling_group.get_pending_scaling_shares(conn=conn)
         if not available_agent_infos:
             return []
         list(pending_jobs).sort(key=lambda _job: _job.created_at, reverse=True)
@@ -574,6 +669,7 @@ scaling_groups = sa.Table(
               server_default=sa.func.now()),
     sa.Column('driver', sa.String(length=64), nullable=False),
     sa.Column('job_scheduler', sa.String(length=64), nullable=False),
+    sa.Column('pending_scalings', sa.ARRAY(sa.String(length=64)))
     # sa.Column('params', sa.JSONB(), nullable=False),
 )
 
