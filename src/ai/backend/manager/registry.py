@@ -120,6 +120,7 @@ class AgentRegistry:
             row = await result.first()
             if row is None:
                 raise ValueError('Scaling group not found')
+            # TODO: consider columns of the row (e.g. which scaling driver to use)
             return ScalingGroup(row.name, self)
 
     async def get_instance(self, inst_id, field=None):

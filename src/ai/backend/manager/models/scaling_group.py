@@ -507,6 +507,7 @@ class SimpleFIFOJobScheduler(AbstractJobScheduler):
         if not available_agent_infos:
             return []
         list(pending_jobs).sort(key=lambda _job: _job.created_at, reverse=True)
+        # TODO: We should consider agents' images.
 
         async with reenter_txn(scaling_group.registry.dbpool, conn) as conn:
             scheduled_jobs = []
