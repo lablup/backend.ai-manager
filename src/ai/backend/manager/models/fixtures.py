@@ -1,4 +1,7 @@
-__all__ = ('example_keypair', )
+from datetime import datetime
+
+
+__all__ = ('example_keypair', 'example_scaling_group')
 
 
 example_keypair = [
@@ -33,4 +36,26 @@ example_keypair = [
             },
         ]
     ),
+]
+
+example_scaling_group = [
+    (
+        'scaling_groups',
+        [
+            {
+                'name': 'default',
+                'is_active': True,
+                'created_at': datetime.now(),
+                'driver': '',
+                'job_scheduler': '',
+            },
+            {
+                'name': 'codeonweb',
+                'is_active': True,
+                'created_at': datetime.now(),
+                'driver': '',
+                'job_scheduler': '',
+            }
+        ]
+    )
 ]

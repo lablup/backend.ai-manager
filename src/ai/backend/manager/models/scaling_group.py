@@ -417,7 +417,7 @@ class BasicScalingDriver(AbstractScalingDriver):
         schedulable_job_ids = set(map(lambda x: x[1].kernel_id,
                                       schedulable_jobs))
         unschedulable_jobs = [job for job in required_buffer_jobs
-                          if job.kernel_id not in schedulable_job_ids]
+                              if job.kernel_id not in schedulable_job_ids]
         if unschedulable_jobs:
             await self.scale_out(scaling_group, unschedulable_jobs, conn=conn)
         else:
