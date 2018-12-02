@@ -571,7 +571,7 @@ class AgentRegistry:
                                                 for_update=True,
                                                 db_connection=conn)
                 await self.set_session_status(sess_id, access_key,
-                                              KernelStatus.RESTARTING,
+                                              KernelStatus.PENDING,
                                               db_connection=conn)
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 # TODO: read from vfolders attachment table
