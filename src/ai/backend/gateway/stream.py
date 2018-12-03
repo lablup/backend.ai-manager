@@ -1,5 +1,8 @@
 '''
 WebSocket-based streaming kernel interaction APIs.
+
+NOTE: For nginx-based setups, we need to gather all websocket-based API handlers
+      under this "/stream/"-prefixed app.
 '''
 
 import asyncio
@@ -23,6 +26,7 @@ from .auth import auth_required
 from .exceptions import KernelNotFound, BackendError
 from .manager import READ_ALLOWED, server_status_required
 from .utils import not_impl_stub
+from .wsproxy import WebSocketProxy
 from ..manager.models import kernels
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.stream'))
@@ -283,6 +287,36 @@ async def stream_execute(request) -> web.Response:
         return ws
 
 
+@server_status_required(READ_ALLOWED)
+@auth_required
+async def stream_wsproxy(request) -> web.Response:
+    registry = request.app['registry']
+    sess_id = request.match_info['sess_id']
+    access_key = request['keypair']['access_key']
+
+    extra_fields = (kernels.c.stdin_port, )
+    log.info(f'{sess_id}')
+    try:
+        kernel = await registry.get_session(
+            sess_id, access_key, field=extra_fields)
+    except KernelNotFound:
+        raise
+    await registry.increment_session_usage(sess_id, access_key)
+
+    if kernel.kernel_host is None:
+        kernel_host = urlparse(kernel.agent_addr).hostname
+    else:
+        kernel_host = kernel.kernel_host
+    path = f'ws://{kernel_host}:{kernel.stdin_port}/'
+
+    log.info(f'WS: {sess_id} -> {path}')
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+    web_socket_proxy = WebSocketProxy(path, ws)
+    await web_socket_proxy.proxy()
+    return ws
+
+
 async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
     try:
         kernel = await app['registry'].get_kernel(
@@ -328,5 +362,6 @@ def create_app():
     app['api_versions'] = (2, 3, 4)
     app.router.add_route('GET', r'/kernel/{sess_id}/pty', stream_pty)
     app.router.add_route('GET', r'/kernel/{sess_id}/execute', stream_execute)
+    app.router.add_route('GET', r'/kernel/{sess_id}/wsproxy', stream_wsproxy)
     app.router.add_route('GET', r'/kernel/{sess_id}/events', not_impl_stub)
     return app, []
