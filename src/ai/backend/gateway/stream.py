@@ -293,6 +293,7 @@ async def stream_wsproxy(request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
+    session = request.app['wsproxy_session']
 
     extra_fields = (kernels.c.stdin_port, )
     log.info(f'{sess_id}')
@@ -309,12 +310,13 @@ async def stream_wsproxy(request) -> web.Response:
         kernel_host = kernel.kernel_host
     path = f'ws://{kernel_host}:{kernel.stdin_port}/'
 
-    log.info(f'WS: {sess_id} -> {path}')
-    ws = web.WebSocketResponse()
-    await ws.prepare(request)
-    web_socket_proxy = WebSocketProxy(path, ws)
-    await web_socket_proxy.proxy()
-    return ws
+    log.info(f'STREAM_WSPROXY: {sess_id} -> {path}')
+    async with session.ws_connect(path) as up_conn:
+        down_conn = web.WebSocketResponse()
+        await down_conn.prepare(request)
+        wsproxy = WebSocketProxy(up_conn, down_conn)
+        await wsproxy.proxy()
+        return down_conn
 
 
 async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
@@ -344,6 +346,7 @@ async def init(app):
     app['stream_execute_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_stdin_socks'] = defaultdict(weakref.WeakSet)
     app['event_dispatcher'].add_handler('kernel_terminated', app, kernel_terminated)
+    app['wsproxy_session'] = aiohttp.ClientSession()
 
 
 async def shutdown(app):
@@ -352,6 +355,7 @@ async def shutdown(app):
             if not handler.done():
                 handler.cancel()
                 await handler
+    await app['wsproxy_session'].close()
 
 
 def create_app():
