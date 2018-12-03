@@ -23,7 +23,7 @@ import zmq
 from ai.backend.common.logging import BraceStyleAdapter
 
 from .auth import auth_required
-from .exceptions import KernelNotFound, BackendError
+from .exceptions import BackendError, KernelNotFound, ServiceUnavailable
 from .manager import READ_ALLOWED, server_status_required
 from .utils import not_impl_stub
 from .wsproxy import WebSocketProxy
@@ -311,12 +311,15 @@ async def stream_wsproxy(request) -> web.Response:
     path = f'ws://{kernel_host}:{kernel.stdin_port}/'
 
     log.info(f'STREAM_WSPROXY: {sess_id} -> {path}')
-    async with session.ws_connect(path) as up_conn:
-        down_conn = web.WebSocketResponse()
-        await down_conn.prepare(request)
-        wsproxy = WebSocketProxy(up_conn, down_conn)
-        await wsproxy.proxy()
-        return down_conn
+    try:
+        async with session.ws_connect(path) as up_conn:
+            down_conn = web.WebSocketResponse()
+            await down_conn.prepare(request)
+            wsproxy = WebSocketProxy(up_conn, down_conn)
+            await wsproxy.proxy()
+            return down_conn
+    except aiohttp.ClientConnectorError:
+        raise ServiceUnavailable(extra_msg='Websocket connection to kernel failed')
 
 
 @server_status_required(READ_ALLOWED)

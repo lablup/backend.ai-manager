@@ -41,8 +41,12 @@ class WebSocketProxy:
                     break
                 elif msg.type == aiohttp.WSMsgType.CLOSE:
                     break
+            # here, client gracefully disconnected
+        except asyncio.CancelledError:
+            # here, client forcibly disconnected
+            pass
         finally:
-            await self.close()
+            await self.close_downstream()
 
     async def downstream(self):
         try:
@@ -57,10 +61,13 @@ class WebSocketProxy:
                     break
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     break
-        except Exception as e:
-            print(e)
+            # here, server gracefully disconnected
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            log.exception('unexpected error')
         finally:
-            await self.close()
+            await self.close_upstream()
 
     async def consume_upstream_buffer(self):
         while True:
@@ -76,10 +83,13 @@ class WebSocketProxy:
     async def write(self, msg: str, tp):
         await self.upstream_buffer.put((msg, tp))
 
-    async def close(self):
-        if self.upstream_buffer_task:
-            self.upstream_buffer_task.cancel()
-        if self.up_conn:
-            await self.up_conn.close()
+    async def close_downstream(self):
         if not self.down_conn.closed:
             await self.down_conn.close()
+
+    async def close_upstream(self):
+        if self.upstream_buffer_task:
+            self.upstream_buffer_task.cancel()
+            await self.upstream_buffer_task
+        if self.up_conn:
+            await self.up_conn.close()
