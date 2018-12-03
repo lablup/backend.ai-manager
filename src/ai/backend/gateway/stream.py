@@ -374,6 +374,6 @@ def create_app():
     app.router.add_route('GET', r'/kernel/{sess_id}/pty', stream_pty)
     app.router.add_route('GET', r'/kernel/{sess_id}/execute', stream_execute)
     app.router.add_route('GET', r'/kernel/{sess_id}/wsproxy', stream_wsproxy)
-    app.router.add_route('GET', r'/kernel/{sess_id}/tcpproxy', stream_wsproxy)
+    app.router.add_route('GET', r'/kernel/{sess_id}/tcpproxy', stream_tcpproxy)
     app.router.add_route('GET', r'/kernel/{sess_id}/events', not_impl_stub)
     return app, []
