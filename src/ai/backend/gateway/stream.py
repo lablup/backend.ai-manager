@@ -319,6 +319,13 @@ async def stream_wsproxy(request) -> web.Response:
         return down_conn
 
 
+@server_status_required(READ_ALLOWED)
+@auth_required
+async def stream_tcpproxy(request) -> web.Response:
+    # TODO
+    raise NotImplementedError
+
+
 async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
     try:
         kernel = await app['registry'].get_kernel(
@@ -367,5 +374,6 @@ def create_app():
     app.router.add_route('GET', r'/kernel/{sess_id}/pty', stream_pty)
     app.router.add_route('GET', r'/kernel/{sess_id}/execute', stream_execute)
     app.router.add_route('GET', r'/kernel/{sess_id}/wsproxy', stream_wsproxy)
+    app.router.add_route('GET', r'/kernel/{sess_id}/tcpproxy', stream_wsproxy)
     app.router.add_route('GET', r'/kernel/{sess_id}/events', not_impl_stub)
     return app, []
