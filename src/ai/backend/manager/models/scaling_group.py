@@ -428,16 +428,25 @@ class BasicScalingDriver(AbstractScalingDriver):
         return schedule_info
 
     async def scale_out(self, scaling_group,
-                        pending_jobs: Iterable[SessionCreationJob],
+                        pending_jobs: List[SessionCreationJob],
                         conn=None):
         # 1. Assume that no # limit of instances,
         # only t2.2xlarge & p2.xlarge, and only cpu, mem, gpu.
-        return
         assert pending_jobs is not None
+
+        pending_jobs_dict = defaultdict(list)
+        for job in pending_jobs:
+            for resource_type in self.resource_precedence:
+                if getattr(job.resources, resource_type) > Decimal(0):
+                    pending_jobs_dict[resource_type].append(job)
+                    break
 
         scale_out_info = []
         for resource_type in self.resource_precedence:
-            target_jobs = filter(lambda job: job.resources.gpu != 0, pending_jobs)
+            target_jobs = pending_jobs_dict[resource_type]
+            if not target_jobs:
+                continue
+
             instance_type, instance_spec = self.instance_info[resource_type][0]
 
             def _acc_resources(acc: ResourceSlot, job: SessionCreationJob):
@@ -447,19 +456,33 @@ class BasicScalingDriver(AbstractScalingDriver):
                     gpu=acc.gpu + job.resources.gpu,
                 )
 
-            resource_sum = reduce(_acc_resources, target_jobs,
-                                  initial=ResourceSlot())
-            instance_num = max(math.ceil(resource_sum.cpu / instance_spec[1].cpu),
-                               math.ceil(resource_sum.mem / instance_spec[1].mem),
-                               math.ceil(resource_sum.gpu / instance_spec[1].gpu))
+            required_resource_sum = reduce(_acc_resources, target_jobs,
+                                           ResourceSlot())
 
-            scale_out_info.append((instance_type, instance_num))
+            def _required_instance_num(resource_type):
+                required_resource = getattr(required_resource_sum, resource_type)
+                instance_resource = getattr(instance_spec, resource_type)
+
+                if required_resource == Decimal(0):
+                    return Decimal(0)
+                if instance_resource == Decimal(0):
+                    return Decimal('Infinity')
+                return math.ceil(required_resource / instance_resource)
+
+            required_instance_num = max(
+                _required_instance_num('cpu'),
+                _required_instance_num('mem'),
+                _required_instance_num('gpu'),
+            )
+
+            scale_out_info.append((instance_type, required_instance_num))
 
         async with reenter_txn(scaling_group.registry.dbpool, conn) as conn:
             query = (sa.select([scaling_groups.c.pending_scalings], for_update=True)
                        .select_from(scaling_groups)
                        .where(scaling_groups.c.name == scaling_group.name))
-            pending_scalings = (await conn.execute(query)).pending_scalings
+            result = await conn.execute(query)
+            pending_scalings = (await result.first()).pending_scalings
             new_scalings = list(map(lambda x: f'{x[0]}:{x[1]}', scale_out_info))
             pending_scalings = merge_scalings(pending_scalings, new_scalings)
 
@@ -468,7 +491,7 @@ class BasicScalingDriver(AbstractScalingDriver):
                                    .where(scaling_groups.c.name == scaling_group.name))
             await conn.execute(query)
 
-        await self.add_agents(scale_out_info)
+            await self.add_agents(scale_out_info)
         # 2, Now consider multiple instances for each resource types.
         # 3. Now consider # limit of instances.
         # 4. Now consider other types of resources, e.g. tpu.
@@ -499,9 +522,9 @@ class BasicScalingDriver(AbstractScalingDriver):
                            .where(agents.c.id in agents_to_remove))
             await conn.execute(query)
 
-        await self.remove_agents(list(agents_to_remove))
+            await self.remove_agents(list(agents_to_remove))
 
-        return schedule_info
+            return schedule_info
 
 
 class AbstractVendorScalingDriverMixin:
