@@ -413,7 +413,7 @@ class BasicScalingDriver(AbstractScalingDriver):
         # Consider minimum prepared shares.
         pending_jobs += required_buffer_jobs
         schedulable_jobs = await scaling_group.job_scheduler.schedule(
-                scaling_group, pending_jobs, conn=conn, use_pending_scalings=True)
+            scaling_group, pending_jobs, conn=conn, use_pending_scalings=True)
         schedulable_job_ids = set(map(lambda x: x[1].kernel_id,
                                       schedulable_jobs))
         unschedulable_jobs = [job for job in required_buffer_jobs
@@ -499,7 +499,7 @@ class BasicScalingDriver(AbstractScalingDriver):
                            .where(agents.c.id in agents_to_remove))
             await conn.execute(query)
 
-        await self.remove_agents(agents_to_remove)
+        await self.remove_agents(list(agents_to_remove))
 
         return schedule_info
 
@@ -511,7 +511,7 @@ class AbstractVendorScalingDriverMixin:
         raise NotImplementedError
 
     @abstractmethod
-    async def remove_agents(self, agents_to_remove: List[Tuple[str, int]]):
+    async def remove_agents(self, agents_to_remove: List[Tuple[str]]):
         raise NotImplementedError
 
 
@@ -565,7 +565,7 @@ class AWSScalingDriverMixin(AbstractVendorScalingDriverMixin):
                                          aws_secret_access_key=aws_secret_key,
                                          aws_access_key_id=aws_access_key) as client:
             # TODO: handle exceptions
-            await client.run_instances(InstanceIds=agents_to_remove)
+            await client.terminate_instances(InstanceIds=agents_to_remove)
 
     def get_launch_template_name(self, instance_type):
         if instance_type == 't2.2xlarge':
