@@ -358,13 +358,6 @@ class AgentRegistry:
                 raise KernelAlreadyExists
             created = False
         except KernelNotFound:
-        #     kern = await self.create_session(
-        #         sess_id, access_key,
-        #         lang, creation_config,
-        #         conn=conn, session_tag=tag, scaling_group=scaling_group)
-        #     created = True
-        # assert kern is not None
-        # return kern, created
             kern = await self.enqueue_session(
                 sess_id, access_key,
                 lang, creation_config,
@@ -402,63 +395,13 @@ class AgentRegistry:
             session_tag=session_tag,
             creation_config=creation_config,
         )
-        kernel_access_info = await scaling_group.register_request(request, conn=conn)
+        kernel_access_info = await scaling_group.register_request(request,
+                                                                  conn=conn)
         await scaling_group.schedule(conn=conn)
         return kernel_access_info
 
     async def create_session(self, agent_id, kernel_id, conn=None):
-        # sess_id = request.sess_id
-        # kernel_id = request.kernel_id
-        # creation_config = request.creation_config
-        #
-        # mounts = creation_config.get('mounts') or []
-        # environ = creation_config.get('environ') or {}
-
         async with reenter_txn(self.dbpool, conn) as conn:
-
-            # TODO: move below to JobScheduler::schedule()
-            # # scan available slots from alive agents
-            # avail_slots = []
-            # query = (sa.select([agents], for_update=True)
-            #            .where(agents.c.status == AgentStatus.ALIVE))
-            #
-            # async for row in conn.execute(query):
-            #     if row['id'] not in runnable_agents:
-            #         continue
-            #     sdiff = ResourceSlot(
-            #         id=row['id'],
-            #         mem=row['mem_slots'] - row['used_mem_slots'],
-            #         cpu=row['cpu_slots'] - row['used_cpu_slots'],
-            #         gpu=row['gpu_slots'] - row['used_gpu_slots'],
-            #     )
-            #     avail_slots.append(sdiff)
-            #
-            # # check minimum requirement
-            # avail_slots = [s for s in avail_slots
-            #                if s.mem >= (required_shares.mem * 1024) and
-            #                   s.cpu >= required_shares.cpu and
-            #                   s.gpu >= required_shares.gpu]
-            #
-            # # load-balance
-            # if avail_slots:
-            #     agent_id = (max(avail_slots, key=lambda s: (s.gpu, s.cpu, s.mem))).id
-            # else:
-            #     raise InstanceNotAvailable
-            #
-            # # reserve slots
-            # mem_col = agents.c.used_mem_slots
-            # cpu_col = agents.c.used_cpu_slots
-            # gpu_col = agents.c.used_gpu_slots
-            # query = (sa.update(agents)
-            #            .values({
-            #                'used_mem_slots': mem_col + required_shares.mem * 1024,
-            #                'used_cpu_slots': cpu_col + required_shares.cpu,
-            #                'used_gpu_slots': gpu_col + required_shares.gpu,
-            #            })
-            #            .where(agents.c.id == agent_id))
-            # result = await conn.execute(query)
-            # assert result.rowcount == 1
-
             # Create kernel by invoking the agent on the instance.
             query = (sa.select('*')
                        .select_from(kernels)
@@ -842,17 +785,19 @@ class AgentRegistry:
 
             if agent_created:
                 # Remove pending scaling if exists.
-                query = (sa.select([scaling_groups.c.pending_scalings], for_update=True)
-                         .select_from(scaling_groups)
-                         .where(scaling_groups.c.name == scaling_group))
+                query = (sa.select([scaling_groups.c.pending_scalings],
+                                   for_update=True)
+                           .select_from(scaling_groups)
+                           .where(scaling_groups.c.name == scaling_group))
                 result = await conn.execute(query)
                 pending_scalings = (await result.first()).pending_scalings
                 instance_type = agent_info['type']
-                pending_scalings, changed = remove_scaling(pending_scalings, instance_type)
+                pending_scalings, changed = \
+                    remove_scaling(pending_scalings, instance_type)
                 if changed:
-                    query = (scaling_groups.update()
-                             .values(pending_scalings=pending_scalings)
-                             .where(scaling_groups.c.name == scaling_group))
+                    query = (sa.update(scaling_groups)
+                               .values(pending_scalings=pending_scalings)
+                               .where(scaling_groups.c.name == scaling_group))
                     await conn.execute(query)
 
                 scaling_group = await self.get_scaling_group(

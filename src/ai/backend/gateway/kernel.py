@@ -134,7 +134,7 @@ async def create(request) -> web.Response:
                     with _timeout(creation_timeout):
                         while True:
                             try:
-                                _ = await request.app['registry'].get_session(
+                                await request.app['registry'].get_session(
                                     sess_id, access_key, db_connection=conn)
                             except KernelNotFound:
                                 pass

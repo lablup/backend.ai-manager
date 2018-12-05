@@ -148,7 +148,8 @@ class ScalingGroup:
                 if max_allowed_slot.cpu is not None:
                     cpu_share = min(
                         max_allowed_slot.cpu,
-                        Decimal(creation_config.get('instanceCores') or Decimal('inf')),
+                        Decimal(creation_config.get('instanceCores') or
+                                Decimal('inf')),
                     )
                 else:
                     assert creation_config['instanceCores'] is not None
@@ -158,7 +159,8 @@ class ScalingGroup:
                 if max_allowed_slot.mem is not None:
                     mem_share = min(
                         max_allowed_slot.mem,
-                        Decimal(creation_config.get('instanceMemory') or Decimal('inf')),
+                        Decimal(creation_config.get('instanceMemory') or
+                                Decimal('inf')),
                     )
                 else:
                     assert creation_config['instanceMemory'] is not None
@@ -168,15 +170,18 @@ class ScalingGroup:
                 if max_allowed_slot.gpu is not None:
                     gpu_share = min(
                         max_allowed_slot.gpu,
-                        Decimal(creation_config.get('instanceGPUs') or Decimal('inf')),
+                        Decimal(creation_config.get('instanceGPUs') or
+                                Decimal('inf')),
                     )
                 else:
                     assert creation_config['instanceGPUs'] is not None
                     gpu_share = Decimal(creation_config['instanceGPUs'])
             except (AssertionError, KeyError):
-                msg = ('You have missing resource limits that must be specified. '
-                       'If the server does not have default resource configurations, '
-                       'you must specify all resource limits by yourself.')
+                msg = (
+                    'You have missing resource limits that must be specified. '
+                    'If the server does not have default resource configurations, '
+                    'you must specify all resource limits by yourself.'
+                )
                 raise InvalidAPIParameters(msg)
 
             # Register request.
@@ -286,7 +291,8 @@ class ScalingGroup:
                     return shares
 
                 pending_scaling_shares = reduce(lambda acc, x: acc + x,
-                                                map(_calculate_shares, pending_scalings),
+                                                map(_calculate_shares,
+                                                    pending_scalings),
                                                 [])
             return pending_scaling_shares
 
@@ -486,9 +492,9 @@ class BasicScalingDriver(AbstractScalingDriver):
             new_scalings = list(map(lambda x: f'{x[0]}:{x[1]}', scale_out_info))
             pending_scalings = merge_scalings(pending_scalings, new_scalings)
 
-            query = (scaling_groups.update()
-                                   .values(pending_scalings=pending_scalings)
-                                   .where(scaling_groups.c.name == scaling_group.name))
+            query = (sa.update(scaling_groups)
+                       .values(pending_scalings=pending_scalings)
+                       .where(scaling_groups.c.name == scaling_group.name))
             await conn.execute(query)
 
             await self.add_agents(scale_out_info)
