@@ -185,7 +185,8 @@ class AgentRegistry:
                 await cancellation_callback()
             raise
         except AgentError as e:
-            if not issubclass(e.args[0], AssertionError):
+            if (isinstance(e.args[0], type) and
+                not issubclass(e.args[0], AssertionError)):
                 log.exception('{0}: agent-side error', op)
             # TODO: wrap some assertion errors as "invalid requests"
             if set_error:
@@ -980,6 +981,7 @@ class AgentRegistry:
         async with reenter_txn(self.dbpool, conn) as conn:
             # check if already terminated
             query = (sa.select([kernels.c.status,
+                                kernels.c.sess_id,
                                 kernels.c.bundle_id,
                                 kernels.c.network_id], for_update=True)
                        .select_from(kernels)
