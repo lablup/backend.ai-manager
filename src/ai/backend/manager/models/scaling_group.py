@@ -275,6 +275,7 @@ class ScalingGroup:
 
                 def _calculate_shares(pending_scaling):
                     instance_type, instance_num = pending_scaling
+                    instance_num = int(instance_num)
                     available_instances = self.scaling_driver.available_instances
                     _, instance_shares = next(x for x in available_instances
                                               if x[0] == instance_type)
