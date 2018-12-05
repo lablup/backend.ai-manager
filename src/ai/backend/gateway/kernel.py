@@ -83,7 +83,7 @@ async def create(request) -> web.Response:
             if request['api_version'] == 1:
                 # custom resource limit unsupported
                 pass
-            elif request['api_version'] in (2, 3):
+            elif request['api_version'] >= 2:
                 creation_config.update(params.get('config', {}))
             # sanity check for vfolders
             if creation_config['mounts']:
@@ -128,7 +128,7 @@ async def create(request) -> web.Response:
         log.exception('GET_OR_CREATE: exception')
         raise
     except Exception:
-        request.app['sentry'].captureException()
+        request.app['error_monitor'].capture_exception()
         log.exception('GET_OR_CREATE: unexpected error!')
         raise InternalServerError
     return web.json_response(resp, status=201)
@@ -224,21 +224,23 @@ async def instance_stats(app, agent_id, kern_stats):
     await app['registry'].handle_stats(agent_id, kern_stats)
 
 
-async def datadog_update(app):
-    with app['datadog'].statsd as statsd:
-
-        statsd.gauge('ai.backend.gateway.coroutines', len(asyncio.Task.all_tasks()))
+async def stats_monitor_update(app):
+    with app['stats_monitor'] as stats_monitor:
+        stats_monitor.report_stats(
+            'gauge', 'ai.backend.gateway.coroutines', len(asyncio.Task.all_tasks()))
 
         all_inst_ids = [
             inst_id async for inst_id
             in app['registry'].enumerate_instances()]
-        statsd.gauge('ai.backend.gateway.agent_instances', len(all_inst_ids))
+        stats_monitor.report_stats(
+            'gauge', 'ai.backend.gateway.agent_instances', len(all_inst_ids))
 
         async with app['dbpool'].acquire() as conn, conn.begin():
             query = (sa.select([sa.func.sum(keypairs.c.concurrency_used)])
                        .select_from(keypairs))
             n = await conn.scalar(query)
-            statsd.gauge('ai.backend.gateway.active_kernels', n)
+            stats_monitor.report_stats(
+                'gauge', 'ai.backend.gateway.active_kernels', n)
 
             subquery = (sa.select([sa.func.count()])
                           .select_from(keypairs)
@@ -246,31 +248,34 @@ async def datadog_update(app):
                           .group_by(keypairs.c.user_id))
             query = sa.select([sa.func.count()]).select_from(subquery.alias())
             n = await conn.scalar(query)
-            statsd.gauge('ai.backend.users.has_active_key', n)
+            stats_monitor.report_stats(
+                'gauge', 'ai.backend.users.has_active_key', n)
 
             subquery = subquery.where(keypairs.c.last_used != null())
             query = sa.select([sa.func.count()]).select_from(subquery.alias())
             n = await conn.scalar(query)
-            statsd.gauge('ai.backend.users.has_used_key', n)
+            stats_monitor.report_stats(
+                'gauge', 'ai.backend.users.has_used_key', n)
 
             '''
             query = sa.select([sa.func.count()]).select_from(usage)
             n = await conn.scalar(query)
-            statsd.gauge('ai.backend.gateway.accum_kernels', n)
+            stats_monitor.report_stats(
+                'gauge', 'ai.backend.gateway.accum_kernels', n)
             '''
 
 
-async def datadog_update_timer(app):
-    if app['datadog'] is None:
+async def stats_monitor_update_timer(app):
+    if app['stats_monitor'] is None:
         return
     while True:
         try:
-            await datadog_update(app)
+            await stats_monitor_update(app)
         except asyncio.CancelledError:
             break
         except:
-            app['sentry'].captureException()
-            log.exception('datadog_update unexpected error')
+            app['error_monitor'].capture_exception()
+            log.exception('stats_monitor_update unexpected error')
         try:
             await asyncio.sleep(5)
         except asyncio.CancelledError:
@@ -347,7 +352,7 @@ async def restart(request) -> web.Response:
         log.exception('RESTART: exception')
         raise
     except:
-        request.app['sentry'].captureException()
+        request.app['error_monitor'].capture_exception()
         log.exception('RESTART: unexpected error')
         raise web.HTTPInternalServerError
     return web.Response(status=204)
@@ -551,7 +556,7 @@ async def download_files(request) -> web.Response:
         log.exception('DOWNLOAD_FILE: exception')
         raise
     except Exception:
-        request.app['sentry'].captureException()
+        request.app['error_monitor'].capture_exception()
         log.exception('DOWNLOAD_FILE: unexpected error!')
         raise InternalServerError
 
@@ -586,7 +591,7 @@ async def list_files(request) -> web.Response:
         log.exception('LIST_FILES: exception')
         raise
     except Exception:
-        request.app['sentry'].captureException()
+        request.app['error_monitor'].capture_exception()
         log.exception('LIST_FILES: unexpected error!')
         raise InternalServerError
     return web.json_response(resp, status=200)

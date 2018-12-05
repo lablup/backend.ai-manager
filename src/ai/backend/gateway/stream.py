@@ -1,5 +1,8 @@
 '''
 WebSocket-based streaming kernel interaction APIs.
+
+NOTE: For nginx-based setups, we need to gather all websocket-based API handlers
+      under this "/stream/"-prefixed app.
 '''
 
 import asyncio
@@ -20,9 +23,10 @@ import zmq
 from ai.backend.common.logging import BraceStyleAdapter
 
 from .auth import auth_required
-from .exceptions import KernelNotFound, BackendError
+from .exceptions import BackendError, KernelNotFound, ServiceUnavailable
 from .manager import READ_ALLOWED, server_status_required
 from .utils import not_impl_stub
+from .wsproxy import WebSocketProxy
 from ..manager.models import kernels
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.stream'))
@@ -134,7 +138,7 @@ async def stream_pty(request) -> web.Response:
             # Agent or kernel is terminated.
             pass
         except:
-            app['sentry'].captureException()
+            app['error_monitor'].capture_exception()
             log.exception('stream_stdin({0}): unexpected error', stream_key)
         finally:
             log.debug('stream_stdin({0}): terminated', stream_key)
@@ -162,7 +166,7 @@ async def stream_pty(request) -> web.Response:
         except asyncio.CancelledError:
             pass
         except:
-            app['sentry'].captureException()
+            app['error_monitor'].capture_exception()
             log.exception('stream_stdout({0}): unexpected error', stream_key)
         finally:
             log.debug('stream_stdout({0}): terminated', stream_key)
@@ -174,7 +178,7 @@ async def stream_pty(request) -> web.Response:
         stdout_task = asyncio.ensure_future(stream_stdout())
         await stream_stdin()
     except:
-        app['sentry'].captureException()
+        app['error_monitor'].capture_exception()
         log.exception('stream_pty({0}): unexpected error', stream_key)
     finally:
         app['stream_pty_handlers'][stream_key].discard(myself)
@@ -247,6 +251,7 @@ async def stream_execute(request) -> web.Response:
                 'files': raw_result.get('files'),
             })
             if raw_result['status'] == 'waiting-input':
+                mode = 'input'
                 code = await ws.receive_str()
             elif raw_result['status'] == 'finished':
                 break
@@ -282,6 +287,48 @@ async def stream_execute(request) -> web.Response:
         return ws
 
 
+@server_status_required(READ_ALLOWED)
+@auth_required
+async def stream_wsproxy(request) -> web.Response:
+    registry = request.app['registry']
+    sess_id = request.match_info['sess_id']
+    access_key = request['keypair']['access_key']
+    session = request.app['wsproxy_session']
+
+    extra_fields = (kernels.c.stdin_port, )
+    log.info(f'{sess_id}')
+    try:
+        kernel = await registry.get_session(
+            sess_id, access_key, field=extra_fields)
+    except KernelNotFound:
+        raise
+    await registry.increment_session_usage(sess_id, access_key)
+
+    if kernel.kernel_host is None:
+        kernel_host = urlparse(kernel.agent_addr).hostname
+    else:
+        kernel_host = kernel.kernel_host
+    path = f'ws://{kernel_host}:{kernel.stdin_port}/'
+
+    log.info(f'STREAM_WSPROXY: {sess_id} -> {path}')
+    try:
+        async with session.ws_connect(path) as up_conn:
+            down_conn = web.WebSocketResponse()
+            await down_conn.prepare(request)
+            wsproxy = WebSocketProxy(up_conn, down_conn)
+            await wsproxy.proxy()
+            return down_conn
+    except aiohttp.ClientConnectorError:
+        raise ServiceUnavailable(extra_msg='Websocket connection to kernel failed')
+
+
+@server_status_required(READ_ALLOWED)
+@auth_required
+async def stream_tcpproxy(request) -> web.Response:
+    # TODO
+    raise NotImplementedError
+
+
 async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
     try:
         kernel = await app['registry'].get_kernel(
@@ -309,6 +356,7 @@ async def init(app):
     app['stream_execute_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_stdin_socks'] = defaultdict(weakref.WeakSet)
     app['event_dispatcher'].add_handler('kernel_terminated', app, kernel_terminated)
+    app['wsproxy_session'] = aiohttp.ClientSession()
 
 
 async def shutdown(app):
@@ -317,6 +365,7 @@ async def shutdown(app):
             if not handler.done():
                 handler.cancel()
                 await handler
+    await app['wsproxy_session'].close()
 
 
 def create_app():
@@ -327,5 +376,7 @@ def create_app():
     app['api_versions'] = (2, 3, 4)
     app.router.add_route('GET', r'/kernel/{sess_id}/pty', stream_pty)
     app.router.add_route('GET', r'/kernel/{sess_id}/execute', stream_execute)
+    app.router.add_route('GET', r'/kernel/{sess_id}/wsproxy', stream_wsproxy)
+    app.router.add_route('GET', r'/kernel/{sess_id}/tcpproxy', stream_tcpproxy)
     app.router.add_route('GET', r'/kernel/{sess_id}/events', not_impl_stub)
     return app, []
