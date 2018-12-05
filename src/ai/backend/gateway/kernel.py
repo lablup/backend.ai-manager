@@ -68,6 +68,7 @@ async def create(request) -> web.Response:
     try:
         access_key = request['keypair']['access_key']
         concurrency_limit = request['keypair']['concurrency_limit']
+        created = False
         async with request.app['dbpool'].acquire() as conn, conn.begin():
             query = (sa.select([keypairs.c.concurrency_used], for_update=True)
                        .select_from(keypairs)
@@ -130,9 +131,14 @@ async def create(request) -> web.Response:
                            .values(concurrency_used=keypairs.c.concurrency_used + 1)
                            .where(keypairs.c.access_key == access_key))
                 await conn.execute(query)
-                try:
-                    with _timeout(creation_timeout):
-                        while True:
+            # Split transaction here.
+        if created:
+            try:
+                with _timeout(creation_timeout):
+                    while True:
+                        # Start a new transaction for every polling.
+                        async with request.app['dbpool'].acquire() as \
+                                conn, conn.begin():
                             try:
                                 await request.app['registry'].get_session(
                                     sess_id, access_key, db_connection=conn)
@@ -141,13 +147,13 @@ async def create(request) -> web.Response:
                             else:
                                 break
                             await asyncio.sleep(2)
-                except asyncio.TimeoutError:
-                    log.warning('GET_OR_CREATE: creation timeout')
-                    await request.app['registry'].mark_kernel_terminated(
-                        str(kernel['id']), conn=conn)
-                    await request.app['registry'].mark_session_terminated(
-                        sess_id, access_key, conn=conn)
-                    raise InstanceNotAvailable
+            except asyncio.TimeoutError:
+                log.warning('GET_OR_CREATE: creation timeout')
+                await request.app['registry'].mark_kernel_terminated(
+                    str(kernel['id']), conn=conn)
+                await request.app['registry'].mark_session_terminated(
+                    sess_id, access_key, conn=conn)
+                raise InstanceNotAvailable
     except BackendError:
         log.exception('GET_OR_CREATE: exception')
         raise InstanceNotAvailable
