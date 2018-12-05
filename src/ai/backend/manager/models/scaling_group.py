@@ -428,9 +428,8 @@ class BasicScalingDriver(AbstractScalingDriver):
         if unschedulable_jobs:
             await self.scale_out(scaling_group, unschedulable_jobs, conn=conn)
         else:
-            # Consider schedulable_jobs, which is for minimum prepared shares.
-            schedule_info = await self.scale_in(
-                scaling_group, schedule_info + schedulable_jobs, conn=conn)
+            await self.scale_in(scaling_group, schedule_info + schedulable_jobs,
+                                conn=conn)
 
         return schedule_info
 
