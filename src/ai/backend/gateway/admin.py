@@ -120,7 +120,7 @@ class QueryForAdmin(graphene.ObjectType):
 
     keypairs = graphene.List(
         KeyPair,
-        user_id=graphene.String(required=True),
+        user_id=graphene.String(),
         is_active=graphene.Boolean())
 
     vfolders = graphene.List(
@@ -161,10 +161,14 @@ class QueryForAdmin(graphene.ObjectType):
         return await loader.load(access_key)
 
     @staticmethod
-    async def resolve_keypairs(executor, info, user_id, is_active=None):
+    async def resolve_keypairs(executor, info, user_id=None, is_active=None):
         manager = info.context['dlmgr']
-        loader = manager.get_loader('KeyPair.by_uid', is_active=is_active)
-        return await loader.load(user_id)
+        dbpool = info.context['dbpool']
+        if user_id is None:
+            return await KeyPair.load_all(dbpool, is_active=is_active)
+        else:
+            loader = manager.get_loader('KeyPair.by_uid', is_active=is_active)
+            return await loader.load(user_id)
 
     @staticmethod
     async def resolve_vfolders(executor, info, access_key=None):
