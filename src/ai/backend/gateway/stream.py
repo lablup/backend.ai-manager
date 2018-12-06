@@ -289,11 +289,12 @@ async def stream_execute(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def stream_wsproxy(request) -> web.Response:
+async def stream_proxy(request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
     session = request.app['wsproxy_session']
+    service = request.query.get('service', None)  # noqa
 
     extra_fields = (kernels.c.stdin_port, )
     log.info(f'{sess_id}')
@@ -308,6 +309,7 @@ async def stream_wsproxy(request) -> web.Response:
         kernel_host = urlparse(kernel.agent_addr).hostname
     else:
         kernel_host = kernel.kernel_host
+    # TODO: use service-port metadata
     path = f'ws://{kernel_host}:{kernel.stdin_port}/'
 
     log.info(f'STREAM_WSPROXY: {sess_id} -> {path}')
@@ -320,13 +322,6 @@ async def stream_wsproxy(request) -> web.Response:
             return down_conn
     except aiohttp.ClientConnectorError:
         raise ServiceUnavailable(extra_msg='Websocket connection to kernel failed')
-
-
-@server_status_required(READ_ALLOWED)
-@auth_required
-async def stream_tcpproxy(request) -> web.Response:
-    # TODO
-    raise NotImplementedError
 
 
 async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
@@ -376,7 +371,9 @@ def create_app():
     app['api_versions'] = (2, 3, 4)
     app.router.add_route('GET', r'/kernel/{sess_id}/pty', stream_pty)
     app.router.add_route('GET', r'/kernel/{sess_id}/execute', stream_execute)
-    app.router.add_route('GET', r'/kernel/{sess_id}/wsproxy', stream_wsproxy)
-    app.router.add_route('GET', r'/kernel/{sess_id}/tcpproxy', stream_tcpproxy)
+    # internally both tcp/http proxies use websockets as API/agent-level transports,
+    # and thus they have the same implementation here.
+    app.router.add_route('GET', r'/kernel/{sess_id}/httpproxy', stream_proxy)
+    app.router.add_route('GET', r'/kernel/{sess_id}/tcpproxy', stream_proxy)
     app.router.add_route('GET', r'/kernel/{sess_id}/events', not_impl_stub)
     return app, []
