@@ -7,6 +7,7 @@ import logging
 import secrets
 
 from aiohttp import web
+import aiohttp_cors
 from aiojobs.aiohttp import atomic
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
@@ -206,13 +207,14 @@ def generate_keypair():
     return ak, sk
 
 
-def create_app():
+def create_app(default_cors_options):
     app = web.Application()
     app['prefix'] = 'auth'  # slashed to distinguish with "/vN/authorize"
     app['api_versions'] = (1, 2, 3, 4)
-    res = app.router.add_resource(r'')
-    res.add_route('GET', auth_test)
-    res.add_route('POST', auth_test)
+    cors = aiohttp_cors.setup(app, defaults=default_cors_options)
+    res = cors.add(app.router.add_resource(r''))
+    cors.add(res.add_route('GET', auth_test))
+    cors.add(res.add_route('POST', auth_test))
     return app, [auth_middleware]
 
 

@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 import weakref
 
 import aiohttp
+import aiohttp_cors
 from aiohttp import web
 import aiozmq
 from aiozmq import create_zmq_stream as aiozmq_sock
@@ -363,17 +364,19 @@ async def shutdown(app):
     await app['wsproxy_session'].close()
 
 
-def create_app():
+def create_app(default_cors_options):
     app = web.Application()
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     app['prefix'] = 'stream'
     app['api_versions'] = (2, 3, 4)
-    app.router.add_route('GET', r'/kernel/{sess_id}/pty', stream_pty)
-    app.router.add_route('GET', r'/kernel/{sess_id}/execute', stream_execute)
+    cors = aiohttp_cors.setup(app, defaults=default_cors_options)
+    add_route = app.router.add_route
+    cors.add(add_route('GET', r'/kernel/{sess_id}/pty', stream_pty))
+    cors.add(add_route('GET', r'/kernel/{sess_id}/execute', stream_execute))
     # internally both tcp/http proxies use websockets as API/agent-level transports,
     # and thus they have the same implementation here.
-    app.router.add_route('GET', r'/kernel/{sess_id}/httpproxy', stream_proxy)
-    app.router.add_route('GET', r'/kernel/{sess_id}/tcpproxy', stream_proxy)
-    app.router.add_route('GET', r'/kernel/{sess_id}/events', not_impl_stub)
+    cors.add(add_route('GET', r'/kernel/{sess_id}/httpproxy', stream_proxy))
+    cors.add(add_route('GET', r'/kernel/{sess_id}/tcpproxy', stream_proxy))
+    cors.add(add_route('GET', r'/kernel/{sess_id}/events', not_impl_stub))
     return app, []

@@ -6,6 +6,7 @@ import traceback
 from typing import Mapping
 
 from aiohttp import web
+import aiohttp_cors
 from aiojobs.aiohttp import atomic
 import graphene
 from graphql.execution.executors.asyncio import AsyncioExecutor
@@ -293,12 +294,13 @@ async def shutdown(app):
     pass
 
 
-def create_app():
+def create_app(default_cors_options):
     app = web.Application()
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     app['api_versions'] = (2, 3, 4)
-    app.router.add_route('POST', r'/graphql', handle_gql)
+    cors = aiohttp_cors.setup(app, defaults=default_cors_options)
+    cors.add(app.router.add_route('POST', r'/graphql', handle_gql))
     return app, []
 
 

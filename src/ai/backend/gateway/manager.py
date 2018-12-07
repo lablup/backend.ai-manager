@@ -6,6 +6,7 @@ from typing import Set
 import sqlalchemy as sa
 
 from aiohttp import web
+import aiohttp_cors
 
 from ai.backend.common.logging import BraceStyleAdapter
 
@@ -112,11 +113,13 @@ async def shutdown(app):
         await app['status_watch_task']
 
 
-def create_app():
+def create_app(default_cors_options):
     app = web.Application()
     app['api_versions'] = (2, 3, 4)
-    app.router.add_route('GET', r'/status', fetch_manager_status)
-    app.router.add_route('PUT', r'/status', update_manager_status)
+    cors = aiohttp_cors.setup(app, defaults=default_cors_options)
+    status_resource = cors.add(app.router.add_resource(r'/status'))
+    cors.add(status_resource.add_route('GET', fetch_manager_status))
+    cors.add(status_resource.add_route('PUT', update_manager_status))
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     return app, []

@@ -13,6 +13,7 @@ import re
 import secrets
 
 from aiohttp import web
+import aiohttp_cors
 import aiotools
 from aiojobs.aiohttp import atomic
 from async_timeout import timeout as _timeout
@@ -644,21 +645,23 @@ async def shutdown(app):
             await t
 
 
-def create_app():
+def create_app(default_cors_options):
     app = web.Application()
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     app['api_versions'] = (1, 2, 3, 4)
-    app.router.add_route('POST',   r'/create', create)  # legacy
-    app.router.add_route('POST',   r'', create)
-    app.router.add_route('GET',    r'/{sess_id}', get_info)
-    app.router.add_route('GET',    r'/{sess_id}/logs', get_logs)
-    app.router.add_route('PATCH',  r'/{sess_id}', restart)
-    app.router.add_route('DELETE', r'/{sess_id}', destroy)
-    app.router.add_route('POST',   r'/{sess_id}', execute)
-    app.router.add_route('POST',   r'/{sess_id}/interrupt', interrupt)
-    app.router.add_route('POST',   r'/{sess_id}/complete', complete)
-    app.router.add_route('POST',   r'/{sess_id}/upload', upload_files)
-    app.router.add_route('GET',    r'/{sess_id}/download', download_files)
-    app.router.add_route('GET',    r'/{sess_id}/files', list_files)
+    cors = aiohttp_cors.setup(app, defaults=default_cors_options)
+    cors.add(app.router.add_route('POST',   r'/create', create))  # legacy
+    cors.add(app.router.add_route('POST',   r'', create))
+    kernel_resource = cors.add(app.router.add_resource(r'/{sess_id}'))
+    cors.add(kernel_resource.add_route('GET',    get_info))
+    cors.add(kernel_resource.add_route('PATCH',  restart))
+    cors.add(kernel_resource.add_route('DELETE', destroy))
+    cors.add(kernel_resource.add_route('POST',   execute))
+    cors.add(app.router.add_route('GET',    r'/{sess_id}/logs', get_logs))
+    cors.add(app.router.add_route('POST',   r'/{sess_id}/interrupt', interrupt))
+    cors.add(app.router.add_route('POST',   r'/{sess_id}/complete', complete))
+    cors.add(app.router.add_route('POST',   r'/{sess_id}/upload', upload_files))
+    cors.add(app.router.add_route('GET',    r'/{sess_id}/download', download_files))
+    cors.add(app.router.add_route('GET',    r'/{sess_id}/files', list_files))
     return app, []

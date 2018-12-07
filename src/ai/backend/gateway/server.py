@@ -146,13 +146,14 @@ async def legacy_auth_test_redirect(request):
     raise web.HTTPFound('/v3/auth/test')
 
 
-async def gw_init(app):
+async def gw_init(app, default_cors_options):
+    cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     # should be done in create_app() in other modules.
-    app.router.add_route('GET', r'', hello)
+    cors.add(app.router.add_route('GET', r'', hello))
 
     # legacy redirects
-    app.router.add_route('GET', r'/v{version:\d+}/authorize',
-                         legacy_auth_test_redirect)
+    cors.add(app.router.add_route('GET', r'/v{version:\d+}/authorize',
+                                  legacy_auth_test_redirect))
 
     # populate public interfaces
     app['config_server'] = ConfigServer(
@@ -271,7 +272,6 @@ async def server_main(loop, pidx, _args):
             expose_headers="*", allow_headers="*"),
     }
     app.on_response_prepare.append(on_prepare)
-    cors = aiohttp_cors.setup(app, defaults=cors_options)
     app['config'] = _args[0]
     app['config'].app_name = 'backend.ai-manager'
     if app['config'].disable_plugins:
@@ -303,17 +303,14 @@ async def server_main(loop, pidx, _args):
     }
     loop.set_exception_handler(global_exception_handler)
     aiojobs.aiohttp.setup(app, **scheduler_opts)
-    await gw_init(app)
-    for route in app.router.routes():
-        cors.add(route)
+    await gw_init(app, cors_options)
 
     def init_subapp(create_subapp):
-        subapp, global_middlewares = create_subapp()
+        subapp, global_middlewares = create_subapp(cors_options)
         assert isinstance(subapp, web.Application)
         subapp.on_response_prepare.append(on_prepare)
         # Allow subapp's access to the root app properties.
         # These are the public APIs exposed to extensions as well.
-        subcors = aiohttp_cors.setup(subapp)
         for key in PUBLIC_INTERFACES:
             subapp[key] = app[key]
         prefix = subapp.get('prefix', pkgname.split('.')[-1].replace('_', '-'))
@@ -322,16 +319,15 @@ async def server_main(loop, pidx, _args):
         app.middlewares.extend(global_middlewares)
 
         # Add legacy version-prefixed routes to the root app with some hacks
+        # (NOTE: they do not support CORS!)
         for r in subapp.router.routes():
-            subcors.add(r, cors_options)
             for version in subapp['api_versions']:
                 subpath = r.resource.canonical
                 if subpath == f'/{prefix}':
                     subpath += '/'
                 legacy_path = f'/v{version}{subpath}'
                 handler = _get_legacy_handler(r.handler, subapp, version)
-                legacy_route = app.router.add_route(r.method, legacy_path, handler)
-                subcors.add(legacy_route, cors_options)
+                app.router.add_route(r.method, legacy_path, handler)
 
     for pkgname in subapp_pkgs:
         if pidx == 0:

@@ -10,6 +10,7 @@ import uuid
 
 import aiohttp
 from aiohttp import web
+import aiohttp_cors
 import aiotools
 import sqlalchemy as sa
 import psycopg2
@@ -653,23 +654,27 @@ async def shutdown(app):
     pass
 
 
-def create_app():
+def create_app(default_cors_options):
     app = web.Application()
     app['prefix'] = 'folders'
     app['api_versions'] = (2, 3, 4)
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
-    app.router.add_route('POST',   r'', create)
-    app.router.add_route('GET',    r'', list_folders)
-    app.router.add_route('GET',    r'/{name}', get_info)
-    app.router.add_route('DELETE', r'/{name}', delete)
-    app.router.add_route('POST',   r'/{name}/mkdir', mkdir)
-    app.router.add_route('POST',   r'/{name}/upload', upload)
-    app.router.add_route('DELETE', r'/{name}/delete_files', delete_files)
-    app.router.add_route('GET',    r'/{name}/download', download)
-    app.router.add_route('GET',    r'/{name}/files', list_files)
-    app.router.add_route('POST',   r'/{name}/invite', invite)
-    app.router.add_route('GET',    r'/invitations/list', invitations)
-    app.router.add_route('POST',   r'/invitations/accept', accept_invitation)
-    app.router.add_route('DELETE', r'/invitations/delete', delete_invitation)
+    cors = aiohttp_cors.setup(app, defaults=default_cors_options)
+    add_route = app.router.add_route
+    root_resource = cors.add(app.router.add_resource(r''))
+    cors.add(root_resource.add_route('POST', create))
+    cors.add(root_resource.add_route('GET',  list_folders))
+    vfolder_resource = cors.add(app.router.add_resource(r'/{name}'))
+    cors.add(vfolder_resource.add_route('GET',    get_info))
+    cors.add(vfolder_resource.add_route('DELETE', delete))
+    cors.add(add_route('POST',   r'/{name}/mkdir', mkdir))
+    cors.add(add_route('POST',   r'/{name}/upload', upload))
+    cors.add(add_route('DELETE', r'/{name}/delete_files', delete_files))
+    cors.add(add_route('GET',    r'/{name}/download', download))
+    cors.add(add_route('GET',    r'/{name}/files', list_files))
+    cors.add(add_route('POST',   r'/{name}/invite', invite))
+    cors.add(add_route('GET',    r'/invitations/list', invitations))
+    cors.add(add_route('POST',   r'/invitations/accept', accept_invitation))
+    cors.add(add_route('DELETE', r'/invitations/delete', delete_invitation))
     return app, []

@@ -102,7 +102,7 @@ async def shutdown(app):
     pass
 
 
-def create_app():
+def create_app(default_cors_options):
     app = web.Application()
     app['api_versions'] = (3, 4)
     app.on_startup.append(init)
