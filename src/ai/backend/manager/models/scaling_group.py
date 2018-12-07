@@ -2,6 +2,7 @@ from abc import ABCMeta, abstractmethod
 import asyncio
 from collections import defaultdict
 from datetime import datetime
+from dateutil.tz import tzutc
 from decimal import Decimal
 import enum
 from functools import reduce
@@ -396,7 +397,7 @@ class BasicScalingDriver(AbstractScalingDriver):
                         mem=share_unit.mem,
                         gpu=share_unit.gpu,
                     ),
-                    created_at=datetime.now(),
+                    created_at=datetime.now(tzutc()),
                 )
                 buffer_jobs.append(job)
         return buffer_jobs
@@ -589,6 +590,8 @@ class AWSScalingDriverMixin(AbstractVendorScalingDriverMixin):
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def remove_agents(self, agents_to_remove):
+        if not agents_to_remove:
+            return
         session = aiobotocore.get_session()
         async with session.create_client('ec2', region_name=aws_region,
                                          aws_secret_access_key=aws_secret_key,
