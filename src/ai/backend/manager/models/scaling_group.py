@@ -634,6 +634,9 @@ class AbstractJobScheduler(metaclass=ABCMeta):
 
 class SimpleFIFOJobScheduler(AbstractJobScheduler):
 
+    # TODO: remove scaling_group from params;
+    # function schema should be something like below:
+    # async def schedule(self, available_agent_infos, pending_jobs, conn, dry_run)
     async def schedule(self, scaling_group, pending_jobs, conn=None,
                        use_pending_scalings=False):
         available_agent_infos = await scaling_group.get_available_shares(conn=conn)
@@ -666,20 +669,22 @@ class SimpleFIFOJobScheduler(AbstractJobScheduler):
                            .where(agents.c.id == agent_id))
                 await conn.execute(query)
 
-                query = (sa.select([agents.c.addr])
-                           .select_from(agents)
-                           .where(agents.c.id == agent_id))
-                result = await conn.execute(query)
-                row = await result.first()
-                agent_addr = row.addr
+                if not use_pending_scalings:
+                    # Prevent assigning kernels to pending scalings. (agents)
+                    query = (sa.select([agents.c.addr])
+                               .select_from(agents)
+                               .where(agents.c.id == agent_id))
+                    result = await conn.execute(query)
+                    row = await result.first()
+                    agent_addr = row.addr
 
-                query = (kernels.update()
-                                .values({
-                                    'agent_addr': agent_addr,
-                                    'scaling_group': scaling_group.name,
-                                })
-                                .where(kernels.c.id == job.kernel_id))
-                await conn.execute(query)
+                    query = (kernels.update()
+                             .values({
+                                 'agent_addr': agent_addr,
+                                 'scaling_group': scaling_group.name,
+                             })
+                             .where(kernels.c.id == job.kernel_id))
+                    await conn.execute(query)
 
                 curr_agent_info = ResourceSlot(
                     id=curr_agent_info.id,
