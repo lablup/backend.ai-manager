@@ -114,7 +114,7 @@ async def sign_request(sign_method, request, secret_key) -> str:
 @web.middleware
 async def auth_middleware(request, handler):
     '''
-    Fetches user information and sets up keypair, uesr, and is_authorized
+    Fetches user information and sets up keypair, user, and is_authorized
     attributes.
     '''
     # This is a global middleware: request.app is the root app.
@@ -122,7 +122,8 @@ async def auth_middleware(request, handler):
     request['is_admin'] = False
     request['keypair'] = None
     request['user'] = None
-    if not get_handler_attr(request, 'auth_required', False):
+    if not get_handler_attr(request, 'auth_required', False) and \
+            not get_handler_attr(request, 'admin_required', False):
         return (await handler(request))
     if not check_date(request):
         raise InvalidAuthParameters('Date/time sync error')
