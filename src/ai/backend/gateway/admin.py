@@ -23,6 +23,7 @@ from ..manager.models import (
     KeyPair, CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
     ComputeSession, ComputeWorker, KernelStatus,
     VirtualFolder,
+    KernelStatus,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
@@ -151,7 +152,38 @@ class QueryForAdmin(graphene.ObjectType):
     @staticmethod
     async def resolve_agents(executor, info, status=None):
         dbpool = info.context['dbpool']
-        return await Agent.load_all(dbpool, status=status)
+        rs = info.context['redis_stat']
+        agent_list = await Agent.load_all(dbpool, status=status)
+        for agent in agent_list:
+            kerns = await agent.resolve_computations(info, 'RUNNING')
+            precpu_used = cpu_used = mem_cur_bytes = 0
+            for kern in kerns:
+                _precpu_used, _cpu_used, _mem_cur_bytes = await rs.hmget(
+                        str(kern.id), 'precpu_used', 'cpu_used', 'mem_cur_bytes')
+                precpu_used += float(_precpu_used) if _precpu_used else 0
+                cpu_used += float(_cpu_used) if _cpu_used else 0
+                mem_cur_bytes += int(_mem_cur_bytes) if _mem_cur_bytes else 0
+
+            precpu_system_used = cpu_system_used = num_cores = 0
+            if len(kerns) > 0:
+                precpu_system_used, cpu_system_used, num_cores = await rs.hmget(
+                    str(kerns[0].id),
+                    'precpu_system_used', 'cpu_system_used', 'num_cores')
+                precpu_system_used = float(precpu_system_used) \
+                    if precpu_system_used else 0
+                cpu_system_used = float(cpu_system_used) if cpu_system_used else 0
+                num_cores = int(num_cores) if num_cores else 0
+
+            # CPU usage calculation ref: https://bit.ly/2rrfrFF
+            cpu_pct = 0
+            cpu_delta = cpu_used - precpu_used
+            system_delta = cpu_system_used - precpu_system_used
+            if system_delta > 0 and cpu_delta > 0:
+                cpu_pct = (cpu_delta / system_delta) * num_cores * 100
+
+            agent.cpu_cur_pct = cpu_pct
+            agent.mem_cur_mbytes = int(mem_cur_bytes / 2 ** 10 / 2 ** 10)
+        return agent_list
 
     @staticmethod
     async def resolve_keypair(executor, info, access_key=None):
