@@ -191,6 +191,7 @@ class ScalingGroup:
                 'role': 'master',
                 'agent': None,
                 'agent_addr': '',
+                'scaling_group': self.name,
                 'cpu_set': [],
                 'gpu_set': [],
                 'kernel_host': None,

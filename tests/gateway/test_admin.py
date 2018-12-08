@@ -22,6 +22,7 @@ class TestAdminQuery:
                 'id': 'test-agent-id',
                 'status': AgentStatus.ALIVE,
                 'region': 'local',
+                'scaling_group': 'default',
                 'mem_slots': 1,
                 'cpu_slots': 1,
                 'gpu_slots': 0,
@@ -33,7 +34,8 @@ class TestAdminQuery:
             })
             await conn.execute(query)
 
-        query = '{ agent(agent_id: "test-agent-id") { status region addr } }'
+        query = ('{ agent(agent_id: "test-agent-id") '
+                 '{ status region scaling_group addr } }')
         payload = json.dumps({'query': query}).encode()
         headers = get_headers('POST', self.url, payload)
         ret = await client.post(self.url, data=payload, headers=headers)
@@ -42,6 +44,7 @@ class TestAdminQuery:
         rsp_json = await ret.json()
         assert rsp_json['agent']['status'] == 'ALIVE'
         assert rsp_json['agent']['region'] == 'local'
+        assert rsp_json['agent']['scaling_group'] == 'default'
         assert rsp_json['agent']['addr'] == '127.0.0.1'
 
     @pytest.mark.asyncio
@@ -56,6 +59,7 @@ class TestAdminQuery:
                     'id': f'test-agent-id-{i}',
                     'status': AgentStatus.ALIVE,
                     'region': 'local',
+                    'scaling_group': 'default',
                     'mem_slots': 1,
                     'cpu_slots': 1,
                     'gpu_slots': 0,
@@ -67,7 +71,7 @@ class TestAdminQuery:
                 })
                 await conn.execute(query)
 
-        query = '{ agents { status region addr } }'
+        query = '{ agents { status region scaling_group addr } }'
         payload = json.dumps({'query': query}).encode()
         headers = get_headers('POST', self.url, payload)
         ret = await client.post(self.url, data=payload, headers=headers)
@@ -76,6 +80,7 @@ class TestAdminQuery:
         rsp_json = await ret.json()
         assert rsp_json['agents'][0]['status'] == 'ALIVE'
         assert rsp_json['agents'][0]['region'] == 'local'
+        assert rsp_json['agents'][0]['scaling_group'] == 'default'
         assert rsp_json['agents'][0]['addr'] == '127.0.0.1'
         assert rsp_json['agents'][1]['status'] == 'ALIVE'
         assert rsp_json['agents'][1]['region'] == 'local'
@@ -199,6 +204,7 @@ class TestAdminQuery:
                 'id': 'test-agent-id',
                 'status': AgentStatus.ALIVE,
                 'region': 'local',
+                'scaling_group': 'default',
                 'mem_slots': 1,
                 'cpu_slots': 1,
                 'gpu_slots': 0,
@@ -219,6 +225,7 @@ class TestAdminQuery:
                 'role': 'master',
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
+                'scaling_group': 'default',
                 'lang': 'lablup/lua:latest',
                 'tag': 'test-tag',
                 'access_key': default_keypair['access_key'],
@@ -235,7 +242,7 @@ class TestAdminQuery:
             })
             await conn.execute(query)
 
-        query = '{ compute_sessions { sess_id role agent lang tag } }'
+        query = '{ compute_sessions { sess_id role agent scaling_group lang tag } }'
         payload = json.dumps({'query': query}).encode()
         headers = get_headers('POST', self.url, payload)
         ret = await client.post(self.url, data=payload, headers=headers)
@@ -245,6 +252,7 @@ class TestAdminQuery:
         assert rsp_json['compute_sessions'][0]['sess_id'] == 'test-sess-id'
         assert rsp_json['compute_sessions'][0]['role'] == 'master'
         assert rsp_json['compute_sessions'][0]['agent'] == 'test-agent-id'
+        assert rsp_json['compute_sessions'][0]['scaling_group'] == 'default'
         assert rsp_json['compute_sessions'][0]['lang'] == 'lablup/lua:latest'
         assert rsp_json['compute_sessions'][0]['tag'] == 'test-tag'
 
@@ -260,6 +268,7 @@ class TestAdminQuery:
                 'id': 'test-agent-id',
                 'status': AgentStatus.ALIVE,
                 'region': 'local',
+                'scaling_group': 'default',
                 'mem_slots': 1,
                 'cpu_slots': 1,
                 'gpu_slots': 0,
@@ -280,6 +289,7 @@ class TestAdminQuery:
                 'role': 'master',
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
+                'scaling_group': 'default',
                 'lang': 'lablup/lua:latest',
                 'tag': 'test-tag',
                 'access_key': default_keypair['access_key'],
@@ -303,6 +313,7 @@ class TestAdminQuery:
                 'role': 'worker',
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
+                'scaling_group': 'default',
                 'lang': 'lablup/lua:latest',
                 'access_key': default_keypair['access_key'],
                 'mem_slot': 1,
@@ -318,7 +329,7 @@ class TestAdminQuery:
             })
             await conn.execute(query)
 
-        query = '{ compute_workers(sess_id: "test-sess-id") { role agent lang } }'
+        query = '{ compute_workers(sess_id: "test-sess-id") { role agent scaling_group lang } }'
         payload = json.dumps({'query': query}).encode()
         headers = get_headers('POST', self.url, payload)
         ret = await client.post(self.url, data=payload, headers=headers)
@@ -327,6 +338,9 @@ class TestAdminQuery:
         rsp_json = await ret.json()
         assert len(rsp_json) == 1
         assert rsp_json['compute_workers'][0]['role'] == 'worker'
+        assert rsp_json['compute_workers'][0]['agent'] == 'test-agent-id'
+        assert rsp_json['compute_workers'][0]['scaling_group'] == 'default'
+        assert rsp_json['compute_workers'][0]['lang'] == 'lablup/lua:latest'
 
 
 class TestUserQuery:
@@ -390,6 +404,7 @@ class TestUserQuery:
                 'id': 'test-agent-id',
                 'status': AgentStatus.ALIVE,
                 'region': 'local',
+                'scaling_group': 'default',
                 'mem_slots': 1,
                 'cpu_slots': 1,
                 'gpu_slots': 0,
@@ -410,6 +425,7 @@ class TestUserQuery:
                 'role': 'master',
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
+                'scaling_group': 'default',
                 'lang': 'lablup/lua:latest',
                 'tag': 'test-tag',
                 'access_key': user_keypair['access_key'],
@@ -426,7 +442,7 @@ class TestUserQuery:
             })
             await conn.execute(query)
 
-        query = '{ compute_sessions { sess_id role agent lang tag } }'
+        query = '{ compute_sessions { sess_id role agent scaling_group lang tag } }'
         payload = json.dumps({'query': query}).encode()
         headers = get_headers('POST', self.url, payload, keypair=user_keypair)
         ret = await client.post(self.url, data=payload, headers=headers)
@@ -436,6 +452,7 @@ class TestUserQuery:
         assert rsp_json['compute_sessions'][0]['sess_id'] == 'test-sess-id'
         assert rsp_json['compute_sessions'][0]['role'] == 'master'
         assert rsp_json['compute_sessions'][0]['agent'] == 'test-agent-id'
+        assert rsp_json['compute_sessions'][0]['scaling_group'] == 'default'
         assert rsp_json['compute_sessions'][0]['lang'] == 'lablup/lua:latest'
         assert rsp_json['compute_sessions'][0]['tag'] == 'test-tag'
 
@@ -451,6 +468,7 @@ class TestUserQuery:
                 'id': 'test-agent-id',
                 'status': AgentStatus.ALIVE,
                 'region': 'local',
+                'scaling_group': 'default',
                 'mem_slots': 1,
                 'cpu_slots': 1,
                 'gpu_slots': 0,
@@ -471,6 +489,7 @@ class TestUserQuery:
                 'role': 'master',
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
+                'scaling_group': 'default',
                 'lang': 'lablup/lua:latest',
                 'tag': 'test-tag',
                 'access_key': user_keypair['access_key'],
@@ -494,6 +513,7 @@ class TestUserQuery:
                 'role': 'worker',
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
+                'scaling_group': 'default',
                 'lang': 'lablup/lua:latest',
                 'access_key': user_keypair['access_key'],
                 'mem_slot': 1,
@@ -509,7 +529,7 @@ class TestUserQuery:
             })
             await conn.execute(query)
 
-        query = '{ compute_workers(sess_id: "test-sess-id") { role agent lang } }'
+        query = '{ compute_workers(sess_id: "test-sess-id") { role agent scaling_group lang } }'
         payload = json.dumps({'query': query}).encode()
         headers = get_headers('POST', self.url, payload, keypair=user_keypair)
         ret = await client.post(self.url, data=payload, headers=headers)
@@ -518,3 +538,6 @@ class TestUserQuery:
         rsp_json = await ret.json()
         assert len(rsp_json) == 1
         assert rsp_json['compute_workers'][0]['role'] == 'worker'
+        assert rsp_json['compute_workers'][0]['agent'] == 'test-agent-id'
+        assert rsp_json['compute_workers'][0]['scaling_group'] == 'default'
+        assert rsp_json['compute_workers'][0]['lang'] == 'lablup/lua:latest'

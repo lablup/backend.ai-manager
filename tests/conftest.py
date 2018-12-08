@@ -144,15 +144,17 @@ def prepare_and_cleanup_databases(request, test_ns, test_db,
             schema_version='head')
         oneshot(args)
 
-    # Populate example_keypair fixture
-    fixture = getattr(fixtures, 'example_keypair')
-    engine = sa.create_engine(alembic_url)
-    conn = engine.connect()
-    for rowset in fixture:
-        table = getattr(models, rowset[0])
-        conn.execute(table.insert(), rowset[1])
-    conn.close()
-    engine.dispose()
+    # Populate example fixture
+    target_fixtures = ['keypair', 'scaling_group']
+    for fixture in target_fixtures:
+        fixture = getattr(fixtures, f'example_{fixture}')
+        engine = sa.create_engine(alembic_url)
+        conn = engine.connect()
+        for rowset in fixture:
+            table = getattr(models, rowset[0])
+            conn.execute(table.insert(), rowset[1])
+        conn.close()
+        engine.dispose()
 
 
 class Client:
