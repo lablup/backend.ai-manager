@@ -132,6 +132,7 @@ async def test_update_manager_status(prepare_manager, get_headers):
 
     assert ret.status == 204
 
+    await asyncio.sleep(0.5)
     status = await app['config_server'].get_manager_status()
     assert status == ManagerStatus.FROZEN
 
@@ -141,6 +142,7 @@ async def test_update_manager_status(prepare_manager, get_headers):
 
     assert ret.status == 204
 
+    await asyncio.sleep(0.5)
     status = await app['config_server'].get_manager_status()
     assert status == ManagerStatus.RUNNING
 
@@ -162,6 +164,7 @@ async def test_update_manager_status_opt_force_kill(prepare_kernel, get_headers)
 
     assert ret.status == 204
 
+    await asyncio.sleep(0.5)
     status = await app['config_server'].get_manager_status()
     assert status == ManagerStatus.FROZEN
 
