@@ -6,6 +6,7 @@ import traceback
 from typing import Mapping
 
 from aiohttp import web
+import aiohttp_cors
 from aiojobs.aiohttp import atomic
 import graphene
 from graphql.execution.executors.asyncio import AsyncioExecutor
@@ -78,7 +79,7 @@ async def handle_gql(request: web.Request) -> web.Response:
                             e.original_error.__traceback__)
                 tb_text = ''.join(traceback.format_exception(*exc_info))
                 log.error('GraphQL located error:\n{0}', tb_text)
-                request.app['sentry'].captureException(exc_info)
+                request.app['error_monitor'].capture_exception(exc_info)
                 has_internal_errors = True
         if has_internal_errors:
             raise BackendError(str(result.errors[0]))
@@ -120,7 +121,7 @@ class QueryForAdmin(graphene.ObjectType):
 
     keypairs = graphene.List(
         KeyPair,
-        user_id=graphene.String(required=True),
+        user_id=graphene.String(),
         is_active=graphene.Boolean())
 
     vfolders = graphene.List(
@@ -161,10 +162,14 @@ class QueryForAdmin(graphene.ObjectType):
         return await loader.load(access_key)
 
     @staticmethod
-    async def resolve_keypairs(executor, info, user_id, is_active=None):
+    async def resolve_keypairs(executor, info, user_id=None, is_active=None):
         manager = info.context['dlmgr']
-        loader = manager.get_loader('KeyPair.by_uid', is_active=is_active)
-        return await loader.load(user_id)
+        dbpool = info.context['dbpool']
+        if user_id is None:
+            return await KeyPair.load_all(dbpool, is_active=is_active)
+        else:
+            loader = manager.get_loader('KeyPair.by_uid', is_active=is_active)
+            return await loader.load(user_id)
 
     @staticmethod
     async def resolve_vfolders(executor, info, access_key=None):
@@ -289,12 +294,13 @@ async def shutdown(app):
     pass
 
 
-def create_app():
+def create_app(default_cors_options):
     app = web.Application()
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
-    app['api_versions'] = (2, 3)
-    app.router.add_route('POST', r'/graphql', handle_gql)
+    app['api_versions'] = (2, 3, 4)
+    cors = aiohttp_cors.setup(app, defaults=default_cors_options)
+    cors.add(app.router.add_route('POST', r'/graphql', handle_gql))
     return app, []
 
 

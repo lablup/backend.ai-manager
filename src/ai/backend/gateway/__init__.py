@@ -1,7 +1,8 @@
-from enum import IntEnum
+import enum
 
 
-class GatewayStatus(IntEnum):
-    STARTING = 1
-    RUNNING = 2
-    SYNCING = 3
+class ManagerStatus(str, enum.Enum):
+    TERMINATED = 'terminated'
+    PREPARING = 'preparing'
+    RUNNING = 'running'
+    FROZEN = 'frozen'

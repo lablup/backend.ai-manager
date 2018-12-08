@@ -88,6 +88,18 @@ class KeyPair(graphene.ObjectType):
         return await loader.load(self.access_key)
 
     @staticmethod
+    async def load_all(dbpool, *, is_active=None):
+        async with dbpool.acquire() as conn:
+            query = sa.select('*').select_from(keypairs)
+            if is_active is not None:
+                query = query.where(keypairs.c.is_active == is_active)
+            objs = []
+            async for row in conn.execute(query):
+                o = KeyPair.from_row(row)
+                objs.append(o)
+        return objs
+
+    @staticmethod
     async def batch_load_by_uid(dbpool, user_ids, *, is_active=None):
         async with dbpool.acquire() as conn:
             query = (sa.select('*')

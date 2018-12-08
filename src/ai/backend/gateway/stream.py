@@ -1,5 +1,8 @@
 '''
 WebSocket-based streaming kernel interaction APIs.
+
+NOTE: For nginx-based setups, we need to gather all websocket-based API handlers
+      under this "/stream/"-prefixed app.
 '''
 
 import asyncio
@@ -12,6 +15,7 @@ from urllib.parse import urlparse
 import weakref
 
 import aiohttp
+import aiohttp_cors
 from aiohttp import web
 import aiozmq
 from aiozmq import create_zmq_stream as aiozmq_sock
@@ -20,17 +24,20 @@ import zmq
 from ai.backend.common.logging import BraceStyleAdapter
 
 from .auth import auth_required
-from .exceptions import KernelNotFound
+from .exceptions import BackendError, KernelNotFound, ServiceUnavailable
+from .manager import READ_ALLOWED, server_status_required
 from .utils import not_impl_stub
+from .wsproxy import WebSocketProxy
 from ..manager.models import kernels
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.stream'))
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
 async def stream_pty(request) -> web.Response:
     app = request.app
-    registry = request.app['registry']
+    registry = app['registry']
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
     stream_key = (sess_id, access_key)
@@ -42,12 +49,11 @@ async def stream_pty(request) -> web.Response:
         raise
 
     await registry.increment_session_usage(sess_id, access_key)
-
-    # Upgrade connection to WebSocket.
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
-    app['stream_pty_handlers'][stream_key].add(asyncio.Task.current_task())
+    myself = asyncio.Task.current_task()
+    app['stream_pty_handlers'][stream_key].add(myself)
 
     async def connect_streams(kernel):
         # TODO: refactor as custom row/table method
@@ -106,11 +112,13 @@ async def stream_pty(request) -> web.Response:
                             code = f"%resize {data['rows']} {data['cols']}"
                             await registry.execute(
                                 sess_id, access_key,
-                                api_version, run_id, 'query', code, {})
+                                api_version, run_id, 'query', code, {},
+                                flush_timeout=None)
                         elif data['type'] == 'ping':
                             await registry.execute(
                                 sess_id, access_key,
-                                api_version, run_id, 'query', '%ping', {})
+                                api_version, run_id, 'query', '%ping', {},
+                                flush_timeout=None)
                         elif data['type'] == 'restart':
                             # Close existing zmq sockets and let stream
                             # handlers get a new one with changed stdin/stdout
@@ -131,7 +139,7 @@ async def stream_pty(request) -> web.Response:
             # Agent or kernel is terminated.
             pass
         except:
-            app['sentry'].captureException()
+            app['error_monitor'].capture_exception()
             log.exception('stream_stdin({0}): unexpected error', stream_key)
         finally:
             log.debug('stream_stdin({0}): terminated', stream_key)
@@ -159,7 +167,7 @@ async def stream_pty(request) -> web.Response:
         except asyncio.CancelledError:
             pass
         except:
-            app['sentry'].captureException()
+            app['error_monitor'].capture_exception()
             log.exception('stream_stdout({0}): unexpected error', stream_key)
         finally:
             log.debug('stream_stdout({0}): terminated', stream_key)
@@ -171,14 +179,150 @@ async def stream_pty(request) -> web.Response:
         stdout_task = asyncio.ensure_future(stream_stdout())
         await stream_stdin()
     except:
-        app['sentry'].captureException()
+        app['error_monitor'].capture_exception()
         log.exception('stream_pty({0}): unexpected error', stream_key)
     finally:
-        app['stream_pty_handlers'][stream_key].discard(asyncio.Task.current_task())
+        app['stream_pty_handlers'][stream_key].discard(myself)
         app['stream_stdin_socks'][stream_key].discard(socks[0])
         stdout_task.cancel()
         await stdout_task
     return ws
+
+
+@server_status_required(READ_ALLOWED)
+@auth_required
+async def stream_execute(request) -> web.Response:
+    '''
+    WebSocket-version of gateway.kernel.execute().
+    '''
+    app = request.app
+    registry = app['registry']
+    sess_id = request.match_info['sess_id']
+    access_key = request['keypair']['access_key']
+    stream_key = (sess_id, access_key)
+    log.info('STREAM_EXECUTE(u:{0}, k:{1})', access_key, sess_id)
+    try:
+        _ = await registry.get_session(sess_id, access_key)  # noqa
+    except KernelNotFound:
+        raise
+
+    await registry.increment_session_usage(sess_id, access_key)
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
+    myself = asyncio.Task.current_task()
+    app['stream_execute_handlers'][stream_key].add(myself)
+
+    # This websocket connection itself is a "run".
+    run_id = secrets.token_hex(8)
+
+    try:
+        if ws.closed:
+            log.warning('STREAM_EXECUTE: client disconnected (cancelled)')
+            return
+        params = await ws.receive_json()
+        assert params.get('mode'), 'mode is missing or empty!'
+        mode = params['mode']
+        assert mode in {'query', 'batch'}, 'mode has an invalid value.'
+        code = params.get('code', '')
+        opts = params.get('options', None) or {}
+
+        while True:
+            # TODO: rewrite agent and kernel-runner for unbuffered streaming.
+            raw_result = await registry.execute(
+                sess_id, access_key,
+                2, run_id, mode, code, opts,
+                flush_timeout=0.2)
+            if ws.closed:
+                log.warning('STREAM_EXECUTE: client disconnected (interrupted)')
+                await registry.interrupt_session(sess_id, access_key)
+                break
+            if raw_result is None:
+                # repeat until we get finished
+                log.debug('STREAM_EXECUTE: none returned, continuing...')
+                mode = 'continue'
+                code = ''
+                opts.clear()
+                continue
+            await ws.send_json({
+                'status': raw_result['status'],
+                'console': raw_result.get('console'),
+                'exitCode': raw_result.get('exitCode'),
+                'options': raw_result.get('options'),
+                'files': raw_result.get('files'),
+            })
+            if raw_result['status'] == 'waiting-input':
+                mode = 'input'
+                code = await ws.receive_str()
+            elif raw_result['status'] == 'finished':
+                break
+            else:
+                # repeat until we get finished
+                mode = 'continue'
+                code = ''
+                opts.clear()
+    except (json.decoder.JSONDecodeError, AssertionError) as e:
+        log.warning('STREAM_EXECUTE: invalid/missing parameters: {0!r}', e)
+        if not ws.closed:
+            await ws.send_json({
+                'status': 'error',
+                'msg': f'Invalid API parameters: {e!r}',
+            })
+    except BackendError as e:
+        log.exception('STREAM_EXECUTE: exception')
+        if not ws.closed:
+            await ws.send_json({
+                'status': 'error',
+                'msg': f'BackendError: {e!r}',
+            })
+        raise
+    except asyncio.CancelledError:
+        if not ws.closed:
+            await ws.send_json({
+                'status': 'server-restarting',
+                'msg': 'The API server is going to restart for maintenance. '
+                       'Please connect again with the same run ID.',
+            })
+    finally:
+        app['stream_execute_handlers'][stream_key].discard(myself)
+        return ws
+
+
+@server_status_required(READ_ALLOWED)
+@auth_required
+async def stream_proxy(request) -> web.Response:
+    registry = request.app['registry']
+    sess_id = request.match_info['sess_id']
+    access_key = request['keypair']['access_key']
+    session = request.app['wsproxy_session']
+    service = request.query.get('service', None)  # noqa
+
+    extra_fields = (kernels.c.stdin_port, )
+    log.info(f'{sess_id}')
+    try:
+        kernel = await registry.get_session(
+            sess_id, access_key, field=extra_fields)
+    except KernelNotFound:
+        raise
+    await registry.increment_session_usage(sess_id, access_key)
+
+    if kernel.kernel_host is None:
+        kernel_host = urlparse(kernel.agent_addr).hostname
+    else:
+        kernel_host = kernel.kernel_host
+    # TODO: use service-port metadata
+    path = f'ws://{kernel_host}:{kernel.stdin_port}/'
+
+    log.info(f'STREAM_WSPROXY: {sess_id} -> {path}')
+    try:
+        async with session.ws_connect(path) as up_conn:
+            down_conn = web.WebSocketResponse()
+            await down_conn.prepare(request)
+            wsproxy = WebSocketProxy(up_conn, down_conn)
+            await wsproxy.proxy()
+            return down_conn
+    except aiohttp.ClientConnectorError:
+        raise ServiceUnavailable(extra_msg='Websocket connection to kernel failed')
 
 
 async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
@@ -190,18 +334,25 @@ async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
     if kernel.role == 'master':
         sess_id = kernel['sess_id']
         stream_key = (sess_id, kernel['access_key'])
+        cancelled_tasks = []
         for sock in app['stream_stdin_socks'][sess_id]:
             sock.close()
         for handler in list(app['stream_pty_handlers'].get(stream_key, [])):
             handler.cancel()
-            await handler
+            cancelled_tasks.append(handler)
+        for handler in list(app['stream_execute_handlers'].get(stream_key, [])):
+            handler.cancel()
+            cancelled_tasks.append(handler)
+        await asyncio.gather(*cancelled_tasks)
         # TODO: reconnect if restarting?
 
 
 async def init(app):
     app['stream_pty_handlers'] = defaultdict(weakref.WeakSet)
+    app['stream_execute_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_stdin_socks'] = defaultdict(weakref.WeakSet)
     app['event_dispatcher'].add_handler('kernel_terminated', app, kernel_terminated)
+    app['wsproxy_session'] = aiohttp.ClientSession()
 
 
 async def shutdown(app):
@@ -210,14 +361,22 @@ async def shutdown(app):
             if not handler.done():
                 handler.cancel()
                 await handler
+    await app['wsproxy_session'].close()
 
 
-def create_app():
+def create_app(default_cors_options):
     app = web.Application()
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     app['prefix'] = 'stream'
-    app['api_versions'] = (2, 3)
-    app.router.add_route('GET', r'/kernel/{sess_id}/pty', stream_pty)
-    app.router.add_route('GET', r'/kernel/{sess_id}/events', not_impl_stub)
+    app['api_versions'] = (2, 3, 4)
+    cors = aiohttp_cors.setup(app, defaults=default_cors_options)
+    add_route = app.router.add_route
+    cors.add(add_route('GET', r'/kernel/{sess_id}/pty', stream_pty))
+    cors.add(add_route('GET', r'/kernel/{sess_id}/execute', stream_execute))
+    # internally both tcp/http proxies use websockets as API/agent-level transports,
+    # and thus they have the same implementation here.
+    cors.add(add_route('GET', r'/kernel/{sess_id}/httpproxy', stream_proxy))
+    cors.add(add_route('GET', r'/kernel/{sess_id}/tcpproxy', stream_proxy))
+    cors.add(add_route('GET', r'/kernel/{sess_id}/events', not_impl_stub))
     return app, []

@@ -175,7 +175,7 @@ class ConfigServer:
         cpu = None if cpu == 'null' else Decimal(cpu)
         mem = await self.etcd.get(f'images/{name}/mem')
         mem = None if mem == 'null' else Decimal(mem)
-        if 'gpu' in tag:
+        if '-gpu' in tag or '-cuda' in tag:
             gpu = await self.etcd.get(f'images/{name}/gpu')
             gpu = Decimal(0) if gpu == 'null' else Decimal(gpu)
         else:
@@ -219,9 +219,9 @@ async def shutdown(app):
         await app['config_server'].deregister_myself()
 
 
-def create_app():
+def create_app(default_cors_options):
     app = web.Application()
-    app['api_versions'] = (3,)
+    app['api_versions'] = (3, 4)
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     return app, []

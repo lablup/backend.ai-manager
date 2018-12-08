@@ -8,7 +8,6 @@ import importlib
 from ipaddress import ip_address
 import logging
 import os
-import pkg_resources
 import ssl
 import sys
 import traceback
@@ -21,26 +20,17 @@ import aioredis
 import aiotools
 from aiopg.sa import create_engine
 import uvloop
-try:
-    import datadog
-    datadog_available = True
-except ImportError:
-    datadog_available = False
-try:
-    import raven
-    raven_available = True
-except ImportError:
-    raven_available = False
 
 from ai.backend.common.argparse import (
     ipaddr, path, port_no,
 )
 from ai.backend.common.utils import env_info
-from ai.backend.common.monitor import DummyDatadog, DummySentry
+from ai.backend.common.monitor import DummyStatsMonitor, DummyErrorMonitor
 from ai.backend.common.logging import Logger, BraceStyleAdapter
+from ai.backend.common.plugin import (
+    discover_entrypoints, install_plugins, add_plugin_args)
 from ..manager import __version__
 from ..manager.registry import AgentRegistry
-from . import GatewayStatus
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
 from .etcd import ConfigServer
 from .events import EventDispatcher, event_subscriber
@@ -48,19 +38,20 @@ from .exceptions import (BackendError, MethodNotAllowed, GenericNotFound,
                          GenericBadRequest, InternalServerError)
 from .config import load_config
 from .events import event_router
+from . import ManagerStatus
 
 VALID_VERSIONS = frozenset([
     'v1.20160915',
     'v2.20170315',
     'v3.20170615',
+    'v4.20181215',
 ])
-LATEST_API_VERSION = 'v3.20170615'
+LATEST_API_VERSION = 'v4.20181215'
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 
 PUBLIC_INTERFACES = [
     'pidx',
-    'status',
     'config',
     'config_server',
     'dbpool',
@@ -69,8 +60,8 @@ PUBLIC_INTERFACES = [
     'redis_stat',
     'redis_image',
     'event_dispatcher',
-    'datadog',
-    'sentry',
+    'stats_monitor',
+    'error_monitor',
 ]
 
 
@@ -100,9 +91,9 @@ async def api_middleware(request, handler):
         raise ex
     version = request.get('api_version', None)
     if version is None:
-        version = int(request.match_info.get('version', 3))
+        version = int(request.match_info.get('version', 4))
         request['api_version'] = version
-    if version < 1 or version > 3:
+    if version < 1 or version > 4:
         raise GenericBadRequest('Unsupported API major version.')
     resp = (await _handler(request))
     return resp
@@ -112,18 +103,21 @@ async def api_middleware(request, handler):
 async def exception_middleware(request, handler):
     app = request.app
     try:
-        app['datadog'].statsd.increment('ai.backend.gateway.api.requests')
+        app['stats_monitor'].report_stats(
+            'increment', 'ai.backend.gateway.api.requests')
         resp = (await handler(request))
     except BackendError as ex:
-        app['sentry'].captureException()
-        statsd = app['datadog'].statsd
-        statsd.increment('ai.backend.gateway.api.failures')
-        statsd.increment(f'ai.backend.gateway.api.status.{ex.status_code}')
+        app['error_monitor'].capture_exception()
+        app['stats_monitor'].report_stats(
+            'increment', 'ai.backend.gateway.api.failures')
+        app['stats_monitor'].report_stats(
+            'increment', f'ai.backend.gateway.api.status.{ex.status_code}')
         raise
     except web.HTTPException as ex:
-        statsd = app['datadog'].statsd
-        statsd.increment('ai.backend.gateway.api.failures')
-        statsd.increment(f'ai.backend.gateway.api.status.{ex.status_code}')
+        app['stats_monitor'].report_stats(
+            'increment', 'ai.backend.gateway.api.failures')
+        app['stats_monitor'].report_stats(
+            'increment', f'ai.backend.gateway.api.status.{ex.status_code}')
         if ex.status_code == 404:
             raise GenericNotFound
         if ex.status_code == 405:
@@ -136,15 +130,15 @@ async def exception_middleware(request, handler):
         log.warning('Request cancelled ({0} {1})', request.method, request.rel_url)
         return web.Response(text='Request cancelled.', status=408)
     except Exception as e:
-        app['sentry'].captureException()
+        app['error_monitor'].capture_exception()
         log.exception('Uncaught exception in HTTP request handlers {0!r}', e)
         if app['config'].debug:
             raise InternalServerError(traceback.format_exc())
         else:
             raise InternalServerError()
     else:
-        app['datadog'].statsd.increment(
-            f'ai.backend.gateway.api.status.{resp.status}')
+        app['stats_monitor'].report_stats(
+            'increment', f'ai.backend.gateway.api.status.{resp.status}')
         return resp
 
 
@@ -152,44 +146,20 @@ async def legacy_auth_test_redirect(request):
     raise web.HTTPFound('/v3/auth/test')
 
 
-async def gw_init(app):
+async def gw_init(app, default_cors_options):
+    cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     # should be done in create_app() in other modules.
-    app.router.add_route('GET', r'', hello)
-    app.on_response_prepare.append(on_prepare)
+    cors.add(app.router.add_route('GET', r'', hello))
 
     # legacy redirects
-    app.router.add_route('GET', r'/v{version:\d+}/authorize',
-                         legacy_auth_test_redirect)
+    cors.add(app.router.add_route('GET', r'/v{version:\d+}/authorize',
+                                  legacy_auth_test_redirect))
 
     # populate public interfaces
     app['config_server'] = ConfigServer(
         app['config'].etcd_addr, app['config'].namespace)
-
-    app['status'] = GatewayStatus.STARTING
-    app['datadog'] = DummyDatadog()
-    app['sentry'] = DummySentry()
-    app['datadog.enabled'] = False
-    app['sentry.enabled'] = False
-    if datadog_available:
-        if app['config'].datadog_api_key is None:
-            log.warning('Datadog logging is disabled (missing API key).')
-        else:
-            datadog.initialize(
-                api_key=app['config'].datadog_api_key,
-                app_key=app['config'].datadog_app_key)
-            app['datadog'] = datadog
-            app['datadog.enabled'] = True
-            log.info('Datadog logging is enabled.')
-    if raven_available:
-        if app['config'].raven_uri is None:
-            log.warning('Sentry error reporting is disabled (missing DSN URI).')
-        else:
-            app['sentry'] = raven.Client(
-                app['config'].raven_uri,
-                release=raven.fetch_package_version('backend.ai-manager'))
-            app['sentry.enabled'] = True
-            log.info('Sentry error reporting is enabled.')
-
+    if app['pidx'] == 0:
+        await app['config_server'].update_manager_status(ManagerStatus.PREPARING)
     app['dbpool'] = await create_engine(
         host=app['config'].db_addr[0], port=app['config'].db_addr[1],
         user=app['config'].db_user, password=app['config'].db_password,
@@ -228,6 +198,18 @@ async def gw_init(app):
         app['redis_image'])
     await app['registry'].init()
 
+    # Detect and install monitoring plugins.
+    app['stats_monitor'] = DummyStatsMonitor()
+    app['error_monitor'] = DummyErrorMonitor()
+    app['stats_monitor.enabled'] = False
+    app['error_monitor.enabled'] = False
+
+    plugins = [
+        'stats_monitor',
+        'error_monitor',
+    ]
+    install_plugins(plugins, app, 'dict', app['config'])
+
 
 async def gw_shutdown(app):
     app['event_subscriber'].cancel()
@@ -250,14 +232,14 @@ def handle_loop_error(app, loop, context):
     exception = context.get('exception')
     msg = context.get('message', '(empty message)')
     if exception is not None:
-        app['sentry'].user_context(context)
+        app['error_monitor'].set_context(context)
         if sys.exc_info()[0] is not None:
             log.exception('Error inside event loop: {0}', msg)
-            app['sentry'].captureException(True)
+            app['error_monitor'].capture_exception(True)
         else:
             exc_info = (type(exception), exception, exception.__traceback__)
             log.error('Error inside event loop: {0}', msg, exc_info=exc_info)
-            app['sentry'].captureException(exc_info)
+            app['error_monitor'].capture_exception(exc_info)
 
 
 def _get_legacy_handler(handler, app, api_version):
@@ -289,8 +271,13 @@ async def server_main(loop, pidx, _args):
             allow_credentials=False,
             expose_headers="*", allow_headers="*"),
     }
-    cors = aiohttp_cors.setup(app, defaults=cors_options)
+    app.on_response_prepare.append(on_prepare)
     app['config'] = _args[0]
+    app['config'].app_name = 'backend.ai-manager'
+    if app['config'].disable_plugins:
+        app['config'].disable_plugins = app['config'].disable_plugins.split(',')
+    else:
+        app['config'].disable_plugins = []
     app['sslctx'] = None
     if app['config'].ssl_cert and app['config'].ssl_key:
         app['sslctx'] = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
@@ -316,16 +303,14 @@ async def server_main(loop, pidx, _args):
     }
     loop.set_exception_handler(global_exception_handler)
     aiojobs.aiohttp.setup(app, **scheduler_opts)
-    await gw_init(app)
-    for route in app.router.routes():
-        cors.add(route)
+    await gw_init(app, cors_options)
 
     def init_subapp(create_subapp):
-        subapp, global_middlewares = create_subapp()
+        subapp, global_middlewares = create_subapp(cors_options)
         assert isinstance(subapp, web.Application)
+        subapp.on_response_prepare.append(on_prepare)
         # Allow subapp's access to the root app properties.
         # These are the public APIs exposed to extensions as well.
-        subcors = aiohttp_cors.setup(subapp)
         for key in PUBLIC_INTERFACES:
             subapp[key] = app[key]
         prefix = subapp.get('prefix', pkgname.split('.')[-1].replace('_', '-'))
@@ -334,16 +319,15 @@ async def server_main(loop, pidx, _args):
         app.middlewares.extend(global_middlewares)
 
         # Add legacy version-prefixed routes to the root app with some hacks
+        # (NOTE: they do not support CORS!)
         for r in subapp.router.routes():
-            subcors.add(r, cors_options)
             for version in subapp['api_versions']:
                 subpath = r.resource.canonical
                 if subpath == f'/{prefix}':
                     subpath += '/'
                 legacy_path = f'/v{version}{subpath}'
                 handler = _get_legacy_handler(r.handler, subapp, version)
-                legacy_route = app.router.add_route(r.method, legacy_path, handler)
-                subcors.add(legacy_route, cors_options)
+                app.router.add_route(r.method, legacy_path, handler)
 
     for pkgname in subapp_pkgs:
         if pidx == 0:
@@ -351,12 +335,12 @@ async def server_main(loop, pidx, _args):
         subapp_mod = importlib.import_module(pkgname, 'ai.backend.gateway')
         init_subapp(getattr(subapp_mod, 'create_app'))
 
-    app_plugin_entry_prefix = 'backendai_webapp_v10'
-    if app['config'].disable_plugins:
-        app['config'].disable_plugins = app['config'].disable_plugins.split(',')
-    for entrypoint in pkg_resources.iter_entry_points(app_plugin_entry_prefix):
-        if entrypoint.name in app['config'].disable_plugins:
-            continue
+    plugins = [
+        'webapp',
+    ]
+    for plugin_info in discover_entrypoints(
+            plugins, disable_plugins=app['config'].disable_plugins):
+        plugin_group, plugin_name, entrypoint = plugin_info
         if pidx == 0:
             log.info('Loading app plugin: {0}', entrypoint.module_name)
         plugin = entrypoint.load()
@@ -423,17 +407,12 @@ def gw_args(parser):
                type=path, default=None,
                help='The path to the private key used to make requests '
                     'for the SSL certificate.')
-    if datadog_available:
-        parser.add('--datadog-api-key', env_var='DATADOG_API_KEY',
-                   type=str, default=None,
-                   help='The API key for Datadog monitoring agent.')
-        parser.add('--datadog-app-key', env_var='DATADOG_APP_KEY',
-                   type=str, default=None,
-                   help='The application key for Datadog monitoring agent.')
-    if raven_available:
-        parser.add('--raven-uri', env_var='RAVEN_URI',
-                   type=str, default=None,
-                   help='The sentry.io event report URL with DSN.')
+
+    plugins = [
+        'stats_monitor',
+        'error_monitor',
+    ]
+    add_plugin_args(parser, plugins)
 
 
 def main():

@@ -13,6 +13,7 @@ import re
 import secrets
 
 from aiohttp import web
+import aiohttp_cors
 import aiotools
 from aiojobs.aiohttp import atomic
 from async_timeout import timeout as _timeout
@@ -25,10 +26,9 @@ from ai.backend.common.logging import BraceStyleAdapter
 from .exceptions import (InvalidAPIParameters, QuotaExceeded,
                          KernelNotFound, VFolderNotFound,
                          BackendError, InternalServerError, InstanceNotAvailable)
-from . import GatewayStatus
 from .auth import auth_required
-from .utils import catch_unexpected, server_ready_required
-from .manager import server_unfrozen_required
+from .utils import catch_unexpected
+from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (keypairs, kernels, vfolders, AgentStatus, KernelStatus,
                               vfolder_permissions)
 
@@ -39,14 +39,12 @@ grace_events = []
 _rx_sess_token = re.compile(r'\w[\w.-]*\w', re.ASCII)
 
 
-@server_unfrozen_required
+@server_status_required(ALL_ALLOWED)
 @auth_required
-@server_ready_required
 @atomic
 async def create(request) -> web.Response:
     try:
-        with _timeout(2):
-            params = await request.json(loads=json.loads)
+        params = await request.json(loads=json.loads)
         assert params.get('lang'), \
                'lang is missing or empty!'
         assert params.get('clientSessionToken'), \
@@ -89,7 +87,7 @@ async def create(request) -> web.Response:
             if request['api_version'] == 1:
                 # custom resource limit unsupported
                 pass
-            elif request['api_version'] in (2, 3):
+            elif request['api_version'] >= 2:
                 creation_config.update(params.get('config', {}))
             # sanity check for vfolders
             if creation_config['mounts']:
@@ -158,7 +156,7 @@ async def create(request) -> web.Response:
         log.exception('GET_OR_CREATE: exception')
         raise InstanceNotAvailable
     except Exception:
-        request.app['sentry'].captureException()
+        request.app['error_monitor'].capture_exception()
         log.exception('GET_OR_CREATE: unexpected error!')
         raise InternalServerError
     return web.json_response(resp, status=201)
@@ -254,21 +252,23 @@ async def instance_stats(app, agent_id, kern_stats):
     await app['registry'].handle_stats(agent_id, kern_stats)
 
 
-async def datadog_update(app):
-    with app['datadog'].statsd as statsd:
-
-        statsd.gauge('ai.backend.gateway.coroutines', len(asyncio.Task.all_tasks()))
+async def stats_monitor_update(app):
+    with app['stats_monitor'] as stats_monitor:
+        stats_monitor.report_stats(
+            'gauge', 'ai.backend.gateway.coroutines', len(asyncio.Task.all_tasks()))
 
         all_inst_ids = [
             inst_id async for inst_id
             in app['registry'].enumerate_instances()]
-        statsd.gauge('ai.backend.gateway.agent_instances', len(all_inst_ids))
+        stats_monitor.report_stats(
+            'gauge', 'ai.backend.gateway.agent_instances', len(all_inst_ids))
 
         async with app['dbpool'].acquire() as conn, conn.begin():
             query = (sa.select([sa.func.sum(keypairs.c.concurrency_used)])
                        .select_from(keypairs))
             n = await conn.scalar(query)
-            statsd.gauge('ai.backend.gateway.active_kernels', n)
+            stats_monitor.report_stats(
+                'gauge', 'ai.backend.gateway.active_kernels', n)
 
             subquery = (sa.select([sa.func.count()])
                           .select_from(keypairs)
@@ -276,39 +276,42 @@ async def datadog_update(app):
                           .group_by(keypairs.c.user_id))
             query = sa.select([sa.func.count()]).select_from(subquery.alias())
             n = await conn.scalar(query)
-            statsd.gauge('ai.backend.users.has_active_key', n)
+            stats_monitor.report_stats(
+                'gauge', 'ai.backend.users.has_active_key', n)
 
             subquery = subquery.where(keypairs.c.last_used != null())
             query = sa.select([sa.func.count()]).select_from(subquery.alias())
             n = await conn.scalar(query)
-            statsd.gauge('ai.backend.users.has_used_key', n)
+            stats_monitor.report_stats(
+                'gauge', 'ai.backend.users.has_used_key', n)
 
             '''
             query = sa.select([sa.func.count()]).select_from(usage)
             n = await conn.scalar(query)
-            statsd.gauge('ai.backend.gateway.accum_kernels', n)
+            stats_monitor.report_stats(
+                'gauge', 'ai.backend.gateway.accum_kernels', n)
             '''
 
 
-async def datadog_update_timer(app):
-    if app['datadog'] is None:
+async def stats_monitor_update_timer(app):
+    if app['stats_monitor'] is None:
         return
     while True:
         try:
-            await datadog_update(app)
+            await stats_monitor_update(app)
         except asyncio.CancelledError:
             break
         except:
-            app['sentry'].captureException()
-            log.exception('datadog_update unexpected error')
+            app['error_monitor'].capture_exception()
+            log.exception('stats_monitor_update unexpected error')
         try:
             await asyncio.sleep(5)
         except asyncio.CancelledError:
             break
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 @atomic
 async def destroy(request) -> web.Response:
     registry = request.app['registry']
@@ -327,8 +330,8 @@ async def destroy(request) -> web.Response:
         return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 @atomic
 async def get_info(request) -> web.Response:
     # NOTE: This API should be replaced with GraphQL version.
@@ -362,8 +365,8 @@ async def get_info(request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 @atomic
 async def restart(request) -> web.Response:
     registry = request.app['registry']
@@ -377,24 +380,23 @@ async def restart(request) -> web.Response:
         log.exception('RESTART: exception')
         raise
     except:
-        request.app['sentry'].captureException()
+        request.app['error_monitor'].capture_exception()
         log.exception('RESTART: unexpected error')
         raise web.HTTPInternalServerError
     return web.Response(status=204)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 async def execute(request) -> web.Response:
     resp = {}
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
     try:
-        with _timeout(2):
-            params = await request.json(loads=json.loads)
+        params = await request.json(loads=json.loads)
         log.info('EXECUTE(u:{0}, k:{1})', access_key, sess_id)
-    except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
+    except json.decoder.JSONDecodeError:
         log.warning('EXECUTE: invalid/missing parameters')
         raise InvalidAPIParameters
     try:
@@ -403,8 +405,8 @@ async def execute(request) -> web.Response:
         if api_version == 1:
             run_id = params.get('runId', secrets.token_hex(8))
             mode = 'query'
-            code = params.get('code', '')
-            opts = {}
+            code = params.get('code', None)
+            opts = None
         elif api_version >= 2:
             assert 'runId' in params, 'runId is missing!'
             run_id = params['runId']  # maybe None
@@ -414,8 +416,11 @@ async def execute(request) -> web.Response:
                    'mode has an invalid value.'
             if mode in {'continue', 'input'}:
                 assert run_id is not None, 'continuation requires explicit run ID'
-            code = params.get('code', '')
-            opts = params.get('options', None) or {}
+            code = params.get('code', None)
+            opts = params.get('options', None)
+        # handle cases when some params are deliberately set to None
+        if code is None: code = ''  # noqa
+        if opts is None: opts = {}  # noqa
         if mode == 'complete':
             # For legacy
             resp['result'] = await registry.get_completions(
@@ -423,7 +428,8 @@ async def execute(request) -> web.Response:
         else:
             raw_result = await registry.execute(
                 sess_id, access_key,
-                api_version, run_id, mode, code, opts)
+                api_version, run_id, mode, code, opts,
+                flush_timeout=2.0)
             if raw_result is None:
                 # the kernel may have terminated from its side,
                 # or there was interruption of agents.
@@ -461,8 +467,8 @@ async def execute(request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 @atomic
 async def interrupt(request) -> web.Response:
     registry = request.app['registry']
@@ -478,8 +484,8 @@ async def interrupt(request) -> web.Response:
     return web.Response(status=204)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 @atomic
 async def complete(request) -> web.Response:
     resp = {'result': {
@@ -511,8 +517,8 @@ async def complete(request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 async def upload_files(request) -> web.Response:
     loop = asyncio.get_event_loop()
     reader = await request.multipart()
@@ -551,8 +557,8 @@ async def upload_files(request) -> web.Response:
     return web.Response(status=204)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 async def download_files(request) -> web.Response:
     try:
         registry = request.app['registry']
@@ -578,7 +584,7 @@ async def download_files(request) -> web.Response:
         log.exception('DOWNLOAD_FILE: exception')
         raise
     except Exception:
-        request.app['sentry'].captureException()
+        request.app['error_monitor'].capture_exception()
         log.exception('DOWNLOAD_FILE: unexpected error!')
         raise InternalServerError
 
@@ -588,8 +594,8 @@ async def download_files(request) -> web.Response:
         return web.Response(body=mpwriter, status=200)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 async def list_files(request) -> web.Response:
     try:
         access_key = request['keypair']['access_key']
@@ -613,14 +619,14 @@ async def list_files(request) -> web.Response:
         log.exception('LIST_FILES: exception')
         raise
     except Exception:
-        request.app['sentry'].captureException()
+        request.app['error_monitor'].capture_exception()
         log.exception('LIST_FILES: unexpected error!')
         raise InternalServerError
     return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
-@server_ready_required
 @atomic
 async def get_logs(request) -> web.Response:
     resp = {'result': {'logs': ''}}
@@ -652,8 +658,6 @@ async def init(app):
         app['agent_lost_checker'] = aiotools.create_timer(
             functools.partial(check_agent_lost, app), 1.0)
 
-    app['status'] = GatewayStatus.RUNNING
-
 
 async def shutdown(app):
     if app['pidx'] == 0:
@@ -668,21 +672,23 @@ async def shutdown(app):
             await t
 
 
-def create_app():
+def create_app(default_cors_options):
     app = web.Application()
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
-    app['api_versions'] = (1, 2, 3)
-    app.router.add_route('POST',   r'/create', create)  # legacy
-    app.router.add_route('POST',   r'', create)
-    app.router.add_route('GET',    r'/{sess_id}', get_info)
-    app.router.add_route('GET',    r'/{sess_id}/logs', get_logs)
-    app.router.add_route('PATCH',  r'/{sess_id}', restart)
-    app.router.add_route('DELETE', r'/{sess_id}', destroy)
-    app.router.add_route('POST',   r'/{sess_id}', execute)
-    app.router.add_route('POST',   r'/{sess_id}/interrupt', interrupt)
-    app.router.add_route('POST',   r'/{sess_id}/complete', complete)
-    app.router.add_route('POST',   r'/{sess_id}/upload', upload_files)
-    app.router.add_route('GET',    r'/{sess_id}/download', download_files)
-    app.router.add_route('GET',    r'/{sess_id}/files', list_files)
+    app['api_versions'] = (1, 2, 3, 4)
+    cors = aiohttp_cors.setup(app, defaults=default_cors_options)
+    cors.add(app.router.add_route('POST',   r'/create', create))  # legacy
+    cors.add(app.router.add_route('POST',   r'', create))
+    kernel_resource = cors.add(app.router.add_resource(r'/{sess_id}'))
+    cors.add(kernel_resource.add_route('GET',    get_info))
+    cors.add(kernel_resource.add_route('PATCH',  restart))
+    cors.add(kernel_resource.add_route('DELETE', destroy))
+    cors.add(kernel_resource.add_route('POST',   execute))
+    cors.add(app.router.add_route('GET',    r'/{sess_id}/logs', get_logs))
+    cors.add(app.router.add_route('POST',   r'/{sess_id}/interrupt', interrupt))
+    cors.add(app.router.add_route('POST',   r'/{sess_id}/complete', complete))
+    cors.add(app.router.add_route('POST',   r'/{sess_id}/upload', upload_files))
+    cors.add(app.router.add_route('GET',    r'/{sess_id}/download', download_files))
+    cors.add(app.router.add_route('GET',    r'/{sess_id}/files', list_files))
     return app, []
