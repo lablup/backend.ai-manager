@@ -33,7 +33,7 @@ async def test_server_status_initalization(create_app_and_client, dirty_etcd):
 
 @pytest.fixture
 async def prepare_manager(create_app_and_client):
-    app, client = await create_app_and_client(modules=['etcd', 'manager'])
+    app, client = await create_app_and_client(modules=['etcd', 'manager', 'auth'])
     return app, client
 
 
