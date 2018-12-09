@@ -120,7 +120,7 @@ class ScalingGroup:
         async with reenter_txn(self.registry.dbpool, conn) as conn:
             query = (sa.select('*')
                        .select_from(kernels)
-                       .where(kernels.c.status == KernelStatus.RESIZING))
+                       .where(kernels.c.status == KernelStatus.PENDING))
 
             jobs = []
             async for row in await conn.execute(query):
@@ -187,7 +187,7 @@ class ScalingGroup:
 
             # Register request.
             kernel_info_base = {
-                'status': KernelStatus.RESIZING,
+                'status': KernelStatus.PENDING,
                 'role': 'master',
                 'agent': None,
                 'agent_addr': '',
