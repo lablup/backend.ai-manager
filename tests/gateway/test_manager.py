@@ -9,7 +9,8 @@ import pytest
 from ai.backend.common.argparse import host_port_pair
 from ai.backend.gateway.exceptions import ServerFrozen
 from ai.backend.gateway.manager import (
-    server_unfrozen_required, GQLMutationUnfrozenRequiredMiddleware, ManagerStatus)
+    server_status_required, ALL_ALLOWED,
+    GQLMutationUnfrozenRequiredMiddleware, ManagerStatus)
 from ai.backend.manager.cli.etcd import put
 
 
@@ -43,7 +44,7 @@ async def test_server_unfrozen_required(prepare_manager):
 
     await app['config_server'].update_manager_status(ManagerStatus.FROZEN)
 
-    @server_unfrozen_required
+    @server_status_required(ALL_ALLOWED)
     async def _dummy_handler(request):
         return 'dummy-response'
 
