@@ -7,7 +7,7 @@ from decimal import Decimal
 import enum
 from functools import reduce
 import math
-from typing import Iterable, List, Tuple
+from typing import List, Tuple
 import os
 import uuid
 
@@ -110,10 +110,10 @@ class ScalingGroup:
         self.name = name
         self.registry = registry
         if not scaling_driver:
-            scaling_driver = AWSDefaultScalingDriver()
+            scaling_driver = AWSDefaultScalingDriver(self)
         self.scaling_driver = scaling_driver
         if not job_scheduler:
-            job_scheduler = SimpleFIFOJobScheduler()
+            job_scheduler = SimpleFIFOJobScheduler(self)
         self.job_scheduler = job_scheduler
 
     async def get_pending_jobs(self, conn=None):
@@ -257,8 +257,8 @@ class ScalingGroup:
             async for row in conn.execute(query):
                 available_shares.append(ResourceSlot(
                     id=row.id,
-                    mem=Decimal(row.mem_slots - row.used_mem_slots),
                     cpu=Decimal(row.cpu_slots - row.used_cpu_slots),
+                    mem=Decimal(row.mem_slots - row.used_mem_slots),
                     gpu=Decimal(row.gpu_slots - row.used_gpu_slots),
                 ))
             return available_shares
@@ -305,28 +305,32 @@ class ScalingGroup:
         return await self.registry.config_server.get_image_required_slots(name, tag)
 
     async def schedule(self, conn=None):
-        # Planning Scheduling
-        pending_jobs = await self.get_pending_jobs(conn=conn)
-        schedule_info = await self.job_scheduler.schedule(self, pending_jobs,
-                                                          conn=conn)
-        # Scaling
-        #
-        # It is possible that scaling driver re-schedule jobs
-        # by optimizing utilization of agents.
-        scheduled_job_ids = map(lambda x: x[1].kernel_id, schedule_info)
-        remaining_jobs = [job for job in pending_jobs
-                          if job.kernel_id not in scheduled_job_ids]
-        schedule_info = await self.scaling_driver.scale(
-            self, schedule_info, remaining_jobs, conn=conn)
+        async with reenter_txn(self.registry.dbpool, conn) as conn:
+            # Scheduling goes first, and then scaling goes next.
+            # This is to prevent scaling down agents which are
+            # necessary to schedule pending jobs.
+            pending_jobs = await self.get_pending_jobs(conn=conn)
+            available_agent_infos = await self.get_available_shares(conn=conn)
+            scheduling_plan = await self.job_scheduler.schedule(
+                available_agent_infos, pending_jobs, conn=conn)
 
-        # Process scheduled jobs
-        if schedule_info:
-            await asyncio.gather(*[self._process_job(agent_id, job, conn=conn)
-                                   for agent_id, job in schedule_info],
-                                 return_exceptions=True)
+            # It is possible that scaling driver re-schedule jobs
+            # by optimizing utilization of agents.
+            scheduled_job_ids = map(lambda x: x[1].kernel_id, scheduling_plan)
+            remaining_jobs = [job for job in pending_jobs
+                              if job.kernel_id not in scheduled_job_ids]
+            scheduling_plan = await self.scaling_driver.scale(
+                scheduling_plan, remaining_jobs, conn=conn)
 
-    async def _process_job(self, agent_id, job, conn=None):
-        return await self.registry.create_session(agent_id, job.kernel_id, conn=conn)
+            # Process scheduled jobs
+            if scheduling_plan:
+                await asyncio.gather(*[self._process_job(agent_id, job, conn=conn)
+                                       for agent_id, job in scheduling_plan],
+                                     return_exceptions=True)
+
+    async def _process_job(self, agent_id: str, job: SessionCreationJob, conn=None):
+        return await self.registry.create_session(agent_id, job.kernel_id,
+                                                  conn=conn)
 
 
 class AbstractScalingDriver(metaclass=ABCMeta):
@@ -335,11 +339,8 @@ class AbstractScalingDriver(metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    async def scale(self, scaling_group: ScalingGroup,
-                    schedule_info: Iterable[Tuple[str, SessionCreationJob]]
-                    = None,
-                    pending_jobs: Iterable[SessionCreationJob] = None,
-                    conn=None):
+    async def scale(self, scheduling_plan: List[Tuple[str, SessionCreationJob]],
+                    pending_jobs: List[SessionCreationJob], conn=None):
         '''
         This callback method is invoked.
         '''
@@ -348,15 +349,9 @@ class AbstractScalingDriver(metaclass=ABCMeta):
 
 class BasicScalingDriver(AbstractScalingDriver):
 
-    def __init__(self):
-        # prevent race-condition of asynchronous agent launches
-        # and scale-up decisions *during* scaling
-
-        # please propose a good design for this!
-        # (instead of simple flag)
-        self._pending_scaling = False
-
-        self.resource_precedence = ['gpu', 'cpu', 'mem']
+    def __init__(self, scaling_group):
+        self.scaling_group = scaling_group
+        self.dbpool = scaling_group.registry.dbpool
 
         cpu_shares_unit = ResourceSlot(
             cpu=Decimal(1),
@@ -387,8 +382,8 @@ class BasicScalingDriver(AbstractScalingDriver):
                 key=lambda o: getattr(o[1], resource_type))
         return instance_info
 
-    def get_required_buffer_jobs(self):
-        buffer_jobs = []
+    def get_minimum_prepared_jobs(self):
+        min_prepared_jobs = []
         for share_unit, min_count in self.min_prepared_shares:
             for _ in range(min_count):
                 job = SessionCreationJob(
@@ -400,48 +395,274 @@ class BasicScalingDriver(AbstractScalingDriver):
                     ),
                     created_at=datetime.now(tzutc()),
                 )
-                buffer_jobs.append(job)
-        return buffer_jobs
+                min_prepared_jobs.append(job)
+        return min_prepared_jobs
 
-    async def scale(self, scaling_group: ScalingGroup,
-                    schedule_info: Iterable[Tuple[str, SessionCreationJob]] = None,
-                    pending_jobs: Iterable[SessionCreationJob] = None,
-                    conn=None):
+    async def scale(self, scheduling_plan: List[Tuple[str, SessionCreationJob]],
+                    pending_jobs: List[SessionCreationJob], conn=None):
 
-        if schedule_info is None:
-            schedule_info = []
-        if pending_jobs is None:
-            pending_jobs = []
-
-        required_buffer_jobs = self.get_required_buffer_jobs()
+        min_prepared_jobs = self.get_minimum_prepared_jobs()
+        available_agent_infos = await self.scaling_group.get_available_shares()
+        pending_scaling_infos = \
+            await self.scaling_group.get_pending_scaling_shares()
 
         # Although pending_jobs is not empty, it is possible that
         # there already exists pending scaling requests and
         # all pending_jobs can be scheduled in those to-be-ready agents.
         # So we need to check for pending scaling requests.
         # Consider minimum prepared shares.
-        pending_jobs += required_buffer_jobs
-        schedulable_jobs = await scaling_group.job_scheduler.schedule(
-            scaling_group, pending_jobs, conn=conn, use_pending_scalings=True)
-        schedulable_job_ids = set(map(lambda x: x[1].kernel_id,
-                                      schedulable_jobs))
-        unschedulable_jobs = [job for job in required_buffer_jobs
-                              if job.kernel_id not in schedulable_job_ids]
-        if unschedulable_jobs:
-            await self.scale_out(scaling_group, unschedulable_jobs, conn=conn)
+        scheduler: AbstractJobScheduler = self.scaling_group.job_scheduler
+        if pending_jobs:
+            virtual_scheduling_plan = await scheduler.schedule(
+                pending_scaling_infos, pending_jobs + min_prepared_jobs,
+                dry_run=True)
         else:
-            await self.scale_in(scaling_group, schedule_info + schedulable_jobs,
-                                conn=conn)
+            # TODO: Give precedence to ALIVE agents compared to
+            # pending scalings when assigning min_prepared_jobs.
+            virtual_scheduling_plan = await scheduler.schedule(
+                available_agent_infos + pending_scaling_infos,
+                min_prepared_jobs, dry_run=True)
 
-        return schedule_info
+        scheduled_job_ids = set(map(lambda x: x[1].kernel_id,
+                                    virtual_scheduling_plan))
+        unschedulable_jobs = [job for job in min_prepared_jobs
+                              if job.kernel_id not in scheduled_job_ids]
 
-    async def scale_out(self, scaling_group,
-                        pending_jobs: List[SessionCreationJob],
-                        conn=None):
+        if unschedulable_jobs:
+            scaling_out_plan = await scheduler.get_minimum_required_instances(
+                self.instance_info, unschedulable_jobs)
+            await self.scale_out(scaling_out_plan, conn=conn)
+        else:
+            belonging_agents = await self.scaling_group.get_belonging_agents()
+            scheduled_agent_ids = \
+                set(map(lambda x: x[0],
+                        scheduling_plan + virtual_scheduling_plan))
+            # TODO: Consider removable pending scalings
+            agent_ids_to_remove = [agent_id for agent_id in belonging_agents
+                                   if agent_id not in scheduled_agent_ids]
+            await self.scale_in(agent_ids_to_remove, conn=conn)
+
+        # Currently, scale() does not change scheduling_plan
+        # for additional optimization of resource usage of agents.
+        return scheduling_plan
+
+    async def scale_out(self, scheduling_plan, conn=None):
+        async with reenter_txn(self.dbpool, conn) as conn:
+            query = (sa.select([scaling_groups.c.pending_scalings], for_update=True)
+                       .select_from(scaling_groups)
+                       .where(scaling_groups.c.name == self.scaling_group.name))
+            result = await conn.execute(query)
+            pending_scalings = (await result.first()).pending_scalings
+            new_scalings = list(map(lambda x: f'{x[0]}:{x[1]}', scheduling_plan))
+            pending_scalings = merge_scalings(pending_scalings, new_scalings)
+
+            query = (sa.update(scaling_groups)
+                       .values(pending_scalings=pending_scalings)
+                       .where(scaling_groups.c.name == self.scaling_group.name))
+            await conn.execute(query)
+
+            await self.add_agents(scheduling_plan)
+
+    async def scale_in(self, agent_ids_to_remove, conn=None):
+        # TODO: enhance get_agents_to_remove logic.
+        #       scale_in() currently terminates only idle agents, but
+        #       this logic can be enhanced in many ways.
+        #       For instance, consider the case where each agent has
+        #       only one kernel. It is obviously a waste of resources.
+        #       We can "mark" agents as MARK_TERMINATED to prevent
+        #       other kernels to be created in that agent and terminate
+        #       that agent as soon as all kernels running in the agent is
+        #       terminated.
+        # pseudo-code
+
+        # TODO: Always maintain certain number of agents.
+        # This is for preventing too many scaling tasks occurs.
+        async with reenter_txn(self.dbpool, conn) as conn:
+            query = (agents.update()
+                           .values(status=AgentStatus.MARK_TERMINATED)
+                           .where(agents.c.id in agent_ids_to_remove))
+            await conn.execute(query)
+
+            await self.remove_agents(list(agent_ids_to_remove))
+
+
+class AbstractVendorScalingDriverMixin:
+
+    @abstractmethod
+    async def add_agents(self, scaling_out_plan: List[Tuple[str, int]]):
+        raise NotImplementedError
+
+    @abstractmethod
+    async def remove_agents(self, agent_ids: List[Tuple[str]]):
+        raise NotImplementedError
+
+
+aws_access_key = os.environ.get('AWS_ACCESS_KEY_ID', 'dummy-access-key')
+aws_secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY', 'dummy-secret-key')
+aws_region = os.environ.get('AWS_REGION', 'ap-northeast-1')
+aws_launch_template_name_format = os.environ.get('AWS_LAUNCH_TEMPLATE_NAME_FORMAT',
+                                                 'backend.ai/agent/{}/v1.4')
+
+
+class AWSScalingDriverMixin(AbstractVendorScalingDriverMixin):
+
+    available_instances: List[Tuple[str, ResourceSlot]] = [
+        ('t2.2xlarge', ResourceSlot(
+            cpu=Decimal(8),
+            mem=Decimal(32.0),
+            gpu=Decimal(0),
+        )),
+        ('p2.xlarge', ResourceSlot(
+            cpu=Decimal(4),
+            mem=Decimal(61.0),
+            gpu=Decimal(1),
+        ))
+    ]
+
+    async def add_agents(self, scaling_out_plan: List[Tuple[str, int]]):
+        session = aiobotocore.get_session()
+        async with session.create_client('ec2', region_name=aws_region,
+                                         aws_secret_access_key=aws_secret_key,
+                                         aws_access_key_id=aws_access_key) as client:
+            tasks = []
+            for instance_type, instance_num in scaling_out_plan:
+                launch_template_name = self.get_launch_template_name(instance_type)
+                launch_template = {
+                    'LaunchTemplateName': launch_template_name,
+                }
+                # TODO: set tags
+                # refs: https://botocore.amazonaws.com/v1/documentation/api/latest
+                #       /reference/services/ec2.html#EC2.Client.run_instances,
+                #       'TagSpecifications' kwargs
+                coro = client.run_instances(LaunchTemplate=launch_template,
+                                            MinCount=instance_num,
+                                            MaxCount=instance_num)
+                tasks.append(coro)
+            # TODO: handle exceptions
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def remove_agents(self, agent_ids):
+        if not agent_ids:
+            return
+        session = aiobotocore.get_session()
+        async with session.create_client('ec2', region_name=aws_region,
+                                         aws_secret_access_key=aws_secret_key,
+                                         aws_access_key_id=aws_access_key) as client:
+            # TODO: handle exceptions
+            await client.terminate_instances(InstanceIds=agent_ids)
+
+    def get_launch_template_name(self, instance_type):
+        if instance_type == 't2.2xlarge':
+            resource_type = 'cpu'
+        elif instance_type == 'p2.xlarge':
+            resource_type = 'gpu'
+        else:
+            raise ValueError(f'Invalid instance type: {instance_type}')
+        return aws_launch_template_name_format.format(resource_type)
+
+
+class AWSDefaultScalingDriver(AWSScalingDriverMixin, BasicScalingDriver):
+    pass
+
+
+class AbstractJobScheduler(metaclass=ABCMeta):
+
+    def init(self, config_server):
+        pass
+
+    @abstractmethod
+    async def schedule(self, available_agent_infos: List[ResourceSlot],
+                       pending_jobs: List[SessionCreationJob],
+                       conn=None,
+                       dry_run=False) -> List[Tuple[str, SessionCreationJob]]:
+        '''
+        This callback method is invoked when there are new session creation requests,
+        terminated sessions, and increases of the scaling group resources.
+
+        Its job is to determine which pending session creation requests can be
+        scheduled on the given scaling group now.
+        '''
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_minimum_required_instances(self, instance_infos, pending_jobs):
+        raise NotImplementedError
+
+
+class SimpleFIFOJobScheduler(AbstractJobScheduler):
+
+    def __init__(self, scaling_group):
+        self.scaling_group = scaling_group
+        self.dbpool = scaling_group.registry.dbpool
+        self.resource_precedence = ['gpu', 'cpu', 'mem']
+
+    async def schedule(self, available_agent_infos, pending_jobs,
+                       conn=None, dry_run=False):
+        if not available_agent_infos:
+            return []
+        list(pending_jobs).sort(key=lambda _job: _job.created_at, reverse=True)
+        # TODO: We should consider agents' images.
+
+        async with reenter_txn(self.dbpool, conn) as conn:
+            scheduling_plan = []
+            curr_agent_info = available_agent_infos.pop(0)
+            for job in pending_jobs:
+                while curr_agent_info.cpu < job.resources.cpu or \
+                        curr_agent_info.mem < job.resources.mem or \
+                        curr_agent_info.gpu < job.resources.gpu:
+                    if not available_agent_infos:
+                        curr_agent_info = None
+                        break
+                    curr_agent_info = available_agent_infos.pop(0)
+
+                if curr_agent_info is None:
+                    break
+                agent_id = curr_agent_info.id
+
+                if not dry_run:
+                    # Prevent assigning kernels to pending scalings. (agents)
+                    updates = {
+                        'used_cpu_slots': agents.c.used_cpu_slots + job.resources.cpu,
+                        'used_mem_slots': agents.c.used_mem_slots + job.resources.mem,
+                        'used_gpu_slots': agents.c.used_gpu_slots + job.resources.gpu,
+                    }
+                    query = (sa.update(agents)
+                               .values(updates)
+                               .where(agents.c.id == agent_id))
+                    await conn.execute(query)
+
+                    query = (sa.select([agents.c.addr])
+                               .select_from(agents)
+                               .where(agents.c.id == agent_id))
+                    result = await conn.execute(query)
+                    row = await result.first()
+                    agent_addr = row.addr
+
+                    query = (kernels.update()
+                             .values({
+                                 'agent_addr': agent_addr,
+                                 'scaling_group': self.scaling_group.name,
+                             })
+                             .where(kernels.c.id == job.kernel_id))
+                    await conn.execute(query)
+
+                curr_agent_info = ResourceSlot(
+                    id=curr_agent_info.id,
+                    cpu=Decimal(curr_agent_info.cpu - job.resources.cpu),
+                    mem=Decimal(curr_agent_info.mem - job.resources.mem),
+                    gpu=Decimal(curr_agent_info.gpu - job.resources.gpu),
+                )
+
+                scheduling_plan.append((agent_id, job))
+
+            return scheduling_plan
+
+    async def get_minimum_required_instances(self, instance_infos, pending_jobs):
         # 1. Assume that no # limit of instances,
         # only t2.2xlarge & p2.xlarge, and only cpu, mem, gpu.
         assert pending_jobs is not None
 
+        # Sort jobs by resource precedence.
         pending_jobs_dict = defaultdict(list)
         for job in pending_jobs:
             for resource_type in self.resource_precedence:
@@ -449,13 +670,13 @@ class BasicScalingDriver(AbstractScalingDriver):
                     pending_jobs_dict[resource_type].append(job)
                     break
 
-        scale_out_info = []
+        min_required_instances = []
         for resource_type in self.resource_precedence:
             target_jobs = pending_jobs_dict[resource_type]
             if not target_jobs:
                 continue
 
-            instance_type, instance_spec = self.instance_info[resource_type][0]
+            instance_type, instance_spec = instance_infos[resource_type][0]
 
             def _acc_resources(acc: ResourceSlot, job: SessionCreationJob):
                 return ResourceSlot(
@@ -483,220 +704,13 @@ class BasicScalingDriver(AbstractScalingDriver):
                 _required_instance_num('gpu'),
             )
 
-            scale_out_info.append((instance_type, required_instance_num))
+            min_required_instances.append((instance_type, required_instance_num))
 
-        async with reenter_txn(scaling_group.registry.dbpool, conn) as conn:
-            query = (sa.select([scaling_groups.c.pending_scalings], for_update=True)
-                       .select_from(scaling_groups)
-                       .where(scaling_groups.c.name == scaling_group.name))
-            result = await conn.execute(query)
-            pending_scalings = (await result.first()).pending_scalings
-            new_scalings = list(map(lambda x: f'{x[0]}:{x[1]}', scale_out_info))
-            pending_scalings = merge_scalings(pending_scalings, new_scalings)
-
-            query = (sa.update(scaling_groups)
-                       .values(pending_scalings=pending_scalings)
-                       .where(scaling_groups.c.name == scaling_group.name))
-            await conn.execute(query)
-
-            await self.add_agents(scale_out_info)
+        return min_required_instances
         # 2, Now consider multiple instances for each resource types.
         # 3. Now consider # limit of instances.
         # 4. Now consider other types of resources, e.g. tpu.
         # 5. Now consider "marked-to-be-terminated" agents if exists.
-
-    async def scale_in(self, scaling_group: ScalingGroup,
-                       schedule_info: Iterable[Tuple[str, SessionCreationJob]],
-                       conn=None):
-        # return schedule_info
-        assert schedule_info is not None
-
-        # TODO: enhance get_agents_to_remove logic.
-        #       scale_in() currently terminates only idle agents, but
-        #       this logic can be enhanced in many ways.
-        #       For instance, consider the case where each agent has
-        #       only one kernel. It is obviously a waste of resources.
-        #       We can "mark" agents as MARK_TERMINATED to prevent
-        #       other kernels to be created in that agent and terminate
-        #       that agent as soon as all kernels running in the agent is
-        #       terminated.
-        # pseudo-code
-        idle_agents = await scaling_group.get_belonging_agents(idle=True, conn=conn)
-        agents_to_remove = set(idle_agents) - set(map(lambda x: x[0], schedule_info))
-
-        async with reenter_txn(scaling_group.registry.dbpool, conn) as conn:
-            query = (agents.update()
-                           .values(status=AgentStatus.MARK_TERMINATED)
-                           .where(agents.c.id in agents_to_remove))
-            await conn.execute(query)
-
-            await self.remove_agents(list(agents_to_remove))
-
-            return schedule_info
-
-
-class AbstractVendorScalingDriverMixin:
-
-    @abstractmethod
-    async def add_agents(self, scale_out_info: List[Tuple[str, int]]):
-        raise NotImplementedError
-
-    @abstractmethod
-    async def remove_agents(self, agents_to_remove: List[Tuple[str]]):
-        raise NotImplementedError
-
-
-aws_access_key = os.environ.get('AWS_ACCESS_KEY_ID', 'dummy-access-key')
-aws_secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY', 'dummy-secret-key')
-aws_region = os.environ.get('AWS_REGION', 'ap-northeast-1')
-aws_launch_template_name_format = os.environ.get('AWS_LAUNCH_TEMPLATE_NAME_FORMAT',
-                                                 'backend.ai/agent/{}/v1.4')
-
-
-class AWSScalingDriverMixin(AbstractVendorScalingDriverMixin):
-
-    available_instances: List[Tuple[str, ResourceSlot]] = [
-        ('t2.2xlarge', ResourceSlot(
-            cpu=Decimal(8),
-            mem=Decimal(32.0),
-            gpu=Decimal(0),
-        )),
-        ('p2.xlarge', ResourceSlot(
-            cpu=Decimal(4),
-            mem=Decimal(61.0),
-            gpu=Decimal(1),
-        ))
-    ]
-
-    async def add_agents(self, scale_out_info: List[Tuple[str, int]]):
-        session = aiobotocore.get_session()
-        async with session.create_client('ec2', region_name=aws_region,
-                                         aws_secret_access_key=aws_secret_key,
-                                         aws_access_key_id=aws_access_key) as client:
-            tasks = []
-            for instance_type, instance_num in scale_out_info:
-                launch_template_name = self.get_launch_template_name(instance_type)
-                launch_template = {
-                    'LaunchTemplateName': launch_template_name,
-                }
-                # TODO: set tags
-                # refs: https://botocore.amazonaws.com/v1/documentation/api/latest
-                #       /reference/services/ec2.html#EC2.Client.run_instances,
-                #       'TagSpecifications' kwargs
-                coro = client.run_instances(LaunchTemplate=launch_template,
-                                            MinCount=instance_num,
-                                            MaxCount=instance_num)
-                tasks.append(coro)
-            # TODO: handle exceptions
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-    async def remove_agents(self, agents_to_remove):
-        if not agents_to_remove:
-            return
-        session = aiobotocore.get_session()
-        async with session.create_client('ec2', region_name=aws_region,
-                                         aws_secret_access_key=aws_secret_key,
-                                         aws_access_key_id=aws_access_key) as client:
-            # TODO: handle exceptions
-            await client.terminate_instances(InstanceIds=agents_to_remove)
-
-    def get_launch_template_name(self, instance_type):
-        if instance_type == 't2.2xlarge':
-            resource_type = 'cpu'
-        elif instance_type == 'p2.xlarge':
-            resource_type = 'gpu'
-        else:
-            raise ValueError(f'Invalid instance type: {instance_type}')
-        return aws_launch_template_name_format.format(resource_type)
-
-
-class AWSDefaultScalingDriver(AWSScalingDriverMixin, BasicScalingDriver):
-    pass
-
-
-class AbstractJobScheduler(metaclass=ABCMeta):
-
-    def init(self, config_server):
-        pass
-
-    @abstractmethod
-    async def schedule(self, scaling_group: ScalingGroup,
-                       pending_jobs: Iterable[SessionCreationJob],
-                       conn=None, use_pending_scalings=False):
-        '''
-        This callback method is invoked when there are new session creation requests,
-        terminated sessions, and increases of the scaling group resources.
-
-        Its job is to determine which pending session creation requests can be
-        scheduled on the given scaling group now.
-        '''
-        raise NotImplementedError
-
-
-class SimpleFIFOJobScheduler(AbstractJobScheduler):
-
-    # TODO: remove scaling_group from params;
-    # function schema should be something like below:
-    # async def schedule(self, available_agent_infos, pending_jobs, conn, dry_run)
-    async def schedule(self, scaling_group, pending_jobs, conn=None,
-                       use_pending_scalings=False):
-        available_agent_infos = await scaling_group.get_available_shares(conn=conn)
-        if use_pending_scalings:
-            available_agent_infos += \
-                await scaling_group.get_pending_scaling_shares(conn=conn)
-        if not available_agent_infos:
-            return []
-        list(pending_jobs).sort(key=lambda _job: _job.created_at, reverse=True)
-        # TODO: We should consider agents' images.
-
-        async with reenter_txn(scaling_group.registry.dbpool, conn) as conn:
-            scheduled_jobs = []
-            curr_agent_info = available_agent_infos.pop(0)
-            for job in pending_jobs:
-                while curr_agent_info.cpu < job.resources.cpu or \
-                        curr_agent_info.mem < job.resources.mem or \
-                        curr_agent_info.gpu or job.resources.gpu:
-                    if not available_agent_infos:
-                        break
-                    curr_agent_info = available_agent_infos.pop(0)
-                agent_id = curr_agent_info.id
-                updates = {
-                    'used_cpu_slots': agents.c.used_cpu_slots + job.resources.cpu,
-                    'used_mem_slots': agents.c.used_mem_slots + job.resources.mem,
-                    'used_gpu_slots': agents.c.used_gpu_slots + job.resources.gpu,
-                }
-                query = (sa.update(agents)
-                           .values(updates)
-                           .where(agents.c.id == agent_id))
-                await conn.execute(query)
-
-                if not use_pending_scalings:
-                    # Prevent assigning kernels to pending scalings. (agents)
-                    query = (sa.select([agents.c.addr])
-                               .select_from(agents)
-                               .where(agents.c.id == agent_id))
-                    result = await conn.execute(query)
-                    row = await result.first()
-                    agent_addr = row.addr
-
-                    query = (kernels.update()
-                             .values({
-                                 'agent_addr': agent_addr,
-                                 'scaling_group': scaling_group.name,
-                             })
-                             .where(kernels.c.id == job.kernel_id))
-                    await conn.execute(query)
-
-                curr_agent_info = ResourceSlot(
-                    id=curr_agent_info.id,
-                    cpu=Decimal(curr_agent_info.cpu - job.resources.cpu),
-                    mem=Decimal(curr_agent_info.mem - job.resources.mem),
-                    gpu=Decimal(curr_agent_info.gpu - job.resources.gpu),
-                )
-
-                scheduled_jobs.append((agent_id, job))
-
-            return scheduled_jobs
 
 
 scaling_groups = sa.Table(

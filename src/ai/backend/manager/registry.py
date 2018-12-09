@@ -814,16 +814,17 @@ class AgentRegistry:
                                .where(scaling_groups.c.name == scaling_group))
                     await conn.execute(query)
 
-                scaling_group = await self.get_scaling_group(
-                    scaling_group=scaling_group, conn=conn)
-                await scaling_group.schedule(conn=conn)
-
         # Update the mapping of kernel images to agents.
         images = msgpack.unpackb(snappy.decompress(agent_info['images']))
         pipe = self.redis_image.pipeline()
         for image in images:
             pipe.sadd(image[0], agent_id)
         await pipe.execute()
+
+        if agent_created:
+            scaling_group = await self.get_scaling_group(
+                scaling_group=scaling_group)
+            await scaling_group.schedule()
 
     async def mark_agent_terminated(self, agent_id, status, conn=None):
         # TODO: interpret kern_id to sess_id
@@ -870,9 +871,8 @@ class AgentRegistry:
                        .where(agents.c.id == agent_id))
             await conn.execute(query)
 
-            scaling_group = await self.get_scaling_group(
-                agent_id=agent_id, conn=conn)
-            await scaling_group.schedule(conn=conn)
+        scaling_group = await self.get_scaling_group(agent_id=agent_id)
+        await scaling_group.schedule()
 
     async def mark_kernel_terminated(self, kernel_id, conn=None):
         '''
@@ -936,10 +936,15 @@ class AgentRegistry:
                        .where(agents.c.id == kernel['agent']))
             await conn.execute(query)
 
-            if kernel['agent'] and prev_status == KernelStatus.RESIZING:
+            # TODO: Fix below logic; I don't understand the below line.
+            if kernel['agent'] and prev_status == KernelStatus.PENDING:
                 scaling_group = await self.get_scaling_group(
                     agent_id=kernel['agent'], conn=conn)
                 await scaling_group.schedule(conn=conn)
+
+            # TODO: If the agent status is MARK_TERMINATED and
+            # this kernel is the last kernel of this agent,
+            # then we should terminate this agent.
 
     async def mark_session_terminated(self, sess_id, access_key, conn=None):
         '''
