@@ -11,7 +11,6 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ImageRef
 
 from ..manager.models.agent import ResourceSlot
-from .exceptions import ImageNotFound
 from .manager import ManagerStatus
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
