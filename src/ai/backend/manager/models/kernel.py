@@ -119,10 +119,6 @@ class SessionCommons:
     io_max_scratch_size = graphene.Int()
     io_cur_scratch_size = graphene.Int()
 
-    # Dynamic fields
-    cpu_cur_pct = graphene.Float()
-    mem_cur_bytes = graphene.Float()
-
     async def resolve_cpu_used(self, info):
         if not hasattr(self, 'status'):
             return None
@@ -203,29 +199,6 @@ class SessionCommons:
         rs = info.context['redis_stat']
         ret = await rs.hget(str(self.id), 'io_cur_scratch_size')
         return int(ret) if ret is not None else 0
-
-    async def resolve_cpu_cur_pct(self, info):
-        if not hasattr(self, 'status'):
-            return None
-        if self.status not in LIVE_STATUS:
-            return 0
-        rs = info.context['redis_stat']
-        precpu_used, cpu_used, precpu_system_used, cpu_system_used, num_cores = \
-            await rs.hmget(str(self.id),
-                           'precpu_used', 'cpu_used',
-                           'precpu_system_used', 'cpu_system_used',
-                           'num_cores')
-
-        # CPU usage calculation ref: https://bit.ly/2rrfrFF
-        cpu_pct = 0
-        if precpu_used is not None and cpu_used is not None and \
-                precpu_system_used is not None and cpu_system_used is not None and \
-                num_cores is not None:
-            cpu_delta = float(cpu_used) - float(precpu_used)
-            system_delta = float(cpu_system_used) - float(precpu_system_used)
-            if system_delta > 0 and cpu_delta > 0:
-                cpu_pct = (cpu_delta / system_delta) * float(num_cores) * 100
-        return round(cpu_pct, 1)
 
     @classmethod
     def parse_row(cls, row):
