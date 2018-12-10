@@ -42,7 +42,7 @@ jobs:
         - pip install -U -e .
         - cd ../backend.ai-manager
         # install manager requirements
-        - if [[ $TRAVIS_BRANCH == "develop" ]]; then BRANCH="develop"; else BRANCH="master"; fi
+        - if [ -z "$TRAVIS_BRANCH" ]; then BRANCH="master"; else BRANCH="$TRAVIS_BRANCH"; fi
         - sed -i'' -e "s/{BRANCH}/$BRANCH/g" requirements-ci.txt
         - pip install -U -r requirements-ci.txt
       before_script:
