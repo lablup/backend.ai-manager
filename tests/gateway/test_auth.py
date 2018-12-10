@@ -83,7 +83,7 @@ async def test_authorize(create_app_and_client, get_headers):
     app, client = await create_app_and_client(modules=['auth'])
 
     async def do_authorize(hash_type, api_version):
-        url = '/v3/auth/test'
+        url = '/auth/test'
         req_data = {'echo': str(uuid.uuid4())}
         req_bytes = json.dumps(req_data).encode()
         headers = get_headers('POST', url, req_bytes,
@@ -96,6 +96,6 @@ async def test_authorize(create_app_and_client, get_headers):
         assert data['echo'] == req_data['echo']
 
     # Try multiple different hashing schemes
-    await do_authorize('sha1', 'v3.20170615')
+    await do_authorize('sha256', 'v4.20181215')
     await do_authorize('sha256', 'v3.20170615')
-    await do_authorize('md5', 'v3.20170615')
+    await do_authorize('sha1', 'v3.20170615')

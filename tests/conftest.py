@@ -296,7 +296,7 @@ async def user_keypair(event_loop, app):
 @pytest.fixture
 def get_headers(app, default_keypair, prepare_docker_images):
     def create_header(method, url, req_bytes, ctype='application/json',
-                      hash_type='sha256', api_version='v3.20170615',
+                      hash_type='sha256', api_version='v4.20181215',
                       keypair=default_keypair):
         now = datetime.now(tzutc())
         hostname = f"localhost:{app['config'].service_port}"
@@ -306,10 +306,13 @@ def get_headers(app, default_keypair, prepare_docker_images):
             'Content-Length': str(len(req_bytes)),
             'X-BackendAI-Version': api_version,
         }
-        if ctype.startswith('multipart'):
+        if api_version >= 'v4.20181215':
             req_bytes = b''
-            del headers['Content-Type']
-            del headers['Content-Length']
+        else:
+            if ctype.startswith('multipart'):
+                req_bytes = b''
+                del headers['Content-Type']
+                del headers['Content-Length']
         req_hash = hashlib.new(hash_type, req_bytes).hexdigest()
         sign_bytes = method.upper().encode() + b'\n' \
                      + url.encode() + b'\n' \
