@@ -16,6 +16,7 @@ from yarl import URL
 import zmq
 
 from ai.backend.common import msgpack
+from ai.backend.common.types import ImageRef
 from ai.backend.common.logging import BraceStyleAdapter
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
@@ -348,40 +349,34 @@ class AgentRegistry:
     async def get_or_create_session(self, sess_id, access_key,
                                     lang, creation_config,
                                     conn=None, tag=None):
+        requested_image_ref = ImageRef(lang)
+        if requested_image_ref.resolve_required():
+            await requested_image_ref.resolve(self.config_server.etcd)
         try:
             kern = await self.get_session(sess_id, access_key)
-            canonical_lang = await self.config_server.resolve_image_name(lang)
-            kernel_lang = tuple(kern.lang.split(':'))
-            kernel_lang = (kernel_lang[0][kernel_lang[0].find('/')+1:] if kernel_lang[0].find('/') else kernel_lang[0], kernel_lang[1])
-            if canonical_lang != kernel_lang:
+            running_image_ref = ImageRef(kern.lang)
+            if running_image_ref != requested_image_ref:
                 raise KernelAlreadyExists
             created = False
         except KernelNotFound:
             kern = await self.create_session(
                 sess_id, access_key,
-                lang, creation_config,
+                requested_image_ref, creation_config,
                 conn=conn, session_tag=tag)
             created = True
         assert kern is not None
         return kern, created
 
     async def create_session(self, sess_id, access_key,
-                             lang, creation_config,
+                             image_ref, creation_config,
                              conn=None, session_tag=None):
         agent_id = None
         created_info = None
         mounts = creation_config.get('mounts') or []
         environ = creation_config.get('environ') or {}
 
-        if '/' in lang:
-            tokens = lang.split('/')
-            docker_registry = '/'.join(tokens[:-1])
-            lang = tokens[-1]
-        else:
-            docker_registry = await self.config_server.get_docker_registry()
-        name, tag = await self.config_server.resolve_image_name(lang)
         max_allowed_slot = \
-            await self.config_server.get_image_required_slots(name, tag)
+            await self.config_server.get_image_required_slots(image_ref)
 
         try:
             cpu_share = Decimal(0)
@@ -426,9 +421,9 @@ class AgentRegistry:
             mem=mem_share,
             gpu=gpu_share,
         )
-        lang = f'{docker_registry}/{name}:{tag}'
-        image_name = f'{docker_registry}/kernel-{name}:{tag}'
-        runnable_agents = frozenset(await self.redis_image.smembers(image_name))
+        runnable_agents = frozenset(
+            await self.redis_image.smembers(image_ref.canonical)
+        )
 
         async with reenter_txn(self.dbpool, conn) as conn:
 
@@ -490,7 +485,7 @@ class AgentRegistry:
                 'agent': agent_id,
                 'agent_addr': agent_addr,
                 'access_key': access_key,
-                'lang': lang,
+                'lang': image_ref.long,
                 'tag': session_tag,
                 # units: absolute
                 'mem_slot': required_shares.mem * 1024,
@@ -512,7 +507,7 @@ class AgentRegistry:
                     'create_session', sess_id, access_key):
                 async with RPCContext(agent_addr, 30) as rpc:
                     config = {
-                        'lang': lang,
+                        'lang': image_ref.long,
                         'limits': {
                             # units: share
                             'mem_slot': str(required_shares.mem),
