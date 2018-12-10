@@ -17,6 +17,7 @@ import tempfile
 import aiodocker
 import aiohttp
 from aiohttp import web
+import aiohttp_cors
 import aiojobs.aiohttp
 from aiopg.sa import create_engine
 from async_timeout import timeout
@@ -344,11 +345,16 @@ async def create_app_and_client(request, test_id, test_ns,
         scheduler_opts = {
             'close_timeout': 10,
         }
+        cors_opts = {
+            '*': aiohttp_cors.ResourceOptions(
+                allow_credentials=False,
+                expose_headers="*", allow_headers="*"),
+        }
         aiojobs.aiohttp.setup(app, **scheduler_opts)
-        await gw_init(app)
+        await gw_init(app, cors_opts)
         for mod in modules:
             target_module = import_module(f'.{mod}', 'ai.backend.gateway')
-            subapp, mw = getattr(target_module, 'create_app', None)()
+            subapp, mw = getattr(target_module, 'create_app', None)(cors_opts)
             assert isinstance(subapp, web.Application)
             for key in PUBLIC_INTERFACES:
                 subapp[key] = app[key]
