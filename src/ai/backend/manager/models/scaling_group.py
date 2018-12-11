@@ -81,12 +81,12 @@ def merge_scalings(s1, s2):
     s2 = _scalings_to_dict(s2)
     s = {}
     for k, v in s1.items():
-        s[k] = v
+        s[k] = int(v)
     for k, v in s2.items():
         if k in s:
-            s[k] += v
+            s[k] += int(v)
         else:
-            s[k] = v
+            s[k] = int(v)
     return [f'{k}:{v}' for k, v in s.items()]
 
 
