@@ -129,13 +129,6 @@ class TestConfigServer:
         assert 4 == len(img_data)
 
     @pytest.mark.asyncio
-    async def test_get_overbook_factors(self, config_server):
-        ret = await config_server.get_overbook_factors()
-        assert 'cpu' in ret
-        assert 'mem' in ret
-        assert 'gpu' in ret
-
-    @pytest.mark.asyncio
     async def test_get_image_required_slots(self, config_server):
         name = 'test-python'
         tag = ''
