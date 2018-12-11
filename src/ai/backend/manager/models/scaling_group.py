@@ -603,17 +603,21 @@ class SimpleFIFOJobScheduler(AbstractJobScheduler):
         list(pending_jobs).sort(key=lambda _job: _job.created_at, reverse=True)
         # TODO: We should consider agents' images.
 
+        idx = 0
         async with reenter_txn(self.dbpool, conn) as conn:
             scheduling_plan = []
-            curr_agent_info = available_agent_infos.pop(0)
+
+            curr_agent_info = available_agent_infos[idx]
+            idx += 1
             for job in pending_jobs:
                 while curr_agent_info.cpu < job.resources.cpu or \
                         curr_agent_info.mem < job.resources.mem or \
                         curr_agent_info.gpu < job.resources.gpu:
-                    if not available_agent_infos:
+                    if idx >= len(available_agent_infos):
                         curr_agent_info = None
                         break
-                    curr_agent_info = available_agent_infos.pop(0)
+                    curr_agent_info = available_agent_infos[idx]
+                    idx += 1
 
                 if curr_agent_info is None:
                     break
