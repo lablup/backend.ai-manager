@@ -8,9 +8,9 @@ import yaml
 
 from ai.backend.common.identity import get_instance_id, get_instance_ip
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.types import ImageRef
 
 from ..manager.models.agent import ResourceSlot
-from .exceptions import ImageNotFound
 from .manager import ManagerStatus
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
@@ -144,44 +144,21 @@ class ConfigServer:
         return docker_registry
 
     @aiotools.lru_cache(expire_after=60.0)
-    async def get_image_required_slots(self, name, tag):
-        installed = await self.etcd.get(f'images/{name}')
+    async def get_image_required_slots(self, image_ref: ImageRef):
+        installed = await self.etcd.get(f'images/{image_ref.name}')
         if installed is None:
             raise RuntimeError('Image metadata is not available!')
-        cpu = await self.etcd.get(f'images/{name}/cpu')
+        cpu = await self.etcd.get(f'images/{image_ref.name}/cpu')
         cpu = None if cpu == 'null' else Decimal(cpu)
-        mem = await self.etcd.get(f'images/{name}/mem')
+        mem = await self.etcd.get(f'images/{image_ref.name}/mem')
         mem = None if mem == 'null' else Decimal(mem)
-        if '-gpu' in tag or '-cuda' in tag:
-            gpu = await self.etcd.get(f'images/{name}/gpu')
+        _, platform_tags = image_ref.tag_set
+        if 'gpu' in platform_tags or 'cuda' in platform_tags:
+            gpu = await self.etcd.get(f'images/{image_ref.name}/gpu')
             gpu = Decimal(0) if gpu == 'null' else Decimal(gpu)
         else:
             gpu = Decimal(0)
         return ResourceSlot(mem=mem, cpu=cpu, gpu=gpu)
-
-    @aiotools.lru_cache(expire_after=60.0)
-    async def resolve_image_name(self, name_or_alias):
-
-        async def resolve_alias(alias_key):
-            alias_target = None
-            while True:
-                prev_alias_key = alias_key
-                alias_key = await self.etcd.get(f'images/_aliases/{alias_key}')
-                if alias_key is None:
-                    alias_target = prev_alias_key
-                    break
-            return alias_target
-
-        alias_target = await resolve_alias(name_or_alias)
-        if alias_target == name_or_alias and name_or_alias.rfind(':') == -1:
-            alias_target = await resolve_alias(f'{name_or_alias}:latest')
-        assert alias_target is not None
-        name, _, tag = alias_target.partition(':')
-        hash = await self.etcd.get(f'images/{name}/tags/{tag}')
-        if hash is None:
-            raise ImageNotFound(f'{name_or_alias}: Unregistered image '
-                                'or unknown alias.')
-        return name, tag
 
     # TODO: invalidate config cache when etcd content is updated
 

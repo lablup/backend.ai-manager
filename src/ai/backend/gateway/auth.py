@@ -212,9 +212,12 @@ def create_app(default_cors_options):
     app['prefix'] = 'auth'  # slashed to distinguish with "/vN/authorize"
     app['api_versions'] = (1, 2, 3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
-    res = cors.add(app.router.add_resource(r''))
-    cors.add(res.add_route('GET', auth_test))
-    cors.add(res.add_route('POST', auth_test))
+    root_resource = cors.add(app.router.add_resource(r''))
+    cors.add(root_resource.add_route('GET', auth_test))
+    cors.add(root_resource.add_route('POST', auth_test))
+    test_resource = cors.add(app.router.add_resource(r'/test'))
+    cors.add(test_resource.add_route('GET', auth_test))
+    cors.add(test_resource.add_route('POST', auth_test))
     return app, [auth_middleware]
 
 

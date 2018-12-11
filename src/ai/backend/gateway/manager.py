@@ -27,6 +27,8 @@ def server_status_required(allowed_status: Set[ManagerStatus]):
         async def wrapped(request):
             status = await request.app['config_server'].get_manager_status()
             if status not in allowed_status:
+                if status == ManagerStatus.FROZEN:
+                    raise ServerFrozen
                 msg = f'Server is not in the required status: {allowed_status}'
                 raise ServiceUnavailable(msg)
             return (await handler(request))

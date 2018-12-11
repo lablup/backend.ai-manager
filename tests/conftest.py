@@ -17,6 +17,7 @@ import tempfile
 import aiodocker
 import aiohttp
 from aiohttp import web
+import aiohttp_cors
 import aiojobs.aiohttp
 from aiopg.sa import create_engine
 from async_timeout import timeout
@@ -295,7 +296,7 @@ async def user_keypair(event_loop, app):
 @pytest.fixture
 def get_headers(app, default_keypair, prepare_docker_images):
     def create_header(method, url, req_bytes, ctype='application/json',
-                      hash_type='sha256', api_version='v3.20170615',
+                      hash_type='sha256', api_version='v4.20181215',
                       keypair=default_keypair):
         now = datetime.now(tzutc())
         hostname = f"localhost:{app['config'].service_port}"
@@ -305,10 +306,13 @@ def get_headers(app, default_keypair, prepare_docker_images):
             'Content-Length': str(len(req_bytes)),
             'X-BackendAI-Version': api_version,
         }
-        if ctype.startswith('multipart'):
+        if api_version >= 'v4.20181215':
             req_bytes = b''
-            del headers['Content-Type']
-            del headers['Content-Length']
+        else:
+            if ctype.startswith('multipart'):
+                req_bytes = b''
+                del headers['Content-Type']
+                del headers['Content-Length']
         req_hash = hashlib.new(hash_type, req_bytes).hexdigest()
         sign_bytes = method.upper().encode() + b'\n' \
                      + url.encode() + b'\n' \
@@ -344,11 +348,16 @@ async def create_app_and_client(request, test_id, test_ns,
         scheduler_opts = {
             'close_timeout': 10,
         }
+        cors_opts = {
+            '*': aiohttp_cors.ResourceOptions(
+                allow_credentials=False,
+                expose_headers="*", allow_headers="*"),
+        }
         aiojobs.aiohttp.setup(app, **scheduler_opts)
-        await gw_init(app)
+        await gw_init(app, cors_opts)
         for mod in modules:
             target_module = import_module(f'.{mod}', 'ai.backend.gateway')
-            subapp, mw = getattr(target_module, 'create_app', None)()
+            subapp, mw = getattr(target_module, 'create_app', None)(cors_opts)
             assert isinstance(subapp, web.Application)
             for key in PUBLIC_INTERFACES:
                 subapp[key] = app[key]
