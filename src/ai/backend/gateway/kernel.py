@@ -134,17 +134,15 @@ async def create(request) -> web.Response:
             try:
                 with _timeout(creation_timeout):
                     while True:
-                        # Start a new transaction for every polling.
-                        async with request.app['dbpool'].acquire() as \
-                                conn, conn.begin():
-                            try:
-                                await request.app['registry'].get_session(
-                                    sess_id, access_key, db_connection=conn)
-                            except KernelNotFound:
-                                pass
-                            else:
-                                break
-                            await asyncio.sleep(2)
+                        try:
+                            # Start a new transaction for every polling.
+                            await request.app['registry'].get_session(
+                                sess_id, access_key, db_connection=conn)
+                        except KernelNotFound:
+                            pass
+                        else:
+                            break
+                        await asyncio.sleep(2)
             except asyncio.TimeoutError:
                 log.warning('GET_OR_CREATE: creation timeout')
                 await request.app['registry'].mark_kernel_terminated(
