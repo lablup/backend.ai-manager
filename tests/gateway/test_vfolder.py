@@ -15,14 +15,15 @@ from ai.backend.manager.models import (
 
 @pytest.fixture
 async def prepare_vfolder(event_loop, request, create_app_and_client, get_headers,
-                          folder_mount, folder_host):
+                          folder_mount, folder_host, folder_fsprefix):
     app, client = await create_app_and_client(
         modules=['etcd', 'auth', 'vfolder', 'manager'])
 
     folder_name = 'test-folder'
     folder_id = None
 
-    (folder_mount / folder_host).mkdir(parents=True, exist_ok=True)
+    base_path = folder_mount / folder_host / folder_fsprefix
+    base_path.mkdir(parents=True, exist_ok=True)
 
     def _remove_folder_mount():
         shutil.rmtree(folder_mount)
@@ -48,10 +49,10 @@ async def prepare_vfolder(event_loop, request, create_app_and_client, get_header
 
 
 @pytest.fixture
-async def other_host(folder_mount):
+async def other_host(folder_mount, folder_fsprefix):
     other_host = 'other-host'
-    other_host_path = folder_mount / other_host
-    other_host_path.mkdir(exist_ok=True)
+    other_host_path = folder_mount / other_host / folder_fsprefix
+    other_host_path.mkdir(parents=True, exist_ok=True)
 
     return other_host
 
@@ -67,12 +68,14 @@ async def test_create_vfolder_in_default_host(prepare_vfolder, folder_host):
 
 
 @pytest.mark.asyncio
-async def test_create_vfolder_in_user_specified_host(prepare_vfolder, folder_mount):
+async def test_create_vfolder_in_user_specified_host(
+        prepare_vfolder, folder_mount, folder_fsprefix):
     app, client, create_vfolder = prepare_vfolder
 
     # prepare for user-specified mount folder.
     user_specified_host = 'user-specified-host'
-    (folder_mount / user_specified_host).mkdir(exist_ok=True)
+    base_path = folder_mount / user_specified_host / folder_fsprefix
+    base_path.mkdir(parents=True, exist_ok=True)
 
     folder_info = await create_vfolder(user_specified_host)
 
@@ -223,10 +226,10 @@ async def test_cannot_get_info_other_users_vfolders(prepare_vfolder, get_headers
 
 @pytest.mark.asyncio
 async def test_delete_vfolder(prepare_vfolder, get_headers,
-                              folder_mount, folder_host):
+                              folder_mount, folder_host, folder_fsprefix):
     app, client, create_vfolder = prepare_vfolder
     folder_info = await create_vfolder()
-    folder_path = (folder_mount / folder_host / folder_info['id'])
+    folder_path = (folder_mount / folder_host / folder_fsprefix / folder_info['id'])
 
     assert folder_path.exists()
 
@@ -240,11 +243,14 @@ async def test_delete_vfolder(prepare_vfolder, get_headers,
 
 
 @pytest.mark.asyncio
-async def test_cannot_delete_others_vfolder(prepare_vfolder, get_headers,
-                                            folder_mount, folder_host, user_keypair):
+async def test_cannot_delete_others_vfolder(
+        prepare_vfolder, get_headers,
+        folder_mount, folder_host, folder_fsprefix,
+        user_keypair):
     app, client, create_vfolder = prepare_vfolder
     folder_info = await create_vfolder()
-    folder_path = (folder_mount / folder_host / folder_info['id'])
+    folder_path = (folder_mount / folder_host /
+                   folder_fsprefix / folder_info['id'])
 
     assert folder_path.exists()
 
@@ -260,7 +266,7 @@ class TestFiles:
 
     @pytest.mark.asyncio
     async def test_upload_file(self, prepare_vfolder, get_headers, tmpdir,
-                               folder_mount, folder_host):
+                               folder_mount, folder_host, folder_fsprefix):
         app, client, create_vfolder = prepare_vfolder
         folder_info = await create_vfolder()
 
@@ -283,7 +289,8 @@ class TestFiles:
         # Get paths for files uploaded to virtual folder
         vf_fname1 = p1.strpath.split('/')[-1]
         vf_fname2 = p2.strpath.split('/')[-1]
-        folder_path = (folder_mount / folder_host / folder_info['id'])
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
 
         assert ret.status == 201
         assert 2 == len(list(folder_path.glob('**/*.txt')))
@@ -292,7 +299,8 @@ class TestFiles:
 
     @pytest.mark.asyncio
     async def test_cannot_upload_other_users_vfolder(
-            self, prepare_vfolder, get_headers, tmpdir, folder_mount, folder_host,
+            self, prepare_vfolder, get_headers, tmpdir,
+            folder_mount, folder_host, folder_fsprefix,
             user_keypair):
         app, client, create_vfolder = prepare_vfolder
         folder_info = await create_vfolder()
@@ -312,17 +320,19 @@ class TestFiles:
         ret = await client.post(url, data=data, headers=headers)
 
         vf_fname1 = p1.strpath.split('/')[-1]
-        folder_path = (folder_mount / folder_host / folder_info['id'])
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
         assert ret.status == 404
         assert not (folder_path / vf_fname1).exists()
 
     @pytest.mark.asyncio
-    async def test_download(self, prepare_vfolder, get_headers, folder_mount,
-                            folder_host):
+    async def test_download(self, prepare_vfolder, get_headers,
+                            folder_mount, folder_host, folder_fsprefix):
         app, client, create_vfolder = prepare_vfolder
 
         folder_info = await create_vfolder()
-        folder_path = (folder_mount / folder_host / folder_info['id'])
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
         with open(folder_path / 'hello.txt', 'w') as f:
             f.write('hello vfolder!')
         assert (folder_path / 'hello.txt').exists()
@@ -347,12 +357,14 @@ class TestFiles:
 
     @pytest.mark.asyncio
     async def test_cannot_download_from_other_users_vfolder(
-            self, prepare_vfolder, get_headers, folder_mount, folder_host,
+            self, prepare_vfolder, get_headers,
+            folder_mount, folder_host, folder_fsprefix,
             user_keypair):
         app, client, create_vfolder = prepare_vfolder
 
         folder_info = await create_vfolder()
-        folder_path = (folder_mount / folder_host / folder_info['id'])
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
         with open(folder_path / 'hello.txt', 'w') as f:
             f.write('hello vfolder!')
         assert (folder_path / 'hello.txt').exists()
@@ -365,12 +377,13 @@ class TestFiles:
         assert ret.status == 404
 
     @pytest.mark.asyncio
-    async def test_list_files(self, prepare_vfolder, get_headers, folder_mount,
-                              folder_host):
+    async def test_list_files(self, prepare_vfolder, get_headers,
+                              folder_mount, folder_host, folder_fsprefix):
         app, client, create_vfolder = prepare_vfolder
 
         folder_info = await create_vfolder()
-        folder_path = (folder_mount / folder_host / folder_info['id'])
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
         with open(folder_path / 'hello.txt', 'w') as f:
             f.write('hello vfolder!')
         assert (folder_path / 'hello.txt').exists()
@@ -386,12 +399,14 @@ class TestFiles:
 
     @pytest.mark.asyncio
     async def test_cannot_list_other_vfolder_files(
-            self, prepare_vfolder, get_headers, folder_mount, folder_host,
+            self, prepare_vfolder, get_headers,
+            folder_mount, folder_host, folder_fsprefix,
             user_keypair):
         app, client, create_vfolder = prepare_vfolder
 
         folder_info = await create_vfolder()
-        folder_path = (folder_mount / folder_host / folder_info['id'])
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
         with open(folder_path / 'hello.txt', 'w') as f:
             f.write('hello vfolder!')
         assert (folder_path / 'hello.txt').exists()
@@ -403,12 +418,13 @@ class TestFiles:
         assert ret.status == 404
 
     @pytest.mark.asyncio
-    async def test_delete_files(self, prepare_vfolder, get_headers, folder_mount,
-                                folder_host):
+    async def test_delete_files(self, prepare_vfolder, get_headers,
+                                folder_mount, folder_host, folder_fsprefix):
         app, client, create_vfolder = prepare_vfolder
 
         folder_info = await create_vfolder()
-        folder_path = (folder_mount / folder_host / folder_info['id'])
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
         with open(folder_path / 'hello.txt', 'w') as f:
             f.write('hello vfolder!')
         assert (folder_path / 'hello.txt').exists()
@@ -423,12 +439,14 @@ class TestFiles:
 
     @pytest.mark.asyncio
     async def test_cannot_delete_other_vfolder_files(
-            self, prepare_vfolder, get_headers, folder_mount, folder_host,
+            self, prepare_vfolder, get_headers,
+            folder_mount, folder_host, folder_fsprefix,
             user_keypair):
         app, client, create_vfolder = prepare_vfolder
 
         folder_info = await create_vfolder()
-        folder_path = (folder_mount / folder_host / folder_info['id'])
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
         with open(folder_path / 'hello.txt', 'w') as f:
             f.write('hello vfolder!')
         assert (folder_path / 'hello.txt').exists()
@@ -445,8 +463,8 @@ class TestFiles:
 class TestInvitation:
 
     @pytest.mark.asyncio
-    async def test_invite(self, prepare_vfolder, get_headers, folder_mount,
-                          folder_host):
+    async def test_invite(self, prepare_vfolder, get_headers,
+                          folder_mount, folder_host, folder_fsprefix):
         app, client, create_vfolder = prepare_vfolder
 
         folder_info = await create_vfolder()
@@ -471,8 +489,9 @@ class TestInvitation:
         assert rsp_json['invited_ids'][0] == 'user@lablup.com'
 
     @pytest.mark.asyncio
-    async def test_invitations(self, prepare_vfolder, get_headers, folder_mount,
-                               folder_host, user_keypair):
+    async def test_invitations(self, prepare_vfolder, get_headers,
+                               folder_mount, folder_host, folder_fsprefix,
+                               user_keypair):
         app, client, create_vfolder = prepare_vfolder
 
         folder_info = await create_vfolder()
@@ -500,8 +519,9 @@ class TestInvitation:
 
     @pytest.mark.asyncio
     async def test_not_list_finished_invitations(
-            self, prepare_vfolder, get_headers, folder_mount,
-            folder_host, user_keypair):
+            self, prepare_vfolder, get_headers,
+            folder_mount, folder_host, folder_fsprefix,
+            user_keypair):
         app, client, create_vfolder = prepare_vfolder
 
         folder_info = await create_vfolder()
@@ -527,7 +547,8 @@ class TestInvitation:
 
     @pytest.mark.asyncio
     async def test_accept_invitation(self, prepare_vfolder, get_headers,
-                                     folder_mount, folder_host, user_keypair):
+                                     folder_mount, folder_host, folder_fsprefix,
+                                     user_keypair):
         app, client, create_vfolder = prepare_vfolder
 
         folder_info = await create_vfolder()
@@ -571,7 +592,8 @@ class TestInvitation:
 
     @pytest.mark.asyncio
     async def test_cannot_accept_invitation_with_duplicated_vfolder_name(
-            self, prepare_vfolder, get_headers, folder_mount, folder_host,
+            self, prepare_vfolder, get_headers,
+            folder_mount, folder_host, folder_fsprefix,
             user_keypair):
         app, client, create_vfolder = prepare_vfolder
 
@@ -626,7 +648,8 @@ class TestInvitation:
 
     @pytest.mark.asyncio
     async def test_delete_invitation(self, prepare_vfolder, get_headers,
-                                     folder_mount, folder_host, user_keypair):
+                                     folder_mount, folder_host, folder_fsprefix,
+                                     user_keypair):
         app, client, create_vfolder = prepare_vfolder
 
         folder_info = await create_vfolder()
@@ -755,7 +778,8 @@ class TestJoinedVfolderManipulations:
 
     @pytest.mark.asyncio
     async def test_upload_file(self, prepare_vfolder, get_headers, tmpdir,
-                               folder_mount, folder_host, user_keypair):
+                               folder_mount, folder_host, folder_fsprefix,
+                               user_keypair):
         app, client, create_vfolder = prepare_vfolder
         folder_info = await create_vfolder()
         async with app['dbpool'].acquire() as conn:
@@ -780,7 +804,8 @@ class TestJoinedVfolderManipulations:
 
         # Get paths for files uploaded to virtual folder
         vf_fname1 = p1.strpath.split('/')[-1]
-        folder_path = (folder_mount / folder_host / folder_info['id'])
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
 
         assert ret.status == 201
         assert 1 == len(list(folder_path.glob('**/*.txt')))
@@ -788,7 +813,8 @@ class TestJoinedVfolderManipulations:
 
     @pytest.mark.asyncio
     async def test_cannot_upload_file_to_read_only_vfolders(
-            self, prepare_vfolder, get_headers, tmpdir, folder_mount, folder_host,
+            self, prepare_vfolder, get_headers, tmpdir,
+            folder_mount, folder_host, folder_fsprefix,
             user_keypair):
         app, client, create_vfolder = prepare_vfolder
         folder_info = await create_vfolder()
@@ -814,17 +840,20 @@ class TestJoinedVfolderManipulations:
 
         # Get paths for files uploaded to virtual folder
         vf_fname1 = p1.strpath.split('/')[-1]
-        folder_path = (folder_mount / folder_host / folder_info['id'])
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
 
         assert ret.status == 404
         assert not (folder_path / vf_fname1).exists()
 
     @pytest.mark.asyncio
-    async def test_download(self, prepare_vfolder, get_headers, folder_mount,
-                            folder_host, user_keypair):
+    async def test_download(self, prepare_vfolder, get_headers,
+                            folder_mount, folder_host, folder_fsprefix,
+                            user_keypair):
         app, client, create_vfolder = prepare_vfolder
         folder_info = await create_vfolder()
-        folder_path = (folder_mount / folder_host / folder_info['id'])
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
         with open(folder_path / 'hello.txt', 'w') as f:
             f.write('hello vfolder!')
         async with app['dbpool'].acquire() as conn:
@@ -856,11 +885,13 @@ class TestJoinedVfolderManipulations:
         assert ret.status == 200
 
     @pytest.mark.asyncio
-    async def test_list_files(self, prepare_vfolder, get_headers, folder_mount,
-                              folder_host, user_keypair):
+    async def test_list_files(self, prepare_vfolder, get_headers,
+                              folder_mount, folder_host, folder_fsprefix,
+                              user_keypair):
         app, client, create_vfolder = prepare_vfolder
         folder_info = await create_vfolder()
-        folder_path = (folder_mount / folder_host / folder_info['id'])
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
         with open(folder_path / 'hello.txt', 'w') as f:
             f.write('hello vfolder!')
         async with app['dbpool'].acquire() as conn:
@@ -881,11 +912,13 @@ class TestJoinedVfolderManipulations:
         assert files[0]['filename'] == 'hello.txt'
 
     @pytest.mark.asyncio
-    async def test_delete_files(self, prepare_vfolder, get_headers, folder_mount,
-                                folder_host, user_keypair):
+    async def test_delete_files(self, prepare_vfolder, get_headers,
+                                folder_mount, folder_host, folder_fsprefix,
+                                user_keypair):
         app, client, create_vfolder = prepare_vfolder
         folder_info = await create_vfolder()
-        folder_path = (folder_mount / folder_host / folder_info['id'])
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
         with open(folder_path / 'hello.txt', 'w') as f:
             f.write('hello vfolder!')
         async with app['dbpool'].acquire() as conn:
@@ -908,12 +941,14 @@ class TestJoinedVfolderManipulations:
 
     @pytest.mark.asyncio
     async def test_cannot_delete_readonly_vfolder_files(
-            self, prepare_vfolder, get_headers, folder_mount, folder_host,
+            self, prepare_vfolder, get_headers,
+            folder_mount, folder_host, folder_fsprefix,
             user_keypair):
         app, client, create_vfolder = prepare_vfolder
 
         folder_info = await create_vfolder()
-        folder_path = (folder_mount / folder_host / folder_info['id'])
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
         with open(folder_path / 'hello.txt', 'w') as f:
             f.write('hello vfolder!')
         async with app['dbpool'].acquire() as conn:

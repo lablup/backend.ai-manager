@@ -152,7 +152,9 @@ async def create(request):
             raise VFolderCreationFailed(
                 'You must specify the vfolder host '
                 'because the default host is not configured.')
-    if not (request.app['VFOLDER_MOUNT'] / folder_host).is_dir():
+    vfroot = (request.app['VFOLDER_MOUNT'] / folder_host /
+              request.app['VFOLDER_FSPREFIX'])
+    if not vfroot.is_dir():
         raise VFolderCreationFailed(f'Invalid vfolder host: {folder_host}')
 
     async with dbpool.acquire() as conn:
@@ -170,7 +172,8 @@ async def create(request):
             raise VFolderAlreadyExists
 
         folder_id = uuid.uuid4().hex
-        folder_path = (request.app['VFOLDER_MOUNT'] / folder_host / folder_id)
+        folder_path = (request.app['VFOLDER_MOUNT'] / folder_host /
+                       request.app['VFOLDER_FSPREFIX'] / folder_id)
         folder_path.mkdir(parents=True, exist_ok=True)
         query = (vfolders.insert().values({
             'id': folder_id,
@@ -242,7 +245,8 @@ async def get_info(request, row):
         is_owner = False
         permission = row.permission
     # TODO: handle nested directory structure
-    folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+    folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
+                   request.app['VFOLDER_FSPREFIX'] / row.id.hex)
     num_files = len(list(folder_path.iterdir()))
     resp = {
         'name': row.name,
@@ -267,7 +271,8 @@ async def mkdir(request, row):
     assert path, 'path not specified!'
     path = Path(path)
     log.info('VFOLDER.MKDIR (u:{0}, f:{1})', access_key, folder_name)
-    folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+    folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
+                   request.app['VFOLDER_FSPREFIX'] / row.id.hex)
     assert not path.is_absolute(), 'path must be relative.'
     try:
         (folder_path / path).mkdir(parents=True, exist_ok=True)
@@ -284,7 +289,8 @@ async def upload(request, row):
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.UPLOAD (u:{0}, f:{1})', access_key, folder_name)
-    folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+    folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
+                   request.app['VFOLDER_FSPREFIX'] / row.id.hex)
     reader = await request.multipart()
     file_count = 0
     async for file in aiotools.aiter(reader.next, None):
@@ -321,7 +327,8 @@ async def delete_files(request, row):
     assert files, 'no file(s) specified!'
     recursive = params.get('recursive', False)
     log.info('VFOLDER.DELETE_FILES (u:{0}, f:{1})', access_key, folder_name)
-    folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+    folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
+                   request.app['VFOLDER_FSPREFIX'] / row.id.hex)
     ops = []
     for file in files:
         file_path = folder_path / file
@@ -350,7 +357,8 @@ async def download(request, row):
     assert params.get('files'), 'no file(s) specified!'
     files = params.get('files')
     log.info('VFOLDER.DOWNLOAD (u:{0}, f:{1})', access_key, folder_name)
-    folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+    folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
+                   request.app['VFOLDER_FSPREFIX'] / row.id.hex)
     for file in files:
         if not (folder_path / file).is_file():
             raise InvalidAPIParameters(
@@ -377,7 +385,8 @@ async def list_files(request, row):
     access_key = request['keypair']['access_key']
     params = await request.json()
     log.info('VFOLDER.LIST_FILES (u:{0}, f:{1})', access_key, folder_name)
-    base_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+    base_path = (request.app['VFOLDER_MOUNT'] / row.host /
+                 request.app['VFOLDER_FSPREFIX'] / row.id.hex)
     folder_path = base_path / params['path'] if 'path' in params else base_path
     if not str(folder_path).startswith(str(base_path)):
         resp = {'error_msg': 'No such file or directory'}
@@ -631,7 +640,8 @@ async def delete(request):
         row = await result.first()
         if row is None:
             raise VFolderNotFound()
-        folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+        folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
+                       request.app['VFOLDER_FSPREFIX'] / row.id.hex)
         try:
             shutil.rmtree(folder_path)
         except IOError:
@@ -647,7 +657,11 @@ async def init(app):
     mount_prefix = await app['config_server'].etcd.get('volumes/_mount')
     if mount_prefix is None:
         mount_prefix = '/mnt'
+    fs_prefix = await app['config_server'].etcd.get('volumes/_fsprefix')
+    if fs_prefix is None:
+        fs_prefix = '/'
     app['VFOLDER_MOUNT'] = Path(mount_prefix)
+    app['VFOLDER_FSPREFIX'] = Path(fs_prefix.lstrip('/'))
 
 
 async def shutdown(app):
