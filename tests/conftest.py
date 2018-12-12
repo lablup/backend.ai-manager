@@ -63,14 +63,19 @@ def folder_mount(test_id):
 
 
 @pytest.fixture(scope='session')
+def folder_fsprefix(test_id):
+    # NOTE: the prefix must NOT start with "/"
+    return Path('fsprefix/inner/')
+
+
+@pytest.fixture(scope='session')
 def folder_host():
-    # FIXME: generalize this
     return 'local'
 
 
 @pytest.fixture(scope='session', autouse=True)
 def prepare_and_cleanup_databases(request, test_ns, test_db,
-                                  folder_mount, folder_host):
+                                  folder_mount, folder_host, folder_fsprefix):
     os.environ['BACKEND_NAMESPACE'] = test_ns
     os.environ['BACKEND_DB_NAME'] = test_db
 
@@ -84,6 +89,9 @@ def prepare_and_cleanup_databases(request, test_ns, test_db,
                      etcd_addr=etcd_addr, namespace=test_ns)
     update_aliases(args)
     args = Namespace(key='volumes/_mount', value=str(folder_mount),
+                     etcd_addr=etcd_addr, namespace=test_ns)
+    put(args)
+    args = Namespace(key='volumes/_fsprefix', value=str(folder_fsprefix),
                      etcd_addr=etcd_addr, namespace=test_ns)
     put(args)
     args = Namespace(key='volumes/_default_host', value=str(folder_host),
@@ -311,8 +319,11 @@ def get_headers(app, default_keypair, prepare_docker_images):
         else:
             if ctype.startswith('multipart'):
                 req_bytes = b''
-                del headers['Content-Type']
-                del headers['Content-Length']
+        if ctype.startswith('multipart'):
+            # Let aiohttp to create appropriate header values
+            # (e.g., multipart content-type header with message boundaries)
+            del headers['Content-Type']
+            del headers['Content-Length']
         req_hash = hashlib.new(hash_type, req_bytes).hexdigest()
         sign_bytes = method.upper().encode() + b'\n' \
                      + url.encode() + b'\n' \
