@@ -143,29 +143,6 @@ class ConfigServer:
         docker_registry = await self.etcd.get('nodes/docker_registry')
         return docker_registry
 
-    @aiotools.lru_cache(maxsize=1, expire_after=60.0)
-    async def get_overbook_factors(self):
-        '''
-        Retrieves the overbook parameters which is used to
-        scale the resource slot values reported by the agent
-        to increase server utilization.
-
-        TIP: If your users run mostly compute-intesive sessions,
-        lower these values towards 1.0.
-        '''
-
-        cpu = await self.etcd.get('config/overbook/cpu')
-        cpu = 6.0 if cpu is None else float(cpu)
-        mem = await self.etcd.get('config/overbook/mem')
-        mem = 2.0 if mem is None else float(mem)
-        gpu = await self.etcd.get('config/overbook/gpu')
-        gpu = 1.0 if gpu is None else float(gpu)
-        return {
-            'mem': mem,
-            'cpu': cpu,
-            'gpu': gpu,
-        }
-
     @aiotools.lru_cache(expire_after=60.0)
     async def get_image_required_slots(self, image_ref: ImageRef):
         installed = await self.etcd.get(f'images/{image_ref.name}')
