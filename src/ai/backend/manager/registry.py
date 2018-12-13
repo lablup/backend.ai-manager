@@ -532,6 +532,7 @@ class AgentRegistry:
                     'agent': agent_id,
                     'agent_addr': agent_addr,
                     'kernel_host': kernel_host,
+                    'service_ports': created_info['service_ports'],
                 }
                 query = (kernels.update()
                                 .values({
@@ -544,6 +545,7 @@ class AgentRegistry:
                                     'repl_out_port': created_info['repl_out_port'],
                                     'stdin_port': created_info['stdin_port'],
                                     'stdout_port': created_info['stdout_port'],
+                                    'service_ports': created_info['service_ports'],
                                 })
                                 .where(kernels.c.id == kernel_id))
                 result = await conn.execute(query)
