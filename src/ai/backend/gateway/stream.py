@@ -24,10 +24,12 @@ import zmq
 from ai.backend.common.logging import BraceStyleAdapter
 
 from .auth import auth_required
-from .exceptions import BackendError, KernelNotFound, ServiceUnavailable
+from .exceptions import (
+    BackendError, AppNotFound, KernelNotFound, InvalidAPIParameters,
+)
 from .manager import READ_ALLOWED, server_status_required
 from .utils import not_impl_stub
-from .wsproxy import WebSocketProxy
+from .wsproxy import TCPProxy
 from ..manager.models import kernels
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.stream'))
@@ -294,26 +296,49 @@ async def stream_proxy(request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
-    session = request.app['wsproxy_session']
-    service = request.query.get('service', None)  # noqa
+    service = request.query.get('app', None)  # noqa
 
     extra_fields = (kernels.c.stdin_port, )
-    log.info(f'{sess_id}')
     try:
         kernel = await registry.get_session(
             sess_id, access_key, field=extra_fields)
     except KernelNotFound:
         raise
-    await registry.increment_session_usage(sess_id, access_key)
-
     if kernel.kernel_host is None:
         kernel_host = urlparse(kernel.agent_addr).hostname
     else:
         kernel_host = kernel.kernel_host
-    # TODO: use service-port metadata
-    path = f'ws://{kernel_host}:{kernel.stdin_port}/'
+    for sport in kernel.service_ports:
+        if sport['name'] == service:
+            dest = (kernel_host, sport['host_port'])
+            break
+    else:
+        raise AppNotFound(f'{sess_id}:{service}')
 
-    log.info(f'STREAM_WSPROXY: {sess_id} -> {path}')
+    log.info('STREAM_WSPROXY: {0} ==[{1}:{2}]==> {3}',
+             sess_id, service, sport['protocol'], dest)
+    if sport['protocol'] == 'tcp':
+        proxy_cls = TCPProxy
+    elif sport['protocol'] == 'pty':
+        raise NotImplementedError
+        # proxy_cls = TermProxy
+    elif sport['protocol'] == 'http':
+        proxy_cls = TCPProxy
+        # proxy_cls = HTTPProxy
+    else:
+        raise InvalidAPIParameters(
+            f"Unsupported service protocol: {sport['protocol']}")
+    await registry.increment_session_usage(sess_id, access_key)
+
+    # TODO: check if the service is already activated?
+    await registry.start_service(sess_id, access_key, service)
+
+    # TODO: weakref to proxies for graceful shutdown?
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+    proxy = proxy_cls(ws, dest[0], dest[1])
+    return await proxy.proxy()
+    '''
     try:
         async with session.ws_connect(path) as up_conn:
             down_conn = web.WebSocketResponse()
@@ -323,6 +348,7 @@ async def stream_proxy(request) -> web.Response:
             return down_conn
     except aiohttp.ClientConnectorError:
         raise ServiceUnavailable(extra_msg='Websocket connection to kernel failed')
+    '''
 
 
 async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
@@ -352,7 +378,6 @@ async def init(app):
     app['stream_execute_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_stdin_socks'] = defaultdict(weakref.WeakSet)
     app['event_dispatcher'].add_handler('kernel_terminated', app, kernel_terminated)
-    app['wsproxy_session'] = aiohttp.ClientSession()
 
 
 async def shutdown(app):
@@ -361,7 +386,6 @@ async def shutdown(app):
             if not handler.done():
                 handler.cancel()
                 await handler
-    await app['wsproxy_session'].close()
 
 
 def create_app(default_cors_options):

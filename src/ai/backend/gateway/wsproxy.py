@@ -2,6 +2,7 @@
 WebSocket-based streaming kernel interaction APIs.
 '''
 
+from abc import ABCMeta, abstractmethod
 import asyncio
 import logging
 
@@ -11,6 +12,71 @@ from aiohttp import web
 from ai.backend.common.logging import BraceStyleAdapter
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.wsproxy'))
+
+
+class ServiceProxy(metaclass=ABCMeta):
+    '''
+    The abstract base class to implement service proxy handlers.
+    '''
+
+    __slots__ = ('ws', 'host', 'port')
+
+    def __init__(self, down_ws, dest_host, dest_port):
+        self.ws = down_ws
+        self.host = dest_host
+        self.port = dest_port
+
+    @abstractmethod
+    async def proxy(self):
+        pass
+
+
+class TCPProxy(ServiceProxy):
+
+    __slots__ = ServiceProxy.__slots__ + ('down_task', )
+
+    def __init__(self, down_ws, dest_host, dest_port):
+        super().__init__(down_ws, dest_host, dest_port)
+        self.down_task = None
+
+    async def proxy(self):
+        try:
+            try:
+                reader, writer = await asyncio.open_connection(self.host, self.port)
+            except ConnectionRefusedError:
+                await self.ws.close(code=1014)
+                return self.ws
+
+            async def downstream():
+                try:
+                    while True:
+                        chunk = await reader.read(8192)
+                        if not chunk:
+                            break
+                        await self.ws.send_bytes(chunk)
+                except asyncio.CancelledError:
+                    pass
+
+            log.debug('TCPProxy connected {0}:{1}', self.host, self.port)
+            self.down_task = asyncio.ensure_future(downstream())
+            async for msg in self.ws:
+                if msg.type == web.WSMsgType.binary:
+                    writer.write(msg.data)
+                    await writer.drain()
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    log.debug('ws connection closed with exception %s' %
+                              self.ws.exception())
+                    writer.close()
+                    await writer.wait_closed()
+
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if self.down_task is not None and not self.down_task.done():
+                self.down_task.cancel()
+                await self.down_task
+            log.debug('websocket connection closed')
+        return self.ws
 
 
 class WebSocketProxy:
