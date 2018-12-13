@@ -299,10 +299,8 @@ async def stream_proxy(request) -> web.Response:
     access_key = request['keypair']['access_key']
     service = request.query.get('app', None)  # noqa
 
-    extra_fields = (kernels.c.stdin_port, )
     try:
-        kernel = await registry.get_session(
-            sess_id, access_key, field=extra_fields)
+        kernel = await registry.get_session(sess_id, access_key)
     except KernelNotFound:
         raise
     if kernel.kernel_host is None:
@@ -343,17 +341,6 @@ async def stream_proxy(request) -> web.Response:
     await ws.prepare(request)
     proxy = proxy_cls(ws, dest[0], dest[1])
     return await proxy.proxy()
-    '''
-    try:
-        async with session.ws_connect(path) as up_conn:
-            down_conn = web.WebSocketResponse()
-            await down_conn.prepare(request)
-            wsproxy = WebSocketProxy(up_conn, down_conn)
-            await wsproxy.proxy()
-            return down_conn
-    except aiohttp.ClientConnectorError:
-        raise ServiceUnavailable(extra_msg='Websocket connection to kernel failed')
-    '''
 
 
 async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
