@@ -26,6 +26,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from .auth import auth_required
 from .exceptions import (
     BackendError, AppNotFound, KernelNotFound, InvalidAPIParameters,
+    InternalServerError,
 )
 from .manager import READ_ALLOWED, server_status_required
 from .utils import not_impl_stub
@@ -330,8 +331,12 @@ async def stream_proxy(request) -> web.Response:
             f"Unsupported service protocol: {sport['protocol']}")
     await registry.increment_session_usage(sess_id, access_key)
 
-    # TODO: check if the service is already activated?
-    await registry.start_service(sess_id, access_key, service)
+    opts = {}
+    result = await registry.start_service(sess_id, access_key,
+                                          service, opts)
+    if result['status'] == 'failed':
+        msg = f"Failed to launch the app service: {result['error']}"
+        raise InternalServerError(msg)
 
     # TODO: weakref to proxies for graceful shutdown?
     ws = web.WebSocketResponse()

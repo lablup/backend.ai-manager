@@ -666,11 +666,11 @@ class AgentRegistry:
                     return None
                 return await coro
 
-    async def start_service(self, sess_id, access_key, service):
+    async def start_service(self, sess_id, access_key, service, opts):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 10) as rpc:
-                coro = rpc.call.start_service(str(kernel['id']), service)
+            async with RPCContext(kernel['agent_addr'], None) as rpc:
+                coro = rpc.call.start_service(str(kernel['id']), service, opts)
                 if coro is None:
                     log.warning('stat_service cancelled')
                     return None
