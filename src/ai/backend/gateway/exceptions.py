@@ -98,6 +98,11 @@ class KernelNotFound(web.HTTPNotFound, BackendError):
     error_title = 'No such kernel.'
 
 
+class AppNotFound(web.HTTPNotFound, BackendError):
+    error_type  = 'https://api.backend.ai/probs/app-not-found'
+    error_title = 'No such app service provided by the session.'
+
+
 class KernelAlreadyExists(web.HTTPBadRequest, BackendError):
     error_type  = 'https://api.backend.ai/probs/kernel-already-exists'
     error_title = 'The kernel already exists with ' \

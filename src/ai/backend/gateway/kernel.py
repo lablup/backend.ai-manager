@@ -119,6 +119,7 @@ async def create(request) -> web.Response:
                 params['lang'], creation_config,
                 conn=conn, tag=params.get('tag', None))
             resp['kernelId'] = str(kernel['sess_id'])
+            resp['servicePorts'] = kernel['service_ports']
             resp['created'] = bool(created)
             if created:
                 query = (sa.update(keypairs)

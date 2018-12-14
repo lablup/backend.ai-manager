@@ -264,7 +264,8 @@ class AgentRegistry:
         '''
 
         cols = [kernels.c.id, kernels.c.sess_id, kernels.c.access_key,
-                kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.lang]
+                kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.lang,
+                kernels.c.service_ports]
         if field == '*':
             cols = '*'
         elif isinstance(field, (tuple, list)):
@@ -307,7 +308,8 @@ class AgentRegistry:
         '''
 
         cols = [kernels.c.id, kernels.c.sess_id,
-                kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.access_key]
+                kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.access_key,
+                kernels.c.service_ports]
         if isinstance(field, (tuple, list)):
             cols.extend(field)
         elif isinstance(field, (sa.Column, sa.sql.elements.ColumnClause)):
@@ -526,12 +528,14 @@ class AgentRegistry:
                 assert str(kernel_id) == created_info['id']
                 agent_host = URL(agent_addr).host
                 kernel_host = created_info.get('kernel_host', agent_host)
+                service_ports = created_info.get('service_ports', [])
                 kernel_access_info = {
                     'id': kernel_id,
                     'sess_id': sess_id,
                     'agent': agent_id,
                     'agent_addr': agent_addr,
                     'kernel_host': kernel_host,
+                    'service_ports': service_ports,
                 }
                 query = (kernels.update()
                                 .values({
@@ -544,6 +548,7 @@ class AgentRegistry:
                                     'repl_out_port': created_info['repl_out_port'],
                                     'stdin_port': created_info['stdin_port'],
                                     'stdout_port': created_info['stdout_port'],
+                                    'service_ports': service_ports,
                                 })
                                 .where(kernels.c.id == kernel_id))
                 result = await conn.execute(query)
@@ -620,6 +625,7 @@ class AgentRegistry:
                     repl_out_port=kernel_info['repl_out_port'],
                     stdin_port=kernel_info['stdin_port'],
                     stdout_port=kernel_info['stdout_port'],
+                    service_ports=kernel_info.get('service_ports', [])
                 )
 
     async def execute(self, sess_id, access_key,
@@ -657,6 +663,16 @@ class AgentRegistry:
                 coro = rpc.call.get_completions(str(kernel['id']), mode, text, opts)
                 if coro is None:
                     log.warning('get_completions cancelled')
+                    return None
+                return await coro
+
+    async def start_service(self, sess_id, access_key, service, opts):
+        async with self.handle_kernel_exception('execute', sess_id, access_key):
+            kernel = await self.get_session(sess_id, access_key)
+            async with RPCContext(kernel['agent_addr'], None) as rpc:
+                coro = rpc.call.start_service(str(kernel['id']), service, opts)
+                if coro is None:
+                    log.warning('stat_service cancelled')
                     return None
                 return await coro
 
