@@ -327,6 +327,7 @@ async def stream_proxy(request) -> web.Response:
     else:
         raise InvalidAPIParameters(
             f"Unsupported service protocol: {sport['protocol']}")
+    # TODO: apply a (distributed) semaphore to limit concurrency per user.
     await registry.increment_session_usage(sess_id, access_key)
 
     opts = {}
