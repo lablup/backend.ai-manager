@@ -7,6 +7,16 @@ Changes
 - Version numbers now follow year.month releases like Docker.
   We plan to release stable versions on every 3 months (e.g., 18.12, 19.03, ...).
 
+18.12.0a1 (2018-12-14)
+----------------------
+
+- NEW: App service ports!  You can start a compute session and directly connect to a
+  service running inside it, such as Jupyter Notebook! (#121)
+
+- Extended CORS support for web browser clients.
+
+- Monitoring tools are separated as plugins.
+
 1.4.7 (2018-11-24)
 ------------------
 
