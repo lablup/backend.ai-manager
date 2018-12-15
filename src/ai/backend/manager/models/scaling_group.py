@@ -600,7 +600,7 @@ class SimpleFIFOJobScheduler(AbstractJobScheduler):
                        conn=None, dry_run=False):
         if not available_agent_infos:
             return []
-        list(pending_jobs).sort(key=lambda _job: _job.created_at, reverse=True)
+        list(pending_jobs).sort(key=lambda _job: _job.created_at)
         # TODO: We should consider agents' images.
 
         idx = 0
