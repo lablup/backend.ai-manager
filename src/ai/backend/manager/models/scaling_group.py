@@ -603,24 +603,49 @@ class SimpleFIFOJobScheduler(AbstractJobScheduler):
         list(pending_jobs).sort(key=lambda _job: _job.created_at)
         # TODO: We should consider agents' images.
 
-        idx = 0
+        agent_infos_by_resource = defaultdict(list)
+        for agent_info in available_agent_infos:
+            for resource_type in self.resource_precedence:
+                if getattr(agent_info, resource_type) > Decimal(0):
+                    agent_infos_by_resource[resource_type].append(agent_info)
+                    break
+
         async with reenter_txn(self.dbpool, conn) as conn:
             scheduling_plan = []
 
-            curr_agent_info = available_agent_infos[idx]
-            idx += 1
-            for job in pending_jobs:
-                while curr_agent_info.cpu < job.resources.cpu or \
-                        curr_agent_info.mem < job.resources.mem or \
-                        curr_agent_info.gpu < job.resources.gpu:
-                    if idx >= len(available_agent_infos):
-                        curr_agent_info = None
-                        break
-                    curr_agent_info = available_agent_infos[idx]
-                    idx += 1
+            curr_agent_info_by_resource = defaultdict(lambda: None)
+            for resource_type in self.resource_precedence:
+                if agent_infos_by_resource[resource_type]:
+                    curr_agent_info_by_resource[resource_type] = \
+                        agent_infos_by_resource[resource_type].pop(0)
 
-                if curr_agent_info is None:
-                    break
+            for job in pending_jobs:
+                for resource_type in self.resource_precedence:
+                    if getattr(job.resources, resource_type) > 0:
+                        r_type = resource_type
+                        break
+
+                # Find a agent to which the current job can be assigned.
+                # Here, we consider resource precedence, which means
+                # if gpu > cpu, then we do not assign jobs with only cpu
+                # to instance with gpu.
+                def _is_assignable(agent_info, job):
+                    assert agent_info is not None
+                    return reduce(lambda acc, resource_type: getattr(agent_info, resource_type) >= getattr(job.resources, resource_type),
+                                  self.resource_precedence,
+                                  True)
+
+                while curr_agent_info_by_resource[r_type] is not None and \
+                        not _is_assignable(curr_agent_info_by_resource[r_type], job):
+                    if not agent_infos_by_resource[r_type]:
+                        curr_agent_info_by_resource[r_type] = None
+                        break
+                    curr_agent_info_by_resource[r_type] = \
+                        agent_infos_by_resource[r_type].pop(0)
+
+                if curr_agent_info_by_resource[r_type] is None:
+                    continue
+                curr_agent_info = curr_agent_info_by_resource[r_type]
                 agent_id = curr_agent_info.id
 
                 if not dry_run:
@@ -643,14 +668,14 @@ class SimpleFIFOJobScheduler(AbstractJobScheduler):
                     agent_addr = row.addr
 
                     query = (kernels.update()
-                             .values({
-                                 'agent_addr': agent_addr,
-                                 'scaling_group': self.scaling_group.name,
-                             })
+                                    .values({
+                                        'agent_addr': agent_addr,
+                                        'scaling_group': self.scaling_group.name,
+                                    })
                              .where(kernels.c.id == job.kernel_id))
                     await conn.execute(query)
 
-                curr_agent_info = ResourceSlot(
+                curr_agent_info_by_resource[r_type] = ResourceSlot(
                     id=curr_agent_info.id,
                     cpu=Decimal(curr_agent_info.cpu - job.resources.cpu),
                     mem=Decimal(curr_agent_info.mem - job.resources.mem),
@@ -666,17 +691,16 @@ class SimpleFIFOJobScheduler(AbstractJobScheduler):
         # only t2.2xlarge & p2.xlarge, and only cpu, mem, gpu.
         assert pending_jobs is not None
 
-        # Sort jobs by resource precedence.
-        pending_jobs_dict = defaultdict(list)
+        jobs_by_resource = defaultdict(list)
         for job in pending_jobs:
             for resource_type in self.resource_precedence:
                 if getattr(job.resources, resource_type) > Decimal(0):
-                    pending_jobs_dict[resource_type].append(job)
+                    jobs_by_resource[resource_type].append(job)
                     break
 
         min_required_instances = []
         for resource_type in self.resource_precedence:
-            target_jobs = pending_jobs_dict[resource_type]
+            target_jobs = jobs_by_resource[resource_type]
             if not target_jobs:
                 continue
 
