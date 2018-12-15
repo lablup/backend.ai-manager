@@ -446,14 +446,14 @@ class BasicScalingDriver(AbstractScalingDriver):
         # for additional optimization of resource usage of agents.
         return scheduling_plan
 
-    async def scale_out(self, scheduling_plan, conn=None):
+    async def scale_out(self, scaling_out_plan, conn=None):
         async with reenter_txn(self.dbpool, conn) as conn:
             query = (sa.select([scaling_groups.c.pending_scalings], for_update=True)
                        .select_from(scaling_groups)
                        .where(scaling_groups.c.name == self.scaling_group.name))
             result = await conn.execute(query)
             pending_scalings = (await result.first()).pending_scalings
-            new_scalings = list(map(lambda x: f'{x[0]}:{x[1]}', scheduling_plan))
+            new_scalings = list(map(lambda x: f'{x[0]}:{x[1]}', scaling_out_plan))
             pending_scalings = merge_scalings(pending_scalings, new_scalings)
 
             query = (sa.update(scaling_groups)
@@ -461,7 +461,7 @@ class BasicScalingDriver(AbstractScalingDriver):
                        .where(scaling_groups.c.name == self.scaling_group.name))
             await conn.execute(query)
 
-            await self.add_agents(scheduling_plan)
+            await self.add_agents(scaling_out_plan)
 
     async def scale_in(self, agent_ids_to_remove, conn=None):
         # TODO: enhance get_agents_to_remove logic.
