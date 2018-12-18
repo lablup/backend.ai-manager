@@ -166,6 +166,7 @@ class AgentRegistry:
             'get_logs': KernelExecutionFailed,
         }
         exc_class = op_exc[op]
+        # NOTE: Error logging is done outside of this actxmanager.
         try:
             yield
         except asyncio.TimeoutError:
@@ -175,14 +176,12 @@ class AgentRegistry:
                     status_info=f'Operation timeout ({op})')
             if error_callback:
                 await error_callback()
-            raise exc_class('TIMEOUT')
+            raise exc_class('TIMEOUT') from None
         except asyncio.CancelledError:
             if cancellation_callback:
                 await cancellation_callback()
             raise
         except AgentError as e:
-            if not issubclass(e.args[0], AssertionError):
-                log.exception('{0}: agent-side error', op)
             # TODO: wrap some assertion errors as "invalid requests"
             if set_error:
                 await self.set_session_status(sess_id, access_key,
@@ -190,13 +189,11 @@ class AgentRegistry:
                                               status_info='Agent error')
             if error_callback:
                 await error_callback()
-            raise exc_class('FAILURE', e)
+            raise exc_class('FAILURE', e) from None
         except BackendError:
             # silently re-raise to make them handled by gateway http handlers
             raise
         except:
-            log.exception('{0}: other error', op)
-            # TODO: raven.captureException()
             if set_error:
                 await self.set_session_status(sess_id, access_key,
                                               KernelStatus.ERROR,

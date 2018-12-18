@@ -212,11 +212,18 @@ class BackendAgentError(BackendError):
             }
         self.agent_error_type = agent_error_type
         self.agent_error_title = agent_error_title
+        self.agent_exception = agent_details.get('exception', '')
         self.body = json.dumps({
             'type': self.error_type,
             'title': self.error_title,
             'agent-details': agent_details,
         }).encode()
+
+    def __str__(self):
+        s = f'{self.status_code} {self.reason}'
+        if self.agent_exception:
+            s += f'\n-> Agent-side error: {self.agent_exception}'
+        return s
 
 
 class KernelCreationFailed(web.HTTPInternalServerError, BackendAgentError):
