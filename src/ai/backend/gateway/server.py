@@ -19,6 +19,7 @@ import aiojobs.aiohttp
 import aioredis
 import aiotools
 from aiopg.sa import create_engine
+from setproctitle import setproctitle
 import uvloop
 
 from ai.backend.common.argparse import (
@@ -422,6 +423,9 @@ def main():
     logger.add_pkg('aiotools')
     logger.add_pkg('aiopg')
     logger.add_pkg('ai.backend')
+
+    setproctitle(f'backend.ai: manager {config.namespace} '
+                 f'{config.service_ip}:{config.service_port}')
 
     with logger:
         log.info('Backend.AI Gateway {0}', __version__)
