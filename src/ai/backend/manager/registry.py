@@ -420,9 +420,6 @@ class AgentRegistry:
             mem=mem_share,
             gpu=gpu_share,
         )
-        runnable_agents = frozenset(
-            await self.redis_image.smembers(image_ref.canonical)
-        )
 
         async with reenter_txn(self.dbpool, conn) as conn:
 
@@ -432,8 +429,6 @@ class AgentRegistry:
                        .where(agents.c.status == AgentStatus.ALIVE))
 
             async for row in conn.execute(query):
-                if row['id'] not in runnable_agents:
-                    continue
                 sdiff = ResourceSlot(
                     id=row['id'],
                     mem=row['mem_slots'] - row['used_mem_slots'],
