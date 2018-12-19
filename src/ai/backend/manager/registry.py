@@ -66,7 +66,7 @@ async def RPCContext(addr, timeout=None):
     except Exception:
         exc_type, exc, tb = sys.exc_info()
         if issubclass(exc_type, GenericError):
-            e = AgentError(exc.args[0], exc.args[1])
+            e = AgentError(exc.args[0], exc.args[1], exc_repr=exc.args[2])
             raise e.with_traceback(tb)
         elif issubclass(exc_type, TypeError):
             if exc.args[0] == "'NoneType' object is not iterable":

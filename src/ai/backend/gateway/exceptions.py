@@ -152,7 +152,10 @@ class AgentError(RuntimeError):
     It carrise two args tuple: the exception type and exception arguments from
     the agent.
     '''
-    pass
+
+    def __init__(self, *args, exc_repr: str = None):
+        super().__init__(*args)
+        self.exc_repr = exc_repr
 
 
 class BackendAgentError(BackendError):
@@ -183,19 +186,23 @@ class BackendAgentError(BackendError):
                 'title': agent_error_title,
             }
         elif isinstance(exc_info, AgentError):
-            if isinstance(exc_info.args[0], Exception):
-                inner_name = type(exc_info.args[0]).__name__
-            elif (isinstance(exc_info.args[0], type) and
-                  issubclass(exc_info.args[0], Exception)):
-                inner_name = exc_info.args[0].__name__
+            if exc_info.exc_repr:
+                exc_repr = exc_info.exc_repr
             else:
-                inner_name = str(exc_info.args[0])
-            inner_args = ', '.join(repr(a) for a in exc_info.args[1])
+                if isinstance(exc_info.args[0], Exception):
+                    inner_name = type(exc_info.args[0]).__name__
+                elif (isinstance(exc_info.args[0], type) and
+                      issubclass(exc_info.args[0], Exception)):
+                    inner_name = exc_info.args[0].__name__
+                else:
+                    inner_name = str(exc_info.args[0])
+                inner_args = ', '.join(repr(a) for a in exc_info.args[1])
+                exc_repr = f'{inner_name}({inner_args})'
             agent_error_title = 'Agent-side exception occurred.'
             agent_details = {
                 'type': agent_error_type,
                 'title': agent_error_title,
-                'exception': f"{inner_name}({inner_args})",
+                'exception': exc_repr,
             }
         elif isinstance(exc_info, Exception):
             agent_error_title = 'Unexpected exception ocurred.'
