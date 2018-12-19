@@ -33,7 +33,77 @@ class Image(graphene.ObjectType):
                 hash_ = kvdict[tag_path]
                 if hash_.startswith(':'):
                     continue
-                item = Image(name=image, tag=tag, hash='')
+                item = Image(name=image, tag=tag, hash=hash)
                 items.append(item)
         # TODO: aliases?
         return items
+
+
+class PreloadImage(graphene.Mutation):
+
+    class Arguments:
+        image_ref = graphene.String(required=True)
+        target_agents = graphene.List(graphene.String(), required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @staticmethod
+    async def mutate(root, info, name, tag, hash):
+        pass
+
+
+class RegisterImage(graphene.Mutation):
+
+    class Arguments:
+        name = graphene.String(required=True)
+        tag = graphene.String(required=True)
+        hash = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @staticmethod
+    async def mutate(root, info, name, tag, hash):
+        pass
+
+
+class DeregisterImage(graphene.Mutation):
+
+    class Arguments:
+        name = graphene.String(required=True)
+        tag = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @staticmethod
+    async def mutate(root, info, name, tag, hash):
+        pass
+
+
+class AliasImage(graphene.Mutation):
+
+    class Arguments:
+        alias = graphene.String(required=True)
+        target = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @staticmethod
+    async def mutate(root, info, name, tag, hash):
+        pass
+
+
+class RemoveImageAlias(graphene.Mutation):
+
+    class Arguments:
+        alias = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @staticmethod
+    async def mutate(root, info, name, tag, hash):
+        pass
