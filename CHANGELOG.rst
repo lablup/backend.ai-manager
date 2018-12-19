@@ -10,9 +10,14 @@ Changes
 18.12.0a2 (2018-12-19)
 ----------------------
 
-- NEW: Add manager.cli commands to list and modify the available kernel images.
+- NEW: Add manager.cli commands to list and modify the available kernel images and
+  their aliases.
 
-- Improve support for using custom Docker registries.
+- CHANGE: The process monitoring tools will now show prettified process names for
+  Backend.AI's daemon processes which exhibit the role and key configurations (e.g.,
+  namespace) at a glance.
+
+- Improve support for using custom/private Docker registries.
 
 18.12.0a1 (2018-12-14)
 ----------------------

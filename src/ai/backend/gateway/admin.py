@@ -19,7 +19,7 @@ from .exceptions import InvalidAPIParameters, BackendError
 from .auth import auth_required
 from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
-    Agent,
+    Agent, Image,
     KeyPair, CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
     ComputeSession, ComputeWorker, KernelStatus,
     VirtualFolder,
@@ -61,6 +61,7 @@ async def handle_gql(request: web.Request) -> web.Response:
         variable_values=body['variables'],
         context_value={
             'dlmgr': dlmanager,
+            'etcd': request.app['config_server'].etcd,
             'access_key': request['keypair']['access_key'],
             'dbpool': request.app['dbpool'],
             'redis_stat': request.app['redis_stat'],
@@ -114,6 +115,10 @@ class QueryForAdmin(graphene.ObjectType):
     agents = graphene.List(
         Agent,
         status=graphene.String())
+
+    images = graphene.List(
+        Image,
+    )
 
     keypair = graphene.Field(
         KeyPair,
@@ -169,6 +174,11 @@ class QueryForAdmin(graphene.ObjectType):
             agent.cpu_cur_pct = cpu_pct
             agent.mem_cur_bytes = mem_cur_bytes
         return agent_list
+
+    @staticmethod
+    async def resolve_images(executor, info):
+        etcd = info.context['etcd']
+        return await Image.load_all(etcd)
 
     @staticmethod
     async def resolve_keypair(executor, info, access_key=None):
@@ -231,6 +241,10 @@ class QueryForUser(graphene.ObjectType):
     It only allows use of the access key specified in the authorization header.
     '''
 
+    images = graphene.List(
+        Image,
+    )
+
     keypair = graphene.Field(lambda: KeyPair)
 
     vfolders = graphene.List(VirtualFolder)
@@ -247,6 +261,11 @@ class QueryForUser(graphene.ObjectType):
         ComputeWorker,
         sess_id=graphene.String(required=True),
         status=graphene.String())
+
+    @staticmethod
+    async def resolve_images(executor, info):
+        etcd = info.context['etcd']
+        return await Image.load_all(etcd)
 
     @staticmethod
     async def resolve_keypair(executor, info):
