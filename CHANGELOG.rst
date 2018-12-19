@@ -7,6 +7,13 @@ Changes
 - Version numbers now follow year.month releases like Docker.
   We plan to release stable versions on every 3 months (e.g., 18.12, 19.03, ...).
 
+18.12.0a2 (2018-12-19)
+----------------------
+
+- NEW: Add manager.cli commands to list and modify the available kernel images.
+
+- Improve support for using custom Docker registries.
+
 18.12.0a1 (2018-12-14)
 ----------------------
 
