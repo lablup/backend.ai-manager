@@ -33,7 +33,7 @@ class Image(graphene.ObjectType):
                 hash_ = kvdict[tag_path]
                 if hash_.startswith(':'):
                     continue
-                item = Image(name=image, tag=tag, hash=hash)
+                item = Image(name=image, tag=tag, hash=hash_)
                 items.append(item)
         # TODO: aliases?
         return items
@@ -43,7 +43,7 @@ class PreloadImage(graphene.Mutation):
 
     class Arguments:
         image_ref = graphene.String(required=True)
-        target_agents = graphene.List(graphene.String(), required=True)
+        target_agents = graphene.List(graphene.String, required=True)
 
     ok = graphene.Boolean()
     msg = graphene.String()
