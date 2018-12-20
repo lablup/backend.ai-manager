@@ -63,8 +63,11 @@ images:
       - ["1.11-py36-cuda9", "x"]
       - ["1.12-py36", "x"]
       - ["1.12-py36-srv", "x"]
+      - ["1.12-py36-serv", "x"]
       - ["1.12-py36-tpu", "x"]
       - ["1.12-py36-cuda9", "x"]
+      - ["2.0-py36", "x"]
+      - ["2.0-py36-cuda9", "x"]
     slots: &for_computing
       cpu: 4     # cores
       mem: 8.0   # GiB
