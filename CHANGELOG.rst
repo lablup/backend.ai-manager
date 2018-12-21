@@ -10,8 +10,16 @@ Changes
 18.12.0a2 (2018-12-19)
 ----------------------
 
-- NEW: Add manager.cli commands to list and modify the available kernel images and
-  their aliases.
+- NEW: Add an admin GraphQL scheme to fetch the currently registered list of
+  kernel images.
+
+- CHANGE: Change fixtures from a Python module to static JSON files.
+  Now the example keypair fixture reside in the sample-configs directory.
+
+  - ``python -m ai.backend.manager.cli fixture populate`` is changed to accept
+    a path to the fixture JSON file.
+
+  - ``python -m ai.backend.manager.cli fixture list`` is now deprecated.
 
 - CHANGE: The process monitoring tools will now show prettified process names for
   Backend.AI's daemon processes which exhibit the role and key configurations (e.g.,
