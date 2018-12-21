@@ -7,7 +7,12 @@ Changes
 - Version numbers now follow year.month releases like Docker.
   We plan to release stable versions on every 3 months (e.g., 18.12, 19.03, ...).
 
-18.12.0a2 (2018-12-19)
+18.12.0a3 (2018-12-21)
+----------------------
+
+- Technical release to fix the backend.ai-common dependency version.
+
+18.12.0a2 (2018-12-21)
 ----------------------
 
 - NEW: Add an admin GraphQL scheme to fetch the currently registered list of
