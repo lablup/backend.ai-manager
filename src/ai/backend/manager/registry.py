@@ -16,6 +16,7 @@ from yarl import URL
 import zmq
 
 from ai.backend.common import msgpack
+from ai.backend.common.types import ImageRef
 from ai.backend.common.logging import BraceStyleAdapter
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
@@ -33,9 +34,11 @@ __all__ = ['AgentRegistry', 'InstanceNotFound']
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.registry'))
 
+agent_peers = {}
+
 
 @aiotools.actxmgr
-async def RPCContext(addr, timeout=10):
+async def RPCContext(addr, timeout=None):
     preserved_exceptions = (
         NotFoundError,
         ParametersError,
@@ -43,19 +46,27 @@ async def RPCContext(addr, timeout=10):
         asyncio.CancelledError,
         asyncio.InvalidStateError,
     )
-    server = None
-    try:
-        server = await aiozmq.rpc.connect_rpc(
+    global agent_peers
+    peer = agent_peers.get(addr, None)
+    if peer is None:
+        peer = await aiozmq.rpc.connect_rpc(
             connect=addr, error_table={
                 'concurrent.futures._base.TimeoutError': asyncio.TimeoutError,
             })
-        server.transport.setsockopt(zmq.LINGER, 50)
+        peer.transport.setsockopt(zmq.LINGER, 1000)
+        agent_peers[addr] = peer
+    try:
         with _timeout(timeout):
-            yield server
+            yield peer
+    except asyncio.TimeoutError:
+        log.warning('timeout while connecting to agent at {}', addr)
+        raise
+    except preserved_exceptions:
+        raise
     except Exception:
         exc_type, exc, tb = sys.exc_info()
         if issubclass(exc_type, GenericError):
-            e = AgentError(exc.args[0], exc.args[1])
+            e = AgentError(exc.args[0], exc.args[1], exc_repr=exc.args[2])
             raise e.with_traceback(tb)
         elif issubclass(exc_type, TypeError):
             if exc.args[0] == "'NoneType' object is not iterable":
@@ -67,15 +78,9 @@ async def RPCContext(addr, timeout=10):
             else:
                 e = AgentError(exc_type, exc.args)
                 raise e.with_traceback(tb)
-        elif issubclass(exc_type, preserved_exceptions):
-            raise
         else:
             e = AgentError(exc_type, exc.args)
             raise e.with_traceback(tb)
-    finally:
-        if server:
-            server.close()
-            await server.wait_closed()
 
 
 @aiotools.actxmgr
@@ -111,7 +116,12 @@ class AgentRegistry:
         pass
 
     async def shutdown(self):
-        pass
+        global agent_peers
+        closing_tasks = []
+        for addr, peer in agent_peers.items():
+            peer.close()
+            closing_tasks.append(peer.wait_closed())
+        await asyncio.gather(*closing_tasks)
 
     async def get_instance(self, inst_id, field=None):
         async with self.dbpool.acquire() as conn, conn.begin():
@@ -156,6 +166,7 @@ class AgentRegistry:
             'get_logs': KernelExecutionFailed,
         }
         exc_class = op_exc[op]
+        # NOTE: Error logging is done outside of this actxmanager.
         try:
             yield
         except asyncio.TimeoutError:
@@ -165,14 +176,12 @@ class AgentRegistry:
                     status_info=f'Operation timeout ({op})')
             if error_callback:
                 await error_callback()
-            raise exc_class('TIMEOUT')
+            raise exc_class('TIMEOUT') from None
         except asyncio.CancelledError:
             if cancellation_callback:
                 await cancellation_callback()
             raise
         except AgentError as e:
-            if not issubclass(e.args[0], AssertionError):
-                log.exception('{0}: agent-side error', op)
             # TODO: wrap some assertion errors as "invalid requests"
             if set_error:
                 await self.set_session_status(sess_id, access_key,
@@ -180,13 +189,11 @@ class AgentRegistry:
                                               status_info='Agent error')
             if error_callback:
                 await error_callback()
-            raise exc_class('FAILURE', e)
+            raise exc_class('FAILURE', e) from None
         except BackendError:
             # silently re-raise to make them handled by gateway http handlers
             raise
         except:
-            log.exception('{0}: other error', op)
-            # TODO: raven.captureException()
             if set_error:
                 await self.set_session_status(sess_id, access_key,
                                               KernelStatus.ERROR,
@@ -254,7 +261,8 @@ class AgentRegistry:
         '''
 
         cols = [kernels.c.id, kernels.c.sess_id, kernels.c.access_key,
-                kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.lang]
+                kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.lang,
+                kernels.c.service_ports]
         if field == '*':
             cols = '*'
         elif isinstance(field, (tuple, list)):
@@ -297,7 +305,8 @@ class AgentRegistry:
         '''
 
         cols = [kernels.c.id, kernels.c.sess_id,
-                kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.access_key]
+                kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.access_key,
+                kernels.c.service_ports]
         if isinstance(field, (tuple, list)):
             cols.extend(field)
         elif isinstance(field, (sa.Column, sa.sql.elements.ColumnClause)):
@@ -339,39 +348,34 @@ class AgentRegistry:
     async def get_or_create_session(self, sess_id, access_key,
                                     lang, creation_config,
                                     conn=None, tag=None):
+        requested_image_ref = ImageRef(lang)
+        if requested_image_ref.resolve_required():
+            await requested_image_ref.resolve(self.config_server.etcd)
         try:
             kern = await self.get_session(sess_id, access_key)
-            canonical_lang = await self.config_server.resolve_image_name(lang)
-            kernel_lang = tuple(kern.lang.split(':'))
-            if canonical_lang != kernel_lang:
+            running_image_ref = ImageRef(kern.lang)
+            if running_image_ref != requested_image_ref:
                 raise KernelAlreadyExists
             created = False
         except KernelNotFound:
             kern = await self.create_session(
                 sess_id, access_key,
-                lang, creation_config,
+                requested_image_ref, creation_config,
                 conn=conn, session_tag=tag)
             created = True
         assert kern is not None
         return kern, created
 
     async def create_session(self, sess_id, access_key,
-                             lang, creation_config,
+                             image_ref, creation_config,
                              conn=None, session_tag=None):
         agent_id = None
         created_info = None
         mounts = creation_config.get('mounts') or []
         environ = creation_config.get('environ') or {}
 
-        if '/' in lang:
-            tokens = lang.split('/')
-            docker_registry = '/'.join(tokens[:-1])
-            lang = tokens[-1]
-        else:
-            docker_registry = await self.config_server.get_docker_registry()
-        name, tag = await self.config_server.resolve_image_name(lang)
         max_allowed_slot = \
-            await self.config_server.get_image_required_slots(name, tag)
+            await self.config_server.get_image_required_slots(image_ref)
 
         try:
             cpu_share = Decimal(0)
@@ -427,9 +431,6 @@ class AgentRegistry:
             gpu=gpu_share,
             tpu=tpu_share,
         )
-        lang = f'{docker_registry}/{name}:{tag}'
-        image_name = f'{docker_registry}/kernel-{name}:{tag}'
-        runnable_agents = frozenset(await self.redis_image.smembers(image_name))
 
         async with reenter_txn(self.dbpool, conn) as conn:
 
@@ -439,8 +440,6 @@ class AgentRegistry:
                        .where(agents.c.status == AgentStatus.ALIVE))
 
             async for row in conn.execute(query):
-                if row['id'] not in runnable_agents:
-                    continue
                 sdiff = ResourceSlot(
                     id=row['id'],
                     mem=row['mem_slots'] - row['used_mem_slots'],
@@ -496,7 +495,7 @@ class AgentRegistry:
                 'agent': agent_id,
                 'agent_addr': agent_addr,
                 'access_key': access_key,
-                'lang': lang,
+                'lang': image_ref.long,
                 'tag': session_tag,
                 # units: absolute
                 'mem_slot': required_shares.mem * 1024,
@@ -518,9 +517,9 @@ class AgentRegistry:
 
             async with self.handle_kernel_exception(
                     'create_session', sess_id, access_key):
-                async with RPCContext(agent_addr, 3) as rpc:
+                async with RPCContext(agent_addr, 30) as rpc:
                     config = {
-                        'lang': lang,
+                        'lang': image_ref.long,
                         'limits': {
                             # units: share
                             'mem_slot': str(required_shares.mem),
@@ -540,12 +539,14 @@ class AgentRegistry:
                 assert str(kernel_id) == created_info['id']
                 agent_host = URL(agent_addr).host
                 kernel_host = created_info.get('kernel_host', agent_host)
+                service_ports = created_info.get('service_ports', [])
                 kernel_access_info = {
                     'id': kernel_id,
                     'sess_id': sess_id,
                     'agent': agent_id,
                     'agent_addr': agent_addr,
                     'kernel_host': kernel_host,
+                    'service_ports': service_ports,
                 }
                 query = (kernels.update()
                                 .values({
@@ -559,6 +560,7 @@ class AgentRegistry:
                                     'repl_out_port': created_info['repl_out_port'],
                                     'stdin_port': created_info['stdin_port'],
                                     'stdout_port': created_info['stdout_port'],
+                                    'service_ports': service_ports,
                                 })
                                 .where(kernels.c.id == kernel_id))
                 result = await conn.execute(query)
@@ -578,7 +580,7 @@ class AgentRegistry:
                                                   db_connection=conn)
             except KernelNotFound:
                 return
-            async with RPCContext(kernel['agent_addr'], 10) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 return await rpc.call.destroy_kernel(str(kernel['id']))
 
     async def restart_session(self, sess_id, access_key):
@@ -631,23 +633,28 @@ class AgentRegistry:
                     sess_id, access_key,
                     KernelStatus.RUNNING,
                     container_id=kernel_info['container_id'],
-                    cpu_set=list(kernel_info['cpu_set']),
-                    gpu_set=list(kernel_info['gpu_set']),
+                    cpu_set=[],
+                    gpu_set=[],
                     repl_in_port=kernel_info['repl_in_port'],
                     repl_out_port=kernel_info['repl_out_port'],
                     stdin_port=kernel_info['stdin_port'],
                     stdout_port=kernel_info['stdout_port'],
+                    service_ports=kernel_info.get('service_ports', [])
                 )
 
     async def execute(self, sess_id, access_key,
-                      api_version, run_id, mode, code, opts):
+                      api_version, run_id, mode, code, opts, *,
+                      flush_timeout=None):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
             # The agent aggregates at most 2 seconds of outputs
             # if the kernel runs for a long time.
-            async with RPCContext(kernel['agent_addr'], 300) as rpc:
+            if api_version == 4:  # manager-agent protocol is same.
+                api_version = 3
+            async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 coro = rpc.call.execute(api_version, str(kernel['id']),
-                                        run_id, mode, code, opts)
+                                        run_id, mode, code, opts,
+                                        flush_timeout)
                 if coro is None:
                     log.warning('execute cancelled')
                     return None
@@ -656,7 +663,7 @@ class AgentRegistry:
     async def interrupt_session(self, sess_id, access_key):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 5) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 coro = rpc.call.interrupt_kernel(str(kernel['id']))
                 if coro is None:
                     log.warning('interrupt cancelled')
@@ -666,17 +673,27 @@ class AgentRegistry:
     async def get_completions(self, sess_id, access_key, mode, text, opts):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 5) as rpc:
+            async with RPCContext(kernel['agent_addr'], 10) as rpc:
                 coro = rpc.call.get_completions(str(kernel['id']), mode, text, opts)
                 if coro is None:
                     log.warning('get_completions cancelled')
                     return None
                 return await coro
 
+    async def start_service(self, sess_id, access_key, service, opts):
+        async with self.handle_kernel_exception('execute', sess_id, access_key):
+            kernel = await self.get_session(sess_id, access_key)
+            async with RPCContext(kernel['agent_addr'], None) as rpc:
+                coro = rpc.call.start_service(str(kernel['id']), service, opts)
+                if coro is None:
+                    log.warning('stat_service cancelled')
+                    return None
+                return await coro
+
     async def upload_file(self, sess_id, access_key, filename, payload):
         async with self.handle_kernel_exception('upload_file', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 180) as rpc:
+            async with RPCContext(kernel['agent_addr'], None) as rpc:
                 coro = rpc.call.upload_file(str(kernel['id']), filename, payload)
                 if coro is None:
                     log.warning('upload_file cancelled')
@@ -687,7 +704,7 @@ class AgentRegistry:
         async with self.handle_kernel_exception('download_file', sess_id,
                                                 access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 180) as rpc:
+            async with RPCContext(kernel['agent_addr'], None) as rpc:
                 coro = rpc.call.download_file(str(kernel['id']), filepath)
                 if coro is None:
                     log.warning('download_file cancelled')
@@ -697,7 +714,7 @@ class AgentRegistry:
     async def list_files(self, sess_id, access_key, path):
         async with self.handle_kernel_exception('list_files', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 5) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 coro = rpc.call.list_files(str(kernel['id']), path)
                 if coro is None:
                     log.warning('list_files cancelled')
@@ -707,7 +724,7 @@ class AgentRegistry:
     async def get_logs(self, sess_id, access_key):
         async with self.handle_kernel_exception('get_logs', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 5) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 coro = rpc.call.get_logs(str(kernel['id']))
                 if coro is None:
                     log.warning('get_logs cancelled')
@@ -748,7 +765,7 @@ class AgentRegistry:
             return rows
 
     async def kill_all_sessions_in_agent(self, agent_addr):
-        async with RPCContext(agent_addr, 5) as rpc:
+        async with RPCContext(agent_addr, 30) as rpc:
             coro = rpc.call.clean_all_kernels('manager-freeze-force-kill')
             if coro is None:
                 log.warning('kill_all_sessions_in_agent cancelled')
@@ -786,15 +803,10 @@ class AgentRegistry:
                        .where(agents.c.id == agent_id))
             result = await conn.execute(query)
             row = await result.first()
-            ob_factors = await self.config_server.get_overbook_factors()
-            reported_mem_slots = int(Decimal(agent_info['mem_slots']) *
-                                     Decimal(ob_factors['mem']))
-            reported_cpu_slots = float(Decimal(agent_info['cpu_slots']) *
-                                       Decimal(ob_factors['cpu']))
-            reported_gpu_slots = float(Decimal(agent_info['gpu_slots']) *
-                                       Decimal(ob_factors['gpu']))
-            reported_tpu_slots = float(Decimal(agent_info['tpu_slots']) *
-                                       Decimal(ob_factors['tpu']))
+            reported_mem_slots = int(Decimal(agent_info['mem_slots']))
+            reported_cpu_slots = float(Decimal(agent_info['cpu_slots']))
+            reported_gpu_slots = float(Decimal(agent_info['gpu_slots']))
+            reported_tpu_slots = float(Decimal(agent_info['tpu_slots']))
             if row is None or row.status is None:
                 # new agent detected!
                 log.info('agent {0} joined!', agent_id)
@@ -865,6 +877,8 @@ class AgentRegistry:
         #  TODO: define behavior when agent reuse running instances upon revive
         # await app['registry'].forget_all_kernels_in_instance(agent_id)
 
+        global agent_peers
+
         await self.redis_live.hdel('last_seen', agent_id)
 
         pipe = self.redis_image.pipeline()
@@ -874,11 +888,16 @@ class AgentRegistry:
 
         async with reenter_txn(self.dbpool, conn) as conn:
 
-            query = (sa.select([agents.c.status], for_update=True)
+            query = (sa.select([agents.c.status, agents.c.addr], for_update=True)
                        .select_from(agents)
                        .where(agents.c.id == agent_id))
             result = await conn.execute(query)
-            prev_status = await result.scalar()
+            row = await result.first()
+            peer = agent_peers.pop(row['addr'], None)
+            if peer is not None:
+                peer.close()
+                await peer.wait_closed()
+            prev_status = row['status']
             if prev_status in (None, AgentStatus.LOST, AgentStatus.TERMINATED):
                 return
 

@@ -62,6 +62,7 @@ kernels = sa.Table(
     sa.Column('repl_out_port', sa.Integer(), nullable=False),
     sa.Column('stdin_port', sa.Integer(), nullable=False),
     sa.Column('stdout_port', sa.Integer(), nullable=False),
+    sa.Column('service_ports', sa.JSON(), nullable=True),
 
     # Lifecycle
     sa.Column('created_at', sa.DateTime(timezone=True),
@@ -105,6 +106,7 @@ class SessionCommons:
 
     agent = graphene.String()
     container_id = graphene.String()
+    service_ports = graphene.JSONString()
 
     mem_slot = graphene.Int()
     cpu_slot = graphene.Float()
@@ -217,6 +219,7 @@ class SessionCommons:
             'terminated_at': row['terminated_at'],
             'agent': row['agent'],
             'container_id': row['container_id'],
+            'service_ports': row['service_ports'],
             'mem_slot': row['mem_slot'],
             'cpu_slot': row['cpu_slot'],
             'gpu_slot': row['gpu_slot'],

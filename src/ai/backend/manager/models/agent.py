@@ -72,6 +72,10 @@ class Agent(graphene.ObjectType):
     first_contact = GQLDateTime()
     lost_at = GQLDateTime()
 
+    # Dynamic fields
+    cpu_cur_pct = graphene.Float()
+    mem_cur_bytes = graphene.Float()
+
     computations = graphene.List(
         'ai.backend.manager.models.Computation',
         status=graphene.String())

@@ -10,6 +10,7 @@ import uuid
 
 import aiohttp
 from aiohttp import web
+import aiohttp_cors
 import aiotools
 import sqlalchemy as sa
 import psycopg2
@@ -20,7 +21,9 @@ from .auth import auth_required
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
     InvalidAPIParameters)
-from .manager import server_unfrozen_required
+from .manager import (
+    READ_ALLOWED, ALL_ALLOWED,
+    server_status_required)
 from ..manager.models import (
     keypairs, vfolders, vfolder_invitations, vfolder_permissions,
     VFolderPermission)
@@ -131,7 +134,7 @@ def vfolder_check_exists(handler):
     return _wrapped
 
 
-@server_unfrozen_required
+@server_status_required(ALL_ALLOWED)
 @auth_required
 async def create(request):
     resp = {}
@@ -149,7 +152,9 @@ async def create(request):
             raise VFolderCreationFailed(
                 'You must specify the vfolder host '
                 'because the default host is not configured.')
-    if not (request.app['VFOLDER_MOUNT'] / folder_host).is_dir():
+    vfroot = (request.app['VFOLDER_MOUNT'] / folder_host /
+              request.app['VFOLDER_FSPREFIX'])
+    if not vfroot.is_dir():
         raise VFolderCreationFailed(f'Invalid vfolder host: {folder_host}')
 
     async with dbpool.acquire() as conn:
@@ -167,7 +172,8 @@ async def create(request):
             raise VFolderAlreadyExists
 
         folder_id = uuid.uuid4().hex
-        folder_path = (request.app['VFOLDER_MOUNT'] / folder_host / folder_id)
+        folder_path = (request.app['VFOLDER_MOUNT'] / folder_host /
+                       request.app['VFOLDER_FSPREFIX'] / folder_id)
         folder_path.mkdir(parents=True, exist_ok=True)
         query = (vfolders.insert().values({
             'id': folder_id,
@@ -189,6 +195,7 @@ async def create(request):
     return web.json_response(resp, status=201)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
 async def list_folders(request):
     resp = []
@@ -223,6 +230,7 @@ async def list_folders(request):
     return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
 async def get_info(request, row):
@@ -237,7 +245,8 @@ async def get_info(request, row):
         is_owner = False
         permission = row.permission
     # TODO: handle nested directory structure
-    folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+    folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
+                   request.app['VFOLDER_FSPREFIX'] / row.id.hex)
     num_files = len(list(folder_path.iterdir()))
     resp = {
         'name': row.name,
@@ -251,6 +260,7 @@ async def get_info(request, row):
     return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_WRITE)
 async def mkdir(request, row):
@@ -261,7 +271,8 @@ async def mkdir(request, row):
     assert path, 'path not specified!'
     path = Path(path)
     log.info('VFOLDER.MKDIR (u:{0}, f:{1})', access_key, folder_name)
-    folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+    folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
+                   request.app['VFOLDER_FSPREFIX'] / row.id.hex)
     assert not path.is_absolute(), 'path must be relative.'
     try:
         (folder_path / path).mkdir(parents=True, exist_ok=True)
@@ -271,13 +282,15 @@ async def mkdir(request, row):
     return web.Response(status=201)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_WRITE)
 async def upload(request, row):
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.UPLOAD (u:{0}, f:{1})', access_key, folder_name)
-    folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+    folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
+                   request.app['VFOLDER_FSPREFIX'] / row.id.hex)
     reader = await request.multipart()
     file_count = 0
     async for file in aiotools.aiter(reader.next, None):
@@ -303,6 +316,7 @@ async def upload(request, row):
     return web.Response(status=201)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.RW_DELETE)
 async def delete_files(request, row):
@@ -313,7 +327,8 @@ async def delete_files(request, row):
     assert files, 'no file(s) specified!'
     recursive = params.get('recursive', False)
     log.info('VFOLDER.DELETE_FILES (u:{0}, f:{1})', access_key, folder_name)
-    folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+    folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
+                   request.app['VFOLDER_FSPREFIX'] / row.id.hex)
     ops = []
     for file in files:
         file_path = folder_path / file
@@ -332,6 +347,7 @@ async def delete_files(request, row):
     return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
 async def download(request, row):
@@ -341,7 +357,8 @@ async def download(request, row):
     assert params.get('files'), 'no file(s) specified!'
     files = params.get('files')
     log.info('VFOLDER.DOWNLOAD (u:{0}, f:{1})', access_key, folder_name)
-    folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+    folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
+                   request.app['VFOLDER_FSPREFIX'] / row.id.hex)
     for file in files:
         if not (folder_path / file).is_file():
             raise InvalidAPIParameters(
@@ -360,6 +377,7 @@ async def download(request, row):
         return web.Response(body=mpwriter, status=200)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
 async def list_files(request, row):
@@ -367,7 +385,8 @@ async def list_files(request, row):
     access_key = request['keypair']['access_key']
     params = await request.json()
     log.info('VFOLDER.LIST_FILES (u:{0}, f:{1})', access_key, folder_name)
-    base_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+    base_path = (request.app['VFOLDER_MOUNT'] / row.host /
+                 request.app['VFOLDER_FSPREFIX'] / row.id.hex)
     folder_path = base_path / params['path'] if 'path' in params else base_path
     if not str(folder_path).startswith(str(base_path)):
         resp = {'error_msg': 'No such file or directory'}
@@ -392,6 +411,7 @@ async def list_files(request, row):
     return web.json_response(resp, status=200)
 
 
+@server_status_required(ALL_ALLOWED)
 @auth_required
 async def invite(request):
     dbpool = request.app['dbpool']
@@ -466,6 +486,7 @@ async def invite(request):
     return web.json_response(resp, status=201)
 
 
+@server_status_required(READ_ALLOWED)
 @auth_required
 async def invitations(request):
     dbpool = request.app['dbpool']
@@ -495,6 +516,7 @@ async def invitations(request):
     return web.json_response(resp, status=200)
 
 
+@server_status_required(ALL_ALLOWED)
 @auth_required
 async def accept_invitation(request):
     dbpool = request.app['dbpool']
@@ -570,6 +592,7 @@ async def accept_invitation(request):
     return web.json_response({'msg': msg}, status=201)
 
 
+@server_status_required(ALL_ALLOWED)
 @auth_required
 async def delete_invitation(request):
     dbpool = request.app['dbpool']
@@ -598,6 +621,7 @@ async def delete_invitation(request):
     return web.json_response(resp, status=200)
 
 
+@server_status_required(ALL_ALLOWED)
 @auth_required
 async def delete(request):
     dbpool = request.app['dbpool']
@@ -616,7 +640,8 @@ async def delete(request):
         row = await result.first()
         if row is None:
             raise VFolderNotFound()
-        folder_path = (request.app['VFOLDER_MOUNT'] / row.host / row.id.hex)
+        folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
+                       request.app['VFOLDER_FSPREFIX'] / row.id.hex)
         try:
             shutil.rmtree(folder_path)
         except IOError:
@@ -632,30 +657,38 @@ async def init(app):
     mount_prefix = await app['config_server'].etcd.get('volumes/_mount')
     if mount_prefix is None:
         mount_prefix = '/mnt'
+    fs_prefix = await app['config_server'].etcd.get('volumes/_fsprefix')
+    if fs_prefix is None:
+        fs_prefix = '/'
     app['VFOLDER_MOUNT'] = Path(mount_prefix)
+    app['VFOLDER_FSPREFIX'] = Path(fs_prefix.lstrip('/'))
 
 
 async def shutdown(app):
     pass
 
 
-def create_app():
+def create_app(default_cors_options):
     app = web.Application()
     app['prefix'] = 'folders'
-    app['api_versions'] = (2, 3)
+    app['api_versions'] = (2, 3, 4)
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
-    app.router.add_route('POST',   r'', create)
-    app.router.add_route('GET',    r'', list_folders)
-    app.router.add_route('GET',    r'/{name}', get_info)
-    app.router.add_route('DELETE', r'/{name}', delete)
-    app.router.add_route('POST',   r'/{name}/mkdir', mkdir)
-    app.router.add_route('POST',   r'/{name}/upload', upload)
-    app.router.add_route('DELETE', r'/{name}/delete_files', delete_files)
-    app.router.add_route('GET',    r'/{name}/download', download)
-    app.router.add_route('GET',    r'/{name}/files', list_files)
-    app.router.add_route('POST',   r'/{name}/invite', invite)
-    app.router.add_route('GET',    r'/invitations/list', invitations)
-    app.router.add_route('POST',   r'/invitations/accept', accept_invitation)
-    app.router.add_route('DELETE', r'/invitations/delete', delete_invitation)
+    cors = aiohttp_cors.setup(app, defaults=default_cors_options)
+    add_route = app.router.add_route
+    root_resource = cors.add(app.router.add_resource(r''))
+    cors.add(root_resource.add_route('POST', create))
+    cors.add(root_resource.add_route('GET',  list_folders))
+    vfolder_resource = cors.add(app.router.add_resource(r'/{name}'))
+    cors.add(vfolder_resource.add_route('GET',    get_info))
+    cors.add(vfolder_resource.add_route('DELETE', delete))
+    cors.add(add_route('POST',   r'/{name}/mkdir', mkdir))
+    cors.add(add_route('POST',   r'/{name}/upload', upload))
+    cors.add(add_route('DELETE', r'/{name}/delete_files', delete_files))
+    cors.add(add_route('GET',    r'/{name}/download', download))
+    cors.add(add_route('GET',    r'/{name}/files', list_files))
+    cors.add(add_route('POST',   r'/{name}/invite', invite))
+    cors.add(add_route('GET',    r'/invitations/list', invitations))
+    cors.add(add_route('POST',   r'/invitations/accept', accept_invitation))
+    cors.add(add_route('DELETE', r'/invitations/delete', delete_invitation))
     return app, []

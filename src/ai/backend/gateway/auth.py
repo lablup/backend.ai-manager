@@ -7,6 +7,7 @@ import logging
 import secrets
 
 from aiohttp import web
+import aiohttp_cors
 from aiojobs.aiohttp import atomic
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
@@ -81,17 +82,17 @@ async def sign_request(sign_method, request, secret_key) -> str:
         assert hash_type in hashlib.algorithms_guaranteed, \
                'Unsupported request signing method (hash type)'
 
-        if (request.can_read_body and
-            not request.content_type == 'multipart/form-data'):
-            # read the whole body if neither streaming nor bodyless
-            body = await request.read()
-        else:
-            body = b''
-        body_hash = hashlib.new(hash_type, body).hexdigest()
         new_api_version = request.headers.get('X-BackendAI-Version')
         legacy_api_version = request.headers.get('X-Sorna-Version')
         api_version = new_api_version or legacy_api_version
         assert api_version is not None, 'API version missing in request headers'
+        body = b''
+        if api_version < 'v4.20181215':
+            if (request.can_read_body and
+                request.content_type != 'multipart/form-data'):
+                # read the whole body if neither streaming nor bodyless
+                body = await request.read()
+        body_hash = hashlib.new(hash_type, body).hexdigest()
 
         sign_bytes = ('{0}\n{1}\n{2}\nhost:{3}\ncontent-type:{4}\n'
                       'x-{name}-version:{5}\n{6}').format(
@@ -206,13 +207,17 @@ def generate_keypair():
     return ak, sk
 
 
-def create_app():
+def create_app(default_cors_options):
     app = web.Application()
-    app['prefix'] = 'auth/'  # slashed to distinguish with "/vN/authorize"
-    app['api_versions'] = (1, 2, 3)
-    res = app.router.add_resource(r'/test')
-    res.add_route('GET', auth_test)
-    res.add_route('POST', auth_test)
+    app['prefix'] = 'auth'  # slashed to distinguish with "/vN/authorize"
+    app['api_versions'] = (1, 2, 3, 4)
+    cors = aiohttp_cors.setup(app, defaults=default_cors_options)
+    root_resource = cors.add(app.router.add_resource(r''))
+    cors.add(root_resource.add_route('GET', auth_test))
+    cors.add(root_resource.add_route('POST', auth_test))
+    test_resource = cors.add(app.router.add_resource(r'/test'))
+    cors.add(test_resource.add_route('GET', auth_test))
+    cors.add(test_resource.add_route('POST', auth_test))
     return app, [auth_middleware]
 
 

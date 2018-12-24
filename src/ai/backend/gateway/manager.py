@@ -1,38 +1,45 @@
 import asyncio
-import enum
 import functools
 import json
 import logging
+from typing import Set
 import sqlalchemy as sa
 
 from aiohttp import web
+import aiohttp_cors
 
 from ai.backend.common.logging import BraceStyleAdapter
 
+from . import ManagerStatus
 from .auth import admin_required
-from .exceptions import InvalidAPIParameters, ServerFrozen
+from .exceptions import InvalidAPIParameters, ServerFrozen, ServiceUnavailable
 from ..manager.models import kernels, KernelStatus
 
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.manager'))
 
 
-class ManagerStatus(enum.Enum):
-    RUNNING = 'running'
-    FROZEN = 'frozen'
+def server_status_required(allowed_status: Set[ManagerStatus]):
+
+    def decorator(handler):
+
+        @functools.wraps(handler)
+        async def wrapped(request):
+            status = await request.app['config_server'].get_manager_status()
+            if status not in allowed_status:
+                if status == ManagerStatus.FROZEN:
+                    raise ServerFrozen
+                msg = f'Server is not in the required status: {allowed_status}'
+                raise ServiceUnavailable(msg)
+            return (await handler(request))
+
+        return wrapped
+
+    return decorator
 
 
-def server_unfrozen_required(handler):
-
-    @functools.wraps(handler)
-    async def _wrapped(request):
-        status = await request.app['config_server'].get_manager_status()
-        if status == ManagerStatus.FROZEN:
-            raise ServerFrozen
-
-        return await handler(request)
-
-    return _wrapped
+READ_ALLOWED = frozenset({ManagerStatus.RUNNING, ManagerStatus.FROZEN})
+ALL_ALLOWED = frozenset({ManagerStatus.RUNNING})
 
 
 class GQLMutationUnfrozenRequiredMiddleware:
@@ -101,16 +108,20 @@ async def init(app):
 
 
 async def shutdown(app):
+    if app['pidx'] == 0:
+        await app['config_server'].update_manager_status(ManagerStatus.TERMINATED)
     if app['status_watch_task'] is not None:
         app['status_watch_task'].cancel()
         await app['status_watch_task']
 
 
-def create_app():
+def create_app(default_cors_options):
     app = web.Application()
-    app['api_versions'] = (2, 3)
-    app.router.add_route('GET', r'/status', fetch_manager_status)
-    app.router.add_route('PUT', r'/status', update_manager_status)
+    app['api_versions'] = (2, 3, 4)
+    cors = aiohttp_cors.setup(app, defaults=default_cors_options)
+    status_resource = cors.add(app.router.add_resource(r'/status'))
+    cors.add(status_resource.add_route('GET', fetch_manager_status))
+    cors.add(status_resource.add_route('PUT', update_manager_status))
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     return app, []

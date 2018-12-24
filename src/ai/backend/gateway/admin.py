@@ -6,6 +6,7 @@ import traceback
 from typing import Mapping
 
 from aiohttp import web
+import aiohttp_cors
 from aiojobs.aiohttp import atomic
 import graphene
 from graphql.execution.executors.asyncio import AsyncioExecutor
@@ -18,7 +19,7 @@ from .exceptions import InvalidAPIParameters, BackendError
 from .auth import auth_required
 from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
-    Agent,
+    Agent, Image,
     KeyPair, CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
     ComputeSession, ComputeWorker, KernelStatus,
     VirtualFolder,
@@ -60,6 +61,7 @@ async def handle_gql(request: web.Request) -> web.Response:
         variable_values=body['variables'],
         context_value={
             'dlmgr': dlmanager,
+            'etcd': request.app['config_server'].etcd,
             'access_key': request['keypair']['access_key'],
             'dbpool': request.app['dbpool'],
             'redis_stat': request.app['redis_stat'],
@@ -78,7 +80,7 @@ async def handle_gql(request: web.Request) -> web.Response:
                             e.original_error.__traceback__)
                 tb_text = ''.join(traceback.format_exception(*exc_info))
                 log.error('GraphQL located error:\n{0}', tb_text)
-                request.app['sentry'].captureException(exc_info)
+                request.app['error_monitor'].capture_exception(exc_info)
                 has_internal_errors = True
         if has_internal_errors:
             raise BackendError(str(result.errors[0]))
@@ -114,13 +116,17 @@ class QueryForAdmin(graphene.ObjectType):
         Agent,
         status=graphene.String())
 
+    images = graphene.List(
+        Image,
+    )
+
     keypair = graphene.Field(
         KeyPair,
         access_key=graphene.String())
 
     keypairs = graphene.List(
         KeyPair,
-        user_id=graphene.String(required=True),
+        user_id=graphene.String(),
         is_active=graphene.Boolean())
 
     vfolders = graphene.List(
@@ -144,13 +150,35 @@ class QueryForAdmin(graphene.ObjectType):
     @staticmethod
     async def resolve_agent(executor, info, agent_id):
         manager = info.context['dlmgr']
+        rs = info.context['redis_stat']
         loader = manager.get_loader('Agent', status=None)
-        return await loader.load(agent_id)
+        agent = await loader.load(agent_id)
+        cpu_pct, mem_cur_bytes = await rs.hmget(
+            str(agent.id),
+            'cpu_pct', 'mem_cur_bytes',
+        )
+        agent.cpu_cur_pct = cpu_pct
+        agent.mem_cur_bytes = mem_cur_bytes
+        return agent
 
     @staticmethod
     async def resolve_agents(executor, info, status=None):
         dbpool = info.context['dbpool']
-        return await Agent.load_all(dbpool, status=status)
+        rs = info.context['redis_stat']
+        agent_list = await Agent.load_all(dbpool, status=status)
+        for agent in agent_list:
+            cpu_pct, mem_cur_bytes = await rs.hmget(
+                str(agent.id),
+                'cpu_pct', 'mem_cur_bytes',
+            )
+            agent.cpu_cur_pct = cpu_pct
+            agent.mem_cur_bytes = mem_cur_bytes
+        return agent_list
+
+    @staticmethod
+    async def resolve_images(executor, info):
+        etcd = info.context['etcd']
+        return await Image.load_all(etcd)
 
     @staticmethod
     async def resolve_keypair(executor, info, access_key=None):
@@ -161,10 +189,14 @@ class QueryForAdmin(graphene.ObjectType):
         return await loader.load(access_key)
 
     @staticmethod
-    async def resolve_keypairs(executor, info, user_id, is_active=None):
+    async def resolve_keypairs(executor, info, user_id=None, is_active=None):
         manager = info.context['dlmgr']
-        loader = manager.get_loader('KeyPair.by_uid', is_active=is_active)
-        return await loader.load(user_id)
+        dbpool = info.context['dbpool']
+        if user_id is None:
+            return await KeyPair.load_all(dbpool, is_active=is_active)
+        else:
+            loader = manager.get_loader('KeyPair.by_uid', is_active=is_active)
+            return await loader.load(user_id)
 
     @staticmethod
     async def resolve_vfolders(executor, info, access_key=None):
@@ -209,6 +241,10 @@ class QueryForUser(graphene.ObjectType):
     It only allows use of the access key specified in the authorization header.
     '''
 
+    images = graphene.List(
+        Image,
+    )
+
     keypair = graphene.Field(lambda: KeyPair)
 
     vfolders = graphene.List(VirtualFolder)
@@ -225,6 +261,11 @@ class QueryForUser(graphene.ObjectType):
         ComputeWorker,
         sess_id=graphene.String(required=True),
         status=graphene.String())
+
+    @staticmethod
+    async def resolve_images(executor, info):
+        etcd = info.context['etcd']
+        return await Image.load_all(etcd)
 
     @staticmethod
     async def resolve_keypair(executor, info):
@@ -289,12 +330,13 @@ async def shutdown(app):
     pass
 
 
-def create_app():
+def create_app(default_cors_options):
     app = web.Application()
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
-    app['api_versions'] = (2, 3)
-    app.router.add_route('POST', r'/graphql', handle_gql)
+    app['api_versions'] = (2, 3, 4)
+    cors = aiohttp_cors.setup(app, defaults=default_cors_options)
+    cors.add(app.router.add_route('POST', r'/graphql', handle_gql))
     return app, []
 
 

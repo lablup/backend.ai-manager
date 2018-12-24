@@ -7,6 +7,70 @@ Changes
 - Version numbers now follow year.month releases like Docker.
   We plan to release stable versions on every 3 months (e.g., 18.12, 19.03, ...).
 
+18.12.0a3 (2018-12-21)
+----------------------
+
+- Technical release to fix the backend.ai-common dependency version.
+
+18.12.0a2 (2018-12-21)
+----------------------
+
+- NEW: Add an admin GraphQL scheme to fetch the currently registered list of
+  kernel images.
+
+- CHANGE: Change fixtures from a Python module to static JSON files.
+  Now the example keypair fixture reside in the sample-configs directory.
+
+  - ``python -m ai.backend.manager.cli fixture populate`` is changed to accept
+    a path to the fixture JSON file.
+
+  - ``python -m ai.backend.manager.cli fixture list`` is now deprecated.
+
+- CHANGE: The process monitoring tools will now show prettified process names for
+  Backend.AI's daemon processes which exhibit the role and key configurations (e.g.,
+  namespace) at a glance.
+
+- Improve support for using custom/private Docker registries.
+
+18.12.0a1 (2018-12-14)
+----------------------
+
+- NEW: App service ports!  You can start a compute session and directly connect to a
+  service running inside it, such as Jupyter Notebook! (#121)
+
+- Extended CORS support for web browser clients.
+
+- Monitoring tools are separated as plugins.
+
+1.4.7 (2018-11-24)
+------------------
+
+- Technical release to fix an internal merge error.
+
+1.4.6 (2018-11-24)
+------------------
+
+- Fix various bugs.
+
+  - Fix kernel restart regression bug.
+  - Fix code execution with API v4 requests.
+  - Fix auth test URLs.
+  - Fix Server response headers in subapps.
+
+1.4.5 (2018-11-22)
+------------------
+
+- backport: Accept API v4 requests (lablup/backend.ai#30)
+  In API v4, the authentication signature always uses an emtpy string
+  as the request body element to allow easier implementation of streaming
+  and proxies.
+
+- Fix handling of empty/unspecified execute API options (#116)
+
+- Fix storing of fractional resources reported by agents
+
+- Update image metadata/aliases for TensorFlow 1.12 and PyTorch
+
 1.4.4 (2018-11-09)
 ------------------
 

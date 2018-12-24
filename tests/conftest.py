@@ -17,6 +17,7 @@ import tempfile
 import aiodocker
 import aiohttp
 from aiohttp import web
+import aiohttp_cors
 import aiojobs.aiohttp
 from aiopg.sa import create_engine
 from async_timeout import timeout
@@ -62,14 +63,19 @@ def folder_mount(test_id):
 
 
 @pytest.fixture(scope='session')
+def folder_fsprefix(test_id):
+    # NOTE: the prefix must NOT start with "/"
+    return Path('fsprefix/inner/')
+
+
+@pytest.fixture(scope='session')
 def folder_host():
-    # FIXME: generalize this
     return 'local'
 
 
 @pytest.fixture(scope='session', autouse=True)
 def prepare_and_cleanup_databases(request, test_ns, test_db,
-                                  folder_mount, folder_host):
+                                  folder_mount, folder_host, folder_fsprefix):
     os.environ['BACKEND_NAMESPACE'] = test_ns
     os.environ['BACKEND_DB_NAME'] = test_db
 
@@ -83,6 +89,9 @@ def prepare_and_cleanup_databases(request, test_ns, test_db,
                      etcd_addr=etcd_addr, namespace=test_ns)
     update_aliases(args)
     args = Namespace(key='volumes/_mount', value=str(folder_mount),
+                     etcd_addr=etcd_addr, namespace=test_ns)
+    put(args)
+    args = Namespace(key='volumes/_fsprefix', value=str(folder_fsprefix),
                      etcd_addr=etcd_addr, namespace=test_ns)
     put(args)
     args = Namespace(key='volumes/_default_host', value=str(folder_host),
@@ -295,7 +304,7 @@ async def user_keypair(event_loop, app):
 @pytest.fixture
 def get_headers(app, default_keypair, prepare_docker_images):
     def create_header(method, url, req_bytes, ctype='application/json',
-                      hash_type='sha256', api_version='v3.20170615',
+                      hash_type='sha256', api_version='v4.20181215',
                       keypair=default_keypair):
         now = datetime.now(tzutc())
         hostname = f"localhost:{app['config'].service_port}"
@@ -305,8 +314,14 @@ def get_headers(app, default_keypair, prepare_docker_images):
             'Content-Length': str(len(req_bytes)),
             'X-BackendAI-Version': api_version,
         }
-        if ctype.startswith('multipart'):
+        if api_version >= 'v4.20181215':
             req_bytes = b''
+        else:
+            if ctype.startswith('multipart'):
+                req_bytes = b''
+        if ctype.startswith('multipart'):
+            # Let aiohttp to create appropriate header values
+            # (e.g., multipart content-type header with message boundaries)
             del headers['Content-Type']
             del headers['Content-Length']
         req_hash = hashlib.new(hash_type, req_bytes).hexdigest()
@@ -344,11 +359,16 @@ async def create_app_and_client(request, test_id, test_ns,
         scheduler_opts = {
             'close_timeout': 10,
         }
+        cors_opts = {
+            '*': aiohttp_cors.ResourceOptions(
+                allow_credentials=False,
+                expose_headers="*", allow_headers="*"),
+        }
         aiojobs.aiohttp.setup(app, **scheduler_opts)
-        await gw_init(app)
+        await gw_init(app, cors_opts)
         for mod in modules:
             target_module = import_module(f'.{mod}', 'ai.backend.gateway')
-            subapp, mw = getattr(target_module, 'create_app', None)()
+            subapp, mw = getattr(target_module, 'create_app', None)(cors_opts)
             assert isinstance(subapp, web.Application)
             for key in PUBLIC_INTERFACES:
                 subapp[key] = app[key]

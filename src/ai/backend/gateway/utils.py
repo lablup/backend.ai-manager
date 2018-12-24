@@ -9,8 +9,7 @@ from aiohttp import web
 from dateutil.tz import gettz
 import pytz
 
-from . import GatewayStatus
-from .exceptions import QueryNotImplemented, ServiceUnavailable
+from .exceptions import QueryNotImplemented
 
 _rx_sitepkg_path = re.compile(r'^.+/site-packages/')
 
@@ -114,18 +113,6 @@ def get_handler_attr(request, key, default=None):
     if attrs is not None:
         return attrs.get(key, default)
     return default
-
-
-def server_ready_required(handler):
-
-    @functools.wraps(handler)
-    async def wrapped(request):
-        if request.app['status'] != GatewayStatus.RUNNING:
-            raise ServiceUnavailable('Server not ready.')
-        return (await handler(request))
-
-    set_handler_attr(wrapped, 'ready_required', True)
-    return wrapped
 
 
 async def not_impl_stub(request) -> web.Response:

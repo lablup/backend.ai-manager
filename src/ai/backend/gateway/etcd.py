@@ -8,9 +8,9 @@ import yaml
 
 from ai.backend.common.identity import get_instance_id, get_instance_ip
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.types import ImageRef
 
 from ..manager.models.agent import ResourceSlot
-from .exceptions import ImageNotFound
 from .manager import ManagerStatus
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
@@ -146,43 +146,18 @@ class ConfigServer:
         docker_registry = await self.etcd.get('nodes/docker_registry')
         return docker_registry
 
-    @aiotools.lru_cache(maxsize=1, expire_after=60.0)
-    async def get_overbook_factors(self):
-        '''
-        Retrieves the overbook parameters which is used to
-        scale the resource slot values reported by the agent
-        to increase server utilization.
-
-        TIP: If your users run mostly compute-intesive sessions,
-        lower these values towards 1.0.
-        '''
-
-        cpu = await self.etcd.get('config/overbook/cpu')
-        cpu = 6.0 if cpu is None else float(cpu)
-        mem = await self.etcd.get('config/overbook/mem')
-        mem = 2.0 if mem is None else float(mem)
-        gpu = await self.etcd.get('config/overbook/gpu')
-        gpu = 1.0 if gpu is None else float(gpu)
-        tpu = await self.etcd.get('config/overbook/tpu')
-        tpu = 1.0 if tpu is None else float(tpu)
-        return {
-            'mem': mem,
-            'cpu': cpu,
-            'gpu': gpu,
-            'tpu': tpu,
-        }
-
     @aiotools.lru_cache(expire_after=60.0)
-    async def get_image_required_slots(self, name, tag):
-        installed = await self.etcd.get(f'images/{name}')
+    async def get_image_required_slots(self, image_ref: ImageRef):
+        installed = await self.etcd.get(f'images/{image_ref.name}')
         if installed is None:
             raise RuntimeError('Image metadata is not available!')
-        cpu = await self.etcd.get(f'images/{name}/cpu')
+        cpu = await self.etcd.get(f'images/{image_ref.name}/cpu')
         cpu = None if cpu == 'null' else Decimal(cpu)
-        mem = await self.etcd.get(f'images/{name}/mem')
+        mem = await self.etcd.get(f'images/{image_ref.name}/mem')
         mem = None if mem == 'null' else Decimal(mem)
-        if 'gpu' in tag:
-            gpu = await self.etcd.get(f'images/{name}/gpu')
+        _, platform_tags = image_ref.tag_set
+        if 'gpu' in platform_tags or 'cuda' in platform_tags:
+            gpu = await self.etcd.get(f'images/{image_ref.name}/gpu')
             gpu = Decimal(0) if gpu == 'null' else Decimal(gpu)
         else:
             gpu = Decimal(0)
@@ -192,30 +167,6 @@ class ConfigServer:
         else:
             tpu = Decimal(0)
         return ResourceSlot(mem=mem, cpu=cpu, gpu=gpu, tpu=tpu)
-
-    @aiotools.lru_cache(expire_after=60.0)
-    async def resolve_image_name(self, name_or_alias):
-
-        async def resolve_alias(alias_key):
-            alias_target = None
-            while True:
-                prev_alias_key = alias_key
-                alias_key = await self.etcd.get(f'images/_aliases/{alias_key}')
-                if alias_key is None:
-                    alias_target = prev_alias_key
-                    break
-            return alias_target
-
-        alias_target = await resolve_alias(name_or_alias)
-        if alias_target == name_or_alias and name_or_alias.rfind(':') == -1:
-            alias_target = await resolve_alias(f'{name_or_alias}:latest')
-        assert alias_target is not None
-        name, _, tag = alias_target.partition(':')
-        hash = await self.etcd.get(f'images/{name}/tags/{tag}')
-        if hash is None:
-            raise ImageNotFound(f'{name_or_alias}: Unregistered image '
-                                'or unknown alias.')
-        return name, tag
 
     # TODO: invalidate config cache when etcd content is updated
 
@@ -230,9 +181,9 @@ async def shutdown(app):
         await app['config_server'].deregister_myself()
 
 
-def create_app():
+def create_app(default_cors_options):
     app = web.Application()
-    app['api_versions'] = (3,)
+    app['api_versions'] = (3, 4)
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     return app, []
