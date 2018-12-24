@@ -161,8 +161,8 @@ class ConfigServer:
             gpu = Decimal(0) if gpu == 'null' else Decimal(gpu)
         else:
             gpu = Decimal(0)
-        if 'tpu' in tag:
-            tpu = await self.etcd.get(f'images/{name}/tpu')
+        if 'tpu' in platform_tags:
+            tpu = await self.etcd.get(f'images/{image_ref.name}/tpu')
             tpu = Decimal(0) if tpu == 'null' else Decimal(tpu)
         else:
             tpu = Decimal(0)
