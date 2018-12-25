@@ -7,6 +7,11 @@ Changes
 - Version numbers now follow year.month releases like Docker.
   We plan to release stable versions on every 3 months (e.g., 18.12, 19.03, ...).
 
+18.12.0a4 (2018-12-26)
+----------------------
+
+- manager.cli.etcd: Improve interoperability with installer scripts.
+
 18.12.0a3 (2018-12-21)
 ----------------------
 
