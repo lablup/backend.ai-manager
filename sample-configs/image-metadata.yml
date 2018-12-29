@@ -30,8 +30,8 @@ images:
     # image for unit-testing student submissions
     syntax: python
     tags:
-      - ["latest",     ":3.6-debian"]
-      - ["3.6-debian", "2ac49fbe2104"]
+      - ["latest",     ":3.6-ubuntu"]
+      - ["3.6-ubuntu", "x"]
     slots:
       cpu: 1    # cores
       mem: 0.3  # GiB
