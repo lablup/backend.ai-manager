@@ -121,6 +121,7 @@ aliases:
   - ['python-torch-gpu',       'python-pytorch:latest-gpu']
   - ['python-pytorch',         'python-pytorch:latest']
   - ['python-pytorch-gpu',     'python-pytorch:latest-gpu']
+  - ['python-pytorch:0.1-gpu', 'python-pytorch:0.1-py36-cuda8']  # preferred
   - ['python-pytorch:0.2',     'python-pytorch:0.2-py36']      # preferred
   - ['python-pytorch:0.2-gpu', 'python-pytorch:0.2-py36-cuda8']  # preferred
   - ['python-pytorch:0.3',     'python-pytorch:0.3-py36']      # preferred
@@ -134,6 +135,7 @@ aliases:
   - ['torch-python-gpu', 'python-pytorch:latest-gpu']
   - ['pytorch',          'python-pytorch:latest']
   - ['pytorch-gpu',      'python-pytorch:latest-gpu']
+  - ['pytorch:0.1-gpu',  'python-pytorch:0.1-py36-cuda8'] # preferred
   - ['pytorch:0.2',      'python-pytorch:0.2-py36']     # preferred
   - ['pytorch:0.2-gpu',  'python-pytorch:0.2-py36-cuda8'] # preferred
   - ['pytorch:0.3',      'python-pytorch:0.3-py36']     # preferred
