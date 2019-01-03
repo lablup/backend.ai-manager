@@ -48,9 +48,11 @@ kernels = sa.Table(
     sa.Column('container_id', sa.String(length=64)),
     sa.Column('cpu_set', sa.ARRAY(sa.Integer)),
     sa.Column('gpu_set', sa.ARRAY(sa.Integer)),
+    sa.Column('tpu_set', sa.ARRAY(sa.Integer)),
     sa.Column('mem_slot', sa.BigInteger(), nullable=False),
     sa.Column('cpu_slot', sa.Float(), nullable=False),
     sa.Column('gpu_slot', sa.Float(), nullable=False),
+    sa.Column('tpu_slot', sa.Float(), nullable=False),
     sa.Column('environ', sa.ARRAY(sa.String), nullable=True),
 
     # Port mappings
@@ -109,6 +111,7 @@ class SessionCommons:
     mem_slot = graphene.Int()
     cpu_slot = graphene.Float()
     gpu_slot = graphene.Float()
+    tpu_slot = graphene.Float()
 
     num_queries = graphene.Int()
     cpu_used = graphene.Int()
@@ -220,6 +223,7 @@ class SessionCommons:
             'mem_slot': row['mem_slot'],
             'cpu_slot': row['cpu_slot'],
             'gpu_slot': row['gpu_slot'],
+            'tpu_slot': row['tpu_slot'],
             'num_queries': row['num_queries'],
             # live statistics
             # NOTE: currently graphene always uses resolve methods!

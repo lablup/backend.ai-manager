@@ -70,12 +70,15 @@ class ConfigServer:
             mem_share = 'null' if mem_share is None else f'{mem_share:.2f}'
             gpu_share = image['slots']['gpu']
             gpu_share = 'null' if gpu_share is None else f'{gpu_share:.2f}'
+            tpu_share = image['slots']['tpu']
+            tpu_share = 'null' if tpu_share is None else f'{tpu_share:.2f}'
             await self.etcd.put_multi(
                 [f'images/{name}',
                  f'images/{name}/cpu',
                  f'images/{name}/mem',
-                 f'images/{name}/gpu'],
-                ['1', cpu_share, mem_share, gpu_share])
+                 f'images/{name}/gpu',
+                 f'images/{name}/tpu'],
+                ['1', cpu_share, mem_share, gpu_share, tpu_share])
 
             inserted_tags = [(f'images/{name}/tags/{tag}', hash)
                              for tag, hash in image['tags']]
@@ -158,7 +161,12 @@ class ConfigServer:
             gpu = Decimal(0) if gpu == 'null' else Decimal(gpu)
         else:
             gpu = Decimal(0)
-        return ResourceSlot(mem=mem, cpu=cpu, gpu=gpu)
+        if 'tpu' in platform_tags:
+            tpu = await self.etcd.get(f'images/{image_ref.name}/tpu')
+            tpu = Decimal(0) if tpu == 'null' else Decimal(tpu)
+        else:
+            tpu = Decimal(0)
+        return ResourceSlot(mem=mem, cpu=cpu, gpu=gpu, tpu=tpu)
 
     # TODO: invalidate config cache when etcd content is updated
 

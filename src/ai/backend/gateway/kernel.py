@@ -80,6 +80,7 @@ async def create(request) -> web.Response:
                 'instanceMemory': None,
                 'instanceCores': None,
                 'instanceGPUs': None,
+                'instanceTPUs': None,
             }
             if request['api_version'] == 1:
                 # custom resource limit unsupported

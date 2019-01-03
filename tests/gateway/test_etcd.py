@@ -27,6 +27,7 @@ images:
       cpu: 1    # cores
       mem: 1.0  # GiB
       gpu: 0    # fraction of GPU device
+      tpu: 0    # fraction of TPU devices
 '''
     p = Path(tmpdir) / 'test-image-metadata.yml'
     p.write_text(content)

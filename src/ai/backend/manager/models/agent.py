@@ -21,6 +21,7 @@ class ResourceSlot(NamedTuple):
     mem: Decimal = Decimal(0)  # multiple of GiBytes
     cpu: Decimal = Decimal(0)  # multiple of CPU cores
     gpu: Decimal = Decimal(0)  # multiple of GPU devices
+    tpu: Decimal = Decimal(0)  # multiple of TPU devices
 
 
 class AgentStatus(enum.Enum):
@@ -40,10 +41,12 @@ agents = sa.Table(
     sa.Column('mem_slots', sa.BigInteger(), nullable=False),  # MiBytes
     sa.Column('cpu_slots', sa.Float(), nullable=False),  # number of CPU cores
     sa.Column('gpu_slots', sa.Float(), nullable=False),  # number of GPU devices
+    sa.Column('tpu_slots', sa.Float(), nullable=False),  # number of TPU devices
 
     sa.Column('used_mem_slots', sa.BigInteger(), nullable=False),
     sa.Column('used_cpu_slots', sa.Float(), nullable=False),
     sa.Column('used_gpu_slots', sa.Float(), nullable=False),
+    sa.Column('used_tpu_slots', sa.Float(), nullable=False),
 
     sa.Column('addr', sa.String(length=128), nullable=False),
     sa.Column('first_contact', sa.DateTime(timezone=True),
@@ -60,9 +63,11 @@ class Agent(graphene.ObjectType):
     mem_slots = graphene.Int()
     cpu_slots = graphene.Float()
     gpu_slots = graphene.Float()
+    tpu_slots = graphene.Float()
     used_mem_slots = graphene.Int()
     used_cpu_slots = graphene.Float()
     used_gpu_slots = graphene.Float()
+    used_tpu_slots = graphene.Float()
     addr = graphene.String()
     first_contact = GQLDateTime()
     lost_at = GQLDateTime()
@@ -86,9 +91,11 @@ class Agent(graphene.ObjectType):
             mem_slots=row['mem_slots'],
             cpu_slots=row['cpu_slots'],
             gpu_slots=row['gpu_slots'],
+            tpu_slots=row['tpu_slots'],
             used_mem_slots=row['used_mem_slots'],
             used_cpu_slots=row['used_cpu_slots'],
             used_gpu_slots=row['used_gpu_slots'],
+            used_tpu_slots=row['used_tpu_slots'],
             addr=row['addr'],
             first_contact=row['first_contact'],
             lost_at=row['lost_at'],
