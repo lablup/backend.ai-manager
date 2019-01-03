@@ -412,11 +412,11 @@ class AgentRegistry:
             if max_allowed_slot.tpu is not None:
                 tpu_share = min(
                     max_allowed_slot.tpu,
-                    Decimal(creation_config.get('instancetpus') or Decimal('inf')),
+                    Decimal(creation_config.get('instanceTPUs') or Decimal('inf')),
                 )
             else:
-                assert creation_config['instancetpus'] is not None
-                tpu_share = Decimal(creation_config['instancetpus'])
+                assert creation_config['instanceTPUs'] is not None
+                tpu_share = Decimal(creation_config['instanceTPUs'])
         except (AssertionError, KeyError):
             msg = ('You have missing resource limits that must be specified. '
                    'If the server does not have default resource configurations, '
