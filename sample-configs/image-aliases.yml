@@ -97,8 +97,8 @@ aliases:
 
   - ['keras',         'python-tensorflow:latest-dense']
   - ['keras-gpu',     'python-tensorflow:latest-dense-gpu']
-  - ['keras:2.0',     'python-tensorflow:1.5-py36-dense']     # preferred
-  - ['keras:2.0-gpu', 'python-tensorflow:1.5-py36-dense-gpu'] # preferred
+  - ['keras:2.0',     'python-tensorflow:1.12-py36']     # preferred
+  - ['keras:2.0-gpu', 'python-tensorflow:1.12-py36-cuda9'] # preferred
 
   - ['python3-caffe',        'python-caffe:latest']      # CodeOnWeb legacy
   - ['python3-caffe-gpu',    'python-caffe:latest-gpu']  # CodeOnWeb legacy
@@ -121,17 +121,21 @@ aliases:
   - ['python-torch-gpu',       'python-pytorch:latest-gpu']
   - ['python-pytorch',         'python-pytorch:latest']
   - ['python-pytorch-gpu',     'python-pytorch:latest-gpu']
+  - ['python-pytorch:0.1-gpu', 'python-pytorch:0.1-py36-cuda8']  # preferred
   - ['python-pytorch:0.2',     'python-pytorch:0.2-py36']      # preferred
   - ['python-pytorch:0.2-gpu', 'python-pytorch:0.2-py36-cuda8']  # preferred
   - ['python-pytorch:0.3',     'python-pytorch:0.3-py36']      # preferred
   - ['python-pytorch:0.3-gpu', 'python-pytorch:0.3-py36-cuda9']  # preferred
   - ['python-pytorch:0.4',     'python-pytorch:0.4-py36']      # preferred
   - ['python-pytorch:0.4-gpu', 'python-pytorch:0.4-py36-cuda9']  # preferred
+  - ['python-pytorch:1.0',     'python-pytorch:1.0-py36']      # preferred
+  - ['python-pytorch:1.0-gpu', 'python-pytorch:1.0-py36-cuda9']  # preferred
   # TODO: "torch-lua"
   - ['torch-python',     'python-pytorch:latest']
   - ['torch-python-gpu', 'python-pytorch:latest-gpu']
   - ['pytorch',          'python-pytorch:latest']
   - ['pytorch-gpu',      'python-pytorch:latest-gpu']
+  - ['pytorch:0.1-gpu',  'python-pytorch:0.1-py36-cuda8'] # preferred
   - ['pytorch:0.2',      'python-pytorch:0.2-py36']     # preferred
   - ['pytorch:0.2-gpu',  'python-pytorch:0.2-py36-cuda8'] # preferred
   - ['pytorch:0.3',      'python-pytorch:0.3-py36']     # preferred

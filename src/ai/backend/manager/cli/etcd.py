@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import logging
 from pathlib import Path
+import sys
 
 from ai.backend.common.logging import BraceStyleAdapter
 
@@ -59,6 +60,8 @@ def get(args):
                 print(x)
         else:
             val = loop.run_until_complete(etcd.get(args.key))
+            if val is None:
+                sys.exit(1)
             print(val)
 
 
