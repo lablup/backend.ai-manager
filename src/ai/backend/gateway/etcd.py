@@ -68,9 +68,9 @@ class ConfigServer:
             cpu_share = 'null' if cpu_share is None else f'{cpu_share:.2f}'
             mem_share = image['slots']['mem']
             mem_share = 'null' if mem_share is None else f'{mem_share:.2f}'
-            gpu_share = image['slots']['gpu']
+            gpu_share = image['slots'].get('gpu', None)
             gpu_share = 'null' if gpu_share is None else f'{gpu_share:.2f}'
-            tpu_share = image['slots']['tpu']
+            tpu_share = image['slots'].get('tpu', None)
             tpu_share = 'null' if tpu_share is None else f'{tpu_share:.2f}'
             await self.etcd.put_multi(
                 [f'images/{name}',
