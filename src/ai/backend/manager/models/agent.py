@@ -20,7 +20,8 @@ class ResourceSlot(NamedTuple):
     # following slots ( = shares) may be fractional.
     mem: Decimal = Decimal(0)  # multiple of GiBytes
     cpu: Decimal = Decimal(0)  # multiple of CPU cores
-    gpu: Decimal = Decimal(0)  # multiple of GPU devices
+    # TODO: dynamic slots
+    cuda: Decimal = Decimal(0)  # multiple of CUDA devices
     tpu: Decimal = Decimal(0)  # multiple of TPU devices
 
 
@@ -32,6 +33,8 @@ class AgentStatus(enum.Enum):
 
 
 agents = sa.Table(
+    # TODO: change accelerator slots to be dynamically defined.
+
     'agents', metadata,
     sa.Column('id', sa.String(length=64), primary_key=True),
     sa.Column('status', EnumType(AgentStatus), nullable=False, index=True,
@@ -40,7 +43,7 @@ agents = sa.Table(
 
     sa.Column('mem_slots', sa.BigInteger(), nullable=False),  # MiBytes
     sa.Column('cpu_slots', sa.Float(), nullable=False),  # number of CPU cores
-    sa.Column('gpu_slots', sa.Float(), nullable=False),  # number of GPU devices
+    sa.Column('gpu_slots', sa.Float(), nullable=False),  # number of CUDA devices
     sa.Column('tpu_slots', sa.Float(), nullable=False),  # number of TPU devices
 
     sa.Column('used_mem_slots', sa.BigInteger(), nullable=False),
@@ -56,6 +59,7 @@ agents = sa.Table(
 
 
 class Agent(graphene.ObjectType):
+    # TODO: change accelerator slots to be dynamically defined.
 
     id = graphene.String()
     status = graphene.String()

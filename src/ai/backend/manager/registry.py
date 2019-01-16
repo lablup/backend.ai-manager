@@ -382,7 +382,7 @@ class AgentRegistry:
             if max_allowed_slot.cpu is not None:
                 cpu_share = min(
                     max_allowed_slot.cpu,
-                    Decimal(creation_config.get('instanceCores') or Decimal('inf')),
+                    Decimal(creation_config.get('instanceCores') or 'inf'),
                 )
             else:
                 assert creation_config['instanceCores'] is not None
@@ -392,27 +392,28 @@ class AgentRegistry:
             if max_allowed_slot.mem is not None:
                 mem_share = min(
                     max_allowed_slot.mem,
-                    Decimal(creation_config.get('instanceMemory') or Decimal('inf')),
+                    Decimal(creation_config.get('instanceMemory') or 'inf'),
                 )
             else:
                 assert creation_config['instanceMemory'] is not None
                 mem_share = Decimal(creation_config['instanceMemory'])
 
-            gpu_share = Decimal(0)
-            if max_allowed_slot.gpu is not None:
-                gpu_share = min(
-                    max_allowed_slot.gpu,
-                    Decimal(creation_config.get('instanceGPUs') or Decimal('inf')),
+            # TODO: dynamic slots
+            cuda_share = Decimal(0)
+            if max_allowed_slot.cuda is not None:
+                cuda_share = min(
+                    max_allowed_slot.cuda,
+                    Decimal(creation_config.get('instanceGPUs') or 'inf'),
                 )
             else:
                 assert creation_config['instanceGPUs'] is not None
-                gpu_share = Decimal(creation_config['instanceGPUs'])
+                cuda_share = Decimal(creation_config['instanceGPUs'])
 
             tpu_share = Decimal(0)
             if max_allowed_slot.tpu is not None:
                 tpu_share = min(
                     max_allowed_slot.tpu,
-                    Decimal(creation_config.get('instanceTPUs') or Decimal('inf')),
+                    Decimal(creation_config.get('instanceTPUs') or 'inf'),
                 )
             else:
                 assert creation_config['instanceTPUs'] is not None
@@ -428,7 +429,7 @@ class AgentRegistry:
             id=None,
             cpu=cpu_share,
             mem=mem_share,
-            gpu=gpu_share,
+            cuda=cuda_share,
             tpu=tpu_share,
         )
 
@@ -444,7 +445,7 @@ class AgentRegistry:
                     id=row['id'],
                     mem=row['mem_slots'] - row['used_mem_slots'],
                     cpu=row['cpu_slots'] - row['used_cpu_slots'],
-                    gpu=row['gpu_slots'] - row['used_gpu_slots'],
+                    cuda=row['gpu_slots'] - row['used_gpu_slots'],
                     tpu=row['tpu_slots'] - row['used_tpu_slots'],
                 )
                 avail_slots.append(sdiff)
@@ -453,26 +454,26 @@ class AgentRegistry:
             avail_slots = [s for s in avail_slots
                            if s.mem >= (required_shares.mem * 1024) and
                               s.cpu >= required_shares.cpu and
-                              s.gpu >= required_shares.gpu and
+                              s.cuda >= required_shares.cuda and
                               s.tpu >= required_shares.tpu]
 
             # load-balance
             if avail_slots:
                 agent_id = (max(avail_slots,
-                                key=lambda s: (s.gpu, s.cpu, s.mem, s.tpu))).id
+                                key=lambda s: (s.cuda, s.cpu, s.mem, s.tpu))).id
             else:
                 raise InstanceNotAvailable
 
             # reserve slots
             mem_col = agents.c.used_mem_slots
             cpu_col = agents.c.used_cpu_slots
-            gpu_col = agents.c.used_gpu_slots
+            cuda_col = agents.c.used_gpu_slots
             tpu_col = agents.c.used_tpu_slots
             query = (sa.update(agents)
                        .values({
                            'used_mem_slots': mem_col + required_shares.mem * 1024,
                            'used_cpu_slots': cpu_col + required_shares.cpu,
-                           'used_gpu_slots': gpu_col + required_shares.gpu,
+                           'used_gpu_slots': cuda_col + required_shares.cuda,
                            'used_tpu_slots': tpu_col + required_shares.tpu,
                        })
                        .where(agents.c.id == agent_id))
@@ -500,7 +501,7 @@ class AgentRegistry:
                 # units: absolute
                 'mem_slot': required_shares.mem * 1024,
                 'cpu_slot': required_shares.cpu,
-                'gpu_slot': required_shares.gpu,
+                'gpu_slot': required_shares.cuda,
                 'tpu_slot': required_shares.tpu,
                 'environ': [f'{k}={v}' for k, v in environ.items()],
                 'cpu_set': [],
@@ -524,7 +525,7 @@ class AgentRegistry:
                             # units: share
                             'mem_slot': str(required_shares.mem),
                             'cpu_slot': str(required_shares.cpu),
-                            'gpu_slot': str(required_shares.gpu),
+                            'gpu_slot': str(required_shares.cuda),
                             'tpu_slot': str(required_shares.tpu),
                         },
                         'mounts': mounts,
@@ -610,9 +611,10 @@ class AgentRegistry:
                 limits = {
                     # units: share
                     'cpu_slot': kernel['cpu_slot'],
+                    'mem_slot': kernel['mem_slot'] / 1024,
+                    # TODO: dynamic slots
                     'gpu_slot': kernel['gpu_slot'],
                     'tpu_slot': kernel['tpu_slot'],
-                    'mem_slot': kernel['mem_slot'] / 1024,
                 }
                 environ = {
                      k: v for k, v in
@@ -805,8 +807,9 @@ class AgentRegistry:
             row = await result.first()
             reported_mem_slots = int(Decimal(agent_info['mem_slots']))
             reported_cpu_slots = float(Decimal(agent_info['cpu_slots']))
-            reported_gpu_slots = float(Decimal(agent_info['gpu_slots']))
-            reported_tpu_slots = float(Decimal(agent_info['tpu_slots']))
+            # TODO: dynamic slots
+            reported_cuda_slots = float(Decimal(agent_info.get('cuda_slots', 0)))
+            reported_tpu_slots = float(Decimal(agent_info.get('tpu_slots', 0)))
             if row is None or row.status is None:
                 # new agent detected!
                 log.info('agent {0} joined!', agent_id)
@@ -816,7 +819,8 @@ class AgentRegistry:
                     'region': agent_info['region'],
                     'mem_slots': reported_mem_slots,
                     'cpu_slots': reported_cpu_slots,
-                    'gpu_slots': reported_gpu_slots,
+                    # TODO: dynamic slots
+                    'gpu_slots': reported_cuda_slots,
                     'tpu_slots': reported_tpu_slots,
                     'used_mem_slots': 0,
                     'used_cpu_slots': 0,
@@ -834,8 +838,9 @@ class AgentRegistry:
                     changed_cols['mem_slots'] = reported_mem_slots
                 if row.cpu_slots != reported_cpu_slots:
                     changed_cols['cpu_slots'] = reported_cpu_slots
-                if row.gpu_slots != reported_gpu_slots:
-                    changed_cols['gpu_slots'] = reported_gpu_slots
+                # TODO: dynamic slots
+                if row.gpu_slots != reported_cuda_slots:
+                    changed_cols['gpu_slots'] = reported_cuda_slots
                 if row.tpu_slots != reported_tpu_slots:
                     changed_cols['tpu_slots'] = reported_tpu_slots
                 if changed_cols:
@@ -853,7 +858,8 @@ class AgentRegistry:
                                'lost_at': None,
                                'mem_slots': reported_mem_slots,
                                'cpu_slots': reported_cpu_slots,
-                               'gpu_slots': reported_gpu_slots,
+                               # TODO: dynamic slots
+                               'gpu_slots': reported_cuda_slots,
                                'tpu_slots': reported_tpu_slots,
                            })
                            .where(agents.c.id == agent_id))

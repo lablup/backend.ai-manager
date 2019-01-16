@@ -33,6 +33,8 @@ LIVE_STATUS = frozenset(['BUILDING', 'RUNNING'])
 
 
 kernels = sa.Table(
+    # TODO: change accelerator slots to be dynamically defined.
+
     'kernels', metadata,
     IDColumn(),
     sa.Column('sess_id', sa.String(length=64), unique=False, index=True),
@@ -93,6 +95,7 @@ kernels = sa.Table(
 
 
 class SessionCommons:
+    # TODO: change accelerator slots to be dynamically defined.
 
     sess_id = graphene.String()
     id = graphene.UUID()
