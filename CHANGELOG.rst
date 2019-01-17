@@ -1,6 +1,12 @@
 Changes
 =======
 
+19.03.0a1 (2018-01-18)
+----------------------
+
+- Internally changed a resource slot name from "gpu" to "cuda".
+  Still the API and database uses the old name for backward-compatibility.
+
 18.12.0 (2018-01-06)
 --------------------
 
