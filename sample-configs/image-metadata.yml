@@ -5,9 +5,8 @@ images:
     # The clients should use Python 3-compatibile syntax highlights
     # and leave Python 2 only codes as legacy.
     tags:
-      - ["latest",     ":3.6-ubuntu"]
-      - ["3.6-ubuntu", "ca7b9f52b6c2"]
-      # TODO: update kernel runner for ["2.7-debian", ""]
+      - ["latest",     ":3.6-ubuntu18.04"]
+      - ["3.6-ubuntu18.04", "ca7b9f52b6c2"]
     slots: &default
       cpu: 1    # cores
       mem: 1.0  # GiB
@@ -77,6 +76,27 @@ images:
       tpu: 1     # max fraction of TPU device
       # NOTE: gpu slot is only used for the images tagged with "-gpu".
       # NOTE: tpu slot is only used for the images tagged with "-tpu".
+  - name: ngc-pytorch
+    syntax: python
+    tags:
+      - ["latest",   ":18.12.1-py3"]
+      - ["18.12.1-py3", "x"]
+    slots:
+      <<: *for_computing
+  - name: ngc-tensorflow
+    syntax: python
+    tags:
+      - ["latest",   ":18.12-py3"]
+      - ["18.12-py3", "x"]
+    slots:
+      <<: *for_computing
+  - name: ngc-digits
+    syntax: python
+    tags:
+      - ["latest",   ":18.12-tensorflow"]
+      - ["18.12-tensorflwo", "x"]
+    slots:
+      <<: *for_computing
   - name: python-caffe
     syntax: python
     tags:
