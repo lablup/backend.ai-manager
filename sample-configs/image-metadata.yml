@@ -94,7 +94,7 @@ images:
     syntax: python
     tags:
       - ["latest",   ":18.12-tensorflow"]
-      - ["18.12-tensorflwo", "x"]
+      - ["18.12-tensorflow", "x"]
     slots:
       <<: *for_computing
   - name: python-caffe
