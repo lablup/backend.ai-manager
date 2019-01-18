@@ -159,7 +159,10 @@ class ConfigServer:
         _, platform_tags = image_ref.tag_set
         gpu = Decimal(0)
         tpu = Decimal(0)
-        if 'gpu' in platform_tags or 'cuda' in platform_tags:
+        if ('gpu' in platform_tags or
+            'cuda' in platform_tags or
+            'ngc-' in image_ref.name):
+            # TODO: get CUDA-requirements from the image labels
             gpu = await self.etcd.get(f'images/{image_ref.name}/gpu')
             gpu = Decimal(0) if gpu == 'null' else Decimal(gpu)
         if 'tpu' in platform_tags:
