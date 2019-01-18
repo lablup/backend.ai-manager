@@ -156,10 +156,15 @@ class ConfigServer:
         mem = await self.etcd.get(f'images/{image_ref.name}/mem')
         mem = None if mem == 'null' else Decimal(mem)
         # TODO: dynamic slots
-        gpu = await self.etcd.get(f'images/{image_ref.name}/gpu')
-        gpu = Decimal(0) if gpu == 'null' else Decimal(gpu)
-        tpu = await self.etcd.get(f'images/{image_ref.name}/tpu')
-        tpu = Decimal(0) if tpu == 'null' else Decimal(tpu)
+        _, platform_tags = image_ref.tag_set
+        gpu = Decimal(0)
+        tpu = Decimal(0)
+        if 'gpu' in platform_tags or 'cuda' in platform_tags:
+            gpu = await self.etcd.get(f'images/{image_ref.name}/gpu')
+            gpu = Decimal(0) if gpu == 'null' else Decimal(gpu)
+        if 'tpu' in platform_tags:
+            tpu = await self.etcd.get(f'images/{image_ref.name}/tpu')
+            tpu = Decimal(0) if tpu == 'null' else Decimal(tpu)
         return ResourceSlot(mem=mem, cpu=cpu, cuda=gpu, tpu=tpu)
 
     # TODO: invalidate config cache when etcd content is updated
