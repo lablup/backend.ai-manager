@@ -42,12 +42,13 @@ from .events import event_router
 from . import ManagerStatus
 
 VALID_VERSIONS = frozenset([
-    'v1.20160915',
-    'v2.20170315',
+    'v1.20160915',  # deprecated
+    'v2.20170315',  # deprecated
     'v3.20170615',
-    'v4.20181215',
+    'v4.20181215',  # authentication changed not to use request bodies
+    'v4.20190115',  # added & enabled streaming-execute API
 ])
-LATEST_API_VERSION = 'v4.20181215'
+LATEST_API_VERSION = 'v4.20190115'
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 
