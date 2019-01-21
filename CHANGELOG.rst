@@ -1,6 +1,14 @@
 Changes
 =======
 
+19.03.0a2 (2018-01-21)
+----------------------
+
+- Bump API version from v4.20181215 to v4.20190115 to allow clients to distinguish
+  streaming execution API support.
+
+- Fix the backend.ai-common dependency version follow the 19.03 series.
+
 19.03.0a1 (2018-01-18)
 ----------------------
 
