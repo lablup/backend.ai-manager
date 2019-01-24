@@ -4,6 +4,7 @@ import uuid
 
 from aiodataloader import DataLoader
 from aiotools import apartial
+import graphene
 import sqlalchemy as sa
 from sqlalchemy.types import (
     SchemaType,
@@ -183,3 +184,16 @@ class DataLoaderManager:
                 max_batch_size=16)
             self.cache[k] = loader
         return loader
+
+
+class ResourceLimit(graphene.ObjectType):
+    key = graphene.String()
+    min = graphene.String()
+    max = graphene.String()
+
+
+class KVPair(graphene.ObjectType):
+    key = graphene.String()
+    value = graphene.String()
+
+

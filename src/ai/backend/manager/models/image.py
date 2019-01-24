@@ -1,41 +1,55 @@
+import logging
+
 import graphene
 
+from ai.backend.common.logging import BraceStyleAdapter
+from .base import KVPair, ResourceLimit
 # from ai.backend.common.types import ImageRef
+
+log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
 
 __all__ = (
     'Image',
+    'PreloadImage',
+    'RescanImages',
+    'AliasImage',
+    'DealiasImage',
 )
 
 
 class Image(graphene.ObjectType):
     name = graphene.String()
+    humanized_name = graphene.String()
     tag = graphene.String()
     hash = graphene.String()
-    # max_mem = graphene.Int()
-    # max_cpu = graphene.Float()
-    # max_disk = graphene.Float()
-    # last_pull = GQLDateTime()
+    labels = graphene.List(KVPair)
+    aliases = graphene.List(graphene.String)
+    size_bytes = graphene.Int()
+    resource_limits = graphene.List(ResourceLimit)
+    supported_accelerators = graphene.List(graphene.String)
 
     @staticmethod
-    async def load_all(etcd):
+    async def load_all(config_server):
+        raw_items = await config_server.list_images()
         items = []
-        images = []
-        kvdict = dict(await etcd.get_prefix('images'))
-        for key, value in kvdict.items():
-            kpath = key.split('/')
-            if len(kpath) == 2 and value == '1':
-                images.append(kpath[1])
-        for image in images:
-            tag_paths = filter(lambda k: k.startswith(f'images/{image}/tags/'),
-                               kvdict.keys())
-            for tag_path in tag_paths:
-                tag = tag_path.split('/')[-1]
-                hash_ = kvdict[tag_path]
-                if hash_.startswith(':'):
-                    continue
-                item = Image(name=image, tag=tag, hash=hash_)
-                items.append(item)
-        # TODO: aliases?
+        # Convert to GQL objects
+        for r in raw_items:
+            item = Image(
+                name=r['name'],
+                humanized_name=r['humanized_name'],
+                tag=r['tag'],
+                hash=r['hash'],
+                aliases=r['aliases'],
+                labels=[
+                    KVPair(key=k, value=v)
+                    for k, v in r['labels'].items()],
+                size_bytes=r['size_bytes'],
+                supported_accelerators=r['supported_accelerators'],
+                resource_limits=[
+                    ResourceLimit(key=v['key'], min=v['min'], max=v['max'])
+                    for v in r['resource_limits']],
+            )
+            items.append(item)
         return items
 
 
@@ -50,36 +64,23 @@ class PreloadImage(graphene.Mutation):
 
     @staticmethod
     async def mutate(root, info, name, tag, hash):
-        pass
+        return PreloadImage(ok=False, msg='Not implemented.')
 
 
-class RegisterImage(graphene.Mutation):
+class RescanImages(graphene.Mutation):
 
     class Arguments:
-        name = graphene.String(required=True)
-        tag = graphene.String(required=True)
-        hash = graphene.String(required=True)
+        registry = graphene.String()
 
     ok = graphene.Boolean()
     msg = graphene.String()
 
     @staticmethod
-    async def mutate(root, info, name, tag, hash):
-        pass
-
-
-class DeregisterImage(graphene.Mutation):
-
-    class Arguments:
-        name = graphene.String(required=True)
-        tag = graphene.String(required=True)
-
-    ok = graphene.Boolean()
-    msg = graphene.String()
-
-    @staticmethod
-    async def mutate(root, info, name, tag, hash):
-        pass
+    async def mutate(root, info, registry):
+        log.info('rescanning docker registry {0} by API request', registry)
+        config_server = info.context['config_server']
+        await config_server.rescan_images(registry)
+        return RescanImages(ok=True, msg='')
 
 
 class AliasImage(graphene.Mutation):
@@ -92,11 +93,17 @@ class AliasImage(graphene.Mutation):
     msg = graphene.String()
 
     @staticmethod
-    async def mutate(root, info, name, tag, hash):
-        pass
+    async def mutate(root, info, alias, target):
+        log.info('alias image {0} -> {1} by API request', alias, target)
+        config_server = info.context['config_server']
+        try:
+            await config_server.alias(alias, target)
+        except ValueError as e:
+            return AliasImage(ok=False, msg=str(e))
+        return AliasImage(ok=True, msg='')
 
 
-class RemoveImageAlias(graphene.Mutation):
+class DealiasImage(graphene.Mutation):
 
     class Arguments:
         alias = graphene.String(required=True)
@@ -105,5 +112,8 @@ class RemoveImageAlias(graphene.Mutation):
     msg = graphene.String()
 
     @staticmethod
-    async def mutate(root, info, name, tag, hash):
-        pass
+    async def mutate(root, info, alias):
+        log.info('dealias image {0} by API request', alias)
+        config_server = info.context['config_server']
+        await config_server.dealias(alias)
+        return DealiasImage(ok=True, msg='')

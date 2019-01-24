@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import logging
 from pathlib import Path
+from pprint import pprint
 import sys
 
 from ai.backend.common.logging import BraceStyleAdapter
@@ -85,6 +86,15 @@ delete.add('--prefix', action='store_true', default=False,
 
 
 @etcd.register_command
+def list_images(args):
+    '''List everything about images.'''
+    with config_ctx(args) as (loop, config_server):
+        items = loop.run_until_complete(
+            config_server.list_images())
+        pprint(items)
+
+
+@etcd.register_command
 def update_images(args):
     '''Update the latest version of kernels (Docker images)
     that Backend.AI agents will use.'''
@@ -101,11 +111,43 @@ def update_images(args):
 
 update_images.add('-f', '--file', type=Path, metavar='PATH',
                   help='A config file to use.')
-update_images.add('--scan-registry', default=False, action='store_true',
-                  help='Scan the Docker hub to get the latest versinos.')
-update_images.add('--docker-registry', env_var='BACKEND_DOCKER_REGISTRY',
-                  type=str, metavar='URL', default=None,
-                  help='The address of Docker registry server.')
+
+
+@etcd.register_command
+def rescan_images(args):
+    '''Update the kernel image metadata from all configured docker registries.'''
+    with config_ctx(args) as (loop, config_server):
+        loop.run_until_complete(
+            config_server.rescan_images(args.registry))
+
+
+rescan_images.add('-r', '--registry',
+                  type=str, metavar='NAME', default=None,
+                  help='The name (usually hostname or "lablup") '
+                       'of the Docker registry configured.')
+
+
+@etcd.register_command
+def alias(args):
+    '''Add an image alias.'''
+    with config_ctx(args) as (loop, config_server):
+        loop.run_until_complete(
+            config_server.alias(args.alias, args.target))
+
+
+alias.add('alias', type=str, help='The alias of an image to add.')
+alias.add('target', type=str, help='The target image.')
+
+
+@etcd.register_command
+def dealias(args):
+    '''Remove an image alias.'''
+    with config_ctx(args) as (loop, config_server):
+        loop.run_until_complete(
+            config_server.alias(args.alias))
+
+
+dealias.add('alias', type=str, help='The alias of an image to remove.')
 
 
 @etcd.register_command

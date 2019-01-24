@@ -19,7 +19,7 @@ from .exceptions import InvalidAPIParameters, BackendError
 from .auth import auth_required
 from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
-    Agent, Image,
+    Agent, Image, RescanImages, AliasImage, DealiasImage,
     KeyPair, CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
     ComputeSession, ComputeWorker, KernelStatus,
     VirtualFolder,
@@ -61,6 +61,7 @@ async def handle_gql(request: web.Request) -> web.Response:
         variable_values=body['variables'],
         context_value={
             'dlmgr': dlmanager,
+            'config_server': request.app['config_server'],
             'etcd': request.app['config_server'].etcd,
             'access_key': request['keypair']['access_key'],
             'dbpool': request.app['dbpool'],
@@ -93,11 +94,13 @@ class MutationForAdmin(graphene.ObjectType):
     create_keypair = CreateKeyPair.Field()
     modify_keypair = ModifyKeyPair.Field()
     delete_keypair = DeleteKeyPair.Field()
+    rescan_images = RescanImages.Field()
+    alias_image = AliasImage.Field()
+    dealias_image = DealiasImage.Field()
 
 
-# Nothing yet!
-# class MutationForUser(graphene.ObjectType):
-#     pass
+class MutationForUser(graphene.ObjectType):
+    rescan_images = RescanImages.Field()
 
 
 class QueryForAdmin(graphene.ObjectType):
@@ -177,8 +180,8 @@ class QueryForAdmin(graphene.ObjectType):
 
     @staticmethod
     async def resolve_images(executor, info):
-        etcd = info.context['etcd']
-        return await Image.load_all(etcd)
+        config_server = info.context['config_server']
+        return await Image.load_all(config_server)
 
     @staticmethod
     async def resolve_keypair(executor, info, access_key=None):
@@ -264,8 +267,8 @@ class QueryForUser(graphene.ObjectType):
 
     @staticmethod
     async def resolve_images(executor, info):
-        etcd = info.context['etcd']
-        return await Image.load_all(etcd)
+        config_server = info.context['config_server']
+        return await Image.load_all(config_server)
 
     @staticmethod
     async def resolve_keypair(executor, info):

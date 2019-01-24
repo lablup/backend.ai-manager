@@ -1,7 +1,7 @@
 from collections import OrderedDict
 from decimal import Decimal
 import enum
-from typing import NamedTuple, Optional
+from typing import NamedTuple, Mapping, Optional
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -20,9 +20,7 @@ class ResourceSlot(NamedTuple):
     # following slots ( = shares) may be fractional.
     mem: Decimal = Decimal(0)  # multiple of GiBytes
     cpu: Decimal = Decimal(0)  # multiple of CPU cores
-    # TODO: dynamic slots
-    cuda: Decimal = Decimal(0)  # multiple of CUDA devices
-    tpu: Decimal = Decimal(0)  # multiple of TPU devices
+    accel_slots: Optional[Mapping[str, Decimal]] = None
 
 
 class AgentStatus(enum.Enum):
