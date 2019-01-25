@@ -420,14 +420,12 @@ def gw_args(parser):
 def main():
 
     config = load_config(extra_args_funcs=(gw_args, Logger.update_log_args))
+    setproctitle(f'backend.ai: manager {config.namespace} '
+                 f'{config.service_ip}:{config.service_port}')
     logger = Logger(config)
     logger.add_pkg('aiotools')
     logger.add_pkg('aiopg')
     logger.add_pkg('ai.backend')
-
-    setproctitle(f'backend.ai: manager {config.namespace} '
-                 f'{config.service_ip}:{config.service_port}')
-
     with logger:
         log.info('Backend.AI Gateway {0}', __version__)
         log.info('runtime: {0}', env_info())
