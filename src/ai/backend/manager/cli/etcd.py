@@ -95,25 +95,6 @@ def list_images(args):
 
 
 @etcd.register_command
-def update_images(args):
-    '''Update the latest version of kernels (Docker images)
-    that Backend.AI agents will use.'''
-    with config_ctx(args) as (loop, config_server):
-        if args.file:
-            loop.run_until_complete(
-                config_server.update_kernel_images_from_file(args.file))
-        elif args.scan_docker_hub:
-            loop.run_until_complete(
-                config_server.update_kernel_images_from_registry(args.registry_addr))
-        else:
-            log.error('Please specify one of the options. See "--help".')
-
-
-update_images.add('-f', '--file', type=Path, metavar='PATH',
-                  help='A config file to use.')
-
-
-@etcd.register_command
 def rescan_images(args):
     '''Update the kernel image metadata from all configured docker registries.'''
     with config_ctx(args) as (loop, config_server):
