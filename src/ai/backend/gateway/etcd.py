@@ -139,15 +139,19 @@ class ConfigServer:
             print(f'{alias} -> {target}')
         log.info('Done.')
 
-    # @aiotools.lru_cache(maxsize=8)
+    @aiotools.lru_cache(maxsize=8)
     async def get_docker_registry(self, registry: str) -> Tuple[yarl.URL, dict]:
         reg_path = f'config/docker/registry/{quote(registry)}'
         registry_addr = await self.etcd.get(reg_path)
         if registry_addr is None:
             raise RuntimeError(f'Unknown registry: {registry}')
-        auth = await self.etcd.get(f'config/docker/registry/{quote(registry)}/auth')
-        auth = json.loads(auth) if auth is not None else {}
-        return yarl.URL(registry_addr), auth
+        username = await self.etcd.get(f'{reg_path}/username')
+        if username is not None:
+            password = await self.etcd.get(f'{reg_path}/password')
+            creds = {'username': username, 'password': password}
+        else:
+            creds = {}
+        return yarl.URL(registry_addr), creds
 
     async def list_images(self):
         items = []
@@ -238,56 +242,106 @@ class ConfigServer:
             items.append(item)
         return items
 
+    @staticmethod
+    async def authorize_docker_registry(
+            sess: aiohttp.ClientSession,
+            registry_url: yarl.URL,
+            credentials: dict,
+            scope: str) -> dict:
+        '''
+        Authorize to the docker registry using the given credentials and token scope,
+        and returns required aiohttp.ClientSession.request() keyword arguments for
+        further API requests.
+
+        Some registry servers only rely on HTTP Basic Authentication without
+        token-based access controls (usually via nginx proxy). We do support them
+        also. :)
+        '''
+        if credentials.get('username'):
+            basic_auth = aiohttp.BasicAuth(
+                credentials['username'], credentials['password'],
+            )
+        else:
+            basic_auth = None
+        realm = registry_url / 'token'  # fallback
+        service = 'registry'            # fallback
+        async with sess.get(registry_url / 'v2/', auth=basic_auth) as resp:
+            ping_status = resp.status
+            www_auth_header = resp.headers.get('WWW-Authenticate')
+            if www_auth_header:
+                match = re.search(r'realm="([^"]+)"', www_auth_header)
+                if match:
+                    realm = match.group(1)
+                match = re.search(r'service="([^"]+)"', www_auth_header)
+                if match:
+                    service = match.group(1)
+        if ping_status == 200:
+            log.debug('docker-registry: {0} -> basic-auth', registry_url)
+            return {'auth': basic_auth, 'headers': {}}
+        elif ping_status == 404:
+            raise RuntimeError(f'Unsupported docker registry: {registry_url}! '
+                               '(API v2 not implemented)')
+        elif ping_status == 401:
+            params = {
+                'scope': scope,
+                'offline_token': 'true',
+                'client_id': 'docker',
+                'service': service,
+            }
+            async with sess.get(realm, params=params, auth=basic_auth) as resp:
+                log.debug('docker-registry: {0} -> {1}', registry_url, realm)
+                if resp.status == 200:
+                    data = json.loads(await resp.read())
+                    token = data.get('token', None)
+                    return {'auth': None, 'headers': {
+                        'Authorization': f'Bearer {token}'
+                    }}
+        raise RuntimeError('authentication for docker registry '
+                           'f{registry_url} failed')
+
     async def _rescan_images(self, registry_name: str,
                              registry_url: yarl.URL,
-                             auth: dict):
+                             credentials: dict):
         all_updates = {}
         base_hdrs = {
             'Accept': 'application/vnd.docker.distribution.manifest.v2+json',
         }
 
         async def _scan_image(sess, image):
-            hdrs = {**base_hdrs}
-            if registry_url.host == 'registry-1.docker.io':
-                params = {
-                    'scope': f'repository:{image}:pull',
-                    'service': 'registry.docker.io',
-                }
-                async with sess.get('https://auth.docker.io/token',
-                                    params=params) as resp:
-                    data = await resp.json()
-                    hdrs['Authorization'] = f"Bearer {data['token']}"
-            else:
-                if 'auth' in auth:
-                    hdrs['Authorization'] = f"Bearer {auth['auth']}"
+            rqst_args = await self.authorize_docker_registry(
+                sess, registry_url,
+                credentials, f'repository:{image}:pull')
             tags = []
+            rqst_args['headers'].update(**base_hdrs)
             async with sess.get(registry_url / f'v2/{image}/tags/list',
-                                headers=hdrs) as resp:
-                data = await resp.json()
+                                **rqst_args) as resp:
+                data = json.loads(await resp.read())
                 if 'tags' in data:
                     # sometimes there are dangling image names in the hub.
                     tags.extend(data['tags'])
             scheduler = await aiojobs.create_scheduler(limit=8)
             try:
                 jobs = await asyncio.gather(*[
-                    scheduler.spawn(_scan_tag(sess, hdrs, image, tag))
+                    scheduler.spawn(_scan_tag(sess, rqst_args, image, tag))
                     for tag in tags])
                 await asyncio.gather(*[job.wait() for job in jobs])
             finally:
                 await scheduler.close()
 
-        async def _scan_tag(sess, hdrs, image, tag):
+        async def _scan_tag(sess, rqst_args, image, tag):
             config_digest = None
             labels = {}
             async with sess.get(registry_url / f'v2/{image}/manifests/{tag}',
-                                headers=hdrs) as resp:
+                                **rqst_args) as resp:
+                resp.raise_for_status()
                 data = await resp.json()
                 config_digest = data['config']['digest']
                 size_bytes = (sum(layer['size'] for layer in data['layers']) +
                               data['config']['size'])
             async with sess.get(registry_url / f'v2/{image}/blobs/{config_digest}',
-                                headers=hdrs) as resp:
+                                **rqst_args) as resp:
                 # content-type may not be json...
+                resp.raise_for_status()
                 data = json.loads(await resp.read())
                 raw_labels = data['container_config']['Labels']
                 if raw_labels:
@@ -297,6 +351,7 @@ class ConfigServer:
                 # Skip non-Backend.AI kernel images
                 return
 
+            log.info('Updating metadata for {0}:{1}', image, tag)
             updates = {}
             img_ref = ImageRef(image + ':' + tag)
             updates[f'images/{quote(registry_name)}/{img_ref.name}'] = '1'
@@ -319,8 +374,6 @@ class ConfigServer:
             all_updates.update(updates)
 
         async with aiohttp.ClientSession() as sess:
-            # image = 'nvidia/digits'
-            # tag = '18.12-tensorflow'
             images = []
             if registry_url.host == 'registry-1.docker.io':
                 # We need some special treatment for the Docker Hub.
@@ -332,6 +385,21 @@ class ConfigServer:
                     data = await resp.json()
                     images.extend(f"lablup/{item['name']}"
                                   for item in data['results'])
+            else:
+                # In other cases, try the catalog search.
+                rqst_args = await self.authorize_docker_registry(
+                    sess, registry_url,
+                    credentials, 'registry:catalog:*')
+                async with sess.get(registry_url / 'v2/_catalog',
+                                    **rqst_args) as resp:
+                    if resp.status == 200:
+                        data = json.loads(await resp.read())
+                        images.extend(data['repositories'])
+                    else:
+                        log.warning('Docker registry {0} does not allow/support '
+                                    'catalog search. (status={1})',
+                                    registry_url, resp.status)
+
             scheduler = await aiojobs.create_scheduler(limit=8)
             try:
                 jobs = await asyncio.gather(*[
@@ -339,6 +407,10 @@ class ConfigServer:
                 await asyncio.gather(*[job.wait() for job in jobs])
             finally:
                 await scheduler.close()
+
+        if not all_updates:
+            log.info('No images found in registry {0}', registry_url)
+            return
         ks = []
         vs = []
         for k, v in all_updates.items():
@@ -359,8 +431,8 @@ class ConfigServer:
         coros = []
         for registry in registries:
             log.info('Scanning kernel images from the registry "{0}"', registry)
-            registry_url, auth = await self.get_docker_registry(registry)
-            coros.append(self._rescan_images(registry, registry_url, auth))
+            registry_url, creds = await self.get_docker_registry(registry)
+            coros.append(self._rescan_images(registry, registry_url, creds))
         await asyncio.gather(*coros)
 
     async def alias(self, alias: str, target: str):
