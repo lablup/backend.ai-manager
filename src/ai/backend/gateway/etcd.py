@@ -21,12 +21,9 @@ Alias keys are also URL-quoted in the same way.
        ...
    + resource_slots
      + {"cuda"}
-       + {"cuda.device"}
-         - unit: "count"
-       + {"cuda.mem"}
-         - unit: "bytes"
-       + {"cuda.smp"}
-         - unit: "count"
+       + {"cuda.device"}: {"count"}
+       + {"cuda.mem"}: {"bytes"}
+       + {"cuda.smp"}: {"count"}
        ...
      ...
  + nodes
@@ -45,7 +42,7 @@ Alias keys are also URL-quoted in the same way.
      ...
    + {registry}   # url-quoted
      + {image}
-       + {tag}: {digest-for-config-layer}
+       + {tag}: {digest-of-config-layer}
          - size_bytes: {image-size-in-bytes}
          - accelerators: "{accel-name-1},{accel-name-2},..."
          + labels
@@ -442,18 +439,18 @@ class ConfigServer:
         if accels is None:
             accels = []
         for accel in accels:
-            # TODO: store resource slot metadata in agent heartbeats
-            accel_info = AcceleratorInfo.from_key(accel)
-            for res_slot in accel_info.resource_slots():
+            res_slots = await self.etcd.get_prefix('config/resource_slots/{accel}/')
+            for key, res_type in res_slots:
+                res_slot = key.rsplit('/', maxsplit=1)[-1]
                 r_max = await self.etcd.get(f'{tag_path}/resource/{res_slot}/max')
                 if r_max is None:
                     r_value = Decimal(0)
                 else:
-                    if res_slot.style == 'memory':
+                    if res_type == 'bytes':
                         r_value = Decimal(BinarySize.from_str(r_max))
                     else:
                         r_value = Decimal(r_max)
-                accel_slots[res_slot.key] = r_value
+                accel_slots[res_slot] = r_value
         return ResourceSlot(mem=mem, cpu=cpu, accel_slots=accel_slots)
 
 
