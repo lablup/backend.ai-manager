@@ -1,3 +1,62 @@
+'''
+Configuration Schema on etcd:
+
+Note that {image} does not contain the common "<registry>/kernel-" prefix
+while the real images on the registry have that.
+
+{namespace}
+ + config
+   + docker
+     + registry
+       - lablup: https://registry-1.docker.io
+       + {registry-name}: {registry-URL}
+         - user: {username}
+         - password: {password}
+         - auth: {auth-json-cached-from-config.json}
+       ...
+ + ndoes
+   + manager: {instance-id}
+     - event_addr: {tcp://manager:5001}
+   - redis: {tcp://redis:6379}
+   + agents
+     + {instance-id}
+       - status: {one-of-ManagerStatus-value}
+ + volumes
+   - _mount: {path-to-mount-root-for-vfolder-partitions}
+   - _default_host: {default-vfolder-partition-name}
+ + images
+   + _aliases
+     - {alias}: {image:tag}
+     - {alias}: {image:tag}
+     - {alias}: {image:tag}
+     ...
+   + {image}
+     + tags
+       + {tag}: {digest-for-config-layer}
+         - size_bytes: {image-size-in-bytes}
+         - registry: {registry-name}
+         - accelerators: "{accel-name-1},{accel-name-2},..."
+         + labels
+           - {key}: {value}
+           ...
+         + resource
+           + cpu
+             - min
+             - max
+           + mem
+             - min
+             - max
+           + {cuda.smp}
+             - min
+             - max
+           + {cuda.mem}
+             - min
+             - max
+           ...
+       ...
+   ...
+'''
+
 import asyncio
 from collections import defaultdict
 from decimal import Decimal
@@ -46,10 +105,8 @@ class ConfigServer:
             instance_ip = await get_instance_ip()
         event_addr = f'{instance_ip}:{app_config.events_port}'
         await self.etcd.put_multi(
-            ['nodes/manager', 'nodes/redis',
-             'nodes/manager/event_addr', 'nodes/docker_registry'],
-            [instance_id, app_config.redis_addr,
-             event_addr, app_config.docker_registry])
+            ['nodes/manager', 'nodes/redis', 'nodes/manager/event_addr'],
+            [instance_id, app_config.redis_addr, event_addr])
 
     async def deregister_myself(self):
         await self.etcd.delete_prefix('nodes/manager')
