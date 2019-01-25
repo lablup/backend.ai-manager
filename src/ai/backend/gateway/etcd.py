@@ -55,10 +55,10 @@ Alias keys are also URL-quoted in the same way.
            + mem
              - min
              - max
-           + {cuda.smp}
+           + {"cuda.smp"}
              - min
              - max
-           + {cuda.mem}
+           + {"cuda.mem"}
              - min
              - max
            ...
