@@ -14,8 +14,9 @@ Alias keys are also URL-quoted in the same way.
    + docker
      + registry
        - lablup: https://registry-1.docker.io
+         - username: "lablup"
        + {registry-name}: {registry-URL}  # {registry-name} is url-quoted
-         - user: {username}
+         - username: {username}
          - password: {password}
          - auth: {auth-json-cached-from-config.json}
        ...
@@ -41,7 +42,7 @@ Alias keys are also URL-quoted in the same way.
      - {alias}: "{registry}/{image}:{tag}"   # {alias} is url-quoted
      ...
    + {registry}   # url-quoted
-     + {image}
+     + {image}    # url-quoted
        + {tag}: {digest-of-config-layer}
          - size_bytes: {image-size-in-bytes}
          - accelerators: "{accel-name-1},{accel-name-2},..."
@@ -160,25 +161,23 @@ class ConfigServer:
         rx_tag_digest_key = re.compile(
             r'^images/(?P<registry>(?!_aliases)[^/]+)/'
             r'(?P<image>[^/]+)/(?P<tag>[^/]+)$')
-        image_set = set()
+        image_set = {}
         for key, value in kvdict.items():
             kpath = key.split('/')
             if len(kpath) == 3 and kpath[1] == '_aliases':
                 reverse_aliases[value].append(unquote(kpath[2]))
                 continue
-            if len(kpath) == 4:  # a little optimization
-                match = rx_tag_digest_key.search(key)
-                if match is None:
-                    continue
-                image_tuple = (
-                    unquote(match.group('registry')),
-                    match.group('image'),
-                    match.group('tag'),
-                )
-                image_set.add(image_tuple)
+            match = rx_tag_digest_key.search(key)
+            if match is None:
+                continue
+            image_tuple = (
+                unquote(match.group('registry')),
+                unquote(match.group('image')),
+                match.group('tag'),
+            )
+            image_set[image_tuple] = key
 
-        for registry, image, tag in image_set:
-            tag_path = f'images/{quote(registry)}/{image}/{tag}'
+        for (registry, image, tag), tag_path in image_set.items():
             hash_ = kvdict.get(tag_path, '')
 
             res_paths = filter(lambda k: k.startswith(f'{tag_path}/resource/'),
@@ -257,7 +256,7 @@ class ConfigServer:
         token-based access controls (usually via nginx proxy). We do support them
         also. :)
         '''
-        if credentials.get('username'):
+        if credentials.get('username') and credentials.get('password'):
             basic_auth = aiohttp.BasicAuth(
                 credentials['username'], credentials['password'],
             )
@@ -354,9 +353,9 @@ class ConfigServer:
             log.info('Updating metadata for {0}:{1}', image, tag)
             updates = {}
             img_ref = ImageRef(image + ':' + tag)
-            updates[f'images/{quote(registry_name)}/{img_ref.name}'] = '1'
+            updates[f'images/{quote(registry_name)}/{quote(img_ref.name)}'] = '1'
             tag_prefix = f'images/{quote(registry_name)}/' \
-                         f'{img_ref.name}/{img_ref.tag}'
+                         f'{quote(img_ref.name)}/{img_ref.tag}'
             updates[tag_prefix] = config_digest
             updates[f'{tag_prefix}/size_bytes'] = size_bytes
             for k, v in labels.items():
@@ -375,15 +374,16 @@ class ConfigServer:
 
         async with aiohttp.ClientSession() as sess:
             images = []
-            if registry_url.host == 'registry-1.docker.io':
+            if registry_url.host.endswith('.docker.io'):
                 # We need some special treatment for the Docker Hub.
-                params = {
-                    'page_size': '100',
-                }
-                async with sess.get('https://hub.docker.com/v2/repositories/lablup/',
+                params = {'page_size': '100'}
+                username = await self.etcd.get(
+                    f'config/docker/registry/{quote(registry_name)}/username')
+                hub_url = yarl.URL('https://hub.docker.com')
+                async with sess.get(hub_url / f'v2/repositories/{username}/',
                                     params=params) as resp:
                     data = await resp.json()
-                    images.extend(f"lablup/{item['name']}"
+                    images.extend(f"{username}/{item['name']}"
                                   for item in data['results'])
             else:
                 # In other cases, try the catalog search.
@@ -441,7 +441,7 @@ class ConfigServer:
             raise ValueError('target must be a canonical reference to '
                              'an image including registry name, image name, '
                              'and the tag.')
-        tag_path = f'images/{quote(ref.registry)}/{ref.image}/{ref.tag}'
+        tag_path = f'images/{quote(ref.registry)}/{quote(ref.image)}/{ref.tag}'
         digest = await self.etcd.get(tag_path)
         if digest is None:
             raise ValueError('target must be a valid iamge.')
@@ -488,11 +488,11 @@ class ConfigServer:
 
     @aiotools.lru_cache(expire_after=60.0)
     async def get_image_required_slots(self, image_ref: ImageRef):
-        installed = await self.etcd.get(f'images/{image_ref.name}')
+        installed = await self.etcd.get(f'images/{quote(image_ref.name)}')
         if installed is None:
             raise RuntimeError('Image metadata is not available!')
         tag_path = f'images/{quote(image_ref.registry)}/' \
-                   f'{image_ref.name}/{image_ref.tag}'
+                   f'{quote(image_ref.name)}/{image_ref.tag}'
         cpu = await self.etcd.get(f'{tag_path}/resource/cpu/max')
         if cpu is None:
             cpu_min = Decimal(await self.etcd.get(f'{tag_path}/resource/cpu/min'))
