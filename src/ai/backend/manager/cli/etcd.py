@@ -89,17 +89,38 @@ delete.add('--prefix', action='store_true', default=False,
 def list_images(args):
     '''List everything about images.'''
     with config_ctx(args) as (loop, config_server):
-        items = loop.run_until_complete(
-            config_server.list_images())
-        pprint(items)
+        try:
+            items = loop.run_until_complete(
+                config_server.list_images())
+            pprint(items)
+        except Exception:
+            log.exception('An error occurred.')
+
+
+@etcd.register_command
+def inspect_image(args):
+    '''List everything about images.'''
+    with config_ctx(args) as (loop, config_server):
+        try:
+            item = loop.run_until_complete(
+                config_server.inspect_image(args.reference))
+            pprint(item)
+        except Exception:
+            log.exception('An error occurred.')
+
+
+inspect_image.add('reference', type=str, help='The reference to an image.')
 
 
 @etcd.register_command
 def rescan_images(args):
     '''Update the kernel image metadata from all configured docker registries.'''
     with config_ctx(args) as (loop, config_server):
-        loop.run_until_complete(
-            config_server.rescan_images(args.registry))
+        try:
+            loop.run_until_complete(
+                config_server.rescan_images(args.registry))
+        except Exception:
+            log.exception('An error occurred.')
 
 
 rescan_images.add('-r', '--registry',

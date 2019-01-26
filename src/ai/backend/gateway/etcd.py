@@ -84,8 +84,10 @@ import yaml
 import yarl
 
 from ai.backend.common.identity import get_instance_id, get_instance_ip
+from ai.backend.common.docker import get_known_registries
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ImageRef, BinarySize
+from ai.backend.common.exception import UnknownImageReference
 from ai.backend.common.etcd import (
     quote as etcd_quote,
     unquote as etcd_unquote,
@@ -142,19 +144,97 @@ class ConfigServer:
             print(f'{alias} -> {target}')
         log.info('Done.')
 
+    async def _scan_reverse_aliases(self):
+        kvpairs = dict(await self.etcd.get_prefix('images/_aliases'))
+        result = defaultdict(list)
+        for key, value in kvpairs.items():
+            kpath = key.split('/')
+            result[value].append(etcd_unquote(kpath[2]))
+        return result
+
+    def _parse_image(self, image_ref, kvpairs, reverse_aliases):
+        tag_path = image_ref.tag_path
+        digest = kvpairs.get(tag_path, '')
+        res_paths = filter(lambda k: k.startswith(f'{tag_path}/resource/'),
+                           kvpairs.keys())
+        res_types = []
+        res_values = {}
+        for res_path in res_paths:
+            res_type, limit_type = res_path.rsplit('/', maxsplit=2)[-2:]
+            value = kvpairs[res_path]
+            res_types.append(res_type)
+            res_values[(res_type, limit_type)] = value
+
+        res_limits = []
+        for res_type in res_types:
+            min_value = res_values[(res_type, 'min')]
+            max_value = res_values.get((res_type, 'max'), None)
+            if max_value is None:
+                if res_type == 'cpu':
+                    max_value = max(Decimal(min_value),
+                                    Decimal(_default_cpu_max))
+                elif res_type == 'mem':
+                    max_value = '{:g}'.format(
+                        max(BinarySize.from_str(min_value),
+                            BinarySize.from_str(_default_mem_max)))
+                else:
+                    # disallowed!
+                    max_value = '0'
+
+            res_limits.append({
+                'key': res_type,
+                'min': min_value,
+                'max': max_value,
+            })
+
+        accels = kvpairs.get(f'{tag_path}/accelerators')
+        if accels is None:
+            accels = []
+        else:
+            accels = accels.split(',')
+
+        labels = {}
+        label_paths = filter(lambda k: k.startswith(f'{tag_path}/labels/'),
+                             kvpairs.keys())
+        for label_path in label_paths:
+            label_key = label_path.rsplit('/', maxsplit=1)[-1]
+            value = kvpairs[label_path]
+            labels[label_key] = value
+
+        item = {
+            'name': image_ref.name,
+            'humanized_name': image_ref.name,  # TODO: implement
+            'tag': image_ref.tag,
+            'registry': image_ref.registry,
+            'digest': digest,
+            'labels': labels,
+            'aliases': reverse_aliases.get(
+                f'{image_ref.name}:{image_ref.tag}', []),
+            'size_bytes': kvpairs.get(f'{tag_path}/size_bytes', 0),
+            'resource_limits': res_limits,
+            'supported_accelerators': accels,
+        }
+        return item
+
+    async def inspect_image(self, reference: str):
+        known_registries = await get_known_registries(self.etcd)
+        reverse_aliases = await self._scan_reverse_aliases()
+        ref = ImageRef(reference, known_registries)
+        kvpairs = dict(await self.etcd.get_prefix(ref.tag_path))
+        if not kvpairs or not kvpairs.get(ref.tag_path):
+            raise UnknownImageReference(reference)
+        return self._parse_image(ref, kvpairs, reverse_aliases)
+
     async def list_images(self):
         items = []
-        reverse_aliases = defaultdict(list)
-        kvdict = dict(await self.etcd.get_prefix('images'))
+        known_registries = await get_known_registries(self.etcd)
+        reverse_aliases = await self._scan_reverse_aliases()
+        kvpairs = dict(await self.etcd.get_prefix('images'))
         rx_tag_digest_key = re.compile(
             r'^images/(?P<registry>(?!_aliases)[^/]+)/'
             r'(?P<image>[^/]+)/(?P<tag>[^/]+)$')
         image_set = {}
-        for key, value in kvdict.items():
-            kpath = key.split('/')
-            if len(kpath) == 3 and kpath[1] == '_aliases':
-                reverse_aliases[value].append(etcd_unquote(kpath[2]))
-                continue
+        for key, value in kvpairs.items():
             match = rx_tag_digest_key.search(key)
             if match is None:
                 continue
@@ -166,67 +246,8 @@ class ConfigServer:
             image_set[image_tuple] = key
 
         for (registry, image, tag), tag_path in image_set.items():
-            hash_ = kvdict.get(tag_path, '')
-
-            res_paths = filter(lambda k: k.startswith(f'{tag_path}/resource/'),
-                               kvdict.keys())
-            res_types = []
-            res_values = {}
-            for res_path in res_paths:
-                res_type, limit_type = res_path.rsplit('/', maxsplit=2)[-2:]
-                value = kvdict[res_path]
-                res_types.append(res_type)
-                res_values[(res_type, limit_type)] = value
-
-            res_limits = []
-            for res_type in res_types:
-                min_value = res_values[(res_type, 'min')]
-                max_value = res_values.get((res_type, 'max'), None)
-                if max_value is None:
-                    if res_type == 'cpu':
-                        max_value = max(Decimal(min_value),
-                                        Decimal(_default_cpu_max))
-                    elif res_type == 'mem':
-                        max_value = '{:g}'.format(
-                            max(BinarySize.from_str(min_value),
-                                BinarySize.from_str(_default_mem_max)))
-                    else:
-                        # disallowed!
-                        max_value = '0'
-
-                res_limits.append({
-                    'key': res_type,
-                    'min': min_value,
-                    'max': max_value,
-                })
-
-            accels = kvdict.get(f'{tag_path}/accelerators')
-            if accels is None:
-                accels = []
-            else:
-                accels = accels.split(',')
-
-            labels = {}
-            label_paths = filter(lambda k: k.startswith(f'{tag_path}/labels/'),
-                                 kvdict.keys())
-            for label_path in label_paths:
-                label_key = label_path.rsplit('/', maxsplit=1)[-1]
-                value = kvdict[label_path]
-                labels[label_key] = value
-
-            item = {
-                'name': image,
-                'humanized_name': image,  # TODO: implement
-                'registry': registry,
-                'tag': tag,
-                'hash': hash_,
-                'labels': labels,
-                'aliases': reverse_aliases.get(f'{image}:{tag}', []),
-                'size_bytes': kvdict.get(f'{tag_path}/size_bytes', 0),
-                'resource_limits': res_limits,
-                'supported_accelerators': accels,
-            }
-            items.append(item)
+            ref = ImageRef(f'{registry}/{image}:{tag}', known_registries)
+            items.append(self._parse_image(ref, kvpairs, reverse_aliases))
         return items
 
     async def _rescan_images(self, registry_name: str,
@@ -283,11 +304,10 @@ class ConfigServer:
 
             log.info('Updating metadata for {0}:{1}', image, tag)
             updates = {}
-            img_ref = ImageRef(image + ':' + tag)
             updates[f'images/{etcd_quote(registry_name)}/'
-                    f'{etcd_quote(img_ref.name)}'] = '1'
+                    f'{etcd_quote(image)}'] = '1'
             tag_prefix = f'images/{etcd_quote(registry_name)}/' \
-                         f'{etcd_quote(img_ref.name)}/{img_ref.tag}'
+                         f'{etcd_quote(image)}/{tag}'
             updates[tag_prefix] = config_digest
             updates[f'{tag_prefix}/size_bytes'] = size_bytes
             for k, v in labels.items():
