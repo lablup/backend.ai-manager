@@ -157,12 +157,12 @@ class ConfigServer:
         digest = kvpairs.get(tag_path, '')
         res_paths = filter(lambda k: k.startswith(f'{tag_path}/resource/'),
                            kvpairs.keys())
-        res_types = []
+        res_types = set()
         res_values = {}
         for res_path in res_paths:
             res_type, limit_type = res_path.rsplit('/', maxsplit=2)[-2:]
             value = kvpairs[res_path]
-            res_types.append(res_type)
+            res_types.add(res_type)
             res_values[(res_type, limit_type)] = value
 
         res_limits = []
@@ -216,6 +216,14 @@ class ConfigServer:
         }
         return item
 
+    async def _check_image(self, reference: str) -> ImageRef:
+        known_registries = await get_known_registries(self.etcd)
+        ref = ImageRef(reference, known_registries)
+        digest = await self.etcd.get(ref.tag_path)
+        if digest is None:
+            raise UnknownImageReference(reference)
+        return ref
+
     async def inspect_image(self, reference: str):
         known_registries = await get_known_registries(self.etcd)
         reverse_aliases = await self._scan_reverse_aliases()
@@ -249,6 +257,14 @@ class ConfigServer:
             ref = ImageRef(f'{registry}/{image}:{tag}', known_registries)
             items.append(self._parse_image(ref, kvpairs, reverse_aliases))
         return items
+
+    async def set_image_resource_limit(self, reference: str,
+                                       slot_type: str,
+                                       max_value: str):
+        # TODO: add some validation
+        ref = await self._check_image(reference)
+        await self.etcd.put(f'{ref.tag_path}/resource/{slot_type}/max',
+                            max_value)
 
     async def _rescan_images(self, registry_name: str,
                              registry_url: yarl.URL,

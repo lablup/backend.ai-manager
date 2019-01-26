@@ -113,6 +113,26 @@ inspect_image.add('reference', type=str, help='The reference to an image.')
 
 
 @etcd.register_command
+def set_image_resource_limit(args):
+    '''List everything about images.'''
+    with config_ctx(args) as (loop, config_server):
+        try:
+            loop.run_until_complete(
+                config_server.set_image_resource_limit(
+                    args.reference, args.slot_type, args.max))
+        except Exception:
+            log.exception('An error occurred.')
+
+
+set_image_resource_limit.add('reference', type=str,
+                             help='The reference to an image.')
+set_image_resource_limit.add('slot_type', type=str,
+                             help='The resource slot name.')
+set_image_resource_limit.add('max', type=str,
+                             help='The maximum value allowed.')
+
+
+@etcd.register_command
 def rescan_images(args):
     '''Update the kernel image metadata from all configured docker registries.'''
     with config_ctx(args) as (loop, config_server):
