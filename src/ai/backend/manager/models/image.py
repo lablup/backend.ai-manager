@@ -36,6 +36,7 @@ class Image(graphene.ObjectType):
             name=r['name'],
             humanized_name=r['humanized_name'],
             tag=r['tag'],
+            registry=r['registry'],
             digest=r['digest'],
             aliases=r['aliases'],
             labels=[

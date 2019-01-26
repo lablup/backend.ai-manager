@@ -337,7 +337,9 @@ class ConfigServer:
                     if resp.status == 200:
                         data = await resp.json()
                         images.extend(f"{username}/{item['name']}"
-                                      for item in data['results'])
+                                      for item in data['results']
+                                      # a little optimization to ignore legacies
+                                      if not item['name'].startswith('kernel-'))
                     else:
                         log.error('Failed to fetch repository list from {0} '
                                   '(status={1})',
