@@ -377,16 +377,6 @@ class ConfigServer:
         await asyncio.gather(*coros)
 
     async def alias(self, alias: str, target: str):
-        ref = ImageRef(target)
-        if ref.resolve_required():
-            raise ValueError('target must be a canonical reference to '
-                             'an image including registry name, image name, '
-                             'and the tag.')
-        tag_path = f'images/{etcd_quote(ref.registry)}/' \
-                   f'{etcd_quote(ref.image)}/{ref.tag}'
-        digest = await self.etcd.get(tag_path)
-        if digest is None:
-            raise ValueError('target must be a valid iamge.')
         await self.etcd.put(f'images/_aliases/{etcd_quote(alias)}', target)
 
     async def dealias(self, alias: str):
