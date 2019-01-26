@@ -71,13 +71,10 @@ Alias keys are also URL-quoted in the same way.
 import asyncio
 from collections import defaultdict
 from decimal import Decimal
-from functools import partial
 import logging
 import json
 from pathlib import Path
 import re
-from typing import Tuple
-from urllib.parse import quote as _quote, unquote
 
 import aiohttp
 from aiohttp import web
@@ -89,7 +86,14 @@ import yarl
 from ai.backend.common.identity import get_instance_id, get_instance_ip
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ImageRef, BinarySize
-
+from ai.backend.common.etcd import (
+    quote as etcd_quote,
+    unquote as etcd_unquote,
+)
+from ai.backend.common.docker import (
+    login as registry_login,
+    get_registry_info
+)
 from ..manager.models.agent import ResourceSlot
 from .manager import ManagerStatus
 
@@ -97,8 +101,6 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
 
 _default_cpu_max = 1
 _default_mem_max = '1g'
-
-quote = partial(_quote, safe='')
 
 
 class ConfigServer:
@@ -136,23 +138,9 @@ class ConfigServer:
         for item in data['aliases']:
             alias = item[0]
             target = item[1]
-            await self.etcd.put(f'images/_aliases/{quote(alias)}', target)
+            await self.etcd.put(f'images/_aliases/{etcd_quote(alias)}', target)
             print(f'{alias} -> {target}')
         log.info('Done.')
-
-    @aiotools.lru_cache(maxsize=8)
-    async def get_docker_registry(self, registry: str) -> Tuple[yarl.URL, dict]:
-        reg_path = f'config/docker/registry/{quote(registry)}'
-        registry_addr = await self.etcd.get(reg_path)
-        if registry_addr is None:
-            raise RuntimeError(f'Unknown registry: {registry}')
-        username = await self.etcd.get(f'{reg_path}/username')
-        if username is not None:
-            password = await self.etcd.get(f'{reg_path}/password')
-            creds = {'username': username, 'password': password}
-        else:
-            creds = {}
-        return yarl.URL(registry_addr), creds
 
     async def list_images(self):
         items = []
@@ -165,14 +153,14 @@ class ConfigServer:
         for key, value in kvdict.items():
             kpath = key.split('/')
             if len(kpath) == 3 and kpath[1] == '_aliases':
-                reverse_aliases[value].append(unquote(kpath[2]))
+                reverse_aliases[value].append(etcd_unquote(kpath[2]))
                 continue
             match = rx_tag_digest_key.search(key)
             if match is None:
                 continue
             image_tuple = (
-                unquote(match.group('registry')),
-                unquote(match.group('image')),
+                etcd_unquote(match.group('registry')),
+                etcd_unquote(match.group('image')),
                 match.group('tag'),
             )
             image_set[image_tuple] = key
@@ -241,63 +229,6 @@ class ConfigServer:
             items.append(item)
         return items
 
-    @staticmethod
-    async def authorize_docker_registry(
-            sess: aiohttp.ClientSession,
-            registry_url: yarl.URL,
-            credentials: dict,
-            scope: str) -> dict:
-        '''
-        Authorize to the docker registry using the given credentials and token scope,
-        and returns required aiohttp.ClientSession.request() keyword arguments for
-        further API requests.
-
-        Some registry servers only rely on HTTP Basic Authentication without
-        token-based access controls (usually via nginx proxy). We do support them
-        also. :)
-        '''
-        if credentials.get('username') and credentials.get('password'):
-            basic_auth = aiohttp.BasicAuth(
-                credentials['username'], credentials['password'],
-            )
-        else:
-            basic_auth = None
-        realm = registry_url / 'token'  # fallback
-        service = 'registry'            # fallback
-        async with sess.get(registry_url / 'v2/', auth=basic_auth) as resp:
-            ping_status = resp.status
-            www_auth_header = resp.headers.get('WWW-Authenticate')
-            if www_auth_header:
-                match = re.search(r'realm="([^"]+)"', www_auth_header)
-                if match:
-                    realm = match.group(1)
-                match = re.search(r'service="([^"]+)"', www_auth_header)
-                if match:
-                    service = match.group(1)
-        if ping_status == 200:
-            log.debug('docker-registry: {0} -> basic-auth', registry_url)
-            return {'auth': basic_auth, 'headers': {}}
-        elif ping_status == 404:
-            raise RuntimeError(f'Unsupported docker registry: {registry_url}! '
-                               '(API v2 not implemented)')
-        elif ping_status == 401:
-            params = {
-                'scope': scope,
-                'offline_token': 'true',
-                'client_id': 'docker',
-                'service': service,
-            }
-            async with sess.get(realm, params=params, auth=basic_auth) as resp:
-                log.debug('docker-registry: {0} -> {1}', registry_url, realm)
-                if resp.status == 200:
-                    data = json.loads(await resp.read())
-                    token = data.get('token', None)
-                    return {'auth': None, 'headers': {
-                        'Authorization': f'Bearer {token}'
-                    }}
-        raise RuntimeError('authentication for docker registry '
-                           'f{registry_url} failed')
-
     async def _rescan_images(self, registry_name: str,
                              registry_url: yarl.URL,
                              credentials: dict):
@@ -307,7 +238,7 @@ class ConfigServer:
         }
 
         async def _scan_image(sess, image):
-            rqst_args = await self.authorize_docker_registry(
+            rqst_args = await registry_login(
                 sess, registry_url,
                 credentials, f'repository:{image}:pull')
             tags = []
@@ -353,9 +284,10 @@ class ConfigServer:
             log.info('Updating metadata for {0}:{1}', image, tag)
             updates = {}
             img_ref = ImageRef(image + ':' + tag)
-            updates[f'images/{quote(registry_name)}/{quote(img_ref.name)}'] = '1'
-            tag_prefix = f'images/{quote(registry_name)}/' \
-                         f'{quote(img_ref.name)}/{img_ref.tag}'
+            updates[f'images/{etcd_quote(registry_name)}/'
+                    f'{etcd_quote(img_ref.name)}'] = '1'
+            tag_prefix = f'images/{etcd_quote(registry_name)}/' \
+                         f'{etcd_quote(img_ref.name)}/{img_ref.tag}'
             updates[tag_prefix] = config_digest
             updates[f'{tag_prefix}/size_bytes'] = size_bytes
             for k, v in labels.items():
@@ -378,16 +310,21 @@ class ConfigServer:
                 # We need some special treatment for the Docker Hub.
                 params = {'page_size': '100'}
                 username = await self.etcd.get(
-                    f'config/docker/registry/{quote(registry_name)}/username')
+                    f'config/docker/registry/{etcd_quote(registry_name)}/username')
                 hub_url = yarl.URL('https://hub.docker.com')
                 async with sess.get(hub_url / f'v2/repositories/{username}/',
                                     params=params) as resp:
-                    data = await resp.json()
-                    images.extend(f"{username}/{item['name']}"
-                                  for item in data['results'])
+                    if resp.status == 200:
+                        data = await resp.json()
+                        images.extend(f"{username}/{item['name']}"
+                                      for item in data['results'])
+                    else:
+                        log.error('Failed to fetch repository list from {0} '
+                                  '(status={1})',
+                                  hub_url, resp.status)
             else:
                 # In other cases, try the catalog search.
-                rqst_args = await self.authorize_docker_registry(
+                rqst_args = await registry_login(
                     sess, registry_url,
                     credentials, 'registry:catalog:*')
                 async with sess.get(registry_url / 'v2/_catalog',
@@ -425,13 +362,17 @@ class ConfigServer:
             for key, val in pairs:
                 match = re.search(r'^config/docker/registry/([^/]+)$', key)
                 if match is not None:
-                    registries.append(unquote(match.group(1)))
+                    registries.append(etcd_unquote(match.group(1)))
         else:
             registries = [registry]
         coros = []
         for registry in registries:
             log.info('Scanning kernel images from the registry "{0}"', registry)
-            registry_url, creds = await self.get_docker_registry(registry)
+            try:
+                registry_url, creds = await get_registry_info(self.etcd, registry)
+            except ValueError:
+                log.error('Unknown registry: "{0}"', registry)
+                continue
             coros.append(self._rescan_images(registry, registry_url, creds))
         await asyncio.gather(*coros)
 
@@ -441,14 +382,15 @@ class ConfigServer:
             raise ValueError('target must be a canonical reference to '
                              'an image including registry name, image name, '
                              'and the tag.')
-        tag_path = f'images/{quote(ref.registry)}/{quote(ref.image)}/{ref.tag}'
+        tag_path = f'images/{etcd_quote(ref.registry)}/' \
+                   f'{etcd_quote(ref.image)}/{ref.tag}'
         digest = await self.etcd.get(tag_path)
         if digest is None:
             raise ValueError('target must be a valid iamge.')
-        await self.etcd.put(f'images/_aliases/{quote(alias)}', target)
+        await self.etcd.put(f'images/_aliases/{etcd_quote(alias)}', target)
 
     async def dealias(self, alias: str):
-        await self.etcd.delete(f'images/_aliases/{quote(alias)}')
+        await self.etcd.delete(f'images/_aliases/{etcd_quote(alias)}')
 
     async def update_volumes_from_file(self, file: Path):
         log.info('Updating network volumes from "{0}"', file)
@@ -488,11 +430,11 @@ class ConfigServer:
 
     @aiotools.lru_cache(expire_after=60.0)
     async def get_image_required_slots(self, image_ref: ImageRef):
-        installed = await self.etcd.get(f'images/{quote(image_ref.name)}')
+        installed = await self.etcd.get(f'images/{etcd_quote(image_ref.name)}')
         if installed is None:
             raise RuntimeError('Image metadata is not available!')
-        tag_path = f'images/{quote(image_ref.registry)}/' \
-                   f'{quote(image_ref.name)}/{image_ref.tag}'
+        tag_path = f'images/{etcd_quote(image_ref.registry)}/' \
+                   f'{etcd_quote(image_ref.name)}/{image_ref.tag}'
         cpu = await self.etcd.get(f'{tag_path}/resource/cpu/max')
         if cpu is None:
             cpu_min = Decimal(await self.etcd.get(f'{tag_path}/resource/cpu/min'))
