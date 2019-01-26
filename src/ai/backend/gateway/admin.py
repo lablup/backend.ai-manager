@@ -2,7 +2,6 @@ import asyncio
 import inspect
 import json
 import logging
-import traceback
 from typing import Mapping
 
 from aiohttp import web
@@ -10,12 +9,12 @@ import aiohttp_cors
 from aiojobs.aiohttp import atomic
 import graphene
 from graphql.execution.executors.asyncio import AsyncioExecutor
-from graphql.error.located_error import GraphQLLocatedError
+from graphql.error import GraphQLError, format_error
 
 from ai.backend.common.logging import BraceStyleAdapter
 
 from .manager import GQLMutationUnfrozenRequiredMiddleware
-from .exceptions import InvalidAPIParameters, BackendError
+from .exceptions import InvalidAPIParameters, GraphQLError as BackendGQLError
 from .auth import auth_required
 from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
@@ -73,21 +72,14 @@ async def handle_gql(request: web.Request) -> web.Response:
     if inspect.isawaitable(result):
         result = await result
     if result.errors:
-        has_internal_errors = False
+        errors = []
         for e in result.errors:
-            if isinstance(e, GraphQLLocatedError):
-                exc_info = (type(e.original_error),
-                            e.original_error,
-                            e.original_error.__traceback__)
-                tb_text = ''.join(traceback.format_exception(*exc_info))
-                log.error('GraphQL located error:\n{0}', tb_text)
-                request.app['error_monitor'].capture_exception(exc_info)
-                has_internal_errors = True
-        if has_internal_errors:
-            raise BackendError(str(result.errors[0]))
-        raise InvalidAPIParameters(str(result.errors[0]))
-    else:
-        return web.json_response(result.data, status=200, dumps=json.dumps)
+            if isinstance(e, GraphQLError):
+                errors.append(format_error(e))
+            else:
+                errors.append({'message': str(e)})
+        raise BackendGQLError(extra_data=errors)
+    return web.json_response(result.data, status=200)
 
 
 class MutationForAdmin(graphene.ObjectType):
@@ -113,11 +105,15 @@ class QueryForAdmin(graphene.ObjectType):
 
     agent = graphene.Field(
         Agent,
-        agent_id=graphene.String())
+        agent_id=graphene.String(required=True))
 
     agents = graphene.List(
         Agent,
         status=graphene.String())
+
+    image = graphene.Field(
+        Image,
+        reference=graphene.String(required=True))
 
     images = graphene.List(
         Image,
@@ -177,6 +173,11 @@ class QueryForAdmin(graphene.ObjectType):
             agent.cpu_cur_pct = cpu_pct
             agent.mem_cur_bytes = mem_cur_bytes
         return agent_list
+
+    @staticmethod
+    async def resolve_image(executor, info, reference):
+        config_server = info.context['config_server']
+        return await Image.load_item(config_server, reference)
 
     @staticmethod
     async def resolve_images(executor, info):
@@ -244,6 +245,10 @@ class QueryForUser(graphene.ObjectType):
     It only allows use of the access key specified in the authorization header.
     '''
 
+    image = graphene.Field(
+        Image,
+        reference=graphene.String(required=True))
+
     images = graphene.List(
         Image,
     )
@@ -264,6 +269,11 @@ class QueryForUser(graphene.ObjectType):
         ComputeWorker,
         sess_id=graphene.String(required=True),
         status=graphene.String())
+
+    @staticmethod
+    async def resolve_image(executor, info, reference):
+        config_server = info.context['config_server']
+        return await Image.load_item(config_server, reference)
 
     @staticmethod
     async def resolve_images(executor, info):
