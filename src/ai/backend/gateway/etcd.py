@@ -52,16 +52,16 @@ Alias keys are also URL-quoted in the same way.
          + resource
            + cpu
              - min
-             - max
+             - max   # may not be defined
            + mem
              - min
-             - max
+             - max   # may not be defined
            + {"cuda.smp"}
              - min
-             - max
+             - max   # treated as 0 if not defined
            + {"cuda.mem"}
              - min
-             - max
+             - max   # treated as 0 if not defined
            ...
        ...
      ...
