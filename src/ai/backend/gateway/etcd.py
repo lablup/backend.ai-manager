@@ -217,7 +217,7 @@ class ConfigServer:
             item = {
                 'name': image,
                 'humanized_name': image,  # TODO: implement
-                'registry': kvdict.get(f'{tag_path}/registry', ''),
+                'registry': registry,
                 'tag': tag,
                 'hash': hash_,
                 'labels': labels,
