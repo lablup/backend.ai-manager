@@ -35,8 +35,8 @@ from ai.backend.gateway.server import (
     _get_legacy_handler,
     PUBLIC_INTERFACES)
 from ai.backend.manager import models
-from ai.backend.manager.models import fixtures, agents, kernels, keypairs, vfolders
-from ai.backend.manager.cli.etcd import delete, put, update_images, update_aliases
+from ai.backend.manager.models import agents, kernels, keypairs, vfolders
+from ai.backend.manager.cli.etcd import delete, put, update_aliases
 from ai.backend.manager.cli.dbschema import oneshot
 
 here = Path(__file__).parent
@@ -81,13 +81,6 @@ def prepare_and_cleanup_databases(request, test_ns, test_db,
 
     # Clear and reset etcd namespace using CLI functions.
     etcd_addr = host_port_pair(os.environ['BACKEND_ETCD_ADDR'])
-    samples = here / '..' / 'sample-configs'
-    args = Namespace(file=samples / 'image-metadata.yml',
-                     etcd_addr=etcd_addr, namespace=test_ns)
-    update_images(args)
-    args = Namespace(file=samples / 'image-aliases.yml',
-                     etcd_addr=etcd_addr, namespace=test_ns)
-    update_aliases(args)
     args = Namespace(key='volumes/_mount', value=str(folder_mount),
                      etcd_addr=etcd_addr, namespace=test_ns)
     put(args)
@@ -97,7 +90,8 @@ def prepare_and_cleanup_databases(request, test_ns, test_db,
     args = Namespace(key='volumes/_default_host', value=str(folder_host),
                      etcd_addr=etcd_addr, namespace=test_ns)
     put(args)
-    args = Namespace(key='nodes/docker_registry', value='lablup',
+    args = Namespace(key='config/docker/registry/index.docker.io',
+                     value='https://registry-1.docker.io',
                      etcd_addr=etcd_addr, namespace=test_ns)
     put(args)
 
@@ -154,12 +148,14 @@ def prepare_and_cleanup_databases(request, test_ns, test_db,
         oneshot(args)
 
     # Populate example_keypair fixture
-    fixture = getattr(fixtures, 'example_keypair')
+    fixture = {
+        # TODO: fill up
+    }
     engine = sa.create_engine(alembic_url)
     conn = engine.connect()
-    for rowset in fixture:
-        table = getattr(models, rowset[0])
-        conn.execute(table.insert(), rowset[1])
+    for table_name, rows in fixture.items():
+        table = getattr(models, table_name)
+        conn.execute(table.insert(), rows)
     conn.close()
     engine.dispose()
 

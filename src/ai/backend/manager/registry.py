@@ -16,7 +16,7 @@ from yarl import URL
 import zmq
 
 from ai.backend.common import msgpack
-from ai.backend.common.types import ImageRef
+from ai.backend.common.types import BinarySize, ImageRef
 from ai.backend.common.logging import BraceStyleAdapter
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
@@ -374,111 +374,116 @@ class AgentRegistry:
         mounts = creation_config.get('mounts') or []
         environ = creation_config.get('environ') or {}
 
-        max_allowed_slot = \
-            await self.config_server.get_image_required_slots(image_ref)
+        image_min_slots, image_max_slots = \
+            await self.config_server.get_image_slot_ranges(image_ref)
+        known_resource_slot_types = \
+            await self.config_server.get_resource_slots()
+
+        # ==== BEGIN: ENQUEUING PART ====
+        # This part will be moved to the job-enqueue handler.
+
+        # Sanitize user input: does it have resource config?
+        if 'resources' in creation_config:
+            # Sanitize user input: does it have "known" resource slots only?
+            for slot_key, slot_value in creation_config['resources'].items():
+                if slot_key not in known_resource_slot_types:
+                    raise InvalidAPIParameters(
+                        f'Unknown requested resource slot: {slot_key}')
+            requested_slots = ResourceSlot(creation_config['resources'])
+        else:
+            # Handle the legacy clients (prior to v19.03)
+            # We support CPU/memory conversion, but to use accelerators users
+            # must update their clients because the slots names are not provided
+            # by the accelerator plugins.
+            requested_slots = ResourceSlot({
+                'cpu': creation_config.get('instanceCores', image_max_slots['cpu']),
+                'mem': creation_config.get('instanceMemory', image_max_slots['mem']),
+            })
+            # In legacy clients, memory is normalized to GiB.
+            requested_slots['mem'] = \
+                str(requested_slots['mem']) + 'g'
+            gpu = creation_config.get('instanceGPUs')
+            if gpu is not None:
+                raise InvalidAPIParameters('Client upgrade required '
+                                           'to use GPUs (v19.03+).')
+            tpu = creation_config.get('instanceTPUs')
+            if tpu is not None:
+                raise InvalidAPIParameters('Client upgrade required '
+                                           'to use TPUs (v19.03+).')
 
         try:
-            cpu_share = Decimal(0)
-            if max_allowed_slot.cpu is not None:
-                cpu_share = min(
-                    max_allowed_slot.cpu,
-                    Decimal(creation_config.get('instanceCores') or 'inf'),
-                )
-            else:
-                assert creation_config['instanceCores'] is not None
-                cpu_share = Decimal(creation_config['instanceCores'])
+            # Check if: requested >= image-minimum
+            requested_slots = requested_slots.as_numeric(known_resource_slot_types)
+            if image_min_slots > requested_slots:
+                raise InvalidAPIParameters(
+                    'Your resource request is smaller than '
+                    'the minimum required by the image.')
 
-            mem_share = Decimal(0)
-            if max_allowed_slot.mem is not None:
-                mem_share = min(
-                    max_allowed_slot.mem,
-                    Decimal(creation_config.get('instanceMemory') or 'inf'),
-                )
-            else:
-                assert creation_config['instanceMemory'] is not None
-                mem_share = Decimal(creation_config['instanceMemory'])
+            # Check if: requested <= image-maximum
+            if not (image_max_slots > requested_slots):
+                raise InvalidAPIParameters(
+                    'Your resource request is larger than '
+                    'the maximum allowed by the image.')
+        except ValueError:
+            # happens when requested_slots have more keys
+            # than the image-defined slots
+            # (e.g., image does not support accelerators
+            #  requested by the client)
+            raise InvalidAPIParameters(
+                'Your resource request has more resource types '
+                'than supported by the image.')
 
-            # TODO: dynamic slots
-            cuda_share = Decimal(0)
-            if max_allowed_slot.cuda is not None:
-                cuda_share = min(
-                    max_allowed_slot.cuda,
-                    Decimal(creation_config.get('instanceGPUs') or 'inf'),
-                )
-            else:
-                assert creation_config['instanceGPUs'] is not None
-                cuda_share = Decimal(creation_config['instanceGPUs'])
-
-            tpu_share = Decimal(0)
-            if max_allowed_slot.tpu is not None:
-                tpu_share = min(
-                    max_allowed_slot.tpu,
-                    Decimal(creation_config.get('instanceTPUs') or 'inf'),
-                )
-            else:
-                assert creation_config['instanceTPUs'] is not None
-                tpu_share = Decimal(creation_config['instanceTPUs'])
-        except (AssertionError, KeyError):
-            msg = ('You have missing resource limits that must be specified. '
-                   'If the server does not have default resource configurations, '
-                   'you must specify all resource limits by yourself.')
-            raise InvalidAPIParameters(msg)
-
-        # units: share
-        required_shares = ResourceSlot(
-            id=None,
-            cpu=cpu_share,
-            mem=mem_share,
-            cuda=cuda_share,
-            tpu=tpu_share,
-        )
+        # ==== END: ENQUEUING PART ====
 
         async with reenter_txn(self.dbpool, conn) as conn:
 
-            # scan available slots from alive agents
-            avail_slots = []
+            # Fetch all agent available slots and normalize them to "remaining" slots
+            possible_agent_slots = []
             query = (sa.select([agents], for_update=True)
                        .where(agents.c.status == AgentStatus.ALIVE))
-
             async for row in conn.execute(query):
-                sdiff = ResourceSlot(
-                    id=row['id'],
-                    mem=row['mem_slots'] - row['used_mem_slots'],
-                    cpu=row['cpu_slots'] - row['used_cpu_slots'],
-                    cuda=row['gpu_slots'] - row['used_gpu_slots'],
-                    tpu=row['tpu_slots'] - row['used_tpu_slots'],
-                )
-                avail_slots.append(sdiff)
+                total_slots = ResourceSlot(row['available_slots']) \
+                              .as_numeric(known_resource_slot_types)
+                occupied_slots = ResourceSlot(row['occupied_slots']) \
+                                 .as_numeric(known_resource_slot_types)
+                # TODO: would there be any case that occupied_slots have more keys
+                #       than total_slots?
+                remaining_slots = total_slots - occupied_slots,
 
-            # check minimum requirement
-            avail_slots = [s for s in avail_slots
-                           if s.mem >= (required_shares.mem * 1024) and
-                              s.cpu >= required_shares.cpu and
-                              s.cuda >= required_shares.cuda and
-                              s.tpu >= required_shares.tpu]
+                # Check if: any(remaining >= requested)
+                try:
+                    if remaining_slots >= requested_slots:
+                        possible_agent_slots.append((
+                            row['id'],
+                            remaining_slots,
+                            occupied_slots))
+                except ValueError:
+                    # happens when requested_slots have more keys
+                    # than the agent_slots
+                    # (e.g., agent does not have accelerators
+                    #  requested by the client)
+                    continue
 
-            # load-balance
-            if avail_slots:
-                agent_id = (max(avail_slots,
-                                key=lambda s: (s.cuda, s.cpu, s.mem, s.tpu))).id
+            # Load-balance! (choose the agent with most remaining slots)
+            # Here, all items in possible_agent_slots have the same keys,
+            # allowing the total ordering property.
+            if possible_agent_slots:
+                agent_id, _, occupied_slots = (
+                    max(possible_agent_slots,
+                        key=lambda s: s[1])
+                )[0]
             else:
                 raise InstanceNotAvailable
 
-            # reserve slots
-            mem_col = agents.c.used_mem_slots
-            cpu_col = agents.c.used_cpu_slots
-            cuda_col = agents.c.used_gpu_slots
-            tpu_col = agents.c.used_tpu_slots
+            # Reserve slots
+            updated_occupied_slots = (occupied_slots + requested_slots) \
+                                     .as_humanized(known_resource_slot_types)
             query = (sa.update(agents)
                        .values({
-                           'used_mem_slots': mem_col + required_shares.mem * 1024,
-                           'used_cpu_slots': cpu_col + required_shares.cpu,
-                           'used_gpu_slots': cuda_col + required_shares.cuda,
-                           'used_tpu_slots': tpu_col + required_shares.tpu,
+                           'occupied_slots': updated_occupied_slots,
                        })
                        .where(agents.c.id == agent_id))
             result = await conn.execute(query)
-            assert result.rowcount == 1
 
             # Create kernel by invoking the agent on the instance.
             query = (sa.select([agents.c.addr])
@@ -499,14 +504,9 @@ class AgentRegistry:
                 'lang': image_ref.long,
                 'tag': session_tag,
                 # units: absolute
-                'mem_slot': required_shares.mem * 1024,
-                'cpu_slot': required_shares.cpu,
-                'gpu_slot': required_shares.cuda,
-                'tpu_slot': required_shares.tpu,
+                'occupied_slots': requested_slots,
+                'occupied_shares': {},
                 'environ': [f'{k}={v}' for k, v in environ.items()],
-                'cpu_set': [],
-                'gpu_set': [],
-                'tpu_set': [],
                 'kernel_host': None,
                 'repl_in_port': 0,
                 'repl_out_port': 0,
@@ -521,13 +521,7 @@ class AgentRegistry:
                 async with RPCContext(agent_addr, 30) as rpc:
                     config = {
                         'lang': image_ref.long,
-                        'limits': {
-                            # units: share
-                            'mem_slot': str(required_shares.mem),
-                            'cpu_slot': str(required_shares.cpu),
-                            'gpu_slot': str(required_shares.cuda),
-                            'tpu_slot': str(required_shares.tpu),
-                        },
+                        'resource_slots': requested_slots,
                         'mounts': mounts,
                         'environ': environ,
                     }
@@ -553,9 +547,7 @@ class AgentRegistry:
                                 .values({
                                     'status': KernelStatus.RUNNING,
                                     'container_id': created_info['container_id'],
-                                    'cpu_set': [],  # TODO: revamp with resource_spec
-                                    'gpu_set': [],  # TODO: revamp with resource_spec
-                                    'tpu_set': [],  # TODO: revamp with resource_spec
+                                    'occupied_shares': {},  # TODO: implement?
                                     'kernel_host': kernel_host,
                                     'repl_in_port': created_info['repl_in_port'],
                                     'repl_out_port': created_info['repl_out_port'],
@@ -794,22 +786,23 @@ class AgentRegistry:
 
         # Check and update status of the agent record in DB
         async with self.dbpool.acquire() as conn, conn.begin():
-            # TODO: check why sa.column('status') does not work
             query = (sa.select([agents.c.status,
-                                agents.c.mem_slots,
-                                agents.c.cpu_slots,
-                                agents.c.gpu_slots,
-                                agents.c.tpu_slots],
+                                agents.c.available_slots],
                                for_update=True)
                        .select_from(agents)
                        .where(agents.c.id == agent_id))
             result = await conn.execute(query)
             row = await result.first()
-            reported_mem_slots = int(Decimal(agent_info['mem_slots']))
-            reported_cpu_slots = float(Decimal(agent_info['cpu_slots']))
-            # TODO: dynamic slots
-            reported_cuda_slots = float(Decimal(agent_info.get('cuda_slots', 0)))
-            reported_tpu_slots = float(Decimal(agent_info.get('tpu_slots', 0)))
+
+            available_slots = ResourceSlot({
+                k: v[1] for k, v in
+                agent_info['resource_slots'].items()})
+            slot_key_and_units = {
+                k: v[0] for k, v in
+                agent_info['resource_slots'].items()}
+
+            # compare and update etcd slot_keys
+
             if row is None or row.status is None:
                 # new agent detected!
                 log.info('agent {0} joined!', agent_id)
@@ -817,35 +810,24 @@ class AgentRegistry:
                     'id': agent_id,
                     'status': AgentStatus.ALIVE,
                     'region': agent_info['region'],
-                    'mem_slots': reported_mem_slots,
-                    'cpu_slots': reported_cpu_slots,
-                    # TODO: dynamic slots
-                    'gpu_slots': reported_cuda_slots,
-                    'tpu_slots': reported_tpu_slots,
-                    'used_mem_slots': 0,
-                    'used_cpu_slots': 0,
-                    'used_gpu_slots': 0,
-                    'used_tpu_slots': 0,
+                    'available_slots': available_slots,
+                    'occupied_slots': {},
                     'addr': agent_info['addr'],
                     'first_contact': now,
                     'lost_at': None,
                 })
                 result = await conn.execute(query)
                 assert result.rowcount == 1
+                await self.config_server.update_resource_slots(slot_key_and_units)
+                self.config_server.get_resource_slots.cache_clear()
             elif row.status == AgentStatus.ALIVE:
-                changed_cols = {}
-                if row.mem_slots != reported_mem_slots:
-                    changed_cols['mem_slots'] = reported_mem_slots
-                if row.cpu_slots != reported_cpu_slots:
-                    changed_cols['cpu_slots'] = reported_cpu_slots
-                # TODO: dynamic slots
-                if row.gpu_slots != reported_cuda_slots:
-                    changed_cols['gpu_slots'] = reported_cuda_slots
-                if row.tpu_slots != reported_tpu_slots:
-                    changed_cols['tpu_slots'] = reported_tpu_slots
-                if changed_cols:
+                updates = {}
+                if available_slots != row.available_slots:
+                    updates['available_slots'] = available_slots
+                # occupied_slots are updated when kernels starts/terminates
+                if updates:
                     query = (sa.update(agents)
-                               .values(changed_cols)
+                               .values(updates)
                                .where(agents.c.id == agent_id))
                     await conn.execute(query)
             elif row.status in (AgentStatus.LOST, AgentStatus.TERMINATED):
@@ -856,14 +838,12 @@ class AgentRegistry:
                                'region': agent_info['region'],
                                'addr': agent_info['addr'],
                                'lost_at': None,
-                               'mem_slots': reported_mem_slots,
-                               'cpu_slots': reported_cpu_slots,
-                               # TODO: dynamic slots
-                               'gpu_slots': reported_cuda_slots,
-                               'tpu_slots': reported_tpu_slots,
+                               'available_slots': available_slots,
                            })
                            .where(agents.c.id == agent_id))
                 await conn.execute(query)
+                await self.config_server.update_resource_slots(slot_key_and_units)
+                self.config_server.get_resource_slots.cache_clear()
             else:
                 log.error('should not reach here! {0}', type(row.status))
 

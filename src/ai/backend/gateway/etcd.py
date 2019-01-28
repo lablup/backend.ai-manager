@@ -428,6 +428,15 @@ class ConfigServer:
         await self.etcd.put('manager/status', status.value)
 
     @aiotools.lru_cache(maxsize=1)
+    async def get_resource_slots(self):
+        '''
+        Returns the system-wide known resource slots and their units.
+        '''
+        intrinsic_slots = {'cpu': 'count', 'mem': 'bytes'}
+        configured_slots = await self.etcd.get_prefix_dict('config/resource_slots')
+        return {**intrinsic_slots, **configured_slots}
+
+    @aiotools.lru_cache(maxsize=1)
     async def get_manager_status(self):
         status = await self.etcd.get('manager/status')
         return ManagerStatus(status)
@@ -444,43 +453,48 @@ class ConfigServer:
         return origins
 
     @aiotools.lru_cache(expire_after=60.0)
-    async def get_image_required_slots(self, image_ref: ImageRef):
-        installed = await self.etcd.get(f'images/{etcd_quote(image_ref.name)}')
-        if installed is None:
-            raise RuntimeError('Image metadata is not available!')
-        tag_path = f'images/{etcd_quote(image_ref.registry)}/' \
-                   f'{etcd_quote(image_ref.name)}/{image_ref.tag}'
-        cpu = await self.etcd.get(f'{tag_path}/resource/cpu/max')
-        if cpu is None:
-            cpu_min = Decimal(await self.etcd.get(f'{tag_path}/resource/cpu/min'))
-            cpu = max(Decimal(cpu_min), Decimal(_default_cpu_max))
-        else:
-            cpu = Decimal(cpu)
-        mem = await self.etcd.get(f'{tag_path}/resource/mem/max')
-        if mem is None:
-            mem_min = Decimal(await self.etcd.get(f'{tag_path}/resource/mem/min'))
-            mem = Decimal(max(BinarySize.from_str(mem_min),
-                              BinarySize.from_str(_default_mem_max)))
-        else:
-            mem = Decimal(mem)
-        accel_slots = []
-        accels = await self.etcd.get(f'{tag_path}/accelerators')
-        if accels is None:
-            accels = []
-        for accel in accels:
-            res_slots = await self.etcd.get_prefix('config/resource_slots/{accel}/')
-            for key, res_type in res_slots:
-                res_slot = key.rsplit('/', maxsplit=1)[-1]
-                r_max = await self.etcd.get(f'{tag_path}/resource/{res_slot}/max')
-                if r_max is None:
-                    r_value = Decimal(0)
+    async def get_image_slot_ranges(self, image_ref: ImageRef):
+        '''
+        Returns the minimum and maximum ResourceSlot values.
+        All slot values are converted and normalized to Decimal.
+        '''
+        data = await self.etcd.get_prefix_dict(image_ref.tag_path)
+        slot_units = await self.etcd.get_resource_slots()
+        min_slot = ResourceSlot()
+        max_slot = ResourceSlot()
+
+        for slot_key, slot_range in data['resource'].items():
+            slot_unit = slot_units.get(slot_key)
+            if slot_unit is None:
+                raise RuntimeError('The requested image requires resource slots '
+                                   'that are not known to the manager.')
+            min_value = slot_range['min']
+            max_value = slot_range.get('max')
+            if max_value is None:
+                if slot_key == 'cpu':
+                    max_value = max(Decimal(min_value),
+                                    Decimal(_default_cpu_max))
+                elif slot_key == 'mem':
+                    max_value = '{:g}'.format(
+                        max(BinarySize.from_str(min_value),
+                            BinarySize.from_str(_default_mem_max)))
                 else:
-                    if res_type == 'bytes':
-                        r_value = Decimal(BinarySize.from_str(r_max))
-                    else:
-                        r_value = Decimal(r_max)
-                accel_slots[res_slot] = r_value
-        return ResourceSlot(mem=mem, cpu=cpu, accel_slots=accel_slots)
+                    # disallowed!
+                    max_value = '0'
+            if slot_unit == 'bytes':
+                if not isinstance(min_value, Decimal):
+                    min_value = BinarySize.from_str(min_value)
+                if not isinstance(max_value, Decimal):
+                    max_value = BinarySize.from_str(max_value)
+            else:
+                if not isinstance(min_value, Decimal):
+                    min_value = Decimal(min_value)
+                if not isinstance(max_value, Decimal):
+                    max_value = Decimal(max_value)
+            min_slot[slot_key] = min_value
+            max_slot[slot_key] = max_value
+
+        return min_slot, max_slot
 
 
 async def init(app):

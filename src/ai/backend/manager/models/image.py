@@ -4,7 +4,6 @@ import graphene
 
 from ai.backend.common.logging import BraceStyleAdapter
 from .base import KVPair, ResourceLimit
-# from ai.backend.common.types import ImageRef
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
 
@@ -30,24 +29,28 @@ class Image(graphene.ObjectType):
     supported_accelerators = graphene.List(graphene.String)
 
     @classmethod
-    async def load_item(cls, config_server, reference):
-        r = await config_server.inspect_image(reference)
+    def _convert_from_dict(cls, data):
         return cls(
-            name=r['name'],
-            humanized_name=r['humanized_name'],
-            tag=r['tag'],
-            registry=r['registry'],
-            digest=r['digest'],
-            aliases=r['aliases'],
+            name=data['name'],
+            humanized_name=data['humanized_name'],
+            tag=data['tag'],
+            registry=data['registry'],
+            digest=data['digest'],
+            aliases=data['aliases'],
             labels=[
                 KVPair(key=k, value=v)
-                for k, v in r['labels'].items()],
-            size_bytes=r['size_bytes'],
-            supported_accelerators=r['supported_accelerators'],
+                for k, v in data['labels'].items()],
+            size_bytes=data['size_bytes'],
+            supported_accelerators=data['supported_accelerators'],
             resource_limits=[
                 ResourceLimit(key=v['key'], min=v['min'], max=v['max'])
-                for v in r['resource_limits']],
+                for v in data['resource_limits']],
         )
+
+    @classmethod
+    async def load_item(cls, config_server, reference):
+        r = await config_server.inspect_image(reference)
+        return cls._convert_from_dict(r)
 
     @classmethod
     async def load_all(cls, config_server):
@@ -55,22 +58,7 @@ class Image(graphene.ObjectType):
         items = []
         # Convert to GQL objects
         for r in raw_items:
-            item = cls(
-                name=r['name'],
-                humanized_name=r['humanized_name'],
-                tag=r['tag'],
-                registry=r['registry'],
-                digest=r['digest'],
-                aliases=r['aliases'],
-                labels=[
-                    KVPair(key=k, value=v)
-                    for k, v in r['labels'].items()],
-                size_bytes=r['size_bytes'],
-                supported_accelerators=r['supported_accelerators'],
-                resource_limits=[
-                    ResourceLimit(key=v['key'], min=v['min'], max=v['max'])
-                    for v in r['resource_limits']],
-            )
+            item = cls._convert_from_dict(r)
             items.append(item)
         return items
 
