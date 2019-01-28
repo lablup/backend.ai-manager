@@ -4,6 +4,7 @@ import enum
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql as pgsql
 
 from .base import metadata, zero_if_none, EnumType, IDColumn
 
@@ -33,8 +34,6 @@ LIVE_STATUS = frozenset(['BUILDING', 'RUNNING'])
 
 
 kernels = sa.Table(
-    # TODO: change accelerator slots to be dynamically defined.
-
     'kernels', metadata,
     IDColumn(),
     sa.Column('sess_id', sa.String(length=64), unique=False, index=True),
@@ -48,13 +47,8 @@ kernels = sa.Table(
 
     # Resource occupation
     sa.Column('container_id', sa.String(length=64)),
-    sa.Column('cpu_set', sa.ARRAY(sa.Integer)),
-    sa.Column('gpu_set', sa.ARRAY(sa.Integer)),
-    sa.Column('tpu_set', sa.ARRAY(sa.Integer)),
-    sa.Column('mem_slot', sa.BigInteger(), nullable=False),
-    sa.Column('cpu_slot', sa.Float(), nullable=False),
-    sa.Column('gpu_slot', sa.Float(), nullable=False),
-    sa.Column('tpu_slot', sa.Float(), nullable=False),
+    sa.Column('occupied_slots', pgsql.JSONB(), nullable=False),
+    sa.Column('occupied_shares', pgsql.JSONB(), nullable=False),
     sa.Column('environ', sa.ARRAY(sa.String), nullable=True),
 
     # Port mappings
@@ -62,9 +56,9 @@ kernels = sa.Table(
     sa.Column('kernel_host', sa.String(length=128), nullable=True),
     sa.Column('repl_in_port', sa.Integer(), nullable=False),
     sa.Column('repl_out_port', sa.Integer(), nullable=False),
-    sa.Column('stdin_port', sa.Integer(), nullable=False),
-    sa.Column('stdout_port', sa.Integer(), nullable=False),
-    sa.Column('service_ports', sa.JSON(), nullable=True),
+    sa.Column('stdin_port', sa.Integer(), nullable=False),   # legacy for stream_pty
+    sa.Column('stdout_port', sa.Integer(), nullable=False),  # legacy for stream_pty
+    sa.Column('service_ports', pgsql.JSONB(), nullable=True),
 
     # Lifecycle
     sa.Column('created_at', sa.DateTime(timezone=True),
@@ -95,8 +89,6 @@ kernels = sa.Table(
 
 
 class SessionCommons:
-    # TODO: change accelerator slots to be dynamically defined.
-
     sess_id = graphene.String()
     id = graphene.UUID()
     role = graphene.String()
@@ -111,10 +103,9 @@ class SessionCommons:
     container_id = graphene.String()
     service_ports = graphene.JSONString()
 
-    mem_slot = graphene.Int()
-    cpu_slot = graphene.Float()
-    gpu_slot = graphene.Float()
-    tpu_slot = graphene.Float()
+    occupied_slots = graphene.JSONString()
+    occupied_shares = graphene.JSONString()
+    # TODO: add dynamic stats for intrinsic/accelerator metrics
 
     num_queries = graphene.Int()
     cpu_used = graphene.Int()
@@ -223,10 +214,8 @@ class SessionCommons:
             'agent': row['agent'],
             'container_id': row['container_id'],
             'service_ports': row['service_ports'],
-            'mem_slot': row['mem_slot'],
-            'cpu_slot': row['cpu_slot'],
-            'gpu_slot': row['gpu_slot'],
-            'tpu_slot': row['tpu_slot'],
+            'occupied_slots': row['occupied_slots'],
+            'occupied_shares': row['occupied_shares'],
             'num_queries': row['num_queries'],
             # live statistics
             # NOTE: currently graphene always uses resolve methods!

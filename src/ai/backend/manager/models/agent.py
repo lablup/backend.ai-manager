@@ -6,6 +6,7 @@ from typing import NamedTuple, Mapping, Optional
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql as pgsql
 
 from .base import metadata, EnumType
 
@@ -31,23 +32,14 @@ class AgentStatus(enum.Enum):
 
 
 agents = sa.Table(
-    # TODO: change accelerator slots to be dynamically defined.
-
     'agents', metadata,
     sa.Column('id', sa.String(length=64), primary_key=True),
     sa.Column('status', EnumType(AgentStatus), nullable=False, index=True,
               default=AgentStatus.ALIVE),
     sa.Column('region', sa.String(length=64), index=True, nullable=False),
 
-    sa.Column('mem_slots', sa.BigInteger(), nullable=False),  # MiBytes
-    sa.Column('cpu_slots', sa.Float(), nullable=False),  # number of CPU cores
-    sa.Column('gpu_slots', sa.Float(), nullable=False),  # number of CUDA devices
-    sa.Column('tpu_slots', sa.Float(), nullable=False),  # number of TPU devices
-
-    sa.Column('used_mem_slots', sa.BigInteger(), nullable=False),
-    sa.Column('used_cpu_slots', sa.Float(), nullable=False),
-    sa.Column('used_gpu_slots', sa.Float(), nullable=False),
-    sa.Column('used_tpu_slots', sa.Float(), nullable=False),
+    sa.Column('available_slots', pgsql.JSONB(), nullable=False),
+    sa.Column('occupied_slots', pgsql.JSONB(), nullable=False),
 
     sa.Column('addr', sa.String(length=128), nullable=False),
     sa.Column('first_contact', sa.DateTime(timezone=True),
@@ -57,24 +49,16 @@ agents = sa.Table(
 
 
 class Agent(graphene.ObjectType):
-    # TODO: change accelerator slots to be dynamically defined.
-
     id = graphene.String()
     status = graphene.String()
     region = graphene.String()
-    mem_slots = graphene.Int()
-    cpu_slots = graphene.Float()
-    gpu_slots = graphene.Float()
-    tpu_slots = graphene.Float()
-    used_mem_slots = graphene.Int()
-    used_cpu_slots = graphene.Float()
-    used_gpu_slots = graphene.Float()
-    used_tpu_slots = graphene.Float()
+    available_slots = graphene.JSONString()
+    occupied_slots = graphene.JSONString()
     addr = graphene.String()
     first_contact = GQLDateTime()
     lost_at = GQLDateTime()
 
-    # Dynamic fields
+    # TODO: Dynamic fields
     cpu_cur_pct = graphene.Float()
     mem_cur_bytes = graphene.Float()
 
@@ -90,14 +74,8 @@ class Agent(graphene.ObjectType):
             id=row['id'],
             status=row['status'],
             region=row['region'],
-            mem_slots=row['mem_slots'],
-            cpu_slots=row['cpu_slots'],
-            gpu_slots=row['gpu_slots'],
-            tpu_slots=row['tpu_slots'],
-            used_mem_slots=row['used_mem_slots'],
-            used_cpu_slots=row['used_cpu_slots'],
-            used_gpu_slots=row['used_gpu_slots'],
-            used_tpu_slots=row['used_tpu_slots'],
+            available_slots=row['available_slots'],
+            occupied_slots=row['occupied_slots'],
             addr=row['addr'],
             first_contact=row['first_contact'],
             lost_at=row['lost_at'],
