@@ -75,8 +75,8 @@ def upgrade():
     UPDATE kernels SET occupied_shares = json_build_object(
         'cpu', cpu_set,
         'mem', mem_slot,
-        'cuda.device', gpu_set,
-        'tpu.device', tpu_set
+        'cuda.device', '{}'::json,
+        'tpu.device', '{}'::json
     );
     '''
     connection.execute(query)
