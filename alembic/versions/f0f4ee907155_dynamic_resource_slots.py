@@ -33,7 +33,7 @@ def upgrade():
     query = '''
     UPDATE agents SET available_slots = json_build_object(
         'cpu', cpu_slots,
-        'mem', mem_slots,
+        'mem', mem_slots::text || 'g' ,
         'cuda.device', gpu_slots,
         'tpu.device', tpu_slots
     );
@@ -42,7 +42,7 @@ def upgrade():
     query = '''
     UPDATE agents SET occupied_slots = json_build_object(
         'cpu', used_cpu_slots,
-        'mem', used_mem_slots,
+        'mem', used_mem_slots::text || 'g',
         'cuda.device', used_gpu_slots,
         'tpu.device', used_tpu_slots
     );
