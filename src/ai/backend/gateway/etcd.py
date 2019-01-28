@@ -11,6 +11,8 @@ Alias keys are also URL-quoted in the same way.
 
 {namespace}
  + config
+   + api
+     - allow-origins: "*"
    + docker
      + registry
        - lablup: https://registry-1.docker.io
@@ -21,11 +23,9 @@ Alias keys are also URL-quoted in the same way.
          - auth: {auth-json-cached-from-config.json}
        ...
    + resource_slots
-     + {"cuda"}
-       + {"cuda.device"}: {"count"}
-       + {"cuda.mem"}: {"bytes"}
-       + {"cuda.smp"}: {"count"}
-       ...
+     + {"cuda.device"}: {"count"}
+     + {"cuda.mem"}: {"bytes"}
+     + {"cuda.smp"}: {"count"}
      ...
  + nodes
    + manager: {instance-id}
@@ -89,6 +89,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ImageRef, BinarySize
 from ai.backend.common.exception import UnknownImageReference
 from ai.backend.common.etcd import (
+    make_dict_from_pairs,
     quote as etcd_quote,
     unquote as etcd_unquote,
 )
@@ -154,67 +155,48 @@ class ConfigServer:
 
     def _parse_image(self, image_ref, kvpairs, reverse_aliases):
         tag_path = image_ref.tag_path
-        digest = kvpairs.get(tag_path, '')
-        res_paths = filter(lambda k: k.startswith(f'{tag_path}/resource/'),
-                           kvpairs.keys())
-        res_types = set()
-        res_values = {}
-        for res_path in res_paths:
-            res_type, limit_type = res_path.rsplit('/', maxsplit=2)[-2:]
-            value = kvpairs[res_path]
-            res_types.add(res_type)
-            res_values[(res_type, limit_type)] = value
+        item = make_dict_from_pairs(tag_path, kvpairs)
 
         res_limits = []
-        for res_type in res_types:
-            min_value = res_values[(res_type, 'min')]
-            max_value = res_values.get((res_type, 'max'), None)
+        for slot_key, slot_range in item['resource'].items():
+            min_value = slot_range['min']
+            max_value = slot_range.get('max')
             if max_value is None:
-                if res_type == 'cpu':
+                if slot_key == 'cpu':
                     max_value = max(Decimal(min_value),
                                     Decimal(_default_cpu_max))
-                elif res_type == 'mem':
+                elif slot_key == 'mem':
                     max_value = '{:g}'.format(
                         max(BinarySize.from_str(min_value),
                             BinarySize.from_str(_default_mem_max)))
                 else:
                     # disallowed!
                     max_value = '0'
-
             res_limits.append({
-                'key': res_type,
+                'key': slot_key,
                 'min': min_value,
                 'max': max_value,
             })
 
-        accels = kvpairs.get(f'{tag_path}/accelerators')
+        accels = item.get('accelerators')
         if accels is None:
             accels = []
         else:
             accels = accels.split(',')
 
-        labels = {}
-        label_paths = filter(lambda k: k.startswith(f'{tag_path}/labels/'),
-                             kvpairs.keys())
-        for label_path in label_paths:
-            label_key = label_path.rsplit('/', maxsplit=1)[-1]
-            value = kvpairs[label_path]
-            labels[label_key] = value
-
-        item = {
+        return {
             'name': image_ref.name,
             'humanized_name': image_ref.name,  # TODO: implement
             'tag': image_ref.tag,
             'registry': image_ref.registry,
-            'digest': digest,
-            'labels': labels,
+            'digest': item[''],
+            'labels': item.get('labels', {}),
             'aliases': reverse_aliases.get(
                 f'{image_ref.name}:{image_ref.tag}', []),
-            'size_bytes': kvpairs.get(f'{tag_path}/size_bytes', 0),
+            'size_bytes': item.get('size_bytes', 0),
             'resource_limits': res_limits,
             'supported_accelerators': accels,
         }
-        return item
 
     async def _check_image(self, reference: str) -> ImageRef:
         known_registries = await get_known_registries(self.etcd)
@@ -386,12 +368,7 @@ class ConfigServer:
         if not all_updates:
             log.info('No images found in registry {0}', registry_url)
             return
-        ks = []
-        vs = []
-        for k, v in all_updates.items():
-            ks.append(k)
-            vs.append(v)
-        await self.etcd.put_multi(ks, vs)
+        await self.etcd.put_dict(all_updates)
 
     async def rescan_images(self, registry: str = None):
         if registry is None:
@@ -429,17 +406,23 @@ class ConfigServer:
             return
         for item in data['volumes']:
             name = item['name']
-            ks = []
-            vs = []
-            for k, v in item['mount'].items():
-                ks.append(f'volumes/{name}/mount/{k}')
-                vs.append(v)
-            await self.etcd.put_multi(ks, vs)
+            updates = {
+                f'volumes/{name}/mount/{k}': v
+                for k, v in item['mount'].items()
+            }
+            await self.etcd.put_dict(updates)
         log.info('done')
 
-    async def manager_status_update(self):
-        async for ev in self.etcd.watch('manager/status'):
-            yield ev
+    async def update_resource_slots(self, slot_key_and_units):
+        updates = {}
+        for k, v in slot_key_and_units:
+            if k in ('cpu', 'mem'):
+                continue
+            # currently we support only two units
+            # (where count may be fractional)
+            assert v in ('bytes', 'count')
+            updates[f'config/resource_slots/{k}'] = v
+        await self.etcd.put_dict(updates)
 
     async def update_manager_status(self, status):
         await self.etcd.put('manager/status', status.value)
@@ -448,6 +431,10 @@ class ConfigServer:
     async def get_manager_status(self):
         status = await self.etcd.get('manager/status')
         return ManagerStatus(status)
+
+    async def watch_manager_status(self):
+        async for ev in self.etcd.watch('manager/status'):
+            yield ev
 
     @aiotools.lru_cache(maxsize=1, expire_after=60.0)
     async def get_allowed_origins(self):
