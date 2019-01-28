@@ -1,5 +1,4 @@
 import asyncio
-from decimal import Decimal
 from datetime import datetime
 import logging
 import sys
@@ -16,7 +15,7 @@ from yarl import URL
 import zmq
 
 from ai.backend.common import msgpack
-from ai.backend.common.types import BinarySize, ImageRef
+from ai.backend.common.types import ImageRef
 from ai.backend.common.logging import BraceStyleAdapter
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
@@ -503,8 +502,8 @@ class AgentRegistry:
                 'access_key': access_key,
                 'lang': image_ref.long,
                 'tag': session_tag,
-                # units: absolute
-                'occupied_slots': requested_slots,
+                'occupied_slots': requested_slots.as_humanized(
+                    known_resource_slot_types),
                 'occupied_shares': {},
                 'environ': [f'{k}={v}' for k, v in environ.items()],
                 'kernel_host': None,
@@ -543,19 +542,20 @@ class AgentRegistry:
                     'kernel_host': kernel_host,
                     'service_ports': service_ports,
                 }
-                query = (kernels.update()
-                                .values({
-                                    'status': KernelStatus.RUNNING,
-                                    'container_id': created_info['container_id'],
-                                    'occupied_shares': {},  # TODO: implement?
-                                    'kernel_host': kernel_host,
-                                    'repl_in_port': created_info['repl_in_port'],
-                                    'repl_out_port': created_info['repl_out_port'],
-                                    'stdin_port': created_info['stdin_port'],
-                                    'stdout_port': created_info['stdout_port'],
-                                    'service_ports': service_ports,
-                                })
-                                .where(kernels.c.id == kernel_id))
+                query = (
+                    kernels.update()
+                    .values({
+                        'status': KernelStatus.RUNNING,
+                        'container_id': created_info['container_id'],
+                        'occupied_shares': created_info['occupied_shares'],
+                        'kernel_host': kernel_host,
+                        'repl_in_port': created_info['repl_in_port'],
+                        'repl_out_port': created_info['repl_out_port'],
+                        'stdin_port': created_info['stdin_port'],
+                        'stdout_port': created_info['stdout_port'],
+                        'service_ports': service_ports,
+                    })
+                    .where(kernels.c.id == kernel_id))
                 result = await conn.execute(query)
                 assert result.rowcount == 1
                 return kernel_access_info
@@ -581,10 +581,8 @@ class AgentRegistry:
                 'restart_session', sess_id, access_key, set_error=True):
             extra_cols = (
                 kernels.c.lang,
-                kernels.c.mem_slot,
-                kernels.c.cpu_slot,
-                kernels.c.gpu_slot,
-                kernels.c.tpu_slot,
+                kernels.c.occupied_slots,
+                kernels.c.occupied_shares,
                 kernels.c.environ,
                 kernels.c.cpu_set,
                 kernels.c.gpu_set,
@@ -600,14 +598,6 @@ class AgentRegistry:
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 # TODO: read from vfolders attachment table
                 mounts = []
-                limits = {
-                    # units: share
-                    'cpu_slot': kernel['cpu_slot'],
-                    'mem_slot': kernel['mem_slot'] / 1024,
-                    # TODO: dynamic slots
-                    'gpu_slot': kernel['gpu_slot'],
-                    'tpu_slot': kernel['tpu_slot'],
-                }
                 environ = {
                      k: v for k, v in
                      map(lambda s: s.split('=', 1), kernel['environ'])
@@ -615,10 +605,9 @@ class AgentRegistry:
                 new_config = {
                     'lang': kernel['lang'],
                     'mounts': mounts,
-                    'limits': limits,
+                    'slots': kernel['occupied_slots'],
+                    'shares': kernel['occupied_shares'],
                     'environ': environ,
-                    'cpu_set': kernel['cpu_set'],
-                    'gpu_set': kernel['gpu_set'],
                 }
                 kernel_info = await rpc.call.restart_kernel(str(kernel['id']),
                                                             new_config)
@@ -627,8 +616,6 @@ class AgentRegistry:
                     sess_id, access_key,
                     KernelStatus.RUNNING,
                     container_id=kernel_info['container_id'],
-                    cpu_set=[],
-                    gpu_set=[],
                     repl_in_port=kernel_info['repl_in_port'],
                     repl_out_port=kernel_info['repl_out_port'],
                     stdin_port=kernel_info['stdin_port'],
