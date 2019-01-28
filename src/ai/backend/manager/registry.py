@@ -15,6 +15,7 @@ from yarl import URL
 import zmq
 
 from ai.backend.common import msgpack
+from ai.backend.common.docker import get_registry_info
 from ai.backend.common.types import ImageRef, ResourceSlot
 from ai.backend.common.logging import BraceStyleAdapter
 from ..gateway.exceptions import (
@@ -490,6 +491,9 @@ class AgentRegistry:
             agent_addr = await conn.scalar(query)
             assert agent_addr is not None
 
+            registry_url, registry_creds = \
+                await get_registry_info(image_ref.registry)
+
             # Prepare kernel.
             kernel_id = uuid.uuid4()
             query = kernels.insert().values({
@@ -501,6 +505,7 @@ class AgentRegistry:
                 'agent_addr': agent_addr,
                 'access_key': access_key,
                 'image': image_ref.canonical,
+                'registry': image_ref.registry,
                 'tag': session_tag,
                 'occupied_slots': requested_slots.as_humanized(
                     known_resource_slot_types),
@@ -519,7 +524,14 @@ class AgentRegistry:
                     'create_session', sess_id, access_key):
                 async with RPCContext(agent_addr, 30) as rpc:
                     config = {
-                        'lang': image_ref.long,
+                        'image': {
+                            'registry': {
+                                'name': image_ref.registry,
+                                'url': registry_url,
+                                **registry_creds,
+                            },
+                            'canonical': image_ref.canonical,
+                        },
                         'resource_slots': requested_slots,
                         'mounts': mounts,
                         'environ': environ,
@@ -595,6 +607,10 @@ class AgentRegistry:
                 await self.set_session_status(sess_id, access_key,
                                               KernelStatus.RESTARTING,
                                               db_connection=conn)
+
+            registry_url, registry_creds = \
+                await get_registry_info(kernel['registry'])
+
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 # TODO: read from vfolders attachment table
                 mounts = []
@@ -603,7 +619,13 @@ class AgentRegistry:
                      map(lambda s: s.split('=', 1), kernel['environ'])
                 }
                 new_config = {
-                    'lang': kernel['lang'],
+                    'image': {
+                        'registry': {
+                            'url': registry_url,
+                            **registry_creds,
+                        },
+                        'canonical': kernel['image'],
+                    },
                     'mounts': mounts,
                     'slots': kernel['occupied_slots'],
                     'shares': kernel['occupied_shares'],
