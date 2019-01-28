@@ -261,7 +261,8 @@ class AgentRegistry:
         '''
 
         cols = [kernels.c.id, kernels.c.sess_id, kernels.c.access_key,
-                kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.lang,
+                kernels.c.agent_addr, kernels.c.kernel_host,
+                kernels.c.image, kernels.c.registry,
                 kernels.c.service_ports]
         if field == '*':
             cols = '*'
@@ -346,14 +347,13 @@ class AgentRegistry:
             await conn.execute(query)
 
     async def get_or_create_session(self, sess_id, access_key,
-                                    lang, creation_config,
+                                    image, creation_config,
                                     conn=None, tag=None):
-        requested_image_ref = ImageRef(lang)
-        if requested_image_ref.resolve_required():
-            await requested_image_ref.resolve(self.config_server.etcd)
+        requested_image_ref = \
+            await ImageRef.resolve_alias(image, self.config_server.etcd)
         try:
             kern = await self.get_session(sess_id, access_key)
-            running_image_ref = ImageRef(kern.lang)
+            running_image_ref = ImageRef(kern['image'], [kern['registry']])
             if running_image_ref != requested_image_ref:
                 raise KernelAlreadyExists
             created = False
@@ -366,14 +366,17 @@ class AgentRegistry:
         assert kern is not None
         return kern, created
 
-    async def create_session(self, sess_id, access_key,
-                             image_ref, creation_config,
+    async def create_session(self, sess_id: str, access_key: str,
+                             image_ref: ImageRef,
+                             creation_config: dict,
                              conn=None, session_tag=None):
         agent_id = None
         created_info = None
         mounts = creation_config.get('mounts') or []
         environ = creation_config.get('environ') or {}
 
+        # TODO: merge into a single call
+        image_info = await self.config_server.inspect_image(image_ref)
         image_min_slots, image_max_slots = \
             await self.config_server.get_image_slot_ranges(image_ref)
         known_resource_slot_types = \
@@ -395,13 +398,21 @@ class AgentRegistry:
             # We support CPU/memory conversion, but to use accelerators users
             # must update their clients because the slots names are not provided
             # by the accelerator plugins.
+            cpu = creation_config.get('instanceCores')
+            if cpu is None:
+                # the key is there but may be null.
+                cpu = image_max_slots['cpu']
+            mem = creation_config.get('instanceMemory')
+            if mem is None:
+                # the key is there but may be null.
+                mem = image_max_slots['mem']
+            else:
+                # In legacy clients, memory is normalized to GiB.
+                mem = str(mem) + 'g'
             requested_slots = ResourceSlot({
-                'cpu': creation_config.get('instanceCores', image_max_slots['cpu']),
-                'mem': creation_config.get('instanceMemory', image_max_slots['mem']),
-            })
-            # In legacy clients, memory is normalized to GiB.
-            requested_slots['mem'] = \
-                str(requested_slots['mem']) + 'g'
+                'cpu': cpu,
+                'mem': mem,
+            }).as_numeric(known_resource_slot_types)
             gpu = creation_config.get('instanceGPUs')
             if gpu is not None:
                 raise InvalidAPIParameters('Client upgrade required '
@@ -410,6 +421,7 @@ class AgentRegistry:
             if tpu is not None:
                 raise InvalidAPIParameters('Client upgrade required '
                                            'to use TPUs (v19.03+).')
+        log.debug('requested resource slots: {!r}', requested_slots)
 
         try:
             # Check if: requested >= image-minimum
@@ -530,7 +542,9 @@ class AgentRegistry:
                                 'url': registry_url,
                                 **registry_creds,
                             },
+                            'digest': image_info['digest'],
                             'canonical': image_ref.canonical,
+                            'labels': image_info['labels'],
                         },
                         'resource_slots': requested_slots,
                         'mounts': mounts,
@@ -592,7 +606,8 @@ class AgentRegistry:
         async with self.handle_kernel_exception(
                 'restart_session', sess_id, access_key, set_error=True):
             extra_cols = (
-                kernels.c.lang,
+                kernels.c.image,
+                kernels.c.registry,
                 kernels.c.occupied_slots,
                 kernels.c.occupied_shares,
                 kernels.c.environ,
@@ -610,6 +625,8 @@ class AgentRegistry:
 
             registry_url, registry_creds = \
                 await get_registry_info(kernel['registry'])
+            image_ref = ImageRef(kernel['image'], [kernel['registry']])
+            image_info = await self.config_server.inspect_image(image_ref)
 
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 # TODO: read from vfolders attachment table
@@ -624,7 +641,9 @@ class AgentRegistry:
                             'url': registry_url,
                             **registry_creds,
                         },
+                        'digest': image_info['digest'],
                         'canonical': kernel['image'],
+                        'labels': image_info['labels'],
                     },
                     'mounts': mounts,
                     'slots': kernel['occupied_slots'],
@@ -819,7 +838,7 @@ class AgentRegistry:
                     'id': agent_id,
                     'status': AgentStatus.ALIVE,
                     'region': agent_info['region'],
-                    'available_slots': available_slots,
+                    'available_slots': available_slots.data,
                     'occupied_slots': {},
                     'addr': agent_info['addr'],
                     'first_contact': now,
@@ -831,8 +850,8 @@ class AgentRegistry:
                 self.config_server.get_resource_slots.cache_clear()
             elif row.status == AgentStatus.ALIVE:
                 updates = {}
-                if available_slots != row.available_slots:
-                    updates['available_slots'] = available_slots
+                if available_slots.data != row.available_slots:
+                    updates['available_slots'] = available_slots.data
                 # occupied_slots are updated when kernels starts/terminates
                 if updates:
                     query = (sa.update(agents)
@@ -847,7 +866,7 @@ class AgentRegistry:
                                'region': agent_info['region'],
                                'addr': agent_info['addr'],
                                'lost_at': None,
-                               'available_slots': available_slots,
+                               'available_slots': available_slots.data,
                            })
                            .where(agents.c.id == agent_id))
                 await conn.execute(query)

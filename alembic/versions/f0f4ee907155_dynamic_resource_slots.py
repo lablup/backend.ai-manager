@@ -31,21 +31,21 @@ def upgrade():
                                       nullable=False,
                                       server_default=sa.text("'{}'::jsonb")))
     query = '''
-    UPDATE agents SET available_slots = json_build_object(
+    UPDATE agents SET available_slots = json_strip_nulls(json_build_object(
         'cpu', cpu_slots,
         'mem', mem_slots::text || 'g' ,
         'cuda.device', gpu_slots,
         'tpu.device', tpu_slots
-    );
+    ));
     '''
     connection.execute(query)
     query = '''
-    UPDATE agents SET occupied_slots = json_build_object(
+    UPDATE agents SET occupied_slots = json_strip_nulls(json_build_object(
         'cpu', used_cpu_slots,
         'mem', used_mem_slots::text || 'g',
         'cuda.device', used_gpu_slots,
         'tpu.device', used_tpu_slots
-    );
+    ));
     '''
     connection.execute(query)
     op.drop_column('agents', 'cpu_slots')

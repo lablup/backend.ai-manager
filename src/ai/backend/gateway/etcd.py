@@ -75,6 +75,7 @@ import logging
 import json
 from pathlib import Path
 import re
+from typing import Union
 
 import aiohttp
 from aiohttp import web
@@ -205,10 +206,13 @@ class ConfigServer:
             raise UnknownImageReference(reference)
         return ref
 
-    async def inspect_image(self, reference: str):
-        known_registries = await get_known_registries(self.etcd)
+    async def inspect_image(self, reference: Union[str, ImageRef]):
+        if isinstance(reference, str):
+            known_registries = await get_known_registries(self.etcd)
+            ref = ImageRef(reference, known_registries)
+        else:
+            ref = reference
         reverse_aliases = await self._scan_reverse_aliases()
-        ref = ImageRef(reference, known_registries)
         kvpairs = dict(await self.etcd.get_prefix(ref.tag_path))
         if not kvpairs or not kvpairs.get(ref.tag_path):
             raise UnknownImageReference(reference)
@@ -414,7 +418,7 @@ class ConfigServer:
 
     async def update_resource_slots(self, slot_key_and_units):
         updates = {}
-        for k, v in slot_key_and_units:
+        for k, v in slot_key_and_units.items():
             if k in ('cpu', 'mem'):
                 continue
             # currently we support only two units
@@ -458,9 +462,9 @@ class ConfigServer:
         All slot values are converted and normalized to Decimal.
         '''
         data = await self.etcd.get_prefix_dict(image_ref.tag_path)
-        slot_units = await self.etcd.get_resource_slots()
-        min_slot = ResourceSlot()
-        max_slot = ResourceSlot()
+        slot_units = await self.get_resource_slots()
+        min_slot = ResourceSlot(numeric=True)
+        max_slot = ResourceSlot(numeric=True)
 
         for slot_key, slot_range in data['resource'].items():
             slot_unit = slot_units.get(slot_key)
