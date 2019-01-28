@@ -225,7 +225,7 @@ class TestAdminQuery:
                 'role': 'master',
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
-                'lang': 'lablup/lua:latest',
+                'image': 'lablup/lua:latest',
                 'tag': 'test-tag',
                 'access_key': default_keypair['access_key'],
                 'mem_slot': 1,
@@ -243,7 +243,7 @@ class TestAdminQuery:
             })
             await conn.execute(query)
 
-        query = '{ compute_sessions { sess_id role agent lang tag } }'
+        query = '{ compute_sessions { sess_id role agent image tag } }'
         payload = json.dumps({'query': query}).encode()
         headers = get_headers('POST', self.url, payload)
         ret = await client.post(self.url, data=payload, headers=headers)
@@ -253,7 +253,7 @@ class TestAdminQuery:
         assert rsp_json['compute_sessions'][0]['sess_id'] == 'test-sess-id'
         assert rsp_json['compute_sessions'][0]['role'] == 'master'
         assert rsp_json['compute_sessions'][0]['agent'] == 'test-agent-id'
-        assert rsp_json['compute_sessions'][0]['lang'] == 'lablup/lua:latest'
+        assert rsp_json['compute_sessions'][0]['image'] == 'lablup/lua:latest'
         assert rsp_json['compute_sessions'][0]['tag'] == 'test-tag'
 
     @pytest.mark.asyncio
@@ -290,7 +290,7 @@ class TestAdminQuery:
                 'role': 'master',
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
-                'lang': 'lablup/lua:latest',
+                'image': 'lablup/lua:latest',
                 'tag': 'test-tag',
                 'access_key': default_keypair['access_key'],
                 'mem_slot': 1,
@@ -315,7 +315,7 @@ class TestAdminQuery:
                 'role': 'worker',
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
-                'lang': 'lablup/lua:latest',
+                'image': 'lablup/lua:latest',
                 'access_key': default_keypair['access_key'],
                 'mem_slot': 1,
                 'cpu_slot': 1,
@@ -332,7 +332,7 @@ class TestAdminQuery:
             })
             await conn.execute(query)
 
-        query = '{ compute_workers(sess_id: "test-sess-id") { role agent lang } }'
+        query = '{ compute_workers(sess_id: "test-sess-id") { role agent image } }'
         payload = json.dumps({'query': query}).encode()
         headers = get_headers('POST', self.url, payload)
         ret = await client.post(self.url, data=payload, headers=headers)
@@ -426,7 +426,7 @@ class TestUserQuery:
                 'role': 'master',
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
-                'lang': 'lablup/lua:latest',
+                'image': 'lablup/lua:latest',
                 'tag': 'test-tag',
                 'access_key': user_keypair['access_key'],
                 'mem_slot': 1,
@@ -444,7 +444,7 @@ class TestUserQuery:
             })
             await conn.execute(query)
 
-        query = '{ compute_sessions { sess_id role agent lang tag } }'
+        query = '{ compute_sessions { sess_id role agent image tag } }'
         payload = json.dumps({'query': query}).encode()
         headers = get_headers('POST', self.url, payload, keypair=user_keypair)
         ret = await client.post(self.url, data=payload, headers=headers)
@@ -454,7 +454,7 @@ class TestUserQuery:
         assert rsp_json['compute_sessions'][0]['sess_id'] == 'test-sess-id'
         assert rsp_json['compute_sessions'][0]['role'] == 'master'
         assert rsp_json['compute_sessions'][0]['agent'] == 'test-agent-id'
-        assert rsp_json['compute_sessions'][0]['lang'] == 'lablup/lua:latest'
+        assert rsp_json['compute_sessions'][0]['image'] == 'lablup/lua:latest'
         assert rsp_json['compute_sessions'][0]['tag'] == 'test-tag'
 
     @pytest.mark.asyncio
@@ -491,7 +491,7 @@ class TestUserQuery:
                 'role': 'master',
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
-                'lang': 'lablup/lua:latest',
+                'image': 'lablup/lua:latest',
                 'tag': 'test-tag',
                 'access_key': user_keypair['access_key'],
                 'mem_slot': 1,
@@ -516,7 +516,7 @@ class TestUserQuery:
                 'role': 'worker',
                 'agent': 'test-agent-id',
                 'agent_addr': '127.0.0.1:5002',
-                'lang': 'lablup/lua:latest',
+                'image': 'lablup/lua:latest',
                 'access_key': user_keypair['access_key'],
                 'mem_slot': 1,
                 'cpu_slot': 1,
@@ -533,7 +533,7 @@ class TestUserQuery:
             })
             await conn.execute(query)
 
-        query = '{ compute_workers(sess_id: "test-sess-id") { role agent lang } }'
+        query = '{ compute_workers(sess_id: "test-sess-id") { role agent image } }'
         payload = json.dumps({'query': query}).encode()
         headers = get_headers('POST', self.url, payload, keypair=user_keypair)
         ret = await client.post(self.url, data=payload, headers=headers)

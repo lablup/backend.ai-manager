@@ -460,7 +460,7 @@ class AgentRegistry:
                                  .as_numeric(known_resource_slot_types)
                 # TODO: would there be any case that occupied_slots have more keys
                 #       than total_slots?
-                remaining_slots = total_slots - occupied_slots,
+                remaining_slots = total_slots - occupied_slots
 
                 # Check if: any(remaining >= requested)
                 try:
@@ -480,10 +480,8 @@ class AgentRegistry:
             # Here, all items in possible_agent_slots have the same keys,
             # allowing the total ordering property.
             if possible_agent_slots:
-                agent_id, _, occupied_slots = (
-                    max(possible_agent_slots,
-                        key=lambda s: s[1])
-                )[0]
+                agent_id, _, occupied_slots = \
+                    max(possible_agent_slots, key=lambda s: s[1])
             else:
                 raise InstanceNotAvailable
 
@@ -492,7 +490,7 @@ class AgentRegistry:
                                      .as_humanized(known_resource_slot_types)
             query = (sa.update(agents)
                        .values({
-                           'occupied_slots': updated_occupied_slots,
+                           'occupied_slots': updated_occupied_slots.data,
                        })
                        .where(agents.c.id == agent_id))
             result = await conn.execute(query)
@@ -504,7 +502,8 @@ class AgentRegistry:
             assert agent_addr is not None
 
             registry_url, registry_creds = \
-                await get_registry_info(image_ref.registry)
+                await get_registry_info(self.config_server.etcd,
+                                        image_ref.registry)
 
             # Prepare kernel.
             kernel_id = uuid.uuid4()
@@ -520,7 +519,7 @@ class AgentRegistry:
                 'registry': image_ref.registry,
                 'tag': session_tag,
                 'occupied_slots': requested_slots.as_humanized(
-                    known_resource_slot_types),
+                    known_resource_slot_types).data,
                 'occupied_shares': {},
                 'environ': [f'{k}={v}' for k, v in environ.items()],
                 'kernel_host': None,
@@ -539,14 +538,17 @@ class AgentRegistry:
                         'image': {
                             'registry': {
                                 'name': image_ref.registry,
-                                'url': registry_url,
+                                'url': str(registry_url),
                                 **registry_creds,
                             },
                             'digest': image_info['digest'],
                             'canonical': image_ref.canonical,
                             'labels': image_info['labels'],
                         },
-                        'resource_slots': requested_slots,
+                        'resource_slots': {
+                            k: str(v)
+                            for k, v in requested_slots.data.items()
+                        },
                         'mounts': mounts,
                         'environ': environ,
                     }
@@ -624,7 +626,8 @@ class AgentRegistry:
                                               db_connection=conn)
 
             registry_url, registry_creds = \
-                await get_registry_info(kernel['registry'])
+                await get_registry_info(self.config_server.etcd,
+                                        kernel['registry'])
             image_ref = ImageRef(kernel['image'], [kernel['registry']])
             image_info = await self.config_server.inspect_image(image_ref)
 
@@ -638,7 +641,7 @@ class AgentRegistry:
                 new_config = {
                     'image': {
                         'registry': {
-                            'url': registry_url,
+                            'url': str(registry_url),
                             **registry_creds,
                         },
                         'digest': image_info['digest'],

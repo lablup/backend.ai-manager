@@ -36,7 +36,7 @@ from ai.backend.gateway.server import (
     PUBLIC_INTERFACES)
 from ai.backend.manager import models
 from ai.backend.manager.models import agents, kernels, keypairs, vfolders
-from ai.backend.manager.cli.etcd import delete, put, update_aliases
+from ai.backend.manager.cli.etcd import delete, put
 from ai.backend.manager.cli.dbschema import oneshot
 
 here = Path(__file__).parent
@@ -524,10 +524,10 @@ async def prepare_kernel(request, create_app_and_client,
         spawn_agent=True,
         ev_router=True)
 
-    async def create_kernel(lang='lua:5.3-alpine', tag=None):
+    async def create_kernel(image='lua:5.3-alpine', tag=None):
         url = '/v3/kernel/'
         req_bytes = json.dumps({
-            'lang': lang,
+            'image': image,
             'tag': tag,
             'clientSessionToken': sess_id,
         }).encode()

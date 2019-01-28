@@ -93,7 +93,8 @@ class SessionCommons:
     sess_id = graphene.String()
     id = graphene.UUID()
     role = graphene.String()
-    lang = graphene.String()
+    image = graphene.String()
+    registry = graphene.String()
 
     status = graphene.String()
     status_info = graphene.String()
@@ -207,7 +208,8 @@ class SessionCommons:
             'sess_id': row['sess_id'],
             'id': row['id'],
             'role': row['role'],
-            'lang': row['lang'],
+            'image': row['image'],
+            'registry': row['registry'],
             'status': row['status'],
             'status_info': row['status_info'],
             'created_at': row['created_at'],

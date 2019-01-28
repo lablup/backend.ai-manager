@@ -45,8 +45,11 @@ _rx_sess_token = re.compile(r'\w[\w.-]*\w', re.ASCII)
 async def create(request) -> web.Response:
     try:
         params = await request.json(loads=json.loads)
-        assert params.get('lang'), \
-               'lang is missing or empty!'
+        image = params.get('image')
+        if image is None:
+            image = params.get('lang')
+        assert image is not None, \
+               'lang or image is missing or empty!'
         assert params.get('clientSessionToken'), \
                'clientSessionToken is missing or empty!'
         sess_id = params['clientSessionToken']
@@ -54,8 +57,8 @@ async def create(request) -> web.Response:
                'clientSessionToken is too short or long (4 to 64 bytes required)!'
         assert _rx_sess_token.fullmatch(sess_id), \
                'clientSessionToken contains invalid characters.'
-        log.info('GET_OR_CREATE (u:{0}, lang:{1}, tag:{2}, token:{3})',
-                 request['keypair']['access_key'], params['lang'],
+        log.info('GET_OR_CREATE (u:{0}, image:{1}, tag:{2}, token:{3})',
+                 request['keypair']['access_key'], image,
                  params.get('tag', None), sess_id)
     except (json.decoder.JSONDecodeError, AssertionError) as e:
         log.warning('GET_OR_CREATE: invalid/missing parameters, {0!r}', e)
@@ -73,6 +76,7 @@ async def create(request) -> web.Response:
                       access_key, concurrency_used, concurrency_limit)
             if concurrency_used >= concurrency_limit:
                 raise QuotaExceeded
+            # TODO: replace with 'resources'
             creation_config = {
                 'mounts': None,
                 'environ': None,
@@ -117,7 +121,7 @@ async def create(request) -> web.Response:
                 creation_config['mounts'] = mount_details
             kernel, created = await request.app['registry'].get_or_create_session(
                 sess_id, access_key,
-                params['lang'], creation_config,
+                image, creation_config,
                 conn=conn, tag=params.get('tag', None))
             resp['kernelId'] = str(kernel['sess_id'])
             resp['servicePorts'] = kernel['service_ports']
@@ -318,7 +322,9 @@ async def get_info(request) -> web.Response:
     try:
         await registry.increment_session_usage(sess_id, access_key)
         kern = await registry.get_session(sess_id, access_key, field='*')
-        resp['lang'] = kern.lang
+        resp['lang'] = kern.image  # legacy
+        resp['image'] = kern.image
+        resp['registry'] = kern.registry
         resp['tag'] = kern.tag
         age = datetime.now(tzutc()) - kern.created_at
         resp['age'] = age.total_seconds() * 1000
