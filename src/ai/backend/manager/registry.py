@@ -15,7 +15,7 @@ from yarl import URL
 import zmq
 
 from ai.backend.common import msgpack
-from ai.backend.common.types import ImageRef
+from ai.backend.common.types import ImageRef, ResourceSlot
 from ai.backend.common.logging import BraceStyleAdapter
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
@@ -26,7 +26,7 @@ from ..gateway.exceptions import (
     AgentError)
 from .models import (
     agents, kernels, keypairs,
-    ResourceSlot, AgentStatus, KernelStatus
+    AgentStatus, KernelStatus
 )
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
@@ -500,7 +500,7 @@ class AgentRegistry:
                 'agent': agent_id,
                 'agent_addr': agent_addr,
                 'access_key': access_key,
-                'lang': image_ref.long,
+                'image': image_ref.canonical,
                 'tag': session_tag,
                 'occupied_slots': requested_slots.as_humanized(
                     known_resource_slot_types),
