@@ -383,7 +383,11 @@ async def download(request, row):
 async def list_files(request, row):
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
-    params = await request.json()
+    if request.body_exists:
+        params = await request.json()
+    else:
+        params = request.query
+
     log.info('VFOLDER.LIST_FILES (u:{0}, f:{1})', access_key, folder_name)
     base_path = (request.app['VFOLDER_MOUNT'] / row.host /
                  request.app['VFOLDER_FSPREFIX'] / row.id.hex)

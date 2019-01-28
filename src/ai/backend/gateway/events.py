@@ -3,6 +3,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 import functools
 import logging
+import secrets
 import sys
 from typing import Callable
 
@@ -16,10 +17,12 @@ from ai.backend.common.logging import BraceStyleAdapter
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.events'))
 
+ipc_key = secrets.token_hex(8)
+
 if sys.platform == 'darwin':
-    EVENT_IPC_ADDR = 'ipc://ai.backend.agent-events'
+    EVENT_IPC_ADDR = f'ipc://ai.backend.agent-events.{ipc_key}'
 elif sys.platform == 'linux':
-    EVENT_IPC_ADDR = 'ipc://@/ai.backend.agent-events'
+    EVENT_IPC_ADDR = f'ipc://@/ai.backend.agent-events.{ipc_key}'
 else:
     raise NotImplementedError('unsupported platform')
 
