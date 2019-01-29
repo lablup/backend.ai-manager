@@ -6,6 +6,7 @@ from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
+from ai.backend.common.types import ResourceSlot
 from .base import metadata, EnumType
 
 __all__ = (
@@ -57,15 +58,17 @@ class Agent(graphene.ObjectType):
         status=graphene.String())
 
     @classmethod
-    def from_row(cls, row):
+    def from_row(cls, context, row):
         if row is None:
             return None
         return cls(
             id=row['id'],
             status=row['status'],
             region=row['region'],
-            available_slots=row['available_slots'],
-            occupied_slots=row['occupied_slots'],
+            available_slots=(ResourceSlot(row['available_slots'])
+                             .as_json_humanized(context['known_slot_types'])),
+            occupied_slots=(ResourceSlot(row['occupied_slots'])
+                            .as_json_humanized(context['known_slot_types'])),
             addr=row['addr'],
             first_contact=row['first_contact'],
             lost_at=row['lost_at'],
@@ -80,8 +83,8 @@ class Agent(graphene.ObjectType):
         return await loader.load(self.id)
 
     @staticmethod
-    async def load_all(dbpool, status=None):
-        async with dbpool.acquire() as conn:
+    async def load_all(context, status=None):
+        async with context['dbpool'].acquire() as conn:
             query = (sa.select('*')
                        .select_from(agents))
             if status is not None:
@@ -89,11 +92,11 @@ class Agent(graphene.ObjectType):
                 query = query.where(agents.c.status == status)
             result = await conn.execute(query)
             rows = await result.fetchall()
-            return [Agent.from_row(r) for r in rows]
+            return [Agent.from_row(context, r) for r in rows]
 
     @staticmethod
-    async def batch_load(dbpool, agent_ids, status=None):
-        async with dbpool.acquire() as conn:
+    async def batch_load(context, agent_ids, status=None):
+        async with context['dbpool'].acquire() as conn:
             query = (sa.select('*')
                        .select_from(agents)
                        .where(agents.c.id.in_(agent_ids))
@@ -105,6 +108,6 @@ class Agent(graphene.ObjectType):
             for k in agent_ids:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
-                o = Agent.from_row(row)
+                o = Agent.from_row(context, row)
                 objs_per_key[row.id] = o
         return tuple(objs_per_key.values())

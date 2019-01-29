@@ -379,7 +379,7 @@ class AgentRegistry:
         image_info = await self.config_server.inspect_image(image_ref)
         image_min_slots, image_max_slots = \
             await self.config_server.get_image_slot_ranges(image_ref)
-        known_resource_slot_types = \
+        known_slot_types = \
             await self.config_server.get_resource_slots()
 
         # ==== BEGIN: ENQUEUING PART ====
@@ -389,7 +389,7 @@ class AgentRegistry:
         if 'resources' in creation_config:
             # Sanitize user input: does it have "known" resource slots only?
             for slot_key, slot_value in creation_config['resources'].items():
-                if slot_key not in known_resource_slot_types:
+                if slot_key not in known_slot_types:
                     raise InvalidAPIParameters(
                         f'Unknown requested resource slot: {slot_key}')
             requested_slots = ResourceSlot(creation_config['resources'])
@@ -412,7 +412,7 @@ class AgentRegistry:
             requested_slots = ResourceSlot({
                 'cpu': cpu,
                 'mem': mem,
-            }).as_numeric(known_resource_slot_types)
+            }).as_numeric(known_slot_types)
             gpu = creation_config.get('instanceGPUs')
             if gpu is not None:
                 raise InvalidAPIParameters('Client upgrade required '
@@ -425,7 +425,7 @@ class AgentRegistry:
 
         try:
             # Check if: requested >= image-minimum
-            requested_slots = requested_slots.as_numeric(known_resource_slot_types)
+            requested_slots = requested_slots.as_numeric(known_slot_types)
             if image_min_slots > requested_slots:
                 raise InvalidAPIParameters(
                     'Your resource request is smaller than '
@@ -455,9 +455,9 @@ class AgentRegistry:
                        .where(agents.c.status == AgentStatus.ALIVE))
             async for row in conn.execute(query):
                 total_slots = ResourceSlot(row['available_slots']) \
-                              .as_numeric(known_resource_slot_types)
+                              .as_numeric(known_slot_types)
                 occupied_slots = ResourceSlot(row['occupied_slots']) \
-                                 .as_numeric(known_resource_slot_types)
+                                 .as_numeric(known_slot_types)
                 # TODO: would there be any case that occupied_slots have more keys
                 #       than total_slots?
                 remaining_slots = total_slots - occupied_slots
@@ -480,17 +480,17 @@ class AgentRegistry:
             # Here, all items in possible_agent_slots have the same keys,
             # allowing the total ordering property.
             if possible_agent_slots:
-                agent_id, _, occupied_slots = \
+                agent_id, _, current_occupied_slots = \
                     max(possible_agent_slots, key=lambda s: s[1])
             else:
                 raise InstanceNotAvailable
 
             # Reserve slots
-            updated_occupied_slots = (occupied_slots + requested_slots) \
-                                     .as_humanized(known_resource_slot_types)
+            updated_occupied_slots = current_occupied_slots + requested_slots
             query = (sa.update(agents)
                        .values({
-                           'occupied_slots': updated_occupied_slots.data,
+                           'occupied_slots': (updated_occupied_slots
+                                              .as_json_numeric(known_slot_types)),
                        })
                        .where(agents.c.id == agent_id))
             result = await conn.execute(query)
@@ -518,8 +518,7 @@ class AgentRegistry:
                 'image': image_ref.canonical,
                 'registry': image_ref.registry,
                 'tag': session_tag,
-                'occupied_slots': requested_slots.as_humanized(
-                    known_resource_slot_types).data,
+                'occupied_slots': requested_slots.as_json_numeric(known_slot_types),
                 'occupied_shares': {},
                 'environ': [f'{k}={v}' for k, v in environ.items()],
                 'kernel_host': None,
@@ -545,10 +544,8 @@ class AgentRegistry:
                             'canonical': image_ref.canonical,
                             'labels': image_info['labels'],
                         },
-                        'resource_slots': {
-                            k: str(v)
-                            for k, v in requested_slots.data.items()
-                        },
+                        'resource_slots': (requested_slots
+                                           .as_json_numeric(known_slot_types)),
                         'mounts': mounts,
                         'environ': environ,
                     }
@@ -570,12 +567,13 @@ class AgentRegistry:
                     'kernel_host': kernel_host,
                     'service_ports': service_ports,
                 }
+                # TODO: created_info contains resource_spec
                 query = (
                     kernels.update()
                     .values({
                         'status': KernelStatus.RUNNING,
                         'container_id': created_info['container_id'],
-                        'occupied_shares': created_info['occupied_shares'],
+                        'occupied_shares': {},
                         'kernel_host': kernel_host,
                         'repl_in_port': created_info['repl_in_port'],
                         'repl_out_port': created_info['repl_out_port'],
@@ -826,12 +824,13 @@ class AgentRegistry:
             result = await conn.execute(query)
             row = await result.first()
 
-            available_slots = ResourceSlot({
-                k: v[1] for k, v in
-                agent_info['resource_slots'].items()})
             slot_key_and_units = {
                 k: v[0] for k, v in
                 agent_info['resource_slots'].items()}
+            available_slots = ResourceSlot({
+                k: v[1] for k, v in
+                agent_info['resource_slots'].items()}) \
+                .as_numeric(slot_key_and_units)
 
             # compare and update etcd slot_keys
 
@@ -842,7 +841,8 @@ class AgentRegistry:
                     'id': agent_id,
                     'status': AgentStatus.ALIVE,
                     'region': agent_info['region'],
-                    'available_slots': available_slots.data,
+                    'available_slots': (available_slots
+                                        .as_json_numeric(slot_key_and_units)),
                     'occupied_slots': {},
                     'addr': agent_info['addr'],
                     'first_contact': now,
@@ -854,8 +854,11 @@ class AgentRegistry:
                 self.config_server.get_resource_slots.cache_clear()
             elif row.status == AgentStatus.ALIVE:
                 updates = {}
-                if available_slots.data != row.available_slots:
-                    updates['available_slots'] = available_slots.data
+                current_avail_slots = (ResourceSlot(row.available_slots)
+                                       .as_numeric(slot_key_and_units))
+                if available_slots != current_avail_slots:
+                    updates['available_slots'] = \
+                        available_slots.as_json_numeric(slot_key_and_units)
                 # occupied_slots are updated when kernels starts/terminates
                 if updates:
                     query = (sa.update(agents)
@@ -870,7 +873,9 @@ class AgentRegistry:
                                'region': agent_info['region'],
                                'addr': agent_info['addr'],
                                'lost_at': None,
-                               'available_slots': available_slots.data,
+                               'available_slots': (
+                                   available_slots
+                                   .as_json_numeric(slot_key_and_units)),
                            })
                            .where(agents.c.id == agent_id))
                 await conn.execute(query)
@@ -969,29 +974,33 @@ class AgentRegistry:
             await conn.execute(query)
 
             # release resource slots
-            # units: absolute
-            query = (sa.select([sa.column('agent'),
-                                sa.column('mem_slot'),
-                                sa.column('cpu_slot'),
-                                sa.column('gpu_slot'),
-                                sa.column('tpu_slot')])
+            known_slot_types = \
+                await self.config_server.get_resource_slots()
+            query = (sa.select([sa.column('agent'), sa.column('occupied_slots')])
                        .select_from(kernels)
                        .where(kernels.c.id == kernel_id))
             result = await conn.execute(query)
             kernel = await result.first()
             if kernel is None:
                 return
+            query = (sa.select([sa.column('occupied_slots')],
+                               for_update=True)
+                       .select_from(agents)
+                       .where(agents.c.id == kernel['agent']))
+            result = await conn.execute(query)
+            agent = await result.first()
+            if agent is None:
+                return
             # units: absolute
-            mem_col = agents.c.used_mem_slots
-            cpu_col = agents.c.used_cpu_slots
-            gpu_col = agents.c.used_gpu_slots
-            tpu_col = agents.c.used_tpu_slots
+            occupied_slots = \
+                ResourceSlot(kernel['occupied_slots']).as_numeric(known_slot_types)
+            current_occupied_slots = \
+                ResourceSlot(agent['occupied_slots']).as_numeric(known_slot_types)
+            updated_occupied_slots = current_occupied_slots - occupied_slots
             query = (sa.update(agents)
                        .values({
-                           'used_mem_slots': mem_col - kernel['mem_slot'],
-                           'used_cpu_slots': cpu_col - kernel['cpu_slot'],
-                           'used_gpu_slots': gpu_col - kernel['gpu_slot'],
-                           'used_tpu_slots': tpu_col - kernel['tpu_slot'],
+                           'occupied_slots': (updated_occupied_slots
+                                              .as_json_numeric(known_slot_types)),
                        })
                        .where(agents.c.id == kernel['agent']))
             await conn.execute(query)

@@ -48,13 +48,13 @@ class Image(graphene.ObjectType):
         )
 
     @classmethod
-    async def load_item(cls, config_server, reference):
-        r = await config_server.inspect_image(reference)
+    async def load_item(cls, context, reference):
+        r = await context['config_server'].inspect_image(reference)
         return cls._convert_from_dict(r)
 
     @classmethod
-    async def load_all(cls, config_server):
-        raw_items = await config_server.list_images()
+    async def load_all(cls, context):
+        raw_items = await context['config_server'].list_images()
         items = []
         # Convert to GQL objects
         for r in raw_items:

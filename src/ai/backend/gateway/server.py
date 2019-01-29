@@ -55,7 +55,7 @@ LATEST_REV_DATES = {
     3: '20181215',
     4: '20190315',
 }
-LATEST_API_VERSION = 'v4.20190115'
+LATEST_API_VERSION = 'v4.20190315'
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 

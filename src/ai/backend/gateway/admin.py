@@ -54,18 +54,23 @@ async def handle_gql(request: web.Request) -> web.Response:
         raise InvalidAPIParameters(e.args[0])
 
     manager_status = await request.app['config_server'].get_manager_status()
-    dlmanager = DataLoaderManager(request.app['dbpool'])
+    known_slot_types = await request.app['config_server'].get_resource_slots()
+    context = {
+        'config_server': request.app['config_server'],
+        'etcd': request.app['config_server'].etcd,
+        'access_key': request['keypair']['access_key'],
+        'dbpool': request.app['dbpool'],
+        'redis_stat': request.app['redis_stat'],
+        'manager_status': manager_status,
+        'known_slot_types': known_slot_types,
+    }
+    dlmanager = DataLoaderManager(context)
     result = schema.execute(
         body['query'], executor,
         variable_values=body['variables'],
         context_value={
             'dlmgr': dlmanager,
-            'config_server': request.app['config_server'],
-            'etcd': request.app['config_server'].etcd,
-            'access_key': request['keypair']['access_key'],
-            'dbpool': request.app['dbpool'],
-            'redis_stat': request.app['redis_stat'],
-            'manager_status': manager_status,
+            **context,
         },
         middleware=[GQLMutationUnfrozenRequiredMiddleware()],
         return_promise=True)
@@ -162,9 +167,8 @@ class QueryForAdmin(graphene.ObjectType):
 
     @staticmethod
     async def resolve_agents(executor, info, status=None):
-        dbpool = info.context['dbpool']
         rs = info.context['redis_stat']
-        agent_list = await Agent.load_all(dbpool, status=status)
+        agent_list = await Agent.load_all(info.context, status=status)
         for agent in agent_list:
             cpu_pct, mem_cur_bytes = await rs.hmget(
                 str(agent.id),
@@ -181,8 +185,7 @@ class QueryForAdmin(graphene.ObjectType):
 
     @staticmethod
     async def resolve_images(executor, info):
-        config_server = info.context['config_server']
-        return await Image.load_all(config_server)
+        return await Image.load_all(info.context)
 
     @staticmethod
     async def resolve_keypair(executor, info, access_key=None):
@@ -195,9 +198,8 @@ class QueryForAdmin(graphene.ObjectType):
     @staticmethod
     async def resolve_keypairs(executor, info, user_id=None, is_active=None):
         manager = info.context['dlmgr']
-        dbpool = info.context['dbpool']
         if user_id is None:
-            return await KeyPair.load_all(dbpool, is_active=is_active)
+            return await KeyPair.load_all(info.context, is_active=is_active)
         else:
             loader = manager.get_loader('KeyPair.by_uid', is_active=is_active)
             return await loader.load(user_id)
@@ -274,13 +276,11 @@ class QueryForUser(graphene.ObjectType):
 
     @staticmethod
     async def resolve_image(executor, info, reference):
-        config_server = info.context['config_server']
-        return await Image.load_item(config_server, reference)
+        return await Image.load_item(info.context, reference)
 
     @staticmethod
     async def resolve_images(executor, info):
-        config_server = info.context['config_server']
-        return await Image.load_all(config_server)
+        return await Image.load_all(info.context)
 
     @staticmethod
     async def resolve_keypair(executor, info):
