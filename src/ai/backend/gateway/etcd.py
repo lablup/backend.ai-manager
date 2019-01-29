@@ -99,6 +99,7 @@ from ai.backend.common.docker import (
     get_registry_info
 )
 from .manager import ManagerStatus
+from .utils import chunked
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
 
@@ -371,7 +372,8 @@ class ConfigServer:
         if not all_updates:
             log.info('No images found in registry {0}', registry_url)
             return
-        await self.etcd.put_dict(all_updates)
+        for kvlist in chunked(sorted(all_updates.items()), 16):
+            await self.etcd.put_dict(dict(kvlist))
 
     async def rescan_images(self, registry: str = None):
         if registry is None:
