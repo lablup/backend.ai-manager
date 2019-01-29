@@ -1,6 +1,18 @@
 Changes
 =======
 
+19.03.0b1 (2018-01-30)
+----------------------
+
+- BIG: Support for dynamic resource slots and full private Docker registries. (#127)
+  Now all resource-related fields in APIs/DB are JSON.
+
+- Support running multiple managers on the same host by randomizing internal IPC
+  socket addresses.  This also improves the security a little.
+
+- Support bodyless (query params intead) GET requests for vfolder/kernel file
+  download APIs.
+
 19.03.0a2 (2018-01-21)
 ----------------------
 
