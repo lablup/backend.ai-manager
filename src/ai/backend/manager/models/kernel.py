@@ -119,6 +119,7 @@ class SessionCommons:
     io_write_bytes = graphene.Int()
     io_max_scratch_size = graphene.Int()
     io_cur_scratch_size = graphene.Int()
+    cpu_using = graphene.Float()
 
     async def resolve_cpu_used(self, info):
         if not hasattr(self, 'status'):
@@ -201,6 +202,19 @@ class SessionCommons:
         ret = await rs.hget(str(self.id), 'io_cur_scratch_size')
         return int(ret) if ret is not None else 0
 
+    async def resolve_cpu_using(self, info):
+        if not hasattr(self, 'status'):
+            return None
+        if self.status not in LIVE_STATUS:
+            return 0
+        rs = info.context['redis_stat']
+        cpu_used = await rs.hget(str(self.id), 'cpu_used')
+        precpu_used = await rs.hget(str(self.id), 'precpu_used')
+        ret = 0
+        if cpu_used is not None and precpu_used is not None:
+            ret = (float(cpu_used) - float(precpu_used)) / 10   # cpu_used(ms), precpu_used(ms), interval=1s, ret(%)
+        return round(float(ret), 2)
+
     @classmethod
     def parse_row(cls, row):
         assert row is not None
@@ -264,6 +278,21 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
         return await loader.load(self.sess_id)
 
     @staticmethod
+    async def load_all(dbpool, status=None):
+        async with dbpool.acquire() as conn:
+            status = KernelStatus[status] if status else KernelStatus['RUNNING']
+            query = (sa.select('*')
+                       .select_from(kernels)
+                       .where(kernels.c.role == 'master')
+                       .order_by(sa.desc(kernels.c.created_at))
+                       .limit(100))
+            if status is not None:
+                query = query.where(kernels.c.status == status)
+            result = await conn.execute(query)
+            rows = await result.fetchall()
+            return [ComputeSession.from_row(r) for r in rows]
+
+    @staticmethod
     async def batch_load(dbpool, access_keys, *, status=None):
         async with dbpool.acquire() as conn:
             query = (sa.select('*')
@@ -308,6 +337,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 o = ComputeSession.from_row(row)
                 sess_info[row.sess_id].append(o)
             return tuple(sess_info.values())
+
 
     @classmethod
     def parse_row(cls, row):

@@ -168,7 +168,7 @@ class QueryForAdmin(graphene.ObjectType):
         for agent in agent_list:
             cpu_pct, mem_cur_bytes = await rs.hmget(
                 str(agent.id),
-                'cpu_pct', 'mem_cur_bytes',
+                'cpu_pct', 'mem_cur_bytes', 
             )
             agent.cpu_cur_pct = cpu_pct
             agent.mem_cur_bytes = mem_cur_bytes
@@ -212,15 +212,17 @@ class QueryForAdmin(graphene.ObjectType):
 
     @staticmethod
     async def resolve_compute_sessions(executor, info, access_key=None, status=None):
-        manager = info.context['dlmgr']
         # TODO: make status a proper graphene.Enum type
         #       (https://github.com/graphql-python/graphene/issues/544)
-        if access_key is None:
-            access_key = info.context['access_key']
         if status is not None:
             status = KernelStatus[status]
-        loader = manager.get_loader('ComputeSession', status=status)
-        return await loader.load(access_key)
+        if access_key is not None:
+            manager = info.context['dlmgr']
+            loader = manager.get_loader('ComputeSession', status=status)
+            return await loader.load(access_key)
+        else:
+            dbpool = info.context['dbpool']
+            return await ComputeSession.load_all(dbpool)
 
     @staticmethod
     async def resolve_compute_session(executor, info, sess_id, status=None):
