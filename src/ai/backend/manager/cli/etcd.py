@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import logging
 from pathlib import Path
+from pprint import pprint
 import sys
 
 from ai.backend.common.logging import BraceStyleAdapter
@@ -85,27 +86,90 @@ delete.add('--prefix', action='store_true', default=False,
 
 
 @etcd.register_command
-def update_images(args):
-    '''Update the latest version of kernels (Docker images)
-    that Backend.AI agents will use.'''
+def list_images(args):
+    '''List everything about images.'''
     with config_ctx(args) as (loop, config_server):
-        if args.file:
-            loop.run_until_complete(
-                config_server.update_kernel_images_from_file(args.file))
-        elif args.scan_docker_hub:
-            loop.run_until_complete(
-                config_server.update_kernel_images_from_registry(args.registry_addr))
-        else:
-            log.error('Please specify one of the options. See "--help".')
+        try:
+            items = loop.run_until_complete(
+                config_server.list_images())
+            pprint(items)
+        except Exception:
+            log.exception('An error occurred.')
 
 
-update_images.add('-f', '--file', type=Path, metavar='PATH',
-                  help='A config file to use.')
-update_images.add('--scan-registry', default=False, action='store_true',
-                  help='Scan the Docker hub to get the latest versinos.')
-update_images.add('--docker-registry', env_var='BACKEND_DOCKER_REGISTRY',
-                  type=str, metavar='URL', default=None,
-                  help='The address of Docker registry server.')
+@etcd.register_command
+def inspect_image(args):
+    '''List everything about images.'''
+    with config_ctx(args) as (loop, config_server):
+        try:
+            item = loop.run_until_complete(
+                config_server.inspect_image(args.reference))
+            pprint(item)
+        except Exception:
+            log.exception('An error occurred.')
+
+
+inspect_image.add('reference', type=str, help='The reference to an image.')
+
+
+@etcd.register_command
+def set_image_resource_limit(args):
+    '''List everything about images.'''
+    with config_ctx(args) as (loop, config_server):
+        try:
+            loop.run_until_complete(
+                config_server.set_image_resource_limit(
+                    args.reference, args.slot_type, args.max))
+        except Exception:
+            log.exception('An error occurred.')
+
+
+set_image_resource_limit.add('reference', type=str,
+                             help='The reference to an image.')
+set_image_resource_limit.add('slot_type', type=str,
+                             help='The resource slot name.')
+set_image_resource_limit.add('max', type=str,
+                             help='The maximum value allowed.')
+
+
+@etcd.register_command
+def rescan_images(args):
+    '''Update the kernel image metadata from all configured docker registries.'''
+    with config_ctx(args) as (loop, config_server):
+        try:
+            loop.run_until_complete(
+                config_server.rescan_images(args.registry))
+        except Exception:
+            log.exception('An error occurred.')
+
+
+rescan_images.add('-r', '--registry',
+                  type=str, metavar='NAME', default=None,
+                  help='The name (usually hostname or "lablup") '
+                       'of the Docker registry configured.')
+
+
+@etcd.register_command
+def alias(args):
+    '''Add an image alias.'''
+    with config_ctx(args) as (loop, config_server):
+        loop.run_until_complete(
+            config_server.alias(args.alias, args.target))
+
+
+alias.add('alias', type=str, help='The alias of an image to add.')
+alias.add('target', type=str, help='The target image.')
+
+
+@etcd.register_command
+def dealias(args):
+    '''Remove an image alias.'''
+    with config_ctx(args) as (loop, config_server):
+        loop.run_until_complete(
+            config_server.alias(args.alias))
+
+
+dealias.add('alias', type=str, help='The alias of an image to remove.')
 
 
 @etcd.register_command

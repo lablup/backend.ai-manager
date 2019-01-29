@@ -4,7 +4,9 @@ import enum
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql as pgsql
 
+from ai.backend.common.types import ResourceSlot
 from .base import metadata, zero_if_none, EnumType, IDColumn
 
 __all__ = (
@@ -33,8 +35,6 @@ LIVE_STATUS = frozenset(['BUILDING', 'RUNNING'])
 
 
 kernels = sa.Table(
-    # TODO: change accelerator slots to be dynamically defined.
-
     'kernels', metadata,
     IDColumn(),
     sa.Column('sess_id', sa.String(length=64), unique=False, index=True),
@@ -43,18 +43,14 @@ kernels = sa.Table(
     sa.Column('agent_addr', sa.String(length=128), nullable=False),
     sa.Column('access_key', sa.String(length=20),
               sa.ForeignKey('keypairs.access_key')),
-    sa.Column('lang', sa.String(length=512)),
+    sa.Column('image', sa.String(length=512)),
+    sa.Column('registry', sa.String(length=512)),
     sa.Column('tag', sa.String(length=64), nullable=True),
 
     # Resource occupation
     sa.Column('container_id', sa.String(length=64)),
-    sa.Column('cpu_set', sa.ARRAY(sa.Integer)),
-    sa.Column('gpu_set', sa.ARRAY(sa.Integer)),
-    sa.Column('tpu_set', sa.ARRAY(sa.Integer)),
-    sa.Column('mem_slot', sa.BigInteger(), nullable=False),
-    sa.Column('cpu_slot', sa.Float(), nullable=False),
-    sa.Column('gpu_slot', sa.Float(), nullable=False),
-    sa.Column('tpu_slot', sa.Float(), nullable=False),
+    sa.Column('occupied_slots', pgsql.JSONB(), nullable=False),
+    sa.Column('occupied_shares', pgsql.JSONB(), nullable=False),
     sa.Column('environ', sa.ARRAY(sa.String), nullable=True),
 
     # Port mappings
@@ -62,9 +58,9 @@ kernels = sa.Table(
     sa.Column('kernel_host', sa.String(length=128), nullable=True),
     sa.Column('repl_in_port', sa.Integer(), nullable=False),
     sa.Column('repl_out_port', sa.Integer(), nullable=False),
-    sa.Column('stdin_port', sa.Integer(), nullable=False),
-    sa.Column('stdout_port', sa.Integer(), nullable=False),
-    sa.Column('service_ports', sa.JSON(), nullable=True),
+    sa.Column('stdin_port', sa.Integer(), nullable=False),   # legacy for stream_pty
+    sa.Column('stdout_port', sa.Integer(), nullable=False),  # legacy for stream_pty
+    sa.Column('service_ports', pgsql.JSONB(), nullable=True),
 
     # Lifecycle
     sa.Column('created_at', sa.DateTime(timezone=True),
@@ -95,12 +91,11 @@ kernels = sa.Table(
 
 
 class SessionCommons:
-    # TODO: change accelerator slots to be dynamically defined.
-
     sess_id = graphene.String()
     id = graphene.UUID()
     role = graphene.String()
-    lang = graphene.String()
+    image = graphene.String()
+    registry = graphene.String()
 
     status = graphene.String()
     status_info = graphene.String()
@@ -111,10 +106,9 @@ class SessionCommons:
     container_id = graphene.String()
     service_ports = graphene.JSONString()
 
-    mem_slot = graphene.Int()
-    cpu_slot = graphene.Float()
-    gpu_slot = graphene.Float()
-    tpu_slot = graphene.Float()
+    occupied_slots = graphene.JSONString()
+    occupied_shares = graphene.JSONString()
+    # TODO: add dynamic stats for intrinsic/accelerator metrics
 
     num_queries = graphene.Int()
     cpu_used = graphene.Int()
@@ -223,13 +217,14 @@ class SessionCommons:
         return round(float(ret), 2)
 
     @classmethod
-    def parse_row(cls, row):
+    def parse_row(cls, context, row):
         assert row is not None
         return {
             'sess_id': row['sess_id'],
             'id': row['id'],
             'role': row['role'],
-            'lang': row['lang'],
+            'image': row['image'],
+            'registry': row['registry'],
             'status': row['status'],
             'status_info': row['status_info'],
             'created_at': row['created_at'],
@@ -237,10 +232,9 @@ class SessionCommons:
             'agent': row['agent'],
             'container_id': row['container_id'],
             'service_ports': row['service_ports'],
-            'mem_slot': row['mem_slot'],
-            'cpu_slot': row['cpu_slot'],
-            'gpu_slot': row['gpu_slot'],
-            'tpu_slot': row['tpu_slot'],
+            'occupied_slots': (ResourceSlot(row['occupied_slots'])
+                               .as_json_humanized(context['known_slot_types'])),
+            'occupied_shares': row['occupied_shares'],
             'num_queries': row['num_queries'],
             # live statistics
             # NOTE: currently graphene always uses resolve methods!
@@ -256,10 +250,10 @@ class SessionCommons:
         }
 
     @classmethod
-    def from_row(cls, row):
+    def from_row(cls, context, row):
         if row is None:
             return None
-        props = cls.parse_row(row)
+        props = cls.parse_row(context, row)
         return cls(**props)
 
 
@@ -286,8 +280,8 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
         return await loader.load(self.sess_id)
 
     @staticmethod
-    async def load_all(dbpool, status=None):
-        async with dbpool.acquire() as conn:
+    async def load_all(context, status=None):
+        async with context['dbpool'].acquire() as conn:
             status = KernelStatus[status] if status else KernelStatus['RUNNING']
             query = (sa.select('*')
                        .select_from(kernels)
@@ -298,11 +292,10 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 query = query.where(kernels.c.status == status)
             result = await conn.execute(query)
             rows = await result.fetchall()
-            return [ComputeSession.from_row(r) for r in rows]
+            return [ComputeSession.from_row(context, r) for r in rows]
 
-    @staticmethod
-    async def batch_load(dbpool, access_keys, *, status=None):
-        async with dbpool.acquire() as conn:
+    async def batch_load(context, access_keys, *, status=None):
+        async with context['dbpool'].acquire() as conn:
             query = (sa.select('*')
                        .select_from(kernels)
                        .where((kernels.c.access_key.in_(access_keys)) &
@@ -315,13 +308,13 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             for k in access_keys:
                 objs_per_key[k] = list()
             async for row in conn.execute(query):
-                o = ComputeSession.from_row(row)
+                o = ComputeSession.from_row(context, row)
                 objs_per_key[row.access_key].append(o)
         return tuple(objs_per_key.values())
 
     @staticmethod
-    async def batch_load_detail(dbpool, sess_ids, *, access_key=None, status=None):
-        async with dbpool.acquire() as conn:
+    async def batch_load_detail(context, sess_ids, *, access_key=None, status=None):
+        async with context['dbpool'].acquire() as conn:
             # TODO: Extend to return terminated sessions (we need unique identifier).
             status = KernelStatus[status] if status else KernelStatus['RUNNING']
             query = (sa.select('*')
@@ -333,7 +326,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 query = query.where(kernels.c.access_key == access_key)
             sess_info = []
             async for row in conn.execute(query):
-                o = ComputeSession.from_row(row)
+                o = ComputeSession.from_row(context, row)
                 sess_info.append(o)
         if len(sess_info) != 0:
             return tuple(sess_info)
@@ -342,14 +335,13 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             for s in sess_ids:
                 sess_info[s] = list()
             async for row in conn.execute(query):
-                o = ComputeSession.from_row(row)
+                o = ComputeSession.from_row(context, row)
                 sess_info[row.sess_id].append(o)
             return tuple(sess_info.values())
 
-
     @classmethod
-    def parse_row(cls, row):
-        common_props = super().parse_row(row)
+    def parse_row(cls, context, row):
+        common_props = super().parse_row(context, row)
         return {**common_props, 'tag': row['tag']}
 
 
@@ -359,8 +351,8 @@ class ComputeWorker(SessionCommons, graphene.ObjectType):
     '''
 
     @staticmethod
-    async def batch_load(dbpool, sess_ids, *, status=None, access_key=None):
-        async with dbpool.acquire() as conn:
+    async def batch_load(context, sess_ids, *, status=None, access_key=None):
+        async with context['dbpool'].acquire() as conn:
             query = (sa.select('*')
                        .select_from(kernels)
                        .where((kernels.c.sess_id.in_(sess_ids)) &
@@ -376,7 +368,7 @@ class ComputeWorker(SessionCommons, graphene.ObjectType):
             for k in sess_ids:
                 objs_per_key[k] = list()
             async for row in conn.execute(query):
-                o = ComputeWorker.from_row(row)
+                o = ComputeWorker.from_row(context, row)
                 objs_per_key[row.sess_id].append(o)
         return tuple(objs_per_key.values())
 
@@ -387,8 +379,8 @@ class Computation(SessionCommons, graphene.ObjectType):
     '''
 
     @staticmethod
-    async def batch_load_by_agent_id(dbpool, agent_ids, *, status=None):
-        async with dbpool.acquire() as conn:
+    async def batch_load_by_agent_id(context, agent_ids, *, status=None):
+        async with context['dbpool'].acquire() as conn:
             query = (sa.select('*')
                        .select_from(kernels)
                        .where(kernels.c.agent.in_(agent_ids))
@@ -400,6 +392,6 @@ class Computation(SessionCommons, graphene.ObjectType):
             for k in agent_ids:
                 objs_per_key[k] = list()
             async for row in conn.execute(query):
-                o = Computation.from_row(row)
+                o = Computation.from_row(context, row)
                 objs_per_key[row.agent].append(o)
         return tuple(objs_per_key.values())

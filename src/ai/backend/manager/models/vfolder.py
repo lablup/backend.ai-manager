@@ -135,8 +135,8 @@ class VirtualFolder(graphene.ObjectType):
         return 0
 
     @staticmethod
-    async def batch_load(dbpool, access_keys):
-        async with dbpool.acquire() as conn:
+    async def batch_load(context, access_keys):
+        async with context['dbpool'].acquire() as conn:
             # TODO: num_attached count group-by
             query = (sa.select('*')
                        .select_from(vfolders)

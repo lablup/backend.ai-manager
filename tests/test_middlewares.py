@@ -117,7 +117,7 @@ async def test_api_ver(test_client):
         'X-BackendAI-Version': 'v1.20160915',
     })
     assert resp.status == 200
-    assert inner_request['api_version'] == 1
+    assert inner_request['api_version'][0] == 1
 
     # calling without version prefix
     resp = await client.post('/test', headers={
@@ -130,7 +130,7 @@ async def test_api_ver(test_client):
         'X-BackendAI-Version': 'v2.20170315',
     })
     assert resp.status == 200
-    assert inner_request['api_version'] == 2
+    assert inner_request['api_version'][0] == 2
 
     # calling with invalid version
     resp = await client.post('/v0/test', headers={

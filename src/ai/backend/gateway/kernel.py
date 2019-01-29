@@ -45,8 +45,11 @@ _rx_sess_token = re.compile(r'\w[\w.-]*\w', re.ASCII)
 async def create(request) -> web.Response:
     try:
         params = await request.json(loads=json.loads)
-        assert params.get('lang'), \
-               'lang is missing or empty!'
+        image = params.get('image')
+        if image is None:
+            image = params.get('lang')
+        assert image is not None, \
+               'lang or image is missing or empty!'
         assert params.get('clientSessionToken'), \
                'clientSessionToken is missing or empty!'
         sess_id = params['clientSessionToken']
@@ -54,8 +57,8 @@ async def create(request) -> web.Response:
                'clientSessionToken is too short or long (4 to 64 bytes required)!'
         assert _rx_sess_token.fullmatch(sess_id), \
                'clientSessionToken contains invalid characters.'
-        log.info('GET_OR_CREATE (u:{0}, lang:{1}, tag:{2}, token:{3})',
-                 request['keypair']['access_key'], params['lang'],
+        log.info('GET_OR_CREATE (u:{0}, image:{1}, tag:{2}, token:{3})',
+                 request['keypair']['access_key'], image,
                  params.get('tag', None), sess_id)
     except (json.decoder.JSONDecodeError, AssertionError) as e:
         log.warning('GET_OR_CREATE: invalid/missing parameters, {0!r}', e)
@@ -77,16 +80,25 @@ async def create(request) -> web.Response:
                 'mounts': None,
                 'environ': None,
                 'clusterSize': None,
-                'instanceMemory': None,
-                'instanceCores': None,
-                'instanceGPUs': None,
-                'instanceTPUs': None,
             }
-            if request['api_version'] == 1:
+            api_version = request['api_version']
+            if api_version[0] == 1:
                 # custom resource limit unsupported
                 pass
-            elif request['api_version'] >= 2:
+            elif api_version[0] >= 2:
+                creation_config.update(**{
+                    'instanceMemory': None,
+                    'instanceCores': None,
+                    'instanceGPUs': None,
+                    'instanceTPUs': None,
+                })
                 creation_config.update(params.get('config', {}))
+            elif api_version[0] >= 4 and api_version[1] >= '20190315':
+                creation_config.update(params.get('config', {}))
+                # "instanceXXX" fields are dropped and changed to
+                # a generalized "resource" map.
+                # TODO: implement
+
             # sanity check for vfolders
             if creation_config['mounts']:
                 mount_details = []
@@ -117,7 +129,7 @@ async def create(request) -> web.Response:
                 creation_config['mounts'] = mount_details
             kernel, created = await request.app['registry'].get_or_create_session(
                 sess_id, access_key,
-                params['lang'], creation_config,
+                image, creation_config,
                 conn=conn, tag=params.get('tag', None))
             resp['kernelId'] = str(kernel['sess_id'])
             resp['servicePorts'] = kernel['service_ports']
@@ -318,7 +330,9 @@ async def get_info(request) -> web.Response:
     try:
         await registry.increment_session_usage(sess_id, access_key)
         kern = await registry.get_session(sess_id, access_key, field='*')
-        resp['lang'] = kern.lang
+        resp['lang'] = kern.image  # legacy
+        resp['image'] = kern.image
+        resp['registry'] = kern.registry
         resp['tag'] = kern.tag
         age = datetime.now(tzutc()) - kern.created_at
         resp['age'] = age.total_seconds() * 1000
@@ -377,12 +391,12 @@ async def execute(request) -> web.Response:
     try:
         await registry.increment_session_usage(sess_id, access_key)
         api_version = request['api_version']
-        if api_version == 1:
+        if api_version[0] == 1:
             run_id = params.get('runId', secrets.token_hex(8))
             mode = 'query'
             code = params.get('code', None)
             opts = None
-        elif api_version >= 2:
+        elif api_version[0] >= 2:
             assert 'runId' in params, 'runId is missing!'
             run_id = params['runId']  # maybe None
             assert params.get('mode'), 'mode is missing or empty!'
@@ -425,7 +439,7 @@ async def execute(request) -> web.Response:
                 'options': raw_result.get('options'),
                 'files': raw_result.get('files'),
             }
-            if api_version == 1:
+            if api_version[0] == 1:
                 result['stdout'] = raw_result.get('stdout')
                 result['stderr'] = raw_result.get('stderr')
                 result['media'] = raw_result.get('media')

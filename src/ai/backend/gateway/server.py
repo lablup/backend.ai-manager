@@ -47,8 +47,15 @@ VALID_VERSIONS = frozenset([
     'v3.20170615',
     'v4.20181215',  # authentication changed not to use request bodies
     'v4.20190115',  # added & enabled streaming-execute API
+    'v4.20190315',  # resource/image changes
 ])
-LATEST_API_VERSION = 'v4.20190115'
+LATEST_REV_DATES = {
+    1: '20160915',
+    2: '20170915',
+    3: '20181215',
+    4: '20190315',
+}
+LATEST_API_VERSION = 'v4.20190315'
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 
@@ -91,11 +98,19 @@ async def api_middleware(request, handler):
     if ex is not None:
         # handled by exception_middleware
         raise ex
-    version = request.get('api_version', None)
-    if version is None:
-        version = int(request.match_info.get('version', 4))
-        request['api_version'] = version
-    if version < 1 or version > 4:
+    new_api_version = request.headers.get('X-BackendAI-Version')
+    legacy_api_version = request.headers.get('X-Sorna-Version')
+    api_version = new_api_version or legacy_api_version
+    try:
+        if api_version is None:
+            major_version = int(request.match_info.get('version', 4))
+            revision_date = LATEST_REV_DATES[major_version]
+            request['api_version'] = (major_version, revision_date)
+        else:
+            assert api_version in VALID_VERSIONS
+            major_version, revision_date = api_version.split('.', maxsplit=1)
+            request['api_version'] = (int(major_version[1:]), revision_date)
+    except (AssertionError, ValueError, KeyError):
         raise GenericBadRequest('Unsupported API major version.')
     resp = (await _handler(request))
     return resp
@@ -244,15 +259,18 @@ def handle_loop_error(app, loop, context):
             app['error_monitor'].capture_exception(exc_info)
 
 
-def _get_legacy_handler(handler, app, api_version):
+def _get_legacy_handler(handler, app, major_api_version):
 
     @functools.wraps(handler)
     async def _wrapped_handler(request):
-        request['api_version'] = api_version
+        request['api_version'] = (
+            major_api_version,
+            LATEST_REV_DATES[major_api_version],
+        )
         # This is a hack to support legacy routes without altering aiohttp core.
         m = web.UrlMappingMatchInfo(request._match_info,
                                     request._match_info.route)
-        m['version'] = api_version
+        m['version'] = major_api_version
         m.add_app(app)
         m.freeze()
         request._match_info = m
@@ -420,14 +438,12 @@ def gw_args(parser):
 def main():
 
     config = load_config(extra_args_funcs=(gw_args, Logger.update_log_args))
+    setproctitle(f'backend.ai: manager {config.namespace} '
+                 f'{config.service_ip}:{config.service_port}')
     logger = Logger(config)
     logger.add_pkg('aiotools')
     logger.add_pkg('aiopg')
     logger.add_pkg('ai.backend')
-
-    setproctitle(f'backend.ai: manager {config.namespace} '
-                 f'{config.service_ip}:{config.service_port}')
-
     with logger:
         log.info('Backend.AI Gateway {0}', __version__)
         log.info('runtime: {0}', env_info())

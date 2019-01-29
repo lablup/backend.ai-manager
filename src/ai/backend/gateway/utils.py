@@ -1,6 +1,7 @@
 from datetime import datetime
 import functools
 import io
+import itertools
 import numbers
 import re
 import traceback
@@ -117,3 +118,12 @@ def get_handler_attr(request, key, default=None):
 
 async def not_impl_stub(request) -> web.Response:
     raise QueryNotImplemented
+
+
+def chunked(iterable, n):
+    it = iter(iterable)
+    while True:
+        chunk = tuple(itertools.islice(it, n))
+        if not chunk:
+            return
+        yield chunk

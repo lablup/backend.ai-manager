@@ -52,7 +52,7 @@ class GQLMutationUnfrozenRequiredMiddleware:
 
 
 async def detect_status_update(app):
-    async for ev in app['config_server'].manager_status_update():
+    async for ev in app['config_server'].watch_manager_status():
         if ev.event == 'put':
             app['config_server'].get_manager_status.cache_clear()
             updated_status = await app['config_server'].get_manager_status()

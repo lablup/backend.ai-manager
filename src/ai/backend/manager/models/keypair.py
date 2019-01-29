@@ -88,8 +88,8 @@ class KeyPair(graphene.ObjectType):
         return await loader.load(self.access_key)
 
     @staticmethod
-    async def load_all(dbpool, *, is_active=None):
-        async with dbpool.acquire() as conn:
+    async def load_all(context, *, is_active=None):
+        async with context['dbpool'].acquire() as conn:
             query = sa.select('*').select_from(keypairs)
             if is_active is not None:
                 query = query.where(keypairs.c.is_active == is_active)
@@ -100,8 +100,8 @@ class KeyPair(graphene.ObjectType):
         return objs
 
     @staticmethod
-    async def batch_load_by_uid(dbpool, user_ids, *, is_active=None):
-        async with dbpool.acquire() as conn:
+    async def batch_load_by_uid(context, user_ids, *, is_active=None):
+        async with context['dbpool'].acquire() as conn:
             query = (sa.select('*')
                        .select_from(keypairs)
                        .where(keypairs.c.user_id.in_(user_ids)))
@@ -116,8 +116,8 @@ class KeyPair(graphene.ObjectType):
         return tuple(objs_per_key.values())
 
     @staticmethod
-    async def batch_load_by_ak(dbpool, access_keys):
-        async with dbpool.acquire() as conn:
+    async def batch_load_by_ak(context, access_keys):
+        async with context['dbpool'].acquire() as conn:
             query = (sa.select('*')
                        .select_from(keypairs)
                        .where(keypairs.c.access_key.in_(access_keys)))

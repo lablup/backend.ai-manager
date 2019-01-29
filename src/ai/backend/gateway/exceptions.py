@@ -25,17 +25,26 @@ class BackendError(web.HTTPError):
     error_type  = 'https://api.backend.ai/probs/general-error'
     error_title = 'General Backend API Error.'
 
-    def __init__(self, extra_msg=None):
+    def __init__(self, extra_msg=None, extra_data=None):
         super().__init__()
         self.args = (self.status_code, self.reason, self.error_type)
         self.empty_body = False
         self.content_type = 'application/problem+json'
+        self.extra_msg = extra_msg
         if extra_msg:
             self.error_title += f' ({extra_msg})'
-        self.body = json.dumps({
+        body = {
             'type': self.error_type,
             'title': self.error_title,
-        }).encode()
+        }
+        if extra_data is not None:
+            body['data'] = extra_data
+        self.body = json.dumps(body).encode()
+
+    def __str__(self):
+        if self.extra_msg:
+            return f'{self.error_title} ({self.extra_msg})'
+        return self.error_title
 
 
 class GenericNotFound(web.HTTPNotFound, BackendError):
@@ -56,6 +65,11 @@ class MethodNotAllowed(web.HTTPMethodNotAllowed, BackendError):
 class InternalServerError(web.HTTPInternalServerError, BackendError):
     error_type  = 'https://api.backend.ai/probs/internal-server-error'
     error_title = 'Internal server error.'
+
+
+class ServerMisconfiguredError(web.HTTPInternalServerError, BackendError):
+    error_type  = 'https://api.backend.ai/probs/server-misconfigured'
+    error_title = 'Servier misconfigured.'
 
 
 class ServiceUnavailable(web.HTTPServiceUnavailable, BackendError):
@@ -81,6 +95,11 @@ class AuthorizationFailed(web.HTTPUnauthorized, BackendError):
 class InvalidAPIParameters(web.HTTPBadRequest, BackendError):
     error_type  = 'https://api.backend.ai/probs/invalid-api-params'
     error_title = 'Missing or invalid API parameters.'
+
+
+class GraphQLError(web.HTTPBadRequest, BackendError):
+    error_type  = 'https://api.backend.ai/probs/graphql-error'
+    error_title = 'GraphQL-generated error.'
 
 
 class InstanceNotFound(web.HTTPNotFound, BackendError):
