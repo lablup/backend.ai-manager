@@ -109,7 +109,7 @@ images:
     syntax: python
     tags:
       - ["latest",     ":1.0-py36"]
-      - ["latest-gpu", ":1.0-py36-cuda9"]
+      - ["latest-gpu", ":1.0-py36-cuda10"]
       - ["0.1-py36-cuda8", "x"]
       - ["0.2-py36",     "x"]
       - ["0.2-py36-cuda8", "x"]
@@ -118,7 +118,7 @@ images:
       - ["0.4-py36",     "x"]
       - ["0.4-py36-cuda9", "x"]
       - ["1.0-py36",     "x"]
-      - ["1.0-py36-cuda9", "x"]
+      - ["1.0-py36-cuda10", "x"]
     slots:
       <<: *for_computing
   - name: python-cntk
