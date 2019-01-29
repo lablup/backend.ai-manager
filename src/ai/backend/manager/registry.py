@@ -431,8 +431,13 @@ class AgentRegistry:
                     'Your resource request is smaller than '
                     'the minimum required by the image.')
 
+            # If the resource is not specified, fill them with image minimums.
+            for slot_key, slot_val in image_min_slots.items():
+                if slot_key not in requested_slots:
+                    requested_slots[slot_key] = slot_val
+
             # Check if: requested <= image-maximum
-            if not (image_max_slots > requested_slots):
+            if image_max_slots < requested_slots:
                 raise InvalidAPIParameters(
                     'Your resource request is larger than '
                     'the maximum allowed by the image.')
@@ -532,7 +537,10 @@ class AgentRegistry:
 
             async with self.handle_kernel_exception(
                     'create_session', sess_id, access_key):
-                async with RPCContext(agent_addr, 30) as rpc:
+                # the agent may be pulling an image!
+                # (TODO: return early and update the kernel status
+                #        via asynchronous events)
+                async with RPCContext(agent_addr, None) as rpc:
                     config = {
                         'image': {
                             'registry': {
