@@ -98,6 +98,7 @@ from ai.backend.common.docker import (
     login as registry_login,
     get_registry_info
 )
+from .exceptions import ServerMisconfiguredError
 from .manager import ManagerStatus
 from .utils import chunked
 
@@ -160,7 +161,10 @@ class ConfigServer:
 
         res_limits = []
         for slot_key, slot_range in item['resource'].items():
-            min_value = slot_range['min']
+            min_value = slot_range.get('min')
+            if min_value is None:
+                raise ServerMisconfiguredError(
+                    f'{image_ref} is not configured to use "{slot_key}" resource.')
             max_value = slot_range.get('max')
             if max_value is None:
                 if slot_key == 'cpu':

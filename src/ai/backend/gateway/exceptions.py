@@ -67,6 +67,11 @@ class InternalServerError(web.HTTPInternalServerError, BackendError):
     error_title = 'Internal server error.'
 
 
+class ServerMisconfiguredError(web.HTTPInternalServerError, BackendError):
+    error_type  = 'https://api.backend.ai/probs/server-misconfigured'
+    error_title = 'Servier misconfigured.'
+
+
 class ServiceUnavailable(web.HTTPServiceUnavailable, BackendError):
     error_type  = 'https://api.backend.ai/probs/service-unavailable'
     error_title = 'Serivce unavailable.'
