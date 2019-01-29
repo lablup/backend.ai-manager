@@ -172,7 +172,7 @@ class QueryForAdmin(graphene.ObjectType):
         for agent in agent_list:
             cpu_pct, mem_cur_bytes = await rs.hmget(
                 str(agent.id),
-                'cpu_pct', 'mem_cur_bytes', 
+                'cpu_pct', 'mem_cur_bytes',
             )
             agent.cpu_cur_pct = cpu_pct
             agent.mem_cur_bytes = mem_cur_bytes
@@ -223,8 +223,7 @@ class QueryForAdmin(graphene.ObjectType):
             loader = manager.get_loader('ComputeSession', status=status)
             return await loader.load(access_key)
         else:
-            dbpool = info.context['dbpool']
-            return await ComputeSession.load_all(dbpool)
+            return await ComputeSession.load_all(info.context)
 
     @staticmethod
     async def resolve_compute_session(executor, info, sess_id, status=None):

@@ -567,10 +567,13 @@ class AgentRegistry:
                     'kernel_host': kernel_host,
                     'service_ports': service_ports,
                 }
-                # TODO: created_info contains resource_spec
+                # NOTE: created_info contains resource_spec
                 query = (
                     kernels.update()
                     .values({
+                        # TODO: add more kernel status about image pulling
+                        # TODO: move this status transition to event handler for
+                        #       "kernel_started"
                         'status': KernelStatus.RUNNING,
                         'container_id': created_info['container_id'],
                         'occupied_shares': {},
