@@ -76,21 +76,29 @@ async def create(request) -> web.Response:
                       access_key, concurrency_used, concurrency_limit)
             if concurrency_used >= concurrency_limit:
                 raise QuotaExceeded
-            # TODO: replace with 'resources'
             creation_config = {
                 'mounts': None,
                 'environ': None,
                 'clusterSize': None,
-                'instanceMemory': None,
-                'instanceCores': None,
-                'instanceGPUs': None,
-                'instanceTPUs': None,
             }
-            if request['api_version'] == 1:
+            api_version = request['api_version']
+            if api_version[0] == 1:
                 # custom resource limit unsupported
                 pass
-            elif request['api_version'] >= 2:
+            elif api_version[0] >= 2:
+                creation_config.update(**{
+                    'instanceMemory': None,
+                    'instanceCores': None,
+                    'instanceGPUs': None,
+                    'instanceTPUs': None,
+                })
                 creation_config.update(params.get('config', {}))
+            elif api_version[0] >= 4 and api_version[1] >= '20190315':
+                creation_config.update(params.get('config', {}))
+                # "instanceXXX" fields are dropped and changed to
+                # a generalized "resource" map.
+                # TODO: implement
+
             # sanity check for vfolders
             if creation_config['mounts']:
                 mount_details = []
@@ -383,12 +391,12 @@ async def execute(request) -> web.Response:
     try:
         await registry.increment_session_usage(sess_id, access_key)
         api_version = request['api_version']
-        if api_version == 1:
+        if api_version[0] == 1:
             run_id = params.get('runId', secrets.token_hex(8))
             mode = 'query'
             code = params.get('code', None)
             opts = None
-        elif api_version >= 2:
+        elif api_version[0] >= 2:
             assert 'runId' in params, 'runId is missing!'
             run_id = params['runId']  # maybe None
             assert params.get('mode'), 'mode is missing or empty!'
@@ -431,7 +439,7 @@ async def execute(request) -> web.Response:
                 'options': raw_result.get('options'),
                 'files': raw_result.get('files'),
             }
-            if api_version == 1:
+            if api_version[0] == 1:
                 result['stdout'] = raw_result.get('stdout')
                 result['stderr'] = raw_result.get('stderr')
                 result['media'] = raw_result.get('media')
