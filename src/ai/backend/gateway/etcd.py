@@ -27,6 +27,10 @@ Alias keys are also URL-quoted in the same way.
      + {"cuda.mem"}: {"bytes"}
      + {"cuda.smp"}: {"count"}
      ...
+   + plugins
+     + "cuda"
+       - allocation_mode: "discrete"
+       ...
  + nodes
    + manager: {instance-id}
      - event_addr: {"tcp://manager:5001"}
