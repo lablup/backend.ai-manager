@@ -27,6 +27,8 @@ class Image(graphene.ObjectType):
     size_bytes = graphene.Int()
     resource_limits = graphene.List(ResourceLimit)
     supported_accelerators = graphene.List(graphene.String)
+    # legacy field
+    hash = graphene.String()
 
     @classmethod
     def _convert_from_dict(cls, data):
@@ -36,6 +38,7 @@ class Image(graphene.ObjectType):
             tag=data['tag'],
             registry=data['registry'],
             digest=data['digest'],
+            hash=data['digest'],  # legacy
             aliases=data['aliases'],
             labels=[
                 KVPair(key=k, value=v)
