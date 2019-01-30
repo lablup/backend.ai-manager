@@ -6,7 +6,7 @@ from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
-from ai.backend.common.types import ResourceSlot
+from ai.backend.common.types import ResourceSlot, BinarySize
 from .base import metadata, EnumType
 
 __all__ = (
@@ -49,6 +49,16 @@ class Agent(graphene.ObjectType):
     first_contact = GQLDateTime()
     lost_at = GQLDateTime()
 
+    # Legacy fields
+    mem_slots = graphene.Int()
+    cpu_slots = graphene.Float()
+    gpu_slots = graphene.Float()
+    tpu_slots = graphene.Float()
+    used_mem_slots = graphene.Int()
+    used_cpu_slots = graphene.Float()
+    used_gpu_slots = graphene.Float()
+    used_tpu_slots = graphene.Float()
+
     # TODO: Dynamic fields
     cpu_cur_pct = graphene.Float()
     mem_cur_bytes = graphene.Float()
@@ -61,6 +71,7 @@ class Agent(graphene.ObjectType):
     def from_row(cls, context, row):
         if row is None:
             return None
+        mega = 2 ** 20
         return cls(
             id=row['id'],
             status=row['status'],
@@ -72,6 +83,15 @@ class Agent(graphene.ObjectType):
             addr=row['addr'],
             first_contact=row['first_contact'],
             lost_at=row['lost_at'],
+            # legacy fields
+            mem_slots=BinarySize.from_str(row['available_slots']['mem']) // mega,
+            cpu_slots=row['available_slots']['cpu'],
+            gpu_slots=row['available_slots'].get('cuda.device', 0),
+            tpu_slots=row['available_slots'].get('tpu.device', 0),
+            used_mem_slots=BinarySize.from_str(row['occupied_slots']['mem']) // mega,
+            used_cpu_slots=float(row['occupied_slots']['cpu']),
+            used_gpu_slots=float(row['occupied_slots'].get('cuda.device', 0)),
+            used_tpu_slots=float(row['occupied_slots'].get('tpu.device', 0)),
         )
 
     async def resolve_computations(self, info, status=None):

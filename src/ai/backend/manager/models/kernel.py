@@ -6,7 +6,7 @@ from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
-from ai.backend.common.types import ResourceSlot
+from ai.backend.common.types import ResourceSlot, BinarySize
 from .base import metadata, zero_if_none, EnumType, IDColumn
 
 __all__ = (
@@ -108,6 +108,14 @@ class SessionCommons:
 
     occupied_slots = graphene.JSONString()
     occupied_shares = graphene.JSONString()
+
+    # Legacy fields
+    lang = graphene.String()
+    mem_slot = graphene.Int()
+    cpu_slot = graphene.Float()
+    gpu_slot = graphene.Float()
+    tpu_slot = graphene.Float()
+
     # TODO: add dynamic stats for intrinsic/accelerator metrics
 
     num_queries = graphene.Int()
@@ -219,6 +227,7 @@ class SessionCommons:
     @classmethod
     def parse_row(cls, context, row):
         assert row is not None
+        mega = 2 ** 20
         return {
             'sess_id': row['sess_id'],
             'id': row['id'],
@@ -247,6 +256,12 @@ class SessionCommons:
             'io_write_bytes': row['io_write_bytes'],
             'io_max_scratch_size': row['io_max_scratch_size'],
             'io_cur_scratch_size': 0,
+            # legacy fields
+            'lang': row['image'],
+            'mem_slot': BinarySize.from_str(row['occupied_slots']['mem']) // mega,
+            'cpu_slot': float(row['occupied_slots']['cpu']),
+            'gpu_slot': float(row['occupied_slots'].get('cuda.device', 0)),
+            'tpu_slot': float(row['occupied_slots'].get('tpu.device', 0)),
         }
 
     @classmethod
