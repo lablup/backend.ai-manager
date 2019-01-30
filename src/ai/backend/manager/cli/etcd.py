@@ -5,9 +5,13 @@ from pathlib import Path
 from pprint import pprint
 import sys
 
+import aioredis
+
+from ai.backend.common.etcd import AsyncEtcd
 from ai.backend.common.logging import BraceStyleAdapter
 
 from . import register_command
+from ...gateway.defs import REDIS_IMAGE_DB
 from ...gateway.etcd import ConfigServer
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
@@ -24,9 +28,9 @@ def etcd(args):
 def etcd_ctx(args):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    config_server = ConfigServer(args.etcd_addr, args.namespace)
+    etcd = AsyncEtcd(args.etcd_addr, args.namespace)
     with contextlib.closing(loop):
-        yield loop, config_server.etcd
+        yield loop, etcd
     asyncio.set_event_loop(None)
 
 
@@ -34,9 +38,19 @@ def etcd_ctx(args):
 def config_ctx(args):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    config_server = ConfigServer(args.etcd_addr, args.namespace)
+    ctx = {}
+    ctx['redis_image'] = loop.run_until_complete(aioredis.create_redis(
+        args.redis_addr.as_sockaddr(),
+        timeout=3.0,
+        encoding='utf8',
+        db=REDIS_IMAGE_DB))
+    config_server = ConfigServer(ctx, args.etcd_addr, args.namespace)
     with contextlib.closing(loop):
-        yield loop, config_server
+        try:
+            yield loop, config_server
+        finally:
+            ctx['redis_image'].close()
+            loop.run_until_complete(ctx['redis_image'].wait_closed())
     asyncio.set_event_loop(None)
 
 

@@ -174,7 +174,7 @@ async def gw_init(app, default_cors_options):
 
     # populate public interfaces
     app['config_server'] = ConfigServer(
-        app['config'].etcd_addr, app['config'].namespace)
+        app, app['config'].etcd_addr, app['config'].namespace)
     if app['pidx'] == 0:
         await app['config_server'].update_manager_status(ManagerStatus.PREPARING)
     app['dbpool'] = await create_engine(

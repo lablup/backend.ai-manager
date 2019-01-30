@@ -114,9 +114,10 @@ _default_mem_max = '1g'
 
 class ConfigServer:
 
-    def __init__(self, etcd_addr, namespace):
+    def __init__(self, app_ctx, etcd_addr, namespace):
         # WARNING: importing etcd3/grpc must be done after forks.
         from ai.backend.common.etcd import AsyncEtcd
+        self.context = app_ctx
         self.etcd = AsyncEtcd(etcd_addr, namespace)
 
     async def register_myself(self, app_config):
@@ -159,9 +160,12 @@ class ConfigServer:
             result[value].append(etcd_unquote(kpath[2]))
         return result
 
-    def _parse_image(self, image_ref, kvpairs, reverse_aliases):
+    async def _parse_image(self, image_ref, kvpairs, reverse_aliases):
         tag_path = image_ref.tag_path
         item = make_dict_from_pairs(tag_path, kvpairs)
+        installed = (
+            await self.context['redis_image'].scard(image_ref.canonical)
+        ) > 0
 
         res_limits = []
         for slot_key, slot_range in item['resource'].items():
@@ -205,6 +209,7 @@ class ConfigServer:
             'size_bytes': item.get('size_bytes', 0),
             'resource_limits': res_limits,
             'supported_accelerators': accels,
+            'installed': installed,
         }
 
     async def _check_image(self, reference: str) -> ImageRef:
@@ -225,7 +230,7 @@ class ConfigServer:
         kvpairs = dict(await self.etcd.get_prefix(ref.tag_path))
         if not kvpairs or not kvpairs.get(ref.tag_path):
             raise UnknownImageReference(reference)
-        return self._parse_image(ref, kvpairs, reverse_aliases)
+        return await self._parse_image(ref, kvpairs, reverse_aliases)
 
     async def list_images(self):
         items = []
@@ -247,10 +252,11 @@ class ConfigServer:
             )
             image_set[image_tuple] = key
 
+        coros = []
         for (registry, image, tag), tag_path in image_set.items():
             ref = ImageRef(f'{registry}/{image}:{tag}', known_registries)
-            items.append(self._parse_image(ref, kvpairs, reverse_aliases))
-        return items
+            coros.append(self._parse_image(ref, kvpairs, reverse_aliases))
+        return await asyncio.gather(*coros)
 
     async def set_image_resource_limit(self, reference: str,
                                        slot_type: str,

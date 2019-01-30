@@ -27,6 +27,7 @@ class Image(graphene.ObjectType):
     size_bytes = graphene.Int()
     resource_limits = graphene.List(ResourceLimit)
     supported_accelerators = graphene.List(graphene.String)
+    installed = graphene.Boolean()
     # legacy field
     hash = graphene.String()
 

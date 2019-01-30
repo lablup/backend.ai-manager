@@ -15,7 +15,7 @@ from yarl import URL
 import zmq
 
 from ai.backend.common import msgpack
-from ai.backend.common.docker import get_registry_info
+from ai.backend.common.docker import get_registry_info, get_known_registries
 from ai.backend.common.types import ImageRef, ResourceSlot
 from ai.backend.common.logging import BraceStyleAdapter
 from ..gateway.exceptions import (
@@ -896,10 +896,12 @@ class AgentRegistry:
                 log.error('should not reach here! {0}', type(row.status))
 
         # Update the mapping of kernel images to agents.
+        known_registries = await get_known_registries(self.config_server.etcd)
         images = msgpack.unpackb(snappy.decompress(agent_info['images']))
         pipe = self.redis_image.pipeline()
         for image in images:
-            pipe.sadd(image[0], agent_id)
+            image_ref = ImageRef(image[0], known_registries)
+            pipe.sadd(image_ref.canonical, agent_id)
         await pipe.execute()
 
     async def mark_agent_terminated(self, agent_id, status, conn=None):
