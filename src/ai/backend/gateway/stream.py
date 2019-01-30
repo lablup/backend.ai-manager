@@ -45,6 +45,7 @@ async def stream_pty(request) -> web.Response:
     access_key = request['keypair']['access_key']
     stream_key = (sess_id, access_key)
     extra_fields = (kernels.c.stdin_port, kernels.c.stdout_port)
+    api_version = request['api_version']
     try:
         kernel = await registry.get_session(
             sess_id, access_key, field=extra_fields)
@@ -109,7 +110,6 @@ async def stream_pty(request) -> web.Response:
                             continue
                     else:
                         await registry.increment_session_usage(sess_id, access_key)
-                        api_version = 2
                         run_id = secrets.token_hex(8)
                         if data['type'] == 'resize':
                             code = f"%resize {data['rows']} {data['cols']}"
@@ -203,6 +203,7 @@ async def stream_execute(request) -> web.Response:
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
     stream_key = (sess_id, access_key)
+    api_version = request['api_version']
     log.info('STREAM_EXECUTE(u:{0}, k:{1})', access_key, sess_id)
     try:
         _ = await registry.get_session(sess_id, access_key)  # noqa
@@ -234,7 +235,7 @@ async def stream_execute(request) -> web.Response:
             # TODO: rewrite agent and kernel-runner for unbuffered streaming.
             raw_result = await registry.execute(
                 sess_id, access_key,
-                2, run_id, mode, code, opts,
+                api_version, run_id, mode, code, opts,
                 flush_timeout=0.2)
             if ws.closed:
                 log.warning('STREAM_EXECUTE: client disconnected (interrupted)')
