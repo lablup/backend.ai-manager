@@ -304,6 +304,7 @@ class ConfigServer:
                 if raw_labels:
                     labels.update(raw_labels)
 
+            log.debug('checking image repository {}:{}', image, tag)
             if not labels.get('ai.backend.kernelspec'):
                 # Skip non-Backend.AI kernel images
                 return
@@ -360,6 +361,7 @@ class ConfigServer:
                     if resp.status == 200:
                         data = json.loads(await resp.read())
                         images.extend(data['repositories'])
+                        log.debug('found {} repositories', len(images))
                     else:
                         log.warning('Docker registry {0} does not allow/support '
                                     'catalog search. (status={1})',

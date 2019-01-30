@@ -21,6 +21,7 @@ from dateutil.tz import tzutc
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import true, null
 
+from ai.backend.common.exception import UnknownImageReference
 from ai.backend.common.logging import BraceStyleAdapter
 
 from .exceptions import (InvalidAPIParameters, QuotaExceeded,
@@ -142,6 +143,8 @@ async def create(request) -> web.Response:
     except BackendError:
         log.exception('GET_OR_CREATE: exception')
         raise
+    except UnknownImageReference:
+        raise InvalidAPIParameters(f'Unknown image reference: {image}')
     except Exception:
         request.app['error_monitor'].capture_exception()
         log.exception('GET_OR_CREATE: unexpected error!')
