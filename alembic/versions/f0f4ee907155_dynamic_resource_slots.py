@@ -80,8 +80,6 @@ def upgrade():
         'cuda.device', gpu_slot,
         'tpu.device', tpu_slot
     );
-    '''
-    query = '''
     UPDATE kernels SET occupied_shares = json_build_object(
         'cpu', cpu_set,
         'mem', mem_slot,
