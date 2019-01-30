@@ -10,6 +10,8 @@ Changes
 
 - Fix missing metrics in some cases.
 
+- Fix a logical error preventing session creation when min/max are same.
+
 19.03.0b2 (2018-01-30)
 ----------------------
 
