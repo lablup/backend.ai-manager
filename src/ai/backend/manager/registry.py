@@ -431,16 +431,16 @@ class AgentRegistry:
                     'Your resource request is smaller than '
                     'the minimum required by the image.')
 
+            # Check if: requested <= image-maximum
+            if not (requested_slots <= image_max_slots):
+                raise InvalidAPIParameters(
+                    'Your resource request is larger than '
+                    'the maximum allowed by the image.')
+
             # If the resource is not specified, fill them with image minimums.
             for slot_key, slot_val in image_min_slots.items():
                 if slot_key not in requested_slots:
                     requested_slots[slot_key] = slot_val
-
-            # Check if: requested <= image-maximum
-            if image_max_slots < requested_slots:
-                raise InvalidAPIParameters(
-                    'Your resource request is larger than '
-                    'the maximum allowed by the image.')
         except ValueError:
             # happens when requested_slots have more keys
             # than the image-defined slots
