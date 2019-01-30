@@ -258,8 +258,8 @@ class SessionCommons:
             'io_cur_scratch_size': 0,
             # legacy fields
             'lang': row['image'],
-            'mem_slot': BinarySize.from_str(row['occupied_slots']['mem']) // mega,
-            'cpu_slot': float(row['occupied_slots']['cpu']),
+            'mem_slot': BinarySize.from_str(row['occupied_slots'].get('mem', 0)) // mega,
+            'cpu_slot': float(row['occupied_slots'].get('cpu', 0)),
             'gpu_slot': float(row['occupied_slots'].get('cuda.device', 0)),
             'tpu_slot': float(row['occupied_slots'].get('tpu.device', 0)),
         }

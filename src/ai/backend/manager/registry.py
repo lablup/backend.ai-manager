@@ -465,6 +465,9 @@ class AgentRegistry:
                                  .as_numeric(known_slot_types)
                 # TODO: would there be any case that occupied_slots have more keys
                 #       than total_slots?
+                log.debug('total resource slots: {!r}', total_slots)
+                log.debug('occupied resource slots: {!r}', occupied_slots)
+
                 remaining_slots = total_slots - occupied_slots
 
                 # Check if: any(remaining >= requested)
