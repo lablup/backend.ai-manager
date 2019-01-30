@@ -254,11 +254,13 @@ class ConfigServer:
 
     async def set_image_resource_limit(self, reference: str,
                                        slot_type: str,
-                                       max_value: str):
+                                       value: str,
+                                       is_min: bool = True):
         # TODO: add some validation
         ref = await self._check_image(reference)
-        await self.etcd.put(f'{ref.tag_path}/resource/{slot_type}/max',
-                            max_value)
+        realm = 'min' if is_min else 'max'
+        await self.etcd.put(f'{ref.tag_path}/resource/{slot_type}/{realm}',
+                            value)
 
     async def _rescan_images(self, registry_name: str,
                              registry_url: yarl.URL,

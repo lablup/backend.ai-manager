@@ -119,16 +119,18 @@ def set_image_resource_limit(args):
         try:
             loop.run_until_complete(
                 config_server.set_image_resource_limit(
-                    args.reference, args.slot_type, args.max))
+                    args.reference, args.slot_type, args.value, args.min))
         except Exception:
             log.exception('An error occurred.')
 
 
+set_image_resource_limit.add('--min', action='store_true', default=False,
+                             help='Set the minimum value instead of the maximum.')
 set_image_resource_limit.add('reference', type=str,
                              help='The reference to an image.')
 set_image_resource_limit.add('slot_type', type=str,
                              help='The resource slot name.')
-set_image_resource_limit.add('max', type=str,
+set_image_resource_limit.add('value', type=str,
                              help='The maximum value allowed.')
 
 
