@@ -88,8 +88,8 @@ class Agent(graphene.ObjectType):
             cpu_slots=row['available_slots']['cpu'],
             gpu_slots=row['available_slots'].get('cuda.device', 0),
             tpu_slots=row['available_slots'].get('tpu.device', 0),
-            used_mem_slots=BinarySize.from_str(row['occupied_slots']['mem']) // mega,
-            used_cpu_slots=float(row['occupied_slots']['cpu']),
+            used_mem_slots=BinarySize.from_str(row['occupied_slots'].get('mem', 0)) // mega,
+            used_cpu_slots=float(row['occupied_slots'].get('cpu', 0)),
             used_gpu_slots=float(row['occupied_slots'].get('cuda.device', 0)),
             used_tpu_slots=float(row['occupied_slots'].get('tpu.device', 0)),
         )
