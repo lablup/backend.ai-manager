@@ -1,6 +1,18 @@
 Changes
 =======
 
+19.03.0b4 (2018-01-30)
+----------------------
+
+- Add "installed" field to GraphQL image/images query results so that
+  the client could know whether if an image has any agent that locally has it.
+
+- Remove aiojobs.atomic decorators from gateway.kernel API handlers to prevent
+  blocking due to long agent-side operations such as image pulling.
+
+- Fix a regression in the query/batch mode code execution due to old codes
+  in the websocket handlers.
+
 19.03.0b3 (2018-01-30)
 ----------------------
 
