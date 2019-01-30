@@ -1,6 +1,15 @@
 Changes
 =======
 
+19.03.0b3 (2018-01-30)
+----------------------
+
+- Add missing support for legacy GraphQL "image" / "images" queries.
+
+- Add "--min" switch to "set-image-resource-limit" manager CLI command.
+
+- Fix missing metrics in some cases.
+
 19.03.0b2 (2018-01-30)
 ----------------------
 
