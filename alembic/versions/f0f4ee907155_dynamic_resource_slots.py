@@ -34,18 +34,28 @@ def upgrade():
     UPDATE agents SET available_slots = json_strip_nulls(json_build_object(
         'cpu', cpu_slots,
         'mem', mem_slots::text || 'g' ,
-        'cuda.device', gpu_slots,
-        'tpu.device', tpu_slots
     ));
-    '''
-    connection.execute(query)
-    query = '''
+    UPDATE agents SET available_slots = available_slots || json_build_object(
+        'cuda.device', gpu_slots,
+    )::jsonb
+    WHERE gpu_slots > 0;
+    UPDATE agents SET available_slots = available_slots || json_build_object(
+        'tpu.device', tpu_slots,
+    )::jsonb
+    WHERE tpu_slots > 0;
+
     UPDATE agents SET occupied_slots = json_strip_nulls(json_build_object(
         'cpu', used_cpu_slots,
         'mem', used_mem_slots::text || 'g',
-        'cuda.device', used_gpu_slots,
-        'tpu.device', used_tpu_slots
     ));
+    UPDATE agents SET occupied_slots = occupied_slots || json_build_object(
+        'cuda.device', used_gpu_slots,
+    )::jsonb
+    WHERE used_gpu_slots > 0;
+    UPDATE agents SET occupied_slots = occupied_slots || json_build_object(
+        'tpu.device', used_tpu_slots,
+    )::jsonb
+    WHERE used_tpu_slots > 0;
     '''
     connection.execute(query)
     op.drop_column('agents', 'cpu_slots')
