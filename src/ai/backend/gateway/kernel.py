@@ -15,7 +15,6 @@ import secrets
 from aiohttp import web
 import aiohttp_cors
 import aiotools
-from aiojobs.aiohttp import atomic
 from async_timeout import timeout as _timeout
 from dateutil.tz import tzutc
 import sqlalchemy as sa
@@ -42,7 +41,6 @@ _rx_sess_token = re.compile(r'\w[\w.-]*\w', re.ASCII)
 
 @server_status_required(ALL_ALLOWED)
 @auth_required
-@atomic
 async def create(request) -> web.Response:
     try:
         params = await request.json(loads=json.loads)
@@ -302,7 +300,6 @@ async def stats_monitor_update_timer(app):
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
 async def destroy(request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
@@ -322,7 +319,6 @@ async def destroy(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
 async def get_info(request) -> web.Response:
     # NOTE: This API should be replaced with GraphQL version.
     resp = {}
@@ -359,7 +355,6 @@ async def get_info(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
 async def restart(request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
@@ -461,7 +456,6 @@ async def execute(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
 async def interrupt(request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
@@ -478,7 +472,6 @@ async def interrupt(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
 async def complete(request) -> web.Response:
     resp = {'result': {
         'status': 'finished',
@@ -619,7 +612,6 @@ async def list_files(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
 async def get_logs(request) -> web.Response:
     resp = {'result': {'logs': ''}}
     registry = request.app['registry']
