@@ -1,6 +1,14 @@
 Changes
 =======
 
+19.03.0b2 (2018-01-30)
+----------------------
+
+- Support legacy GraphQL clients by interpolating new JSON-based resource fields.
+
+- Fix interpretation of private docker image references without explicit repository
+  subpaths. Previously it was assume to be under "lablup/" always.
+
 19.03.0b1 (2018-01-30)
 ----------------------
 
