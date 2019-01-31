@@ -1,6 +1,11 @@
 Changes
 =======
 
+19.03.0b5 (2018-01-31)
+----------------------
+
+- Fix various migration issues related to JSON fields and SQL.
+
 19.03.0b4 (2018-01-30)
 ----------------------
 
