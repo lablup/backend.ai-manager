@@ -3,7 +3,7 @@ import logging
 import graphene
 
 from ai.backend.common.logging import BraceStyleAdapter
-from .base import KVPair, ResourceLimit
+from .base import KVPair, ResourceLimit, BigInt
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
 
@@ -24,7 +24,7 @@ class Image(graphene.ObjectType):
     digest = graphene.String()
     labels = graphene.List(KVPair)
     aliases = graphene.List(graphene.String)
-    size_bytes = graphene.Int()
+    size_bytes = BigInt()
     resource_limits = graphene.List(ResourceLimit)
     supported_accelerators = graphene.List(graphene.String)
     installed = graphene.Boolean()
