@@ -132,7 +132,8 @@ async def auth_middleware(request, handler):
         sign_method, access_key, signature = params
         async with request.app['dbpool'].acquire() as conn, conn.begin():
             query = (keypairs.select()
-                             .where(keypairs.c.access_key == access_key))
+                             .where((keypairs.c.access_key == access_key) &
+                                    (keypairs.c.is_active.is_(True))))
             result = await conn.execute(query)
             row = await result.first()
             if row is None:
