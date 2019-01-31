@@ -39,16 +39,18 @@ class Image(graphene.ObjectType):
             tag=data['tag'],
             registry=data['registry'],
             digest=data['digest'],
-            hash=data['digest'],  # legacy
-            aliases=data['aliases'],
             labels=[
                 KVPair(key=k, value=v)
                 for k, v in data['labels'].items()],
+            aliases=data['aliases'],
             size_bytes=data['size_bytes'],
-            supported_accelerators=data['supported_accelerators'],
             resource_limits=[
                 ResourceLimit(key=v['key'], min=v['min'], max=v['max'])
                 for v in data['resource_limits']],
+            supported_accelerators=data['supported_accelerators'],
+            installed=data['installed'],
+            # legacy
+            hash=data['digest'],
         )
 
     @classmethod
