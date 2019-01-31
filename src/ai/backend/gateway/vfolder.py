@@ -383,7 +383,7 @@ async def download(request, row):
 async def list_files(request, row):
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
-    if request.body_exists:
+    if request.can_read_body:
         params = await request.json()
     else:
         params = request.query
