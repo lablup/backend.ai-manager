@@ -96,7 +96,7 @@ async def sign_request(sign_method, request, secret_key) -> str:
 
         sign_bytes = ('{0}\n{1}\n{2}\nhost:{3}\ncontent-type:{4}\n'
                       'x-{name}-version:{5}\n{6}').format(
-            request.method, str(request.rel_url), request['raw_date'],
+            request.method, str(request.raw_path), request['raw_date'],
             request.host, request.content_type, api_version,
             body_hash,
             name='backendai' if new_api_version is not None else 'sorna'
