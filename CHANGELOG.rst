@@ -1,6 +1,30 @@
 Changes
 =======
 
+19.03.0b6 (2018-01-31)
+----------------------
+
+- Various small-but-required bug fixes
+
+  - When signing API requests, it now uses ``raw_path`` instead of ``rel_url``
+    to preserve the URL-encoded query string intact.
+
+  - Large kernel iamges scanned from registries caused a graphene error due to
+    out-of-range 32-bit signed integers in the "size_bytes" field.  Adopted a custom
+    BigInt scalar to coerce big integers to Javascript floats since modern JS engines
+    mostly support up to 52-bit floating point numbers.
+
+    *NOTE:* The next ECMAScript standard will support explicit big numbers with the
+    "n" suffix, which is experimentally implemented in the V8 engine last year.
+    (https://developers.google.com/web/updates/2018/05/bigint)
+
+  - An aiohttp API compatibility issue in the vfolder download handler.
+
+  - Fix the missing "installed" field value in GraphQL's "images" query.
+
+  - Fix a missing check for "is_active" status of keypairs during API request
+    authentication.
+
 19.03.0b5 (2018-01-31)
 ----------------------
 
