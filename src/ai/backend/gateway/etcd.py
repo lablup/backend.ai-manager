@@ -83,6 +83,7 @@ from typing import Union
 
 import aiohttp
 from aiohttp import web
+import aiohttp_cors
 import aiojobs
 import aiotools
 import yaml
@@ -436,8 +437,11 @@ class ConfigServer:
             await self.etcd.put_dict(updates)
         log.info('done')
 
-    async def update_resource_slots(self, slot_key_and_units):
+    async def update_resource_slots(self, slot_key_and_units, *,
+                                    clear_existing: bool = True):
         updates = {}
+        if clear_existing:
+            await self.etcd.delete_prefix('config/resource_slots/')
         for k, v in slot_key_and_units.items():
             if k in ('cpu', 'mem'):
                 continue
@@ -446,11 +450,13 @@ class ConfigServer:
             assert v in ('bytes', 'count')
             updates[f'config/resource_slots/{k}'] = v
         await self.etcd.put_dict(updates)
+        # self.get_resource_slots.cache_clear()
 
     async def update_manager_status(self, status):
         await self.etcd.put('manager/status', status.value)
 
-    @aiotools.lru_cache(maxsize=1)
+    # TODO: Need to update all manager processes at once when clearing caches....
+    # @aiotools.lru_cache(maxsize=1)
     async def get_resource_slots(self):
         '''
         Returns the system-wide known resource slots and their units.
@@ -489,8 +495,8 @@ class ConfigServer:
         for slot_key, slot_range in data['resource'].items():
             slot_unit = slot_units.get(slot_key)
             if slot_unit is None:
-                raise RuntimeError('The requested image requires resource slots '
-                                   'that are not known to the manager.')
+                # ignore unknown slots
+                continue
             min_value = slot_range['min']
             max_value = slot_range.get('max')
             if max_value is None:
@@ -520,6 +526,11 @@ class ConfigServer:
         return min_slot, max_slot
 
 
+async def get_resource_slots(request) -> web.Response:
+    known_slots = await request.app['config_server'].get_resource_slots()
+    return web.json_response(known_slots, status=200)
+
+
 async def init(app):
     if app['pidx'] == 0:
         await app['config_server'].register_myself(app['config'])
@@ -532,7 +543,9 @@ async def shutdown(app):
 
 def create_app(default_cors_options):
     app = web.Application()
-    app['api_versions'] = (3, 4)
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
+    app['api_versions'] = (3, 4)
+    cors = aiohttp_cors.setup(app, defaults=default_cors_options)
+    cors.add(app.router.add_route('GET',   r'/resource-slots', get_resource_slots))
     return app, []
