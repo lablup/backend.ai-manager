@@ -493,8 +493,8 @@ class ConfigServer:
         for slot_key, slot_range in data['resource'].items():
             slot_unit = slot_units.get(slot_key)
             if slot_unit is None:
-                raise RuntimeError('The requested image requires resource slots '
-                                   'that are not known to the manager.')
+                # ignore unknown slots
+                continue
             min_value = slot_range['min']
             max_value = slot_range.get('max')
             if max_value is None:

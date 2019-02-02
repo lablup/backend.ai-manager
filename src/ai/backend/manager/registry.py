@@ -425,7 +425,8 @@ class AgentRegistry:
 
         try:
             # Check if: requested >= image-minimum
-            requested_slots = requested_slots.as_numeric(known_slot_types)
+            requested_slots = requested_slots.as_numeric(
+                known_slot_types, unknown='error')
             if image_min_slots > requested_slots:
                 raise InvalidAPIParameters(
                     'Your resource request is smaller than '
@@ -439,6 +440,8 @@ class AgentRegistry:
 
             # If the resource is not specified, fill them with image minimums.
             for slot_key, slot_val in image_min_slots.items():
+                if slot_key not in known_slot_types:
+                    continue
                 if slot_key not in requested_slots:
                     requested_slots[slot_key] = slot_val
         except ValueError:
@@ -460,9 +463,9 @@ class AgentRegistry:
                        .where(agents.c.status == AgentStatus.ALIVE))
             async for row in conn.execute(query):
                 total_slots = ResourceSlot(row['available_slots']) \
-                              .as_numeric(known_slot_types)
+                              .as_numeric(known_slot_types, unknown='drop')
                 occupied_slots = ResourceSlot(row['occupied_slots']) \
-                                 .as_numeric(known_slot_types)
+                                 .as_numeric(known_slot_types, unknown='drop')
                 # TODO: would there be any case that occupied_slots have more keys
                 #       than total_slots?
                 log.debug('total resource slots: {!r}', total_slots)
@@ -844,7 +847,7 @@ class AgentRegistry:
             available_slots = ResourceSlot({
                 k: v[1] for k, v in
                 agent_info['resource_slots'].items()}) \
-                .as_numeric(slot_key_and_units)
+                .as_numeric(slot_key_and_units, unknown='error')
 
             # compare and update etcd slot_keys
 
@@ -865,14 +868,15 @@ class AgentRegistry:
                 result = await conn.execute(query)
                 assert result.rowcount == 1
                 await self.config_server.update_resource_slots(slot_key_and_units)
-                self.config_server.get_resource_slots.cache_clear()
             elif row.status == AgentStatus.ALIVE:
                 updates = {}
                 current_avail_slots = (ResourceSlot(row.available_slots)
-                                       .as_numeric(slot_key_and_units))
+                                       .as_numeric(slot_key_and_units,
+                                                   unknown='drop'))
                 if available_slots != current_avail_slots:
                     updates['available_slots'] = \
-                        available_slots.as_json_numeric(slot_key_and_units)
+                        available_slots.as_json_numeric(
+                            slot_key_and_units, unknown='drop')
                 # occupied_slots are updated when kernels starts/terminates
                 if updates:
                     query = (sa.update(agents)
@@ -894,7 +898,6 @@ class AgentRegistry:
                            .where(agents.c.id == agent_id))
                 await conn.execute(query)
                 await self.config_server.update_resource_slots(slot_key_and_units)
-                self.config_server.get_resource_slots.cache_clear()
             else:
                 log.error('should not reach here! {0}', type(row.status))
 
@@ -1009,9 +1012,11 @@ class AgentRegistry:
                 return
             # units: absolute
             occupied_slots = \
-                ResourceSlot(kernel['occupied_slots']).as_numeric(known_slot_types)
+                ResourceSlot(kernel['occupied_slots']).as_numeric(
+                    known_slot_types, unknown='drop')
             current_occupied_slots = \
-                ResourceSlot(agent['occupied_slots']).as_numeric(known_slot_types)
+                ResourceSlot(agent['occupied_slots']).as_numeric(
+                    known_slot_types, unknown='drop')
             updated_occupied_slots = current_occupied_slots - occupied_slots
             query = (sa.update(agents)
                        .values({
