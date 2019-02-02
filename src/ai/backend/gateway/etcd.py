@@ -436,8 +436,11 @@ class ConfigServer:
             await self.etcd.put_dict(updates)
         log.info('done')
 
-    async def update_resource_slots(self, slot_key_and_units):
+    async def update_resource_slots(self, slot_key_and_units, *,
+                                    clear_existing: bool = True):
         updates = {}
+        if clear_existing:
+            await self.etcd.delete_prefix('config/resource_slots/')
         for k, v in slot_key_and_units.items():
             if k in ('cpu', 'mem'):
                 continue
@@ -446,6 +449,7 @@ class ConfigServer:
             assert v in ('bytes', 'count')
             updates[f'config/resource_slots/{k}'] = v
         await self.etcd.put_dict(updates)
+        self.get_resource_slots.cache_clear()
 
     async def update_manager_status(self, status):
         await self.etcd.put('manager/status', status.value)
