@@ -11,7 +11,7 @@ from .base import metadata, zero_if_none, EnumType, IDColumn
 
 __all__ = (
     'kernels', 'KernelStatus',
-    'ComputeSession', 'ComputeWorker', 'Computation',
+    'ComputeSession', 'ComputeWorker', 'Computation', 'CountComputeSessions',
 )
 
 
@@ -272,6 +272,26 @@ class SessionCommons:
         return cls(**props)
 
 
+class CountComputeSessions(graphene.ObjectType):
+    count = graphene.Int()
+    
+    @staticmethod
+    async def load_count(context, access_key=None, status=None):
+        #TODO: optimize this query to get only 'COUNT(*)'
+        async with context['dbpool'].acquire() as conn:
+            query = (sa.select([kernels.c.sess_id])
+                       .select_from(kernels)
+                       .where(kernels.c.role == 'master'))
+            if status is not None:
+                status = KernelStatus[status]
+                query = query.where(kernels.c.status == status)
+            if access_key is not None:
+                query = query.where(kernels.c.access_key.in_(access_keys))
+            result = await conn.execute(query)
+            sess_ids = await result.fetchall()
+            return CountComputeSessions(count=len(sess_ids))
+
+
 class ComputeSession(SessionCommons, graphene.ObjectType):
     '''
     Represents a master session.
@@ -293,6 +313,27 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             status = KernelStatus[status]
         loader = manager.get_loader('ComputeWorker', status=status)
         return await loader.load(self.sess_id)
+
+
+    @staticmethod
+    async def load_with_limit(context, limit, offset, access_keys=None, status=None):
+        async with context['dbpool'].acquire() as conn:
+            # TODO: optimization for pagination using subquery, join
+            query = (sa.select('*')
+                       .select_from(kernels)
+                       .where(kernels.c.role == 'master')
+                       .order_by(sa.desc(kernels.c.created_at))
+                       .limit(limit)
+                       .offset(offset))  # offset idx starts at 0
+            if status is not None:
+                status = KernelStatus[status]
+                query = query.where(kernels.c.status == status)
+            if access_keys is not None:
+                query = query.where(kernels.c.access_key.in_(access_keys))
+            result = await conn.execute(query)
+            rows = await result.fetchall()
+            return [ComputeSession.from_row(context, r) for r in rows]
+
 
     @staticmethod
     async def load_all(context, status=None):

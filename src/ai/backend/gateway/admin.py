@@ -20,7 +20,7 @@ from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
     Agent, Image, RescanImages, AliasImage, DealiasImage,
     KeyPair, CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
-    ComputeSession, ComputeWorker, KernelStatus,
+    CountComputeSessions, ComputeSession, ComputeWorker, KernelStatus,
     VirtualFolder,
 )
 
@@ -137,8 +137,15 @@ class QueryForAdmin(graphene.ObjectType):
         VirtualFolder,
         access_key=graphene.String())
 
+    count_compute_sessions = graphene.Field(
+        CountComputeSessions,
+        access_key=graphene.String(),
+        status=graphene.String())
+
     compute_sessions = graphene.List(
         ComputeSession,
+        limit=graphene.Int(required=True),
+        offset=graphene.Int(required=True),
         access_key=graphene.String(),
         status=graphene.String())
 
@@ -213,17 +220,14 @@ class QueryForAdmin(graphene.ObjectType):
         return await loader.load(access_key)
 
     @staticmethod
-    async def resolve_compute_sessions(executor, info, access_key=None, status=None):
+    async def resolve_count_compute_sessions(executor, info, access_key=None, status=None):
+        return await CountComputeSessions.load_count(info.context, access_key, status)
+
+    @staticmethod
+    async def resolve_compute_sessions(executor, info, limit, offset, access_key=None, status=None):
         # TODO: make status a proper graphene.Enum type
         #       (https://github.com/graphql-python/graphene/issues/544)
-        if status is not None:
-            status = KernelStatus[status]
-        if access_key is not None:
-            manager = info.context['dlmgr']
-            loader = manager.get_loader('ComputeSession', status=status)
-            return await loader.load(access_key)
-        else:
-            return await ComputeSession.load_all(info.context)
+        return await ComputeSession.load_with_limit(info.context, limit, offset, access_key, status)
 
     @staticmethod
     async def resolve_compute_session(executor, info, sess_id, status=None):
