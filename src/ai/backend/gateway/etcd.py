@@ -449,12 +449,13 @@ class ConfigServer:
             assert v in ('bytes', 'count')
             updates[f'config/resource_slots/{k}'] = v
         await self.etcd.put_dict(updates)
-        self.get_resource_slots.cache_clear()
+        # self.get_resource_slots.cache_clear()
 
     async def update_manager_status(self, status):
         await self.etcd.put('manager/status', status.value)
 
-    @aiotools.lru_cache(maxsize=1)
+    # TODO: Need to update all manager processes at once when clearing caches....
+    # @aiotools.lru_cache(maxsize=1)
     async def get_resource_slots(self):
         '''
         Returns the system-wide known resource slots and their units.
