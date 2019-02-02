@@ -83,6 +83,7 @@ from typing import Union
 
 import aiohttp
 from aiohttp import web
+import aiohttp_cors
 import aiojobs
 import aiotools
 import yaml
@@ -525,6 +526,11 @@ class ConfigServer:
         return min_slot, max_slot
 
 
+async def get_resource_slots(request) -> web.Response:
+    known_slots = await request.app['config_server'].get_resource_slots()
+    return web.json_response(known_slots, status=200)
+
+
 async def init(app):
     if app['pidx'] == 0:
         await app['config_server'].register_myself(app['config'])
@@ -537,7 +543,9 @@ async def shutdown(app):
 
 def create_app(default_cors_options):
     app = web.Application()
-    app['api_versions'] = (3, 4)
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
+    app['api_versions'] = (3, 4)
+    cors = aiohttp_cors.setup(app, defaults=default_cors_options)
+    cors.add(app.router.add_route('GET',   r'/resource-slots', get_resource_slots))
     return app, []
