@@ -221,7 +221,7 @@ class QueryForAdmin(graphene.ObjectType):
 
     @staticmethod
     async def resolve_count_compute_sessions(executor, info, access_key=None, status=None):
-        return await CountComputeSessions.load_count(info.context, access_key, status)
+        return await ComputeSession.load_count(info.context, access_key, status)
 
     @staticmethod
     async def resolve_compute_sessions(executor, info, limit, offset, access_key=None, status=None):

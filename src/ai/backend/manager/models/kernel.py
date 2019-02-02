@@ -274,23 +274,6 @@ class SessionCommons:
 
 class CountComputeSessions(graphene.ObjectType):
     count = graphene.Int()
-    
-    @staticmethod
-    async def load_count(context, access_key=None, status=None):
-        #TODO: optimize this query to get only 'COUNT(*)'
-        async with context['dbpool'].acquire() as conn:
-            query = (sa.select([kernels.c.sess_id])
-                       .select_from(kernels)
-                       .where(kernels.c.role == 'master'))
-            if status is not None:
-                status = KernelStatus[status]
-                query = query.where(kernels.c.status == status)
-            if access_key is not None:
-                query = query.where(kernels.c.access_key.in_(access_keys))
-            result = await conn.execute(query)
-            sess_ids = await result.fetchall()
-            return CountComputeSessions(count=len(sess_ids))
-
 
 class ComputeSession(SessionCommons, graphene.ObjectType):
     '''
@@ -313,6 +296,23 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             status = KernelStatus[status]
         loader = manager.get_loader('ComputeWorker', status=status)
         return await loader.load(self.sess_id)
+
+    
+    @staticmethod
+    async def load_count(context, access_key=None, status=None):
+        #TODO: optimize this query to get only 'COUNT(*)'
+        async with context['dbpool'].acquire() as conn:
+            query = (sa.select([kernels.c.sess_id])
+                       .select_from(kernels)
+                       .where(kernels.c.role == 'master'))
+            if status is not None:
+                status = KernelStatus[status]
+                query = query.where(kernels.c.status == status)
+            if access_key is not None:
+                query = query.where(kernels.c.access_key.in_(access_keys))
+            result = await conn.execute(query)
+            sess_ids = await result.fetchall()
+            return CountComputeSessions(count=len(sess_ids))
 
 
     @staticmethod
