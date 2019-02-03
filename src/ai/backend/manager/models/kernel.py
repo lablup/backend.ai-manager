@@ -300,19 +300,20 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
     
     @staticmethod
     async def load_count(context, access_key=None, status=None):
-        #TODO: optimize this query to get only 'COUNT(*)'
         async with context['dbpool'].acquire() as conn:
-            query = (sa.select([kernels.c.sess_id])
+            query = (sa.select([sa.func.count(kernels.c.sess_id)])
                        .select_from(kernels)
-                       .where(kernels.c.role == 'master'))
+                       .where(kernels.c.role == 'master')
+                       .as_scalar())
             if status is not None:
                 status = KernelStatus[status]
                 query = query.where(kernels.c.status == status)
             if access_key is not None:
                 query = query.where(kernels.c.access_key.in_(access_keys))
             result = await conn.execute(query)
-            sess_ids = await result.fetchall()
-            return CountComputeSessions(count=len(sess_ids))
+            total_count = await result.fetchone()
+            total_count = total_count[0]
+            return CountComputeSessions(count=total_count)
 
 
     @staticmethod
@@ -324,7 +325,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                        .where(kernels.c.role == 'master')
                        .order_by(sa.desc(kernels.c.created_at))
                        .limit(limit)
-                       .offset(offset))  # offset idx starts at 0
+                       .offset(offset))
             if status is not None:
                 status = KernelStatus[status]
                 query = query.where(kernels.c.status == status)
