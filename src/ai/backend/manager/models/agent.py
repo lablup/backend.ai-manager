@@ -11,7 +11,7 @@ from .base import metadata, EnumType
 
 __all__ = (
     'agents', 'AgentStatus',
-    'Agent',
+    'Agent', 'CountAgents'
 )
 
 
@@ -37,6 +37,10 @@ agents = sa.Table(
               server_default=sa.func.now()),
     sa.Column('lost_at', sa.DateTime(timezone=True), nullable=True),
 )
+
+
+class CountAgents(graphene.ObjectType):
+    count = graphene.Int()
 
 
 class Agent(graphene.ObjectType):
@@ -101,6 +105,35 @@ class Agent(graphene.ObjectType):
         manager = info.context['dlmgr']
         loader = manager.get_loader('Computation.by_agent_id', status=status)
         return await loader.load(self.id)
+
+    @staticmethod
+    async def load_count(context, status=None):
+        async with context['dbpool'].acquire() as conn:
+            query = (sa.select([sa.func.count(agents.c.id)])
+                       .select_from(agents)
+                       .as_scalar())
+            if status is not None:
+                status = AgentStatus[status]
+                query = query.where(agents.c.status == status)
+            result = await conn.execute(query)
+            count = await result.fetchone()
+            return CountAgents(count=count[0])
+
+    @staticmethod
+    async def load_with_limit(context, limit, offset, status=None):
+        async with context['dbpool'].acquire() as conn:
+            # TODO: optimization for pagination using subquery, join
+            query = (sa.select('*')
+                       .select_from(agents)
+                       .order_by(agents.c.id)
+                       .limit(limit)
+                       .offset(offset))
+            if status is not None:
+                status = AgentStatus[status]
+                query = query.where(agents.c.status == status)
+            result = await conn.execute(query)
+            rows = await result.fetchall()
+            return [Agent.from_row(context, r) for r in rows]
 
     @staticmethod
     async def load_all(context, status=None):

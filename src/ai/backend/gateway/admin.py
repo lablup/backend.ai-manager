@@ -18,7 +18,7 @@ from .exceptions import InvalidAPIParameters, GraphQLError as BackendGQLError
 from .auth import auth_required
 from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
-    Agent, Image, RescanImages, AliasImage, DealiasImage,
+    CountAgents, Agent, Image, RescanImages, AliasImage, DealiasImage,
     KeyPair, CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
     CountComputeSessions, ComputeSession, ComputeWorker, KernelStatus,
     VirtualFolder,
@@ -108,12 +108,18 @@ class QueryForAdmin(graphene.ObjectType):
     users.
     '''
 
+    count_agents = graphene.Field(
+        CountAgents,
+        status=graphene.String())
+
     agent = graphene.Field(
         Agent,
         agent_id=graphene.String(required=True))
 
     agents = graphene.List(
         Agent,
+        limit=graphene.Int(required=True),
+        offset=graphene.Int(required=True),
         status=graphene.String())
 
     image = graphene.Field(
@@ -159,6 +165,10 @@ class QueryForAdmin(graphene.ObjectType):
         status=graphene.String())
 
     @staticmethod
+    async def resolve_count_agents(executor, info, status=None):
+        return await Agent.load_count(info.context, status)
+
+    @staticmethod
     async def resolve_agent(executor, info, agent_id):
         manager = info.context['dlmgr']
         rs = info.context['redis_stat']
@@ -173,9 +183,9 @@ class QueryForAdmin(graphene.ObjectType):
         return agent
 
     @staticmethod
-    async def resolve_agents(executor, info, status=None):
+    async def resolve_agents(executor, info, limit, offset, status=None):
         rs = info.context['redis_stat']
-        agent_list = await Agent.load_all(info.context, status=status)
+        agent_list = await Agent.load_with_limit(info.context, limit, offset, status)
         for agent in agent_list:
             cpu_pct, mem_cur_bytes = await rs.hmget(
                 str(agent.id),

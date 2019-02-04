@@ -221,7 +221,8 @@ class SessionCommons:
         precpu_used = await rs.hget(str(self.id), 'precpu_used')
         ret = 0
         if cpu_used is not None and precpu_used is not None:
-            ret = (float(cpu_used) - float(precpu_used)) / 10   # cpu_used(ms), precpu_used(ms), interval=1s, ret(%)
+            ret = (float(cpu_used) - float(precpu_used)) / 10
+            # cpu_used(ms), precpu_used(ms), interval=1s, ret(%)
         return round(float(ret), 2)
 
     @classmethod
@@ -275,6 +276,7 @@ class SessionCommons:
 class CountComputeSessions(graphene.ObjectType):
     count = graphene.Int()
 
+
 class ComputeSession(SessionCommons, graphene.ObjectType):
     '''
     Represents a master session.
@@ -297,7 +299,6 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
         loader = manager.get_loader('ComputeWorker', status=status)
         return await loader.load(self.sess_id)
 
-    
     @staticmethod
     async def load_count(context, access_key=None, status=None):
         async with context['dbpool'].acquire() as conn:
@@ -309,15 +310,13 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 status = KernelStatus[status]
                 query = query.where(kernels.c.status == status)
             if access_key is not None:
-                query = query.where(kernels.c.access_key.in_(access_keys))
+                query = query.where(kernels.c.access_key == access_key)
             result = await conn.execute(query)
-            total_count = await result.fetchone()
-            total_count = total_count[0]
-            return CountComputeSessions(count=total_count)
-
+            count = await result.fetchone()
+            return CountComputeSessions(count=count[0])
 
     @staticmethod
-    async def load_with_limit(context, limit, offset, access_keys=None, status=None):
+    async def load_with_limit(context, limit, offset, access_key=None, status=None):
         async with context['dbpool'].acquire() as conn:
             # TODO: optimization for pagination using subquery, join
             query = (sa.select('*')
@@ -329,12 +328,11 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             if status is not None:
                 status = KernelStatus[status]
                 query = query.where(kernels.c.status == status)
-            if access_keys is not None:
-                query = query.where(kernels.c.access_key.in_(access_keys))
+            if access_key is not None:
+                query = query.where(kernels.c.access_key == access_key)
             result = await conn.execute(query)
             rows = await result.fetchall()
             return [ComputeSession.from_row(context, r) for r in rows]
-
 
     @staticmethod
     async def load_all(context, status=None):
