@@ -104,6 +104,16 @@ class Agent(graphene.ObjectType):
         return await loader.load(self.id)
 
     @staticmethod
+    async def _append_dynamic_fields(context, agent):
+        rs = context['redis_stat']
+        cpu_pct, mem_cur_bytes = await rs.hmget(
+            str(agent.id),
+            'cpu_pct', 'mem_cur_bytes',
+        )
+        agent.cpu_cur_pct = cpu_pct
+        agent.mem_cur_bytes = mem_cur_bytes
+
+    @staticmethod
     async def load_all(context, status=None):
         async with context['dbpool'].acquire() as conn:
             query = (sa.select('*')
@@ -113,7 +123,12 @@ class Agent(graphene.ObjectType):
                 query = query.where(agents.c.status == status)
             result = await conn.execute(query)
             rows = await result.fetchall()
-            return [Agent.from_row(context, r) for r in rows]
+            _agents = []
+            for r in rows:
+                _agent = Agent.from_row(context, r)
+                await Agent._append_dynamic_fields(context, _agent)
+                _agents.append(_agent)
+            return _agents
 
     @staticmethod
     async def batch_load(context, agent_ids, status=None):
@@ -130,5 +145,6 @@ class Agent(graphene.ObjectType):
                 objs_per_key[k] = None
             async for row in conn.execute(query):
                 o = Agent.from_row(context, row)
+                await Agent._append_dynamic_fields(context, o)
                 objs_per_key[row.id] = o
         return tuple(objs_per_key.values())

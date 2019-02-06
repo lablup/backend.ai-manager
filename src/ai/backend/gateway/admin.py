@@ -154,29 +154,12 @@ class QueryForAdmin(graphene.ObjectType):
     @staticmethod
     async def resolve_agent(executor, info, agent_id):
         manager = info.context['dlmgr']
-        rs = info.context['redis_stat']
         loader = manager.get_loader('Agent', status=None)
-        agent = await loader.load(agent_id)
-        cpu_pct, mem_cur_bytes = await rs.hmget(
-            str(agent.id),
-            'cpu_pct', 'mem_cur_bytes',
-        )
-        agent.cpu_cur_pct = cpu_pct
-        agent.mem_cur_bytes = mem_cur_bytes
-        return agent
+        return await loader.load(agent_id)
 
     @staticmethod
     async def resolve_agents(executor, info, status=None):
-        rs = info.context['redis_stat']
-        agent_list = await Agent.load_all(info.context, status=status)
-        for agent in agent_list:
-            cpu_pct, mem_cur_bytes = await rs.hmget(
-                str(agent.id),
-                'cpu_pct', 'mem_cur_bytes',
-            )
-            agent.cpu_cur_pct = cpu_pct
-            agent.mem_cur_bytes = mem_cur_bytes
-        return agent_list
+        return await Agent.load_all(info.context, status=status)
 
     @staticmethod
     async def resolve_image(executor, info, reference):
