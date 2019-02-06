@@ -344,11 +344,11 @@ class ConfigServer:
                 updates[f'{tag_prefix}/resource/{res_key}/min'] = v
             all_updates.update(updates)
 
-        verify_ssl = True
+        ssl_ctx = None  # default
         app_config = self.context.get('config')
-        if app_config is not None:
-            verify_ssl = app_config.skip_sslcert_validation
-        connector = aiohttp.TCPConnector(verify_ssl=verify_ssl)
+        if app_config is not None and app_config.skip_sslcert_validation:
+            ssl_ctx = False
+        connector = aiohttp.TCPConnector(ssl=ssl_ctx)
         async with aiohttp.ClientSession(connector=connector) as sess:
             images = []
             if registry_url.host.endswith('.docker.io'):
