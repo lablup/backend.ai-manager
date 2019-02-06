@@ -221,7 +221,8 @@ class SessionCommons:
         precpu_used = await rs.hget(str(self.id), 'precpu_used')
         ret = 0
         if cpu_used is not None and precpu_used is not None:
-            ret = (float(cpu_used) - float(precpu_used)) / 10   # cpu_used(ms), precpu_used(ms), interval=1s, ret(%)
+            ret = (float(cpu_used) - float(precpu_used)) / 10
+            # cpu_used(ms), precpu_used(ms), interval=1s, ret(%)
         return round(float(ret), 2)
 
     @classmethod
@@ -258,7 +259,8 @@ class SessionCommons:
             'io_cur_scratch_size': 0,
             # legacy fields
             'lang': row['image'],
-            'mem_slot': BinarySize.from_str(row['occupied_slots'].get('mem', 0)) // mega,
+            'mem_slot': BinarySize.from_str(
+                row['occupied_slots'].get('mem', 0)) // mega,
             'cpu_slot': float(row['occupied_slots'].get('cpu', 0)),
             'gpu_slot': float(row['occupied_slots'].get('cuda.device', 0)),
             'tpu_slot': float(row['occupied_slots'].get('tpu.device', 0)),

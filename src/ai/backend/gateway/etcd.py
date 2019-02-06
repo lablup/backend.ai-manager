@@ -234,7 +234,6 @@ class ConfigServer:
         return await self._parse_image(ref, kvpairs, reverse_aliases)
 
     async def list_images(self):
-        items = []
         known_registries = await get_known_registries(self.etcd)
         reverse_aliases = await self._scan_reverse_aliases()
         kvpairs = dict(await self.etcd.get_prefix('images'))
