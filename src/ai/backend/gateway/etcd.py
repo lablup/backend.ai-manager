@@ -344,7 +344,12 @@ class ConfigServer:
                 updates[f'{tag_prefix}/resource/{res_key}/min'] = v
             all_updates.update(updates)
 
-        async with aiohttp.ClientSession() as sess:
+        verify_ssl = True
+        app_config = self.context.get('config')
+        if app_config is not None:
+            verify_ssl = app_config.skip_sslcert_validation
+        connector = aiohttp.TCPConnector(verify_ssl=verify_ssl)
+        async with aiohttp.ClientSession(connector=connector) as sess:
             images = []
             if registry_url.host.endswith('.docker.io'):
                 # We need some special treatment for the Docker Hub.

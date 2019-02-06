@@ -40,6 +40,13 @@ def load_config(argv=None, extra_args_funcs=()):
     parser.add('--disable-plugins', env_var='BACKEND_DISABLE_PLUGINS',
                type=str, default='',
                help='A comma-separated blacklist of app plugins not to use.')
+    parser.add('--skip-sslcert-validation',
+               env_var='BACKEND_SKIP_SSLCERT_VALIDATION',
+               action='store_true', default=False,
+               help='Let the underlying HTTP library to skip SSL certificate '
+                    'validation (e.g., for accessing private Docker registries).  '
+                    'Only enable this for setups using privately signed '
+                    'certificates.')
     for func in extra_args_funcs:
         func(parser)
     args = parser.parse_args(args=argv)
