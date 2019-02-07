@@ -68,7 +68,7 @@ class KeyPair(graphene.ObjectType):
             resource_policy=row['resource_policy'],
             created_at=row['created_at'],
             last_used=row['last_used'],
-            concurrency_limit=row['concurrency_limit'],
+            concurrency_limit=0,  # moved to resource policy
             concurrency_used=row['concurrency_used'],
             rate_limit=row['rate_limit'],
             num_queries=row['num_queries'],
