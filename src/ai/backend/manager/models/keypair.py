@@ -140,8 +140,8 @@ class KeyPair(graphene.ObjectType):
 class KeyPairInput(graphene.InputObjectType):
     is_active = graphene.Boolean(required=False, default=True)
     is_admin = graphene.Boolean(required=False, default=False)
-    resource_policy = graphene.String(required=False, default=None)
-    concurrency_limit = graphene.Int(required=True)
+    resource_policy = graphene.String(required=True)
+    concurrency_limit = graphene.Int(required=False)  # deprecated and ignored
     rate_limit = graphene.Int(required=True)
 
     # When creating, you MUST set all fields.
@@ -170,7 +170,6 @@ class CreateKeyPair(graphene.Mutation):
                 'is_active': bool(props.is_active),
                 'is_admin': bool(props.is_admin),
                 'resource_policy': props.resource_policy,
-                'concurrency_limit': props.concurrency_limit,
                 'concurrency_used': 0,
                 'rate_limit': props.rate_limit,
                 'num_queries': 0,
@@ -214,7 +213,6 @@ class ModifyKeyPair(graphene.Mutation):
             set_if_set('is_active')
             set_if_set('is_admin')
             set_if_set('resource_policy')
-            set_if_set('concurrency_limit')
             set_if_set('rate_limit')
 
             query = (keypairs.update()
