@@ -395,6 +395,30 @@ async def download(request, row):
 @server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
+async def download_single(request, row):
+    folder_name = request.match_info['name']
+    access_key = request['keypair']['access_key']
+    if request.can_read_body:
+        params = await request.json()
+    else:
+        params = request.query
+    assert params.get('file'), 'no file(s) specified!'
+    fn = params.get('file')
+    log.info('VFOLDER.DOWNLOAD (u:{0}, f:{1})', access_key, folder_name)
+    folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
+                   request.app['VFOLDER_FSPREFIX'] / row.id.hex)
+    path = folder_path / fn
+    if not (path).is_file():
+        raise InvalidAPIParameters(
+            f'You cannot download "{fn}" because it is not a regular file.')
+    
+    data = open(folder_path / fn, 'rb')
+    return web.Response(body=data, status=200)
+
+
+@server_status_required(READ_ALLOWED)
+@auth_required
+@vfolder_permission_required(VFolderPermission.READ_ONLY)
 async def list_files(request, row):
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
@@ -705,6 +729,7 @@ def create_app(default_cors_options):
     cors.add(add_route('POST',   r'/{name}/upload', upload))
     cors.add(add_route('DELETE', r'/{name}/delete_files', delete_files))
     cors.add(add_route('GET',    r'/{name}/download', download))
+    cors.add(add_route('GET',    r'/{name}/download_single', download_single))
     cors.add(add_route('GET',    r'/{name}/files', list_files))
     cors.add(add_route('POST',   r'/{name}/invite', invite))
     cors.add(add_route('GET',    r'/invitations/list', invitations))
