@@ -358,16 +358,17 @@ class AgentRegistry:
             running_image_ref = ImageRef(kern['image'], [kern['registry']])
             if running_image_ref != requested_image_ref:
                 raise KernelAlreadyExists
-            created = False
+            create = False
         except KernelNotFound:
+            create = True
+        if create:
             kern = await self.create_session(
                 sess_id, access_key,
                 requested_image_ref, creation_config,
                 resource_policy,
                 conn=conn, session_tag=tag)
-            created = True
         assert kern is not None
-        return kern, created
+        return kern, create
 
     async def create_session(self, sess_id: str, access_key: str,
                              image_ref: ImageRef,
