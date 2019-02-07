@@ -24,11 +24,10 @@ keypairs = sa.Table(
     sa.Column('is_active', sa.Boolean, index=True),
     sa.Column('is_admin', sa.Boolean, index=True,
               default=False, server_default=false()),
-    sa.Column('resource_policy', sa.String, nullable=True),
+    sa.Column('resource_policy', sa.String, nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
     sa.Column('last_used', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('concurrency_limit', sa.Integer),
     sa.Column('concurrency_used', sa.Integer),
     sa.Column('rate_limit', sa.Integer),
     sa.Column('num_queries', sa.Integer, server_default='0'),
@@ -44,7 +43,6 @@ class KeyPair(graphene.ObjectType):
     resource_policy = graphene.String()
     created_at = GQLDateTime()
     last_used = GQLDateTime()
-    concurrency_limit = graphene.Int()
     concurrency_used = graphene.Int()
     rate_limit = graphene.Int()
     num_queries = graphene.Int()
