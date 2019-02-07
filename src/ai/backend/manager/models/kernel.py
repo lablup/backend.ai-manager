@@ -7,11 +7,11 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common.types import ResourceSlot, BinarySize
-from .base import metadata, zero_if_none, EnumType, IDColumn
+from .base import metadata, zero_if_none, EnumType, IDColumn, Item, PaginatedList
 
 __all__ = (
     'kernels', 'KernelStatus',
-    'ComputeSession', 'ComputeWorker', 'Computation', 'CountComputeSessions',
+    'ComputeSessionList', 'ComputeSession', 'ComputeWorker', 'Computation',
 )
 
 
@@ -273,14 +273,12 @@ class SessionCommons:
         return cls(**props)
 
 
-class CountComputeSessions(graphene.ObjectType):
-    count = graphene.Int()
-
-
 class ComputeSession(SessionCommons, graphene.ObjectType):
     '''
     Represents a master session.
     '''
+    class Meta:
+        interfaces = (Item, )
 
     tag = graphene.String()  # Only for ComputeSession
 
@@ -313,7 +311,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 query = query.where(kernels.c.access_key == access_key)
             result = await conn.execute(query)
             count = await result.fetchone()
-            return CountComputeSessions(count=count[0])
+            return count[0]
 
     @staticmethod
     async def load_with_limit(context, limit, offset, access_key=None, status=None):
@@ -398,6 +396,13 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
     def parse_row(cls, context, row):
         common_props = super().parse_row(context, row)
         return {**common_props, 'tag': row['tag']}
+
+
+class ComputeSessionList(graphene.ObjectType):
+    class Meta:
+        interfaces = (PaginatedList, )
+
+    items = graphene.List(ComputeSession, required=True)
 
 
 class ComputeWorker(SessionCommons, graphene.ObjectType):

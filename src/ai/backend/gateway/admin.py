@@ -20,7 +20,7 @@ from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
     CountAgents, Agent, Image, RescanImages, AliasImage, DealiasImage,
     KeyPair, CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
-    CountComputeSessions, ComputeSession, ComputeWorker, KernelStatus,
+    ComputeSession, ComputeSessionList, ComputeWorker, KernelStatus,
     VirtualFolder,
 )
 
@@ -143,13 +143,8 @@ class QueryForAdmin(graphene.ObjectType):
         VirtualFolder,
         access_key=graphene.String())
 
-    count_compute_sessions = graphene.Field(
-        CountComputeSessions,
-        access_key=graphene.String(),
-        status=graphene.String())
-
-    compute_sessions = graphene.List(
-        ComputeSession,
+    compute_sessions = graphene.Field(
+        ComputeSessionList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
         access_key=graphene.String(),
@@ -229,15 +224,15 @@ class QueryForAdmin(graphene.ObjectType):
         loader = manager.get_loader('VirtualFolder')
         return await loader.load(access_key)
 
-    @staticmethod
-    async def resolve_count_compute_sessions(executor, info, access_key=None, status=None):
-        return await ComputeSession.load_count(info.context, access_key, status)
 
     @staticmethod
     async def resolve_compute_sessions(executor, info, limit, offset, access_key=None, status=None):
         # TODO: make status a proper graphene.Enum type
         #       (https://github.com/graphql-python/graphene/issues/544)
-        return await ComputeSession.load_with_limit(info.context, limit, offset, access_key, status)
+        total_count = await ComputeSession.load_count(info.context, access_key, status)
+        items = await ComputeSession.load_with_limit(info.context, limit, offset, access_key, status)
+        return ComputeSessionList(items, total_count)
+
 
     @staticmethod
     async def resolve_compute_session(executor, info, sess_id, status=None):

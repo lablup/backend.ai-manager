@@ -225,3 +225,10 @@ class BigInt(Scalar):
             if num > MAX_INT or num < MIN_INT:
                 return float(int(num))
             return num
+
+class Item(graphene.Interface):
+    status = graphene.String()
+
+class PaginatedList(graphene.Interface):
+    items = graphene.List(Item, required=True)
+    total_count = graphene.Int(required=True)
