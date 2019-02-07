@@ -6,11 +6,12 @@ from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
-from .base import metadata, EnumType
+from .base import metadata, BigInt, EnumType
 
 __all__ = (
-    'user_resource_policies',
-    'UserResourcePolicy',
+    'keypair_resource_policies',
+    'KeyPairResourcePolicy',
+    'DefaultForUnspecified',
 )
 
 
@@ -19,8 +20,8 @@ class DefaultForUnspecified(enum.Enum):
     UNLIMITED = 1
 
 
-user_resource_policies = sa.Table(
-    'user_resource_policies', metadata,
+keypair_resource_policies = sa.Table(
+    'keypair_resource_policies', metadata,
     sa.Column('name', sa.String(length=256), primary_key=True),
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
@@ -38,14 +39,14 @@ user_resource_policies = sa.Table(
 )
 
 
-class UserResourcePolicy(graphene.ObjectType):
+class KeyPairResourcePolicy(graphene.ObjectType):
     name = graphene.String()
     created_at = GQLDateTime()
     default_for_unspecified = graphene.String()
     total_resource_slots = graphene.JSONString()
     max_concurrent_sessions = graphene.Int()
     max_vfolder_count = graphene.Int()
-    max_vfolder_size = graphene.Int()
+    max_vfolder_size = BigInt()
     allowed_vfolder_hosts = graphene.List(lambda: graphene.String)
 
     @classmethod
@@ -63,26 +64,26 @@ class UserResourcePolicy(graphene.ObjectType):
             allowed_vfolder_hosts=row['allowed_vfolder_hosts'],
         )
 
-    @staticmethod
-    async def load_all(context):
+    @classmethod
+    async def load_all(cls, context):
         async with context['dbpool'].acquire() as conn:
             query = (sa.select('*')
-                       .select_from(user_resource_policies))
+                       .select_from(keypair_resource_policies))
             result = await conn.execute(query)
             rows = await result.fetchall()
-            return [UserResourcePolicy.from_row(context, r) for r in rows]
+            return [cls.from_row(context, r) for r in rows]
 
-    @staticmethod
-    async def batch_load_by_name(context, names):
+    @classmethod
+    async def batch_load_by_name(cls, context, names):
         async with context['dbpool'].acquire() as conn:
             query = (sa.select('*')
-                       .select_from(user_resource_policies)
-                       .where(user_resource_policies.c.name.in_(names))
-                       .order_by(user_resource_policies.c.id))
+                       .select_from(keypair_resource_policies)
+                       .where(keypair_resource_policies.c.name.in_(names))
+                       .order_by(keypair_resource_policies.c.id))
             objs_per_key = OrderedDict()
             for k in names:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
-                o = UserResourcePolicy.from_row(context, row)
+                o = cls.from_row(context, row)
                 objs_per_key[row.id] = o
         return tuple(objs_per_key.values())
