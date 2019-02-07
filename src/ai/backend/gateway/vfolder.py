@@ -140,6 +140,7 @@ async def create(request):
     resp = {}
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
+    resource_policy = request['keypair']['resource_policy']
     params = await request.json()
     log.info('VFOLDER.CREATE (u:{0})', access_key)
     assert _rx_slug.search(params['name']) is not None
@@ -152,23 +153,33 @@ async def create(request):
             raise VFolderCreationFailed(
                 'You must specify the vfolder host '
                 'because the default host is not configured.')
+    # Check resource policy's allowed_vfolder_hosts
+    if folder_host not in resource_policy['allowed_vfolder_hosts']:
+        raise InvalidAPIParameters('You are not allowed to use this vfolder host.')
     vfroot = (request.app['VFOLDER_MOUNT'] / folder_host /
               request.app['VFOLDER_FSPREFIX'])
     if not vfroot.is_dir():
         raise VFolderCreationFailed(f'Invalid vfolder host: {folder_host}')
 
     async with dbpool.acquire() as conn:
+        # Check resource policy's max_vfolder_count
+        query = (sa.select([sa.func.count()])
+                   .where(vfolders.c.belongs_to == access_key))
+        result = await conn.scalar(query)
+        if result >= resource_policy['max_vfolder_count']:
+            raise InvalidAPIParameters('You cannot create more vfolders.')
+
         # Prevent creation of vfolder with duplicated name.
         j = sa.join(vfolders, vfolder_permissions,
                     vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
-        query = (sa.select('*')
+        query = (sa.select([sa.func.count()])
                    .select_from(j)
                    .where(((vfolders.c.belongs_to == access_key) |
                            (vfolder_permissions.c.access_key == access_key)) &
                           ((vfolders.c.name == params['name']) &
                            (vfolders.c.host == folder_host))))
-        result = await conn.execute(query)
-        if result.rowcount > 0:
+        result = await conn.scalar(query)
+        if result > 0:
             raise VFolderAlreadyExists
 
         folder_id = uuid.uuid4().hex
