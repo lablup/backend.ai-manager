@@ -228,7 +228,7 @@ class BigInt(Scalar):
 
 
 class Item(graphene.Interface):
-    status = graphene.String()
+    id = graphene.ID()
 
 
 class PaginatedList(graphene.Interface):

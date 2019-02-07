@@ -44,7 +44,7 @@ class Agent(graphene.ObjectType):
     class Meta:
         interfaces = (Item, )
 
-    id = graphene.String()
+    id = graphene.ID()
     status = graphene.String()
     region = graphene.String()
     available_slots = graphene.JSONString()

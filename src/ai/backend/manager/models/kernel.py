@@ -92,7 +92,7 @@ kernels = sa.Table(
 
 class SessionCommons:
     sess_id = graphene.String()
-    id = graphene.UUID()
+    id = graphene.ID()
     role = graphene.String()
     image = graphene.String()
     registry = graphene.String()
