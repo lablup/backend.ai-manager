@@ -426,7 +426,7 @@ class AgentRegistry:
             if tpu is not None:
                 raise InvalidAPIParameters('Client upgrade required '
                                            'to use TPUs (v19.03+).')
-        log.debug('requested resource slots: {!r}', requested_slots)
+        log.debug('oringally requested resource slots: {!r}', requested_slots)
 
         # Check the image resource slots.
         try:
@@ -472,14 +472,17 @@ class AgentRegistry:
         async with reenter_txn(self.dbpool, conn) as conn:
             query = (sa.select([kernels.c.occupied_slots])
                        .where((kernels.c.access_key == access_key) &
-                              (kernels.c.status != 'TERMINATED')))
-            key_occupied = sum(*[
+                              (kernels.c.status != KernelStatus.TERMINATED)))
+            zero = ResourceSlot({}).as_numeric(known_slot_types, fill_missing=True)
+            key_occupied = sum([
                 (ResourceSlot(row['occupied_slots'])
                  .as_numeric(known_slot_types,
                              unknown='drop', fill_missing=True))
-                async for row in conn.execute(query)])
-            log.debug('{} requesting {} currently occupies {} in total out of {}',
-                      access_key, requested_slots, key_occupied, total_allowed)
+                async for row in conn.execute(query)], zero)
+            log.debug('{} requesting {}\ncurrently occupies {}\nin total out of {} '
+                      '(default {})',
+                      access_key, requested_slots, key_occupied, total_allowed,
+                      resource_policy['default_for_unspecified'])
             if (resource_policy['default_for_unspecified'] ==
                 DefaultForUnspecified.LIMITED):
                 if not (key_occupied + requested_slots <= total_allowed):
