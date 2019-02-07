@@ -22,6 +22,7 @@ from ..manager.models import (
     KeyPair, CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
     ComputeSession, ComputeWorker, KernelStatus,
     VirtualFolder,
+    KeyPairResourcePolicy,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
@@ -133,6 +134,13 @@ class QueryForAdmin(graphene.ObjectType):
         user_id=graphene.String(),
         is_active=graphene.Boolean())
 
+    keypair_resource_policy = graphene.Field(
+        KeyPairResourcePolicy,
+        name=graphene.String(required=True))
+
+    keypair_resource_policies = graphene.List(
+        KeyPairResourcePolicy)
+
     vfolders = graphene.List(
         VirtualFolder,
         access_key=graphene.String())
@@ -186,6 +194,16 @@ class QueryForAdmin(graphene.ObjectType):
         else:
             loader = manager.get_loader('KeyPair.by_uid', is_active=is_active)
             return await loader.load(user_id)
+
+    @staticmethod
+    async def resolve_keypair_resource_policy(executor, info, name):
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('KeyPairResourcePolicy.by_name')
+        return await loader.load(name)
+
+    @staticmethod
+    async def resolve_keypair_resource_policies(executor, info):
+        return await KeyPairResourcePolicy.load_all(info.context)
 
     @staticmethod
     async def resolve_vfolders(executor, info, access_key=None):

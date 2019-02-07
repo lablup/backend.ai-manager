@@ -1,12 +1,23 @@
 {
+    "keypair_resource_policies": [
+        {
+            "name": "default",
+            "default_for_unspecified": "UNLIMITED",
+            "total_resource_slots": {},
+            "max_concurrent_sessions": 30,
+            "max_containers_per_session": 1,
+            "max_vfolder_count": 10,
+            "max_vfolder_size": 0,
+            "allowed_vfolder_hosts": ["local"]
+        }
+    ],
     "keypairs": [
         {
             "user_id": "admin@lablup.com",
             "access_key": "AKIAIOSFODNN7EXAMPLE",
             "secret_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
             "is_active": true,
-            "billing_plan": "free",
-            "concurrency_limit": 30,
+            "resource_policy": "default",
             "concurrency_used": 0,
             "rate_limit": 1000,
             "num_queries": 0,
@@ -17,8 +28,7 @@
             "access_key": "AKIANABBDUSEREXAMPLE",
             "secret_key": "C8qnIo29EZvXkPK_MXcuAakYTy4NYrxwmCEyNPlf",
             "is_active": true,
-            "billing_plan": "free",
-            "concurrency_limit": 30,
+            "resource_policy": "default",
             "concurrency_used": 0,
             "rate_limit": 1000,
             "num_queries": 0,
