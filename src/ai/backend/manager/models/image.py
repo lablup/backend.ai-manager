@@ -3,7 +3,7 @@ import logging
 import graphene
 
 from ai.backend.common.logging import BraceStyleAdapter
-from .base import KVPair, ResourceLimit, BigInt
+from .base import BigInt, KVPair, ResourceLimit
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
 
