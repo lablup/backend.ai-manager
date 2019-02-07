@@ -462,6 +462,9 @@ class AgentRegistry:
         # Check the keypair resource policy.
         # - Keypair resource occupation includes both running and enqueued sessions,
         #   while agent resource occupation includes only running sessions.
+        # - TODO: merge multicontainer-session branch and check
+        #         max_containers_per_session.
+        # - TODO: check scaling-group resource policy as well.
         total_allowed = (ResourceSlot(resource_policy['total_resource_slots'])
                          .as_numeric(known_slot_types,
                                      unknown='drop', fill_missing=True))
