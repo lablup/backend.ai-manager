@@ -1,6 +1,27 @@
 Changes
 =======
 
+19.03.0b7 (2018-02-03)
+----------------------
+
+- Fix various issues related to resource slot type *changes*.
+
+  - Ignore unknown slots except when the user explicitly requests one.
+
+  - Always reset resource slot types when processing heartbeats.
+
+    IMPORTANT: You must install the same set of accelerator plugins across all your
+    agent nodes so that they report the same set of resource slot types even when
+    some agents does not have support for specific accelerator plugins.  Also,
+    plugins are required to return "disabled" plugin instance which specified the
+    resource slot types but returns no available devices.
+
+- Add a small API to get currently known resource slots from clients:
+  "<ENDPOINT>/etcd/resource-slots"
+
+- Now "occupied_slots" field and "available_slots" field in the Admin GraphQL APIs
+  returns a consistent set of keys from the known resource slot types.
+
 19.03.0b6 (2018-01-31)
 ----------------------
 

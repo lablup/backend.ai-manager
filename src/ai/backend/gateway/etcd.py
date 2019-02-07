@@ -234,7 +234,6 @@ class ConfigServer:
         return await self._parse_image(ref, kvpairs, reverse_aliases)
 
     async def list_images(self):
-        items = []
         known_registries = await get_known_registries(self.etcd)
         reverse_aliases = await self._scan_reverse_aliases()
         kvpairs = dict(await self.etcd.get_prefix('images'))
@@ -344,7 +343,12 @@ class ConfigServer:
                 updates[f'{tag_prefix}/resource/{res_key}/min'] = v
             all_updates.update(updates)
 
-        async with aiohttp.ClientSession() as sess:
+        ssl_ctx = None  # default
+        app_config = self.context.get('config')
+        if app_config is not None and app_config.skip_sslcert_validation:
+            ssl_ctx = False
+        connector = aiohttp.TCPConnector(ssl=ssl_ctx)
+        async with aiohttp.ClientSession(connector=connector) as sess:
             images = []
             if registry_url.host.endswith('.docker.io'):
                 # We need some special treatment for the Docker Hub.

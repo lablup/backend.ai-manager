@@ -18,7 +18,7 @@ from .exceptions import InvalidAPIParameters, GraphQLError as BackendGQLError
 from .auth import auth_required
 from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
-    CountAgents, Agent, Image, RescanImages, AliasImage, DealiasImage,
+    Agent, AgentList, Image, RescanImages, AliasImage, DealiasImage,
     KeyPair, CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
     ComputeSession, ComputeSessionList, ComputeWorker, KernelStatus,
     VirtualFolder,
@@ -108,18 +108,18 @@ class QueryForAdmin(graphene.ObjectType):
     users.
     '''
 
-    count_agents = graphene.Field(
-        CountAgents,
-        status=graphene.String())
-
     agent = graphene.Field(
         Agent,
         agent_id=graphene.String(required=True))
 
-    agents = graphene.List(
-        Agent,
+    agent_list = graphene.Field(
+        AgentList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
+        status=graphene.String())
+
+    agents = graphene.List(
+        Agent,
         status=graphene.String())
 
     image = graphene.Field(
@@ -143,10 +143,15 @@ class QueryForAdmin(graphene.ObjectType):
         VirtualFolder,
         access_key=graphene.String())
 
-    compute_sessions = graphene.Field(
+    compute_session_list = graphene.Field(
         ComputeSessionList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
+        access_key=graphene.String(),
+        status=graphene.String())
+
+    compute_sessions = graphene.List(
+        ComputeSession,
         access_key=graphene.String(),
         status=graphene.String())
 
@@ -160,35 +165,21 @@ class QueryForAdmin(graphene.ObjectType):
         status=graphene.String())
 
     @staticmethod
-    async def resolve_count_agents(executor, info, status=None):
-        return await Agent.load_count(info.context, status)
-
-    @staticmethod
     async def resolve_agent(executor, info, agent_id):
         manager = info.context['dlmgr']
-        rs = info.context['redis_stat']
         loader = manager.get_loader('Agent', status=None)
-        agent = await loader.load(agent_id)
-        cpu_pct, mem_cur_bytes = await rs.hmget(
-            str(agent.id),
-            'cpu_pct', 'mem_cur_bytes',
-        )
-        agent.cpu_cur_pct = cpu_pct
-        agent.mem_cur_bytes = mem_cur_bytes
-        return agent
+        return await loader.load(agent_id)
 
     @staticmethod
-    async def resolve_agents(executor, info, limit, offset, status=None):
+    async def resolve_agents(executor, info, status=None):
+        return await Agent.load_all(info.context, status=status)
+
+    @staticmethod
+    async def resolve_agent_list(executor, info, limit, offset, status=None):
         rs = info.context['redis_stat']
+        total_count = await Agent.load_count(info.context, status)
         agent_list = await Agent.load_with_limit(info.context, limit, offset, status)
-        for agent in agent_list:
-            cpu_pct, mem_cur_bytes = await rs.hmget(
-                str(agent.id),
-                'cpu_pct', 'mem_cur_bytes',
-            )
-            agent.cpu_cur_pct = cpu_pct
-            agent.mem_cur_bytes = mem_cur_bytes
-        return agent_list
+        return AgentList(agent_list, total_count)
 
     @staticmethod
     async def resolve_image(executor, info, reference):
@@ -224,15 +215,26 @@ class QueryForAdmin(graphene.ObjectType):
         loader = manager.get_loader('VirtualFolder')
         return await loader.load(access_key)
 
-
     @staticmethod
-    async def resolve_compute_sessions(executor, info, limit, offset, access_key=None, status=None):
+    async def resolve_compute_session_list(executor, info, limit, offset, access_key=None, status=None):
         # TODO: make status a proper graphene.Enum type
         #       (https://github.com/graphql-python/graphene/issues/544)
         total_count = await ComputeSession.load_count(info.context, access_key, status)
         items = await ComputeSession.load_with_limit(info.context, limit, offset, access_key, status)
         return ComputeSessionList(items, total_count)
 
+    @staticmethod
+    async def resolve_compute_sessions(executor, info, access_key=None, status=None):
+        # TODO: make status a proper graphene.Enum type
+        #       (https://github.com/graphql-python/graphene/issues/544)
+        if status is not None:
+            status = KernelStatus[status]
+        if access_key is not None:
+            manager = info.context['dlmgr']
+            loader = manager.get_loader('ComputeSession', status=status)
+            return await loader.load(access_key)
+        else:
+            return await ComputeSession.load_all(info.context)
 
     @staticmethod
     async def resolve_compute_session(executor, info, sess_id, status=None):
