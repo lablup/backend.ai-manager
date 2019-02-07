@@ -65,7 +65,7 @@ def upgrade():
     connection = op.get_bind()
     connection.execute(query)
     print('\n!!! NOTICE !!!\n')
-    print('Create a default resource policy and linked all keypairs to it.')
+    print('Created a default resource policy and linked all keypairs to it.')
     print('Please inspect and adjust it!\n')
     op.alter_column('keypairs', 'resource_policy',
                     existing_type=sa.VARCHAR(),
