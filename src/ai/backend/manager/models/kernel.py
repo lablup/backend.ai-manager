@@ -7,7 +7,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common.types import ResourceSlot, BinarySize
-from .base import metadata, zero_if_none, EnumType, IDColumn
+from .base import metadata, zero_if_none, BigInt, EnumType, IDColumn
 
 __all__ = (
     'kernels', 'KernelStatus',
@@ -118,16 +118,16 @@ class SessionCommons:
 
     # TODO: add dynamic stats for intrinsic/accelerator metrics
 
-    num_queries = graphene.Int()
-    cpu_used = graphene.Int()
-    mem_max_bytes = graphene.Int()
-    mem_cur_bytes = graphene.Int()
-    net_rx_bytes = graphene.Int()
-    net_tx_bytes = graphene.Int()
-    io_read_bytes = graphene.Int()
-    io_write_bytes = graphene.Int()
-    io_max_scratch_size = graphene.Int()
-    io_cur_scratch_size = graphene.Int()
+    num_queries = BigInt()
+    cpu_used = BigInt()
+    mem_max_bytes = BigInt()
+    mem_cur_bytes = BigInt()
+    net_rx_bytes = BigInt()
+    net_tx_bytes = BigInt()
+    io_read_bytes = BigInt()
+    io_write_bytes = BigInt()
+    io_max_scratch_size = BigInt()
+    io_cur_scratch_size = BigInt()
     cpu_using = graphene.Float()
 
     async def resolve_cpu_used(self, info):
