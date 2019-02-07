@@ -40,6 +40,7 @@ def upgrade():
         sa.Column('total_resource_slots',
                   postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column('max_concurrent_sessions', sa.Integer(), nullable=False),
+        sa.Column('max_containers_per_session', sa.Integer(), nullable=False),
         sa.Column('max_vfolder_count', sa.Integer(), nullable=False),
         sa.Column('max_vfolder_size', sa.BigInteger(), nullable=False),
         sa.Column('allowed_vfolder_hosts',
@@ -55,6 +56,7 @@ def upgrade():
         'UNLIMITED',
         '{}'::jsonb,
         30,
+        1,
         10,
         0,
         array['local']

@@ -55,6 +55,11 @@ class KeyPair(graphene.ObjectType):
         status=graphene.String(),
     )
 
+    # Deprecated
+    concurrency_limit = graphene.Int(
+        deprecation_reason='Moved to KeyPairResourcePolicy object as '
+                           'max_concurrent_sessions field.')
+
     @classmethod
     def from_row(cls, row):
         if row is None:

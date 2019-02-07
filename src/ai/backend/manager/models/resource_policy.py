@@ -31,6 +31,7 @@ keypair_resource_policies = sa.Table(
               nullable=False),
     sa.Column('total_resource_slots', pgsql.JSONB(), nullable=False),
     sa.Column('max_concurrent_sessions', sa.Integer(), nullable=False),
+    sa.Column('max_containers_per_session', sa.Integer(), nullable=False),
     sa.Column('max_vfolder_count', sa.Integer(), nullable=False),
     sa.Column('max_vfolder_size', sa.BigInteger(), nullable=False),
     sa.Column('allowed_vfolder_hosts', pgsql.ARRAY(sa.String), nullable=False),
@@ -45,6 +46,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
     default_for_unspecified = graphene.String()
     total_resource_slots = graphene.JSONString()
     max_concurrent_sessions = graphene.Int()
+    max_containers_per_session = graphene.Int()
     max_vfolder_count = graphene.Int()
     max_vfolder_size = BigInt()
     allowed_vfolder_hosts = graphene.List(lambda: graphene.String)
@@ -59,6 +61,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
             default_for_unspecified=row['default_for_unspecified'],
             total_resource_slots=row['total_resource_slots'],
             max_concurrent_sessions=row['max_concurrent_sessions'],
+            max_containers_per_session=row['max_containers_per_session'],
             max_vfolder_count=row['max_vfolder_count'],
             max_vfolder_size=row['max_vfolder_size'],
             allowed_vfolder_hosts=row['allowed_vfolder_hosts'],
