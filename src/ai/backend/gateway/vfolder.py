@@ -398,7 +398,6 @@ async def download_single(request, row):
             f'You cannot download "{fn}" because it is not a regular file.')
     
     data = open(folder_path / fn, 'rb')
-    statinfo = os.stat('somefile.txt')
     return web.Response(body=data, status=200)
 
 
