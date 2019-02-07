@@ -134,6 +134,7 @@ async def create(request) -> web.Response:
             kernel, created = await request.app['registry'].get_or_create_session(
                 sess_id, access_key,
                 image, creation_config,
+                resource_policy,
                 conn=conn, tag=params.get('tag', None))
             resp['kernelId'] = str(kernel['sess_id'])
             resp['servicePorts'] = kernel['service_ports']

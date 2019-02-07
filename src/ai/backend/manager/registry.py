@@ -27,7 +27,8 @@ from ..gateway.exceptions import (
     AgentError)
 from .models import (
     agents, kernels, keypairs,
-    AgentStatus, KernelStatus
+    AgentStatus, KernelStatus,
+    DefaultForUnspecified,
 )
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
@@ -348,6 +349,7 @@ class AgentRegistry:
 
     async def get_or_create_session(self, sess_id, access_key,
                                     image, creation_config,
+                                    resource_policy,
                                     conn=None, tag=None):
         requested_image_ref = \
             await ImageRef.resolve_alias(image, self.config_server.etcd)
@@ -361,6 +363,7 @@ class AgentRegistry:
             kern = await self.create_session(
                 sess_id, access_key,
                 requested_image_ref, creation_config,
+                resource_policy,
                 conn=conn, session_tag=tag)
             created = True
         assert kern is not None
@@ -369,6 +372,7 @@ class AgentRegistry:
     async def create_session(self, sess_id: str, access_key: str,
                              image_ref: ImageRef,
                              creation_config: dict,
+                             resource_policy: dict,
                              conn=None, session_tag=None):
         agent_id = None
         created_info = None
@@ -423,6 +427,7 @@ class AgentRegistry:
                                            'to use TPUs (v19.03+).')
         log.debug('requested resource slots: {!r}', requested_slots)
 
+        # Check the image resource slots.
         try:
             # Check if: requested >= image-minimum
             requested_slots = requested_slots.as_numeric(
@@ -436,7 +441,8 @@ class AgentRegistry:
             if not (requested_slots <= image_max_slots):
                 raise InvalidAPIParameters(
                     'Your resource request is larger than '
-                    'the maximum allowed by the image.')
+                    'the maximum allowed by the image.  '
+                    'Admins may need to explicitly configure the limits.')
 
             # If the resource is not specified, fill them with image minimums.
             for slot_key, slot_val in image_min_slots.items():
@@ -450,8 +456,33 @@ class AgentRegistry:
             # (e.g., image does not support accelerators
             #  requested by the client)
             raise InvalidAPIParameters(
-                'Your resource request has more resource types '
-                'than supported by the image.')
+                'Your resource request has resource types '
+                'not supported by the image.')
+
+        # Check the keypair resource policy.
+        # - Keypair resource occupation includes both running and enqueued sessions,
+        #   while agent resource occupation includes only running sessions.
+        total_allowed = (ResourceSlot(resource_policy['total_resource_slots'])
+                         .as_numeric(known_slot_types,
+                                     unknown='drop', fill_missing=True))
+        async with reenter_txn(self.dbpool, conn) as conn:
+            query = (sa.select([kernels.c.occupied_slots])
+                       .where((kernels.c.access_key == access_key) &
+                              (kernels.c.status != 'TERMINATED')))
+            key_occupied = sum(*[
+                (ResourceSlot(row['occupied_slots'])
+                 .as_numeric(known_slot_types,
+                             unknown='drop', fill_missing=True))
+                async for row in conn.execute(query)])
+            log.debug('{} requesting {} currently occupies {} in total out of {}',
+                      access_key, requested_slots, key_occupied, total_allowed)
+            if (resource_policy['default_for_unspecified'] ==
+                DefaultForUnspecified.LIMITED):
+                if not (key_occupied + requested_slots <= total_allowed):
+                    raise InvalidAPIParameters('Your resource quota is exceeded.')
+            else:
+                if not (key_occupied + requested_slots).lte_unlimited(total_allowed):
+                    raise InvalidAPIParameters('Your resource quota is exceeded.')
 
         # ==== END: ENQUEUING PART ====
 
