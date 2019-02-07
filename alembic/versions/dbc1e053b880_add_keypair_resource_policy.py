@@ -1,4 +1,4 @@
-"""add-user-resource-policy
+"""add-keypair-resource-policy
 
 Revision ID: dbc1e053b880
 Revises: 2b0931e4a059
