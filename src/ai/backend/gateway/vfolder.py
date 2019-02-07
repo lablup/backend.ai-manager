@@ -150,7 +150,7 @@ async def create(request):
         folder_host = \
             await request.app['config_server'].etcd.get('volumes/_default_host')
         if not folder_host:
-            raise VFolderCreationFailed(
+            raise InvalidAPIParameters(
                 'You must specify the vfolder host '
                 'because the default host is not configured.')
     # Check resource policy's allowed_vfolder_hosts
@@ -159,7 +159,7 @@ async def create(request):
     vfroot = (request.app['VFOLDER_MOUNT'] / folder_host /
               request.app['VFOLDER_FSPREFIX'])
     if not vfroot.is_dir():
-        raise VFolderCreationFailed(f'Invalid vfolder host: {folder_host}')
+        raise InvalidAPIParameters(f'Invalid vfolder host: {folder_host}')
 
     async with dbpool.acquire() as conn:
         # Check resource policy's max_vfolder_count
@@ -183,10 +183,13 @@ async def create(request):
         if result > 0:
             raise VFolderAlreadyExists
 
-        folder_id = uuid.uuid4().hex
-        folder_path = (request.app['VFOLDER_MOUNT'] / folder_host /
-                       request.app['VFOLDER_FSPREFIX'] / folder_id)
-        folder_path.mkdir(parents=True, exist_ok=True)
+        try:
+            folder_id = uuid.uuid4().hex
+            folder_path = (request.app['VFOLDER_MOUNT'] / folder_host /
+                           request.app['VFOLDER_FSPREFIX'] / folder_id)
+            folder_path.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            raise VFolderCreationFailed
         query = (vfolders.insert().values({
             'id': folder_id,
             'name': params['name'],
