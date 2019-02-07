@@ -186,9 +186,9 @@ class Agent(graphene.ObjectType):
                 objs_per_key[row.id] = o
         return tuple(objs_per_key.values())
 
+
 class AgentList(graphene.ObjectType):
     class Meta:
         interfaces = (PaginatedList, )
 
     items = graphene.List(Agent, required=True)
-

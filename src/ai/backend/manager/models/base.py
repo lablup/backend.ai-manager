@@ -226,8 +226,10 @@ class BigInt(Scalar):
                 return float(int(num))
             return num
 
+
 class Item(graphene.Interface):
     status = graphene.String()
+
 
 class PaginatedList(graphene.Interface):
     items = graphene.List(Item, required=True)

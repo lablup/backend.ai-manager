@@ -176,7 +176,6 @@ class QueryForAdmin(graphene.ObjectType):
 
     @staticmethod
     async def resolve_agent_list(executor, info, limit, offset, status=None):
-        rs = info.context['redis_stat']
         total_count = await Agent.load_count(info.context, status)
         agent_list = await Agent.load_with_limit(info.context, limit, offset, status)
         return AgentList(agent_list, total_count)
