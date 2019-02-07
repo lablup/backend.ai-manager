@@ -163,11 +163,12 @@ async def create(request):
 
     async with dbpool.acquire() as conn:
         # Check resource policy's max_vfolder_count
-        query = (sa.select([sa.func.count()])
-                   .where(vfolders.c.belongs_to == access_key))
-        result = await conn.scalar(query)
-        if result >= resource_policy['max_vfolder_count']:
-            raise InvalidAPIParameters('You cannot create more vfolders.')
+        if resource_policy['max_vfolder_count'] > 0:
+            query = (sa.select([sa.func.count()])
+                       .where(vfolders.c.belongs_to == access_key))
+            result = await conn.scalar(query)
+            if result >= resource_policy['max_vfolder_count']:
+                raise InvalidAPIParameters('You cannot create more vfolders.')
 
         # Prevent creation of vfolder with duplicated name.
         j = sa.join(vfolders, vfolder_permissions,
