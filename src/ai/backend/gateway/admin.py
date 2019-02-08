@@ -185,7 +185,7 @@ class QueryForAdmin(graphene.ObjectType):
     @staticmethod
     async def resolve_agent_list(executor, info, limit, offset, status=None):
         total_count = await Agent.load_count(info.context, status)
-        agent_list = await Agent.load_with_limit(info.context, limit, offset, status)
+        agent_list = await Agent.load_slice(info.context, limit, offset, status)
         return AgentList(agent_list, total_count)
 
     @staticmethod
@@ -237,7 +237,7 @@ class QueryForAdmin(graphene.ObjectType):
         # TODO: make status a proper graphene.Enum type
         #       (https://github.com/graphql-python/graphene/issues/544)
         total_count = await ComputeSession.load_count(info.context, access_key, status)
-        items = await ComputeSession.load_with_limit(info.context, limit, offset, access_key, status)
+        items = await ComputeSession.load_slice(info.context, limit, offset, access_key, status)
         return ComputeSessionList(items, total_count)
 
     @staticmethod

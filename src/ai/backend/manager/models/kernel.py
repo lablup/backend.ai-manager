@@ -315,7 +315,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             return count[0]
 
     @staticmethod
-    async def load_with_limit(context, limit, offset, access_key=None, status=None):
+    async def load_slice(context, limit, offset, access_key=None, status=None):
         async with context['dbpool'].acquire() as conn:
             # TODO: optimization for pagination using subquery, join
             query = (sa.select('*')
