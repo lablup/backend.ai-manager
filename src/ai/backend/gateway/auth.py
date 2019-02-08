@@ -11,11 +11,12 @@ import aiohttp_cors
 from aiojobs.aiohttp import atomic
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
+import sqlalchemy as sa
 
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from .exceptions import InvalidAuthParameters, AuthorizationFailed
 from .config import load_config
-from ..manager.models import keypairs
+from ..manager.models import keypairs, keypair_resource_policies
 from .utils import TZINFOS, set_handler_attr, get_handler_attr
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.auth'))
@@ -131,15 +132,21 @@ async def auth_middleware(request, handler):
     if params:
         sign_method, access_key, signature = params
         async with request.app['dbpool'].acquire() as conn, conn.begin():
-            query = (keypairs.select()
-                             .where((keypairs.c.access_key == access_key) &
-                                    (keypairs.c.is_active.is_(True))))
+            j = sa.join(keypairs, keypair_resource_policies,
+                        keypairs.c.resource_policy ==
+                            keypair_resource_policies.c.name)
+            query = (sa.select([keypairs,
+                                keypair_resource_policies],
+                               use_labels=True)
+                       .select_from(j)
+                       .where((keypairs.c.access_key == access_key) &
+                              (keypairs.c.is_active.is_(True))))
             result = await conn.execute(query)
             row = await result.first()
             if row is None:
                 raise AuthorizationFailed('Access key not found')
             my_signature = \
-                await sign_request(sign_method, request, row.secret_key)
+                await sign_request(sign_method, request, row['keypairs_secret_key'])
             if secrets.compare_digest(my_signature, signature):
                 query = (keypairs.update()
                                  .values(last_used=datetime.now(tzutc()),
@@ -147,16 +154,20 @@ async def auth_middleware(request, handler):
                                  .where(keypairs.c.access_key == access_key))
                 await conn.execute(query)
                 request['is_authorized'] = True
-                if row.is_admin:
-                    request['is_admin'] = True
                 request['keypair'] = {
-                    'access_key': access_key,
-                    'concurrency_limit': row.concurrency_limit,
-                    'rate_limit': row.rate_limit,
+                    col.name: row[f'keypairs_{col.name}']
+                    for col in keypairs.c
+                    if col.name != 'secret_key'
+                }
+                request['keypair']['resource_policy'] = {
+                    col.name: row[f'keypair_resource_policies_{col.name}']
+                    for col in keypair_resource_policies.c
                 }
                 request['user'] = {
-                    'id': row.user_id,
+                    'id': row['keypairs_user_id'],
                 }
+                if row['keypairs_is_admin']:
+                    request['is_admin'] = True
     # No matter if authenticated or not, pass-through to the handler.
     # (if it's required, auth_required decorator will handle the situation.)
     return (await handler(request))

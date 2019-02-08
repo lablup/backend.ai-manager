@@ -140,6 +140,7 @@ async def create(request):
     resp = {}
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
+    resource_policy = request['keypair']['resource_policy']
     params = await request.json()
     log.info('VFOLDER.CREATE (u:{0})', access_key)
     assert _rx_slug.search(params['name']) is not None
@@ -149,32 +150,46 @@ async def create(request):
         folder_host = \
             await request.app['config_server'].etcd.get('volumes/_default_host')
         if not folder_host:
-            raise VFolderCreationFailed(
+            raise InvalidAPIParameters(
                 'You must specify the vfolder host '
                 'because the default host is not configured.')
+    # Check resource policy's allowed_vfolder_hosts
+    if folder_host not in resource_policy['allowed_vfolder_hosts']:
+        raise InvalidAPIParameters('You are not allowed to use this vfolder host.')
     vfroot = (request.app['VFOLDER_MOUNT'] / folder_host /
               request.app['VFOLDER_FSPREFIX'])
     if not vfroot.is_dir():
-        raise VFolderCreationFailed(f'Invalid vfolder host: {folder_host}')
+        raise InvalidAPIParameters(f'Invalid vfolder host: {folder_host}')
 
     async with dbpool.acquire() as conn:
+        # Check resource policy's max_vfolder_count
+        if resource_policy['max_vfolder_count'] > 0:
+            query = (sa.select([sa.func.count()])
+                       .where(vfolders.c.belongs_to == access_key))
+            result = await conn.scalar(query)
+            if result >= resource_policy['max_vfolder_count']:
+                raise InvalidAPIParameters('You cannot create more vfolders.')
+
         # Prevent creation of vfolder with duplicated name.
         j = sa.join(vfolders, vfolder_permissions,
                     vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
-        query = (sa.select('*')
+        query = (sa.select([sa.func.count()])
                    .select_from(j)
                    .where(((vfolders.c.belongs_to == access_key) |
                            (vfolder_permissions.c.access_key == access_key)) &
                           ((vfolders.c.name == params['name']) &
                            (vfolders.c.host == folder_host))))
-        result = await conn.execute(query)
-        if result.rowcount > 0:
+        result = await conn.scalar(query)
+        if result > 0:
             raise VFolderAlreadyExists
 
-        folder_id = uuid.uuid4().hex
-        folder_path = (request.app['VFOLDER_MOUNT'] / folder_host /
-                       request.app['VFOLDER_FSPREFIX'] / folder_id)
-        folder_path.mkdir(parents=True, exist_ok=True)
+        try:
+            folder_id = uuid.uuid4().hex
+            folder_path = (request.app['VFOLDER_MOUNT'] / folder_host /
+                           request.app['VFOLDER_FSPREFIX'] / folder_id)
+            folder_path.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            raise VFolderCreationFailed
         query = (vfolders.insert().values({
             'id': folder_id,
             'name': params['name'],
@@ -375,6 +390,30 @@ async def download(request, row):
             return web.Response(status=404, reason='File not found')
         mpwriter._headers['X-TOTAL-PAYLOADS-LENGTH'] = str(total_payloads_length)
         return web.Response(body=mpwriter, status=200)
+
+
+@server_status_required(READ_ALLOWED)
+@auth_required
+@vfolder_permission_required(VFolderPermission.READ_ONLY)
+async def download_single(request, row):
+    folder_name = request.match_info['name']
+    access_key = request['keypair']['access_key']
+    if request.can_read_body:
+        params = await request.json()
+    else:
+        params = request.query
+    assert params.get('file'), 'no file(s) specified!'
+    fn = params.get('file')
+    log.info('VFOLDER.DOWNLOAD (u:{0}, f:{1})', access_key, folder_name)
+    folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
+                   request.app['VFOLDER_FSPREFIX'] / row.id.hex)
+    path = folder_path / fn
+    if not (path).is_file():
+        raise InvalidAPIParameters(
+            f'You cannot download "{fn}" because it is not a regular file.')
+    
+    data = open(folder_path / fn, 'rb')
+    return web.Response(body=data, status=200)
 
 
 @server_status_required(READ_ALLOWED)
@@ -690,6 +729,7 @@ def create_app(default_cors_options):
     cors.add(add_route('POST',   r'/{name}/upload', upload))
     cors.add(add_route('DELETE', r'/{name}/delete_files', delete_files))
     cors.add(add_route('GET',    r'/{name}/download', download))
+    cors.add(add_route('GET',    r'/{name}/download_single', download_single))
     cors.add(add_route('GET',    r'/{name}/files', list_files))
     cors.add(add_route('POST',   r'/{name}/invite', invite))
     cors.add(add_route('GET',    r'/invitations/list', invitations))

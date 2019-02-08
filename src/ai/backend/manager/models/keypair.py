@@ -24,11 +24,12 @@ keypairs = sa.Table(
     sa.Column('is_active', sa.Boolean, index=True),
     sa.Column('is_admin', sa.Boolean, index=True,
               default=False, server_default=false()),
-    sa.Column('resource_policy', sa.String, nullable=True),
+    sa.Column('resource_policy', sa.String(length=256),
+              sa.ForeignKey('keypair_resource_policies.name'),
+              nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
     sa.Column('last_used', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('concurrency_limit', sa.Integer),
     sa.Column('concurrency_used', sa.Integer),
     sa.Column('rate_limit', sa.Integer),
     sa.Column('num_queries', sa.Integer, server_default='0'),
@@ -44,7 +45,6 @@ class KeyPair(graphene.ObjectType):
     resource_policy = graphene.String()
     created_at = GQLDateTime()
     last_used = GQLDateTime()
-    concurrency_limit = graphene.Int()
     concurrency_used = graphene.Int()
     rate_limit = graphene.Int()
     num_queries = graphene.Int()
@@ -54,6 +54,11 @@ class KeyPair(graphene.ObjectType):
         'ai.backend.manager.models.ComputeSession',
         status=graphene.String(),
     )
+
+    # Deprecated
+    concurrency_limit = graphene.Int(
+        deprecation_reason='Moved to KeyPairResourcePolicy object as '
+                           'max_concurrent_sessions field.')
 
     @classmethod
     def from_row(cls, row):
@@ -68,7 +73,7 @@ class KeyPair(graphene.ObjectType):
             resource_policy=row['resource_policy'],
             created_at=row['created_at'],
             last_used=row['last_used'],
-            concurrency_limit=row['concurrency_limit'],
+            concurrency_limit=0,  # moved to resource policy
             concurrency_used=row['concurrency_used'],
             rate_limit=row['rate_limit'],
             num_queries=row['num_queries'],
@@ -135,8 +140,8 @@ class KeyPair(graphene.ObjectType):
 class KeyPairInput(graphene.InputObjectType):
     is_active = graphene.Boolean(required=False, default=True)
     is_admin = graphene.Boolean(required=False, default=False)
-    resource_policy = graphene.String(required=False, default=None)
-    concurrency_limit = graphene.Int(required=True)
+    resource_policy = graphene.String(required=True)
+    concurrency_limit = graphene.Int(required=False)  # deprecated and ignored
     rate_limit = graphene.Int(required=True)
 
     # When creating, you MUST set all fields.
@@ -165,7 +170,6 @@ class CreateKeyPair(graphene.Mutation):
                 'is_active': bool(props.is_active),
                 'is_admin': bool(props.is_admin),
                 'resource_policy': props.resource_policy,
-                'concurrency_limit': props.concurrency_limit,
                 'concurrency_used': 0,
                 'rate_limit': props.rate_limit,
                 'num_queries': 0,
@@ -209,7 +213,6 @@ class ModifyKeyPair(graphene.Mutation):
             set_if_set('is_active')
             set_if_set('is_admin')
             set_if_set('resource_policy')
-            set_if_set('concurrency_limit')
             set_if_set('rate_limit')
 
             query = (keypairs.update()

@@ -29,8 +29,12 @@ from .exceptions import (InvalidAPIParameters, QuotaExceeded,
 from .auth import auth_required
 from .utils import catch_unexpected
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
-from ..manager.models import (keypairs, kernels, vfolders, AgentStatus, KernelStatus,
-                              vfolder_permissions)
+from ..manager.models import (
+    keypairs, keypair_resource_policies,
+    kernels, vfolders,
+    AgentStatus, KernelStatus,
+    vfolder_permissions,
+)
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.kernel'))
 
@@ -65,15 +69,16 @@ async def create(request) -> web.Response:
     resp = {}
     try:
         access_key = request['keypair']['access_key']
-        concurrency_limit = request['keypair']['concurrency_limit']
+        resource_policy = request['keypair']['resource_policy']
         async with request.app['dbpool'].acquire() as conn, conn.begin():
             query = (sa.select([keypairs.c.concurrency_used], for_update=True)
                        .select_from(keypairs)
                        .where(keypairs.c.access_key == access_key))
             concurrency_used = await conn.scalar(query)
             log.debug('access_key: {0} ({1} / {2})',
-                      access_key, concurrency_used, concurrency_limit)
-            if concurrency_used >= concurrency_limit:
+                      access_key, concurrency_used,
+                      resource_policy['max_concurrent_sessions'])
+            if concurrency_used >= resource_policy['max_concurrent_sessions']:
                 raise QuotaExceeded
             creation_config = {
                 'mounts': None,
@@ -129,6 +134,7 @@ async def create(request) -> web.Response:
             kernel, created = await request.app['registry'].get_or_create_session(
                 sess_id, access_key,
                 image, creation_config,
+                resource_policy,
                 conn=conn, tag=params.get('tag', None))
             resp['kernelId'] = str(kernel['sess_id'])
             resp['servicePorts'] = kernel['service_ports']

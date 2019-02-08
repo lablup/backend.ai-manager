@@ -16,6 +16,8 @@ from sqlalchemy.types import (
 )
 from sqlalchemy.dialects.postgresql import UUID, ENUM
 
+SAFE_MIN_INT = -9007199254740991
+SAFE_MAX_INT = 9007199254740991
 
 # The common shared metadata instance
 convention = {
@@ -208,21 +210,28 @@ class BigInt(Scalar):
     """
 
     @staticmethod
-    def big_to_float(value):
+    def coerce_bigint(value):
         num = int(value)
-        if num > MAX_INT or num < MIN_INT:
+        if not (SAFE_MIN_INT <= num <= SAFE_MAX_INT):
+            raise ValueError(
+                'Cannot serialize integer out of the safe range.')
+        if not (MIN_INT <= num <= MAX_INT):
+            # treat as float
             return float(int(num))
         return num
 
-    serialize = big_to_float
-
-    parse_value = big_to_float
+    serialize = coerce_bigint
+    parse_value = coerce_bigint
 
     @staticmethod
     def parse_literal(node):
         if isinstance(node, ast.IntValue):
             num = int(node.value)
-            if num > MAX_INT or num < MIN_INT:
+            if not (SAFE_MIN_INT <= num <= SAFE_MAX_INT):
+                raise ValueError(
+                    'Cannot parse integer out of the safe range.')
+            if not (MIN_INT <= num <= MAX_INT):
+                # treat as float
                 return float(int(num))
             return num
 

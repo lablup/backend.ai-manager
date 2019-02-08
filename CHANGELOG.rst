@@ -1,6 +1,35 @@
 Changes
 =======
 
+19.03.0b8 (2018-02-08)
+----------------------
+
+- NEW: resource policy for keypairs (#134)
+
+  - Now admins can limit the maximum number of concurrent session, virtual folders,
+    and the total resource slots used by each access key.
+
+  - IMPORTANT: DB migration is required (if you upgrade from prior beta versions).
+
+    Before migrating, you *MUST BACKUP* the existing keypairs table if you want to
+    preserve the "concurrency_limit" column, as it will be reset to 30 using a
+    "default" keypair resource policy.  Also, the default policy allows unlimited
+    resource slots to preserve the previous behavior while it limits the number of
+    vfolders to 10 per access key and enables only the "local" vfolder host.  You
+    need to adjust those settings using the dbshell (SQL)!
+
+  - NOTE: Fancy GraphQL mutation APIs for the resource policies (and their CLI/GUI
+    counterparts) will come in the next version.
+
+  - NOTE: Currently the vfolder size limit is not enforced since it is not
+    implemented yet.
+
+- Support big integers (up to 53 bits or 8192 TiB) when serializing various
+  statistics fields in the GraphQL API. (#133)
+
+- Add "--skip-sslcert-validation" CLI option and "BACKEND_SKIP_SSLCERT_VALIDATION"
+  environment variable for setups using privately-signed SSL certificates
+
 19.03.0b7 (2018-02-03)
 ----------------------
 

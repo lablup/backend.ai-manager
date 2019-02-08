@@ -98,15 +98,6 @@ def upgrade():
     op.drop_column('kernels', 'tpu_set')
     # ### end Alembic commands ###
 
-    print('!!! NOTICE !!!\n')
-    print('After upgrade, you must run the following command '
-          'to register slot data types.\n')
-    print('  $ python -m ai.backend.manager.cli etcd put '
-          'config/resource_slots/cuda.device count')
-    print('  $ python -m ai.backend.manager.cli etcd put '
-          'config/resource_slots/tpu.device count')
-    print()
-
 
 def downgrade():
     op.alter_column('kernels', 'service_ports',
