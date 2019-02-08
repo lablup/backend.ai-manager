@@ -299,7 +299,9 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
     @staticmethod
     async def load_all(context, status=None):
         async with context['dbpool'].acquire() as conn:
-            status = KernelStatus[status] if status else KernelStatus['RUNNING']
+            status = status if status else KernelStatus['RUNNING']
+            if isinstance(status, str):
+                status = KernelStatus[status]  # for legacy
             query = (sa.select('*')
                        .select_from(kernels)
                        .where(kernels.c.role == 'master')

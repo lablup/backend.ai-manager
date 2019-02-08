@@ -224,7 +224,7 @@ class QueryForAdmin(graphene.ObjectType):
             loader = manager.get_loader('ComputeSession', status=status)
             return await loader.load(access_key)
         else:
-            return await ComputeSession.load_all(info.context)
+            return await ComputeSession.load_all(info.context, status=status)
 
     @staticmethod
     async def resolve_compute_session(executor, info, sess_id, status=None):
