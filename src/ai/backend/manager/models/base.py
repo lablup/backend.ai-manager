@@ -234,3 +234,12 @@ class BigInt(Scalar):
                 # treat as float
                 return float(int(num))
             return num
+
+
+class Item(graphene.Interface):
+    id = graphene.ID()
+
+
+class PaginatedList(graphene.Interface):
+    items = graphene.List(Item, required=True)
+    total_count = graphene.Int(required=True)

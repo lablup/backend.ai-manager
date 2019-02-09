@@ -7,11 +7,11 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common.types import ResourceSlot, BinarySize
-from .base import metadata, EnumType
+from .base import metadata, EnumType, Item, PaginatedList
 
 __all__ = (
     'agents', 'AgentStatus',
-    'Agent',
+    'AgentList', 'Agent',
 )
 
 
@@ -40,7 +40,11 @@ agents = sa.Table(
 
 
 class Agent(graphene.ObjectType):
-    id = graphene.String()
+
+    class Meta:
+        interfaces = (Item, )
+
+    id = graphene.ID()
     status = graphene.String()
     region = graphene.String()
     available_slots = graphene.JSONString()
@@ -104,6 +108,39 @@ class Agent(graphene.ObjectType):
         return await loader.load(self.id)
 
     @staticmethod
+    async def load_count(context, status=None):
+        async with context['dbpool'].acquire() as conn:
+            query = (sa.select([sa.func.count(agents.c.id)])
+                       .select_from(agents)
+                       .as_scalar())
+            if status is not None:
+                status = AgentStatus[status]
+                query = query.where(agents.c.status == status)
+            result = await conn.execute(query)
+            count = await result.fetchone()
+            return count[0]
+
+    @staticmethod
+    async def load_slice(context, limit, offset, status=None):
+        async with context['dbpool'].acquire() as conn:
+            # TODO: optimization for pagination using subquery, join
+            query = (sa.select('*')
+                       .select_from(agents)
+                       .order_by(agents.c.id)
+                       .limit(limit)
+                       .offset(offset))
+            if status is not None:
+                status = AgentStatus[status]
+                query = query.where(agents.c.status == status)
+            result = await conn.execute(query)
+            rows = await result.fetchall()
+            _agents = []
+            for r in rows:
+                _agent = Agent.from_row(context, r)
+                await Agent._append_dynamic_fields(context, _agent)
+                _agents.append(_agent)
+            return _agents
+
     async def _append_dynamic_fields(context, agent):
         rs = context['redis_stat']
         cpu_pct, mem_cur_bytes = await rs.hmget(
@@ -148,3 +185,10 @@ class Agent(graphene.ObjectType):
                 await Agent._append_dynamic_fields(context, o)
                 objs_per_key[row.id] = o
         return tuple(objs_per_key.values())
+
+
+class AgentList(graphene.ObjectType):
+    class Meta:
+        interfaces = (PaginatedList, )
+
+    items = graphene.List(Agent, required=True)

@@ -7,11 +7,11 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common.types import ResourceSlot, BinarySize
-from .base import metadata, zero_if_none, BigInt, EnumType, IDColumn
+from .base import metadata, zero_if_none, BigInt, EnumType, IDColumn, EnumType, IDColumn, Item, PaginatedList
 
 __all__ = (
     'kernels', 'KernelStatus',
-    'ComputeSession', 'ComputeWorker', 'Computation',
+    'ComputeSessionList', 'ComputeSession', 'ComputeWorker', 'Computation',
 )
 
 
@@ -92,7 +92,7 @@ kernels = sa.Table(
 
 class SessionCommons:
     sess_id = graphene.String()
-    id = graphene.UUID()
+    id = graphene.ID()
     role = graphene.String()
     image = graphene.String()
     registry = graphene.String()
@@ -278,6 +278,8 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
     '''
     Represents a master session.
     '''
+    class Meta:
+        interfaces = (Item, )
 
     tag = graphene.String()  # Only for ComputeSession
 
@@ -295,6 +297,41 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             status = KernelStatus[status]
         loader = manager.get_loader('ComputeWorker', status=status)
         return await loader.load(self.sess_id)
+
+    @staticmethod
+    async def load_count(context, access_key=None, status=None):
+        async with context['dbpool'].acquire() as conn:
+            query = (sa.select([sa.func.count(kernels.c.sess_id)])
+                       .select_from(kernels)
+                       .where(kernels.c.role == 'master')
+                       .as_scalar())
+            if status is not None:
+                status = KernelStatus[status]
+                query = query.where(kernels.c.status == status)
+            if access_key is not None:
+                query = query.where(kernels.c.access_key == access_key)
+            result = await conn.execute(query)
+            count = await result.fetchone()
+            return count[0]
+
+    @staticmethod
+    async def load_slice(context, limit, offset, access_key=None, status=None):
+        async with context['dbpool'].acquire() as conn:
+            # TODO: optimization for pagination using subquery, join
+            query = (sa.select('*')
+                       .select_from(kernels)
+                       .where(kernels.c.role == 'master')
+                       .order_by(sa.desc(kernels.c.created_at))
+                       .limit(limit)
+                       .offset(offset))
+            if status is not None:
+                status = KernelStatus[status]
+                query = query.where(kernels.c.status == status)
+            if access_key is not None:
+                query = query.where(kernels.c.access_key == access_key)
+            result = await conn.execute(query)
+            rows = await result.fetchall()
+            return [ComputeSession.from_row(context, r) for r in rows]
 
     @staticmethod
     async def load_all(context, status=None):
@@ -362,6 +399,13 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
     def parse_row(cls, context, row):
         common_props = super().parse_row(context, row)
         return {**common_props, 'tag': row['tag']}
+
+
+class ComputeSessionList(graphene.ObjectType):
+    class Meta:
+        interfaces = (PaginatedList, )
+
+    items = graphene.List(ComputeSession, required=True)
 
 
 class ComputeWorker(SessionCommons, graphene.ObjectType):
