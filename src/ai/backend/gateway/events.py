@@ -3,8 +3,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 import functools
 import logging
+from pathlib import Path
 import secrets
-import sys
 from typing import Callable
 
 from aiohttp import web
@@ -17,14 +17,10 @@ from ai.backend.common.logging import BraceStyleAdapter
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.events'))
 
+ipc_base_path = Path('/tmp/backend.ai/ipc')
 ipc_key = secrets.token_hex(8)
-
-if sys.platform == 'darwin':
-    EVENT_IPC_ADDR = f'ipc://ai.backend.agent-events.{ipc_key}'
-elif sys.platform == 'linux':
-    EVENT_IPC_ADDR = f'ipc://@/ai.backend.agent-events.{ipc_key}'
-else:
-    raise NotImplementedError('unsupported platform')
+ipc_events_sockpath = ipc_base_path / f'events-{ipc_key}.sock'
+EVENT_IPC_ADDR = f'ipc://{ipc_events_sockpath}'
 
 
 def event_router(_, pidx, args):
@@ -34,6 +30,7 @@ def event_router(_, pidx, args):
     in_sock = ctx.socket(zmq.PULL)
     in_sock.bind(f'tcp://*:{args[0].events_port}')
     out_sock = ctx.socket(zmq.PUSH)
+    ipc_base_path.mkdir(parents=True, exist_ok=True)
     out_sock.bind(EVENT_IPC_ADDR)
     try:
         zmq.proxy(in_sock, out_sock)
@@ -46,6 +43,7 @@ def event_router(_, pidx, args):
         in_sock.close()
         out_sock.close()
         ctx.term()
+        ipc_events_sockpath.unlink()
 
 
 @dataclass
