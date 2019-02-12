@@ -27,6 +27,7 @@ from ..gateway.exceptions import (
     AgentError)
 from .models import (
     agents, kernels, keypairs,
+    vfolders, vfolder_permissions,
     AgentStatus, KernelStatus,
     DefaultForUnspecified,
 )
