@@ -183,7 +183,7 @@ def dealias(args):
     '''Remove an image alias.'''
     with config_ctx(args) as (loop, config_server):
         loop.run_until_complete(
-            config_server.alias(args.alias))
+            config_server.dealias(args.alias))
 
 
 dealias.add('alias', type=str, help='The alias of an image to remove.')

@@ -192,7 +192,7 @@ class ConfigServer:
             'digest': item[''],
             'labels': item.get('labels', {}),
             'aliases': reverse_aliases.get(
-                f'{image_ref.name}:{image_ref.tag}', []),
+                image_ref.canonical, []),
             'size_bytes': item.get('size_bytes', 0),
             'resource_limits': res_limits,
             'supported_accelerators': accels,
@@ -209,8 +209,7 @@ class ConfigServer:
 
     async def inspect_image(self, reference: Union[str, ImageRef]):
         if isinstance(reference, str):
-            known_registries = await get_known_registries(self.etcd)
-            ref = ImageRef(reference, known_registries)
+            ref = await ImageRef.resolve_alias(reference, self.etcd)
         else:
             ref = reference
         reverse_aliases = await self._scan_reverse_aliases()
