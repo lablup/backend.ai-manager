@@ -103,14 +103,10 @@ from ai.backend.common.docker import (
     login as registry_login,
     get_registry_info
 )
-from .exceptions import ServerMisconfiguredError
 from .manager import ManagerStatus
 from .utils import chunked
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
-
-_default_cpu_max = 1
-_default_mem_max = '1g'
 
 
 class ConfigServer:
@@ -172,20 +168,10 @@ class ConfigServer:
         for slot_key, slot_range in item['resource'].items():
             min_value = slot_range.get('min')
             if min_value is None:
-                raise ServerMisconfiguredError(
-                    f'{image_ref} is not configured to use "{slot_key}" resource.')
+                min_value = 0
             max_value = slot_range.get('max')
             if max_value is None:
-                if slot_key == 'cpu':
-                    max_value = max(Decimal(min_value),
-                                    Decimal(_default_cpu_max))
-                elif slot_key == 'mem':
-                    max_value = '{:g}'.format(
-                        max(BinarySize.from_str(min_value),
-                            BinarySize.from_str(_default_mem_max)))
-                else:
-                    # disallowed!
-                    max_value = '0'
+                max_value = 0
             res_limits.append({
                 'key': slot_key,
                 'min': min_value,
@@ -418,6 +404,7 @@ class ConfigServer:
                 continue
             coros.append(self._rescan_images(registry, registry_url, creds))
         await asyncio.gather(*coros)
+        # TODO: delete images removed from registry?
 
     async def alias(self, alias: str, target: str):
         await self.etcd.put(f'images/_aliases/{etcd_quote(alias)}', target)
@@ -501,19 +488,12 @@ class ConfigServer:
             if slot_unit is None:
                 # ignore unknown slots
                 continue
-            min_value = slot_range['min']
+            min_value = slot_range.get('min')
+            if min_value is None:
+                min_value = '0'  # not required
             max_value = slot_range.get('max')
             if max_value is None:
-                if slot_key == 'cpu':
-                    max_value = max(Decimal(min_value),
-                                    Decimal(_default_cpu_max))
-                elif slot_key == 'mem':
-                    max_value = '{:g}'.format(
-                        max(BinarySize.from_str(min_value),
-                            BinarySize.from_str(_default_mem_max)))
-                else:
-                    # disallowed!
-                    max_value = '0'
+                max_value = '0'  # unlimited
             if slot_unit == 'bytes':
                 if not isinstance(min_value, Decimal):
                     min_value = BinarySize.from_str(min_value)
@@ -526,6 +506,13 @@ class ConfigServer:
                     max_value = Decimal(max_value)
             min_slot[slot_key] = min_value
             max_slot[slot_key] = max_value
+
+        # fill missing
+        for slot_key in slot_units.keys():
+            if slot_key not in min_slot:
+                min_slot[slot_key] = 0
+            if slot_key not in max_slot:
+                max_slot[slot_key] = 0
 
         return min_slot, max_slot
 

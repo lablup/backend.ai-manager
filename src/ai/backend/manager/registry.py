@@ -398,27 +398,39 @@ class AgentRegistry:
                 if slot_key not in known_slot_types:
                     raise InvalidAPIParameters(
                         f'Unknown requested resource slot: {slot_key}')
-            requested_slots = ResourceSlot(creation_config['resources'])
+            try:
+                requested_slots = ResourceSlot(creation_config['resources']) \
+                    .as_numeric(known_slot_types, unknown='error', fill_missing=True)
+            except ValueError:
+                log.exception('request_slots & image_slots calculation error')
+                # happens when requested_slots have more keys
+                # than the image-defined slots
+                # (e.g., image does not support accelerators
+                #  requested by the client)
+                raise InvalidAPIParameters(
+                    'Your resource request has resource types '
+                    'not supported by the image.')
+            for slot_key, value in requested_slots.items():
+                if value is None or value == 0:
+                    requested_slots[slot_key] = image_min_slots[slot_key]
         else:
             # Handle the legacy clients (prior to v19.03)
             # We support CPU/memory conversion, but to use accelerators users
             # must update their clients because the slots names are not provided
             # by the accelerator plugins.
             cpu = creation_config.get('instanceCores')
-            if cpu is None:
-                # the key is there but may be null.
-                cpu = image_max_slots['cpu']
+            if cpu is None:  # the key is there but may be null.
+                cpu = image_min_slots['cpu']
             mem = creation_config.get('instanceMemory')
-            if mem is None:
-                # the key is there but may be null.
-                mem = image_max_slots['mem']
+            if mem is None:  # the key is there but may be null.
+                mem = image_min_slots['mem']
             else:
                 # In legacy clients, memory is normalized to GiB.
                 mem = str(mem) + 'g'
             requested_slots = ResourceSlot({
                 'cpu': cpu,
                 'mem': mem,
-            }).as_numeric(known_slot_types)
+            }).as_numeric(known_slot_types, fill_missing=True)
             gpu = creation_config.get('instanceGPUs')
             if gpu is not None:
                 raise InvalidAPIParameters('Client upgrade required '
@@ -427,39 +439,37 @@ class AgentRegistry:
             if tpu is not None:
                 raise InvalidAPIParameters('Client upgrade required '
                                            'to use TPUs (v19.03+).')
-        log.debug('oringally requested resource slots: {!r}', requested_slots)
 
         # Check the image resource slots.
-        try:
-            # Check if: requested >= image-minimum
-            requested_slots = requested_slots.as_numeric(
-                known_slot_types, unknown='error', fill_missing=False)
-            if image_min_slots > requested_slots:
-                raise InvalidAPIParameters(
-                    'Your resource request is smaller than '
-                    'the minimum required by the image.')
+        log.debug('requested_slots: {}', requested_slots)
+        log.debug('image_min_slots: {}', image_min_slots)
+        log.debug('image_max_slots: {}', image_max_slots)
 
-            # Check if: requested <= image-maximum
-            if not (requested_slots <= image_max_slots):
-                raise InvalidAPIParameters(
-                    'Your resource request is larger than '
-                    'the maximum allowed by the image.  '
-                    'Admins may need to explicitly configure the limits.')
-
-            # If the resource is not specified, fill them with image minimums.
-            for slot_key, slot_val in image_min_slots.items():
-                if slot_key not in known_slot_types:
-                    continue
-                if slot_key not in requested_slots:
-                    requested_slots[slot_key] = slot_val
-        except ValueError:
-            # happens when requested_slots have more keys
-            # than the image-defined slots
-            # (e.g., image does not support accelerators
-            #  requested by the client)
+        # Check if: requested >= image-minimum
+        if image_min_slots > requested_slots:
             raise InvalidAPIParameters(
-                'Your resource request has resource types '
-                'not supported by the image.')
+                'Your resource request is smaller than '
+                'the minimum required by the image. ({})'.format(' '.join(
+                    f'{k}={v}' for k, v in
+                    image_min_slots.as_humanized(known_slot_types).items()
+                )))
+
+        # Check if: requested <= image-maximum
+        if not (requested_slots.lte_unlimited(image_max_slots)):
+            raise InvalidAPIParameters(
+                'Your resource request is larger than '
+                'the maximum allowed by the image. ({}; zero means unlimited)'
+                .format(' '.join(
+                    f'{k}={v}' for k, v in
+                    image_max_slots.as_humanized(known_slot_types).items()
+                )))
+
+        # If the resource is not specified, fill them with image minimums.
+        for slot_key, slot_val in image_min_slots.items():
+            if slot_key not in known_slot_types:
+                continue
+            if slot_key not in requested_slots:
+                requested_slots[slot_key] = slot_val
 
         # Check the keypair resource policy.
         # - Keypair resource occupation includes both running and enqueued sessions,
@@ -480,17 +490,27 @@ class AgentRegistry:
                  .as_numeric(known_slot_types,
                              unknown='drop', fill_missing=True))
                 async for row in conn.execute(query)], zero)
-            log.debug('{} requesting {}\ncurrently occupies {}\nin total out of {} '
-                      '(default {})',
-                      access_key, requested_slots, key_occupied, total_allowed,
-                      resource_policy['default_for_unspecified'])
+            log.debug('{} current_occupancy: {}', access_key, key_occupied)
+            log.debug('{} total_allowed: {} (default {})',
+                      access_key, total_allowed,
+                      resource_policy['default_for_unspecified'].name)
             if (resource_policy['default_for_unspecified'] ==
                 DefaultForUnspecified.LIMITED):
                 if not (key_occupied + requested_slots <= total_allowed):
-                    raise InvalidAPIParameters('Your resource quota is exceeded.')
+                    raise InvalidAPIParameters(
+                        'Your resource quota is exceeded. ({})'
+                        .format(' '.join(
+                            f'{k}={v}' for k, v in
+                            total_allowed.as_humanized(known_slot_types).items()
+                        )))
             else:
                 if not (key_occupied + requested_slots).lte_unlimited(total_allowed):
-                    raise InvalidAPIParameters('Your resource quota is exceeded.')
+                    raise InvalidAPIParameters(
+                        'Your resource quota is exceeded. ({}; zero means unlimited)'
+                        .format(' '.join(
+                            f'{k}={v}' for k, v in
+                            total_allowed.as_humanized(known_slot_types).items()
+                        )))
 
         # ==== END: ENQUEUING PART ====
 
