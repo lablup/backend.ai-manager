@@ -1,6 +1,22 @@
 Changes
 =======
 
+19.03.0b9 (2018-02-15)
+----------------------
+
+- NEW: Add pagination support to the GraphQL API (#132)
+
+- CHANGE: Unspecified (or zero'ed) per-image resource limits are now treated as
+  *unlimited*.
+
+- Implement RW/RO permissions when mounting shared vfolders (#82)
+
+- Fix various bugs including CLI commands for image aliases, the session restart
+  API, skipping SSL certificate verification in CLI commands, fixture population with
+  enum values and already-inserted rows, and session termination hang-up in specific
+  environments where locally bound sockets are not accessible via the node's
+  network-local IP address.
+
 19.03.0b8 (2018-02-08)
 ----------------------
 
