@@ -44,6 +44,7 @@ def config_ctx(args):
         timeout=3.0,
         encoding='utf8',
         db=REDIS_IMAGE_DB))
+    ctx['config'] = args
     config_server = ConfigServer(ctx, args.etcd_addr, args.namespace)
     with contextlib.closing(loop):
         try:

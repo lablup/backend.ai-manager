@@ -6,5 +6,6 @@ export BACKEND_ETCD_ADDR=localhost:8120
 export BACKEND_DB_USER=postgres
 export BACKEND_DB_PASSWORD=develove
 export BACKEND_DB_NAME=backend
+export BACKEND_SKIP_SSLCERT_VALIDATION=no
 
 exec "$@"
