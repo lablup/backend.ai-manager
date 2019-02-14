@@ -9,8 +9,7 @@ from typing import Callable
 
 from aiohttp import web
 from aiojobs.aiohttp import get_scheduler_from_app
-import aiozmq
-import zmq
+import zmq, zmq.asyncio
 
 from ai.backend.common import msgpack
 from ai.backend.common.logging import BraceStyleAdapter
@@ -76,23 +75,25 @@ class EventDispatcher:
 
 
 async def event_subscriber(dispatcher):
-    event_sock = await aiozmq.create_zmq_stream(
-        zmq.PULL, connect=EVENT_IPC_ADDR)
+    ctx = zmq.asyncio.Context()
+    event_sock = ctx.socket(zmq.PULL)
+    event_sock.connect(EVENT_IPC_ADDR)
     try:
         while True:
-            data = await event_sock.read()
+            data = await event_sock.recv_multipart()
+            if not data:
+                break
             event_name = data[0].decode('ascii')
             agent_id = data[1].decode('utf8')
             args = msgpack.unpackb(data[2])
             await dispatcher.dispatch(event_name, agent_id, args)
     except asyncio.CancelledError:
         pass
-    except aiozmq.ZmqStreamClosed:
-        pass
     except Exception:
         log.exception('unexpected error')
     finally:
         event_sock.close()
+        ctx.term()
 
 
 async def init(app):
