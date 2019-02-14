@@ -27,7 +27,6 @@ from ..gateway.exceptions import (
     AgentError)
 from .models import (
     agents, kernels, keypairs,
-    vfolders, vfolder_permissions,
     AgentStatus, KernelStatus,
     DefaultForUnspecified,
 )
@@ -685,10 +684,7 @@ class AgentRegistry:
                 kernels.c.image,
                 kernels.c.registry,
                 kernels.c.occupied_slots,
-                kernels.c.occupied_shares,
                 kernels.c.environ,
-                kernels.c.cpu_set,
-                kernels.c.gpu_set,
             )
             async with self.dbpool.acquire() as conn, conn.begin():
                 kernel = await self.get_session(sess_id, access_key,
@@ -706,8 +702,6 @@ class AgentRegistry:
             image_info = await self.config_server.inspect_image(image_ref)
 
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
-                # TODO: read from vfolders attachment table
-                mounts = []
                 environ = {
                      k: v for k, v in
                      map(lambda s: s.split('=', 1), kernel['environ'])
@@ -715,6 +709,7 @@ class AgentRegistry:
                 new_config = {
                     'image': {
                         'registry': {
+                            'name': image_ref.registry,
                             'url': str(registry_url),
                             **registry_creds,
                         },
@@ -722,10 +717,9 @@ class AgentRegistry:
                         'canonical': kernel['image'],
                         'labels': image_info['labels'],
                     },
-                    'mounts': mounts,
-                    'slots': kernel['occupied_slots'],
-                    'shares': kernel['occupied_shares'],
                     'environ': environ,
+                    'mounts': [],  # recovered from container config
+                    'resource_slots': kernel['occupied_slots'],  # unused currently
                 }
                 kernel_info = await rpc.call.restart_kernel(str(kernel['id']),
                                                             new_config)

@@ -7,7 +7,10 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common.types import ResourceSlot, BinarySize
-from .base import metadata, zero_if_none, BigInt, EnumType, IDColumn, EnumType, IDColumn, Item, PaginatedList
+from .base import (
+    metadata, zero_if_none,
+    BigInt, IDColumn, EnumType, Item, PaginatedList,
+)
 
 __all__ = (
     'kernels', 'KernelStatus',
