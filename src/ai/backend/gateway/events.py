@@ -34,7 +34,7 @@ def event_router(_, pidx, args):
     out_sock.bind(EVENT_IPC_ADDR)
     try:
         zmq.proxy(in_sock, out_sock)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         pass
     except:
         log.exception('unexpected error')
