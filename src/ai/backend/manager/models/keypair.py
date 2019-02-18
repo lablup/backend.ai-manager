@@ -1,3 +1,4 @@
+import asyncio
 import base64
 from collections import OrderedDict
 import secrets
@@ -6,6 +7,7 @@ import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import false
+import psycopg2 as pg
 
 from .base import metadata
 
@@ -158,8 +160,8 @@ class CreateKeyPair(graphene.Mutation):
     msg = graphene.String()
     keypair = graphene.Field(lambda: KeyPair)
 
-    @staticmethod
-    async def mutate(root, info, user_id, props):
+    @classmethod
+    async def mutate(cls, root, info, user_id, props):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             ak = 'AKIA' + base64.b32encode(secrets.token_bytes(10)).decode('ascii')
             sk = secrets.token_urlsafe(30)
@@ -177,18 +179,23 @@ class CreateKeyPair(graphene.Mutation):
             query = (keypairs.insert().values(data))
             try:
                 result = await conn.execute(query)
+                if result.rowcount > 0:
+                    # Read the created key data from DB.
+                    checkq = keypairs.select().where(keypairs.c.access_key == ak)
+                    result = await conn.execute(checkq)
+                    o = KeyPair.from_row(await result.first())
+                    return cls(ok=True, msg='success', keypair=o)
+                else:
+                    return cls(ok=False, msg='failed to create keypair',
+                               keypair=None)
+            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+                return cls(ok=False, msg=f'integrity error: {e}',
+                           keypair=None)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                raise
             except Exception as e:
-                return CreateKeyPair(ok=False, msg=str(e),
-                                     keypair=None)
-            if result.rowcount > 0:
-                # Read the created key data from DB.
-                checkq = keypairs.select().where(keypairs.c.access_key == ak)
-                result = await conn.execute(checkq)
-                o = KeyPair.from_row(await result.first())
-                return CreateKeyPair(ok=True, msg='success', keypair=o)
-            else:
-                return CreateKeyPair(ok=False, msg='failed to create keypair',
-                                     keypair=None)
+                return cls(ok=False, msg=f'unexpected error: {e}',
+                           keypair=None)
 
 
 class ModifyKeyPair(graphene.Mutation):
@@ -200,8 +207,8 @@ class ModifyKeyPair(graphene.Mutation):
     ok = graphene.Boolean()
     msg = graphene.String()
 
-    @staticmethod
-    async def mutate(root, info, access_key, props):
+    @classmethod
+    async def mutate(cls, root, info, access_key, props):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
 
@@ -215,14 +222,23 @@ class ModifyKeyPair(graphene.Mutation):
             set_if_set('resource_policy')
             set_if_set('rate_limit')
 
-            query = (keypairs.update()
-                             .values(data)
-                             .where(keypairs.c.access_key == access_key))
-            result = await conn.execute(query)
-            if result.rowcount > 0:
-                return ModifyKeyPair(ok=True, msg='success')
-            else:
-                return ModifyKeyPair(ok=False, msg='failed to modify keypair')
+            try:
+                query = (keypairs.update()
+                                 .values(data)
+                                 .where(keypairs.c.access_key == access_key))
+                result = await conn.execute(query)
+                if result.rowcount > 0:
+                    return cls(ok=True, msg='success')
+                else:
+                    return cls(ok=False, msg='no such keypair')
+            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+                return cls(ok=False,
+                           msg=f'integrity error: {e}')
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                raise
+            except Exception as e:
+                return cls(ok=False,
+                           msg=f'unexpected error: {e}')
 
 
 class DeleteKeyPair(graphene.Mutation):
@@ -233,13 +249,22 @@ class DeleteKeyPair(graphene.Mutation):
     ok = graphene.Boolean()
     msg = graphene.String()
 
-    @staticmethod
-    async def mutate(root, info, access_key):
+    @classmethod
+    async def mutate(cls, root, info, access_key):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
-            query = (keypairs.delete()
-                             .where(keypairs.c.access_key == access_key))
-            result = await conn.execute(query)
-            if result.rowcount > 0:
-                return DeleteKeyPair(ok=True, msg='success')
-            else:
-                return DeleteKeyPair(ok=False, msg='failed to delete keypair')
+            try:
+                query = (keypairs.delete()
+                                 .where(keypairs.c.access_key == access_key))
+                result = await conn.execute(query)
+                if result.rowcount > 0:
+                    return cls(ok=True, msg='success')
+                else:
+                    return cls(ok=False, msg='no such keypair')
+            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+                return cls(ok=False,
+                           msg=f'integrity error: {e}')
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                raise
+            except Exception as e:
+                return cls(ok=False,
+                           msg=f'unexpected error: {e}')

@@ -1,3 +1,4 @@
+import asyncio
 from collections import OrderedDict
 import enum
 
@@ -5,6 +6,7 @@ import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
+import psycopg2 as pg
 
 from .base import metadata, BigInt, EnumType
 
@@ -12,6 +14,9 @@ __all__ = (
     'keypair_resource_policies',
     'KeyPairResourcePolicy',
     'DefaultForUnspecified',
+    'CreateKeyPairResourcePolicy',
+    'ModifyKeyPairResourcePolicy',
+    'DeleteKeyPairResourcePolicy',
 )
 
 
@@ -90,3 +95,143 @@ class KeyPairResourcePolicy(graphene.ObjectType):
                 o = cls.from_row(context, row)
                 objs_per_key[row.id] = o
         return tuple(objs_per_key.values())
+
+
+class KeyPairResourcePolicyInput(graphene.InputObjectType):
+    default_for_unspecified = graphene.Boolean(required=True)
+    total_resource_slots = graphene.JSONString(required=True)
+    max_concurrent_sessions = graphene.Int(required=True)
+    max_containers_per_session = graphene.Int(required=True)
+    max_vfolder_count = graphene.Int(required=True)
+    max_vfolder_size = BigInt(required=True)
+    allowed_vfolder_hosts = graphene.List(lambda: graphene.String)
+
+    # When creating, you MUST set all fields.
+    # When modifying, set the field to "None" to skip setting the value.
+
+
+class CreateKeyPairResourcePolicy(graphene.Mutation):
+
+    class Arguments:
+        name = graphene.String(required=True)
+        props = KeyPairResourcePolicyInput(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+    resource_policy = graphene.Field(lambda: KeyPairResourcePolicy)
+
+    @classmethod
+    async def mutate(cls, root, info, name, props):
+        async with info.context['dbpool'].acquire() as conn, conn.begin():
+            data = {
+                'name': name,
+                'default_for_unspecified':
+                    DefaultForUnspecified(props.default_for_unspecified),
+                'total_resource_slots': props.total_resource_slots,
+                'max_concurrent_sessions': props.max_concurrent_sessions,
+                'max_containers_per_session': props.max_containers_per_session,
+                'max_vfolder_count': props.max_vfolder_count,
+                'max_vfolder_size': props.max_vfolder_size,
+                'allowed_vfolder_hosts': props.allowed_vfolder_hosts,
+            }
+            query = (keypair_resource_policies.insert().values(data))
+            try:
+                result = await conn.execute(query)
+                if result.rowcount > 0:
+                    checkq = (
+                        keypair_resource_policies.select()
+                        .where(keypair_resource_policies.c.name == name))
+                    result = await conn.execute(checkq)
+                    o = KeyPairResourcePolicy.from_row(
+                        info.context, await result.first())
+                    return cls(ok=True, msg='success', resource_policy=o)
+                else:
+                    return cls(ok=False, msg='failed to create resource policy',
+                               resource_policy=None)
+            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+                return cls(ok=False, msg=f'integrity error: {e}',
+                           resource_policy=None)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                raise
+            except Exception as e:
+                return cls(
+                    ok=False,
+                    msg=f'unexpected error ({type(e).__name__}): {e}',
+                    resource_policy=None)
+
+
+class ModifyKeyPairResourcePolicy(graphene.Mutation):
+
+    class Arguments:
+        name = graphene.String(required=True)
+        props = KeyPairResourcePolicyInput(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @classmethod
+    async def mutate(cls, root, info, name, props):
+        async with info.context['dbpool'].acquire() as conn, conn.begin():
+            data = {}
+
+            def set_if_set(name, clean=lambda v: v):
+                v = getattr(props, name)
+                if v is not None:
+                    data[name] = clean(v)
+
+            set_if_set('default_for_unspecified', DefaultForUnspecified)
+            set_if_set('total_resource_slots')
+            set_if_set('max_concurrent_sessions')
+            set_if_set('max_containers_per_session')
+            set_if_set('max_vfolder_count')
+            set_if_set('max_vfolder_size')
+            set_if_set('allowed_vfolder_hosts')
+
+            try:
+                query = (
+                    keypair_resource_policies.update()
+                    .values(data)
+                    .where(keypair_resource_policies.c.name == name))
+                result = await conn.execute(query)
+                if result.rowcount > 0:
+                    return cls(ok=True, msg='success')
+                else:
+                    return cls(ok=False, msg='no such resource policy')
+            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+                return cls(ok=False,
+                           msg=f'integrity error: {e}')
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                raise
+            except Exception as e:
+                return cls(ok=False,
+                           msg=f'unexpected error: {e}')
+
+
+class DeleteKeyPairResourcePolicy(graphene.Mutation):
+
+    class Arguments:
+        name = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @classmethod
+    async def mutate(cls, root, info, name):
+        async with info.context['dbpool'].acquire() as conn, conn.begin():
+            query = (
+                keypair_resource_policies.delete()
+                .where(keypair_resource_policies.c.name == name))
+            try:
+                result = await conn.execute(query)
+                if result.rowcount > 0:
+                    return cls(ok=True, msg='success')
+                else:
+                    return cls(ok=False, msg='no such resource policy')
+            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+                return cls(ok=False,
+                           msg=f'integrity error: {e}')
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                raise
+            except Exception as e:
+                return cls(ok=False,
+                           msg=f'unexpected error: {e}')

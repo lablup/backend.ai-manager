@@ -22,7 +22,8 @@ from ..manager.models import (
     KeyPair, CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
     ComputeSession, ComputeSessionList, ComputeWorker, KernelStatus,
     VirtualFolder,
-    KeyPairResourcePolicy,
+    KeyPairResourcePolicy, CreateKeyPairResourcePolicy,
+    ModifyKeyPairResourcePolicy, DeleteKeyPairResourcePolicy,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
@@ -95,6 +96,9 @@ class MutationForAdmin(graphene.ObjectType):
     rescan_images = RescanImages.Field()
     alias_image = AliasImage.Field()
     dealias_image = DealiasImage.Field()
+    create_keypair_resource_policy = CreateKeyPairResourcePolicy.Field()
+    modify_keypair_resource_policy = ModifyKeyPairResourcePolicy.Field()
+    delete_keypair_resource_policy = DeleteKeyPairResourcePolicy.Field()
 
 
 class MutationForUser(graphene.ObjectType):
