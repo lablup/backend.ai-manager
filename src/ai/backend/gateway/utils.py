@@ -1,6 +1,7 @@
 from datetime import datetime
 import functools
 import io
+import inspect
 import itertools
 import numbers
 import re
@@ -127,3 +128,15 @@ def chunked(iterable, n):
         if not chunk:
             return
         yield chunk
+
+
+async def call_non_bursty(coro, max_bursts=64, max_idle=100):
+    '''
+    Execute a coroutine once upon max_bursts bursty invocations or max_idle
+    milliseconds after bursts smaller than max_bursts.
+    '''
+    # TODO: implement
+    if inspect.iscoroutine(coro):
+        await coro
+    elif inspect.iscoroutinefunction(coro):
+        await coro()

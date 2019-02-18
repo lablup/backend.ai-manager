@@ -5,6 +5,7 @@ WebSocket-based streaming kernel interaction APIs.
 from abc import ABCMeta, abstractmethod
 import asyncio
 import logging
+from typing import Awaitable
 
 import aiohttp
 from aiohttp import web
@@ -19,12 +20,21 @@ class ServiceProxy(metaclass=ABCMeta):
     The abstract base class to implement service proxy handlers.
     '''
 
-    __slots__ = ('ws', 'host', 'port')
+    __slots__ = (
+        'ws', 'host', 'port',
+        'downstream_cb', 'upstream_cb', 'ping_cb',
+    )
 
-    def __init__(self, down_ws, dest_host, dest_port):
+    def __init__(self, down_ws, dest_host, dest_port, *,
+                 downstream_callback: Awaitable = None,
+                 upstream_callback: Awaitable = None,
+                 ping_callback: Awaitable = None):
         self.ws = down_ws
         self.host = dest_host
         self.port = dest_port
+        self.downstream_cb = downstream_callback
+        self.upstream_cb = upstream_callback
+        self.ping_cb = ping_callback
 
     @abstractmethod
     async def proxy(self):
@@ -35,8 +45,8 @@ class TCPProxy(ServiceProxy):
 
     __slots__ = ServiceProxy.__slots__ + ('down_task', )
 
-    def __init__(self, down_ws, dest_host, dest_port):
-        super().__init__(down_ws, dest_host, dest_port)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.down_task = None
 
     async def proxy(self):
@@ -54,15 +64,24 @@ class TCPProxy(ServiceProxy):
                         if not chunk:
                             break
                         await self.ws.send_bytes(chunk)
+                        if self.downstream_cb is not None:
+                            await self.downstream_cb(chunk)
                 except asyncio.CancelledError:
                     pass
 
             log.debug('TCPProxy connected {0}:{1}', self.host, self.port)
             self.down_task = asyncio.ensure_future(downstream())
             async for msg in self.ws:
-                if msg.type == web.WSMsgType.binary:
+                log.debug('wsmsg {}', msg)
+                if msg.type == web.WSMsgType.BINARY:
                     writer.write(msg.data)
                     await writer.drain()
+                    if self.upstream_cb is not None:
+                        await self.upstream_cb(msg.data)
+                elif msg.type == web.WSMsgType.PING:
+                    await self.ws.pong(msg.data)
+                    if self.ping_cb is not None:
+                        await self.ping_cb(msg.data)
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     log.debug('ws connection closed with exception %s' %
                               self.ws.exception())
@@ -83,14 +102,21 @@ class WebSocketProxy:
     __slots__ = (
         'up_conn', 'down_conn',
         'upstream_buffer', 'upstream_buffer_task',
+        'downstream_cb', 'upstream_cb', 'ping_cb',
     )
 
     def __init__(self, up_conn: aiohttp.ClientWebSocketResponse,
-                 down_conn: web.WebSocketResponse):
+                 down_conn: web.WebSocketResponse, *,
+                 downstream_callback: Awaitable = None,
+                 upstream_callback: Awaitable = None,
+                 ping_callback: Awaitable = None):
         self.up_conn = up_conn
         self.down_conn = down_conn
         self.upstream_buffer = asyncio.Queue()
         self.upstream_buffer_task = None
+        self.downstream_cb = downstream_callback
+        self.upstream_cb = upstream_callback
+        self.ping_cb = ping_callback
 
     async def proxy(self):
         asyncio.ensure_future(self.downstream())
@@ -101,6 +127,11 @@ class WebSocketProxy:
             async for msg in self.down_conn:
                 if msg.type in (web.WSMsgType.TEXT, web.WSMsgType.binary):
                     await self.write(msg.data, msg.type)
+                    if self.upstream_cb is not None:
+                        await self.upstream_cb(msg.data)
+                elif msg.type == web.WSMsgType.PING:
+                    if self.ping_cb is not None:
+                        await self.ping_cb(msg.data)
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     log.error("ws connection closed with exception {}",
                               self.up_conn.exception())
@@ -121,8 +152,12 @@ class WebSocketProxy:
             async for msg in self.up_conn:
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     await self.down_conn.send_str(msg.data)
-                if msg.type == aiohttp.WSMsgType.binary:
+                    if self.downstream_cb is not None:
+                        await self.downstream_cb(msg.data)
+                if msg.type == aiohttp.WSMsgType.BINARY:
                     await self.down_conn.send_bytes(msg.data)
+                    if self.downstream_cb is not None:
+                        await self.downstream_cb(msg.data)
                 elif msg.type == aiohttp.WSMsgType.CLOSED:
                     break
                 elif msg.type == aiohttp.WSMsgType.ERROR:

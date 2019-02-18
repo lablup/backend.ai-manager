@@ -8,6 +8,7 @@ NOTE: For nginx-based setups, we need to gather all websocket-based API handlers
 import asyncio
 import base64
 from collections import defaultdict
+from functools import partial
 import json
 import logging
 import secrets
@@ -29,7 +30,7 @@ from .exceptions import (
     InternalServerError,
 )
 from .manager import READ_ALLOWED, server_status_required
-from .utils import not_impl_stub
+from .utils import not_impl_stub, call_non_bursty
 from .wsproxy import TCPProxy
 from ..manager.models import kernels
 
@@ -331,6 +332,13 @@ async def stream_proxy(request) -> web.Response:
     # TODO: apply a (distributed) semaphore to limit concurrency per user.
     await registry.increment_session_usage(sess_id, access_key)
 
+    async def refresh_cb(kernel_id: str, data: bytes):
+        await call_non_bursty(registry.refresh_session(sess_id, access_key))
+
+    down_cb = partial(refresh_cb, kernel.id)
+    up_cb = partial(refresh_cb, kernel.id)
+    ping_cb = partial(refresh_cb, kernel.id)
+
     opts = {}
     result = await registry.start_service(sess_id, access_key,
                                           service, opts)
@@ -339,9 +347,12 @@ async def stream_proxy(request) -> web.Response:
         raise InternalServerError(msg)
 
     # TODO: weakref to proxies for graceful shutdown?
-    ws = web.WebSocketResponse()
+    ws = web.WebSocketResponse(autoping=False)
     await ws.prepare(request)
-    proxy = proxy_cls(ws, dest[0], dest[1])
+    proxy = proxy_cls(ws, dest[0], dest[1],
+                      downstream_callback=down_cb,
+                      upstream_callback=up_cb,
+                      ping_callback=ping_cb)
     return await proxy.proxy()
 
 

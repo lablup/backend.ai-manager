@@ -165,6 +165,7 @@ class AgentRegistry:
             'download_file': KernelExecutionFailed,
             'list_files': KernelExecutionFailed,
             'get_logs': KernelExecutionFailed,
+            'refresh_session': KernelExecutionFailed,
         }
         exc_class = op_exc[op]
         # NOTE: Error logging is done outside of this actxmanager.
@@ -822,6 +823,17 @@ class AgentRegistry:
                 coro = rpc.call.get_logs(str(kernel['id']))
                 if coro is None:
                     log.warning('get_logs cancelled')
+                    return None
+                return await coro
+
+    async def refresh_session(self, sess_id, access_key):
+        async with self.handle_kernel_exception('refresh_session',
+                                                sess_id, access_key):
+            kernel = await self.get_session(sess_id, access_key)
+            async with RPCContext(kernel['agent_addr'], 30) as rpc:
+                coro = rpc.call.refresh_idle(str(kernel['id']))
+                if coro is None:
+                    log.warning('refresh_session cancelled')
                     return None
                 return await coro
 
