@@ -214,6 +214,7 @@ class ModifyKeyPair(graphene.Mutation):
 
             def set_if_set(name):
                 v = getattr(props, name)
+                # NOTE: unset optional fields are passed as null.
                 if v is not None:
                     data[name] = v
 

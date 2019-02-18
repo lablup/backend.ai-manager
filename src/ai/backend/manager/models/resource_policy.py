@@ -1,6 +1,7 @@
 import asyncio
 from collections import OrderedDict
 import enum
+import logging
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -8,7 +9,10 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 import psycopg2 as pg
 
+from ai.backend.common.logging import BraceStyleAdapter
 from .base import metadata, BigInt, EnumType
+
+log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.models'))
 
 __all__ = (
     'keypair_resource_policies',
@@ -97,8 +101,8 @@ class KeyPairResourcePolicy(graphene.ObjectType):
         return tuple(objs_per_key.values())
 
 
-class KeyPairResourcePolicyInput(graphene.InputObjectType):
-    default_for_unspecified = graphene.Boolean(required=True)
+class CreateKeyPairResourcePolicyInput(graphene.InputObjectType):
+    default_for_unspecified = graphene.String(required=True)
     total_resource_slots = graphene.JSONString(required=True)
     max_concurrent_sessions = graphene.Int(required=True)
     max_containers_per_session = graphene.Int(required=True)
@@ -106,15 +110,22 @@ class KeyPairResourcePolicyInput(graphene.InputObjectType):
     max_vfolder_size = BigInt(required=True)
     allowed_vfolder_hosts = graphene.List(lambda: graphene.String)
 
-    # When creating, you MUST set all fields.
-    # When modifying, set the field to "None" to skip setting the value.
+
+class ModifyKeyPairResourcePolicyInput(graphene.InputObjectType):
+    default_for_unspecified = graphene.String(required=False)
+    total_resource_slots = graphene.JSONString(required=False)
+    max_concurrent_sessions = graphene.Int(required=False)
+    max_containers_per_session = graphene.Int(required=False)
+    max_vfolder_count = graphene.Int(required=False)
+    max_vfolder_size = BigInt(required=False)
+    allowed_vfolder_hosts = graphene.List(lambda: graphene.String, required=False)
 
 
 class CreateKeyPairResourcePolicy(graphene.Mutation):
 
     class Arguments:
         name = graphene.String(required=True)
-        props = KeyPairResourcePolicyInput(required=True)
+        props = CreateKeyPairResourcePolicyInput(required=True)
 
     ok = graphene.Boolean()
     msg = graphene.String()
@@ -164,7 +175,7 @@ class ModifyKeyPairResourcePolicy(graphene.Mutation):
 
     class Arguments:
         name = graphene.String(required=True)
-        props = KeyPairResourcePolicyInput(required=True)
+        props = ModifyKeyPairResourcePolicyInput(required=True)
 
     ok = graphene.Boolean()
     msg = graphene.String()
@@ -176,10 +187,11 @@ class ModifyKeyPairResourcePolicy(graphene.Mutation):
 
             def set_if_set(name, clean=lambda v: v):
                 v = getattr(props, name)
+                # NOTE: unset optional fields are passed as null.
                 if v is not None:
                     data[name] = clean(v)
 
-            set_if_set('default_for_unspecified', DefaultForUnspecified)
+            set_if_set('default_for_unspecified', lambda v: DefaultForUnspecified[v])
             set_if_set('total_resource_slots')
             set_if_set('max_concurrent_sessions')
             set_if_set('max_containers_per_session')
