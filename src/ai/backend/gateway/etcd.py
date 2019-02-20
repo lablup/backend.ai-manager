@@ -35,7 +35,8 @@ Alias keys are also URL-quoted in the same way.
    + manager: {instance-id}
      - event_addr: {"tcp://manager:5001"}
      - status: {one-of-ManagerStatus-value}
-   - redis: {"tcp://redis:6379"}
+   + redis: {"tcp://redis:6379"}
+     - password: {redis-auth-password}
    + agents
      - {instance-id}: {"starting","running"}
  + volumes
@@ -70,6 +71,15 @@ Alias keys are also URL-quoted in the same way.
        ...
      ...
    ...
+ + scaling-groups
+   + {name}
+     - swarm-manager/token
+     - swarm-manager/host
+     - swarm-worker/token
+     - iprange          # to choose ethernet iface when creating containers
+     - resource_policy  # the name of scaling-group resource-policy in database
+     + nodes
+       - {instance-id}: 1  # just a membership set
 '''
 
 import asyncio
