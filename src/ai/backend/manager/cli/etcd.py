@@ -28,7 +28,13 @@ def etcd(args):
 def etcd_ctx(args):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    etcd = AsyncEtcd(args.etcd_addr, args.namespace)
+    creds = None
+    if args.etcd_user is not None:
+        creds = {
+            'user': args.etcd_user,
+            'password': args.etcd_password,
+        }
+    etcd = AsyncEtcd(args.etcd_addr, args.namespace, credentials=creds)
     with contextlib.closing(loop):
         yield loop, etcd
     asyncio.set_event_loop(None)
@@ -45,7 +51,10 @@ def config_ctx(args):
         encoding='utf8',
         db=REDIS_IMAGE_DB))
     ctx['config'] = args
-    config_server = ConfigServer(ctx, args.etcd_addr, args.namespace)
+    config_server = ConfigServer(
+        ctx, args.etcd_addr,
+        args.etcd_user, args.etcd_password,
+        args.namespace)
     with contextlib.closing(loop):
         try:
             yield loop, config_server
