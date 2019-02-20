@@ -45,12 +45,13 @@ def config_ctx(args):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     ctx = {}
+    ctx['config'] = args
     ctx['redis_image'] = loop.run_until_complete(aioredis.create_redis(
         args.redis_addr.as_sockaddr(),
+        password=args.redis_auth,
         timeout=3.0,
         encoding='utf8',
         db=REDIS_IMAGE_DB))
-    ctx['config'] = args
     config_server = ConfigServer(
         ctx, args.etcd_addr,
         args.etcd_user, args.etcd_password,
