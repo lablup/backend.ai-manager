@@ -15,16 +15,21 @@ def load_config(argv=None, extra_args_funcs=()):
                type=host_port_pair, metavar='HOST:PORT',
                default=HostPortPair(ip_address('127.0.0.1'), 2379),
                help='The host:port pair of the etcd cluster or its proxy.')
-    parser.add('--docker-registry', env_var='BACKEND_DOCKER_REGISTRY',
-               type=str, metavar='URL', default='lablup',
-               help='The host:port pair of the private docker registry '
-                    'that caches the kernel images')
+    parser.add('--etcd-user', env_var='BACKEND_ETCD_USER',
+               type=str, default=None,
+               help='The username for the etcd cluster.')
+    parser.add('--etcd-password', env_var='BACKEND_ETCD_PASSWORD',
+               type=str, default=None,
+               help='The password of the user for the etcd cluster.')
     parser.add('--agent-port', env_var='BACKEND_AGENT_PORT',
                type=port_no, default=6001,
                help='The TCP port number where agent instances are listening on.')
     parser.add('--redis-addr', env_var='BACKEND_REDIS_ADDR', type=host_port_pair,
                default=HostPortPair(ip_address('127.0.0.1'), 6379),
                help='The hostname-port pair of a redis server.')
+    parser.add('--redis-auth', env_var='BACKEND_REDIS_AUTH',
+               type=str, default=None,
+               help='The authentication password for the Redis server.')
     parser.add('--db-addr', env_var='BACKEND_DB_ADDR', type=host_port_pair,
                default=HostPortPair(ip_address('127.0.0.1'), 5432),
                help='The hostname-port pair of a database server.')

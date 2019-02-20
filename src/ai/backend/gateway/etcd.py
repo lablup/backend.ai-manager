@@ -111,11 +111,17 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
 
 class ConfigServer:
 
-    def __init__(self, app_ctx, etcd_addr, namespace):
+    def __init__(self, app_ctx, etcd_addr, etcd_user, etcd_password, namespace):
         # WARNING: importing etcd3/grpc must be done after forks.
         from ai.backend.common.etcd import AsyncEtcd
         self.context = app_ctx
-        self.etcd = AsyncEtcd(etcd_addr, namespace)
+        credentials = None
+        if etcd_user is not None:
+            credentials = {
+                'user': etcd_user,
+                'password': etcd_password,
+            }
+        self.etcd = AsyncEtcd(etcd_addr, namespace, credentials=credentials)
 
     async def register_myself(self, app_config):
         instance_id = await get_instance_id()

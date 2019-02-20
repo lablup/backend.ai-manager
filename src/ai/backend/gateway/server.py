@@ -188,16 +188,19 @@ async def gw_init(app, default_cors_options):
     )
     app['redis_live'] = await aioredis.create_redis(
         app['config'].redis_addr.as_sockaddr(),
+        password=app['config'].redis_auth,
         timeout=3.0,
         encoding='utf8',
         db=REDIS_LIVE_DB)
     app['redis_stat'] = await aioredis.create_redis(
         app['config'].redis_addr.as_sockaddr(),
+        password=app['config'].redis_auth,
         timeout=3.0,
         encoding='utf8',
         db=REDIS_STAT_DB)
     app['redis_image'] = await aioredis.create_redis(
         app['config'].redis_addr.as_sockaddr(),
+        password=app['config'].redis_auth,
         timeout=3.0,
         encoding='utf8',
         db=REDIS_IMAGE_DB)
