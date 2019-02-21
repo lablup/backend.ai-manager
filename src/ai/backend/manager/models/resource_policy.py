@@ -91,13 +91,13 @@ class KeyPairResourcePolicy(graphene.ObjectType):
             query = (sa.select('*')
                        .select_from(keypair_resource_policies)
                        .where(keypair_resource_policies.c.name.in_(names))
-                       .order_by(keypair_resource_policies.c.id))
+                       .order_by(keypair_resource_policies.c.name))
             objs_per_key = OrderedDict()
             for k in names:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
                 o = cls.from_row(context, row)
-                objs_per_key[row.id] = o
+                objs_per_key[row.name] = o
         return tuple(objs_per_key.values())
 
 
