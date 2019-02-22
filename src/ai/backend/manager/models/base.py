@@ -1,4 +1,6 @@
 import enum
+import functools
+import logging
 import sys
 import uuid
 
@@ -16,8 +18,13 @@ from sqlalchemy.types import (
 )
 from sqlalchemy.dialects.postgresql import UUID, ENUM
 
+from ai.backend.common.logging import BraceStyleAdapter
+from .. import models
+
 SAFE_MIN_INT = -9007199254740991
 SAFE_MAX_INT = 9007199254740991
+
+log = BraceStyleAdapter(logging.getLogger(__name__))
 
 # The common shared metadata instance
 convention = {
@@ -243,3 +250,30 @@ class Item(graphene.Interface):
 class PaginatedList(graphene.Interface):
     items = graphene.List(Item, required=True)
     total_count = graphene.Int(required=True)
+
+
+def populate_fixture(db_connection, fixture_data):
+    for table_name, rows in fixture_data.items():
+        table = getattr(models, table_name)
+        cols = table.columns
+        pk_cols = table.primary_key.columns
+        for row in rows:
+            # compose pk match where clause
+            pk_match = functools.reduce(lambda x, y: x & y, [
+                (col == row[col.name])
+                for col in pk_cols
+            ])
+            ret = db_connection.execute(
+                sa.select(pk_cols).select_from(table).where(pk_match))
+            if ret.rowcount == 0:
+                # convert enumtype to native values
+                for col in cols:
+                    if isinstance(col.type, EnumType):
+                        row[col.name] = col.type._enum_cls[row[col.name]]
+                    elif isinstance(col.type, EnumValueType):
+                        row[col.name] = col.type._enum_cls(row[col.name])
+                db_connection.execute(table.insert(), [row])
+            else:
+                pk_tuple = tuple(row[col.name] for col in pk_cols)
+                log.info('skipped inserting {} to {} as the row already exists.',
+                         f"[{','.join(pk_tuple)}]", table_name)

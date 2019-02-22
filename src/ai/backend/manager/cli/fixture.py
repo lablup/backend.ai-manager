@@ -1,4 +1,3 @@
-import functools
 import logging
 import json
 from pathlib import Path
@@ -8,8 +7,7 @@ import sqlalchemy as sa
 from ai.backend.common.logging import BraceStyleAdapter
 
 from . import register_command
-from .. import models
-from ..models.base import EnumType, EnumValueType
+from ..models.base import populate_fixture
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
@@ -33,29 +31,7 @@ def populate(args):
     engine = sa.create_engine(f"postgres://{args.db_user}:{args.db_password}"
                               f"@{args.db_addr}/{args.db_name}")
     conn = engine.connect()
-    for table_name, rows in fixture.items():
-        table = getattr(models, table_name)
-        cols = table.columns
-        pk_cols = table.primary_key.columns
-        for row in rows:
-            # compose pk match where clause
-            pk_match = functools.reduce(lambda x, y: x & y, [
-                (col == row[col.name])
-                for col in pk_cols
-            ])
-            ret = conn.execute(sa.select(pk_cols).select_from(table).where(pk_match))
-            if ret.rowcount == 0:
-                # convert enumtype to native values
-                for col in cols:
-                    if isinstance(col.type, EnumType):
-                        row[col.name] = col.type._enum_cls[row[col.name]]
-                    elif isinstance(col.type, EnumValueType):
-                        row[col.name] = col.type._enum_cls(row[col.name])
-                conn.execute(table.insert(), [row])
-            else:
-                pk_tuple = tuple(row[col.name] for col in pk_cols)
-                log.info('skipped inserting {} to {} as the row already exists.',
-                         f"[{','.join(pk_tuple)}]", table_name)
+    populate_fixture(conn, fixture)
     conn.close()
 
 
