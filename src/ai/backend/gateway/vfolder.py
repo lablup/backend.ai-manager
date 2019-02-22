@@ -39,8 +39,8 @@ def vfolder_permission_required(perm: VFolderPermission):
     - owned by the current access key, or
     - allowed accesses by the access key under the specified permission.
 
-    The decorated handler should accept an extra "row" argument
-    which contains the matched VirtualFolder table row.
+    The decorated handler should accept an extra argument
+    which contains a dict object describing the matched VirtualFolder table row.
     '''
 
     def _wrapper(handler):
@@ -220,22 +220,22 @@ async def get_info(request, row):
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.GETINFO (u:{0}, f:{1})', access_key, folder_name)
-    if row.permission is None:
+    if row['permission'] is None:
         is_owner = True
         permission = VFolderPermission.OWNER_PERM
     else:
         is_owner = False
-        permission = row.permission
+        permission = row['permission']
     # TODO: handle nested directory structure
-    folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
-                   request.app['VFOLDER_FSPREFIX'] / row.id.hex)
+    folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
+                   request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
     num_files = len(list(folder_path.iterdir()))
     resp = {
-        'name': row.name,
-        'id': row.id.hex,
-        'host': row.host,
+        'name': row['name'],
+        'id': row['id'].hex,
+        'host': row['host'],
         'numFiles': num_files,
-        'created': str(row.created_at),
+        'created': str(row['created_at']),
         'is_owner': is_owner,
         'permission': permission,
     }
@@ -253,8 +253,8 @@ async def mkdir(request, row):
     assert path, 'path not specified!'
     path = Path(path)
     log.info('VFOLDER.MKDIR (u:{0}, f:{1})', access_key, folder_name)
-    folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
-                   request.app['VFOLDER_FSPREFIX'] / row.id.hex)
+    folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
+                   request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
     assert not path.is_absolute(), 'path must be relative.'
     try:
         (folder_path / path).mkdir(parents=True, exist_ok=True)
@@ -271,8 +271,8 @@ async def upload(request, row):
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.UPLOAD (u:{0}, f:{1})', access_key, folder_name)
-    folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
-                   request.app['VFOLDER_FSPREFIX'] / row.id.hex)
+    folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
+                   request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
     reader = await request.multipart()
     file_count = 0
     async for file in aiotools.aiter(reader.next, None):
@@ -309,8 +309,8 @@ async def delete_files(request, row):
     assert files, 'no file(s) specified!'
     recursive = params.get('recursive', False)
     log.info('VFOLDER.DELETE_FILES (u:{0}, f:{1})', access_key, folder_name)
-    folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
-                   request.app['VFOLDER_FSPREFIX'] / row.id.hex)
+    folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
+                   request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
     ops = []
     for file in files:
         file_path = folder_path / file
@@ -339,8 +339,8 @@ async def download(request, row):
     assert params.get('files'), 'no file(s) specified!'
     files = params.get('files')
     log.info('VFOLDER.DOWNLOAD (u:{0}, f:{1})', access_key, folder_name)
-    folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
-                   request.app['VFOLDER_FSPREFIX'] / row.id.hex)
+    folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
+                   request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
     for file in files:
         if not (folder_path / file).is_file():
             raise InvalidAPIParameters(
@@ -372,8 +372,8 @@ async def download_single(request, row):
     assert params.get('file'), 'no file(s) specified!'
     fn = params.get('file')
     log.info('VFOLDER.DOWNLOAD (u:{0}, f:{1})', access_key, folder_name)
-    folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
-                   request.app['VFOLDER_FSPREFIX'] / row.id.hex)
+    folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
+                   request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
     path = folder_path / fn
     if not (path).is_file():
         raise InvalidAPIParameters(
@@ -395,8 +395,8 @@ async def list_files(request, row):
         params = request.query
 
     log.info('VFOLDER.LIST_FILES (u:{0}, f:{1})', access_key, folder_name)
-    base_path = (request.app['VFOLDER_MOUNT'] / row.host /
-                 request.app['VFOLDER_FSPREFIX'] / row.id.hex)
+    base_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
+                 request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
     folder_path = base_path / params['path'] if 'path' in params else base_path
     if not str(folder_path).startswith(str(base_path)):
         resp = {'error_msg': 'No such file or directory'}
@@ -582,7 +582,7 @@ async def accept_invitation(request):
         if row is None:
             invitation = {'msg': 'Invalid invitee access_key'}
             return web.json_response(resp, status=404)
-        assert row.user_id == invitation.invitee
+        assert row['user_id'] == invitation.invitee
 
         # Create permission relation between the vfolder and the invitee.
         query = (vfolder_permissions.insert().values({
@@ -650,8 +650,8 @@ async def delete(request):
         row = await result.first()
         if row is None:
             raise VFolderNotFound()
-        folder_path = (request.app['VFOLDER_MOUNT'] / row.host /
-                       request.app['VFOLDER_FSPREFIX'] / row.id.hex)
+        folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
+                       request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
         try:
             shutil.rmtree(folder_path)
         except IOError:
