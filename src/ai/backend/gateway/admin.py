@@ -14,7 +14,10 @@ from graphql.error import GraphQLError, format_error
 from ai.backend.common.logging import BraceStyleAdapter
 
 from .manager import GQLMutationUnfrozenRequiredMiddleware
-from .exceptions import InvalidAPIParameters, GraphQLError as BackendGQLError
+from .exceptions import (
+    InvalidAPIParameters, GenericForbidden,
+    GraphQLError as BackendGQLError
+)
 from .auth import auth_required
 from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
@@ -362,7 +365,7 @@ class QueryForUser(graphene.ObjectType):
         if access_key is None:
             access_key = info.context['access_key']
         if access_key != info.context['access_key']:
-            raise InvalidAPIParameters(
+            raise GenericForbidden(
                 'You can only request session list for '
                 'the current access key being used.')
         total_count = await ComputeSession.load_count(
