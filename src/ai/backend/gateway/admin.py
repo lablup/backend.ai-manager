@@ -305,6 +305,7 @@ class QueryForUser(graphene.ObjectType):
         ComputeSessionList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
+        access_key=graphene.String(),
         status=graphene.String())
 
     compute_workers = graphene.List(
@@ -357,8 +358,13 @@ class QueryForUser(graphene.ObjectType):
 
     @staticmethod
     async def resolve_compute_session_list(executor, info, limit, offset,
-                                           status=None):
-        access_key = info.context['access_key']
+                                           access_key=None, status=None):
+        if access_key is None:
+            access_key = info.context['access_key']
+        if access_key != info.context['access_key']:
+            raise InvalidAPIParameters(
+                'You can only request session list for '
+                'the current access key being used.')
         total_count = await ComputeSession.load_count(
             info.context, access_key, status)
         items = await ComputeSession.load_slice(
