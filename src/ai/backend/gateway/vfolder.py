@@ -207,7 +207,7 @@ async def list_folders(request):
                 'id': entry['id'].hex,
                 'host': entry['host'],
                 'is_owner': entry['is_owner'],
-                'permission': str(entry['permission']),
+                'permission': entry['permission'].value,
             })
     return web.json_response(resp, status=200)
 
