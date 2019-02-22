@@ -13,6 +13,7 @@ __all__ = (
     'vfolder_permissions',
     'VirtualFolder',
     'VFolderPermission',
+    'query_accessible_vfolders',
 )
 
 
@@ -96,6 +97,54 @@ vfolder_permissions = sa.Table(
               sa.ForeignKey('keypairs.access_key'),
               nullable=False)
 )
+
+
+async def query_accessible_vfolders(conn, access_key, *,
+                                    extra_vf_conds=None,
+                                    extra_vfperm_conds=None):
+    entries = []
+    j = sa.join(vfolders, vfolder_permissions,
+                vfolders.c.id == vfolder_permissions.c.vfolder)
+    query = (sa.select([
+                   vfolders.c.name,
+                   vfolders.c.id,
+                   vfolders.c.host,
+                   vfolder_permissions.c.permission,
+               ])
+               .select_from(j)
+               .where(vfolder_permissions.c.access_key == access_key))
+    if extra_vf_conds is not None:
+        query = query.where(extra_vf_conds)
+    if extra_vfperm_conds is not None:
+        query = query.where(extra_vfperm_conds)
+    result = await conn.execute(query)
+    async for row in result:
+        entries.append({
+            'name': row.name,
+            'id': row.id,
+            'host': row.host,
+            'is_owner': False,
+            'permission': row.permission,
+        })
+    query = (sa.select([
+                   vfolders.c.name,
+                   vfolders.c.id,
+                   vfolders.c.host,
+               ])
+               .select_from(vfolders)
+               .where(vfolders.c.belongs_to == access_key))
+    if extra_vf_conds is not None:
+        query = query.where(extra_vf_conds)
+    result = await conn.execute(query)
+    async for row in result:
+        entries.append({
+            'name': row.name,
+            'id': row.id,
+            'host': row.host,
+            'is_owner': True,
+            'permission': VFolderPermission.OWNER_PERM,
+        })
+    return entries
 
 
 class VirtualFolder(graphene.ObjectType):

@@ -30,9 +30,9 @@ from .auth import auth_required
 from .utils import catch_unexpected
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (
-    keypairs,
-    kernels, vfolders, vfolder_permissions,
-    AgentStatus, KernelStatus, VFolderPermission,
+    keypairs, kernels, vfolders,
+    AgentStatus, KernelStatus,
+    query_accessible_vfolders,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.kernel'))
@@ -104,43 +104,19 @@ async def create(request) -> web.Response:
 
             # sanity check for vfolders
             if creation_config['mounts']:
-                matched_mounts = set()
                 mount_details = []
-                query = (sa.select([vfolders.c.name,
-                                    vfolders.c.host,
-                                    vfolders.c.id])
-                           .select_from(vfolders)
-                           .where(
-                             (vfolders.c.belongs_to == access_key) &
-                             (vfolders.c.name.in_(creation_config['mounts']))
-                           ))
-                async for row in conn.execute(query):
-                    matched_mounts.add(row['name'])
-                    mount_details.append([
-                        row['name'],
-                        row['host'],
-                        row['id'].hex,
-                        VFolderPermission.OWNER_PERM,
-                    ])
-                j = sa.join(vfolder_permissions, vfolders,
-                            vfolder_permissions.c.vfolder == vfolders.c.id)
-                query = (sa.select([vfolders.c.name,
-                                    vfolders.c.host,
-                                    vfolders.c.id,
-                                    vfolder_permissions.c.permission])
-                           .select_from(j)
-                           .where(
-                             (vfolder_permissions.c.access_key == access_key) &
-                             (vfolders.c.name.in_(creation_config['mounts']))
-                           ))
-                async for row in conn.execute(query):
-                    matched_mounts.add(row['name'])
-                    mount_details.append([
-                        row['name'],
-                        row['host'],
-                        row['id'].hex,
-                        row['permission'],
-                    ])
+                matched_mounts = set()
+                matched_vfolders = await query_accessible_vfolders(
+                    conn, access_key,
+                    extra_vf_conds=(vfolders.c.name.in_(creation_config['mounts'])))
+                for item in matched_vfolders:
+                    matched_mounts.add(item['name'])
+                    mount_details.append({
+                        item['name'],
+                        item['host'],
+                        item['id'].hex,
+                        item['permission'],
+                    })
                 if set(creation_config['mounts']) > matched_mounts:
                     raise VFolderNotFound
                 creation_config['mounts'] = mount_details

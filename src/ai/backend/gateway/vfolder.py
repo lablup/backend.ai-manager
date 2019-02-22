@@ -26,7 +26,7 @@ from .manager import (
     server_status_required)
 from ..manager.models import (
     keypairs, vfolders, vfolder_invitations, vfolder_permissions,
-    VFolderPermission)
+    VFolderPermission, query_accessible_vfolders)
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
 
@@ -72,26 +72,14 @@ def vfolder_permission_required(perm: VFolderPermission):
                 # Otherwise, just compare it as-is (for future compatibility).
                 perm_cond = (vfolder_permissions.c.permission == perm)
             async with dbpool.acquire() as conn:
-                j = sa.join(
-                    vfolders, vfolder_permissions,
-                    vfolders.c.id == vfolder_permissions.c.vfolder,
-                    isouter=True)
-                query = (
-                    sa.select('*')
-                    .select_from(j)
-                    .where(((vfolders.c.belongs_to == access_key) |
-                            ((vfolder_permissions.c.access_key == access_key) &
-                             perm_cond)) &
-                           (vfolders.c.name == folder_name)))
-                try:
-                    result = await conn.execute(query)
-                except psycopg2.DataError:
-                    raise InvalidAPIParameters
-                row = await result.first()
-                if row is None:
+                entries = await query_accessible_vfolders(
+                    conn, access_key,
+                    extra_vf_conds=(vfolders.c.name == folder_name),
+                    extra_vfperm_conds=perm_cond)
+                if len(entries) == 0:
                     raise VFolderNotFound(
                         'Your operation may be permission denied.')
-                return await handler(request, row=row)
+                return await handler(request, row=entries[0])
 
         return _wrapped
 
@@ -171,16 +159,10 @@ async def create(request):
                 raise InvalidAPIParameters('You cannot create more vfolders.')
 
         # Prevent creation of vfolder with duplicated name.
-        j = sa.join(vfolders, vfolder_permissions,
-                    vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
-        query = (sa.select([sa.func.count()])
-                   .select_from(j)
-                   .where(((vfolders.c.belongs_to == access_key) |
-                           (vfolder_permissions.c.access_key == access_key)) &
-                          ((vfolders.c.name == params['name']) &
-                           (vfolders.c.host == folder_host))))
-        result = await conn.scalar(query)
-        if result > 0:
+        entries = await query_accessible_vfolders(
+            conn, access_key,
+            extra_vf_conds=(vfolders.c.name == params['name']))
+        if len(entries) > 0:
             raise VFolderAlreadyExists
 
         try:
@@ -218,29 +200,14 @@ async def list_folders(request):
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.LIST (u:{0})', access_key)
     async with dbpool.acquire() as conn:
-        j = sa.join(vfolders, vfolder_permissions,
-                    vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
-        query = (sa.select('*')
-                   .select_from(j)
-                   .where(((vfolders.c.belongs_to == access_key) |
-                           (vfolder_permissions.c.access_key == access_key))))
-        try:
-            result = await conn.execute(query)
-        except psycopg2.DataError:
-            raise InvalidAPIParameters
-        async for row in result:
-            if row.permission is None:
-                is_owner = True
-                permission = VFolderPermission.OWNER_PERM
-            else:
-                is_owner = False
-                permission = row.permission
+        entries = await query_accessible_vfolders(conn, access_key)
+        for entry in entries:
             resp.append({
-                'name': row.name,
-                'id': row.id.hex,
-                'host': row.host,
-                'is_owner': is_owner,
-                'permission': permission,
+                'name': entry['name'],
+                'id': entry['id'].hex,
+                'host': entry['host'],
+                'is_owner': entry['is_owner'],
+                'permission': str(entry['permission']),
             })
     return web.json_response(resp, status=200)
 
@@ -411,7 +378,7 @@ async def download_single(request, row):
     if not (path).is_file():
         raise InvalidAPIParameters(
             f'You cannot download "{fn}" because it is not a regular file.')
-    
+
     data = open(folder_path / fn, 'rb')
     return web.Response(body=data, status=200)
 
