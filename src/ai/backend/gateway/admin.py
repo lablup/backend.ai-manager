@@ -237,11 +237,12 @@ class QueryForAdmin(graphene.ObjectType):
         return await loader.load(access_key)
 
     @staticmethod
-    async def resolve_compute_session_list(executor, info, limit, offset, access_key=None, status=None):
-        # TODO: make status a proper graphene.Enum type
-        #       (https://github.com/graphql-python/graphene/issues/544)
-        total_count = await ComputeSession.load_count(info.context, access_key, status)
-        items = await ComputeSession.load_slice(info.context, limit, offset, access_key, status)
+    async def resolve_compute_session_list(executor, info, limit, offset,
+                                           access_key=None, status=None):
+        total_count = await ComputeSession.load_count(
+            info.context, access_key, status)
+        items = await ComputeSession.load_slice(
+            info.context, limit, offset, access_key, status)
         return ComputeSessionList(items, total_count)
 
     @staticmethod
@@ -300,6 +301,12 @@ class QueryForUser(graphene.ObjectType):
         ComputeSession,
         sess_id=graphene.String())
 
+    compute_session_list = graphene.Field(
+        ComputeSessionList,
+        limit=graphene.Int(required=True),
+        offset=graphene.Int(required=True),
+        status=graphene.String())
+
     compute_workers = graphene.List(
         ComputeWorker,
         sess_id=graphene.String(required=True),
@@ -347,6 +354,16 @@ class QueryForUser(graphene.ObjectType):
         loader = manager.get_loader('ComputeSession.detail', access_key=access_key,
                                     status=status)
         return await loader.load(sess_id)
+
+    @staticmethod
+    async def resolve_compute_session_list(executor, info, limit, offset,
+                                           status=None):
+        access_key = info.context['access_key']
+        total_count = await ComputeSession.load_count(
+            info.context, access_key, status)
+        items = await ComputeSession.load_slice(
+            info.context, limit, offset, access_key, status)
+        return ComputeSessionList(items, total_count)
 
     @staticmethod
     async def resolve_compute_workers(executor, info, sess_id, status=None):
