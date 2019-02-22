@@ -43,6 +43,7 @@ keypair_resource_policies = sa.Table(
     sa.Column('max_containers_per_session', sa.Integer(), nullable=False),
     sa.Column('max_vfolder_count', sa.Integer(), nullable=False),
     sa.Column('max_vfolder_size', sa.BigInteger(), nullable=False),
+    sa.Column('idle_timeout', sa.BigInteger(), nullable=False),
     sa.Column('allowed_vfolder_hosts', pgsql.ARRAY(sa.String), nullable=False),
     # TODO: implement with a many-to-many association table
     # sa.Column('allowed_scaling_groups', sa.Array(sa.String), nullable=False),
@@ -56,6 +57,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
     total_resource_slots = graphene.JSONString()
     max_concurrent_sessions = graphene.Int()
     max_containers_per_session = graphene.Int()
+    idle_timeout = BigInt()
     max_vfolder_count = graphene.Int()
     max_vfolder_size = BigInt()
     allowed_vfolder_hosts = graphene.List(lambda: graphene.String)
@@ -71,6 +73,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
             total_resource_slots=row['total_resource_slots'],
             max_concurrent_sessions=row['max_concurrent_sessions'],
             max_containers_per_session=row['max_containers_per_session'],
+            idle_timeout=row['idle_timeout'],
             max_vfolder_count=row['max_vfolder_count'],
             max_vfolder_size=row['max_vfolder_size'],
             allowed_vfolder_hosts=row['allowed_vfolder_hosts'],
@@ -106,6 +109,7 @@ class CreateKeyPairResourcePolicyInput(graphene.InputObjectType):
     total_resource_slots = graphene.JSONString(required=True)
     max_concurrent_sessions = graphene.Int(required=True)
     max_containers_per_session = graphene.Int(required=True)
+    idle_timeout = BigInt(required=True)
     max_vfolder_count = graphene.Int(required=True)
     max_vfolder_size = BigInt(required=True)
     allowed_vfolder_hosts = graphene.List(lambda: graphene.String)
@@ -116,6 +120,7 @@ class ModifyKeyPairResourcePolicyInput(graphene.InputObjectType):
     total_resource_slots = graphene.JSONString(required=False)
     max_concurrent_sessions = graphene.Int(required=False)
     max_containers_per_session = graphene.Int(required=False)
+    idle_timeout = BigInt(required=False)
     max_vfolder_count = graphene.Int(required=False)
     max_vfolder_size = BigInt(required=False)
     allowed_vfolder_hosts = graphene.List(lambda: graphene.String, required=False)
@@ -141,6 +146,7 @@ class CreateKeyPairResourcePolicy(graphene.Mutation):
                 'total_resource_slots': props.total_resource_slots,
                 'max_concurrent_sessions': props.max_concurrent_sessions,
                 'max_containers_per_session': props.max_containers_per_session,
+                'idle_timeout': props.idle_timeout,
                 'max_vfolder_count': props.max_vfolder_count,
                 'max_vfolder_size': props.max_vfolder_size,
                 'allowed_vfolder_hosts': props.allowed_vfolder_hosts,
@@ -195,6 +201,7 @@ class ModifyKeyPairResourcePolicy(graphene.Mutation):
             set_if_set('total_resource_slots')
             set_if_set('max_concurrent_sessions')
             set_if_set('max_containers_per_session')
+            set_if_set('idle_timeout')
             set_if_set('max_vfolder_count')
             set_if_set('max_vfolder_size')
             set_if_set('allowed_vfolder_hosts')
