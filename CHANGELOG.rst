@@ -1,6 +1,18 @@
 Changes
 =======
 
+19.03.0rc0 (2018-02-xx)
+-----------------------
+
+- NEW: It now supports authentication with etcd and Redis for better security.
+
+- Implement GQL mutations for KeyPairResourcePolicy.
+
+- Fix vfolder listing queries in all places to consider invited vfolders and owned
+  vfolders correctly.
+
+- Add missing "compute_session_list" GQL field to the user-mode GQL schema.
+
 19.03.0b9 (2018-02-15)
 ----------------------
 
