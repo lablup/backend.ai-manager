@@ -234,7 +234,8 @@ async def get_info(request, row):
         'name': row['name'],
         'id': row['id'].hex,
         'host': row['host'],
-        'numFiles': num_files,
+        'numFiles': num_files,  # legacy
+        'num_files': num_files,
         'created': str(row['created_at']),
         'is_owner': is_owner,
         'permission': permission,
