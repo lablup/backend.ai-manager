@@ -111,7 +111,7 @@ async def create(request) -> web.Response:
                     extra_vf_conds=(vfolders.c.name.in_(creation_config['mounts'])))
                 for item in matched_vfolders:
                     matched_mounts.add(item['name'])
-                    mount_details.append(tuple(
+                    mount_details.append((
                         item['name'],
                         item['host'],
                         item['id'].hex,
