@@ -115,7 +115,7 @@ async def create(request) -> web.Response:
                         item['name'],
                         item['host'],
                         item['id'].hex,
-                        item['permission'],
+                        item['permission'].value,
                     })
                 if set(creation_config['mounts']) > matched_mounts:
                     raise VFolderNotFound
