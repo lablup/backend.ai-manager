@@ -1,10 +1,14 @@
 Changes
 =======
 
-19.03.0rc0 (2018-02-xx)
+19.03.0rc1 (2018-02-25)
 -----------------------
 
 - NEW: It now supports authentication with etcd and Redis for better security.
+
+  - NOTE: etcd authentication is unusable yet in productions due to a missing
+    implementation of auto-refreshing auth tokens in the upstream etcd3 binding
+    library.
 
 - Implement GQL mutations for KeyPairResourcePolicy.
 
@@ -12,6 +16,8 @@ Changes
   vfolders correctly.
 
 - Add missing "compute_session_list" GQL field to the user-mode GQL schema.
+
+- Minor bug fixes and improvements.
 
 19.03.0b9 (2018-02-15)
 ----------------------
