@@ -422,7 +422,7 @@ if __name__ == '__main__':
         auto_camelcase=False)
     user_schema = graphene.Schema(
         query=QueryForUser,
-        mutation=QueryForUser,
+        mutation=MutationForUser,
         auto_camelcase=False)
     print('======== Admin Schema ========')
     print(str(admin_schema))
