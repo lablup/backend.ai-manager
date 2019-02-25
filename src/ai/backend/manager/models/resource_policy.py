@@ -142,7 +142,7 @@ class CreateKeyPairResourcePolicy(graphene.Mutation):
             data = {
                 'name': name,
                 'default_for_unspecified':
-                    DefaultForUnspecified(props.default_for_unspecified),
+                    DefaultForUnspecified[props.default_for_unspecified],
                 'total_resource_slots': props.total_resource_slots,
                 'max_concurrent_sessions': props.max_concurrent_sessions,
                 'max_containers_per_session': props.max_containers_per_session,
