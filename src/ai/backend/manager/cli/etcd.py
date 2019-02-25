@@ -29,7 +29,7 @@ def etcd_ctx(args):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     creds = None
-    if args.etcd_user is not None:
+    if args.etcd_user:
         creds = {
             'user': args.etcd_user,
             'password': args.etcd_password,

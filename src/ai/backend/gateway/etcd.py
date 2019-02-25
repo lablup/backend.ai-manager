@@ -126,7 +126,7 @@ class ConfigServer:
         from ai.backend.common.etcd import AsyncEtcd
         self.context = app_ctx
         credentials = None
-        if etcd_user is not None:
+        if etcd_user:
             credentials = {
                 'user': etcd_user,
                 'password': etcd_password,
