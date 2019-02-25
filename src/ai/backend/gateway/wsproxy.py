@@ -66,6 +66,7 @@ class TCPProxy(ServiceProxy):
                         await self.ws.send_bytes(chunk)
                         if self.downstream_cb is not None:
                             await self.downstream_cb(chunk)
+                    await self.ws.close()
                 except asyncio.CancelledError:
                     pass
 
@@ -74,8 +75,11 @@ class TCPProxy(ServiceProxy):
             async for msg in self.ws:
                 log.debug('wsmsg {}', msg)
                 if msg.type == web.WSMsgType.BINARY:
-                    writer.write(msg.data)
-                    await writer.drain()
+                    try:
+                        writer.write(msg.data)
+                        await writer.drain()
+                    except RuntimeError:
+                        log.debug("Error on writing: Is it closed?")
                     if self.upstream_cb is not None:
                         await self.upstream_cb(msg.data)
                 elif msg.type == web.WSMsgType.PING:
