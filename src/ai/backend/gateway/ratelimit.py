@@ -69,7 +69,7 @@ async def rlim_middleware(app, request, handler):
 async def init(app):
     rr = await aioredis.create_redis_pool(
         app['config'].redis_addr.as_sockaddr(),
-        password=app['config'].redis_auth,
+        password=app['config'].redis_auth if app['config'].redis_auth else None,
         timeout=3.0,
         encoding='utf8',
         db=REDIS_RLIM_DB)

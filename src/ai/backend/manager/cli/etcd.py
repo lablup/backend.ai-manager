@@ -48,7 +48,7 @@ def config_ctx(args):
     ctx['config'] = args
     ctx['redis_image'] = loop.run_until_complete(aioredis.create_redis(
         args.redis_addr.as_sockaddr(),
-        password=args.redis_auth,
+        password=args.redis_auth if args.redis_auth else None,
         timeout=3.0,
         encoding='utf8',
         db=REDIS_IMAGE_DB))
