@@ -48,12 +48,12 @@ async def stream_pty(request) -> web.Response:
     extra_fields = (kernels.c.stdin_port, kernels.c.stdout_port)
     api_version = request['api_version']
     try:
-        kernel = await registry.get_session(
-            sess_id, access_key, field=extra_fields)
+        kernel = await asyncio.shield(
+            registry.get_session(sess_id, access_key, field=extra_fields))
     except KernelNotFound:
         raise
 
-    await registry.increment_session_usage(sess_id, access_key)
+    await asyncio.shield(registry.increment_session_usage(sess_id, access_key))
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
@@ -98,8 +98,8 @@ async def stream_pty(request) -> web.Response:
                             # else.
                             app['stream_stdin_socks'][stream_key].discard(socks[0])
                             socks[1].close()
-                            kernel = await registry.get_session(
-                                sess_id, access_key, field=extra_fields)
+                            kernel = await asyncio.shield(registry.get_session(
+                                sess_id, access_key, field=extra_fields))
                             stdin_sock, stdout_sock = await connect_streams(kernel)
                             socks[0] = stdin_sock
                             socks[1] = stdout_sock
@@ -110,7 +110,8 @@ async def stream_pty(request) -> web.Response:
                             stream_sync.set()
                             continue
                     else:
-                        await registry.increment_session_usage(sess_id, access_key)
+                        await asyncio.shield(
+                            registry.increment_session_usage(sess_id, access_key))
                         run_id = secrets.token_hex(8)
                         if data['type'] == 'resize':
                             code = f"%resize {data['rows']} {data['cols']}"
@@ -129,7 +130,8 @@ async def stream_pty(request) -> web.Response:
                             # ports.
                             log.debug('stream_stdin: restart requested')
                             if not socks[0].at_closing():
-                                await registry.restart_session(sess_id, access_key)
+                                await asyncio.shield(
+                                    registry.restart_session(sess_id, access_key))
                                 socks[0].close()
                             else:
                                 log.warning('stream_stdin({0}): '
@@ -207,11 +209,11 @@ async def stream_execute(request) -> web.Response:
     api_version = request['api_version']
     log.info('STREAM_EXECUTE(u:{0}, k:{1})', access_key, sess_id)
     try:
-        _ = await registry.get_session(sess_id, access_key)  # noqa
+        _ = await asyncio.shield(registry.get_session(sess_id, access_key))  # noqa
     except KernelNotFound:
         raise
 
-    await registry.increment_session_usage(sess_id, access_key)
+    await asyncio.shield(registry.increment_session_usage(sess_id, access_key))
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
@@ -240,7 +242,7 @@ async def stream_execute(request) -> web.Response:
                 flush_timeout=0.2)
             if ws.closed:
                 log.warning('STREAM_EXECUTE: client disconnected (interrupted)')
-                await registry.interrupt_session(sess_id, access_key)
+                await asyncio.shield(registry.interrupt_session(sess_id, access_key))
                 break
             if raw_result is None:
                 # repeat until we get finished
@@ -302,7 +304,7 @@ async def stream_proxy(request) -> web.Response:
     service = request.query.get('app', None)  # noqa
 
     try:
-        kernel = await registry.get_session(sess_id, access_key)
+        kernel = await asyncio.shield(registry.get_session(sess_id, access_key))
     except KernelNotFound:
         raise
     if kernel.kernel_host is None:
@@ -330,18 +332,19 @@ async def stream_proxy(request) -> web.Response:
         raise InvalidAPIParameters(
             f"Unsupported service protocol: {sport['protocol']}")
     # TODO: apply a (distributed) semaphore to limit concurrency per user.
-    await registry.increment_session_usage(sess_id, access_key)
+    await asyncio.shield(registry.increment_session_usage(sess_id, access_key))
 
     async def refresh_cb(kernel_id: str, data: bytes):
-        await call_non_bursty(registry.refresh_session(sess_id, access_key))
+        await asyncio.shield(
+            call_non_bursty(registry.refresh_session(sess_id, access_key)))
 
     down_cb = partial(refresh_cb, kernel.id)
     up_cb = partial(refresh_cb, kernel.id)
     ping_cb = partial(refresh_cb, kernel.id)
 
     opts = {}
-    result = await registry.start_service(sess_id, access_key,
-                                          service, opts)
+    result = await asyncio.shield(
+        registry.start_service(sess_id, access_key, service, opts))
     if result['status'] == 'failed':
         msg = f"Failed to launch the app service: {result['error']}"
         raise InternalServerError(msg)

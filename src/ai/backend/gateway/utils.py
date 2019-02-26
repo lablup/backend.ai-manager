@@ -138,6 +138,6 @@ async def call_non_bursty(coro, max_bursts=64, max_idle=100):
     '''
     # TODO: implement
     if inspect.iscoroutine(coro):
-        await asyncio.shield(coro)
+        await coro
     elif inspect.iscoroutinefunction(coro):
-        await asyncio.shield(coro())
+        await coro()
