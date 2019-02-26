@@ -27,7 +27,7 @@ def load_config(argv=None, extra_args_funcs=()):
     parser.add('--redis-addr', env_var='BACKEND_REDIS_ADDR', type=host_port_pair,
                default=HostPortPair(ip_address('127.0.0.1'), 6379),
                help='The hostname-port pair of a redis server.')
-    parser.add('--redis-auth', env_var='BACKEND_REDIS_AUTH',
+    parser.add('--redis-password', env_var='BACKEND_REDIS_PASSWORD',
                type=str, default=None,
                help='The authentication password for the Redis server.')
     parser.add('--db-addr', env_var='BACKEND_DB_ADDR', type=host_port_pair,
