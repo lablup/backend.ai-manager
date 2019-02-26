@@ -149,10 +149,10 @@ class ConfigServer:
             'nodes/redis': app_config.redis_addr,
             'nodes/manager/event_addr': event_addr,
         }
-        if not app_config.redis_auth:
+        if not app_config.redis_password:
             await self.etcd.delete('/nodes/redis/password')
         else:
-            manager_info['nodes/redis/password'] = app_config.redis_auth
+            manager_info['nodes/redis/password'] = app_config.redis_password
         await self.etcd.put_dict(manager_info)
 
     async def deregister_myself(self):
