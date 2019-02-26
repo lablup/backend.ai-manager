@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 import functools
 import io
@@ -137,6 +138,6 @@ async def call_non_bursty(coro, max_bursts=64, max_idle=100):
     '''
     # TODO: implement
     if inspect.iscoroutine(coro):
-        await coro
+        await asyncio.shield(coro)
     elif inspect.iscoroutinefunction(coro):
-        await coro()
+        await asyncio.shield(coro())
