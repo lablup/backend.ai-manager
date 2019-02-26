@@ -362,8 +362,9 @@ async def stream_proxy(request) -> web.Response:
                           upstream_callback=up_cb,
                           ping_callback=ping_cb)
         return await proxy.proxy()
-    except asyncio.CancelledError:
+    except asyncio.CancelledError as e:
         log.warning('stream_proxy({}, {}) cancelled', stream_key, service)
+        raise e
     finally:
         request.app['stream_proxy_handlers'][stream_key].discard(myself)
 

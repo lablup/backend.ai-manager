@@ -141,11 +141,11 @@ async def exception_middleware(request, handler):
             raise MethodNotAllowed
         log.warning('Bad request: {0!r}', ex)
         raise GenericBadRequest
-    except asyncio.CancelledError:
+    except asyncio.CancelledError as e:
         # The server is closing or the client has disconnected in the middle of
         # request.  Atomic requests are still executed to their ends.
         log.warning('Request cancelled ({0} {1})', request.method, request.rel_url)
-        return web.Response(text='Request cancelled.', status=408)
+        raise e
     except Exception as e:
         app['error_monitor'].capture_exception()
         log.exception('Uncaught exception in HTTP request handlers {0!r}', e)
