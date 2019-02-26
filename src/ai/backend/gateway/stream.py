@@ -303,6 +303,10 @@ async def stream_proxy(request) -> web.Response:
     access_key = request['keypair']['access_key']
     service = request.query.get('app', None)  # noqa
 
+    stream_key = (sess_id, access_key)
+    myself = asyncio.Task.current_task()
+    request.app['stream_proxy_handlers'][stream_key].add(myself)
+
     try:
         kernel = await asyncio.shield(registry.get_session(sess_id, access_key))
     except KernelNotFound:
@@ -342,21 +346,26 @@ async def stream_proxy(request) -> web.Response:
     up_cb = partial(refresh_cb, kernel.id)
     ping_cb = partial(refresh_cb, kernel.id)
 
-    opts = {}
-    result = await asyncio.shield(
-        registry.start_service(sess_id, access_key, service, opts))
-    if result['status'] == 'failed':
-        msg = f"Failed to launch the app service: {result['error']}"
-        raise InternalServerError(msg)
+    try:
+        opts = {}
+        result = await asyncio.shield(
+            registry.start_service(sess_id, access_key, service, opts))
+        if result['status'] == 'failed':
+            msg = f"Failed to launch the app service: {result['error']}"
+            raise InternalServerError(msg)
 
-    # TODO: weakref to proxies for graceful shutdown?
-    ws = web.WebSocketResponse(autoping=False)
-    await ws.prepare(request)
-    proxy = proxy_cls(ws, dest[0], dest[1],
-                      downstream_callback=down_cb,
-                      upstream_callback=up_cb,
-                      ping_callback=ping_cb)
-    return await proxy.proxy()
+        # TODO: weakref to proxies for graceful shutdown?
+        ws = web.WebSocketResponse(autoping=False)
+        await ws.prepare(request)
+        proxy = proxy_cls(ws, dest[0], dest[1],
+                          downstream_callback=down_cb,
+                          upstream_callback=up_cb,
+                          ping_callback=ping_cb)
+        return await proxy.proxy()
+    except asyncio.CancelledError:
+        log.warning('stream_proxy({}, {}) cancelled', stream_key, service)
+    finally:
+        request.app['stream_proxy_handlers'][stream_key].discard(myself)
 
 
 async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
@@ -377,6 +386,9 @@ async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
         for handler in list(app['stream_execute_handlers'].get(stream_key, [])):
             handler.cancel()
             cancelled_tasks.append(handler)
+        for handler in list(app['stream_proxy_handlers'].get(stream_key, [])):
+            handler.cancel()
+            cancelled_tasks.append(handler)
         await asyncio.gather(*cancelled_tasks)
         # TODO: reconnect if restarting?
 
@@ -384,6 +396,7 @@ async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
 async def init(app):
     app['stream_pty_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_execute_handlers'] = defaultdict(weakref.WeakSet)
+    app['stream_proxy_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_stdin_socks'] = defaultdict(weakref.WeakSet)
     app['event_dispatcher'].add_handler('kernel_terminated', app, kernel_terminated)
 
