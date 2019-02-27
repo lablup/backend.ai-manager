@@ -99,6 +99,7 @@ class SessionCommons:
     role = graphene.String()
     image = graphene.String()
     registry = graphene.String()
+    access_key = graphene.String()
 
     status = graphene.String()
     status_info = graphene.String()
@@ -238,6 +239,7 @@ class SessionCommons:
             'role': row['role'],
             'image': row['image'],
             'registry': row['registry'],
+            'access_key': row['access_key'],
             'status': row['status'],
             'status_info': row['status_info'],
             'created_at': row['created_at'],
