@@ -150,6 +150,14 @@ class KeyPairInput(graphene.InputObjectType):
     # When modifying, set the field to "None" to skip setting the value.
 
 
+class ModifyKeyPairInput(graphene.InputObjectType):
+    is_active = graphene.Boolean(required=False)
+    is_admin = graphene.Boolean(required=False)
+    resource_policy = graphene.String(required=False)
+    concurrency_limit = graphene.Int(required=False)  # deprecated and ignored
+    rate_limit = graphene.Int(required=False)
+
+
 class CreateKeyPair(graphene.Mutation):
 
     class Arguments:
@@ -202,7 +210,7 @@ class ModifyKeyPair(graphene.Mutation):
 
     class Arguments:
         access_key = graphene.String(required=True)
-        props = KeyPairInput(required=True)
+        props = ModifyKeyPairInput(required=True)
 
     ok = graphene.Boolean()
     msg = graphene.String()
