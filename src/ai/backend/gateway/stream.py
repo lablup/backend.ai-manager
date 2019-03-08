@@ -143,8 +143,8 @@ async def stream_pty(request) -> web.Response:
                                 stream_key, ws.exception())
         except asyncio.CancelledError:
             # Agent or kernel is terminated.
-            pass
-        except:
+            raise
+        except Exception:
             app['error_monitor'].capture_exception()
             log.exception('stream_stdin({0}): unexpected error', stream_key)
         finally:
@@ -171,7 +171,7 @@ async def stream_pty(request) -> web.Response:
                     'data': base64.b64encode(data[0]).decode('ascii'),
                 }, ensure_ascii=False))
         except asyncio.CancelledError:
-            pass
+            raise
         except:
             app['error_monitor'].capture_exception()
             log.exception('stream_stdout({0}): unexpected error', stream_key)
@@ -290,6 +290,7 @@ async def stream_execute(request) -> web.Response:
                 'msg': 'The API server is going to restart for maintenance. '
                        'Please connect again with the same run ID.',
             })
+        raise
     finally:
         app['stream_execute_handlers'][stream_key].discard(myself)
         return ws
@@ -362,9 +363,9 @@ async def stream_proxy(request) -> web.Response:
                           upstream_callback=up_cb,
                           ping_callback=ping_cb)
         return await proxy.proxy()
-    except asyncio.CancelledError as e:
+    except asyncio.CancelledError:
         log.warning('stream_proxy({}, {}) cancelled', stream_key, service)
-        raise e
+        raise
     finally:
         request.app['stream_proxy_handlers'][stream_key].discard(myself)
 

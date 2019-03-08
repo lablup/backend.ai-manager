@@ -145,7 +145,7 @@ class WebSocketProxy:
             # here, client gracefully disconnected
         except asyncio.CancelledError:
             # here, client forcibly disconnected
-            pass
+            raise
         finally:
             await self.close_downstream()
 
@@ -168,7 +168,7 @@ class WebSocketProxy:
                     break
             # here, server gracefully disconnected
         except asyncio.CancelledError:
-            pass
+            raise
         except Exception:
             log.exception('unexpected error')
         finally:
