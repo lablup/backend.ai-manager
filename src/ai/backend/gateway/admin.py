@@ -299,6 +299,11 @@ class QueryForUser(graphene.ObjectType):
 
     keypair = graphene.Field(lambda: KeyPair)
 
+    keypairs = graphene.List(
+        KeyPair,
+        user_id=graphene.String(required=True),
+        is_active=graphene.Boolean())
+
     keypair_resource_policy = graphene.Field(
         KeyPairResourcePolicy,
         name=graphene.String())
@@ -339,6 +344,12 @@ class QueryForUser(graphene.ObjectType):
         access_key = info.context['access_key']
         loader = manager.get_loader('KeyPair.by_ak')
         return await loader.load(access_key)
+
+    @staticmethod
+    async def resolve_keypairs(executor, info, user_id, is_active=None):
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('KeyPair.by_uid', is_active=is_active)
+        return await loader.load(user_id)
 
     @staticmethod
     async def resolve_keypair_resource_policy(executor, info, name=None):
