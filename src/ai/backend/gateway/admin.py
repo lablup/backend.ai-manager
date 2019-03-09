@@ -149,7 +149,7 @@ class QueryForAdmin(graphene.ObjectType):
 
     keypair_resource_policy = graphene.Field(
         KeyPairResourcePolicy,
-        name=graphene.String(required=True))
+        name=graphene.String())
 
     keypair_resource_policies = graphene.List(
         KeyPairResourcePolicy)
@@ -222,10 +222,15 @@ class QueryForAdmin(graphene.ObjectType):
             return await loader.load(user_id)
 
     @staticmethod
-    async def resolve_keypair_resource_policy(executor, info, name):
+    async def resolve_keypair_resource_policy(executor, info, name=None):
         manager = info.context['dlmgr']
-        loader = manager.get_loader('KeyPairResourcePolicy.by_name')
-        return await loader.load(name)
+        access_key = info.context['access_key']
+        if name is None:
+            loader = manager.get_loader('KeyPairResourcePolicy.by_ak')
+            return await loader.load(access_key)
+        else:
+            loader = manager.get_loader('KeyPairResourcePolicy.by_name')
+            return await loader.load(name)
 
     @staticmethod
     async def resolve_keypair_resource_policies(executor, info):
@@ -294,6 +299,10 @@ class QueryForUser(graphene.ObjectType):
 
     keypair = graphene.Field(lambda: KeyPair)
 
+    keypair_resource_policy = graphene.Field(
+        KeyPairResourcePolicy,
+        name=graphene.String())
+
     vfolders = graphene.List(VirtualFolder)
 
     compute_sessions = graphene.List(
@@ -330,6 +339,17 @@ class QueryForUser(graphene.ObjectType):
         access_key = info.context['access_key']
         loader = manager.get_loader('KeyPair.by_ak')
         return await loader.load(access_key)
+
+    @staticmethod
+    async def resolve_keypair_resource_policy(executor, info, name=None):
+        manager = info.context['dlmgr']
+        access_key = info.context['access_key']
+        if name is None:
+            loader = manager.get_loader('KeyPairResourcePolicy.by_ak')
+            return await loader.load(access_key)
+        else:
+            loader = manager.get_loader('KeyPairResourcePolicy.by_name')
+            return await loader.load(name)
 
     @staticmethod
     async def resolve_vfolders(executor, info):

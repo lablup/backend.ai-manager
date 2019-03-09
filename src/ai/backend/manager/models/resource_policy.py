@@ -10,6 +10,7 @@ from sqlalchemy.dialects import postgresql as pgsql
 import psycopg2 as pg
 
 from ai.backend.common.logging import BraceStyleAdapter
+from . import keypairs
 from .base import metadata, BigInt, EnumType
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.models'))
@@ -98,6 +99,23 @@ class KeyPairResourcePolicy(graphene.ObjectType):
             objs_per_key = OrderedDict()
             for k in names:
                 objs_per_key[k] = None
+            async for row in conn.execute(query):
+                o = cls.from_row(context, row)
+                objs_per_key[row.name] = o
+        return tuple(objs_per_key.values())
+
+    @classmethod
+    async def batch_load_by_ak(cls, context, access_keys):
+        async with context['dbpool'].acquire() as conn:
+            j = sa.join(
+                keypairs, keypair_resource_policies,
+                keypairs.c.resource_policy == keypair_resource_policies.c.name
+            )
+            query = (sa.select([keypair_resource_policies])
+                       .select_from(j)
+                       .where((keypairs.c.access_key.in_(access_keys)))
+                       .order_by(keypair_resource_policies.c.name))
+            objs_per_key = OrderedDict()
             async for row in conn.execute(query):
                 o = cls.from_row(context, row)
                 objs_per_key[row.name] = o
