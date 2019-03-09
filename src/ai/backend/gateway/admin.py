@@ -308,6 +308,9 @@ class QueryForUser(graphene.ObjectType):
         KeyPairResourcePolicy,
         name=graphene.String())
 
+    keypair_resource_policies = graphene.List(
+        KeyPairResourcePolicy)
+
     vfolders = graphene.List(VirtualFolder)
 
     compute_sessions = graphene.List(
@@ -359,8 +362,13 @@ class QueryForUser(graphene.ObjectType):
             loader = manager.get_loader('KeyPairResourcePolicy.by_ak')
             return await loader.load(access_key)
         else:
-            loader = manager.get_loader('KeyPairResourcePolicy.by_name')
+            loader = manager.get_loader('KeyPairResourcePolicy.by_name_user')
             return await loader.load(name)
+
+    @staticmethod
+    async def resolve_keypair_resource_policies(executor, info):
+        access_key = info.context['access_key']
+        return await KeyPairResourcePolicy.load_all_user(info.context, access_key)
 
     @staticmethod
     async def resolve_vfolders(executor, info):

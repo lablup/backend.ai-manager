@@ -90,11 +90,52 @@ class KeyPairResourcePolicy(graphene.ObjectType):
             return [cls.from_row(context, r) for r in rows]
 
     @classmethod
+    async def load_all_user(cls, context, access_key):
+        async with context['dbpool'].acquire() as conn:
+            query = (sa.select([keypairs.c.user_id])
+                       .select_from(keypairs)
+                       .where(keypairs.c.access_key == access_key))
+            result = await conn.execute(query)
+            row = await result.fetchone()
+            user_id = row['user_id']
+            j = sa.join(
+                keypairs, keypair_resource_policies,
+                keypairs.c.resource_policy == keypair_resource_policies.c.name
+            )
+            query = (sa.select([keypair_resource_policies])
+                       .select_from(j)
+                       .where((keypairs.c.user_id == user_id)))
+            result = await conn.execute(query)
+            rows = await result.fetchall()
+            return [cls.from_row(context, r) for r in rows]
+
+    @classmethod
     async def batch_load_by_name(cls, context, names):
         async with context['dbpool'].acquire() as conn:
             query = (sa.select('*')
                        .select_from(keypair_resource_policies)
                        .where(keypair_resource_policies.c.name.in_(names))
+                       .order_by(keypair_resource_policies.c.name))
+            objs_per_key = OrderedDict()
+            for k in names:
+                objs_per_key[k] = None
+            async for row in conn.execute(query):
+                o = cls.from_row(context, row)
+                objs_per_key[row.name] = o
+        return tuple(objs_per_key.values())
+
+    @classmethod
+    async def batch_load_by_name_user(cls, context, names):
+        async with context['dbpool'].acquire() as conn:
+            access_key = context['access_key']
+            j = sa.join(
+                keypairs, keypair_resource_policies,
+                keypairs.c.resource_policy == keypair_resource_policies.c.name
+            )
+            query = (sa.select([keypair_resource_policies])
+                       .select_from(j)
+                       .where((keypair_resource_policies.c.name.in_(names)) &
+                              (keypairs.c.access_key == access_key))
                        .order_by(keypair_resource_policies.c.name))
             objs_per_key = OrderedDict()
             for k in names:
