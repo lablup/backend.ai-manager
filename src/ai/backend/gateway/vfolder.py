@@ -131,7 +131,7 @@ async def create(request):
     resource_policy = request['keypair']['resource_policy']
     params = await request.json()
     log.info('VFOLDER.CREATE (u:{0})', access_key)
-    assert _rx_slug.search(params['name']) is not None, 'invalid name format'
+    assert _rx_slug.search(params.get('name', '')) is not None, 'invalid name format'
     # Resolve host for the new virtual folder.
     folder_host = params.get('host', None)
     if not folder_host:
@@ -251,8 +251,8 @@ async def rename(request, row):
     old_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     params = await request.json()
-    new_name = params.get('new_name')
-    assert _rx_slug.search(params['name']) is not None, 'invalid name format'
+    new_name = params.get('new_name', '')
+    assert _rx_slug.search(new_name) is not None, 'invalid name format'
     log.info('VFOLDER.RENAME (u:{0}, f:{1} -> {2})',
              access_key, old_name, new_name)
     async with dbpool.acquire() as conn:
