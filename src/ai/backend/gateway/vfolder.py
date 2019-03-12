@@ -243,6 +243,40 @@ async def get_info(request, row):
     return web.json_response(resp, status=200)
 
 
+@server_status_required(ALL_ALLOWED)
+@auth_required
+@vfolder_permission_required(VFolderPermission.OWNER_PERM)
+async def rename(request, row):
+    dbpool = request.app['dbpool']
+    old_name = request.match_info['name']
+    access_key = request['keypair']['access_key']
+    params = await request.json()
+    new_name = params.get('new_name')
+    assert new_name, 'path not specified!'
+    log.info('VFOLDER.RENAME (u:{0}, f:{1} -> {2})',
+             access_key, old_name, new_name)
+    async with dbpool.acquire() as conn:
+        entries = await query_accessible_vfolders(conn, access_key)
+        for entry in entries:
+            if entry['name'] == new_name:
+                raise InvalidAPIParameters(
+                    'One of your accessible vfolders already has '
+                    'the name you requested.')
+        for entry in entries:
+            if entry['name'] == old_name:
+                if not entry['is_owner']:
+                    raise InvalidAPIParameters(
+                        'Cannot change the name of a vfolder '
+                        'that is not owned by me.')
+                query = (
+                    vfolders.update()
+                    .values(name=new_name)
+                    .where(vfolders.c.id == entry['id']))
+                await conn.execute(query)
+                break
+    return web.Response(status=201)
+
+
 @server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_WRITE)
@@ -693,6 +727,7 @@ def create_app(default_cors_options):
     vfolder_resource = cors.add(app.router.add_resource(r'/{name}'))
     cors.add(vfolder_resource.add_route('GET',    get_info))
     cors.add(vfolder_resource.add_route('DELETE', delete))
+    cors.add(add_route('POST',   r'/{name}/rename', rename))
     cors.add(add_route('POST',   r'/{name}/mkdir', mkdir))
     cors.add(add_route('POST',   r'/{name}/upload', upload))
     cors.add(add_route('DELETE', r'/{name}/delete_files', delete_files))
