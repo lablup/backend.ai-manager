@@ -463,13 +463,14 @@ class ConfigServer:
             assert v in ('bytes', 'count')
             updates[f'config/resource_slots/{k}'] = v
         await self.etcd.put_dict(updates)
-        # self.get_resource_slots.cache_clear()
 
     async def update_manager_status(self, status):
         await self.etcd.put('manager/status', status.value)
+        self.get_manager_status.cache_clear()
 
-    # TODO: Need to update all manager processes at once when clearing caches....
-    # @aiotools.lru_cache(maxsize=1)
+    # TODO: refactor using contextvars in Python 3.7 so that the result is cached
+    #       in a per-request basis.
+    @aiotools.lru_cache(maxsize=1, expire_after=2.0)
     async def get_resource_slots(self):
         '''
         Returns the system-wide known resource slots and their units.
@@ -478,7 +479,7 @@ class ConfigServer:
         configured_slots = await self.etcd.get_prefix_dict('config/resource_slots')
         return {**intrinsic_slots, **configured_slots}
 
-    @aiotools.lru_cache(maxsize=1)
+    @aiotools.lru_cache(maxsize=1, expire_after=2.0)
     async def get_manager_status(self):
         status = await self.etcd.get('manager/status')
         return ManagerStatus(status)
@@ -487,13 +488,17 @@ class ConfigServer:
         async for ev in self.etcd.watch('manager/status'):
             yield ev
 
-    @aiotools.lru_cache(maxsize=1, expire_after=60.0)
+    # TODO: refactor using contextvars in Python 3.7 so that the result is cached
+    #       in a per-request basis.
+    @aiotools.lru_cache(maxsize=1, expire_after=2.0)
     async def get_allowed_origins(self):
         origins = await self.etcd.get('config/api/allow-origins')
         if origins is None:
             origins = '*'
         return origins
 
+    # TODO: refactor using contextvars in Python 3.7 so that the result is cached
+    #       in a per-request basis.
     @aiotools.lru_cache(expire_after=60.0)
     async def get_image_slot_ranges(self, image_ref: ImageRef):
         '''

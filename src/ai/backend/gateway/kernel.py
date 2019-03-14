@@ -5,6 +5,7 @@ REST-style kernel session management APIs.
 import aiohttp
 import asyncio
 from collections import defaultdict
+from decimal import Decimal
 from datetime import datetime, timedelta
 import functools
 import json
@@ -22,6 +23,7 @@ from sqlalchemy.sql.expression import true, null
 
 from ai.backend.common.exception import UnknownImageReference
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.types import ImageRef
 
 from .exceptions import (InvalidAPIParameters, QuotaExceeded,
                          KernelNotFound, VFolderNotFound,
@@ -41,12 +43,14 @@ grace_events = []
 
 _rx_sess_token = re.compile(r'\w[\w.-]*\w', re.ASCII)
 
+_json_loads = functools.partial(json.loads, parse_float=Decimal)
+
 
 @server_status_required(ALL_ALLOWED)
 @auth_required
 async def create(request) -> web.Response:
     try:
-        params = await request.json(loads=json.loads)
+        params = await request.json(loads=_json_loads)
         image = params.get('image')
         if image is None:
             image = params.get('lang')
@@ -144,6 +148,43 @@ async def create(request) -> web.Response:
         log.exception('GET_OR_CREATE: unexpected error!')
         raise InternalServerError
     return web.json_response(resp, status=201)
+
+
+@server_status_required(READ_ALLOWED)
+@auth_required
+async def check_resource(request) -> web.Response:
+    try:
+        params = await request.json(loads=_json_loads)
+        image = params.get('image')
+        access_key = request['keypair']['access_key']
+        resource_policy = request['keypair']['resource_policy']
+    except (json.decoder.JSONDecodeError, AssertionError) as e:
+        log.warning('CHECK_RESOURCE: invalid/missing parameters, {0!r}', e)
+        raise InvalidAPIParameters(extra_msg=str(e.args[0]))
+    registry = request.app['registry']
+    keypair_limits = None
+    current_available = None
+    known_slot_types = \
+        await registry.config_server.get_resource_slots()
+    keypair_limits = \
+        await registry.normalize_resource_slot_limits(resource_policy)
+    async with request.app['dbpool'].acquire() as conn, conn.begin():
+        key_occupied = \
+            await registry.get_keypair_occupancy(access_key, conn=conn)
+        current_available = keypair_limits - key_occupied
+    resp = {
+        'keypair_limits': keypair_limits.as_json_numeric(known_slot_types),
+        'keypair_default': resource_policy['default_for_unspecified'].name,
+        'current_available': current_available.as_json_numeric(known_slot_types),
+    }
+    if image is not None:
+        image_ref = \
+            await ImageRef.resolve_alias(image, registry.config_server.etcd)
+        image_min_slots, image_max_slots = \
+            await registry.config_server.get_image_slot_ranges(image_ref)
+        resp['image_min_slots'] = image_min_slots
+        resp['image_max_slots'] = image_max_slots
+    return web.json_response(resp, status=200)
 
 
 async def update_instance_usage(app, inst_id):
@@ -377,7 +418,7 @@ async def execute(request) -> web.Response:
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
     try:
-        params = await request.json(loads=json.loads)
+        params = await request.json(loads=_json_loads)
         log.info('EXECUTE(u:{0}, k:{1})', access_key, sess_id)
     except json.decoder.JSONDecodeError:
         log.warning('EXECUTE: invalid/missing parameters')
@@ -478,7 +519,7 @@ async def complete(request) -> web.Response:
     access_key = request['keypair']['access_key']
     try:
         with _timeout(2):
-            params = await request.json(loads=json.loads)
+            params = await request.json(loads=_json_loads)
         log.info('COMPLETE(u:{0}, k:{1})', access_key, sess_id)
     except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
         log.warning('COMPLETE: invalid/missing parameters')
@@ -546,7 +587,7 @@ async def download_files(request) -> web.Response:
         sess_id = request.match_info['sess_id']
         access_key = request['keypair']['access_key']
         with _timeout(2):
-            params = await request.json(loads=json.loads)
+            params = await request.json(loads=_json_loads)
         assert params.get('files'), 'no file(s) specified!'
         files = params.get('files')
         log.info('DOWNLOAD_FILE (u:{0}, token:{1})', access_key, sess_id)
@@ -582,7 +623,7 @@ async def list_files(request) -> web.Response:
         access_key = request['keypair']['access_key']
         sess_id = request.match_info['sess_id']
         with _timeout(2):
-            params = await request.json(loads=json.loads)
+            params = await request.json(loads=_json_loads)
         path = params.get('path', '.')
         log.info('LIST_FILES (u:{0}, token:{1})', access_key, sess_id)
     except (asyncio.TimeoutError, AssertionError,
@@ -658,17 +699,18 @@ def create_app(default_cors_options):
     app.on_shutdown.append(shutdown)
     app['api_versions'] = (1, 2, 3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
-    cors.add(app.router.add_route('POST',   r'/create', create))  # legacy
-    cors.add(app.router.add_route('POST',   r'', create))
+    cors.add(app.router.add_route('POST', '/create', create))  # legacy
+    cors.add(app.router.add_route('POST', '/check-resource', check_resource))
+    cors.add(app.router.add_route('POST', '', create))
     kernel_resource = cors.add(app.router.add_resource(r'/{sess_id}'))
     cors.add(kernel_resource.add_route('GET',    get_info))
     cors.add(kernel_resource.add_route('PATCH',  restart))
     cors.add(kernel_resource.add_route('DELETE', destroy))
     cors.add(kernel_resource.add_route('POST',   execute))
-    cors.add(app.router.add_route('GET',    r'/{sess_id}/logs', get_logs))
-    cors.add(app.router.add_route('POST',   r'/{sess_id}/interrupt', interrupt))
-    cors.add(app.router.add_route('POST',   r'/{sess_id}/complete', complete))
-    cors.add(app.router.add_route('POST',   r'/{sess_id}/upload', upload_files))
-    cors.add(app.router.add_route('GET',    r'/{sess_id}/download', download_files))
-    cors.add(app.router.add_route('GET',    r'/{sess_id}/files', list_files))
+    cors.add(app.router.add_route('GET',  '/{sess_id}/logs', get_logs))
+    cors.add(app.router.add_route('POST', '/{sess_id}/interrupt', interrupt))
+    cors.add(app.router.add_route('POST', '/{sess_id}/complete', complete))
+    cors.add(app.router.add_route('POST', '/{sess_id}/upload', upload_files))
+    cors.add(app.router.add_route('GET',  '/{sess_id}/download', download_files))
+    cors.add(app.router.add_route('GET',  '/{sess_id}/files', list_files))
     return app, []

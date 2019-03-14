@@ -477,19 +477,9 @@ class AgentRegistry:
         # - TODO: merge multicontainer-session branch and check
         #         max_containers_per_session.
         # - TODO: check scaling-group resource policy as well.
-        total_allowed = (ResourceSlot(resource_policy['total_resource_slots'])
-                         .as_numeric(known_slot_types,
-                                     unknown='drop', fill_missing=True))
+        total_allowed = await self.normalize_resource_slot_limits(resource_policy)
         async with reenter_txn(self.dbpool, conn) as conn:
-            query = (sa.select([kernels.c.occupied_slots])
-                       .where((kernels.c.access_key == access_key) &
-                              (kernels.c.status != KernelStatus.TERMINATED)))
-            zero = ResourceSlot({}).as_numeric(known_slot_types, fill_missing=True)
-            key_occupied = sum([
-                (ResourceSlot(row['occupied_slots'])
-                 .as_numeric(known_slot_types,
-                             unknown='drop', fill_missing=True))
-                async for row in conn.execute(query)], zero)
+            key_occupied = await self.get_keypair_occupancy(access_key, conn=conn)
             log.debug('{} current_occupancy: {}', access_key, key_occupied)
             log.debug('{} total_allowed: {} (default {})',
                       access_key, total_allowed,
@@ -661,6 +651,28 @@ class AgentRegistry:
                 result = await conn.execute(query)
                 assert result.rowcount == 1
                 return kernel_access_info
+
+    async def normalize_resource_slot_limits(self, resource_policy):
+        known_slot_types = \
+            await self.config_server.get_resource_slots()
+        return (ResourceSlot(resource_policy['total_resource_slots'])
+                .as_numeric(known_slot_types,
+                            unknown='drop', fill_missing=True))
+
+    async def get_keypair_occupancy(self, access_key, *, conn=None):
+        known_slot_types = \
+            await self.config_server.get_resource_slots()
+        async with reenter_txn(self.dbpool, conn) as conn:
+            query = (sa.select([kernels.c.occupied_slots])
+                       .where((kernels.c.access_key == access_key) &
+                              (kernels.c.status != KernelStatus.TERMINATED)))
+            zero = ResourceSlot({}).as_numeric(known_slot_types, fill_missing=True)
+            key_occupied = sum([
+                (ResourceSlot(row['occupied_slots'])
+                 .as_numeric(known_slot_types,
+                             unknown='drop', fill_missing=True))
+                async for row in conn.execute(query)], zero)
+            return key_occupied
 
     async def destroy_session(self, sess_id, access_key):
         async with self.handle_kernel_exception(
