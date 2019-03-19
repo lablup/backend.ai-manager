@@ -23,11 +23,12 @@ from sqlalchemy.sql.expression import true, null
 from ai.backend.common.exception import UnknownImageReference
 from ai.backend.common.logging import BraceStyleAdapter
 
-from .exceptions import (InvalidAPIParameters, QuotaExceeded,
-                         KernelNotFound, VFolderNotFound,
-                         BackendError, InternalServerError)
+from .exceptions import (
+    InvalidAPIParameters, QuotaExceeded,
+    KernelNotFound, VFolderNotFound,
+    BackendError, InternalServerError)
 from .auth import auth_required
-from .utils import catch_unexpected
+from .utils import catch_unexpected, get_access_key_scopes
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (
     keypairs, kernels, vfolders,
@@ -59,23 +60,23 @@ async def create(request) -> web.Response:
                'clientSessionToken is too short or long (4 to 64 bytes required)!'
         assert _rx_sess_token.fullmatch(sess_id), \
                'clientSessionToken contains invalid characters.'
-        log.info('GET_OR_CREATE (u:{0}, image:{1}, tag:{2}, token:{3})',
-                 request['keypair']['access_key'], image,
+        requester_access_key, owner_access_key = get_access_key_scopes(request)
+        log.info('GET_OR_CREATE (u:{0}/{1}, image:{2}, tag:{3}, token:{4})',
+                 requester_access_key, owner_access_key, image,
                  params.get('tag', None), sess_id)
     except (json.decoder.JSONDecodeError, AssertionError) as e:
         log.warning('GET_OR_CREATE: invalid/missing parameters, {0!r}', e)
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
     resp = {}
     try:
-        access_key = request['keypair']['access_key']
         resource_policy = request['keypair']['resource_policy']
         async with request.app['dbpool'].acquire() as conn, conn.begin():
             query = (sa.select([keypairs.c.concurrency_used], for_update=True)
                        .select_from(keypairs)
-                       .where(keypairs.c.access_key == access_key))
+                       .where(keypairs.c.access_key == owner_access_key))
             concurrency_used = await conn.scalar(query)
             log.debug('access_key: {0} ({1} / {2})',
-                      access_key, concurrency_used,
+                      owner_access_key, concurrency_used,
                       resource_policy['max_concurrent_sessions'])
             if concurrency_used >= resource_policy['max_concurrent_sessions']:
                 raise QuotaExceeded
@@ -107,7 +108,7 @@ async def create(request) -> web.Response:
                 mount_details = []
                 matched_mounts = set()
                 matched_vfolders = await query_accessible_vfolders(
-                    conn, access_key,
+                    conn, owner_access_key,
                     extra_vf_conds=(vfolders.c.name.in_(creation_config['mounts'])))
                 for item in matched_vfolders:
                     matched_mounts.add(item['name'])
@@ -122,7 +123,7 @@ async def create(request) -> web.Response:
                 creation_config['mounts'] = mount_details
 
             kernel, created = await request.app['registry'].get_or_create_session(
-                sess_id, access_key,
+                sess_id, owner_access_key,
                 image, creation_config,
                 resource_policy,
                 conn=conn, tag=params.get('tag', None))
@@ -132,7 +133,7 @@ async def create(request) -> web.Response:
             if created:
                 query = (sa.update(keypairs)
                            .values(concurrency_used=keypairs.c.concurrency_used + 1)
-                           .where(keypairs.c.access_key == access_key))
+                           .where(keypairs.c.access_key == owner_access_key))
                 await conn.execute(query)
     except BackendError:
         log.exception('GET_OR_CREATE: exception')
@@ -299,10 +300,11 @@ async def stats_monitor_update_timer(app):
 async def destroy(request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    access_key = request['keypair']['access_key']
-    log.info('DESTROY (u:{0}, k:{1})', access_key, sess_id)
+    requester_access_key, owner_access_key = get_access_key_scopes(request)
+    log.info('DESTROY (u:{0}/{1}, k:{2})',
+             requester_access_key, owner_access_key, sess_id)
     try:
-        last_stat = await registry.destroy_session(sess_id, access_key)
+        last_stat = await registry.destroy_session(sess_id, owner_access_key)
     except BackendError:
         log.exception('DESTROY: exception')
         raise
@@ -320,11 +322,12 @@ async def get_info(request) -> web.Response:
     resp = {}
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    access_key = request['keypair']['access_key']
-    log.info('GETINFO (u:{0}, k:{1})', access_key, sess_id)
+    requester_access_key, owner_access_key = get_access_key_scopes(request)
+    log.info('GETINFO (u:{0}/{1}, k:{2})',
+             requester_access_key, owner_access_key, sess_id)
     try:
-        await registry.increment_session_usage(sess_id, access_key)
-        kern = await registry.get_session(sess_id, access_key, field='*')
+        await registry.increment_session_usage(sess_id, owner_access_key)
+        kern = await registry.get_session(sess_id, owner_access_key, field='*')
         resp['lang'] = kern.image  # legacy
         resp['image'] = kern.image
         resp['registry'] = kern.registry
@@ -354,11 +357,12 @@ async def get_info(request) -> web.Response:
 async def restart(request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    access_key = request['keypair']['access_key']
-    log.info('RESTART (u:{0}, k:{1})', access_key, sess_id)
+    requester_access_key, owner_access_key = get_access_key_scopes(request)
+    log.info('RESTART (u:{0}/{1}, k:{2})',
+             requester_access_key, owner_access_key, sess_id)
     try:
-        await registry.increment_session_usage(sess_id, access_key)
-        await registry.restart_session(sess_id, access_key)
+        await registry.increment_session_usage(sess_id, owner_access_key)
+        await registry.restart_session(sess_id, owner_access_key)
     except BackendError:
         log.exception('RESTART: exception')
         raise
@@ -375,15 +379,16 @@ async def execute(request) -> web.Response:
     resp = {}
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    access_key = request['keypair']['access_key']
+    requester_access_key, owner_access_key = get_access_key_scopes(request)
     try:
         params = await request.json(loads=json.loads)
-        log.info('EXECUTE(u:{0}, k:{1})', access_key, sess_id)
+        log.info('EXECUTE(u:{0}/{1}, k:{2})',
+                 requester_access_key, owner_access_key, sess_id)
     except json.decoder.JSONDecodeError:
         log.warning('EXECUTE: invalid/missing parameters')
         raise InvalidAPIParameters
     try:
-        await registry.increment_session_usage(sess_id, access_key)
+        await registry.increment_session_usage(sess_id, owner_access_key)
         api_version = request['api_version']
         if api_version[0] == 1:
             run_id = params.get('runId', secrets.token_hex(8))
@@ -407,10 +412,10 @@ async def execute(request) -> web.Response:
         if mode == 'complete':
             # For legacy
             resp['result'] = await registry.get_completions(
-                sess_id, access_key, code, opts)
+                sess_id, owner_access_key, code, opts)
         else:
             raw_result = await registry.execute(
-                sess_id, access_key,
+                sess_id, owner_access_key,
                 api_version, run_id, mode, code, opts,
                 flush_timeout=2.0)
             if raw_result is None:
@@ -455,11 +460,12 @@ async def execute(request) -> web.Response:
 async def interrupt(request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    access_key = request['keypair']['access_key']
-    log.info('INTERRUPT(u:{0}, k:{1})', access_key, sess_id)
+    requester_access_key, owner_access_key = get_access_key_scopes(request)
+    log.info('INTERRUPT(u:{0}/{1}, k:{2})',
+             requester_access_key, owner_access_key, sess_id)
     try:
-        await registry.increment_session_usage(sess_id, access_key)
-        await registry.interrupt_session(sess_id, access_key)
+        await registry.increment_session_usage(sess_id, owner_access_key)
+        await registry.interrupt_session(sess_id, owner_access_key)
     except BackendError:
         log.exception('INTERRUPT: exception')
         raise
@@ -469,28 +475,29 @@ async def interrupt(request) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def complete(request) -> web.Response:
-    resp = {'result': {
-        'status': 'finished',
-        'completions': [],
-    }}
+    resp = {
+        'result': {
+            'status': 'finished',
+            'completions': [],
+        }
+    }
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    access_key = request['keypair']['access_key']
+    requester_access_key, owner_access_key = get_access_key_scopes(request)
     try:
         with _timeout(2):
             params = await request.json(loads=json.loads)
-        log.info('COMPLETE(u:{0}, k:{1})', access_key, sess_id)
+        log.info('COMPLETE(u:{0}/{1}, k:{2})',
+                 requester_access_key, owner_access_key, sess_id)
     except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
-        log.warning('COMPLETE: invalid/missing parameters')
         raise InvalidAPIParameters
     try:
         code = params.get('code', '')
         opts = params.get('options', None) or {}
-        await registry.increment_session_usage(sess_id, access_key)
+        await registry.increment_session_usage(sess_id, owner_access_key)
         resp['result'] = await request.app['registry'].get_completions(
-            sess_id, code, opts)
+            sess_id, owner_access_key, code, opts)
     except AssertionError:
-        log.warning('COMPLETE: invalid/missing parameters')
         raise InvalidAPIParameters
     except BackendError:
         log.exception('COMPLETE: exception')
@@ -505,9 +512,11 @@ async def upload_files(request) -> web.Response:
     reader = await request.multipart()
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    access_key = request['keypair']['access_key']
+    requester_access_key, owner_access_key = get_access_key_scopes(request)
+    log.info('UPLOAD_FILE (u:{0}/{1}, token:{2})',
+             requester_access_key, owner_access_key, sess_id)
     try:
-        await registry.increment_session_usage(sess_id, access_key)
+        await registry.increment_session_usage(sess_id, owner_access_key)
         file_count = 0
         upload_tasks = []
         async for file in aiotools.aiter(reader.next, None):
@@ -529,7 +538,8 @@ async def upload_files(request) -> web.Response:
             data = file.decode(b''.join(chunks))
             log.debug('received file: {0} ({1:,} bytes)', file.filename, recv_size)
             t = loop.create_task(
-                registry.upload_file(sess_id, access_key, file.filename, data))
+                registry.upload_file(sess_id, owner_access_key,
+                                     file.filename, data))
             upload_tasks.append(t)
         await asyncio.gather(*upload_tasks)
     except BackendError:
@@ -544,23 +554,27 @@ async def download_files(request) -> web.Response:
     try:
         registry = request.app['registry']
         sess_id = request.match_info['sess_id']
-        access_key = request['keypair']['access_key']
+        requester_access_key, owner_access_key = get_access_key_scopes(request)
         with _timeout(2):
             params = await request.json(loads=json.loads)
         assert params.get('files'), 'no file(s) specified!'
         files = params.get('files')
-        log.info('DOWNLOAD_FILE (u:{0}, token:{1})', access_key, sess_id)
+        log.info('DOWNLOAD_FILE (u:{0}/{1}, token:{2})',
+                 requester_access_key, owner_access_key, sess_id)
     except (asyncio.TimeoutError, AssertionError, json.decoder.JSONDecodeError) as e:
         log.warning('DOWNLOAD_FILE: invalid/missing parameters, {0!r}', e)
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
 
     try:
         assert len(files) <= 5, 'Too many files'
-        await registry.increment_session_usage(sess_id, access_key)
+        await registry.increment_session_usage(sess_id, owner_access_key)
         # TODO: Read all download file contents. Need to fix by using chuncking, etc.
         results = await asyncio.gather(*map(
-            functools.partial(registry.download_file, sess_id, access_key), files))
+            functools.partial(registry.download_file, sess_id, owner_access_key),
+            files))
         log.debug('file(s) inside container retrieved')
+    except asyncio.CancelledError:
+        raise
     except BackendError:
         log.exception('DOWNLOAD_FILE: exception')
         raise
@@ -579,12 +593,12 @@ async def download_files(request) -> web.Response:
 @auth_required
 async def list_files(request) -> web.Response:
     try:
-        access_key = request['keypair']['access_key']
         sess_id = request.match_info['sess_id']
-        with _timeout(2):
-            params = await request.json(loads=json.loads)
+        requester_access_key, owner_access_key = get_access_key_scopes(request)
+        params = await request.json(loads=json.loads)
         path = params.get('path', '.')
-        log.info('LIST_FILES (u:{0}, token:{1})', access_key, sess_id)
+        log.info('LIST_FILES (u:{0}/{1}, token:{2})',
+                 requester_access_key, owner_access_key, sess_id)
     except (asyncio.TimeoutError, AssertionError,
             json.decoder.JSONDecodeError) as e:
         log.warning('LIST_FILES: invalid/missing parameters, {0!r}', e)
@@ -592,10 +606,12 @@ async def list_files(request) -> web.Response:
     resp = {}
     try:
         registry = request.app['registry']
-        await registry.increment_session_usage(sess_id, access_key)
-        result = await registry.list_files(sess_id, access_key, path)
+        await registry.increment_session_usage(sess_id, owner_access_key)
+        result = await registry.list_files(sess_id, owner_access_key, path)
         resp.update(result)
         log.debug('container file list for {0} retrieved', path)
+    except asyncio.CancelledError:
+        raise
     except BackendError:
         log.exception('LIST_FILES: exception')
         raise
@@ -612,11 +628,12 @@ async def get_logs(request) -> web.Response:
     resp = {'result': {'logs': ''}}
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    access_key = request['keypair']['access_key']
-    log.info('GETLOG (u:{0}, k:{1})', request['keypair']['access_key'], sess_id)
+    requester_access_key, owner_access_key = get_access_key_scopes(request)
+    log.info('GETLOG (u:{0}/{1}, k:{2})',
+             requester_access_key, owner_access_key, sess_id)
     try:
-        await registry.increment_session_usage(sess_id, access_key)
-        resp['result'] = await registry.get_logs(sess_id, access_key)
+        await registry.increment_session_usage(sess_id, owner_access_key)
+        resp['result'] = await registry.get_logs(sess_id, owner_access_key)
         log.info('container log retrieved: {0!r}', resp)
     except BackendError:
         log.exception('GETLOG: exception')

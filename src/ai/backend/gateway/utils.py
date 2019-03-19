@@ -1,4 +1,3 @@
-import asyncio
 from datetime import datetime
 import functools
 import io
@@ -12,7 +11,7 @@ from aiohttp import web
 from dateutil.tz import gettz
 import pytz
 
-from .exceptions import QueryNotImplemented
+from .exceptions import GenericForbidden, QueryNotImplemented
 
 _rx_sitepkg_path = re.compile(r'^.+/site-packages/')
 
@@ -21,6 +20,19 @@ def method_placeholder(orig_method):
     async def _handler(request):
         raise web.HTTPMethodNotAllowed(request.method, [orig_method])
     return _handler
+
+
+def get_access_key_scopes(request):
+    assert request['is_authorized'], \
+           'Only authorized requests may have access key scopes'
+    requester_access_key = request['keypair']['access_key']
+    owner_access_key = request.query.get('owner_access_key', None)
+    if owner_access_key is not None:
+        if not request['is_admin']:
+            raise GenericForbidden(
+                'Only admins can access or control sessions owned by others.')
+        return requester_access_key, owner_access_key
+    return requester_access_key, requester_access_key
 
 
 class _Infinity(numbers.Number):
