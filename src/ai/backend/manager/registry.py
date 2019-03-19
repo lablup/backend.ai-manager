@@ -619,6 +619,7 @@ class AgentRegistry:
                         },
                         'resource_slots': (requested_slots
                                            .as_json_numeric(known_slot_types)),
+                        'idle_timeout': resource_policy['idle_timeout'],
                         'mounts': mounts,
                         'environ': environ,
                     }
