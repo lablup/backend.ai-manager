@@ -28,7 +28,7 @@ def get_access_key_scopes(request):
     requester_access_key = request['keypair']['access_key']
     owner_access_key = request.query.get('owner_access_key', None)
     if owner_access_key is not None:
-        if not request['is_admin']:
+        if owner_access_key != requester_access_key and not request['is_admin']:
             raise GenericForbidden(
                 'Only admins can access or control sessions owned by others.')
         return requester_access_key, owner_access_key
