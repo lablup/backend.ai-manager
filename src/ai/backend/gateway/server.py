@@ -185,7 +185,7 @@ async def gw_init(app, default_cors_options):
         dbname=app['config'].db_name,
         echo=bool(app['config'].verbose),
         # TODO: check the throughput impacts of DB/redis pool sizes
-        minsize=4, maxsize=100,
+        minsize=4, maxsize=256,
         timeout=30, pool_recycle=30,
     )
     app['redis_live'] = await aioredis.create_redis(
