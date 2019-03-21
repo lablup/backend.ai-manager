@@ -70,7 +70,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
         return cls(
             name=row['name'],
             created_at=row['created_at'],
-            default_for_unspecified=row['default_for_unspecified'],
+            default_for_unspecified=row['default_for_unspecified'].name,
             total_resource_slots=row['total_resource_slots'],
             max_concurrent_sessions=row['max_concurrent_sessions'],
             max_containers_per_session=row['max_containers_per_session'],
@@ -83,7 +83,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
     @classmethod
     async def load_all(cls, context):
         async with context['dbpool'].acquire() as conn:
-            query = (sa.select('*')
+            query = (sa.select([keypair_resource_policies])
                        .select_from(keypair_resource_policies))
             result = await conn.execute(query)
             rows = await result.fetchall()
@@ -112,7 +112,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
     @classmethod
     async def batch_load_by_name(cls, context, names):
         async with context['dbpool'].acquire() as conn:
-            query = (sa.select('*')
+            query = (sa.select([keypair_resource_policies])
                        .select_from(keypair_resource_policies)
                        .where(keypair_resource_policies.c.name.in_(names))
                        .order_by(keypair_resource_policies.c.name))
