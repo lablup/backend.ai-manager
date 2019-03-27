@@ -225,8 +225,11 @@ async def list_hosts(request):
         mount_prefix = '/mnt'
     mounted_hosts = set(p.name for p in Path(mount_prefix).iterdir() if p.is_dir())
     allowed_hosts = allowed_hosts & mounted_hosts
+    default_host = await config.get('volumes/_default_host')
+    if default_host not in allowed_hosts:
+        default_host = None
     resp = {
-        'default': await config.get('volumes/_default_host'),
+        'default': default_host,
         'allowed': sorted(allowed_hosts),
     }
     return web.json_response(resp, status=200)
