@@ -42,6 +42,7 @@ Alias keys are also URL-quoted in the same way.
  + volumes
    - _mount: {path-to-mount-root-for-vfolder-partitions}
    - _default_host: {default-vfolder-partition-name}
+   - _fsprefix: {path-prefix-inside-host-mounts}
  + images
    + _aliases
      - {alias}: "{registry}/{image}:{tag}"   # {alias} is url-quoted
@@ -103,7 +104,9 @@ from ai.backend.common.identity import get_instance_id, get_instance_ip
 from ai.backend.common.docker import get_known_registries
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ImageRef, BinarySize, ResourceSlot
-from ai.backend.common.exception import UnknownImageReference
+from ai.backend.common.exception import (
+    UnknownImageReference, ServerMisconfiguredError
+)
 from ai.backend.common.etcd import (
     make_dict_from_pairs,
     quote as etcd_quote,
@@ -117,6 +120,13 @@ from .manager import ManagerStatus
 from .utils import chunked
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
+
+config_defaults = {
+    'volumes/_mount': '/mnt',
+    'volumes/_default_host': 'local',
+    'volumes/_fsprefix': '/',
+    'config/api/allow-origins': '*',
+}
 
 
 class ConfigServer:
@@ -132,6 +142,15 @@ class ConfigServer:
                 'password': etcd_password,
             }
         self.etcd = AsyncEtcd(etcd_addr, namespace, credentials=credentials)
+
+    async def get(self, key, allow_null=True):
+        value = await self.etcd.get(key)
+        if value is None:
+            value = config_defaults.get(key, None)
+        if not allow_null and value is None:
+            raise ServerMisconfiguredError(
+                'A required etcd config is missing.', key)
+        return value
 
     async def register_myself(self, app_config):
         instance_id = await get_instance_id()
@@ -489,10 +508,7 @@ class ConfigServer:
 
     @aiotools.lru_cache(maxsize=1, expire_after=60.0)
     async def get_allowed_origins(self):
-        origins = await self.etcd.get('config/api/allow-origins')
-        if origins is None:
-            origins = '*'
-        return origins
+        return await self.get('config/api/allow-origins')
 
     @aiotools.lru_cache(expire_after=60.0)
     async def get_image_slot_ranges(self, image_ref: ImageRef):
