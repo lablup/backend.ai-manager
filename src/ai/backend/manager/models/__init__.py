@@ -6,6 +6,7 @@ from .keypair import *  # noqa
 from .kernel import *   # noqa
 from .vfolder import *  # noqa
 from .resource_policy import *  # noqa
+from .resource_preset import *  # noqa
 
 __all__ = (
     'metadata',
@@ -15,4 +16,5 @@ __all__ = (
     kernel.__all__,   # noqa
     vfolder.__all__,  # noqa
     resource_policy.__all__,  # noqa
+    resource_preset.__all__,  # noqa
 )
