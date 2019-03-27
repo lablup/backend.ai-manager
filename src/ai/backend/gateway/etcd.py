@@ -42,6 +42,7 @@ Alias keys are also URL-quoted in the same way.
  + volumes
    - _mount: {path-to-mount-root-for-vfolder-partitions}
    - _default_host: {default-vfolder-partition-name}
+   - _fsprefix: {path-prefix-inside-host-mounts}
  + images
    + _aliases
      - {alias}: "{registry}/{image}:{tag}"   # {alias} is url-quoted
@@ -113,10 +114,18 @@ from ai.backend.common.docker import (
     login as registry_login,
     get_registry_info
 )
+from .exceptions import ServerMisconfiguredError
 from .manager import ManagerStatus
 from .utils import chunked
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
+
+config_defaults = {
+    'volumes/_mount': '/mnt',
+    'volumes/_default_host': 'local',
+    'volumes/_fsprefix': '/',
+    'config/api/allow-origins': '*',
+}
 
 
 class ConfigServer:
@@ -132,6 +141,15 @@ class ConfigServer:
                 'password': etcd_password,
             }
         self.etcd = AsyncEtcd(etcd_addr, namespace, credentials=credentials)
+
+    async def get(self, key, allow_null=True):
+        value = await self.etcd.get(key)
+        if value is None:
+            value = config_defaults.get(key, None)
+        if not allow_null and value is None:
+            raise ServerMisconfiguredError(
+                'A required etcd config is missing.', key)
+        return value
 
     async def register_myself(self, app_config):
         instance_id = await get_instance_id()
@@ -492,10 +510,7 @@ class ConfigServer:
     #       in a per-request basis.
     @aiotools.lru_cache(maxsize=1, expire_after=2.0)
     async def get_allowed_origins(self):
-        origins = await self.etcd.get('config/api/allow-origins')
-        if origins is None:
-            origins = '*'
-        return origins
+        return await self.get('config/api/allow-origins')
 
     # TODO: refactor using contextvars in Python 3.7 so that the result is cached
     #       in a per-request basis.

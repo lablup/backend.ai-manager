@@ -609,6 +609,7 @@ class AgentRegistry:
                         },
                         'resource_slots': (requested_slots
                                            .as_json_numeric(known_slot_types)),
+                        'idle_timeout': resource_policy['idle_timeout'],
                         'mounts': mounts,
                         'environ': environ,
                     }
@@ -686,7 +687,7 @@ class AgentRegistry:
                                                   KernelStatus.TERMINATING,
                                                   db_connection=conn)
             except KernelNotFound:
-                return
+                raise
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 return await rpc.call.destroy_kernel(str(kernel['id']))
 

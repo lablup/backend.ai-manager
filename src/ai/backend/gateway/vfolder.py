@@ -214,6 +214,29 @@ async def list_folders(request):
 
 @server_status_required(READ_ALLOWED)
 @auth_required
+async def list_hosts(request):
+    access_key = request['keypair']['access_key']
+    log.info('VFOLDER.LIST_HOSTS (u:{0})', access_key)
+    config = request.app['config_server']
+    allowed_hosts = set(
+        request['keypair']['resource_policy']['allowed_vfolder_hosts'])
+    mount_prefix = await config.get('volumes/_mount')
+    if mount_prefix is None:
+        mount_prefix = '/mnt'
+    mounted_hosts = set(p.name for p in Path(mount_prefix).iterdir() if p.is_dir())
+    allowed_hosts = allowed_hosts & mounted_hosts
+    default_host = await config.get('volumes/_default_host')
+    if default_host not in allowed_hosts:
+        default_host = None
+    resp = {
+        'default': default_host,
+        'allowed': sorted(allowed_hosts),
+    }
+    return web.json_response(resp, status=200)
+
+
+@server_status_required(READ_ALLOWED)
+@auth_required
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
 async def get_info(request, row):
     resp = {}
@@ -699,12 +722,8 @@ async def delete(request):
 
 
 async def init(app):
-    mount_prefix = await app['config_server'].etcd.get('volumes/_mount')
-    if mount_prefix is None:
-        mount_prefix = '/mnt'
-    fs_prefix = await app['config_server'].etcd.get('volumes/_fsprefix')
-    if fs_prefix is None:
-        fs_prefix = '/'
+    mount_prefix = await app['config_server'].get('volumes/_mount')
+    fs_prefix = await app['config_server'].get('volumes/_fsprefix')
     app['VFOLDER_MOUNT'] = Path(mount_prefix)
     app['VFOLDER_FSPREFIX'] = Path(fs_prefix.lstrip('/'))
 
@@ -727,6 +746,7 @@ def create_app(default_cors_options):
     vfolder_resource = cors.add(app.router.add_resource(r'/{name}'))
     cors.add(vfolder_resource.add_route('GET',    get_info))
     cors.add(vfolder_resource.add_route('DELETE', delete))
+    cors.add(add_route('GET',    r'/_/hosts', list_hosts))
     cors.add(add_route('POST',   r'/{name}/rename', rename))
     cors.add(add_route('POST',   r'/{name}/mkdir', mkdir))
     cors.add(add_route('POST',   r'/{name}/upload', upload))

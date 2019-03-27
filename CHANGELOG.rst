@@ -1,6 +1,33 @@
 Changes
 =======
 
+19.03.0rc2 (2018-03-25)
+-----------------------
+
+- NEW: Add an explicit "owner_access_key" query parameter to all session-related APIs
+  (under /kernel/ prefix) so that admininstrators can perform API requests such as
+  termination on sessions owned by other users.
+
+- NEW: Add a new API for renaming vfolders (#82)
+
+- CHANGE: Now idle timeouts are configured by keypair resource policies. (#92)
+
+- CHANGE: Rename "--redis-auth" option to "--redis-password" and its
+  environment variable equivalent as well.
+
+- Now non-admin users are able to query their own keypairs and resource policies via
+  the GraphQL API.
+
+- Improve stability with many concurrent clients and lossy connections by shielding
+  DB-access coroutines to prevent DB connection pool corruption. (#140)
+
+- Increase the default rate-limit for keypairs from 1,000 to 30,000 for better GUI
+  integration.
+
+- Reduce chances for timeout errors when there are bursty session creation requests.
+
+- Other bug fixes and improvements.
+
 19.03.0rc1 (2018-02-25)
 -----------------------
 
