@@ -104,9 +104,7 @@ from ai.backend.common.identity import get_instance_id, get_instance_ip
 from ai.backend.common.docker import get_known_registries
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ImageRef, BinarySize, ResourceSlot
-from ai.backend.common.exception import (
-    UnknownImageReference, ServerMisconfiguredError
-)
+from ai.backend.common.exception import UnknownImageReference
 from ai.backend.common.etcd import (
     make_dict_from_pairs,
     quote as etcd_quote,
@@ -116,6 +114,7 @@ from ai.backend.common.docker import (
     login as registry_login,
     get_registry_info
 )
+from .exceptions import ServerMisconfiguredError
 from .manager import ManagerStatus
 from .utils import chunked
 
