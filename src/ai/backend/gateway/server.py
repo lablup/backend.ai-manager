@@ -78,11 +78,14 @@ async def hello(request) -> web.Response:
     '''
     Returns the API version number.
     '''
-    return web.json_response({'version': LATEST_API_VERSION})
+    return web.json_response({
+        'version': LATEST_API_VERSION,
+        'manager': __version__,
+    })
 
 
 async def on_prepare(request, response):
-    response.headers['Server'] = 'BackendAI-API/' + LATEST_API_VERSION
+    response.headers['Server'] = 'BackendAI'
 
 
 @web.middleware
