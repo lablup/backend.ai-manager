@@ -11,7 +11,7 @@ import psycopg2 as pg
 
 from ai.backend.common.logging import BraceStyleAdapter
 from . import keypairs
-from .base import metadata, BigInt, EnumType
+from .base import metadata, BigInt, EnumType, ResourceSlotColumn
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.models'))
 
@@ -39,7 +39,7 @@ keypair_resource_policies = sa.Table(
               EnumType(DefaultForUnspecified),
               default=DefaultForUnspecified.LIMITED,
               nullable=False),
-    sa.Column('total_resource_slots', pgsql.JSONB(), nullable=False),
+    sa.Column('total_resource_slots', ResourceSlotColumn(), nullable=False),
     sa.Column('max_concurrent_sessions', sa.Integer(), nullable=False),
     sa.Column('max_containers_per_session', sa.Integer(), nullable=False),
     sa.Column('max_vfolder_count', sa.Integer(), nullable=False),

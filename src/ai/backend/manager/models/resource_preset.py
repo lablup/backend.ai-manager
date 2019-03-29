@@ -4,11 +4,10 @@ import logging
 
 import graphene
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql as pgsql
 import psycopg2 as pg
 
 from ai.backend.common.logging import BraceStyleAdapter
-from .base import metadata
+from .base import metadata, ResourceSlotColumn
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.models'))
 
@@ -24,7 +23,7 @@ __all__ = (
 resource_presets = sa.Table(
     'resource_presets', metadata,
     sa.Column('name', sa.String(length=256), primary_key=True),
-    sa.Column('resource_slots', pgsql.JSONB(), nullable=False),
+    sa.Column('resource_slots', ResourceSlotColumn(), nullable=False),
 )
 
 

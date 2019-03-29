@@ -9,7 +9,9 @@ from sqlalchemy.dialects import postgresql as pgsql
 from ai.backend.common.types import ResourceSlot, BinarySize
 from .base import (
     metadata, zero_if_none,
-    BigInt, IDColumn, EnumType, Item, PaginatedList,
+    BigInt, IDColumn, EnumType,
+    ResourceSlotColumn,
+    Item, PaginatedList,
 )
 
 __all__ = (
@@ -52,8 +54,8 @@ kernels = sa.Table(
 
     # Resource occupation
     sa.Column('container_id', sa.String(length=64)),
-    sa.Column('occupied_slots', pgsql.JSONB(), nullable=False),
-    sa.Column('occupied_shares', pgsql.JSONB(), nullable=False),
+    sa.Column('occupied_slots', ResourceSlotColumn(), nullable=False),
+    sa.Column('occupied_shares', ResourceSlotColumn(), nullable=False),
     sa.Column('environ', sa.ARRAY(sa.String), nullable=True),
 
     # Port mappings

@@ -4,10 +4,9 @@ import enum
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common.types import ResourceSlot, BinarySize
-from .base import metadata, EnumType, Item, PaginatedList
+from .base import metadata, EnumType, Item, PaginatedList, ResourceSlotColumn
 
 __all__ = (
     'agents', 'AgentStatus',
@@ -29,8 +28,8 @@ agents = sa.Table(
               default=AgentStatus.ALIVE),
     sa.Column('region', sa.String(length=64), index=True, nullable=False),
 
-    sa.Column('available_slots', pgsql.JSONB(), nullable=False),
-    sa.Column('occupied_slots', pgsql.JSONB(), nullable=False),
+    sa.Column('available_slots', ResourceSlotColumn(), nullable=False),
+    sa.Column('occupied_slots', ResourceSlotColumn(), nullable=False),
 
     sa.Column('addr', sa.String(length=128), nullable=False),
     sa.Column('first_contact', sa.DateTime(timezone=True),

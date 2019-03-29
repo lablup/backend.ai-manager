@@ -16,9 +16,10 @@ from sqlalchemy.types import (
     TypeDecorator,
     CHAR
 )
-from sqlalchemy.dialects.postgresql import UUID, ENUM
+from sqlalchemy.dialects.postgresql import UUID, ENUM, JSONB
 
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.types import ResourceSlot
 from .. import models
 
 SAFE_MIN_INT = -9007199254740991
@@ -110,6 +111,23 @@ class EnumValueType(TypeDecorator, SchemaType):
 
     def copy(self):
         return EnumValueType(self._enum_cls, **self._opts)
+
+
+class ResourceSlotColumn(TypeDecorator):
+    '''
+    A column type wrapper for ResourceSlot from JSONB.
+    '''
+
+    impl = JSONB
+
+    def process_bind_param(self, value, dialect):
+        return value.to_json() if value is not None else None
+
+    def process_result_value(self, value: str, dialect):
+        return ResourceSlot.from_json(value) if value is not None else None
+
+    def copy(self):
+        return ResourceSlotColumn()
 
 
 class CurrencyTypes(enum.Enum):
