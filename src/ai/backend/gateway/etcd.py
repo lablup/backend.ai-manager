@@ -232,8 +232,7 @@ class ConfigServer:
             'registry': image_ref.registry,
             'digest': item[''],
             'labels': item.get('labels', {}),
-            'aliases': reverse_aliases.get(
-                image_ref.canonical, []),
+            'aliases': reverse_aliases.get(image_ref.canonical, []),
             'size_bytes': item.get('size_bytes', 0),
             'resource_limits': res_limits,
             'supported_accelerators': accels,
