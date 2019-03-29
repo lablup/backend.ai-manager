@@ -1,6 +1,5 @@
 import asyncio
 from collections import OrderedDict
-import enum
 import logging
 
 import graphene
@@ -10,6 +9,7 @@ from sqlalchemy.dialects import postgresql as pgsql
 import psycopg2 as pg
 
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
 from . import keypairs
 from .base import metadata, BigInt, EnumType, ResourceSlotColumn
 
@@ -23,11 +23,6 @@ __all__ = (
     'ModifyKeyPairResourcePolicy',
     'DeleteKeyPairResourcePolicy',
 )
-
-
-class DefaultForUnspecified(enum.Enum):
-    LIMITED = 0
-    UNLIMITED = 1
 
 
 keypair_resource_policies = sa.Table(
@@ -71,7 +66,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
             name=row['name'],
             created_at=row['created_at'],
             default_for_unspecified=row['default_for_unspecified'].name,
-            total_resource_slots=row['total_resource_slots'],
+            total_resource_slots=row['total_resource_slots'].to_json(),
             max_concurrent_sessions=row['max_concurrent_sessions'],
             max_containers_per_session=row['max_containers_per_session'],
             idle_timeout=row['idle_timeout'],
@@ -197,12 +192,15 @@ class CreateKeyPairResourcePolicy(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, name, props):
+        known_slot_types = \
+            await info.context['config_server'].get_resource_slots()
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {
                 'name': name,
                 'default_for_unspecified':
                     DefaultForUnspecified[props.default_for_unspecified],
-                'total_resource_slots': props.total_resource_slots,
+                'total_resource_slots': ResourceSlot.from_user_input(
+                    props.total_resource_slots, known_slot_types),
                 'max_concurrent_sessions': props.max_concurrent_sessions,
                 'max_containers_per_session': props.max_containers_per_session,
                 'idle_timeout': props.idle_timeout,
@@ -247,6 +245,8 @@ class ModifyKeyPairResourcePolicy(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, name, props):
+        known_slot_types = \
+            await info.context['config_server'].get_resource_slots()
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
 
@@ -256,8 +256,11 @@ class ModifyKeyPairResourcePolicy(graphene.Mutation):
                 if v is not None:
                     data[name] = clean(v)
 
+            def clean_resource_slot(v):
+                return ResourceSlot.from_user_input(v, known_slot_types)
+
             set_if_set('default_for_unspecified', lambda v: DefaultForUnspecified[v])
-            set_if_set('total_resource_slots')
+            set_if_set('total_resource_slots', clean_resource_slot)
             set_if_set('max_concurrent_sessions')
             set_if_set('max_containers_per_session')
             set_if_set('idle_timeout')

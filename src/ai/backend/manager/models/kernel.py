@@ -55,7 +55,7 @@ kernels = sa.Table(
     # Resource occupation
     sa.Column('container_id', sa.String(length=64)),
     sa.Column('occupied_slots', ResourceSlotColumn(), nullable=False),
-    sa.Column('occupied_shares', ResourceSlotColumn(), nullable=False),
+    sa.Column('occupied_shares', pgsql.JSONB(), nullable=False),  # legacy
     sa.Column('environ', sa.ARRAY(sa.String), nullable=True),
 
     # Port mappings
@@ -249,8 +249,7 @@ class SessionCommons:
             'agent': row['agent'],
             'container_id': row['container_id'],
             'service_ports': row['service_ports'],
-            'occupied_slots': (ResourceSlot(row['occupied_slots'])
-                               .as_json_humanized(context['known_slot_types'])),
+            'occupied_slots': row['occupied_slots'].to_json(),
             'occupied_shares': row['occupied_shares'],
             'num_queries': row['num_queries'],
             # live statistics

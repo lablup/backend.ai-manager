@@ -209,10 +209,10 @@ class ConfigServer:
         for slot_key, slot_range in item['resource'].items():
             min_value = slot_range.get('min')
             if min_value is None:
-                min_value = 0
+                min_value = Decimal(0)
             max_value = slot_range.get('max')
             if max_value is None:
-                max_value = 0
+                max_value = Decimal('Infinity')
             res_limits.append({
                 'key': slot_key,
                 'min': min_value,
@@ -521,8 +521,8 @@ class ConfigServer:
         '''
         data = await self.etcd.get_prefix_dict(image_ref.tag_path)
         slot_units = await self.get_resource_slots()
-        min_slot = ResourceSlot(numeric=True)
-        max_slot = ResourceSlot(numeric=True)
+        min_slot = ResourceSlot()
+        max_slot = ResourceSlot()
 
         for slot_key, slot_range in data['resource'].items():
             slot_unit = slot_units.get(slot_key)
@@ -531,10 +531,10 @@ class ConfigServer:
                 continue
             min_value = slot_range.get('min')
             if min_value is None:
-                min_value = '0'  # not required
+                min_value = Decimal(0)
             max_value = slot_range.get('max')
             if max_value is None:
-                max_value = '0'  # unlimited
+                max_value = Decimal('Infinity')
             if slot_unit == 'bytes':
                 if not isinstance(min_value, Decimal):
                     min_value = BinarySize.from_str(min_value)
@@ -551,9 +551,9 @@ class ConfigServer:
         # fill missing
         for slot_key in slot_units.keys():
             if slot_key not in min_slot:
-                min_slot[slot_key] = 0
+                min_slot[slot_key] = Decimal(0)
             if slot_key not in max_slot:
-                max_slot[slot_key] = 0
+                max_slot[slot_key] = Decimal('Infinity')
 
         return min_slot, max_slot
 

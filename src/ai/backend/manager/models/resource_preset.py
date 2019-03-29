@@ -7,6 +7,7 @@ import sqlalchemy as sa
 import psycopg2 as pg
 
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.types import ResourceSlot
 from .base import metadata, ResourceSlotColumn
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.models'))
@@ -37,7 +38,7 @@ class ResourcePreset(graphene.ObjectType):
             return None
         return cls(
             name=row['name'],
-            resource_slots=row['resource_slots'],
+            resource_slots=row['resource_slots'].to_json(),
         )
 
     @classmethod
@@ -85,10 +86,13 @@ class CreateResourcePreset(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, name, props):
+        known_slot_types = \
+            await info.context['config_server'].get_resource_slots()
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {
                 'name': name,
-                'resource_slots': props.total_resource_slots,
+                'resource_slots': ResourceSlot.from_user_input(
+                    props.resource_slots, known_slot_types),
             }
             query = (resource_presets.insert().values(data))
             try:
@@ -127,6 +131,8 @@ class ModifyResourcePreset(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, name, props):
+        known_slot_types = \
+            await info.context['config_server'].get_resource_slots()
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
 
@@ -136,7 +142,10 @@ class ModifyResourcePreset(graphene.Mutation):
                 if v is not None:
                     data[name] = clean(v)
 
-            set_if_set('resource_slots')
+            def clean_resource_slot(v):
+                return ResourceSlot.from_user_input(v, known_slot_types)
+
+            set_if_set('resource_slots', clean_resource_slot)
 
             try:
                 query = (
