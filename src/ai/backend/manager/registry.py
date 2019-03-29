@@ -28,7 +28,6 @@ from ..gateway.exceptions import (
 from .models import (
     agents, kernels, keypairs,
     AgentStatus, KernelStatus,
-    DefaultForUnspecified,
 )
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']

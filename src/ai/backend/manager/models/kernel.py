@@ -6,7 +6,7 @@ from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
-from ai.backend.common.types import ResourceSlot, BinarySize
+from ai.backend.common.types import BinarySize
 from .base import (
     metadata, zero_if_none,
     BigInt, IDColumn, EnumType,
