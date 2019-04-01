@@ -20,6 +20,7 @@ from .exceptions import (
 from .manager import READ_ALLOWED, server_status_required
 from ..manager.models import (
     agents, resource_presets,
+    AgentStatus,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.kernel'))
@@ -85,10 +86,13 @@ async def check_presets(request) -> web.Response:
         agent_slots = []
         query = (
             sa.select([agents.c.available_slots, agents.c.occupied_slots])
-            .select_from(agents))
+            .select_from(agents)
+            .where(agents.c.status == AgentStatus.ALIVE))
         # TODO: add scaling_group as filter condition
         # query = query.where(resource_presets.c.scaling_group == scaling_group)
-        sgroup_remaining = ResourceSlot()
+        sgroup_remaining = ResourceSlot({
+            k: Decimal(0) for k in known_slot_types.keys()
+        })
         async for row in conn.execute(query):
             remaining = row['available_slots'] - row['occupied_slots']
             sgroup_remaining += remaining
@@ -103,7 +107,7 @@ async def check_presets(request) -> web.Response:
             allocatable = False
             preset_slots = row['resource_slots'].filter_slots(known_slot_types)
             for agent_slot in agent_slots:
-                if agent_slot >= preset_slots:
+                if agent_slot >= preset_slots and keypair_remaining >= preset_slots:
                     allocatable = True
                     break
             resp['presets'].append({
