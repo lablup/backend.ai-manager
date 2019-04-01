@@ -27,6 +27,41 @@ def upgrade():
                   nullable=False),
         sa.PrimaryKeyConstraint('name', name=op.f('pk_resource_presets'))
     )
+    # Add initial fixtures for resource presets
+    query = '''
+    INSERT INTO resource_presets
+    VALUES (
+        'small',
+        '{"cpu":"1","mem":"2147483648"}'::jsonb
+    );
+    INSERT INTO resource_presets
+    VALUES (
+        'small-gpu',
+        '{"cpu":"1","mem":"2147483648","cuda.device":"1","cuda.shares":"0.5"}'::jsonb
+    );
+    INSERT INTO resource_presets
+    VALUES (
+        'medium',
+        '{"cpu":"2","mem":"4294967296"}'::jsonb
+    );
+    INSERT INTO resource_presets
+    VALUES (
+        'medium-gpu',
+        '{"cpu":"2","mem":"4294967296","cuda.device":"1","cuda.shares":"1.0"}'::jsonb
+    );
+    INSERT INTO resource_presets
+    VALUES (
+        'large',
+        '{"cpu":"4","mem":"8589934592"}'::jsonb
+    );
+    INSERT INTO resource_presets
+    VALUES (
+        'large-gpu',
+        '{"cpu":"4","mem":"8589934592","cuda.device":"2","cuda.shares":"2.0"}'::jsonb
+    );
+    '''
+    connection = op.get_bind()
+    connection.execute(query)
     # ### end Alembic commands ###
 
 
