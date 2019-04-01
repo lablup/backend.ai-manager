@@ -6,8 +6,11 @@ Create Date: 2019-03-30 01:45:07.525096
 
 """
 from alembic import op
+from decimal import Decimal
 import sqlalchemy as sa
 import ai.backend.manager.models.base  # noqa
+from ai.backend.manager.models import keypair_resource_policies
+from ai.backend.common.types import BinarySize, ResourceSlot
 
 
 # revision identifiers, used by Alembic.
@@ -62,6 +65,29 @@ def upgrade():
     '''
     connection = op.get_bind()
     connection.execute(query)
+
+    query = '''
+    SELECT name, total_resource_slots
+    FROM keypair_resource_policies
+    '''
+    connection = op.get_bind()
+    result = connection.execute(query)
+    updates = []
+    for row in result:
+        converted = ResourceSlot(row['total_resource_slots'])
+        converted['mem'] = Decimal(BinarySize.from_str(converted['mem']))
+        updates.append((
+            row['name'],
+            converted,
+        ))
+    for name, slots in updates:
+        query = (
+            sa.update(keypair_resource_policies)
+            .values(total_resource_slots=slots)
+            .where(keypair_resource_policies.c.name == name)
+        )
+        connection.execute(query)
+
     # ### end Alembic commands ###
 
 
