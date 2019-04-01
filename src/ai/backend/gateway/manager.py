@@ -7,6 +7,7 @@ import sqlalchemy as sa
 
 from aiohttp import web
 import aiohttp_cors
+from aiojobs.aiohttp import atomic
 
 from ai.backend.common.logging import BraceStyleAdapter
 
@@ -60,6 +61,7 @@ async def detect_status_update(app):
                       app['pidx'], updated_status)
 
 
+@atomic
 async def fetch_manager_status(request):
     try:
         status = await request.app['config_server'].get_manager_status()
@@ -81,6 +83,7 @@ async def fetch_manager_status(request):
 
 
 @admin_required
+@atomic
 async def update_manager_status(request):
     try:
         params = await request.json()

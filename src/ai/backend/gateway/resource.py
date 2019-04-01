@@ -9,6 +9,7 @@ import logging
 
 from aiohttp import web
 import aiohttp_cors
+from aiojobs.aiohttp import atomic
 import sqlalchemy as sa
 
 from ai.backend.common.logging import BraceStyleAdapter
@@ -29,6 +30,7 @@ _json_loads = functools.partial(json.loads, parse_float=Decimal)
 
 
 @auth_required
+@atomic
 async def list_presets(request) -> web.Response:
     '''
     Returns the list of all resource presets.
@@ -54,6 +56,7 @@ async def list_presets(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
+@atomic
 async def check_presets(request) -> web.Response:
     '''
     Returns the list of all resource presets in the current scaling group,

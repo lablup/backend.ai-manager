@@ -96,6 +96,7 @@ import aiohttp
 from aiohttp import web
 import aiohttp_cors
 import aiojobs
+from aiojobs.aiohttp import atomic
 import aiotools
 import yaml
 import yarl
@@ -558,6 +559,7 @@ class ConfigServer:
         return min_slot, max_slot
 
 
+@atomic
 async def get_resource_slots(request) -> web.Response:
     known_slots = await request.app['config_server'].get_resource_slots()
     return web.json_response(known_slots, status=200)

@@ -15,6 +15,7 @@ import secrets
 import aiohttp
 from aiohttp import web
 import aiohttp_cors
+from aiojobs.aiohttp import atomic
 import aiotools
 from dateutil.tz import tzutc
 import sqlalchemy as sa
@@ -319,6 +320,7 @@ async def destroy(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
+@atomic
 async def get_info(request) -> web.Response:
     # NOTE: This API should be replaced with GraphQL version.
     resp = {}
@@ -356,6 +358,7 @@ async def get_info(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
+@atomic
 async def restart(request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
@@ -459,6 +462,7 @@ async def execute(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
+@atomic
 async def interrupt(request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
@@ -476,6 +480,7 @@ async def interrupt(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
+@atomic
 async def complete(request) -> web.Response:
     resp = {
         'result': {
@@ -591,6 +596,7 @@ async def download_files(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
+@atomic
 async def list_files(request) -> web.Response:
     try:
         sess_id = request.match_info['sess_id']
@@ -624,6 +630,7 @@ async def list_files(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
+@atomic
 async def get_logs(request) -> web.Response:
     resp = {'result': {'logs': ''}}
     registry = request.app['registry']
