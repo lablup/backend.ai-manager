@@ -12,6 +12,7 @@ import aiohttp_cors
 import sqlalchemy as sa
 
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.types import ResourceSlot
 from .auth import auth_required
 from .exceptions import (
     InvalidAPIParameters,
@@ -31,6 +32,7 @@ async def list_presets(request) -> web.Response:
     '''
     Returns the list of all resource presets.
     '''
+    known_slot_types = await request.app['registry'].config_server.get_resource_slots()
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         query = (
             sa.select([resource_presets])
@@ -39,10 +41,13 @@ async def list_presets(request) -> web.Response:
         # scaling_group = request.query.get('scaling_group')
         # if scaling_group is not None:
         #     query = query.where(resource_presets.c.scaling_group == scaling_group)
-        result = await conn.execute(query)
-        resp = {
-            'presets': [],  # TODO: jsnon-ize result
-        }
+        resp = {'presets': []}
+        async for row in conn.execute(query):
+            preset_slots = row['resource_slots'].filter_slots(known_slot_types)
+            resp['presets'].append({
+                'name': row['name'],
+                'resource_slots': preset_slots.to_json(),
+            })
         return web.json_response(resp, status=200)
 
 
@@ -63,29 +68,49 @@ async def check_presets(request) -> web.Response:
     except (json.decoder.JSONDecodeError, AssertionError) as e:
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
     registry = request.app['registry']
-    keypair_limits = None
-    current_remaining = None
-    known_slot_types = \
-        await registry.config_server.get_resource_slots()
-    keypair_limits = \
-        await registry.normalize_resource_slot_limits(resource_policy)
+    known_slot_types = await registry.config_server.get_resource_slots()
+    keypair_limits = ResourceSlot.from_policy(resource_policy, known_slot_types)
+    resp = {
+        'keypair_limits': None,
+        'keypair_remaining': None,
+        'scaling_group_remaining': None,
+        'presets': [],
+    }
     async with request.app['dbpool'].acquire() as conn, conn.begin():
+        key_occupied = await registry.get_keypair_occupancy(access_key, conn=conn)
+        keypair_remaining = keypair_limits - key_occupied
+        resp['keypair_limits'] = keypair_limits.to_json()
+        resp['keypair_remaining'] = keypair_remaining.to_json()
+        # query all agent's capacity and occupancy
+        agent_slots = []
+        query = (
+            sa.select([agents.c.available_slots, agents.c.occupied_slots])
+            .select_from(agents))
+        # TODO: add scaling_group as filter condition
+        # query = query.where(resource_presets.c.scaling_group == scaling_group)
+        sgroup_remaining = ResourceSlot()
+        async for row in conn.execute(query):
+            remaining = row['available_slots'] - row['occupied_slots']
+            sgroup_remaining += remaining
+            agent_slots.append(remaining)
+        resp['scaling_group_remaining'] = sgroup_remaining.to_json()
         # fetch all resource presets in the current scaling group.
         query = (
             sa.select([resource_presets])
             .select_from(resource_presets))
-        # query = query.where(resource_presets.c.scaling_group == scaling_group)
-        key_occupied = \
-            await registry.get_keypair_occupancy(access_key, conn=conn)
-        current_remaining = keypair_limits - key_occupied
-        # TODO: query all agent's capacity and occupancy
-        # TODO: check if there are any agent that can allocate the preset for each
-        # preset
-    resp = {
-        'keypair_limits': keypair_limits.as_json_numeric(known_slot_types),
-        'current_remaining': current_remaining.as_json_numeric(known_slot_types),
-        'presets': [],
-    }
+        async for row in conn.execute(query):
+            # check if there are any agent that can allocate each preset
+            allocatable = False
+            preset_slots = row['resource_slots'].filter_slots(known_slot_types)
+            for agent_slot in agent_slots:
+                if agent_slot >= preset_slots:
+                    allocatable = True
+                    break
+            resp['presets'].append({
+                'name': row['name'],
+                'resource_slots': preset_slots.to_json(),
+                'allocatable': allocatable,
+            })
     return web.json_response(resp, status=200)
 
 
