@@ -141,7 +141,7 @@ async def exception_middleware(request, handler):
         if ex.status_code == 404:
             raise GenericNotFound
         if ex.status_code == 405:
-            raise MethodNotAllowed
+            raise MethodNotAllowed(ex.method, ex.allowed_methods)
         log.warning('Bad request: {0!r}', ex)
         raise GenericBadRequest
     except asyncio.CancelledError as e:
