@@ -141,7 +141,7 @@ async def exception_middleware(request, handler):
         if ex.status_code == 404:
             raise GenericNotFound
         if ex.status_code == 405:
-            raise MethodNotAllowed
+            raise MethodNotAllowed(ex.method, ex.allowed_methods)
         log.warning('Bad request: {0!r}', ex)
         raise GenericBadRequest
     except asyncio.CancelledError as e:
@@ -187,7 +187,6 @@ async def gw_init(app, default_cors_options):
         user=app['config'].db_user, password=app['config'].db_password,
         dbname=app['config'].db_name,
         echo=bool(app['config'].verbose),
-        # TODO: check the throughput impacts of DB/redis pool sizes
         minsize=4, maxsize=256,
         timeout=30, pool_recycle=30,
     )
@@ -324,6 +323,7 @@ async def server_main(loop, pidx, _args):
         '.vfolder', '.admin',
         '.kernel', '.stream',
         '.manager',
+        '.resource',
     ]
 
     global_exception_handler = functools.partial(handle_loop_error, app)

@@ -93,7 +93,8 @@ class RescanImages(graphene.Mutation):
 
     @staticmethod
     async def mutate(root, info, registry=None):
-        log.info('rescanning docker registry {0} by API request', registry if registry else '')
+        log.info('rescanning docker registry {0} by API request',
+                 f'({registry})' if registry else '(all)')
         config_server = info.context['config_server']
         await config_server.rescan_images(registry)
         return RescanImages(ok=True, msg='')

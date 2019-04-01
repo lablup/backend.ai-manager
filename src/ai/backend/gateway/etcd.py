@@ -96,6 +96,7 @@ import aiohttp
 from aiohttp import web
 import aiohttp_cors
 import aiojobs
+from aiojobs.aiohttp import atomic
 import aiotools
 import yaml
 import yarl
@@ -209,10 +210,10 @@ class ConfigServer:
         for slot_key, slot_range in item['resource'].items():
             min_value = slot_range.get('min')
             if min_value is None:
-                min_value = 0
+                min_value = Decimal(0)
             max_value = slot_range.get('max')
             if max_value is None:
-                max_value = 0
+                max_value = Decimal('Infinity')
             res_limits.append({
                 'key': slot_key,
                 'min': min_value,
@@ -480,13 +481,14 @@ class ConfigServer:
             assert v in ('bytes', 'count')
             updates[f'config/resource_slots/{k}'] = v
         await self.etcd.put_dict(updates)
-        # self.get_resource_slots.cache_clear()
 
     async def update_manager_status(self, status):
         await self.etcd.put('manager/status', status.value)
+        self.get_manager_status.cache_clear()
 
-    # TODO: Need to update all manager processes at once when clearing caches....
-    # @aiotools.lru_cache(maxsize=1)
+    # TODO: refactor using contextvars in Python 3.7 so that the result is cached
+    #       in a per-request basis.
+    @aiotools.lru_cache(maxsize=1, expire_after=2.0)
     async def get_resource_slots(self):
         '''
         Returns the system-wide known resource slots and their units.
@@ -495,7 +497,7 @@ class ConfigServer:
         configured_slots = await self.etcd.get_prefix_dict('config/resource_slots')
         return {**intrinsic_slots, **configured_slots}
 
-    @aiotools.lru_cache(maxsize=1)
+    @aiotools.lru_cache(maxsize=1, expire_after=2.0)
     async def get_manager_status(self):
         status = await self.etcd.get('manager/status')
         return ManagerStatus(status)
@@ -504,10 +506,14 @@ class ConfigServer:
         async for ev in self.etcd.watch('manager/status'):
             yield ev
 
-    @aiotools.lru_cache(maxsize=1, expire_after=60.0)
+    # TODO: refactor using contextvars in Python 3.7 so that the result is cached
+    #       in a per-request basis.
+    @aiotools.lru_cache(maxsize=1, expire_after=2.0)
     async def get_allowed_origins(self):
         return await self.get('config/api/allow-origins')
 
+    # TODO: refactor using contextvars in Python 3.7 so that the result is cached
+    #       in a per-request basis.
     @aiotools.lru_cache(expire_after=60.0)
     async def get_image_slot_ranges(self, image_ref: ImageRef):
         '''
@@ -516,8 +522,8 @@ class ConfigServer:
         '''
         data = await self.etcd.get_prefix_dict(image_ref.tag_path)
         slot_units = await self.get_resource_slots()
-        min_slot = ResourceSlot(numeric=True)
-        max_slot = ResourceSlot(numeric=True)
+        min_slot = ResourceSlot()
+        max_slot = ResourceSlot()
 
         for slot_key, slot_range in data['resource'].items():
             slot_unit = slot_units.get(slot_key)
@@ -526,10 +532,10 @@ class ConfigServer:
                 continue
             min_value = slot_range.get('min')
             if min_value is None:
-                min_value = '0'  # not required
+                min_value = Decimal(0)
             max_value = slot_range.get('max')
             if max_value is None:
-                max_value = '0'  # unlimited
+                max_value = Decimal('Infinity')
             if slot_unit == 'bytes':
                 if not isinstance(min_value, Decimal):
                     min_value = BinarySize.from_str(min_value)
@@ -546,13 +552,14 @@ class ConfigServer:
         # fill missing
         for slot_key in slot_units.keys():
             if slot_key not in min_slot:
-                min_slot[slot_key] = 0
+                min_slot[slot_key] = Decimal(0)
             if slot_key not in max_slot:
-                max_slot[slot_key] = 0
+                max_slot[slot_key] = Decimal('Infinity')
 
         return min_slot, max_slot
 
 
+@atomic
 async def get_resource_slots(request) -> web.Response:
     known_slots = await request.app['config_server'].get_resource_slots()
     return web.json_response(known_slots, status=200)

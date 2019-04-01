@@ -2,9 +2,9 @@
 REST-style kernel session management APIs.
 '''
 
-import aiohttp
 import asyncio
 from collections import defaultdict
+from decimal import Decimal
 from datetime import datetime, timedelta
 import functools
 import json
@@ -12,10 +12,11 @@ import logging
 import re
 import secrets
 
+import aiohttp
 from aiohttp import web
 import aiohttp_cors
+from aiojobs.aiohttp import atomic
 import aiotools
-from async_timeout import timeout as _timeout
 from dateutil.tz import tzutc
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import true, null
@@ -42,12 +43,14 @@ grace_events = []
 
 _rx_sess_token = re.compile(r'\w[\w.-]*\w', re.ASCII)
 
+_json_loads = functools.partial(json.loads, parse_float=Decimal)
+
 
 @server_status_required(ALL_ALLOWED)
 @auth_required
 async def create(request) -> web.Response:
     try:
-        params = await request.json(loads=json.loads)
+        params = await request.json(loads=_json_loads)
         image = params.get('image')
         if image is None:
             image = params.get('lang')
@@ -317,6 +320,7 @@ async def destroy(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
+@atomic
 async def get_info(request) -> web.Response:
     # NOTE: This API should be replaced with GraphQL version.
     resp = {}
@@ -354,6 +358,7 @@ async def get_info(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
+@atomic
 async def restart(request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
@@ -457,6 +462,7 @@ async def execute(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
+@atomic
 async def interrupt(request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
@@ -474,6 +480,7 @@ async def interrupt(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
+@atomic
 async def complete(request) -> web.Response:
     resp = {
         'result': {
@@ -485,11 +492,10 @@ async def complete(request) -> web.Response:
     sess_id = request.match_info['sess_id']
     requester_access_key, owner_access_key = get_access_key_scopes(request)
     try:
-        with _timeout(2):
-            params = await request.json(loads=json.loads)
+        params = await request.json(loads=json.loads)
         log.info('COMPLETE(u:{0}/{1}, k:{2})',
                  requester_access_key, owner_access_key, sess_id)
-    except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
+    except json.decoder.JSONDecodeError:
         raise InvalidAPIParameters
     try:
         code = params.get('code', '')
@@ -555,13 +561,12 @@ async def download_files(request) -> web.Response:
         registry = request.app['registry']
         sess_id = request.match_info['sess_id']
         requester_access_key, owner_access_key = get_access_key_scopes(request)
-        with _timeout(2):
-            params = await request.json(loads=json.loads)
+        params = await request.json(loads=_json_loads)
         assert params.get('files'), 'no file(s) specified!'
         files = params.get('files')
         log.info('DOWNLOAD_FILE (u:{0}/{1}, token:{2})',
                  requester_access_key, owner_access_key, sess_id)
-    except (asyncio.TimeoutError, AssertionError, json.decoder.JSONDecodeError) as e:
+    except (AssertionError, json.decoder.JSONDecodeError) as e:
         log.warning('DOWNLOAD_FILE: invalid/missing parameters, {0!r}', e)
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
 
@@ -591,6 +596,7 @@ async def download_files(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
+@atomic
 async def list_files(request) -> web.Response:
     try:
         sess_id = request.match_info['sess_id']
@@ -624,6 +630,7 @@ async def list_files(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
+@atomic
 async def get_logs(request) -> web.Response:
     resp = {'result': {'logs': ''}}
     registry = request.app['registry']
@@ -675,17 +682,17 @@ def create_app(default_cors_options):
     app.on_shutdown.append(shutdown)
     app['api_versions'] = (1, 2, 3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
-    cors.add(app.router.add_route('POST',   r'/create', create))  # legacy
-    cors.add(app.router.add_route('POST',   r'', create))
+    cors.add(app.router.add_route('POST', '/create', create))  # legacy
+    cors.add(app.router.add_route('POST', '', create))
     kernel_resource = cors.add(app.router.add_resource(r'/{sess_id}'))
     cors.add(kernel_resource.add_route('GET',    get_info))
     cors.add(kernel_resource.add_route('PATCH',  restart))
     cors.add(kernel_resource.add_route('DELETE', destroy))
     cors.add(kernel_resource.add_route('POST',   execute))
-    cors.add(app.router.add_route('GET',    r'/{sess_id}/logs', get_logs))
-    cors.add(app.router.add_route('POST',   r'/{sess_id}/interrupt', interrupt))
-    cors.add(app.router.add_route('POST',   r'/{sess_id}/complete', complete))
-    cors.add(app.router.add_route('POST',   r'/{sess_id}/upload', upload_files))
-    cors.add(app.router.add_route('GET',    r'/{sess_id}/download', download_files))
-    cors.add(app.router.add_route('GET',    r'/{sess_id}/files', list_files))
+    cors.add(app.router.add_route('GET',  '/{sess_id}/logs', get_logs))
+    cors.add(app.router.add_route('POST', '/{sess_id}/interrupt', interrupt))
+    cors.add(app.router.add_route('POST', '/{sess_id}/complete', complete))
+    cors.add(app.router.add_route('POST', '/{sess_id}/upload', upload_files))
+    cors.add(app.router.add_route('GET',  '/{sess_id}/download', download_files))
+    cors.add(app.router.add_route('GET',  '/{sess_id}/files', list_files))
     return app, []

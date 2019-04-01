@@ -8,7 +8,7 @@ Create Date: 2019-02-07 15:30:54.861821
 from alembic import op
 import sqlalchemy as sa
 import ai.backend.manager.models.base  # noqa
-from ai.backend.manager.models.resource_policy import DefaultForUnspecified
+from ai.backend.common.types import DefaultForUnspecified
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.

@@ -11,6 +11,7 @@ import uuid
 import aiohttp
 from aiohttp import web
 import aiohttp_cors
+from aiojobs.aiohttp import atomic
 import aiotools
 import sqlalchemy as sa
 import psycopg2
@@ -214,6 +215,7 @@ async def list_folders(request):
 
 @server_status_required(READ_ALLOWED)
 @auth_required
+@atomic
 async def list_hosts(request):
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.LIST_HOSTS (u:{0})', access_key)
@@ -269,6 +271,7 @@ async def get_info(request, row):
 @server_status_required(ALL_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.OWNER_PERM)
+@atomic
 async def rename(request, row):
     dbpool = request.app['dbpool']
     old_name = request.match_info['name']
@@ -481,6 +484,7 @@ async def list_files(request, row):
 
 @server_status_required(ALL_ALLOWED)
 @auth_required
+@atomic
 async def invite(request):
     dbpool = request.app['dbpool']
     folder_name = request.match_info['name']
@@ -556,6 +560,7 @@ async def invite(request):
 
 @server_status_required(READ_ALLOWED)
 @auth_required
+@atomic
 async def invitations(request):
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
@@ -586,6 +591,7 @@ async def invitations(request):
 
 @server_status_required(ALL_ALLOWED)
 @auth_required
+@atomic
 async def accept_invitation(request):
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
@@ -662,6 +668,7 @@ async def accept_invitation(request):
 
 @server_status_required(ALL_ALLOWED)
 @auth_required
+@atomic
 async def delete_invitation(request):
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']

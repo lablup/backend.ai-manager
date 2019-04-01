@@ -4,10 +4,9 @@ import enum
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql as pgsql
 
-from ai.backend.common.types import ResourceSlot, BinarySize
-from .base import metadata, EnumType, Item, PaginatedList
+from ai.backend.common.types import BinarySize
+from .base import metadata, EnumType, Item, PaginatedList, ResourceSlotColumn
 
 __all__ = (
     'agents', 'AgentStatus',
@@ -29,8 +28,8 @@ agents = sa.Table(
               default=AgentStatus.ALIVE),
     sa.Column('region', sa.String(length=64), index=True, nullable=False),
 
-    sa.Column('available_slots', pgsql.JSONB(), nullable=False),
-    sa.Column('occupied_slots', pgsql.JSONB(), nullable=False),
+    sa.Column('available_slots', ResourceSlotColumn(), nullable=False),
+    sa.Column('occupied_slots', ResourceSlotColumn(), nullable=False),
 
     sa.Column('addr', sa.String(length=128), nullable=False),
     sa.Column('first_contact', sa.DateTime(timezone=True),
@@ -80,10 +79,8 @@ class Agent(graphene.ObjectType):
             id=row['id'],
             status=row['status'],
             region=row['region'],
-            available_slots=(ResourceSlot(row['available_slots'])
-                             .as_json_humanized(context['known_slot_types'])),
-            occupied_slots=(ResourceSlot(row['occupied_slots'])
-                            .as_json_humanized(context['known_slot_types'])),
+            available_slots=row['available_slots'].to_json(),
+            occupied_slots=row['occupied_slots'].to_json(),
             addr=row['addr'],
             first_contact=row['first_contact'],
             lost_at=row['lost_at'],
@@ -124,7 +121,7 @@ class Agent(graphene.ObjectType):
     async def load_slice(context, limit, offset, status=None):
         async with context['dbpool'].acquire() as conn:
             # TODO: optimization for pagination using subquery, join
-            query = (sa.select('*')
+            query = (sa.select([agents])
                        .select_from(agents)
                        .order_by(agents.c.id)
                        .limit(limit)
@@ -153,7 +150,7 @@ class Agent(graphene.ObjectType):
     @staticmethod
     async def load_all(context, status=None):
         async with context['dbpool'].acquire() as conn:
-            query = (sa.select('*')
+            query = (sa.select([agents])
                        .select_from(agents))
             if status is not None:
                 status = AgentStatus[status]
@@ -170,7 +167,7 @@ class Agent(graphene.ObjectType):
     @staticmethod
     async def batch_load(context, agent_ids, status=None):
         async with context['dbpool'].acquire() as conn:
-            query = (sa.select('*')
+            query = (sa.select([agents])
                        .select_from(agents)
                        .where(agents.c.id.in_(agent_ids))
                        .order_by(agents.c.id))

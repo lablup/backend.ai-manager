@@ -25,8 +25,8 @@ class BackendError(web.HTTPError):
     error_type  = 'https://api.backend.ai/probs/general-error'
     error_title = 'General Backend API Error.'
 
-    def __init__(self, extra_msg=None, extra_data=None):
-        super().__init__()
+    def __init__(self, extra_msg=None, extra_data=None, **kwargs):
+        super().__init__(**kwargs)
         self.args = (self.status_code, self.reason, self.error_type)
         self.empty_body = False
         self.content_type = 'application/problem+json'

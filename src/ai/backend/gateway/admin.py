@@ -27,6 +27,8 @@ from ..manager.models import (
     VirtualFolder,
     KeyPairResourcePolicy, CreateKeyPairResourcePolicy,
     ModifyKeyPairResourcePolicy, DeleteKeyPairResourcePolicy,
+    ResourcePreset,
+    CreateResourcePreset, ModifyResourcePreset, DeleteResourcePreset,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
@@ -102,6 +104,9 @@ class MutationForAdmin(graphene.ObjectType):
     create_keypair_resource_policy = CreateKeyPairResourcePolicy.Field()
     modify_keypair_resource_policy = ModifyKeyPairResourcePolicy.Field()
     delete_keypair_resource_policy = DeleteKeyPairResourcePolicy.Field()
+    create_resource_preset = CreateResourcePreset.Field()
+    modify_resource_preset = ModifyResourcePreset.Field()
+    delete_resource_preset = DeleteResourcePreset.Field()
 
 
 class MutationForUser(graphene.ObjectType):
@@ -153,6 +158,13 @@ class QueryForAdmin(graphene.ObjectType):
 
     keypair_resource_policies = graphene.List(
         KeyPairResourcePolicy)
+
+    resource_preset = graphene.Field(
+        ResourcePreset,
+        name=graphene.String())
+
+    resource_presets = graphene.List(
+        ResourcePreset)
 
     vfolders = graphene.List(
         VirtualFolder,
@@ -237,6 +249,16 @@ class QueryForAdmin(graphene.ObjectType):
         return await KeyPairResourcePolicy.load_all(info.context)
 
     @staticmethod
+    async def resolve_resource_preset(executor, info, name):
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('ResourcePreset.by_name')
+        return await loader.load(name)
+
+    @staticmethod
+    async def resolve_resource_presets(executor, info):
+        return await ResourcePreset.load_all(info.context)
+
+    @staticmethod
     async def resolve_vfolders(executor, info, access_key=None):
         manager = info.context['dlmgr']
         if access_key is None:
@@ -311,6 +333,13 @@ class QueryForUser(graphene.ObjectType):
     keypair_resource_policies = graphene.List(
         KeyPairResourcePolicy)
 
+    resource_preset = graphene.Field(
+        ResourcePreset,
+        name=graphene.String())
+
+    resource_presets = graphene.List(
+        ResourcePreset)
+
     vfolders = graphene.List(VirtualFolder)
 
     compute_sessions = graphene.List(
@@ -369,6 +398,16 @@ class QueryForUser(graphene.ObjectType):
     async def resolve_keypair_resource_policies(executor, info):
         access_key = info.context['access_key']
         return await KeyPairResourcePolicy.load_all_user(info.context, access_key)
+
+    @staticmethod
+    async def resolve_resource_preset(executor, info, name):
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('ResourcePreset.by_name')
+        return await loader.load(name)
+
+    @staticmethod
+    async def resolve_resource_presets(executor, info):
+        return await ResourcePreset.load_all(info.context)
 
     @staticmethod
     async def resolve_vfolders(executor, info):
