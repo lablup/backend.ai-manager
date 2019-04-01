@@ -97,7 +97,7 @@ class KeyPair(graphene.ObjectType):
     @staticmethod
     async def load_all(context, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
-            query = sa.select('*').select_from(keypairs)
+            query = sa.select([keypairs]).select_from(keypairs)
             if is_active is not None:
                 query = query.where(keypairs.c.is_active == is_active)
             objs = []
@@ -109,7 +109,7 @@ class KeyPair(graphene.ObjectType):
     @staticmethod
     async def batch_load_by_uid(context, user_ids, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
-            query = (sa.select('*')
+            query = (sa.select([keypairs])
                        .select_from(keypairs)
                        .where(keypairs.c.user_id.in_(user_ids)))
             if is_active is not None:
@@ -125,7 +125,7 @@ class KeyPair(graphene.ObjectType):
     @staticmethod
     async def batch_load_by_ak(context, access_keys):
         async with context['dbpool'].acquire() as conn:
-            query = (sa.select('*')
+            query = (sa.select([keypairs])
                        .select_from(keypairs)
                        .where(keypairs.c.access_key.in_(access_keys)))
             objs_per_key = OrderedDict()

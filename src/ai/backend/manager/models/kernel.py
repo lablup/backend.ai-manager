@@ -324,7 +324,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
     async def load_slice(context, limit, offset, access_key=None, status=None):
         async with context['dbpool'].acquire() as conn:
             # TODO: optimization for pagination using subquery, join
-            query = (sa.select('*')
+            query = (sa.select([kernels])
                        .select_from(kernels)
                        .where(kernels.c.role == 'master')
                        .order_by(sa.desc(kernels.c.created_at))
@@ -345,7 +345,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             status = status if status else KernelStatus['RUNNING']
             if isinstance(status, str):
                 status = KernelStatus[status]  # for legacy
-            query = (sa.select('*')
+            query = (sa.select([kernels])
                        .select_from(kernels)
                        .where(kernels.c.role == 'master')
                        .order_by(sa.desc(kernels.c.created_at))
@@ -358,7 +358,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
 
     async def batch_load(context, access_keys, *, status=None):
         async with context['dbpool'].acquire() as conn:
-            query = (sa.select('*')
+            query = (sa.select([kernels])
                        .select_from(kernels)
                        .where((kernels.c.access_key.in_(access_keys)) &
                               (kernels.c.role == 'master'))
@@ -379,7 +379,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
         async with context['dbpool'].acquire() as conn:
             # TODO: Extend to return terminated sessions (we need unique identifier).
             status = KernelStatus[status] if status else KernelStatus['RUNNING']
-            query = (sa.select('*')
+            query = (sa.select([kernels])
                        .select_from(kernels)
                        .where((kernels.c.role == 'master') &
                               (kernels.c.status == status) &
@@ -422,7 +422,7 @@ class ComputeWorker(SessionCommons, graphene.ObjectType):
     @staticmethod
     async def batch_load(context, sess_ids, *, status=None, access_key=None):
         async with context['dbpool'].acquire() as conn:
-            query = (sa.select('*')
+            query = (sa.select([kernels])
                        .select_from(kernels)
                        .where((kernels.c.sess_id.in_(sess_ids)) &
                               (kernels.c.role == 'worker'))
@@ -450,7 +450,7 @@ class Computation(SessionCommons, graphene.ObjectType):
     @staticmethod
     async def batch_load_by_agent_id(context, agent_ids, *, status=None):
         async with context['dbpool'].acquire() as conn:
-            query = (sa.select('*')
+            query = (sa.select([kernels])
                        .select_from(kernels)
                        .where(kernels.c.agent.in_(agent_ids))
                        .order_by(sa.desc(kernels.c.created_at)))

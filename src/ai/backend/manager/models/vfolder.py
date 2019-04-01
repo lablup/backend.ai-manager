@@ -205,7 +205,7 @@ class VirtualFolder(graphene.ObjectType):
     async def batch_load(context, access_keys):
         async with context['dbpool'].acquire() as conn:
             # TODO: num_attached count group-by
-            query = (sa.select('*')
+            query = (sa.select([vfolders])
                        .select_from(vfolders)
                        .where(vfolders.c.belongs_to.in_(access_keys))
                        .order_by(sa.desc(vfolders.c.created_at)))
