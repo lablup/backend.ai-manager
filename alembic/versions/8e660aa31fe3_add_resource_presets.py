@@ -75,11 +75,12 @@ def upgrade():
     updates = []
     for row in result:
         converted = ResourceSlot(row['total_resource_slots'])
-        converted['mem'] = Decimal(BinarySize.from_str(converted['mem']))
-        updates.append((
-            row['name'],
-            converted,
-        ))
+        if 'mem' in converted:
+            converted['mem'] = Decimal(BinarySize.from_str(converted['mem']))
+            updates.append((
+                row['name'],
+                converted,
+            ))
     for name, slots in updates:
         query = (
             sa.update(keypair_resource_policies)
