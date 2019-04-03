@@ -242,7 +242,7 @@ class SessionCommons:
             'image': row['image'],
             'registry': row['registry'],
             'access_key': row['access_key'],
-            'status': row['status'],
+            'status': row['status'].name,
             'status_info': row['status_info'],
             'created_at': row['created_at'],
             'terminated_at': row['terminated_at'],

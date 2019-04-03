@@ -77,7 +77,7 @@ class Agent(graphene.ObjectType):
         mega = 2 ** 20
         return cls(
             id=row['id'],
-            status=row['status'],
+            status=row['status'].name,
             region=row['region'],
             available_slots=row['available_slots'].to_json(),
             occupied_slots=row['occupied_slots'].to_json(),
