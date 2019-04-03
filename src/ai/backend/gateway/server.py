@@ -187,8 +187,8 @@ async def gw_init(app, default_cors_options):
         user=app['config'].db_user, password=app['config'].db_password,
         dbname=app['config'].db_name,
         echo=bool(app['config'].verbose),
-        minsize=4, maxsize=256,
-        timeout=30, pool_recycle=30,
+        minsize=8, maxsize=256,
+        timeout=60, pool_recycle=120,
     )
     app['redis_live'] = await aioredis.create_redis(
         app['config'].redis_addr.as_sockaddr(),

@@ -3,7 +3,6 @@ REST-style kernel session management APIs.
 '''
 
 import asyncio
-from collections import defaultdict
 from decimal import Decimal
 from datetime import datetime, timedelta
 import functools
@@ -160,38 +159,7 @@ async def create(request) -> web.Response:
     return web.json_response(resp, status=201)
 
 
-async def update_instance_usage(app, inst_id):
-    sess_ids = await app['registry'].get_sessions_in_instance(inst_id)
-    all_sessions = await app['registry'].get_sessions(sess_ids)
-    affected_keys = [kern['access_key'] for kern in all_sessions if kern is not None]
-
-    # TODO: enqueue termination event to streaming response queue
-
-    per_key_counts = defaultdict(int)
-    for ak in filter(lambda ak: ak is not None, affected_keys):
-        per_key_counts[ak] += 1
-    per_key_counts_str = ', '.join(f'{k}:{v}' for k, v in per_key_counts.items())
-    log.info('-> cleaning {0!r}', sess_ids)
-    log.info('-> per-key usage: {0}', per_key_counts_str)
-
-    if not affected_keys:
-        return
-
-    async with app['dbpool'].acquire() as conn, conn.begin():
-        log.debug('update_instance_usage({0})', inst_id)
-        for kern in all_sessions:
-            if kern is None:
-                continue
-            query = (sa.update(keypairs)
-                       .values({
-                           'concurrency_used': keypairs.c.concurrency_used -
-                                               per_key_counts[kern['access_key']],  # noqa
-                       })
-                       .where(keypairs.c.access_key == kern['access_key']))
-            await conn.execute(query)
-
-
-async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
+async def kernel_terminated(app, agent_id, kernel_id, reason, _reserved_arg):
     try:
         kernel = await app['registry'].get_kernel(
             kernel_id, (kernels.c.role, kernels.c.status), allow_stale=True)
