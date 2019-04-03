@@ -83,61 +83,60 @@ async def create(request) -> web.Response:
                       resource_policy['max_concurrent_sessions'])
             if concurrency_used >= resource_policy['max_concurrent_sessions']:
                 raise QuotaExceeded
-            creation_config = {
-                'mounts': None,
-                'environ': None,
-                'clusterSize': None,
-            }
-            api_version = request['api_version']
-            if api_version[0] == 1:
-                # custom resource limit unsupported
-                pass
-            elif api_version[0] >= 2:
-                creation_config.update(**{
-                    'instanceMemory': None,
-                    'instanceCores': None,
-                    'instanceGPUs': None,
-                    'instanceTPUs': None,
-                })
-                creation_config.update(params.get('config', {}))
-            elif api_version[0] >= 4 and api_version[1] >= '20190315':
-                creation_config.update(params.get('config', {}))
-                # "instanceXXX" fields are dropped and changed to
-                # a generalized "resource" map.
-                # TODO: implement
+            query = (sa.update(keypairs)
+                       .values(concurrency_used=keypairs.c.concurrency_used + 1)
+                       .where(keypairs.c.access_key == owner_access_key))
+            await conn.execute(query)
+        creation_config = {
+            'mounts': None,
+            'environ': None,
+            'clusterSize': None,
+        }
+        api_version = request['api_version']
+        if api_version[0] == 1:
+            # custom resource limit unsupported
+            pass
+        elif api_version[0] >= 2:
+            creation_config.update(**{
+                'instanceMemory': None,
+                'instanceCores': None,
+                'instanceGPUs': None,
+                'instanceTPUs': None,
+            })
+            creation_config.update(params.get('config', {}))
+        elif api_version[0] >= 4 and api_version[1] >= '20190315':
+            creation_config.update(params.get('config', {}))
+            # "instanceXXX" fields are dropped and changed to
+            # a generalized "resource" map.
+            # TODO: implement
 
-            # sanity check for vfolders
-            if creation_config['mounts']:
-                mount_details = []
-                matched_mounts = set()
-                matched_vfolders = await query_accessible_vfolders(
-                    conn, owner_access_key,
-                    extra_vf_conds=(vfolders.c.name.in_(creation_config['mounts'])))
-                for item in matched_vfolders:
-                    matched_mounts.add(item['name'])
-                    mount_details.append((
-                        item['name'],
-                        item['host'],
-                        item['id'].hex,
-                        item['permission'].value,
-                    ))
-                if set(creation_config['mounts']) > matched_mounts:
-                    raise VFolderNotFound
-                creation_config['mounts'] = mount_details
+        # sanity check for vfolders
+        if creation_config['mounts']:
+            mount_details = []
+            matched_mounts = set()
+            matched_vfolders = await query_accessible_vfolders(
+                conn, owner_access_key,
+                extra_vf_conds=(vfolders.c.name.in_(creation_config['mounts'])))
+            for item in matched_vfolders:
+                matched_mounts.add(item['name'])
+                mount_details.append((
+                    item['name'],
+                    item['host'],
+                    item['id'].hex,
+                    item['permission'].value,
+                ))
+            if set(creation_config['mounts']) > matched_mounts:
+                raise VFolderNotFound
+            creation_config['mounts'] = mount_details
 
-            kernel, created = await request.app['registry'].get_or_create_session(
-                sess_id, owner_access_key,
-                image, creation_config,
-                resource_policy,
-                conn=conn, tag=params.get('tag', None))
-            resp['kernelId'] = str(kernel['sess_id'])
-            resp['servicePorts'] = kernel['service_ports']
-            resp['created'] = bool(created)
-            if created:
-                query = (sa.update(keypairs)
-                           .values(concurrency_used=keypairs.c.concurrency_used + 1)
-                           .where(keypairs.c.access_key == owner_access_key))
-                await conn.execute(query)
+        kernel, created = await request.app['registry'].get_or_create_session(
+            sess_id, owner_access_key,
+            image, creation_config,
+            resource_policy,
+            tag=params.get('tag', None))
+        resp['kernelId'] = str(kernel['sess_id'])
+        resp['servicePorts'] = kernel['service_ports']
+        resp['created'] = bool(created)
     except BackendError:
         log.exception('GET_OR_CREATE: exception')
         raise
