@@ -377,279 +377,262 @@ class AgentRegistry:
         mounts = creation_config.get('mounts') or []
         environ = creation_config.get('environ') or {}
 
-        try:
+        # TODO: merge into a single call
+        image_info = await self.config_server.inspect_image(image_ref)
+        image_min_slots, image_max_slots = \
+            await self.config_server.get_image_slot_ranges(image_ref)
+        known_slot_types = \
+            await self.config_server.get_resource_slots()
 
-            # TODO: merge into a single call
-            image_info = await self.config_server.inspect_image(image_ref)
-            image_min_slots, image_max_slots = \
-                await self.config_server.get_image_slot_ranges(image_ref)
-            known_slot_types = \
-                await self.config_server.get_resource_slots()
+        # ==== BEGIN: ENQUEUING PART ====
+        # This part will be moved to the job-enqueue handler.
 
-            # ==== BEGIN: ENQUEUING PART ====
-            # This part will be moved to the job-enqueue handler.
-
-            # Sanitize user input: does it have resource config?
-            if 'resources' in creation_config:
-                # Sanitize user input: does it have "known" resource slots only?
-                for slot_key, slot_value in creation_config['resources'].items():
-                    if slot_key not in known_slot_types:
-                        raise InvalidAPIParameters(
-                            f'Unknown requested resource slot: {slot_key}')
-                try:
-                    requested_slots = ResourceSlot.from_user_input(
-                        creation_config['resources'], known_slot_types)
-                except ValueError:
-                    log.exception('request_slots & image_slots calculation error')
-                    # happens when requested_slots have more keys
-                    # than the image-defined slots
-                    # (e.g., image does not support accelerators
-                    #  requested by the client)
+        # Sanitize user input: does it have resource config?
+        if 'resources' in creation_config:
+            # Sanitize user input: does it have "known" resource slots only?
+            for slot_key, slot_value in creation_config['resources'].items():
+                if slot_key not in known_slot_types:
                     raise InvalidAPIParameters(
-                        'Your resource request has resource type(s) '
-                        'not supported by the image.')
+                        f'Unknown requested resource slot: {slot_key}')
+            try:
+                requested_slots = ResourceSlot.from_user_input(
+                    creation_config['resources'], known_slot_types)
+            except ValueError:
+                log.exception('request_slots & image_slots calculation error')
+                # happens when requested_slots have more keys
+                # than the image-defined slots
+                # (e.g., image does not support accelerators
+                #  requested by the client)
+                raise InvalidAPIParameters(
+                    'Your resource request has resource type(s) '
+                    'not supported by the image.')
 
-                # If the resource is not specified, fill them with image minimums.
-                for k, v in requested_slots.items():
-                    if v is None or v == 0:
-                        requested_slots[k] = image_min_slots[k]
+            # If the resource is not specified, fill them with image minimums.
+            for k, v in requested_slots.items():
+                if v is None or v == 0:
+                    requested_slots[k] = image_min_slots[k]
+        else:
+            # Handle the legacy clients (prior to v19.03)
+            # We support CPU/memory conversion, but to use accelerators users
+            # must update their clients because the slots names are not provided
+            # by the accelerator plugins.
+            cpu = creation_config.get('instanceCores')
+            if cpu is None:  # the key is there but may be null.
+                cpu = image_min_slots['cpu']
+            mem = creation_config.get('instanceMemory')
+            if mem is None:  # the key is there but may be null.
+                mem = image_min_slots['mem']
             else:
-                # Handle the legacy clients (prior to v19.03)
-                # We support CPU/memory conversion, but to use accelerators users
-                # must update their clients because the slots names are not provided
-                # by the accelerator plugins.
-                cpu = creation_config.get('instanceCores')
-                if cpu is None:  # the key is there but may be null.
-                    cpu = image_min_slots['cpu']
-                mem = creation_config.get('instanceMemory')
-                if mem is None:  # the key is there but may be null.
-                    mem = image_min_slots['mem']
-                else:
-                    # In legacy clients, memory is normalized to GiB.
-                    mem = str(mem) + 'g'
-                requested_slots = ResourceSlot.from_user_input({
-                    'cpu': cpu,
-                    'mem': mem,
-                }, known_slot_types)
-                gpu = creation_config.get('instanceGPUs')
-                if gpu is not None:
-                    raise InvalidAPIParameters('Client upgrade required '
-                                               'to use GPUs (v19.03+).')
-                tpu = creation_config.get('instanceTPUs')
-                if tpu is not None:
-                    raise InvalidAPIParameters('Client upgrade required '
-                                               'to use TPUs (v19.03+).')
+                # In legacy clients, memory is normalized to GiB.
+                mem = str(mem) + 'g'
+            requested_slots = ResourceSlot.from_user_input({
+                'cpu': cpu,
+                'mem': mem,
+            }, known_slot_types)
+            gpu = creation_config.get('instanceGPUs')
+            if gpu is not None:
+                raise InvalidAPIParameters('Client upgrade required '
+                                           'to use GPUs (v19.03+).')
+            tpu = creation_config.get('instanceTPUs')
+            if tpu is not None:
+                raise InvalidAPIParameters('Client upgrade required '
+                                           'to use TPUs (v19.03+).')
 
-            # Check the image resource slots.
-            log.debug('requested_slots: {}', requested_slots)
-            log.debug('image_min_slots: {}', image_min_slots)
-            log.debug('image_max_slots: {}', image_max_slots)
+        # Check the image resource slots.
+        log.debug('requested_slots: {}', requested_slots)
+        log.debug('image_min_slots: {}', image_min_slots)
+        log.debug('image_max_slots: {}', image_max_slots)
 
-            # Check if: requested >= image-minimum
-            if image_min_slots > requested_slots:
+        # Check if: requested >= image-minimum
+        if image_min_slots > requested_slots:
+            raise InvalidAPIParameters(
+                'Your resource request is smaller than '
+                'the minimum required by the image. ({})'.format(' '.join(
+                    f'{k}={v}' for k, v in
+                    image_min_slots.to_humanized(known_slot_types).items()
+                )))
+
+        # Check if: requested <= image-maximum
+        if not (requested_slots <= image_max_slots):
+            raise InvalidAPIParameters(
+                'Your resource request is larger than '
+                'the maximum allowed by the image. ({})'
+                .format(' '.join(
+                    f'{k}={v}' for k, v in
+                    image_max_slots.to_humanized(known_slot_types).items()
+                )))
+
+        # Check the keypair resource policy.
+        # - Keypair resource occupation includes both running and enqueued sessions,
+        #   while agent resource occupation includes only running sessions.
+        # - TODO: merge multicontainer-session branch and check
+        #         max_containers_per_session.
+        # - TODO: check scaling-group resource policy as well.
+        total_allowed = ResourceSlot.from_policy(resource_policy, known_slot_types)
+        async with self.dbpool.acquire() as conn, conn.begin():
+            key_occupied = await self.get_keypair_occupancy(access_key, conn=conn)
+            log.debug('{} current_occupancy: {}', access_key, key_occupied)
+            log.debug('{} total_allowed: {}', access_key, total_allowed)
+            if not (key_occupied + requested_slots <= total_allowed):
                 raise InvalidAPIParameters(
-                    'Your resource request is smaller than '
-                    'the minimum required by the image. ({})'.format(' '.join(
-                        f'{k}={v}' for k, v in
-                        image_min_slots.to_humanized(known_slot_types).items()
-                    )))
-
-            # Check if: requested <= image-maximum
-            if not (requested_slots <= image_max_slots):
-                raise InvalidAPIParameters(
-                    'Your resource request is larger than '
-                    'the maximum allowed by the image. ({})'
+                    'Your resource quota is exceeded. ({})'
                     .format(' '.join(
                         f'{k}={v}' for k, v in
-                        image_max_slots.to_humanized(known_slot_types).items()
+                        total_allowed.to_humanized(known_slot_types).items()
                     )))
 
-            # Check the keypair resource policy.
-            # - Keypair resource occupation includes both running and enqueued sessions,
-            #   while agent resource occupation includes only running sessions.
-            # - TODO: merge multicontainer-session branch and check
-            #         max_containers_per_session.
-            # - TODO: check scaling-group resource policy as well.
-            total_allowed = ResourceSlot.from_policy(resource_policy, known_slot_types)
-            async with self.dbpool.acquire() as conn, conn.begin():
-                key_occupied = await self.get_keypair_occupancy(access_key, conn=conn)
-                log.debug('{} current_occupancy: {}', access_key, key_occupied)
-                log.debug('{} total_allowed: {}', access_key, total_allowed)
-                if not (key_occupied + requested_slots <= total_allowed):
-                    raise InvalidAPIParameters(
-                        'Your resource quota is exceeded. ({})'
-                        .format(' '.join(
-                            f'{k}={v}' for k, v in
-                            total_allowed.to_humanized(known_slot_types).items()
-                        )))
+        # ==== END: ENQUEUING PART ====
 
-            # ==== END: ENQUEUING PART ====
+        async with self.dbpool.acquire() as conn, conn.begin():
 
-            async with self.dbpool.acquire() as conn, conn.begin():
+            # Fetch all agent available slots and normalize them to "remaining" slots
+            possible_agent_slots = []
+            query = (
+                sa.select([
+                    agents.c.id,
+                    agents.c.available_slots,
+                    agents.c.occupied_slots,
+                ], for_update=True)
+                .where(agents.c.status == AgentStatus.ALIVE)
+            )
+            async for row in conn.execute(query):
+                capacity_slots = row['available_slots']
+                occupied_slots = row['occupied_slots']
+                log.debug('{} capacity: {!r}', row['id'], capacity_slots)
+                log.debug('{} occupied: {!r}', row['id'], occupied_slots)
+                try:
+                    remaining_slots = capacity_slots - occupied_slots
 
-                # Fetch all agent available slots and normalize them to "remaining" slots
-                possible_agent_slots = []
-                query = (
-                    sa.select([
-                        agents.c.id,
-                        agents.c.available_slots,
-                        agents.c.occupied_slots,
-                    ], for_update=True)
-                    .where(agents.c.status == AgentStatus.ALIVE)
-                )
-                async for row in conn.execute(query):
-                    capacity_slots = row['available_slots']
-                    occupied_slots = row['occupied_slots']
-                    log.debug('{} capacity: {!r}', row['id'], capacity_slots)
-                    log.debug('{} occupied: {!r}', row['id'], occupied_slots)
-                    try:
-                        remaining_slots = capacity_slots - occupied_slots
+                    # Check if: any(remaining >= requested)
+                    if remaining_slots >= requested_slots:
+                        possible_agent_slots.append((
+                            row['id'],
+                            remaining_slots,
+                            occupied_slots))
+                except ValueError:
+                    # happens when requested_slots have more keys
+                    # than the agent_slots
+                    # (e.g., agent does not have accelerators
+                    #  requested by the client)
+                    continue
 
-                        # Check if: any(remaining >= requested)
-                        if remaining_slots >= requested_slots:
-                            possible_agent_slots.append((
-                                row['id'],
-                                remaining_slots,
-                                occupied_slots))
-                    except ValueError:
-                        # happens when requested_slots have more keys
-                        # than the agent_slots
-                        # (e.g., agent does not have accelerators
-                        #  requested by the client)
-                        continue
+            # Load-balance! (choose the agent with most remaining slots)
+            # Here, all items in possible_agent_slots have the same keys,
+            # allowing the total ordering property.
+            if possible_agent_slots:
+                agent_id, _, current_occupied_slots = \
+                    max(possible_agent_slots, key=lambda s: s[1])
+            else:
+                raise InstanceNotAvailable
 
-                # Load-balance! (choose the agent with most remaining slots)
-                # Here, all items in possible_agent_slots have the same keys,
-                # allowing the total ordering property.
-                if possible_agent_slots:
-                    agent_id, _, current_occupied_slots = \
-                        max(possible_agent_slots, key=lambda s: s[1])
-                else:
-                    raise InstanceNotAvailable
+            # Reserve slots
+            query = (sa.update(agents)
+                       .values({
+                           'occupied_slots': current_occupied_slots + requested_slots
+                       })
+                       .where(agents.c.id == agent_id))
+            await conn.execute(query)
 
-                # Reserve slots
-                query = (sa.update(agents)
-                           .values({
-                               'occupied_slots': current_occupied_slots + requested_slots
-                           })
-                           .where(agents.c.id == agent_id))
-                await conn.execute(query)
+            # Create kernel by invoking the agent on the instance.
+            query = (sa.select([agents.c.addr])
+                       .where(agents.c.id == agent_id))
+            agent_addr = await conn.scalar(query)
+            assert agent_addr is not None
 
-                # Create kernel by invoking the agent on the instance.
-                query = (sa.select([agents.c.addr])
-                           .where(agents.c.id == agent_id))
-                agent_addr = await conn.scalar(query)
-                assert agent_addr is not None
+            registry_url, registry_creds = \
+                await get_registry_info(self.config_server.etcd,
+                                        image_ref.registry)
 
-                registry_url, registry_creds = \
-                    await get_registry_info(self.config_server.etcd,
-                                            image_ref.registry)
+            # Prepare kernel.
+            kernel_id = uuid.uuid4()
+            query = kernels.insert().values({
+                'id': kernel_id,
+                'status': KernelStatus.PREPARING,
+                'sess_id': sess_id,
+                'role': 'master',
+                'agent': agent_id,
+                'agent_addr': agent_addr,
+                'access_key': access_key,
+                'image': image_ref.canonical,
+                'registry': image_ref.registry,
+                'tag': session_tag,
+                'occupied_slots': requested_slots,
+                'occupied_shares': {},
+                'environ': [f'{k}={v}' for k, v in environ.items()],
+                'kernel_host': None,
+                'repl_in_port': 0,
+                'repl_out_port': 0,
+                'stdin_port': 0,
+                'stdout_port': 0,
+            })
+            await conn.execute(query)
 
-                # Prepare kernel.
-                kernel_id = uuid.uuid4()
-                query = kernels.insert().values({
-                    'id': kernel_id,
-                    'status': KernelStatus.PREPARING,
-                    'sess_id': sess_id,
-                    'role': 'master',
-                    'agent': agent_id,
-                    'agent_addr': agent_addr,
-                    'access_key': access_key,
-                    'image': image_ref.canonical,
-                    'registry': image_ref.registry,
-                    'tag': session_tag,
-                    'occupied_slots': requested_slots,
-                    'occupied_shares': {},
-                    'environ': [f'{k}={v}' for k, v in environ.items()],
-                    'kernel_host': None,
-                    'repl_in_port': 0,
-                    'repl_out_port': 0,
-                    'stdin_port': 0,
-                    'stdout_port': 0,
-                })
-                await conn.execute(query)
+        try:
 
-            try:
-
-                async with self.handle_kernel_exception(
-                        'create_session', sess_id, access_key):
-                    # the agent may be pulling an image!
-                    # (TODO: return early and update the kernel status
-                    #        via asynchronous events)
-                    async with RPCContext(agent_addr, None) as rpc:
-                        config = {
-                            'image': {
-                                'registry': {
-                                    'name': image_ref.registry,
-                                    'url': str(registry_url),
-                                    **registry_creds,
-                                },
-                                'digest': image_info['digest'],
-                                'canonical': image_ref.canonical,
-                                'labels': image_info['labels'],
+            async with self.handle_kernel_exception(
+                    'create_session', sess_id, access_key):
+                # the agent may be pulling an image!
+                # (TODO: return early and update the kernel status
+                #        via asynchronous events)
+                async with RPCContext(agent_addr, None) as rpc:
+                    config = {
+                        'image': {
+                            'registry': {
+                                'name': image_ref.registry,
+                                'url': str(registry_url),
+                                **registry_creds,
                             },
-                            'resource_slots': requested_slots.to_json(),
-                            'idle_timeout': resource_policy['idle_timeout'],
-                            'mounts': mounts,
-                            'environ': environ,
-                        }
-                        created_info = await rpc.call.create_kernel(str(kernel_id),
-                                                                    config)
-                    if created_info is None:
-                        raise KernelCreationFailed('ooops')
-
-            except Exception:  # including timeout and cancellation
-
-                # This catches errors during kernel creation via agent RPC.
-
-                async with self.dbpool.acquire() as conn, conn.begin():
-
-                    # The following ops are same to the "kernel_terminated" handler.
-                    # Since events are only generated by the agents and the "kernel_created"
-                    # event is generated only when kernel creation was successful,
-                    # we do this by ourselves.
-
-                    # Mark as terminated with error
-                    query = (
-                        kernels.update()
-                        .values({
-                            'status': KernelStatus.TERMINATED,
-                            'status_info': 'creation-failed',
-                            'terminated_at': datetime.now(tzutc()),
-                        })
-                        .where(kernels.c.id == kernel_id))
-                    await conn.execute(query)
-
-                    # Un-reserve slots
-                    query = (
-                        sa.select([agents.c.occupied_slots], for_update=True)
-                        .select_from(agents)
-                        .where(agents.c.id == agent_id))
-                    current_occupied_slots = await conn.scalar(query)
-                    query = (
-                        sa.update(agents)
-                        .values({
-                            'occupied_slots': current_occupied_slots - requested_slots
-                        })
-                        .where(agents.c.id == agent_id))
-                    await conn.execute(query)
-
-                # Bubble-up exceptions
-                raise
+                            'digest': image_info['digest'],
+                            'canonical': image_ref.canonical,
+                            'labels': image_info['labels'],
+                        },
+                        'resource_slots': requested_slots.to_json(),
+                        'idle_timeout': resource_policy['idle_timeout'],
+                        'mounts': mounts,
+                        'environ': environ,
+                    }
+                    created_info = await rpc.call.create_kernel(str(kernel_id),
+                                                                config)
+                if created_info is None:
+                    raise KernelCreationFailed('ooops')
 
         except Exception as e:  # including timeout and cancellation
 
-            # Decrement concurrency used
-            async with self.dbpool.acquire() as conn, conn.begin():
-                query = (
-                    sa.update(keypairs)
-                    .values(concurrency_used=keypairs.c.concurrency_used - 1)
-                    .where(keypairs.c.access_key == access_key))
-                await conn.execute(query)
-
-            # This also catches InstanceNotAvailable
+            # This catches errors during kernel creation via agent RPC.
             log.debug('create_session("{0}", "{1}") -> failed ({2})',
                       sess_id, access_key, repr(e))
+
+            async with self.dbpool.acquire() as conn, conn.begin():
+
+                # The following ops are same to the "kernel_terminated" handler.
+                # Since events are only generated by the agents and the "kernel_created"
+                # event is generated only when kernel creation was successful,
+                # we do this by ourselves.
+
+                # Mark as terminated with error
+                query = (
+                    kernels.update()
+                    .values({
+                        'status': KernelStatus.TERMINATED,
+                        'status_info': 'creation-failed',
+                        'terminated_at': datetime.now(tzutc()),
+                    })
+                    .where(kernels.c.id == kernel_id))
+                await conn.execute(query)
+
+                # Un-reserve slots
+                query = (
+                    sa.select([agents.c.occupied_slots], for_update=True)
+                    .select_from(agents)
+                    .where(agents.c.id == agent_id))
+                current_occupied_slots = await conn.scalar(query)
+                query = (
+                    sa.update(agents)
+                    .values({
+                        'occupied_slots': current_occupied_slots - requested_slots
+                    })
+                    .where(agents.c.id == agent_id))
+                await conn.execute(query)
 
             # Bubble-up exceptions
             raise

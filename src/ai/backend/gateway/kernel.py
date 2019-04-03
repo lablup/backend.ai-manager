@@ -111,32 +111,43 @@ async def create(request) -> web.Response:
             # TODO: implement
 
         # sanity check for vfolders
-        if creation_config['mounts']:
-            mount_details = []
-            matched_mounts = set()
-            matched_vfolders = await query_accessible_vfolders(
-                conn, owner_access_key,
-                extra_vf_conds=(vfolders.c.name.in_(creation_config['mounts'])))
-            for item in matched_vfolders:
-                matched_mounts.add(item['name'])
-                mount_details.append((
-                    item['name'],
-                    item['host'],
-                    item['id'].hex,
-                    item['permission'].value,
-                ))
-            if set(creation_config['mounts']) > matched_mounts:
-                raise VFolderNotFound
-            creation_config['mounts'] = mount_details
+        try:
+            if creation_config['mounts']:
+                mount_details = []
+                matched_mounts = set()
+                matched_vfolders = await query_accessible_vfolders(
+                    conn, owner_access_key,
+                    extra_vf_conds=(vfolders.c.name.in_(creation_config['mounts'])))
+                for item in matched_vfolders:
+                    matched_mounts.add(item['name'])
+                    mount_details.append((
+                        item['name'],
+                        item['host'],
+                        item['id'].hex,
+                        item['permission'].value,
+                    ))
+                if set(creation_config['mounts']) > matched_mounts:
+                    raise VFolderNotFound
+                creation_config['mounts'] = mount_details
 
-        kernel, created = await request.app['registry'].get_or_create_session(
-            sess_id, owner_access_key,
-            image, creation_config,
-            resource_policy,
-            tag=params.get('tag', None))
-        resp['kernelId'] = str(kernel['sess_id'])
-        resp['servicePorts'] = kernel['service_ports']
-        resp['created'] = bool(created)
+            kernel, created = await request.app['registry'].get_or_create_session(
+                sess_id, owner_access_key,
+                image, creation_config,
+                resource_policy,
+                tag=params.get('tag', None))
+            resp['kernelId'] = str(kernel['sess_id'])
+            resp['servicePorts'] = kernel['service_ports']
+            resp['created'] = bool(created)
+        except Exception:
+            # Decrement concurrency used
+            async with request.app['dbpool'].acquire() as conn, conn.begin():
+                query = (
+                    sa.update(keypairs)
+                    .values(concurrency_used=keypairs.c.concurrency_used - 1)
+                    .where(keypairs.c.access_key == owner_access_key))
+                await conn.execute(query)
+            # Bubble up
+            raise
     except BackendError:
         log.exception('GET_OR_CREATE: exception')
         raise
