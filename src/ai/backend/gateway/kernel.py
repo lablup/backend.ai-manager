@@ -187,12 +187,13 @@ async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
     except KernelNotFound:
         return
     if kernel.status != KernelStatus.RESTARTING:
-        await app['registry'].mark_kernel_terminated(kernel_id)
+        await app['registry'].mark_kernel_terminated(kernel_id, reason)
         # TODO: spawn another kernel to keep the capacity of multi-container bundle?
     if kernel.role == 'master' and kernel.status != KernelStatus.RESTARTING:
         await app['registry'].mark_session_terminated(
             kernel['sess_id'],
-            kernel['access_key'])
+            kernel['access_key'],
+            reason)
 
 
 async def instance_started(app, agent_id):
