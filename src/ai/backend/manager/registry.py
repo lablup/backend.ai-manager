@@ -354,7 +354,7 @@ class AgentRegistry:
         requested_image_ref = \
             await ImageRef.resolve_alias(image, self.config_server.etcd)
         try:
-            kern = await self.get_session(sess_id, access_key)
+            kern = await self.get_session(sess_id, access_key, db_connection=conn)
             running_image_ref = ImageRef(kern['image'], [kern['registry']])
             if running_image_ref != requested_image_ref:
                 raise KernelAlreadyExists
