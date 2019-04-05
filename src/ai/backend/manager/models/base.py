@@ -1,6 +1,7 @@
 import enum
 import functools
 import logging
+from typing import Mapping
 import sys
 import uuid
 
@@ -121,6 +122,8 @@ class ResourceSlotColumn(TypeDecorator):
     impl = JSONB
 
     def process_bind_param(self, value, dialect):
+        if isinstance(value, Mapping) and not isinstance(value, ResourceSlot):
+            return value
         return value.to_json() if value is not None else None
 
     def process_result_value(self, value: str, dialect):
