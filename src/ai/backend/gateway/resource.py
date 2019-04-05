@@ -76,14 +76,16 @@ async def check_presets(request) -> web.Response:
     keypair_limits = ResourceSlot.from_policy(resource_policy, known_slot_types)
     resp = {
         'keypair_limits': None,
+        'keypair_using': None,
         'keypair_remaining': None,
         'scaling_group_remaining': None,
         'presets': [],
     }
     async with request.app['dbpool'].acquire() as conn, conn.begin():
-        key_occupied = await registry.get_keypair_occupancy(access_key, conn=conn)
-        keypair_remaining = keypair_limits - key_occupied
+        keypair_occupied = await registry.get_keypair_occupancy(access_key, conn=conn)
+        keypair_remaining = keypair_limits - keypair_occupied
         resp['keypair_limits'] = keypair_limits.to_json()
+        resp['keypair_using'] = keypair_occupied.to_json()
         resp['keypair_remaining'] = keypair_remaining.to_json()
         # query all agent's capacity and occupancy
         agent_slots = []
