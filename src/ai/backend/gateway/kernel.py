@@ -3,7 +3,6 @@ REST-style kernel session management APIs.
 '''
 
 import asyncio
-from collections import defaultdict
 from decimal import Decimal
 from datetime import datetime, timedelta
 import functools
@@ -83,30 +82,35 @@ async def create(request) -> web.Response:
                       resource_policy['max_concurrent_sessions'])
             if concurrency_used >= resource_policy['max_concurrent_sessions']:
                 raise QuotaExceeded
-            creation_config = {
-                'mounts': None,
-                'environ': None,
-                'clusterSize': None,
-            }
-            api_version = request['api_version']
-            if api_version[0] == 1:
-                # custom resource limit unsupported
-                pass
-            elif api_version[0] >= 2:
-                creation_config.update(**{
-                    'instanceMemory': None,
-                    'instanceCores': None,
-                    'instanceGPUs': None,
-                    'instanceTPUs': None,
-                })
-                creation_config.update(params.get('config', {}))
-            elif api_version[0] >= 4 and api_version[1] >= '20190315':
-                creation_config.update(params.get('config', {}))
-                # "instanceXXX" fields are dropped and changed to
-                # a generalized "resource" map.
-                # TODO: implement
+            query = (sa.update(keypairs)
+                       .values(concurrency_used=keypairs.c.concurrency_used + 1)
+                       .where(keypairs.c.access_key == owner_access_key))
+            await conn.execute(query)
+        creation_config = {
+            'mounts': None,
+            'environ': None,
+            'clusterSize': None,
+        }
+        api_version = request['api_version']
+        if api_version[0] == 1:
+            # custom resource limit unsupported
+            pass
+        elif api_version[0] >= 2:
+            creation_config.update(**{
+                'instanceMemory': None,
+                'instanceCores': None,
+                'instanceGPUs': None,
+                'instanceTPUs': None,
+            })
+            creation_config.update(params.get('config', {}))
+        elif api_version[0] >= 4 and api_version[1] >= '20190315':
+            creation_config.update(params.get('config', {}))
+            # "instanceXXX" fields are dropped and changed to
+            # a generalized "resource" map.
+            # TODO: implement
 
-            # sanity check for vfolders
+        # sanity check for vfolders
+        try:
             if creation_config['mounts']:
                 mount_details = []
                 matched_mounts = set()
@@ -129,15 +133,20 @@ async def create(request) -> web.Response:
                 sess_id, owner_access_key,
                 image, creation_config,
                 resource_policy,
-                conn=conn, tag=params.get('tag', None))
+                tag=params.get('tag', None))
             resp['kernelId'] = str(kernel['sess_id'])
             resp['servicePorts'] = kernel['service_ports']
             resp['created'] = bool(created)
-            if created:
-                query = (sa.update(keypairs)
-                           .values(concurrency_used=keypairs.c.concurrency_used + 1)
-                           .where(keypairs.c.access_key == owner_access_key))
+        except Exception:
+            # Decrement concurrency used
+            async with request.app['dbpool'].acquire() as conn, conn.begin():
+                query = (
+                    sa.update(keypairs)
+                    .values(concurrency_used=keypairs.c.concurrency_used - 1)
+                    .where(keypairs.c.access_key == owner_access_key))
                 await conn.execute(query)
+            # Bubble up
+            raise
     except BackendError:
         log.exception('GET_OR_CREATE: exception')
         raise
@@ -150,50 +159,20 @@ async def create(request) -> web.Response:
     return web.json_response(resp, status=201)
 
 
-async def update_instance_usage(app, inst_id):
-    sess_ids = await app['registry'].get_sessions_in_instance(inst_id)
-    all_sessions = await app['registry'].get_sessions(sess_ids)
-    affected_keys = [kern['access_key'] for kern in all_sessions if kern is not None]
-
-    # TODO: enqueue termination event to streaming response queue
-
-    per_key_counts = defaultdict(int)
-    for ak in filter(lambda ak: ak is not None, affected_keys):
-        per_key_counts[ak] += 1
-    per_key_counts_str = ', '.join(f'{k}:{v}' for k, v in per_key_counts.items())
-    log.info('-> cleaning {0!r}', sess_ids)
-    log.info('-> per-key usage: {0}', per_key_counts_str)
-
-    if not affected_keys:
-        return
-
-    async with app['dbpool'].acquire() as conn, conn.begin():
-        log.debug('update_instance_usage({0})', inst_id)
-        for kern in all_sessions:
-            if kern is None:
-                continue
-            query = (sa.update(keypairs)
-                       .values({
-                           'concurrency_used': keypairs.c.concurrency_used -
-                                               per_key_counts[kern['access_key']],  # noqa
-                       })
-                       .where(keypairs.c.access_key == kern['access_key']))
-            await conn.execute(query)
-
-
-async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
+async def kernel_terminated(app, agent_id, kernel_id, reason, _reserved_arg):
     try:
         kernel = await app['registry'].get_kernel(
             kernel_id, (kernels.c.role, kernels.c.status), allow_stale=True)
     except KernelNotFound:
         return
     if kernel.status != KernelStatus.RESTARTING:
-        await app['registry'].mark_kernel_terminated(kernel_id)
+        await app['registry'].mark_kernel_terminated(kernel_id, reason)
         # TODO: spawn another kernel to keep the capacity of multi-container bundle?
     if kernel.role == 'master' and kernel.status != KernelStatus.RESTARTING:
         await app['registry'].mark_session_terminated(
             kernel['sess_id'],
-            kernel['access_key'])
+            kernel['access_key'],
+            reason)
 
 
 async def instance_started(app, agent_id):

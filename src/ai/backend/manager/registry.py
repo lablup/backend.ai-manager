@@ -58,9 +58,6 @@ async def RPCContext(addr, timeout=None):
     try:
         with _timeout(timeout):
             yield peer
-    except asyncio.TimeoutError:
-        log.warning('timeout while connecting to agent at {}', addr)
-        raise
     except preserved_exceptions:
         raise
     except Exception:
@@ -350,11 +347,11 @@ class AgentRegistry:
     async def get_or_create_session(self, sess_id, access_key,
                                     image, creation_config,
                                     resource_policy,
-                                    conn=None, tag=None):
+                                    tag=None):
         requested_image_ref = \
             await ImageRef.resolve_alias(image, self.config_server.etcd)
         try:
-            kern = await self.get_session(sess_id, access_key, db_connection=conn)
+            kern = await self.get_session(sess_id, access_key)
             running_image_ref = ImageRef(kern['image'], [kern['registry']])
             if running_image_ref != requested_image_ref:
                 raise KernelAlreadyExists
@@ -366,7 +363,7 @@ class AgentRegistry:
                 sess_id, access_key,
                 requested_image_ref, creation_config,
                 resource_policy,
-                conn=conn, session_tag=tag)
+                session_tag=tag)
         assert kern is not None
         return kern, create
 
@@ -374,7 +371,7 @@ class AgentRegistry:
                              image_ref: ImageRef,
                              creation_config: dict,
                              resource_policy: dict,
-                             conn=None, session_tag=None):
+                             session_tag=None):
         agent_id = None
         created_info = None
         mounts = creation_config.get('mounts') or []
@@ -472,7 +469,7 @@ class AgentRegistry:
         #         max_containers_per_session.
         # - TODO: check scaling-group resource policy as well.
         total_allowed = ResourceSlot.from_policy(resource_policy, known_slot_types)
-        async with reenter_txn(self.dbpool, conn) as conn:
+        async with self.dbpool.acquire() as conn, conn.begin():
             key_occupied = await self.get_keypair_occupancy(access_key, conn=conn)
             log.debug('{} current_occupancy: {}', access_key, key_occupied)
             log.debug('{} total_allowed: {}', access_key, total_allowed)
@@ -486,12 +483,18 @@ class AgentRegistry:
 
         # ==== END: ENQUEUING PART ====
 
-        async with reenter_txn(self.dbpool, conn) as conn:
+        async with self.dbpool.acquire() as conn, conn.begin():
 
             # Fetch all agent available slots and normalize them to "remaining" slots
             possible_agent_slots = []
-            query = (sa.select([agents], for_update=True)
-                       .where(agents.c.status == AgentStatus.ALIVE))
+            query = (
+                sa.select([
+                    agents.c.id,
+                    agents.c.available_slots,
+                    agents.c.occupied_slots,
+                ], for_update=True)
+                .where(agents.c.status == AgentStatus.ALIVE)
+            )
             async for row in conn.execute(query):
                 capacity_slots = row['available_slots']
                 occupied_slots = row['occupied_slots']
@@ -528,7 +531,7 @@ class AgentRegistry:
                            'occupied_slots': current_occupied_slots + requested_slots
                        })
                        .where(agents.c.id == agent_id))
-            result = await conn.execute(query)
+            await conn.execute(query)
 
             # Create kernel by invoking the agent on the instance.
             query = (sa.select([agents.c.addr])
@@ -562,8 +565,9 @@ class AgentRegistry:
                 'stdin_port': 0,
                 'stdout_port': 0,
             })
-            result = await conn.execute(query)
-            assert result.rowcount == 1
+            await conn.execute(query)
+
+        try:
 
             async with self.handle_kernel_exception(
                     'create_session', sess_id, access_key):
@@ -591,21 +595,68 @@ class AgentRegistry:
                                                                 config)
                 if created_info is None:
                     raise KernelCreationFailed('ooops')
-                log.debug('create_session("{0}", "{1}") -> created on {2}\n{3!r}',
-                          sess_id, access_key, agent_id, created_info)
-                assert str(kernel_id) == created_info['id']
-                agent_host = URL(agent_addr).host
-                kernel_host = created_info.get('kernel_host', agent_host)
-                service_ports = created_info.get('service_ports', [])
-                kernel_access_info = {
-                    'id': kernel_id,
-                    'sess_id': sess_id,
-                    'agent': agent_id,
-                    'agent_addr': agent_addr,
-                    'kernel_host': kernel_host,
-                    'service_ports': service_ports,
-                }
-                # NOTE: created_info contains resource_spec
+
+        except Exception as e:  # including timeout and cancellation
+
+            # This catches errors during kernel creation via agent RPC.
+            log.debug('create_session("{0}", "{1}") -> failed ({2})',
+                      sess_id, access_key, repr(e))
+
+            async with self.dbpool.acquire() as conn, conn.begin():
+
+                # The following ops are same to the "kernel_terminated" handler.
+                # Since events are only generated by the agents and the "kernel_created"
+                # event is generated only when kernel creation was successful,
+                # we do this by ourselves.
+
+                # Mark as terminated with error
+                query = (
+                    kernels.update()
+                    .values({
+                        'status': KernelStatus.TERMINATED,
+                        'status_info': 'creation-failed',
+                        'terminated_at': datetime.now(tzutc()),
+                    })
+                    .where(kernels.c.id == kernel_id))
+                await conn.execute(query)
+
+                # Un-reserve slots
+                query = (
+                    sa.select([agents.c.occupied_slots], for_update=True)
+                    .select_from(agents)
+                    .where(agents.c.id == agent_id))
+                current_occupied_slots = await conn.scalar(query)
+                query = (
+                    sa.update(agents)
+                    .values({
+                        'occupied_slots': current_occupied_slots - requested_slots
+                    })
+                    .where(agents.c.id == agent_id))
+                await conn.execute(query)
+
+            # Bubble-up exceptions
+            raise
+
+        else:
+
+            log.debug('create_session("{0}", "{1}") -> created on {2}\n{3!r}',
+                      sess_id, access_key, agent_id, created_info)
+            assert str(kernel_id) == created_info['id']
+
+            # Return and record kernel access information
+            agent_host = URL(agent_addr).host
+            kernel_host = created_info.get('kernel_host', agent_host)
+            service_ports = created_info.get('service_ports', [])
+            kernel_access_info = {
+                'id': kernel_id,
+                'sess_id': sess_id,
+                'agent': agent_id,
+                'agent_addr': agent_addr,
+                'kernel_host': kernel_host,
+                'service_ports': service_ports,
+            }
+            # NOTE: created_info contains resource_spec
+            async with self.dbpool.acquire() as conn, conn.begin():
                 query = (
                     kernels.update()
                     .values({
@@ -623,9 +674,8 @@ class AgentRegistry:
                         'service_ports': service_ports,
                     })
                     .where(kernels.c.id == kernel_id))
-                result = await conn.execute(query)
-                assert result.rowcount == 1
-                return kernel_access_info
+                await conn.execute(query)
+            return kernel_access_info
 
     async def get_keypair_occupancy(self, access_key, *, conn=None):
         known_slot_types = \
@@ -997,12 +1047,12 @@ class AgentRegistry:
                        .where(agents.c.id == agent_id))
             await conn.execute(query)
 
-    async def mark_kernel_terminated(self, kernel_id, conn=None):
+    async def mark_kernel_terminated(self, kernel_id, reason):
         '''
         Mark the kernel (individual worker) terminated and release
         the resource slots occupied by it.
         '''
-        async with reenter_txn(self.dbpool, conn) as conn:
+        async with self.dbpool.acquire() as conn, conn.begin():
             # check if already terminated
             query = (sa.select([kernels.c.status], for_update=True)
                        .select_from(kernels)
@@ -1016,6 +1066,7 @@ class AgentRegistry:
             # (we don't delete the row for later logging and billing)
             kern_data = {
                 'status': KernelStatus.TERMINATED,
+                'status_info': reason,
                 'terminated_at': datetime.now(tzutc()),
             }
             kern_stat = await self.redis_stat.hgetall(kernel_id)
@@ -1060,7 +1111,7 @@ class AgentRegistry:
                        .where(agents.c.id == kernel['agent']))
             await conn.execute(query)
 
-    async def mark_session_terminated(self, sess_id, access_key):
+    async def mark_session_terminated(self, sess_id, access_key, reason):
         '''
         Mark the compute session terminated and restore the concurrency limit
         of the owner access key.  Releasing resource limits is handled by
@@ -1069,10 +1120,7 @@ class AgentRegistry:
         async with self.dbpool.acquire() as conn, conn.begin():
             # concurrency is per session.
             query = (sa.update(keypairs)
-                       .values({
-                           'concurrency_used': (
-                               keypairs.c.concurrency_used - 1),
-                       })
+                       .values(concurrency_used=keypairs.c.concurrency_used - 1)
                        .where(keypairs.c.access_key == access_key))
             await conn.execute(query)
 
