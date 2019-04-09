@@ -340,8 +340,9 @@ async def stream_proxy(request) -> web.Response:
     await asyncio.shield(registry.increment_session_usage(sess_id, access_key))
 
     async def refresh_cb(kernel_id: str, data: bytes):
-        await asyncio.shield(
-            call_non_bursty(registry.refresh_session(sess_id, access_key)))
+        await asyncio.shield(call_non_bursty(
+            kernel_id, registry.refresh_session(sess_id, access_key),
+            max_bursts=64, max_idle=2000))
 
     down_cb = partial(refresh_cb, kernel.id)
     up_cb = partial(refresh_cb, kernel.id)

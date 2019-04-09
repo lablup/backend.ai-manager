@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import datetime
 import functools
 import io
@@ -5,6 +6,7 @@ import inspect
 import itertools
 import numbers
 import re
+import time
 import traceback
 
 from aiohttp import web
@@ -143,13 +145,47 @@ def chunked(iterable, n):
         yield chunk
 
 
-async def call_non_bursty(coro, max_bursts=64, max_idle=100):
+_burst_last_call = 0
+_burst_times = dict()
+_burst_counts = defaultdict(int)
+
+
+async def call_non_bursty(key, coro, *, max_bursts=64, max_idle=100):
+    global _burst_last_call, _burst_calls, _burst_counts
     '''
     Execute a coroutine once upon max_bursts bursty invocations or max_idle
     milliseconds after bursts smaller than max_bursts.
     '''
-    # TODO: implement
-    if inspect.iscoroutine(coro):
-        await coro
-    elif inspect.iscoroutinefunction(coro):
-        await coro()
+    now = time.monotonic()
+
+    if now - _burst_last_call > 3.0:
+        # garbage-collect keys
+        cleaned_keys = []
+        for k, t in _burst_times.items():
+            if now - t > (max_idle / 1e3):
+                cleaned_keys.append(k)
+        for k in cleaned_keys:
+            del _burst_times[k]
+            del _burst_counts[k]
+
+    last_called = _burst_times.get(key, 0)
+    _burst_times[key] = now
+    _burst_last_call = now
+    invoke = False
+
+    if now - last_called > (max_idle / 1e3):
+        invoke = True
+        _burst_counts.pop(key, None)
+    else:
+        _burst_counts[key] += 1
+    if _burst_counts[key] >= max_bursts:
+        invoke = True
+        del _burst_counts[key]
+
+    if invoke:
+        if inspect.iscoroutine(coro):
+            return await coro
+        elif inspect.iscoroutinefunction(coro):
+            return await coro()
+        else:
+            return coro()

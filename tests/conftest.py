@@ -81,22 +81,29 @@ def prepare_and_cleanup_databases(request, test_ns, test_db,
 
     # Clear and reset etcd namespace using CLI functions.
     etcd_addr = host_port_pair(os.environ['BACKEND_ETCD_ADDR'])
+    etcd_user = os.environ.get('BACKEND_ETCD_USER')
+    etcd_password = os.environ.get('BACKEND_ETCD_PASSWORD')
     args = Namespace(key='volumes/_mount', value=str(folder_mount),
+                     etcd_user=etcd_user, etcd_password=etcd_password,
                      etcd_addr=etcd_addr, namespace=test_ns)
     put(args)
     args = Namespace(key='volumes/_fsprefix', value=str(folder_fsprefix),
+                     etcd_user=etcd_user, etcd_password=etcd_password,
                      etcd_addr=etcd_addr, namespace=test_ns)
     put(args)
     args = Namespace(key='volumes/_default_host', value=str(folder_host),
+                     etcd_user=etcd_user, etcd_password=etcd_password,
                      etcd_addr=etcd_addr, namespace=test_ns)
     put(args)
     args = Namespace(key='config/docker/registry/index.docker.io',
                      value='https://registry-1.docker.io',
+                     etcd_user=etcd_user, etcd_password=etcd_password,
                      etcd_addr=etcd_addr, namespace=test_ns)
     put(args)
 
     def finalize_etcd():
         args = Namespace(key='', prefix=True,
+                         etcd_user=etcd_user, etcd_password=etcd_password,
                          etcd_addr=etcd_addr, namespace=test_ns)
         delete(args)
 
