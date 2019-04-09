@@ -1053,25 +1053,32 @@ class AgentRegistry:
         the resource slots occupied by it.
         '''
         async with self.dbpool.acquire() as conn, conn.begin():
-            # check if already terminated
-            query = (sa.select([kernels.c.status], for_update=True)
+            # Check the current status.
+            query = (sa.select([kernels.c.role, kernels.c.status], for_update=True)
                        .select_from(kernels)
                        .where(kernels.c.id == kernel_id))
             result = await conn.execute(query)
-            prev_status = await result.scalar()
-            if prev_status in (None, KernelStatus.TERMINATED):
+            row = await result.first()
+            if row is None or row['status'] == KernelStatus.TERMINATED:
+                # Skip if non-existent or already terminated.
                 return
+            if row['role'] == 'master':
+                # The master session is terminated; decrement the user's concurrency counter
+                query = (sa.update(keypairs)
+                           .values(concurrency_used=keypairs.c.concurrency_used - 1)
+                           .where(keypairs.c.access_key == access_key))
+                await conn.execute(query)
 
-            # change the status to TERMINATED
+            # Change the status to TERMINATED.
             # (we don't delete the row for later logging and billing)
-            kern_data = {
+            updates = {
                 'status': KernelStatus.TERMINATED,
                 'status_info': reason,
                 'terminated_at': datetime.now(tzutc()),
             }
             kern_stat = await self.redis_stat.hgetall(kernel_id)
             if kern_stat is not None and 'cpu_used' in kern_stat:
-                kern_data.update({
+                updates.update({
                     'cpu_used': int(float(kern_stat['cpu_used'])),
                     'mem_max_bytes': int(kern_stat['mem_max_bytes']),
                     'net_rx_bytes': int(kern_stat['net_rx_bytes']),
@@ -1081,11 +1088,11 @@ class AgentRegistry:
                     'io_max_scratch_size': int(kern_stat['io_max_scratch_size']),
                 })
             query = (sa.update(kernels)
-                       .values(kern_data)
+                       .values(updates)
                        .where(kernels.c.id == kernel_id))
             await conn.execute(query)
 
-            # release resource slots
+            # Release resource slots.
             query = (sa.select([kernels.c.agent, kernels.c.occupied_slots])
                        .select_from(kernels)
                        .where(kernels.c.id == kernel_id))
@@ -1109,19 +1116,6 @@ class AgentRegistry:
                            'occupied_slots': updated_occupied_slots,
                        })
                        .where(agents.c.id == kernel['agent']))
-            await conn.execute(query)
-
-    async def mark_session_terminated(self, sess_id, access_key, reason):
-        '''
-        Mark the compute session terminated and restore the concurrency limit
-        of the owner access key.  Releasing resource limits is handled by
-        func:`mark_kernel_terminated`.
-        '''
-        async with self.dbpool.acquire() as conn, conn.begin():
-            # concurrency is per session.
-            query = (sa.update(keypairs)
-                       .values(concurrency_used=keypairs.c.concurrency_used - 1)
-                       .where(keypairs.c.access_key == access_key))
             await conn.execute(query)
 
     async def forget_instance(self, inst_id):

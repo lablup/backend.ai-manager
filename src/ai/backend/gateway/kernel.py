@@ -111,6 +111,7 @@ async def create(request) -> web.Response:
 
         # sanity check for vfolders
         try:
+            kernel = None
             if creation_config['mounts']:
                 mount_details = []
                 matched_mounts = set()
@@ -138,13 +139,14 @@ async def create(request) -> web.Response:
             resp['servicePorts'] = kernel['service_ports']
             resp['created'] = bool(created)
         except Exception:
-            # Decrement concurrency used
-            async with request.app['dbpool'].acquire() as conn, conn.begin():
-                query = (
-                    sa.update(keypairs)
-                    .values(concurrency_used=keypairs.c.concurrency_used - 1)
-                    .where(keypairs.c.access_key == owner_access_key))
-                await conn.execute(query)
+            # Restore concurrency_used if exception occurs before kernel creation
+            if kernel is None:
+                async with request.app['dbpool'].acquire() as conn, conn.begin():
+                    query = (
+                        sa.update(keypairs)
+                        .values(concurrency_used=keypairs.c.concurrency_used - 1)
+                        .where(keypairs.c.access_key == owner_access_key))
+                    await conn.execute(query)
             # Bubble up
             raise
     except BackendError:
@@ -167,12 +169,6 @@ async def kernel_terminated(app, agent_id, kernel_id, reason, _reserved_arg):
         return
     if kernel.status != KernelStatus.RESTARTING:
         await app['registry'].mark_kernel_terminated(kernel_id, reason)
-        # TODO: spawn another kernel to keep the capacity of multi-container bundle?
-    if kernel.role == 'master' and kernel.status != KernelStatus.RESTARTING:
-        await app['registry'].mark_session_terminated(
-            kernel['sess_id'],
-            kernel['access_key'],
-            reason)
 
 
 async def instance_started(app, agent_id):
