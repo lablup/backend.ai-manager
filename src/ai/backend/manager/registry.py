@@ -1054,7 +1054,7 @@ class AgentRegistry:
         '''
         async with self.dbpool.acquire() as conn, conn.begin():
             # Check the current status.
-            query = (sa.select([kernels.c.role, kernels.c.status], for_update=True)
+            query = (sa.select([kernels.c.access_key, kernels.c.role, kernels.c.status], for_update=True)
                        .select_from(kernels)
                        .where(kernels.c.id == kernel_id))
             result = await conn.execute(query)
@@ -1066,7 +1066,7 @@ class AgentRegistry:
                 # The master session is terminated; decrement the user's concurrency counter
                 query = (sa.update(keypairs)
                            .values(concurrency_used=keypairs.c.concurrency_used - 1)
-                           .where(keypairs.c.access_key == access_key))
+                           .where(keypairs.c.access_key == row['access_key']))
                 await conn.execute(query)
 
             # Change the status to TERMINATED.
