@@ -1,6 +1,22 @@
 Changes
 =======
 
+19.03.0 (2018-04-10)
+--------------------
+
+- NEW: resource preset API which provides a way to check resource availability
+  of specific resource configurations
+
+- NEW: vfolder/_/hosts API to retrieve vfolder hosts accessible by the user
+
+- CHANGE: The root API also returns the manager version as well as API version.
+
+- Fix empty alias list when querying images.
+
+- Fix GQL/DB-related bugs and improve migration experience.
+
+- Fix consistency corruption of keypairs.concurrency_used field.
+
 19.03.0rc2 (2018-03-25)
 -----------------------
 
