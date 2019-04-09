@@ -34,7 +34,7 @@ from ai.backend.gateway.server import (
     exception_middleware, api_middleware,
     _get_legacy_handler,
     PUBLIC_INTERFACES)
-from ai.backend.manager import models
+from ai.backend.manager.models.base import populate_fixture
 from ai.backend.manager.models import agents, kernels, keypairs, vfolders
 from ai.backend.manager.cli.etcd import delete, put
 from ai.backend.manager.cli.dbschema import oneshot
@@ -155,14 +155,16 @@ def prepare_and_cleanup_databases(request, test_ns, test_db,
         oneshot(args)
 
     # Populate example_keypair fixture
-    fixture = {
-        # TODO: fill up
-    }
+    fixtures = {}
+    fixtures.update(json.loads(
+        (Path(__file__).parent.parent /
+         'sample-configs' / 'example-keypairs.json').read_text()))
+    fixtures.update(json.loads(
+        (Path(__file__).parent.parent /
+         'sample-configs' / 'example-resource-presets.json').read_text()))
     engine = sa.create_engine(alembic_url)
     conn = engine.connect()
-    for table_name, rows in fixture.items():
-        table = getattr(models, table_name)
-        conn.execute(table.insert(), rows)
+    populate_fixture(conn, fixtures)
     conn.close()
     engine.dispose()
 
@@ -231,9 +233,15 @@ async def app(event_loop, test_ns, test_db, unused_tcp_port):
     app['config'] = load_config(argv=[], extra_args_funcs=(gw_args,))
     app['config'].debug = True
 
+    app['config'].etcd_addr = host_port_pair(os.environ['BACKEND_ETCD_ADDR'])
+    app['config'].etcd_user = os.environ.get('BACKEND_ETCD_USER')
+    app['config'].etcd_password = os.environ.get('BACKEND_ETCD_PASSWORD')
+
+    app['config'].redis_addr = host_port_pair(os.environ['BACKEND_REDIS_ADDR'])
+    app['config'].redis_password = os.environ.get('BACKEND_REDIS_PASSWORD')
+
     # Override basic settings.
     # Change these configs if local servers have different port numbers.
-    app['config'].redis_addr = host_port_pair(os.environ['BACKEND_REDIS_ADDR'])
     app['config'].db_addr = host_port_pair(os.environ['BACKEND_DB_ADDR'])
     app['config'].db_name = test_db
     app['config'].docker_registry = 'lablup'

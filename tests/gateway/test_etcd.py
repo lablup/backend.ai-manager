@@ -9,7 +9,12 @@ from ai.backend.gateway.exceptions import ImageNotFound
 
 @pytest.fixture
 async def config_server(app):
-    server = ConfigServer(app['config'].etcd_addr, app['config'].namespace)
+    server = ConfigServer(
+        app,
+        app['config'].etcd_addr,
+        app['config'].etcd_user,
+        app['config'].etcd_password,
+        app['config'].namespace)
     yield server
     await server.etcd.delete_prefix('nodes/manager')
 

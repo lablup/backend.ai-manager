@@ -55,7 +55,7 @@ kernels = sa.Table(
     # Resource occupation
     sa.Column('container_id', sa.String(length=64)),
     sa.Column('occupied_slots', ResourceSlotColumn(), nullable=False),
-    sa.Column('occupied_shares', pgsql.JSONB(), nullable=False),  # legacy
+    sa.Column('occupied_shares', pgsql.JSONB(), nullable=False, default={}),  # legacy
     sa.Column('environ', sa.ARRAY(sa.String), nullable=True),
 
     # Port mappings
@@ -382,8 +382,9 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             query = (sa.select([kernels])
                        .select_from(kernels)
                        .where((kernels.c.role == 'master') &
-                              (kernels.c.status == status) &
                               (kernels.c.sess_id.in_(sess_ids))))
+            if status is not None:
+                query = query.where(kernels.c.status == status)
             if access_key is not None:
                 query = query.where(kernels.c.access_key == access_key)
             sess_info = []
