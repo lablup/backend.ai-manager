@@ -1,6 +1,17 @@
 Changes
 =======
 
+19.03.1 (2018-04-21)
+--------------------
+
+- Fix various non-critical warnings and exceptions that occurs when users
+  disconnect abruptly (e.g., closing browsers connected to container service ports)
+
+- Ensure that the event subscriber coroutine keep continuing when it receives
+  corrupted messages and fails to parse them. (#146)
+  This has caused intermittent but permanent agent-lost timeouts in public network
+  environments.
+
 19.03.0 (2018-04-10)
 --------------------
 
