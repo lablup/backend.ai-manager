@@ -225,7 +225,7 @@ async def stream_execute(request) -> web.Response:
 
     try:
         if ws.closed:
-            log.warning('STREAM_EXECUTE: client disconnected (cancelled)')
+            log.debug('STREAM_EXECUTE: client disconnected (cancelled)')
             return
         params = await ws.receive_json()
         assert params.get('mode'), 'mode is missing or empty!'
@@ -241,7 +241,7 @@ async def stream_execute(request) -> web.Response:
                 api_version, run_id, mode, code, opts,
                 flush_timeout=0.2)
             if ws.closed:
-                log.warning('STREAM_EXECUTE: client disconnected (interrupted)')
+                log.debug('STREAM_EXECUTE: client disconnected (interrupted)')
                 await asyncio.shield(registry.interrupt_session(sess_id, access_key))
                 break
             if raw_result is None:
@@ -341,7 +341,8 @@ async def stream_proxy(request) -> web.Response:
 
     async def refresh_cb(kernel_id: str, data: bytes):
         await asyncio.shield(call_non_bursty(
-            kernel_id, registry.refresh_session(sess_id, access_key),
+            kernel_id,
+            partial(registry.refresh_session, sess_id, access_key),
             max_bursts=64, max_idle=2000))
 
     down_cb = partial(refresh_cb, kernel.id)
@@ -365,7 +366,7 @@ async def stream_proxy(request) -> web.Response:
                           ping_callback=ping_cb)
         return await proxy.proxy()
     except asyncio.CancelledError:
-        log.warning('stream_proxy({}, {}) cancelled', stream_key, service)
+        log.debug('stream_proxy({}, {}) cancelled', stream_key, service)
         raise
     finally:
         request.app['stream_proxy_handlers'][stream_key].discard(myself)

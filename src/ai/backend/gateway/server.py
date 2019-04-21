@@ -147,7 +147,7 @@ async def exception_middleware(request, handler):
     except asyncio.CancelledError as e:
         # The server is closing or the client has disconnected in the middle of
         # request.  Atomic requests are still executed to their ends.
-        log.warning('Request cancelled ({0} {1})', request.method, request.rel_url)
+        log.debug('Request cancelled ({0} {1})', request.method, request.rel_url)
         raise e
     except Exception as e:
         app['error_monitor'].capture_exception()

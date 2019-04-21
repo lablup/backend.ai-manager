@@ -4,6 +4,7 @@ import functools
 import io
 import inspect
 import itertools
+import logging
 import numbers
 import re
 import time
@@ -13,7 +14,11 @@ from aiohttp import web
 from dateutil.tz import gettz
 import pytz
 
+from ai.backend.common.logging import BraceStyleAdapter
+
 from .exceptions import GenericForbidden, QueryNotImplemented
+
+log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.utils'))
 
 _rx_sitepkg_path = re.compile(r'^.+/site-packages/')
 
@@ -151,11 +156,16 @@ _burst_counts = defaultdict(int)
 
 
 async def call_non_bursty(key, coro, *, max_bursts=64, max_idle=100):
-    global _burst_last_call, _burst_calls, _burst_counts
     '''
     Execute a coroutine once upon max_bursts bursty invocations or max_idle
     milliseconds after bursts smaller than max_bursts.
     '''
+    global _burst_last_call, _burst_calls, _burst_counts
+    if inspect.iscoroutine(coro):
+        # Coroutine objects may not be called before garbage-collected
+        # as this function throttles the frequency of invocation.
+        # That will generate a bogus warning by the asyncio's debug facility.
+        raise TypeError('You must pass coroutine function, not coroutine object.')
     now = time.monotonic()
 
     if now - _burst_last_call > 3.0:
@@ -166,7 +176,7 @@ async def call_non_bursty(key, coro, *, max_bursts=64, max_idle=100):
                 cleaned_keys.append(k)
         for k in cleaned_keys:
             del _burst_times[k]
-            del _burst_counts[k]
+            _burst_counts.pop(k, None)
 
     last_called = _burst_times.get(key, 0)
     _burst_times[key] = now
@@ -183,9 +193,7 @@ async def call_non_bursty(key, coro, *, max_bursts=64, max_idle=100):
         del _burst_counts[key]
 
     if invoke:
-        if inspect.iscoroutine(coro):
-            return await coro
-        elif inspect.iscoroutinefunction(coro):
+        if inspect.iscoroutinefunction(coro):
             return await coro()
         else:
             return coro()

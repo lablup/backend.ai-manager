@@ -60,20 +60,26 @@ class TCPProxy(ServiceProxy):
             async def downstream():
                 try:
                     while True:
-                        chunk = await reader.read(8192)
-                        if not chunk:
+                        try:
+                            chunk = await reader.read(8192)
+                            if not chunk:
+                                break
+                            await self.ws.send_bytes(chunk)
+                        except (RuntimeError, ConnectionResetError,
+                                asyncio.CancelledError):
+                            # connection interrupted
                             break
-                        await self.ws.send_bytes(chunk)
-                        if self.downstream_cb is not None:
-                            await self.downstream_cb(chunk)
-                    await self.ws.close()
+                        else:
+                            if self.downstream_cb is not None:
+                                await asyncio.shield(self.downstream_cb(chunk))
                 except asyncio.CancelledError:
                     pass
+                finally:
+                    await self.ws.close(code=1001)
 
             log.debug('TCPProxy connected {0}:{1}', self.host, self.port)
             self.down_task = asyncio.ensure_future(downstream())
             async for msg in self.ws:
-                log.debug('wsmsg {}', msg)
                 if msg.type == web.WSMsgType.BINARY:
                     try:
                         writer.write(msg.data)
@@ -157,11 +163,11 @@ class WebSocketProxy:
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     await self.down_conn.send_str(msg.data)
                     if self.downstream_cb is not None:
-                        await self.downstream_cb(msg.data)
+                        await asyncio.shield(self.downstream_cb(msg.data))
                 if msg.type == aiohttp.WSMsgType.BINARY:
                     await self.down_conn.send_bytes(msg.data)
                     if self.downstream_cb is not None:
-                        await self.downstream_cb(msg.data)
+                        await asyncio.shield(self.downstream_cb(msg.data))
                 elif msg.type == aiohttp.WSMsgType.CLOSED:
                     break
                 elif msg.type == aiohttp.WSMsgType.ERROR:
