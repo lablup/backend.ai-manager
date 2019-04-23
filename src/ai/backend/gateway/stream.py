@@ -197,7 +197,7 @@ async def stream_pty(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def stream_execute(request) -> web.Response:
+async def stream_execute(request) -> web.StreamResponse:
     '''
     WebSocket-version of gateway.kernel.execute().
     '''
@@ -298,7 +298,7 @@ async def stream_execute(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def stream_proxy(request) -> web.Response:
+async def stream_proxy(request) -> web.StreamResponse:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
