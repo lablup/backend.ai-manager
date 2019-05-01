@@ -1,15 +1,18 @@
+import enum
+
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 from passlib.hash import bcrypt
 import sqlalchemy as sa
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
-from .base import metadata, IDColumn
+from .base import metadata, EnumValueType, IDColumn
 
 
 __all__ = (
     'users',
     'User',
+    'UserRole'
 )
 
 
@@ -28,19 +31,34 @@ class PasswordColumn(TypeDecorator):
         return _hash_password(value)
 
 
+class UserRole(str, enum.Enum):
+    '''
+    User's role.
+    '''
+    ADMIN = 'admin'
+    USER = 'user'
+    MONITOR = 'monitor'
+
+
 users = sa.Table(
     'users', metadata,
-    IDColumn('id'),
-    sa.Column('username', sa.String(length=64)),
-    sa.Column('email', sa.String(length=64), index=True, nullable=False),
-    PasswordColumn('password'),
+    IDColumn('uuid'),
+    sa.Column('username', sa.String(length=64), unique=True),
+    sa.Column('email', sa.String(length=64), index=True,
+              nullable=False, unique=True),
+    sa.Column('password', PasswordColumn()),
     sa.Column('need_password_change', sa.Boolean),
     sa.Column('first_name', sa.String(length=32)),
     sa.Column('last_name', sa.String(length=32)),
     sa.Column('description', sa.String(length=500)),
-    sa.Column('is_active', sa.Boolean),
+    sa.Column('is_active', sa.Boolean, default=True),
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
+
+    # TODO: fill in domain field after Domain table is created
+    # sa.Column('domain', sa.String(length=64),
+    #           sa.ForeignKey('domains.id'), index=True),
+    sa.Column('role', EnumValueType(UserRole), default=UserRole.USER),
 )
 
 

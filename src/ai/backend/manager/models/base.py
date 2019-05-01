@@ -177,6 +177,10 @@ def IDColumn(name='id'):
                      server_default=sa.text("uuid_generate_v4()"))
 
 
+def ForeignKeyIDColumn(name, fk_field, nullable=True):
+    return sa.Column(name, GUID, sa.ForeignKey(fk_field), nullable=nullable)
+
+
 class DataLoaderManager:
     '''
     For every different combination of filtering conditions, we need to make a

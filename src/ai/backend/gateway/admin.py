@@ -65,6 +65,7 @@ async def handle_gql(request: web.Request) -> web.Response:
     context = {
         'config_server': request.app['config_server'],
         'etcd': request.app['config_server'].etcd,
+        'user': request['user'],
         'access_key': request['keypair']['access_key'],
         'dbpool': request.app['dbpool'],
         'redis_stat': request.app['redis_stat'],

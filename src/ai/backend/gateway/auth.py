@@ -164,7 +164,8 @@ async def auth_middleware(request, handler):
                     for col in keypair_resource_policies.c
                 }
                 request['user'] = {
-                    'id': row['keypairs_user_id'],
+                    'id': row['keypairs_user_id'],  # legacy
+                    'uuid': row['keypairs_user'] if 'keypairs_user' in row else None,
                 }
                 if row['keypairs_is_admin']:
                     request['is_admin'] = True
