@@ -238,7 +238,7 @@ class QueryForAdmin(graphene.ObjectType):
     async def resolve_user(executor, info, email=None):
         manager = info.context['dlmgr']
         if email is None:
-            email = info.context['user']['id']
+            email = info.context['user']['email']
         loader = manager.get_loader('User.by_email')
         return await loader.load(email)
 
@@ -414,7 +414,7 @@ class QueryForUser(graphene.ObjectType):
     @staticmethod
     async def resolve_user(executor, info):
         manager = info.context['dlmgr']
-        email = info.context['user']['id']
+        email = info.context['user']['email']
         loader = manager.get_loader('User.by_email')
         return await loader.load(email)
 

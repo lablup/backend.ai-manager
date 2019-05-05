@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from .exceptions import InvalidAuthParameters, AuthorizationFailed
 from .config import load_config
-from ..manager.models import keypairs, keypair_resource_policies
+from ..manager.models import keypairs, keypair_resource_policies, users
 from .utils import TZINFOS, set_handler_attr, get_handler_attr
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.auth'))
@@ -132,12 +132,10 @@ async def auth_middleware(request, handler):
     if params:
         sign_method, access_key, signature = params
         async with request.app['dbpool'].acquire() as conn, conn.begin():
-            j = sa.join(keypairs, keypair_resource_policies,
-                        keypairs.c.resource_policy ==
-                            keypair_resource_policies.c.name)
-            query = (sa.select([keypairs,
-                                keypair_resource_policies],
-                               use_labels=True)
+            j = (keypairs.join(users, keypairs.c.user == users.c.uuid)
+                         .join(keypair_resource_policies,
+                               keypairs.c.resource_policy == keypair_resource_policies.c.name))
+            query = (sa.select([users, keypairs, keypair_resource_policies], use_labels=True)
                        .select_from(j)
                        .where((keypairs.c.access_key == access_key) &
                               (keypairs.c.is_active.is_(True))))
@@ -164,9 +162,11 @@ async def auth_middleware(request, handler):
                     for col in keypair_resource_policies.c
                 }
                 request['user'] = {
-                    'id': row['keypairs_user_id'],  # legacy
-                    'uuid': row['keypairs_user'] if 'keypairs_user' in row else None,
+                    col.name: row[f'users_{col.name}']
+                    for col in users.c
+                    if col.name not in ('password', 'description', 'created_at')
                 }
+                request['user']['id'] = row['keypairs_user_id']  # legacy
                 if row['keypairs_is_admin']:
                     request['is_admin'] = True
     # No matter if authenticated or not, pass-through to the handler.
