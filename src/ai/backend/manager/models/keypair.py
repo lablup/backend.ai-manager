@@ -9,8 +9,7 @@ import sqlalchemy as sa
 from sqlalchemy.sql.expression import false
 import psycopg2 as pg
 
-from .base import metadata, ForeignKeyIDColumn, IDColumn
-from .user import users
+from .base import metadata, ForeignKeyIDColumn
 
 __all__ = (
     'keypairs',
@@ -53,6 +52,7 @@ class KeyPair(graphene.ObjectType):
     concurrency_used = graphene.Int()
     rate_limit = graphene.Int()
     num_queries = graphene.Int()
+    user = graphene.UUID()
 
     vfolders = graphene.List('ai.backend.manager.models.VirtualFolder')
     compute_sessions = graphene.List(
@@ -82,6 +82,7 @@ class KeyPair(graphene.ObjectType):
             concurrency_used=row['concurrency_used'],
             rate_limit=row['rate_limit'],
             num_queries=row['num_queries'],
+            user=row['user'],
         )
 
     async def resolve_vfolders(self, info):
@@ -174,6 +175,25 @@ class CreateKeyPair(graphene.Mutation):
     @classmethod
     async def mutate(cls, root, info, user_id, props):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
+            # Check if user exists with requested email (user_id for legacy).
+            from .user import users  # noqa
+            query = (sa.select([users.c.uuid])
+                       .select_from(users)
+                       .where(users.c.email == user_id))
+            try:
+                result = await conn.execute(query)
+                user = await result.fetchone()
+                if user is None:
+                    return cls(ok=False, msg=f'User not found: {user_id}', keypair=None)
+                user_uuid = user['uuid']
+            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+                return cls(ok=False, msg=f'integrity error: {e}', keypair=None)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                raise
+            except Exception as e:
+                return cls(ok=False, msg=f'unexpected error: {e}', keypair=None)
+
+            # Create keypair.
             ak = 'AKIA' + base64.b32encode(secrets.token_bytes(10)).decode('ascii')
             sk = secrets.token_urlsafe(30)
             data = {
@@ -186,6 +206,7 @@ class CreateKeyPair(graphene.Mutation):
                 'concurrency_used': 0,
                 'rate_limit': props.rate_limit,
                 'num_queries': 0,
+                'user': user_uuid,
             }
             query = (keypairs.insert().values(data))
             try:

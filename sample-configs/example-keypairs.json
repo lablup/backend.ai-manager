@@ -1,4 +1,42 @@
 {
+    "users": [
+        {
+            "uuid": "f38dea23-50fa-42a0-b5ae-338f5f4693f4",
+            "username": "admin",
+            "email": "admin@lablup.com",
+            "password": "0",
+            "need_password_change": false,
+            "first_name": "Admin",
+            "last_name": "Lablup",
+            "description": "Lablup's Admin Account",
+            "is_active": true,
+            "role": "admin"
+        },
+        {
+            "uuid": "dfa9da54-4b28-432f-be29-c0d680c7a412",
+            "username": "user",
+            "email": "user@lablup.com",
+            "password": "0",
+            "need_password_change": false,
+            "first_name": "User",
+            "last_name": "Lablup",
+            "description": "Lablup's User Account",
+            "is_active": true,
+            "role": "user"
+        },
+        {
+            "uuid": "2e10157d-20ca-4bd0-9806-3f909cbcd0e6",
+            "username": "monitor",
+            "email": "monitor@lablup.com",
+            "password": "0",
+            "need_password_change": false,
+            "first_name": "Monitor",
+            "last_name": "Lablup",
+            "description": "Lablup's Monitor Account",
+            "is_active": true,
+            "role": "monitor"
+        }
+    ],
     "keypair_resource_policies": [
         {
             "name": "default",
@@ -22,7 +60,8 @@
             "concurrency_used": 0,
             "rate_limit": 30000,
             "num_queries": 0,
-            "is_admin": true
+            "is_admin": true,
+            "user": "f38dea23-50fa-42a0-b5ae-338f5f4693f4"
         },
         {
             "user_id": "user@lablup.com",
@@ -33,7 +72,20 @@
             "concurrency_used": 0,
             "rate_limit": 30000,
             "num_queries": 0,
-            "is_admin": false
+            "is_admin": false,
+            "user": "dfa9da54-4b28-432f-be29-c0d680c7a412"
+        },
+        {
+            "user_id": "monitor@lablup.com",
+            "access_key": "AKIANAMONITOREXAMPLE",
+            "secret_key": "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",
+            "is_active": true,
+            "resource_policy": "default",
+            "concurrency_used": 0,
+            "rate_limit": 30000,
+            "num_queries": 0,
+            "is_admin": false,
+            "user": "2e10157d-20ca-4bd0-9806-3f909cbcd0e6"
         }
     ]
 }

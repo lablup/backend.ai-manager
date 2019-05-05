@@ -313,6 +313,30 @@ async def user_keypair(event_loop, app):
 
 
 @pytest.fixture
+async def monitor_keypair(event_loop, app):
+    access_key = 'AKIANAMONITOREXAMPLE'
+    config = app['config']
+    pool = await create_engine(
+        host=config.db_addr[0], port=config.db_addr[1],
+        user=config.db_user, password=config.db_password,
+        dbname=config.db_name, minsize=1, maxsize=4
+    )
+    async with pool.acquire() as conn:
+        query = (sa.select([keypairs.c.access_key, keypairs.c.secret_key])
+                   .select_from(keypairs)
+                   .where(keypairs.c.access_key == access_key))
+        result = await conn.execute(query)
+        row = await result.first()
+        keypair = {
+            'access_key': access_key,
+            'secret_key': row.secret_key,
+        }
+    pool.close()
+    await pool.wait_closed()
+    return keypair
+
+
+@pytest.fixture
 def get_headers(app, default_keypair, prepare_docker_images):
     def create_header(method, url, req_bytes, ctype='application/json',
                       hash_type='sha256', api_version='v4.20181215',
