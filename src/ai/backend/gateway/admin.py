@@ -324,7 +324,7 @@ class QueryForUser(graphene.ObjectType):
 
     keypairs = graphene.List(
         KeyPair,
-        user_id=graphene.String(required=True),
+        user_id=graphene.String(),
         is_active=graphene.Boolean())
 
     keypair_resource_policy = graphene.Field(
@@ -379,8 +379,12 @@ class QueryForUser(graphene.ObjectType):
         return await loader.load(access_key)
 
     @staticmethod
-    async def resolve_keypairs(executor, info, user_id, is_active=None):
+    async def resolve_keypairs(executor, info, user_id=None, is_active=None):
         manager = info.context['dlmgr']
+        if user_id is None:
+            user_id = info.context['user']['id']
+        elif user_id != info.context['user']['id']:
+            raise GenericForbidden('You cannot request other user\'s keypairs.')
         loader = manager.get_loader('KeyPair.by_uid', is_active=is_active)
         return await loader.load(user_id)
 
