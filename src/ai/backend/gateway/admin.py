@@ -22,6 +22,7 @@ from .auth import auth_required
 from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
     Agent, AgentList, Image, RescanImages, AliasImage, DealiasImage,
+    User, CreateUser, ModifyUser, DeleteUser,
     KeyPair, CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
     ComputeSession, ComputeSessionList, ComputeWorker, KernelStatus,
     VirtualFolder,
@@ -96,6 +97,9 @@ async def handle_gql(request: web.Request) -> web.Response:
 
 
 class MutationForAdmin(graphene.ObjectType):
+    create_user = CreateUser.Field()
+    modify_user = ModifyUser.Field()
+    delete_user = DeleteUser.Field()
     create_keypair = CreateKeyPair.Field()
     modify_keypair = ModifyKeyPair.Field()
     delete_keypair = DeleteKeyPair.Field()
@@ -143,6 +147,19 @@ class QueryForAdmin(graphene.ObjectType):
     images = graphene.List(
         Image,
     )
+
+    user = graphene.Field(
+        User,
+        email=graphene.String())
+
+    users = graphene.List(
+        User,
+        is_active=graphene.Boolean())
+
+    user_check_password = graphene.Field(
+        User,
+        email=graphene.String(),
+        password=graphene.String())
 
     keypair = graphene.Field(
         KeyPair,
@@ -216,6 +233,22 @@ class QueryForAdmin(graphene.ObjectType):
     @staticmethod
     async def resolve_images(executor, info):
         return await Image.load_all(info.context)
+
+    @staticmethod
+    async def resolve_user(executor, info, email=None):
+        manager = info.context['dlmgr']
+        if email is None:
+            email = info.context['user']['id']
+        loader = manager.get_loader('User.by_email')
+        return await loader.load(email)
+
+    @staticmethod
+    async def resolve_users(executor, info, is_active=None):
+        return await User.load_all(info.context, is_active=is_active)
+
+    @staticmethod
+    async def resolve_user_check_password(executor, info, email, password):
+        return await User.check_password(info.context, email, password)
 
     @staticmethod
     async def resolve_keypair(executor, info, access_key=None):
@@ -320,6 +353,13 @@ class QueryForUser(graphene.ObjectType):
         Image,
     )
 
+    user = graphene.Field(User)
+
+    user_check_password = graphene.Field(
+        User,
+        email=graphene.String(),
+        password=graphene.String())
+
     keypair = graphene.Field(lambda: KeyPair)
 
     keypairs = graphene.List(
@@ -370,6 +410,17 @@ class QueryForUser(graphene.ObjectType):
     @staticmethod
     async def resolve_images(executor, info):
         return await Image.load_all(info.context)
+
+    @staticmethod
+    async def resolve_user(executor, info):
+        manager = info.context['dlmgr']
+        email = info.context['user']['id']
+        loader = manager.get_loader('User.by_email')
+        return await loader.load(email)
+
+    @staticmethod
+    async def resolve_user_check_password(executor, info, email, password):
+        return await User.check_password(info.context, email, password)
 
     @staticmethod
     async def resolve_keypair(executor, info):
