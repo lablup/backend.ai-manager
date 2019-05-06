@@ -14,7 +14,7 @@ from .base import metadata, EnumValueType, IDColumn
 
 __all__ = (
     'users',
-    'User', 'UserInput', 'UserRole',
+    'User', 'UserInput', 'ModifyUserInput', 'UserRole',
     'CreateUser', 'ModifyUser', 'DeleteUser',
 )
 
@@ -60,7 +60,7 @@ users = sa.Table(
 
     # TODO: fill in domain field after Domain table is created
     # sa.Column('domain', sa.String(length=64),
-    #           sa.ForeignKey('domains.id'), index=True),
+    #           sa.ForeignKey('domains.name'), index=True),
     sa.Column('role', EnumValueType(UserRole), default=UserRole.USER),
 )
 
