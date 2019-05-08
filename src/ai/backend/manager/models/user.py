@@ -58,9 +58,8 @@ users = sa.Table(
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
 
-    # TODO: fill in domain field after Domain table is created
-    # sa.Column('domain', sa.String(length=64),
-    #           sa.ForeignKey('domains.name'), index=True),
+    sa.Column('domain_name', sa.String(length=64), sa.ForeignKey('domains.name'),
+              nullable=False, index=True),
     sa.Column('role', EnumValueType(UserRole), default=UserRole.USER),
 )
 
@@ -76,6 +75,7 @@ class User(graphene.ObjectType):
     description = graphene.String()
     is_active = graphene.Boolean()
     created_at = GQLDateTime()
+    domain_name = graphene.String()
     role = graphene.String()
     # Dynamic properties
     full_name = graphene.String()
@@ -96,6 +96,7 @@ class User(graphene.ObjectType):
             description=row['description'],
             is_active=row['is_active'],
             created_at=row['created_at'],
+            domain_name=row['domain_name'],
             role=row['role'],
             # Dynamic properties
             full_name=row['first_name'] + ' ' + row['last_name'],
@@ -158,6 +159,7 @@ class UserInput(graphene.InputObjectType):
     last_name = graphene.String(required=False)
     description = graphene.String(required=False)
     is_active = graphene.Boolean(required=False, default=True)
+    domain_name = graphene.String(required=True, default='default')
     role = graphene.String(required=False, default=UserRole.USER)
 
     # When creating, you MUST set all fields.
@@ -172,6 +174,7 @@ class ModifyUserInput(graphene.InputObjectType):
     last_name = graphene.String(required=False)
     description = graphene.String(required=False)
     is_active = graphene.Boolean(required=False)
+    domain_name = graphene.String(required=False)
     role = graphene.String(required=False)
 
 
@@ -198,6 +201,7 @@ class CreateUser(graphene.Mutation):
                 'last_name': props.last_name,
                 'description': props.description,
                 'is_active': props.is_active,
+                'domain_name': props.domain_name,
                 'role': UserRole(props.role),
             }
             query = (users.insert().values(data))
@@ -250,6 +254,7 @@ class ModifyUser(graphene.Mutation):
             set_if_set('last_name')
             set_if_set('description')
             set_if_set('is_active')
+            set_if_set('domain_name')
             set_if_set('role')
 
             query = (users.update().values(data).where(users.c.email == email))

@@ -7,7 +7,8 @@ from graphene.types.datetime import DateTime as GQLDateTime
 import psycopg2 as pg
 import sqlalchemy as sa
 
-from .base import metadata
+from ai.backend.common.types import ResourceSlot
+from .base import metadata, ResourceSlotColumn
 
 
 __all__ = (
@@ -26,9 +27,8 @@ domains = sa.Table(
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
     sa.Column('modified_at', sa.DateTime(timezone=True),
               server_default=sa.func.now(), onupdate=sa.func.current_timestamp()),
-
-    sa.Column('resource_policy', sa.String(length=256),
-              sa.ForeignKey('keypair_resource_policy.name'), index=True),
+    # TODO: separate resource-related fields with new domain resource policy table when needed.
+    sa.Column('total_resource_slots', ResourceSlotColumn(), nullable=False),
 )
 
 
@@ -38,7 +38,7 @@ class Domain(graphene.ObjectType):
     is_active = graphene.Boolean()
     created_at = GQLDateTime()
     modified_at = GQLDateTime()
-    resource_policy = graphene.String()
+    total_resource_slots = graphene.JSONString()
 
     @classmethod
     def from_row(cls, row):
@@ -50,7 +50,7 @@ class Domain(graphene.ObjectType):
             is_active=row['is_active'],
             created_at=row['created_at'],
             modified_at=row['modified_at'],
-            resource_policy=row['resource_policy'],
+            total_resource_slots=row['total_resource_slots'].to_json(),
         )
 
     @staticmethod
@@ -85,14 +85,14 @@ class Domain(graphene.ObjectType):
 class DomainInput(graphene.InputObjectType):
     description = graphene.String(required=False)
     is_active = graphene.Boolean(required=False, default=True)
-    resource_policy = graphene.String(required=True)
+    total_resource_slots = graphene.JSONString(required=True)
 
 
 class ModifyDomainInput(graphene.InputObjectType):
     name = graphene.String(required=False)
     description = graphene.String(required=False)
     is_active = graphene.Boolean(required=False)
-    resource_policy = graphene.String(required=False)
+    total_resource_slots = graphene.JSONString(required=False)
 
 
 class CreateDomain(graphene.Mutation):
@@ -107,13 +107,15 @@ class CreateDomain(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, name, props):
+        known_slot_types = await info.context['config_server'].get_resource_slots()
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             assert _rx_slug.search(name) is not None, 'invalid name format. slug format required.'
             data = {
                 'name': name,
                 'description': props.description,
                 'is_active': props.is_active,
-                'resource_policy': props.resource_policy,
+                'total_resource_slots': ResourceSlot.from_user_input(
+                    props.total_resource_slots, known_slot_types),
             }
             query = (domains.insert().values(data))
             try:
@@ -145,21 +147,25 @@ class ModifyDomain(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, name, props):
+        known_slot_types = await info.context['config_server'].get_resource_slots()
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
 
-            def set_if_set(name):
+            def set_if_set(name, clean=lambda v: v):
                 v = getattr(props, name)
                 # NOTE: unset optional fields are passed as null.
                 if v is not None:
-                    data[name] = v
+                    data[name] = clean(v)
             assert _rx_slug.search(data['name']) is not None, \
                 'invalid name format. slug format required.'
+
+            def clean_resource_slot(v):
+                return ResourceSlot.from_user_input(v, known_slot_types)
 
             set_if_set('name')
             set_if_set('description')
             set_if_set('is_active')
-            set_if_set('resource_policy')
+            set_if_set('total_resource_slots', clean_resource_slot)
 
             query = (domains.update().values(data).where(domains.c.name == name))
             try:

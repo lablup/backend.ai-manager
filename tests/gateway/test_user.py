@@ -85,7 +85,7 @@ class TestUserAdminQuery:
         query = textwrap.dedent('''\
         mutation($email: String!, $input: UserInput!) {
             create_user(email: $email, props: $input) {
-                ok msg user { username email password full_name description is_active role }
+                ok msg user { username email password full_name description is_active domain_name role }
             }
         }''')
         variables = {
@@ -98,6 +98,7 @@ class TestUserAdminQuery:
                 'last_name': 'Last',
                 'description': 'New user',
                 'is_active': True,
+                'domain_name': 'default',
                 'role': 'monitor',
             }
         }
@@ -113,6 +114,7 @@ class TestUserAdminQuery:
         assert rsp_json['create_user']['user']['full_name'] == 'First Last'
         assert rsp_json['create_user']['user']['description'] == 'New user'
         assert rsp_json['create_user']['user']['is_active']
+        assert rsp_json['create_user']['user']['domain_name'] == 'default'
         assert rsp_json['create_user']['user']['role'] == 'monitor'
 
         # Update the user.
@@ -165,7 +167,7 @@ class TestUserAdminQuery:
         app, client = await create_app_and_client(modules=['auth', 'admin', 'manager'])
 
         # Create a user.
-        email = 'newuser@lablup.com'
+        email = 'newuser2@lablup.com'
         password = 'new-password'
         query = textwrap.dedent('''\
         mutation($email: String!, $input: UserInput!) {
@@ -176,13 +178,14 @@ class TestUserAdminQuery:
         variables = {
             'email': email,
             'input': {
-                'username': 'newuser',
+                'username': 'newuser2',
                 'password': password,
                 'need_password_change': False,
                 'first_name': 'First',
                 'last_name': 'Last',
                 'description': 'New user',
                 'is_active': True,
+                'domain_name': 'default',
                 'role': 'monitor',
             }
         }

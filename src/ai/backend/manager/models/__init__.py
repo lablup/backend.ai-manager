@@ -1,6 +1,7 @@
 from .base import metadata  # noqa
 
 from .agent import *    # noqa
+from .domain import *   # noqa
 from .image import *    # noqa
 from .keypair import *  # noqa
 from .kernel import *   # noqa
@@ -12,6 +13,7 @@ from .resource_preset import *  # noqa
 __all__ = (
     'metadata',
     agent.__all__,    # noqa
+    domain.__all__,   # noqa
     image.__all__,    # noqa
     keypair.__all__,  # noqa
     kernel.__all__,   # noqa

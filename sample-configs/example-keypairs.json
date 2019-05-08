@@ -1,4 +1,12 @@
 {
+    "domains": [
+        {
+            "name": "default",
+            "description": "Default domain",
+            "is_active": true,
+            "total_resource_slots": {}
+        }
+    ],
     "users": [
         {
             "uuid": "f38dea23-50fa-42a0-b5ae-338f5f4693f4",
@@ -10,6 +18,7 @@
             "last_name": "Lablup",
             "description": "Lablup's Admin Account",
             "is_active": true,
+            "domain_name": "default",
             "role": "admin"
         },
         {
@@ -22,6 +31,7 @@
             "last_name": "Lablup",
             "description": "Lablup's User Account",
             "is_active": true,
+            "domain_name": "default",
             "role": "user"
         },
         {
@@ -34,6 +44,7 @@
             "last_name": "Lablup",
             "description": "Lablup's Monitor Account",
             "is_active": true,
+            "domain_name": "default",
             "role": "monitor"
         }
     ],
