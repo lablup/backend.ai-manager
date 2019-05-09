@@ -271,7 +271,7 @@ class TestUserUserQuery:
 
         assert ret.status == 400
 
-    async def test_check_password(self, create_app_and_client, get_headers):
+    async def test_check_password(self, create_app_and_client, get_headers, user_keypair):
         app, client = await create_app_and_client(modules=['auth', 'admin', 'manager'])
 
         # Check pasword with incorrect password
@@ -282,7 +282,7 @@ class TestUserUserQuery:
             }
         }''')
         payload = json.dumps({'query': query}).encode()
-        headers = get_headers('POST', self.url, payload)
+        headers = get_headers('POST', self.url, payload, keypair=user_keypair)
         ret = await client.post(self.url, data=payload, headers=headers)
         rsp_json = await ret.json()
 
@@ -296,7 +296,7 @@ class TestUserUserQuery:
             }
         }''')
         payload = json.dumps({'query': query}).encode()
-        headers = get_headers('POST', self.url, payload)
+        headers = get_headers('POST', self.url, payload, keypair=user_keypair)
         ret = await client.post(self.url, data=payload, headers=headers)
         rsp_json = await ret.json()
 

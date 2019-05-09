@@ -11,6 +11,20 @@ class TestDomainAdminQuery:
     async def test_query_domain(self, create_app_and_client, get_headers):
         app, client = await create_app_and_client(modules=['auth', 'admin', 'manager'])
 
+        query = textwrap.dedent('{ domain { name is_active total_resource_slots } }')
+        payload = json.dumps({'query': query}).encode()
+        headers = get_headers('POST', self.url, payload)
+        ret = await client.post(self.url, data=payload, headers=headers)
+        rsp_json = await ret.json()
+
+        assert ret.status == 200
+        assert rsp_json['domain']['name'] == 'default'
+        assert rsp_json['domain']['is_active']
+        assert rsp_json['domain']['total_resource_slots'] == '{}'
+
+    async def test_query_domain_by_name(self, create_app_and_client, get_headers):
+        app, client = await create_app_and_client(modules=['auth', 'admin', 'manager'])
+
         query = textwrap.dedent('''\
         {
             domain(name: "default") {
@@ -153,6 +167,35 @@ class TestDomainAdminQuery:
 
 
 @pytest.mark.asyncio
-class TestUserUserQuery:
+class TestDomainUserQuery:
     url = '/v3/admin/graphql'
-    # No User Queries currently.
+
+    async def test_query_domain(self, create_app_and_client, get_headers, user_keypair):
+        app, client = await create_app_and_client(modules=['auth', 'admin', 'manager'])
+
+        query = textwrap.dedent('{ domain { name is_active total_resource_slots } }')
+        payload = json.dumps({'query': query}).encode()
+        headers = get_headers('POST', self.url, payload, keypair=user_keypair)
+        ret = await client.post(self.url, data=payload, headers=headers)
+        rsp_json = await ret.json()
+
+        assert ret.status == 200
+        assert rsp_json['domain']['name'] == 'default'
+        assert rsp_json['domain']['is_active']
+        assert rsp_json['domain']['total_resource_slots'] == '{}'
+
+    async def test_cannot_query_domain_with_name(self, create_app_and_client, get_headers, user_keypair):
+        app, client = await create_app_and_client(modules=['auth', 'admin', 'manager'])
+
+        query = textwrap.dedent('''\
+        {
+            domain(name: "default") {
+                name is_active total_resource_slots
+            }
+        }''')
+        payload = json.dumps({'query': query}).encode()
+        headers = get_headers('POST', self.url, payload, keypair=user_keypair)
+        ret = await client.post(self.url, data=payload, headers=headers)
+        rsp_json = await ret.json()
+
+        assert ret.status != 200

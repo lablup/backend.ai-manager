@@ -146,7 +146,7 @@ class QueryForAdmin(graphene.ObjectType):
 
     domain = graphene.Field(
         Domain,
-        name=graphene.String(required=True))
+        name=graphene.String())
 
     domains = graphene.List(
         Domain,
@@ -238,8 +238,10 @@ class QueryForAdmin(graphene.ObjectType):
         return AgentList(agent_list, total_count)
 
     @staticmethod
-    async def resolve_domain(executor, info, name):
+    async def resolve_domain(executor, info, name=None):
         manager = info.context['dlmgr']
+        if name is None:
+            name = info.context['user']['domain_name']
         loader = manager.get_loader('Domain.by_name')
         return await loader.load(name)
 
@@ -366,6 +368,7 @@ class QueryForUser(graphene.ObjectType):
     Available GraphQL queries for the user priveilege.
     It only allows use of the access key specified in the authorization header.
     '''
+    domain = graphene.Field(Domain)
 
     image = graphene.Field(
         Image,
@@ -424,6 +427,13 @@ class QueryForUser(graphene.ObjectType):
         ComputeWorker,
         sess_id=graphene.String(required=True),
         status=graphene.String())
+
+    @staticmethod
+    async def resolve_domain(executor, info, name=None):
+        manager = info.context['dlmgr']
+        name = info.context['user']['domain_name']
+        loader = manager.get_loader('Domain.by_name')
+        return await loader.load(name)
 
     @staticmethod
     async def resolve_image(executor, info, reference):
