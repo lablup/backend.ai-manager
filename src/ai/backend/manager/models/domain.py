@@ -70,7 +70,7 @@ class Domain(graphene.ObjectType):
         async with context['dbpool'].acquire() as conn:
             query = (sa.select([domains])
                        .select_from(domains)
-                       .where(domains.c.name.in_(domains)))
+                       .where(domains.c.name.in_(names)))
             objs_per_key = OrderedDict()
             # For each name, there is only one domain.
             # So we don't build lists in objs_per_key variable.
@@ -156,8 +156,6 @@ class ModifyDomain(graphene.Mutation):
                 # NOTE: unset optional fields are passed as null.
                 if v is not None:
                     data[name] = clean(v)
-            assert _rx_slug.search(data['name']) is not None, \
-                'invalid name format. slug format required.'
 
             def clean_resource_slot(v):
                 return ResourceSlot.from_user_input(v, known_slot_types)
@@ -166,12 +164,14 @@ class ModifyDomain(graphene.Mutation):
             set_if_set('description')
             set_if_set('is_active')
             set_if_set('total_resource_slots', clean_resource_slot)
+            assert _rx_slug.search(data['name']) is not None, \
+                'invalid name format. slug format required.'
 
             query = (domains.update().values(data).where(domains.c.name == name))
             try:
                 result = await conn.execute(query)
                 if result.rowcount > 0:
-                    checkq = domains.select().where(domains.c.name == name)
+                    checkq = domains.select().where(domains.c.name == data['name'])
                     result = await conn.execute(checkq)
                     o = Domain.from_row(await result.first())
                     return cls(ok=True, msg='success', domain=o)

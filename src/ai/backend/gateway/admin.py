@@ -22,6 +22,7 @@ from .auth import auth_required
 from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
     Agent, AgentList, Image, RescanImages, AliasImage, DealiasImage,
+    Domain, CreateDomain, ModifyDomain, DeleteDomain,
     User, CreateUser, ModifyUser, DeleteUser,
     KeyPair, CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
     ComputeSession, ComputeSessionList, ComputeWorker, KernelStatus,
@@ -97,6 +98,9 @@ async def handle_gql(request: web.Request) -> web.Response:
 
 
 class MutationForAdmin(graphene.ObjectType):
+    create_domain = CreateDomain.Field()
+    modify_domain = ModifyDomain.Field()
+    delete_domain = DeleteDomain.Field()
     create_user = CreateUser.Field()
     modify_user = ModifyUser.Field()
     delete_user = DeleteUser.Field()
@@ -139,6 +143,14 @@ class QueryForAdmin(graphene.ObjectType):
     agents = graphene.List(
         Agent,
         status=graphene.String())
+
+    domain = graphene.Field(
+        Domain,
+        name=graphene.String(required=True))
+
+    domains = graphene.List(
+        Domain,
+        is_active=graphene.Boolean())
 
     image = graphene.Field(
         Image,
@@ -224,6 +236,16 @@ class QueryForAdmin(graphene.ObjectType):
         total_count = await Agent.load_count(info.context, status)
         agent_list = await Agent.load_slice(info.context, limit, offset, status)
         return AgentList(agent_list, total_count)
+
+    @staticmethod
+    async def resolve_domain(executor, info, name):
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('Domain.by_name')
+        return await loader.load(name)
+
+    @staticmethod
+    async def resolve_domains(executor, info, is_active=None):
+        return await Domain.load_all(info.context, is_active=is_active)
 
     @staticmethod
     async def resolve_image(executor, info, reference):
