@@ -115,6 +115,7 @@ class ModifyGroupInput(graphene.InputObjectType):
     description = graphene.String(required=False)
     is_active = graphene.Boolean(required=False)
     domain_name = graphene.String(required=False)
+    user_update_mode = graphene.String(required=False)
     user_uuids = graphene.List(lambda: graphene.String, required=False)
 
 
@@ -217,23 +218,36 @@ class ModifyGroup(GroupMutationMixin, graphene.Mutation):
             if 'name' in data:
                 assert _rx_slug.search(data['name']) is not None, \
                     'invalid name format. slug format required.'
+            assert props.user_update_mode in (None, 'add', 'remove',), 'invalid user_update_mode'
+            if not props.user_uuids:
+                props.user_update_mode = None
+            if not data and props.user_update_mode is None:
+                return cls(ok=False, msg='nothing to update', group=None)
 
-            if 'user_uuids' in props:
-                for user_uuid in props['user_uuids']:
-                    query = (sa.insert(association_groups_users)
-                               .values(user_id=str(user_uuid), group_id=gid))
+            try:
+                if props.user_update_mode == 'add':
+                    values = [{'user_id': uuid, 'group_id': gid} for uuid in props.user_uuids]
+                    query = sa.insert(association_groups_users).values(values)
+                    await conn.execute(query)
+                elif props['user_update_mode'] == 'remove':
+                    query = (association_groups_users
+                             .delete()
+                             .where(association_groups_users.c.user_id.in_(props.user_uuids))
+                             .where(association_groups_users.c.group_id == gid))
                     await conn.execute(query)
 
-            query = (groups.update().values(data).where(groups.c.id == gid))
-            try:
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    checkq = groups.select().where(groups.c.id == gid)
-                    result = await conn.execute(checkq)
-                    o = Group.from_row(await result.first())
-                    return cls(ok=True, msg='success', group=o)
-                else:
-                    return cls(ok=False, msg='no such group', group=None)
+                if data:
+                    query = (groups.update().values(data).where(groups.c.id == gid))
+                    result = await conn.execute(query)
+                    if result.rowcount > 0:
+                        checkq = groups.select().where(groups.c.id == gid)
+                        result = await conn.execute(checkq)
+                        o = Group.from_row(await result.first())
+                        return cls(ok=True, msg='success', group=o)
+                    else:
+                        return cls(ok=False, msg='no such group', group=None)
+                else:  # updated association_groups_users table
+                    return cls(ok=True, msg='success', group=None)
             except (pg.IntegrityError, sa.exc.IntegrityError) as e:
                 return cls(ok=False, msg=f'integrity error: {e}', group=None)
             except (asyncio.CancelledError, asyncio.TimeoutError):

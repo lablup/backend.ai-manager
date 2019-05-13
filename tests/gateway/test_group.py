@@ -385,6 +385,31 @@ class TestGroupAdminQuery:
             row = await result.fetchone()
         assert row is not None
 
+    async def test_name_should_be_slugged(self, create_app_and_client, get_headers):
+        app, client = await create_app_and_client(modules=['auth', 'admin', 'manager'])
+
+        # Try to create a group with space in name.
+        group_name = 'new group'
+        query = textwrap.dedent('''\
+        mutation($name: String!, $input: GroupInput!) {
+            create_group(name: $name, props: $input) {
+                ok msg group { name description is_active domain_name }
+            }
+        }''')
+        variables = {
+            'name': group_name,
+            'input': {
+                'description': 'desc',
+                'is_active': True,
+                'domain_name': 'default',
+            }
+        }
+        payload = json.dumps({'query': query, 'variables': variables}).encode()
+        headers = get_headers('POST', self.url, payload)
+        ret = await client.post(self.url, data=payload, headers=headers)
+
+        assert ret.status != 200
+
     async def test_mutate_group_with_users(self, create_app_and_client, get_headers,
                                            default_domain_keypair):
         app, client = await create_app_and_client(modules=['auth', 'admin', 'manager'])
@@ -413,7 +438,7 @@ class TestGroupAdminQuery:
 
         assert ret.status == 200
 
-        # Update the group with users.
+        # Add users to the group.
         async with app['dbpool'].acquire() as conn:
             from ai.backend.manager.models import users
             query = (sa.select([users.c.uuid])
@@ -432,14 +457,13 @@ class TestGroupAdminQuery:
         variables = {
             'gid': gid,
             'input': {
+                'user_update_mode': 'add',
                 'user_uuids': user_uuids,
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
         headers = get_headers('POST', self.url, payload, keypair=default_domain_keypair)
         ret = await client.post(self.url, data=payload, headers=headers)
-        rsp_json = await ret.json()
-
         assert ret.status == 200
 
         # Check association between the group and the users are created.
@@ -451,6 +475,34 @@ class TestGroupAdminQuery:
             rows = await result.fetchall()
         assert set(user_uuids) == set([str(item[0]) for item in rows])
 
+        # Remove one user from the group.
+        query = textwrap.dedent('''\
+        mutation($gid: String!, $input: ModifyGroupInput!) {
+            modify_group(gid: $gid, props: $input) {
+                ok msg group { name description is_active domain_name }
+            }
+        }''')
+        variables = {
+            'gid': gid,
+            'input': {
+                'user_update_mode': 'remove',
+                'user_uuids': [user_uuids[0]],
+            }
+        }
+        payload = json.dumps({'query': query, 'variables': variables}).encode()
+        headers = get_headers('POST', self.url, payload, keypair=default_domain_keypair)
+        ret = await client.post(self.url, data=payload, headers=headers)
+        assert ret.status == 200
+
+        # Check association is removed.
+        async with app['dbpool'].acquire() as conn:
+            query = (sa.select([association_groups_users.c.user_id])
+                       .select_from(association_groups_users)
+                       .where(association_groups_users.c.group_id == gid))
+            result = await conn.execute(query)
+            rows = await result.fetchall()
+        assert set([user_uuids[1]]) == set([str(item[0]) for item in rows])
+
         # Delete the group.
         query = textwrap.dedent('''\
         mutation($gid: String!) {
@@ -460,33 +512,16 @@ class TestGroupAdminQuery:
         payload = json.dumps({'query': query, 'variables': variables}).encode()
         headers = get_headers('POST', self.url, payload, keypair=default_domain_keypair)
         ret = await client.post(self.url, data=payload, headers=headers)
-
         assert ret.status == 200
 
-    async def test_name_should_be_slugged(self, create_app_and_client, get_headers):
-        app, client = await create_app_and_client(modules=['auth', 'admin', 'manager'])
-
-        # Try to create a group with space in name.
-        group_name = 'new group'
-        query = textwrap.dedent('''\
-        mutation($name: String!, $input: GroupInput!) {
-            create_group(name: $name, props: $input) {
-                ok msg group { name description is_active domain_name }
-            }
-        }''')
-        variables = {
-            'name': group_name,
-            'input': {
-                'description': 'desc',
-                'is_active': True,
-                'domain_name': 'default',
-            }
-        }
-        payload = json.dumps({'query': query, 'variables': variables}).encode()
-        headers = get_headers('POST', self.url, payload)
-        ret = await client.post(self.url, data=payload, headers=headers)
-
-        assert ret.status != 200
+        # Check remaining association is removed.
+        async with app['dbpool'].acquire() as conn:
+            query = (sa.select([association_groups_users.c.user_id])
+                       .select_from(association_groups_users)
+                       .where(association_groups_users.c.group_id == gid))
+            result = await conn.execute(query)
+            rows = await result.fetchall()
+        assert len(rows) == 0
 
 
 @pytest.mark.asyncio

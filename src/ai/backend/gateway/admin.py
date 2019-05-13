@@ -105,7 +105,6 @@ class MutationForAdmin(graphene.ObjectType):
     create_group = CreateGroup.Field()
     modify_group = ModifyGroup.Field()
     delete_group = DeleteGroup.Field()
-    # add_users_to_group = AddUsersToGroups.Field()
     create_user = CreateUser.Field()
     modify_user = ModifyUser.Field()
     delete_user = DeleteUser.Field()
