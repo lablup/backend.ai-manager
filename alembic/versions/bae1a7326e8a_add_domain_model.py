@@ -52,9 +52,8 @@ def upgrade():
             VALUES ('default', 'Default domain', True, '{}'::jsonb);''')
         connection.execute(query)
     # Fill in users' domain_name field.
-    query = 'UPDATE users SET domain_name = \'default\''
+    query = "UPDATE users SET domain_name = 'default' WHERE email != 'admin@lablup.com';"
     connection.execute(query)
-    op.alter_column('users', column_name='domain_name', nullable=False)
 
 
 def downgrade():

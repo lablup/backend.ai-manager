@@ -7,6 +7,15 @@
             "total_resource_slots": {}
         }
     ],
+    "groups": [
+        {
+            "id": "2de2b969-1d04-48a6-af16-0bc8adb3c831",
+            "name": "default",
+            "description": "Default group in default domain",
+            "is_active": true,
+            "domain_name": "default"
+        }
+    ],
     "users": [
         {
             "uuid": "f38dea23-50fa-42a0-b5ae-338f5f4693f4",
@@ -17,6 +26,19 @@
             "first_name": "Admin",
             "last_name": "Lablup",
             "description": "Lablup's Admin Account",
+            "is_active": true,
+            "domain_name": null,
+            "role": "admin"
+        },
+        {
+            "uuid": "4f13d193-f646-425a-a340-270c4d2b9860",
+            "username": "domain-admin",
+            "email": "domain-admin@lablup.com",
+            "password": "0",
+            "need_password_change": false,
+            "first_name": "Default Domain Admin",
+            "last_name": "Lablup",
+            "description": "Lablup's Default Domain Admin Account",
             "is_active": true,
             "domain_name": "default",
             "role": "admin"
@@ -73,6 +95,18 @@
             "num_queries": 0,
             "is_admin": true,
             "user": "f38dea23-50fa-42a0-b5ae-338f5f4693f4"
+        },
+        {
+            "user_id": "domain-admin@lablup.com",
+            "access_key": "AKIAHUKCHDEZGEXAMPLE",
+            "secret_key": "cWbsM_vBB4CzTW7JdORRMx8SjGI3-wEXAMPLEKEY",
+            "is_active": true,
+            "resource_policy": "default",
+            "concurrency_used": 0,
+            "rate_limit": 30000,
+            "num_queries": 0,
+            "is_admin": true,
+            "user": "4f13d193-f646-425a-a340-270c4d2b9860"
         },
         {
             "user_id": "user@lablup.com",

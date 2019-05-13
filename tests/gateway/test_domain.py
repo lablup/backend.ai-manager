@@ -41,7 +41,6 @@ class TestDomainAdminQuery:
         assert rsp_json['domain']['is_active']
         assert rsp_json['domain']['total_resource_slots'] == '{}'
 
-    @pytest.mark.asyncio
     async def test_query_domains(self, create_app_and_client, get_headers):
         app, client = await create_app_and_client(modules=['auth', 'admin', 'manager'])
 
@@ -196,6 +195,5 @@ class TestDomainUserQuery:
         payload = json.dumps({'query': query}).encode()
         headers = get_headers('POST', self.url, payload, keypair=user_keypair)
         ret = await client.post(self.url, data=payload, headers=headers)
-        rsp_json = await ret.json()
 
         assert ret.status != 200

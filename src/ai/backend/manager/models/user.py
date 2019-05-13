@@ -58,8 +58,9 @@ users = sa.Table(
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
 
-    sa.Column('domain_name', sa.String(length=64), sa.ForeignKey('domains.name'),
-              nullable=False, index=True),
+    # Note: admins without domain_name is global admin.
+    sa.Column('domain_name', sa.String(length=64),
+              sa.ForeignKey('domains.name'), index=True),
     sa.Column('role', EnumValueType(UserRole), default=UserRole.USER),
 )
 
