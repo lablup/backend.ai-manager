@@ -1,8 +1,8 @@
 """add group model
 
-Revision ID: edd3c0764c79
+Revision ID: 7a82e0c70122
 Revises: bae1a7326e8a
-Create Date: 2019-05-09 15:22:19.342121
+Create Date: 2019-05-09 10:00:55.788734
 
 """
 from alembic import op
@@ -11,7 +11,7 @@ import ai.backend.manager.models.base  # noqa
 
 
 # revision identifiers, used by Alembic.
-revision = 'edd3c0764c79'
+revision = '7a82e0c70122'
 down_revision = 'bae1a7326e8a'
 branch_labels = None
 depends_on = None

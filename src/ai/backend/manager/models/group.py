@@ -4,35 +4,46 @@ import re
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
-from passlib.hash import bcrypt
 import psycopg2 as pg
 import sqlalchemy as sa
-from sqlalchemy.types import TypeDecorator, VARCHAR
 
-from .base import metadata, EnumValueType, IDColumn
+from .base import metadata, GUID, IDColumn
 
 
 __all__ = (
-    'groups',
-    # 'Group', 'GroupInput', 'GroupRole',
-    # 'CreateGroup', 'ModifyGroup', 'DeleteGroup',
+    'groups', 'association_groups_users',
+    'Group', 'GroupInput', 'ModifyGroupInput',
+    'CreateGroup', 'ModifyGroup', 'DeleteGroup',
 )
 
 _rx_slug = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$')
 
+association_groups_users = sa.Table(
+    'association_groups_users', metadata,
+    sa.Column('user_id', GUID,
+              sa.ForeignKey('users.uuid', onupdate='CASCADE', ondelete='CASCADE'),
+              nullable=False),
+    sa.Column('group_id', GUID,
+              sa.ForeignKey('groups.id', onupdate='CASCADE', ondelete='CASCADE'),
+              nullable=False),
+    sa.UniqueConstraint('user_id', 'group_id', name='uq_association_user_id_group_id')
+)
+
+
 groups = sa.Table(
     'groups', metadata,
     IDColumn('id'),
-    sa.Column('name', sa.String(length=64)),
+    sa.Column('name', sa.String(length=64), nullable=False),
     sa.Column('description', sa.String(length=512)),
     sa.Column('is_active', sa.Boolean, default=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
     sa.Column('modified_at', sa.DateTime(timezone=True),
               server_default=sa.func.now(), onupdate=sa.func.current_timestamp()),
 
-    sa.Column('domain', sa.String(length=64), sa.ForeignKey('domains.name'), index=True),
-    sa.Column('resource_policy', sa.String(length=256),
-              sa.ForeignKey('keypair_resource_policy.name'), index=True),
+    sa.Column('domain_name', sa.String(length=64),
+              sa.ForeignKey('domains.name', onupdate='CASCADE', ondelete='CASCADE'),
+              nullable=False, index=True),
+    sa.UniqueConstraint('name', 'domain_name', name='uq_groups_name_domain_name')
 )
 
 
@@ -43,8 +54,7 @@ class Group(graphene.ObjectType):
     is_active = graphene.Boolean()
     created_at = GQLDateTime()
     modified_at = GQLDateTime()
-    domain = graphene.String()
-    resource_policy = graphene.String()
+    domain_name = graphene.String()
 
     @classmethod
     def from_row(cls, row):
@@ -57,14 +67,15 @@ class Group(graphene.ObjectType):
             is_active=row['is_active'],
             created_at=row['created_at'],
             modified_at=row['modified_at'],
-            domain=row['domain'],
-            resource_policy=row['resource_policy'],
+            domain_name=row['domain_name'],
         )
 
     @staticmethod
-    async def load_all(context, *, is_active=None):
+    async def load_all(context, domain_name, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
-            query = sa.select([groups]).select_from(groups)
+            query = (sa.select([groups])
+                       .select_from(groups)
+                       .where(groups.c.domain_name == domain_name))
             if is_active is not None:
                 query = query.where(groups.c.is_active == is_active)
             objs = []
@@ -74,38 +85,69 @@ class Group(graphene.ObjectType):
         return objs
 
     @staticmethod
-    async def batch_load_by_id(context, ids=None, *, is_active=None):
+    async def batch_load_by_id(context, ids=None):
         async with context['dbpool'].acquire() as conn:
+            current_domain_name = context['user']['domain_name']
             query = (sa.select([groups])
                        .select_from(groups)
-                       .where(groups.c.id.in_(groups)))
+                       .where(groups.c.id.in_(ids)))
+            if current_domain_name is not None:
+                query = query.where(groups.c.domain_name == current_domain_name)
             objs_per_key = OrderedDict()
-            # For each name, there is only one domain.
+            # For each id, there is only one group.
             # So we don't build lists in objs_per_key variable.
             for k in ids:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
                 o = Group.from_row(row)
-                objs_per_key[row.name] = o
+                objs_per_key[str(row.id)] = o
         return tuple(objs_per_key.values())
 
 
 class GroupInput(graphene.InputObjectType):
     description = graphene.String(required=False)
     is_active = graphene.Boolean(required=False, default=True)
-    domain = graphene.String(required=True)
-    resource_policy = graphene.String(required=True)
+    domain_name = graphene.String(required=True)
 
 
 class ModifyGroupInput(graphene.InputObjectType):
     name = graphene.String(required=False)
     description = graphene.String(required=False)
     is_active = graphene.Boolean(required=False)
-    domain = graphene.String(required=False)
-    resource_policy = graphene.String(required=False)
+    domain_name = graphene.String(required=False)
+    user_uuids = graphene.List(lambda: graphene.String, required=False)
 
 
-class CreateGroup(graphene.Mutation):
+class GroupMutationMixin:
+
+    @staticmethod
+    async def check_perm(info, *, domain_name=None, gid=None):
+        from .user import UserRole
+        user = info.context['user']
+        permitted = False
+        if user['role'] == UserRole.ADMIN:
+            if user['domain_name'] is None:  # global admin
+                permitted = True
+            else:
+                if domain_name is None and gid is not None:  # get target group's domain
+                    async with info.context['dbpool'].acquire() as conn, conn.begin():
+                        query = groups.select().where(groups.c.id == gid)
+                        try:
+                            result = await conn.execute(query)
+                            if result.rowcount > 0:
+                                result = await conn.execute(query)
+                                o = Group.from_row(await result.first())
+                                domain_name = o.domain_name
+                        except (asyncio.CancelledError, asyncio.TimeoutError):
+                            raise
+                        except Exception:
+                            pass
+                if user['domain_name'] == domain_name:
+                    permitted = True
+        return permitted
+
+
+class CreateGroup(GroupMutationMixin, graphene.Mutation):
 
     class Arguments:
         name = graphene.String(required=True)
@@ -117,21 +159,21 @@ class CreateGroup(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, name, props):
+        assert await cls.check_perm(info, domain_name=props.domain_name), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             assert _rx_slug.search(name) is not None, 'invalid name format. slug format required.'
             data = {
                 'name': name,
                 'description': props.description,
                 'is_active': props.is_active,
-                'domain': props.domain,
-                'resource_policy': props.resource_policy,
+                'domain_name': props.domain_name,
             }
             query = (groups.insert().values(data))
             try:
                 result = await conn.execute(query)
                 if result.rowcount > 0:
-                    checkq = groups.select().where(groups.c.name == name &
-                                                   groups.c.domain == props.domain)
+                    checkq = groups.select().where((groups.c.name == name) &
+                                                   (groups.c.domain_name == props.domain_name))
                     result = await conn.execute(checkq)
                     o = Group.from_row(await result.first())
                     return cls(ok=True, msg='success', group=o)
@@ -145,7 +187,7 @@ class CreateGroup(graphene.Mutation):
                 return cls(ok=False, msg=f'unexpected error: {e}', group=None)
 
 
-class ModifyGroup(graphene.Mutation):
+class ModifyGroup(GroupMutationMixin, graphene.Mutation):
 
     class Arguments:
         gid = graphene.String(required=True)
@@ -157,6 +199,7 @@ class ModifyGroup(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, gid, props):
+        assert await cls.check_perm(info, gid=gid), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
 
@@ -165,14 +208,21 @@ class ModifyGroup(graphene.Mutation):
                 # NOTE: unset optional fields are passed as null.
                 if v is not None:
                     data[name] = v
-            assert _rx_slug.search(data['name']) is not None, \
-                'invalid name format. slug format required.'
 
             set_if_set('name')
             set_if_set('description')
             set_if_set('is_active')
-            set_if_set('domain')
-            set_if_set('resource_policy')
+            set_if_set('domain_name')
+
+            if 'name' in data:
+                assert _rx_slug.search(data['name']) is not None, \
+                    'invalid name format. slug format required.'
+
+            if 'user_uuids' in props:
+                for user_uuid in props['user_uuids']:
+                    query = (sa.insert(association_groups_users)
+                               .values(user_id=str(user_uuid), group_id=gid))
+                    await conn.execute(query)
 
             query = (groups.update().values(data).where(groups.c.id == gid))
             try:
@@ -192,7 +242,7 @@ class ModifyGroup(graphene.Mutation):
                 return cls(ok=False, msg=f'unexpected error: {e}', group=None)
 
 
-class DeleteGroup(graphene.Mutation):
+class DeleteGroup(GroupMutationMixin, graphene.Mutation):
 
     class Arguments:
         gid = graphene.String(required=True)
@@ -202,6 +252,7 @@ class DeleteGroup(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, gid):
+        assert await cls.check_perm(info, gid=gid), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             try:
                 query = groups.delete().where(groups.c.id == gid)

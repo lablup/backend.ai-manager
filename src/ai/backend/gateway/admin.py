@@ -23,6 +23,7 @@ from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
     Agent, AgentList, Image, RescanImages, AliasImage, DealiasImage,
     Domain, CreateDomain, ModifyDomain, DeleteDomain,
+    Group, CreateGroup, ModifyGroup, DeleteGroup,
     User, CreateUser, ModifyUser, DeleteUser,
     KeyPair, CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
     ComputeSession, ComputeSessionList, ComputeWorker, KernelStatus,
@@ -101,6 +102,10 @@ class MutationForAdmin(graphene.ObjectType):
     create_domain = CreateDomain.Field()
     modify_domain = ModifyDomain.Field()
     delete_domain = DeleteDomain.Field()
+    create_group = CreateGroup.Field()
+    modify_group = ModifyGroup.Field()
+    delete_group = DeleteGroup.Field()
+    # add_users_to_group = AddUsersToGroups.Field()
     create_user = CreateUser.Field()
     modify_user = ModifyUser.Field()
     delete_user = DeleteUser.Field()
@@ -150,6 +155,15 @@ class QueryForAdmin(graphene.ObjectType):
 
     domains = graphene.List(
         Domain,
+        is_active=graphene.Boolean())
+
+    group = graphene.Field(
+        Group,
+        id=graphene.String(required=True))
+
+    groups = graphene.List(
+        Group,
+        domain_name=graphene.String(required=True),
         is_active=graphene.Boolean())
 
     image = graphene.Field(
@@ -252,6 +266,16 @@ class QueryForAdmin(graphene.ObjectType):
     async def resolve_domains(executor, info, is_active=None):
         assert info.context['user']['domain_name'] is None, 'no permission'
         return await Domain.load_all(info.context, is_active=is_active)
+
+    @staticmethod
+    async def resolve_group(executor, info, id):
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('Group.by_id')
+        return await loader.load(id)
+
+    @staticmethod
+    async def resolve_groups(executor, info, domain_name, *, is_active=None):
+        return await Group.load_all(info.context, domain_name=domain_name, is_active=is_active)
 
     @staticmethod
     async def resolve_image(executor, info, reference):
@@ -374,6 +398,15 @@ class QueryForUser(graphene.ObjectType):
     '''
     domain = graphene.Field(Domain)
 
+    group = graphene.Field(
+        Group,
+        id=graphene.String(required=True))
+
+    groups = graphene.List(
+        Group,
+        domain_name=graphene.String(required=True),
+        is_active=graphene.Boolean())
+
     image = graphene.Field(
         Image,
         reference=graphene.String(required=True))
@@ -438,6 +471,16 @@ class QueryForUser(graphene.ObjectType):
         name = info.context['user']['domain_name']
         loader = manager.get_loader('Domain.by_name')
         return await loader.load(name)
+
+    @staticmethod
+    async def resolve_group(executor, info, id):
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('Group.by_id')
+        return await loader.load(id)
+
+    @staticmethod
+    async def resolve_groups(executor, info, domain_name, *, is_active=None):
+        return await Group.load_all(info.context, domain_name=domain_name, is_active=is_active)
 
     @staticmethod
     async def resolve_image(executor, info, reference):
