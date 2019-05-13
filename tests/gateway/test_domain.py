@@ -196,6 +196,83 @@ class TestDomainAdminQuery:
 
         assert ret.status == 200
 
+    async def test_domain_user_cannot_mutate_domain(self, create_app_and_client, get_headers,
+                                                    default_domain_keypair):
+        app, client = await create_app_and_client(modules=['auth', 'admin', 'manager'])
+
+        # Create a domain.
+        domain_name = 'domain-user-cannot-mutate-domain'
+        query = textwrap.dedent('''\
+        mutation($name: String!, $input: DomainInput!) {
+            create_domain(name: $name, props: $input) {
+                ok msg domain { name description is_active total_resource_slots }
+            }
+        }''')
+        variables = {
+            'name': domain_name,
+            'input': {
+                'description': 'desc',
+                'is_active': True,
+                'total_resource_slots': '{}',
+            }
+        }
+        payload = json.dumps({'query': query, 'variables': variables}).encode()
+        headers = get_headers('POST', self.url, payload, keypair=default_domain_keypair)
+        ret = await client.post(self.url, data=payload, headers=headers)
+        assert ret.status == 400
+
+        # Create a domain for testing by global admin.
+        query = textwrap.dedent('''\
+        mutation($name: String!, $input: DomainInput!) {
+            create_domain(name: $name, props: $input) {
+                ok msg domain { name description is_active total_resource_slots }
+            }
+        }''')
+        variables = {
+            'name': domain_name,
+            'input': {
+                'description': 'desc',
+                'is_active': True,
+                'total_resource_slots': '{}',
+            }
+        }
+        payload = json.dumps({'query': query, 'variables': variables}).encode()
+        headers = get_headers('POST', self.url, payload)
+        ret = await client.post(self.url, data=payload, headers=headers)
+        assert ret.status == 200
+
+        # Update the domain.
+        query = textwrap.dedent('''\
+        mutation($name: String!, $input: ModifyDomainInput!) {
+            modify_domain(name: $name, props: $input) {
+                ok msg domain { name description is_active total_resource_slots }
+            }
+        }''')
+        variables = {
+            'name': domain_name,
+            'input': {
+                'name': domain_name + '-by-domain-admin',
+                'description': 'New domain-mod',
+                'is_active': False,
+                'total_resource_slots': '{"cpu": "1", "mem": "1"}',
+            }
+        }
+        payload = json.dumps({'query': query, 'variables': variables}).encode()
+        headers = get_headers('POST', self.url, payload, keypair=default_domain_keypair)
+        ret = await client.post(self.url, data=payload, headers=headers)
+        assert ret.status == 400
+
+        # Delete the domain.
+        query = textwrap.dedent('''\
+        mutation($name: String!) {
+            delete_domain(name: $name) { ok msg }
+        }''')
+        variables = {'name': domain_name}
+        payload = json.dumps({'query': query, 'variables': variables}).encode()
+        headers = get_headers('POST', self.url, payload, keypair=default_domain_keypair)
+        ret = await client.post(self.url, data=payload, headers=headers)
+        assert ret.status == 400
+
     async def test_name_should_be_slugged(self, create_app_and_client, get_headers):
         app, client = await create_app_and_client(modules=['auth', 'admin', 'manager'])
 

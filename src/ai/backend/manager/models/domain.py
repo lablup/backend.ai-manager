@@ -95,7 +95,19 @@ class ModifyDomainInput(graphene.InputObjectType):
     total_resource_slots = graphene.JSONString(required=False)
 
 
-class CreateDomain(graphene.Mutation):
+class DomainMutationMixin:
+
+    @staticmethod
+    def check_perm(info):
+        from .user import UserRole
+        user = info.context['user']
+        if user['role'] == UserRole.ADMIN and user['domain_name'] is None:
+            return True
+        else:
+            return False
+
+
+class CreateDomain(DomainMutationMixin, graphene.Mutation):
 
     class Arguments:
         name = graphene.String(required=True)
@@ -107,6 +119,7 @@ class CreateDomain(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, name, props):
+        assert cls.check_perm(info), 'no permission'
         known_slot_types = await info.context['config_server'].get_resource_slots()
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             assert _rx_slug.search(name) is not None, 'invalid name format. slug format required.'
@@ -135,7 +148,7 @@ class CreateDomain(graphene.Mutation):
                 return cls(ok=False, msg=f'unexpected error: {e}', domain=None)
 
 
-class ModifyDomain(graphene.Mutation):
+class ModifyDomain(DomainMutationMixin, graphene.Mutation):
 
     class Arguments:
         name = graphene.String(required=True)
@@ -147,6 +160,7 @@ class ModifyDomain(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, name, props):
+        assert cls.check_perm(info), 'no permission'
         known_slot_types = await info.context['config_server'].get_resource_slots()
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
@@ -164,8 +178,10 @@ class ModifyDomain(graphene.Mutation):
             set_if_set('description')
             set_if_set('is_active')
             set_if_set('total_resource_slots', clean_resource_slot)
-            assert _rx_slug.search(data['name']) is not None, \
-                'invalid name format. slug format required.'
+
+            if 'name' in data:
+                assert _rx_slug.search(data['name']) is not None, \
+                    'invalid name format. slug format required.'
 
             query = (domains.update().values(data).where(domains.c.name == name))
             try:
@@ -185,7 +201,7 @@ class ModifyDomain(graphene.Mutation):
                 return cls(ok=False, msg=f'unexpected error: {e}', domain=None)
 
 
-class DeleteDomain(graphene.Mutation):
+class DeleteDomain(DomainMutationMixin, graphene.Mutation):
 
     class Arguments:
         name = graphene.String(required=True)
@@ -195,6 +211,7 @@ class DeleteDomain(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, name):
+        assert cls.check_perm(info), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             try:
                 query = domains.delete().where(domains.c.name == name)
