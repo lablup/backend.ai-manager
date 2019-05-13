@@ -240,13 +240,17 @@ class QueryForAdmin(graphene.ObjectType):
     @staticmethod
     async def resolve_domain(executor, info, name=None):
         manager = info.context['dlmgr']
-        if name is None:
-            name = info.context['user']['domain_name']
+        if info.context['user']['domain_name'] is None:  # global admin
+            assert name is not None, 'no domain for this user'
+        else:  # domain admin
+            name = info.context['user']['domain_name'] if name is None else name
+            assert name == info.context['user']['domain_name'], 'no such domain'
         loader = manager.get_loader('Domain.by_name')
         return await loader.load(name)
 
     @staticmethod
     async def resolve_domains(executor, info, is_active=None):
+        assert info.context['user']['domain_name'] is None, 'no permission'
         return await Domain.load_all(info.context, is_active=is_active)
 
     @staticmethod
