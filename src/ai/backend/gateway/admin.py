@@ -22,6 +22,9 @@ from .auth import auth_required
 from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
     Agent, AgentList, Image, RescanImages, AliasImage, DealiasImage,
+    Domain, CreateDomain, ModifyDomain, DeleteDomain,
+    Group, CreateGroup, ModifyGroup, DeleteGroup,
+    User, CreateUser, ModifyUser, DeleteUser,
     KeyPair, CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
     ComputeSession, ComputeSessionList, ComputeWorker, KernelStatus,
     VirtualFolder,
@@ -65,6 +68,7 @@ async def handle_gql(request: web.Request) -> web.Response:
     context = {
         'config_server': request.app['config_server'],
         'etcd': request.app['config_server'].etcd,
+        'user': request['user'],
         'access_key': request['keypair']['access_key'],
         'dbpool': request.app['dbpool'],
         'redis_stat': request.app['redis_stat'],
@@ -95,6 +99,15 @@ async def handle_gql(request: web.Request) -> web.Response:
 
 
 class MutationForAdmin(graphene.ObjectType):
+    create_domain = CreateDomain.Field()
+    modify_domain = ModifyDomain.Field()
+    delete_domain = DeleteDomain.Field()
+    create_group = CreateGroup.Field()
+    modify_group = ModifyGroup.Field()
+    delete_group = DeleteGroup.Field()
+    create_user = CreateUser.Field()
+    modify_user = ModifyUser.Field()
+    delete_user = DeleteUser.Field()
     create_keypair = CreateKeyPair.Field()
     modify_keypair = ModifyKeyPair.Field()
     delete_keypair = DeleteKeyPair.Field()
@@ -135,6 +148,23 @@ class QueryForAdmin(graphene.ObjectType):
         Agent,
         status=graphene.String())
 
+    domain = graphene.Field(
+        Domain,
+        name=graphene.String())
+
+    domains = graphene.List(
+        Domain,
+        is_active=graphene.Boolean())
+
+    group = graphene.Field(
+        Group,
+        id=graphene.String(required=True))
+
+    groups = graphene.List(
+        Group,
+        domain_name=graphene.String(required=True),
+        is_active=graphene.Boolean())
+
     image = graphene.Field(
         Image,
         reference=graphene.String(required=True))
@@ -142,6 +172,19 @@ class QueryForAdmin(graphene.ObjectType):
     images = graphene.List(
         Image,
     )
+
+    user = graphene.Field(
+        User,
+        email=graphene.String())
+
+    users = graphene.List(
+        User,
+        is_active=graphene.Boolean())
+
+    user_check_password = graphene.Field(
+        User,
+        email=graphene.String(),
+        password=graphene.String())
 
     keypair = graphene.Field(
         KeyPair,
@@ -208,6 +251,32 @@ class QueryForAdmin(graphene.ObjectType):
         return AgentList(agent_list, total_count)
 
     @staticmethod
+    async def resolve_domain(executor, info, name=None):
+        manager = info.context['dlmgr']
+        if info.context['user']['domain_name'] is None:  # global admin
+            assert name is not None, 'no domain for this user'
+        else:  # domain admin
+            name = info.context['user']['domain_name'] if name is None else name
+            assert name == info.context['user']['domain_name'], 'no such domain'
+        loader = manager.get_loader('Domain.by_name')
+        return await loader.load(name)
+
+    @staticmethod
+    async def resolve_domains(executor, info, is_active=None):
+        assert info.context['user']['domain_name'] is None, 'no permission'
+        return await Domain.load_all(info.context, is_active=is_active)
+
+    @staticmethod
+    async def resolve_group(executor, info, id):
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('Group.by_id')
+        return await loader.load(id)
+
+    @staticmethod
+    async def resolve_groups(executor, info, domain_name, *, is_active=None):
+        return await Group.load_all(info.context, domain_name=domain_name, is_active=is_active)
+
+    @staticmethod
     async def resolve_image(executor, info, reference):
         config_server = info.context['config_server']
         return await Image.load_item(config_server, reference)
@@ -215,6 +284,22 @@ class QueryForAdmin(graphene.ObjectType):
     @staticmethod
     async def resolve_images(executor, info):
         return await Image.load_all(info.context)
+
+    @staticmethod
+    async def resolve_user(executor, info, email=None):
+        manager = info.context['dlmgr']
+        if email is None:
+            email = info.context['user']['email']
+        loader = manager.get_loader('User.by_email')
+        return await loader.load(email)
+
+    @staticmethod
+    async def resolve_users(executor, info, is_active=None):
+        return await User.load_all(info.context, is_active=is_active)
+
+    @staticmethod
+    async def resolve_user_check_password(executor, info, email, password):
+        return await User.check_password(info.context, email, password)
 
     @staticmethod
     async def resolve_keypair(executor, info, access_key=None):
@@ -310,6 +395,16 @@ class QueryForUser(graphene.ObjectType):
     Available GraphQL queries for the user priveilege.
     It only allows use of the access key specified in the authorization header.
     '''
+    domain = graphene.Field(Domain)
+
+    group = graphene.Field(
+        Group,
+        id=graphene.String(required=True))
+
+    groups = graphene.List(
+        Group,
+        domain_name=graphene.String(required=True),
+        is_active=graphene.Boolean())
 
     image = graphene.Field(
         Image,
@@ -319,11 +414,18 @@ class QueryForUser(graphene.ObjectType):
         Image,
     )
 
+    user = graphene.Field(User)
+
+    user_check_password = graphene.Field(
+        User,
+        email=graphene.String(),
+        password=graphene.String())
+
     keypair = graphene.Field(lambda: KeyPair)
 
     keypairs = graphene.List(
         KeyPair,
-        user_id=graphene.String(required=True),
+        user_id=graphene.String(),
         is_active=graphene.Boolean())
 
     keypair_resource_policy = graphene.Field(
@@ -363,12 +465,40 @@ class QueryForUser(graphene.ObjectType):
         status=graphene.String())
 
     @staticmethod
+    async def resolve_domain(executor, info, name=None):
+        manager = info.context['dlmgr']
+        name = info.context['user']['domain_name']
+        loader = manager.get_loader('Domain.by_name')
+        return await loader.load(name)
+
+    @staticmethod
+    async def resolve_group(executor, info, id):
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('Group.by_id')
+        return await loader.load(id)
+
+    @staticmethod
+    async def resolve_groups(executor, info, domain_name, *, is_active=None):
+        return await Group.load_all(info.context, domain_name=domain_name, is_active=is_active)
+
+    @staticmethod
     async def resolve_image(executor, info, reference):
         return await Image.load_item(info.context, reference)
 
     @staticmethod
     async def resolve_images(executor, info):
         return await Image.load_all(info.context)
+
+    @staticmethod
+    async def resolve_user(executor, info):
+        manager = info.context['dlmgr']
+        email = info.context['user']['email']
+        loader = manager.get_loader('User.by_email')
+        return await loader.load(email)
+
+    @staticmethod
+    async def resolve_user_check_password(executor, info, email, password):
+        return await User.check_password(info.context, email, password)
 
     @staticmethod
     async def resolve_keypair(executor, info):
@@ -378,8 +508,12 @@ class QueryForUser(graphene.ObjectType):
         return await loader.load(access_key)
 
     @staticmethod
-    async def resolve_keypairs(executor, info, user_id, is_active=None):
+    async def resolve_keypairs(executor, info, user_id=None, is_active=None):
         manager = info.context['dlmgr']
+        if user_id is None:
+            user_id = info.context['user']['id']
+        elif user_id != info.context['user']['id']:
+            raise GenericForbidden('You cannot request other user\'s keypairs.')
         loader = manager.get_loader('KeyPair.by_uid', is_active=is_active)
         return await loader.load(user_id)
 

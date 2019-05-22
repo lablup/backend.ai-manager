@@ -266,50 +266,56 @@ async def app(event_loop, test_ns, test_db, unused_tcp_port):
 
 @pytest.fixture
 async def default_keypair(event_loop, app):
-    access_key = 'AKIAIOSFODNN7EXAMPLE'
-    config = app['config']
-    pool = await create_engine(
-        host=config.db_addr[0], port=config.db_addr[1],
-        user=config.db_user, password=config.db_password,
-        dbname=config.db_name, minsize=1, maxsize=4
-    )
-    async with pool.acquire() as conn:
-        query = (sa.select([keypairs.c.access_key, keypairs.c.secret_key])
-                   .select_from(keypairs)
-                   .where(keypairs.c.access_key == access_key))
-        result = await conn.execute(query)
-        row = await result.first()
-        keypair = {
-            'access_key': access_key,
-            'secret_key': row.secret_key,
-        }
-    pool.close()
-    await pool.wait_closed()
-    return keypair
+    """Global admin keypair"""
+    # access_key = 'AKIAIOSFODNN7EXAMPLE'
+    # config = app['config']
+    # pool = await create_engine(
+    #     host=config.db_addr[0], port=config.db_addr[1],
+    #     user=config.db_user, password=config.db_password,
+    #     dbname=config.db_name, minsize=1, maxsize=4
+    # )
+    # async with pool.acquire() as conn:
+    #     query = (sa.select([keypairs.c.access_key, keypairs.c.secret_key])
+    #                .select_from(keypairs)
+    #                .where(keypairs.c.access_key == access_key))
+    #     result = await conn.execute(query)
+    #     row = await result.first()
+    #     keypair = {
+    #         'access_key': access_key,
+    #         'secret_key': row.secret_key,
+    #     }
+    # pool.close()
+    # await pool.wait_closed()
+    # return keypair
+    return {
+        'access_key': 'AKIAIOSFODNN7EXAMPLE',
+        'secret_key': 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    }
+
+
+@pytest.fixture
+async def default_domain_keypair(event_loop, app):
+    """Default domain admin keypair"""
+    return {
+        'access_key': 'AKIAHUKCHDEZGEXAMPLE',
+        'secret_key': 'cWbsM_vBB4CzTW7JdORRMx8SjGI3-wEXAMPLEKEY',
+    }
 
 
 @pytest.fixture
 async def user_keypair(event_loop, app):
-    access_key = 'AKIANABBDUSEREXAMPLE'
-    config = app['config']
-    pool = await create_engine(
-        host=config.db_addr[0], port=config.db_addr[1],
-        user=config.db_user, password=config.db_password,
-        dbname=config.db_name, minsize=1, maxsize=4
-    )
-    async with pool.acquire() as conn:
-        query = (sa.select([keypairs.c.access_key, keypairs.c.secret_key])
-                   .select_from(keypairs)
-                   .where(keypairs.c.access_key == access_key))
-        result = await conn.execute(query)
-        row = await result.first()
-        keypair = {
-            'access_key': access_key,
-            'secret_key': row.secret_key,
-        }
-    pool.close()
-    await pool.wait_closed()
-    return keypair
+    return {
+        'access_key': 'AKIANABBDUSEREXAMPLE',
+        'secret_key': 'C8qnIo29EZvXkPK_MXcuAakYTy4NYrxwmCEyNPlf',
+    }
+
+
+@pytest.fixture
+async def monitor_keypair(event_loop, app):
+    return {
+        'access_key': 'AKIANAMONITOREXAMPLE',
+        'secret_key': '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',
+    }
 
 
 @pytest.fixture
