@@ -70,15 +70,12 @@ class User(graphene.ObjectType):
     email = graphene.String()
     password = graphene.String()
     need_password_change = graphene.Boolean()
-    first_name = graphene.String()
-    last_name = graphene.String()
+    full_name = graphene.String()
     description = graphene.String()
     is_active = graphene.Boolean()
     created_at = GQLDateTime()
     domain_name = graphene.String()
     role = graphene.String()
-    # Dynamic properties
-    full_name = graphene.String()
     # Authentication
     password_correct = graphene.Boolean()
 
@@ -91,15 +88,12 @@ class User(graphene.ObjectType):
             username=row['username'],
             email=row['email'],
             need_password_change=row['need_password_change'],
-            first_name=row['first_name'],
-            last_name=row['last_name'],
+            full_name=row['full_name'],
             description=row['description'],
             is_active=row['is_active'],
             created_at=row['created_at'],
             domain_name=row['domain_name'],
             role=row['role'],
-            # Dynamic properties
-            full_name=row['first_name'] + ' ' + row['last_name'],
         )
 
     @classmethod
@@ -155,8 +149,7 @@ class UserInput(graphene.InputObjectType):
     username = graphene.String(required=True)
     password = graphene.String(required=True)
     need_password_change = graphene.Boolean(required=True)
-    first_name = graphene.String(required=False)
-    last_name = graphene.String(required=False)
+    full_name = graphene.String(required=False)
     description = graphene.String(required=False)
     is_active = graphene.Boolean(required=False, default=True)
     domain_name = graphene.String(required=True, default='default')
@@ -170,8 +163,7 @@ class ModifyUserInput(graphene.InputObjectType):
     username = graphene.String(required=False)
     password = graphene.String(required=False)
     need_password_change = graphene.Boolean(required=False)
-    first_name = graphene.String(required=False)
-    last_name = graphene.String(required=False)
+    full_name = graphene.String(required=False)
     description = graphene.String(required=False)
     is_active = graphene.Boolean(required=False)
     domain_name = graphene.String(required=False)
@@ -197,8 +189,7 @@ class CreateUser(graphene.Mutation):
                 'email': email,
                 'password': props.password,
                 'need_password_change': props.need_password_change,
-                'first_name': props.first_name,
-                'last_name': props.last_name,
+                'full_name': props.full_name,
                 'description': props.description,
                 'is_active': props.is_active,
                 'domain_name': props.domain_name,
@@ -250,8 +241,7 @@ class ModifyUser(graphene.Mutation):
             set_if_set('username')
             set_if_set('password')
             set_if_set('need_password_change')
-            set_if_set('first_name')
-            set_if_set('last_name')
+            set_if_set('full_name')
             set_if_set('description')
             set_if_set('is_active')
             set_if_set('domain_name')

@@ -94,8 +94,7 @@ class TestUserAdminQuery:
                 'username': 'newuser',
                 'password': 'new-password',
                 'need_password_change': False,
-                'first_name': 'First',
-                'last_name': 'Last',
+                'full_name': 'First Last',
                 'description': 'New user',
                 'is_active': True,
                 'domain_name': 'default',
@@ -130,8 +129,7 @@ class TestUserAdminQuery:
                 'username': 'newuser-mod',
                 'password': 'new-password-mod',
                 'need_password_change': True,
-                'first_name': 'First-mod',
-                'last_name': 'Last-mod',
+                'full_name': 'First Last-mod',
                 'description': 'New user-mod',
                 'is_active': False,
                 'role': 'user',
@@ -146,7 +144,7 @@ class TestUserAdminQuery:
         assert rsp_json['modify_user']['user']['username'] == 'newuser-mod'
         assert rsp_json['modify_user']['user']['email'] == email
         assert rsp_json['modify_user']['user']['password'] is None
-        assert rsp_json['modify_user']['user']['full_name'] == 'First-mod Last-mod'
+        assert rsp_json['modify_user']['user']['full_name'] == 'First Last-mod'
         assert rsp_json['modify_user']['user']['description'] == 'New user-mod'
         assert not rsp_json['modify_user']['user']['is_active']
         assert rsp_json['modify_user']['user']['role'] == 'user'
@@ -181,8 +179,7 @@ class TestUserAdminQuery:
                 'username': 'newuser2',
                 'password': password,
                 'need_password_change': False,
-                'first_name': 'First',
-                'last_name': 'Last',
+                'full_name': 'First Last',
                 'description': 'New user',
                 'is_active': True,
                 'domain_name': 'default',
