@@ -74,9 +74,13 @@ def upgrade():
         else:
             # Create new user (set username with email)
             role = UserRole.ADMIN if is_admin else UserRole.USER
+            temp_password = keypair['secret_key'][:8]
             query = (sa.insert(users)
                        .returning(users.c.uuid)
-                       .values(username=email, email=email, need_password_change=True, is_active=True, role=role))
+                       .values(username=email, email=email,
+                               password=temp_password,
+                               need_password_change=True,
+                               is_active=True, role=role))
             user = connection.execute(query).fetchone()
             user_uuid = user[0]
         # Update current keypair's `user` field with associated user's uuid.
