@@ -208,7 +208,7 @@ def admin_required(handler):
 
 @auth_required
 @atomic
-async def auth_test(request: web.Request) -> web.Response:
+async def test(request: web.Request) -> web.Response:
     try:
         params = json.loads(await request.text())
         params = t.Dict({
@@ -225,7 +225,7 @@ async def auth_test(request: web.Request) -> web.Response:
 
 
 @atomic
-async def auth_authorize(request: web.Request) -> web.Response:
+async def authorize(request: web.Request) -> web.Response:
     try:
         params = await request.json()
         params = t.Dict({
@@ -268,12 +268,12 @@ def create_app(default_cors_options):
     app['api_versions'] = (1, 2, 3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     root_resource = cors.add(app.router.add_resource(r''))
-    cors.add(root_resource.add_route('GET', auth_test))
-    cors.add(root_resource.add_route('POST', auth_test))
+    cors.add(root_resource.add_route('GET', test))
+    cors.add(root_resource.add_route('POST', test))
     test_resource = cors.add(app.router.add_resource('/test'))
-    cors.add(test_resource.add_route('GET', auth_test))
-    cors.add(test_resource.add_route('POST', auth_test))
-    cors.add(app.router.add_route('POST', '/authorize', auth_authorize))
+    cors.add(test_resource.add_route('GET', test))
+    cors.add(test_resource.add_route('POST', test))
+    cors.add(app.router.add_route('POST', '/authorize', authorize))
     return app, [auth_middleware]
 
 
