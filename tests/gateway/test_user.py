@@ -200,37 +200,6 @@ class TestUserAdminQuery:
             obj = await result.first()
         assert obj['password'] != password
 
-    async def test_check_password(self, create_app_and_client, get_headers):
-        app, client = await create_app_and_client(modules=['auth', 'admin', 'manager'])
-
-        # Check pasword with incorrect password
-        query = textwrap.dedent('''\
-        {
-            user_check_password(email: "admin@lablup.com", password: "1") {
-                password_correct
-            }
-        }''')
-        payload = json.dumps({'query': query}).encode()
-        headers = get_headers('POST', self.url, payload)
-        ret = await client.post(self.url, data=payload, headers=headers)
-        rsp_json = await ret.json()
-
-        assert not rsp_json['user_check_password']['password_correct']
-
-        # Check pasword with correct password
-        query = textwrap.dedent('''\
-        {
-            user_check_password(email: "admin@lablup.com", password: "0") {
-                password_correct
-            }
-        }''')
-        payload = json.dumps({'query': query}).encode()
-        headers = get_headers('POST', self.url, payload)
-        ret = await client.post(self.url, data=payload, headers=headers)
-        rsp_json = await ret.json()
-
-        assert rsp_json['user_check_password']['password_correct']
-
 
 @pytest.mark.asyncio
 class TestUserUserQuery:
@@ -267,34 +236,3 @@ class TestUserUserQuery:
         ret = await client.post(self.url, data=payload, headers=headers)
 
         assert ret.status == 400
-
-    async def test_check_password(self, create_app_and_client, get_headers, user_keypair):
-        app, client = await create_app_and_client(modules=['auth', 'admin', 'manager'])
-
-        # Check pasword with incorrect password
-        query = textwrap.dedent('''\
-        {
-            user_check_password(email: "user@lablup.com", password: "1") {
-                password_correct
-            }
-        }''')
-        payload = json.dumps({'query': query}).encode()
-        headers = get_headers('POST', self.url, payload, keypair=user_keypair)
-        ret = await client.post(self.url, data=payload, headers=headers)
-        rsp_json = await ret.json()
-
-        assert not rsp_json['user_check_password']['password_correct']
-
-        # Check pasword with correct password
-        query = textwrap.dedent('''\
-        {
-            user_check_password(email: "user@lablup.com", password: "0") {
-                password_correct
-            }
-        }''')
-        payload = json.dumps({'query': query}).encode()
-        headers = get_headers('POST', self.url, payload, keypair=user_keypair)
-        ret = await client.post(self.url, data=payload, headers=headers)
-        rsp_json = await ret.json()
-
-        assert rsp_json['user_check_password']['password_correct']

@@ -194,8 +194,7 @@ class CreateKeyPair(graphene.Mutation):
                 return cls(ok=False, msg=f'unexpected error: {e}', keypair=None)
 
             # Create keypair.
-            ak = 'AKIA' + base64.b32encode(secrets.token_bytes(10)).decode('ascii')
-            sk = secrets.token_urlsafe(30)
+            ak, sk = generate_keypair()
             data = {
                 'user_id': user_id,
                 'access_key': ak,
@@ -301,3 +300,12 @@ class DeleteKeyPair(graphene.Mutation):
             except Exception as e:
                 return cls(ok=False,
                            msg=f'unexpected error: {e}')
+
+
+def generate_keypair():
+    '''
+    AWS-like access key and secret key generation.
+    '''
+    ak = 'AKIA' + base64.b32encode(secrets.token_bytes(10)).decode('ascii')
+    sk = secrets.token_urlsafe(30)
+    return ak, sk

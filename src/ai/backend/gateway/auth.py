@@ -12,11 +12,19 @@ from aiojobs.aiohttp import atomic
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
 import sqlalchemy as sa
+import trafaret as t
 
 from ai.backend.common.logging import Logger, BraceStyleAdapter
-from .exceptions import InvalidAuthParameters, AuthorizationFailed
+from .exceptions import (
+    InvalidAuthParameters, AuthorizationFailed,
+    InvalidAPIParameters,
+)
 from .config import load_config
-from ..manager.models import keypairs, keypair_resource_policies, users
+from ..manager.models import (
+    keypairs, keypair_resource_policies, users,
+)
+from ..manager.models.user import check_credential
+from ..manager.models.keypair import generate_keypair
 from .utils import TZINFOS, set_handler_attr, get_handler_attr
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.auth'))
@@ -200,24 +208,58 @@ def admin_required(handler):
 
 @auth_required
 @atomic
-async def auth_test(request) -> web.Response:
+async def auth_test(request: web.Request) -> web.Response:
     try:
         params = json.loads(await request.text())
+        params = t.Dict({
+            t.Key('echo'): t.String,
+        }).check(params)
     except json.decoder.JSONDecodeError:
-        raise InvalidAuthParameters('Malformed body')
+        raise InvalidAPIParameters('Malformed body')
+    except t.DataError as e:
+        raise InvalidAPIParameters(f'Input validation error: {e}')
     resp_data = {'authorized': 'yes'}
     if 'echo' in params:
         resp_data['echo'] = params['echo']
     return web.json_response(resp_data)
 
 
-def generate_keypair():
-    '''
-    AWS-like access key and secret key generation.
-    '''
-    ak = 'AKIA' + base64.b32encode(secrets.token_bytes(10)).decode('ascii')
-    sk = secrets.token_urlsafe(30)
-    return ak, sk
+@atomic
+async def auth_authorize(request: web.Request) -> web.Response:
+    try:
+        params = await request.json()
+        params = t.Dict({
+            t.Key('type'): t.Enum('keypair', 'jwt'),
+            t.Key('domain'): t.String,
+            t.Key('username'): t.String,
+            t.Key('password'): t.String,
+        }).check(params)
+    except json.decoder.JSONDecodeError:
+        raise InvalidAPIParameters('Malformed body')
+    except t.DataError as e:
+        raise InvalidAPIParameters(f'Input validation error: {e}')
+    if params['type'] != 'keypair':
+        # other types are not implemented yet.
+        raise InvalidAPIParameters('Unsupported authorization type')
+    dbpool = request.app['dbpool']
+    user = await check_credential(
+        dbpool,
+        params['domain'], params['username'], params['password'])
+    if user is None:
+        raise AuthorizationFailed('User credential mismatch.')
+    async with dbpool.acquire() as conn:
+        query = (sa.select([keypairs.c.access_key, keypairs.c.secret_key])
+                   .select_from(users)
+                   .where((keypairs.c.user_id == user['email'])))
+        result = await conn.execute(query)
+        keypair = await result.first()
+    return web.json_response({
+        'data': {
+            'access_key': keypair['access_key'],
+            'secret_key': keypair['secret_key'],
+            'role': user['role'],
+        },
+    })
 
 
 def create_app(default_cors_options):
@@ -228,9 +270,10 @@ def create_app(default_cors_options):
     root_resource = cors.add(app.router.add_resource(r''))
     cors.add(root_resource.add_route('GET', auth_test))
     cors.add(root_resource.add_route('POST', auth_test))
-    test_resource = cors.add(app.router.add_resource(r'/test'))
+    test_resource = cors.add(app.router.add_resource('/test'))
     cors.add(test_resource.add_route('GET', auth_test))
     cors.add(test_resource.add_route('POST', auth_test))
+    cors.add(app.router.add_route('POST', '/authorize', auth_authorize))
     return app, [auth_middleware]
 
 

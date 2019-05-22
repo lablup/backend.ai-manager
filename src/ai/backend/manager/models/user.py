@@ -19,14 +19,6 @@ __all__ = (
 )
 
 
-def _hash_password(password):
-    return bcrypt.hash(password, rounds=12)
-
-
-def _verify_password(guess, hashed):
-    return bcrypt.verify(guess, hashed)
-
-
 class PasswordColumn(TypeDecorator):
     impl = VARCHAR
 
@@ -96,14 +88,6 @@ class User(graphene.ObjectType):
             role=row['role'],
         )
 
-    @classmethod
-    def from_row_authenticate(cls, row):
-        if row is None:
-            return None
-        return cls(
-            password_correct=row
-        )
-
     @staticmethod
     async def load_all(context, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
@@ -131,18 +115,6 @@ class User(graphene.ObjectType):
                 o = User.from_row(row)
                 objs_per_key[row.email] = o
         return tuple(objs_per_key.values())
-
-    @classmethod
-    async def check_password(cls, context, email=None, password=None):
-        async with context['dbpool'].acquire() as conn:
-            query = (sa.select([users])
-                       .select_from(users)
-                       .where(users.c.email == email))
-            result = await conn.execute(query)
-            row = await result.first()
-            User.from_row_authenticate(row)
-            correct = _verify_password(password, row.password)
-        return cls(password_correct=correct)
 
 
 class UserInput(graphene.InputObjectType):
@@ -289,3 +261,26 @@ class DeleteUser(graphene.Mutation):
                 raise
             except Exception as e:
                 return cls(ok=False, msg=f'unexpected error: {e}')
+
+
+def _hash_password(password):
+    return bcrypt.hash(password, rounds=12)
+
+
+def _verify_password(guess, hashed):
+    return bcrypt.verify(guess, hashed)
+
+
+async def check_credential(dbpool, domain: str, email: str, password: str):
+    async with dbpool.acquire() as conn:
+        query = (sa.select([users])
+                   .select_from(users)
+                   .where((users.c.email == email) &
+                          (users.c.domain_name == domain)))
+        result = await conn.execute(query)
+        row = await result.first()
+        if row is None:
+            return None
+        if _verify_password(password, row['password']):
+            return row
+        return None

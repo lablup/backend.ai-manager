@@ -181,11 +181,6 @@ class QueryForAdmin(graphene.ObjectType):
         User,
         is_active=graphene.Boolean())
 
-    user_check_password = graphene.Field(
-        User,
-        email=graphene.String(),
-        password=graphene.String())
-
     keypair = graphene.Field(
         KeyPair,
         access_key=graphene.String())
@@ -296,10 +291,6 @@ class QueryForAdmin(graphene.ObjectType):
     @staticmethod
     async def resolve_users(executor, info, is_active=None):
         return await User.load_all(info.context, is_active=is_active)
-
-    @staticmethod
-    async def resolve_user_check_password(executor, info, email, password):
-        return await User.check_password(info.context, email, password)
 
     @staticmethod
     async def resolve_keypair(executor, info, access_key=None):
@@ -416,11 +407,6 @@ class QueryForUser(graphene.ObjectType):
 
     user = graphene.Field(User)
 
-    user_check_password = graphene.Field(
-        User,
-        email=graphene.String(),
-        password=graphene.String())
-
     keypair = graphene.Field(lambda: KeyPair)
 
     keypairs = graphene.List(
@@ -495,10 +481,6 @@ class QueryForUser(graphene.ObjectType):
         email = info.context['user']['email']
         loader = manager.get_loader('User.by_email')
         return await loader.load(email)
-
-    @staticmethod
-    async def resolve_user_check_password(executor, info, email, password):
-        return await User.check_password(info.context, email, password)
 
     @staticmethod
     async def resolve_keypair(executor, info):
