@@ -73,11 +73,14 @@ class Group(graphene.ObjectType):
     @staticmethod
     async def load_all(context, domain_name, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
+            current_domain_name = context['user']['domain_name']
             query = (sa.select([groups])
                        .select_from(groups)
                        .where(groups.c.domain_name == domain_name))
             if is_active is not None:
                 query = query.where(groups.c.is_active == is_active)
+            if current_domain_name is not None:  # prevent querying group in other domain
+                query = query.where(groups.c.domain_name == current_domain_name)
             objs = []
             async for row in conn.execute(query):
                 o = Group.from_row(row)
@@ -91,7 +94,7 @@ class Group(graphene.ObjectType):
             query = (sa.select([groups])
                        .select_from(groups)
                        .where(groups.c.id.in_(ids)))
-            if current_domain_name is not None:
+            if current_domain_name is not None:  # prevent querying group in other domain
                 query = query.where(groups.c.domain_name == current_domain_name)
             objs_per_key = OrderedDict()
             # For each id, there is only one group.
@@ -229,7 +232,7 @@ class ModifyGroup(GroupMutationMixin, graphene.Mutation):
                     values = [{'user_id': uuid, 'group_id': gid} for uuid in props.user_uuids]
                     query = sa.insert(association_groups_users).values(values)
                     await conn.execute(query)
-                elif props['user_update_mode'] == 'remove':
+                elif props.user_update_mode == 'remove':
                     query = (association_groups_users
                              .delete()
                              .where(association_groups_users.c.user_id.in_(props.user_uuids))
@@ -244,8 +247,7 @@ class ModifyGroup(GroupMutationMixin, graphene.Mutation):
                         result = await conn.execute(checkq)
                         o = Group.from_row(await result.first())
                         return cls(ok=True, msg='success', group=o)
-                    else:
-                        return cls(ok=False, msg='no such group', group=None)
+                    return cls(ok=False, msg='no such group', group=None)
                 else:  # updated association_groups_users table
                     return cls(ok=True, msg='success', group=None)
             except (pg.IntegrityError, sa.exc.IntegrityError) as e:

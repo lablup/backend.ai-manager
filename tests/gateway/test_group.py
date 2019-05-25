@@ -157,7 +157,7 @@ class TestGroupAdminQuery:
                                                        default_domain_keypair):
         app, client = await create_app_and_client(modules=['auth', 'admin', 'manager'])
 
-        # Create a domain and where requester does not belong to.
+        # Create a domain where requester does not belong to.
         new_domain_name = 'other-domain-to-test-query-groups'
         query = textwrap.dedent('''\
         mutation($name: String!, $input: DomainInput!) {
@@ -198,10 +198,10 @@ class TestGroupAdminQuery:
 
         query = textwrap.dedent('''\
         {
-            groups(domain_name: "default") {
+            groups(domain_name: "%s") {
                 id name description is_active domain_name
             }
-        }''')
+        }''' % new_domain_name)
         payload = json.dumps({'query': query}).encode()
         headers = get_headers('POST', self.url, payload, keypair=default_domain_keypair)
         ret = await client.post(self.url, data=payload, headers=headers)
