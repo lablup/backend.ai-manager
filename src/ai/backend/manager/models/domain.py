@@ -174,7 +174,7 @@ class ModifyDomain(DomainMutationMixin, graphene.Mutation):
             def clean_resource_slot(v):
                 return ResourceSlot.from_user_input(v, known_slot_types)
 
-            set_if_set('name')
+            set_if_set('name')  # data['name'] is new domain name
             set_if_set('description')
             set_if_set('is_active')
             set_if_set('total_resource_slots', clean_resource_slot)
@@ -187,7 +187,8 @@ class ModifyDomain(DomainMutationMixin, graphene.Mutation):
             try:
                 result = await conn.execute(query)
                 if result.rowcount > 0:
-                    checkq = domains.select().where(domains.c.name == data['name'])
+                    new_name = data['name'] if 'name' in data else name
+                    checkq = domains.select().where(domains.c.name == new_name)
                     result = await conn.execute(checkq)
                     o = Domain.from_row(await result.first())
                     return cls(ok=True, msg='success', domain=o)
