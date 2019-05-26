@@ -92,6 +92,8 @@ class User(graphene.ObjectType):
     async def load_all(context, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
             query = sa.select([users]).select_from(users)
+            if context['user'].get('domain_name', None) is not None:
+                query = query.where(users.c.domain_name == context['user']['domain_name'])
             if is_active is not None:
                 query = query.where(users.c.is_active == is_active)
             objs = []
@@ -106,6 +108,8 @@ class User(graphene.ObjectType):
             query = (sa.select([users])
                        .select_from(users)
                        .where(users.c.email.in_(emails)))
+            if context['user'].get('domain_name', None) is not None:
+                query = query.where(users.c.domain_name == context['user']['domain_name'])
             objs_per_key = OrderedDict()
             # For each email, there is only one user.
             # So we don't build lists in objs_per_key variable.
@@ -142,7 +146,18 @@ class ModifyUserInput(graphene.InputObjectType):
     role = graphene.String(required=False)
 
 
-class CreateUser(graphene.Mutation):
+class UserMutationMixin:
+
+    @staticmethod
+    def check_perm(info):
+        from .user import UserRole
+        user = info.context['user']
+        if user['role'] == UserRole.ADMIN and user['domain_name'] is None:
+            return True  # only global admin is allowed to mutate, currently
+        return False
+
+
+class CreateUser(UserMutationMixin, graphene.Mutation):
 
     class Arguments:
         email = graphene.String(required=True)
@@ -154,6 +169,7 @@ class CreateUser(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, email, props):
+        assert cls.check_perm(info), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             username = props.username if props.username else email
             data = {
@@ -187,7 +203,7 @@ class CreateUser(graphene.Mutation):
                 return cls(ok=False, msg=f'unexpected error: {e}', user=None)
 
 
-class ModifyUser(graphene.Mutation):
+class ModifyUser(UserMutationMixin, graphene.Mutation):
 
     class Arguments:
         email = graphene.String(required=True)
@@ -199,6 +215,7 @@ class ModifyUser(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, email, props):
+        assert cls.check_perm(info), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
 
@@ -237,7 +254,7 @@ class ModifyUser(graphene.Mutation):
                 return cls(ok=False, msg=f'unexpected error: {e}', user=None)
 
 
-class DeleteUser(graphene.Mutation):
+class DeleteUser(UserMutationMixin, graphene.Mutation):
 
     class Arguments:
         email = graphene.String(required=True)
@@ -247,6 +264,7 @@ class DeleteUser(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, email):
+        assert cls.check_perm(info), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             try:
                 query = (users.delete().where(users.c.email == email))
