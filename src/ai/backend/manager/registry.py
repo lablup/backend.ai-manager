@@ -1076,17 +1076,24 @@ class AgentRegistry:
                 'status_info': reason,
                 'terminated_at': datetime.now(tzutc()),
             }
-            kern_stat = await self.redis_stat.hgetall(kernel_id)
-            if kern_stat is not None and 'cpu_used' in kern_stat:
-                updates.update({
-                    'cpu_used': int(float(kern_stat['cpu_used'])),
-                    'mem_max_bytes': int(kern_stat['mem_max_bytes']),
-                    'net_rx_bytes': int(kern_stat['net_rx_bytes']),
-                    'net_tx_bytes': int(kern_stat['net_tx_bytes']),
-                    'io_read_bytes': int(kern_stat['io_read_bytes']),
-                    'io_write_bytes': int(kern_stat['io_write_bytes']),
-                    'io_max_scratch_size': int(kern_stat['io_max_scratch_size']),
-                })
+            stat_type = await self.redis_stat.type(kernel_id)
+            if stat_type == 'string':
+                kern_stat = await self.redis_stat.get(kernel_id, encoding=None)
+                if kern_stat is not None:
+                    print(msgpack.unpackb(kern_stat))
+                # TODO: updates['final_stats'] = kern_stat
+            else:
+                kern_stat = await self.redis_stat.hgetall(kernel_id)
+                if kern_stat is not None and 'cpu_used' in kern_stat:
+                    updates.update({
+                        'cpu_used': int(float(kern_stat['cpu_used'])),
+                        'mem_max_bytes': int(kern_stat['mem_max_bytes']),
+                        'net_rx_bytes': int(kern_stat['net_rx_bytes']),
+                        'net_tx_bytes': int(kern_stat['net_tx_bytes']),
+                        'io_read_bytes': int(kern_stat['io_read_bytes']),
+                        'io_write_bytes': int(kern_stat['io_write_bytes']),
+                        'io_max_scratch_size': int(kern_stat['io_max_scratch_size']),
+                    })
             query = (sa.update(kernels)
                        .values(updates)
                        .where(kernels.c.id == kernel_id))
