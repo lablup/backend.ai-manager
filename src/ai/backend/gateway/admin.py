@@ -231,16 +231,19 @@ class QueryForAdmin(graphene.ObjectType):
 
     @staticmethod
     async def resolve_agent(executor, info, agent_id):
+        assert info.context['user']['domain_name'] is None, 'permission error (need to be global admin)'
         manager = info.context['dlmgr']
         loader = manager.get_loader('Agent', status=None)
         return await loader.load(agent_id)
 
     @staticmethod
     async def resolve_agents(executor, info, status=None):
+        assert info.context['user']['domain_name'] is None, 'permission error (need to be global admin)'
         return await Agent.load_all(info.context, status=status)
 
     @staticmethod
     async def resolve_agent_list(executor, info, limit, offset, status=None):
+        assert info.context['user']['domain_name'] is None, 'permission error (need to be global admin)'
         total_count = await Agent.load_count(info.context, status)
         agent_list = await Agent.load_slice(info.context, limit, offset, status)
         return AgentList(agent_list, total_count)
