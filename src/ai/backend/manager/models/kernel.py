@@ -9,7 +9,7 @@ from sqlalchemy.dialects import postgresql as pgsql
 from ai.backend.common.types import BinarySize
 from .base import (
     metadata, zero_if_none,
-    BigInt, IDColumn, EnumType,
+    BigInt, GUID, IDColumn, EnumType,
     ResourceSlotColumn,
     Item, PaginatedList,
 )
@@ -46,8 +46,10 @@ kernels = sa.Table(
     sa.Column('role', sa.String(length=16), nullable=False, default='master'),
     sa.Column('agent', sa.String(length=64), sa.ForeignKey('agents.id')),
     sa.Column('agent_addr', sa.String(length=128), nullable=False),
-    sa.Column('access_key', sa.String(length=20),
-              sa.ForeignKey('keypairs.access_key')),
+    sa.Column('domain_name', sa.String(length=64), sa.ForeignKey('domains.name'), nullable=False),
+    sa.Column('group_id', GUID, sa.ForeignKey('groups.id'), nullable=False),
+    sa.Column('user_uuid', GUID, sa.ForeignKey('users.uuid'), nullable=False),
+    sa.Column('access_key', sa.String(length=20), sa.ForeignKey('keypairs.access_key')),
     sa.Column('image', sa.String(length=512)),
     sa.Column('registry', sa.String(length=512)),
     sa.Column('tag', sa.String(length=64), nullable=True),
