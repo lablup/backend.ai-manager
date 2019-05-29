@@ -13,6 +13,7 @@ from .base import (
     ResourceSlotColumn,
     Item, PaginatedList,
 )
+from .user import UserRole
 
 __all__ = (
     'kernels', 'KernelStatus',
@@ -313,8 +314,10 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
         return await loader.load(self.sess_id)
 
     @staticmethod
-    async def load_count(context, access_key=None, status=None):
+    async def load_count(context, access_key=None, status=None, group_id=None):
         async with context['dbpool'].acquire() as conn:
+            domain_name = None if context['user']['role'] == UserRole.SUPERADMIN \
+                    else context['user']['domain_name']
             query = (sa.select([sa.func.count(kernels.c.sess_id)])
                        .select_from(kernels)
                        .where(kernels.c.role == 'master')
@@ -324,6 +327,10 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 query = query.where(kernels.c.status == status)
             if access_key is not None:
                 query = query.where(kernels.c.access_key == access_key)
+            if domain_name is not None:
+                query = query.where(kernels.c.domain_name == domain_name)
+            if group_id is not None:
+                query = query.where(kernels.c.group_id == group_id)
             result = await conn.execute(query)
             count = await result.fetchone()
             return count[0]
@@ -332,7 +339,8 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
     async def load_slice(context, limit, offset, access_key=None, status=None, group_id=None):
         async with context['dbpool'].acquire() as conn:
             # TODO: optimization for pagination using subquery, join
-            domain_name = context['user']['domain_name']
+            domain_name = None if context['user']['role'] == UserRole.SUPERADMIN \
+                    else context['user']['domain_name']
             query = (sa.select([kernels])
                        .select_from(kernels)
                        .where(kernels.c.role == 'master')
@@ -480,6 +488,8 @@ class Computation(SessionCommons, graphene.ObjectType):
     @staticmethod
     async def batch_load_by_agent_id(context, agent_ids, *, status=None):
         async with context['dbpool'].acquire() as conn:
+            domain_name = None if context['user']['role'] == UserRole.SUPERADMIN \
+                    else context['user']['domain_name']
             query = (sa.select([kernels])
                        .select_from(kernels)
                        .where(kernels.c.agent.in_(agent_ids))
@@ -487,6 +497,8 @@ class Computation(SessionCommons, graphene.ObjectType):
             if status is not None:
                 status = KernelStatus[status]
                 query = query.where(kernels.c.status == status)
+            if domain_name is not None:
+                query = query.where(kernels.c.domain_name == domain_name)
             objs_per_key = OrderedDict()
             for k in agent_ids:
                 objs_per_key[k] = list()

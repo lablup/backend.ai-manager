@@ -24,7 +24,7 @@ from ..manager.models import (
     Agent, AgentList, Image, RescanImages, AliasImage, DealiasImage,
     Domain, CreateDomain, ModifyDomain, DeleteDomain,
     Group, CreateGroup, ModifyGroup, DeleteGroup,
-    User, CreateUser, ModifyUser, DeleteUser,
+    User, CreateUser, ModifyUser, DeleteUser, UserRole,
     KeyPair, CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
     ComputeSession, ComputeSessionList, ComputeWorker, KernelStatus,
     VirtualFolder,
@@ -214,13 +214,13 @@ class QueryForAdmin(graphene.ObjectType):
         offset=graphene.Int(required=True),
         access_key=graphene.String(),
         status=graphene.String(),
-        group_id=graphene.UUID())
+        group_id=graphene.String())
 
     compute_sessions = graphene.List(
         ComputeSession,
         access_key=graphene.String(),
         status=graphene.String(),
-        group_id=graphene.UUID())
+        group_id=graphene.String())
 
     compute_session = graphene.Field(
         ComputeSession,
@@ -233,27 +233,30 @@ class QueryForAdmin(graphene.ObjectType):
 
     @staticmethod
     async def resolve_agent(executor, info, agent_id):
-        assert info.context['user']['domain_name'] is None, 'permission error (need to be global admin)'
+        assert info.context['user']['role'] == UserRole.SUPERADMIN, \
+            'permission error (need to be superadmin)'
         manager = info.context['dlmgr']
         loader = manager.get_loader('Agent', status=None)
         return await loader.load(agent_id)
 
     @staticmethod
     async def resolve_agents(executor, info, status=None):
-        assert info.context['user']['domain_name'] is None, 'permission error (need to be global admin)'
+        assert info.context['user']['role'] == UserRole.SUPERADMIN, \
+            'permission error (need to be superadmin)'
         return await Agent.load_all(info.context, status=status)
 
     @staticmethod
     async def resolve_agent_list(executor, info, limit, offset, status=None):
-        assert info.context['user']['domain_name'] is None, 'permission error (need to be global admin)'
+        assert info.context['user']['role'] == UserRole.SUPERADMIN, \
+            'permission error (need to be superadmin)'
         total_count = await Agent.load_count(info.context, status)
         agent_list = await Agent.load_slice(info.context, limit, offset, status)
         return AgentList(agent_list, total_count)
 
     @staticmethod
     async def resolve_domain(executor, info, name=None):
-        manager = info.context['dlmgr']
-        if info.context['user']['domain_name'] is None:  # global admin
+        manager = info.context['dlmgr']  # superadmin
+        if info.context['user']['role'] == UserRole.SUPERADMIN:
             assert name is not None, 'no domain for this user'
         else:  # domain admin
             name = info.context['user']['domain_name'] if name is None else name
@@ -263,7 +266,8 @@ class QueryForAdmin(graphene.ObjectType):
 
     @staticmethod
     async def resolve_domains(executor, info, is_active=None):
-        assert info.context['user']['domain_name'] is None, 'no permission'
+        assert info.context['user']['role'] == UserRole.SUPERADMIN, \
+            'permission error (need to be superadmin)'
         return await Domain.load_all(info.context, is_active=is_active)
 
     @staticmethod
@@ -349,11 +353,12 @@ class QueryForAdmin(graphene.ObjectType):
 
     @staticmethod
     async def resolve_compute_session_list(executor, info, limit, offset,
-                                           access_key=None, status=None):
+                                           access_key=None, status=None,
+                                           group_id=None):
         total_count = await ComputeSession.load_count(
-            info.context, access_key, status)
+            info.context, access_key, status, group_id)
         items = await ComputeSession.load_slice(
-            info.context, limit, offset, access_key, status)
+            info.context, limit, offset, access_key, status, group_id)
         return ComputeSessionList(items, total_count)
 
     @staticmethod

@@ -130,6 +130,7 @@ async def auth_middleware(request, handler):
     # This is a global middleware: request.app is the root app.
     request['is_authorized'] = False
     request['is_admin'] = False
+    request['is_superadmin'] = False
     request['keypair'] = None
     request['user'] = None
     if not get_handler_attr(request, 'auth_required', False):
@@ -175,8 +176,12 @@ async def auth_middleware(request, handler):
                     if col.name not in ('password', 'description', 'created_at')
                 }
                 request['user']['id'] = row['keypairs_user_id']  # legacy
+                # if request['role'] in ['admin', 'superadmin']:
                 if row['keypairs_is_admin']:
                     request['is_admin'] = True
+                if request['user']['role'] == 'superadmin':
+                    request['is_superamdin'] = True
+
     # No matter if authenticated or not, pass-through to the handler.
     # (if it's required, auth_required decorator will handle the situation.)
     return (await handler(request))

@@ -345,8 +345,8 @@ class AgentRegistry:
             await conn.execute(query)
 
     async def get_or_create_session(self, sess_id, access_key,
-                                    image, creation_config,
-                                    resource_policy,
+                                    image, creation_config, resource_policy,
+                                    domain_name=None, group_id=None, user_uuid=None,
                                     tag=None):
         requested_image_ref = \
             await ImageRef.resolve_alias(image, self.config_server.etcd)
@@ -363,6 +363,7 @@ class AgentRegistry:
                 sess_id, access_key,
                 requested_image_ref, creation_config,
                 resource_policy,
+                domain_name, group_id, user_uuid,
                 session_tag=tag)
         assert kern is not None
         return kern, create
@@ -371,6 +372,9 @@ class AgentRegistry:
                              image_ref: ImageRef,
                              creation_config: dict,
                              resource_policy: dict,
+                             domain_name: str,
+                             group_id: str,
+                             user_uuid: str,
                              session_tag=None):
         agent_id = None
         created_info = None
@@ -552,6 +556,9 @@ class AgentRegistry:
                 'role': 'master',
                 'agent': agent_id,
                 'agent_addr': agent_addr,
+                'domain_name': domain_name,
+                'group_id': group_id,
+                'user_uuid': user_uuid,
                 'access_key': access_key,
                 'image': image_ref.canonical,
                 'registry': image_ref.registry,

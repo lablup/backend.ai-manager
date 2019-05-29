@@ -30,6 +30,7 @@ class UserRole(str, enum.Enum):
     '''
     User's role.
     '''
+    SUPERADMIN = 'superadmin'
     ADMIN = 'admin'
     USER = 'user'
     MONITOR = 'monitor'

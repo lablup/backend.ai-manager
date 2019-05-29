@@ -31,6 +31,7 @@ from .auth import auth_required
 from .utils import catch_unexpected, get_access_key_scopes
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (
+    association_groups_users,
     keypairs, kernels, vfolders,
     AgentStatus, KernelStatus,
     query_accessible_vfolders,
@@ -63,6 +64,9 @@ async def create(request) -> web.Response:
         assert _rx_sess_token.fullmatch(sess_id), \
                'clientSessionToken contains invalid characters.'
         requester_access_key, owner_access_key = get_access_key_scopes(request)
+        domain_name = request['user']['domain_name']
+        group_id = params.get('group_id', None)
+        user_uuid = request['user']['uuid']
         log.info('GET_OR_CREATE (u:{0}/{1}, image:{2}, tag:{3}, token:{4})',
                  requester_access_key, owner_access_key, image,
                  params.get('tag', None), sess_id)
@@ -86,6 +90,15 @@ async def create(request) -> web.Response:
                        .values(concurrency_used=keypairs.c.concurrency_used + 1)
                        .where(keypairs.c.access_key == owner_access_key))
             await conn.execute(query)
+
+            if group_id is None:
+                query = (sa.select([association_groups_users.c.group_id])
+                           .select_from(association_groups_users)
+                           .where(association_groups_users.c.user_id == user_uuid))
+                rows = await conn.execute(query)
+                row = await rows.fetchone()
+                assert row is not None, 'group_id should be provided'
+                group_id = row.group_id
         creation_config = {
             'mounts': None,
             'environ': None,
@@ -134,6 +147,7 @@ async def create(request) -> web.Response:
                 sess_id, owner_access_key,
                 image, creation_config,
                 resource_policy,
+                domain_name=domain_name, group_id=group_id, user_uuid=user_uuid,
                 tag=params.get('tag', None))
             resp['kernelId'] = str(kernel['sess_id'])
             resp['servicePorts'] = kernel['service_ports']
