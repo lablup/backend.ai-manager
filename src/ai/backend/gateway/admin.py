@@ -213,12 +213,14 @@ class QueryForAdmin(graphene.ObjectType):
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
         access_key=graphene.String(),
-        status=graphene.String())
+        status=graphene.String(),
+        group_id=graphene.UUID())
 
     compute_sessions = graphene.List(
         ComputeSession,
         access_key=graphene.String(),
-        status=graphene.String())
+        status=graphene.String(),
+        group_id=graphene.UUID())
 
     compute_session = graphene.Field(
         ComputeSession,
@@ -355,7 +357,8 @@ class QueryForAdmin(graphene.ObjectType):
         return ComputeSessionList(items, total_count)
 
     @staticmethod
-    async def resolve_compute_sessions(executor, info, access_key=None, status=None):
+    async def resolve_compute_sessions(executor, info, access_key=None,
+                                       status=None, group_id=None):
         # TODO: make status a proper graphene.Enum type
         #       (https://github.com/graphql-python/graphene/issues/544)
         if status is not None:
@@ -363,9 +366,10 @@ class QueryForAdmin(graphene.ObjectType):
         if access_key is not None:
             manager = info.context['dlmgr']
             loader = manager.get_loader('ComputeSession', status=status)
-            return await loader.load(access_key)
+            return await loader.load(access_key, group_id=group_id)
         else:
-            return await ComputeSession.load_all(info.context, status=status)
+            return await ComputeSession.load_all(info.context, status=status,
+                                                 group_id=group_id)
 
     @staticmethod
     async def resolve_compute_session(executor, info, sess_id, status=None):

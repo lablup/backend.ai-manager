@@ -103,6 +103,9 @@ class SessionCommons:
     role = graphene.String()
     image = graphene.String()
     registry = graphene.String()
+    domain_name = graphene.String()
+    group_id = graphene.UUID()
+    user_uuid = graphene.UUID()
     access_key = graphene.String()
 
     status = graphene.String()
@@ -243,6 +246,9 @@ class SessionCommons:
             'role': row['role'],
             'image': row['image'],
             'registry': row['registry'],
+            'domain_name': row['domain_name'],
+            'group_id': row['group_id'],
+            'user_uuid': row['user_uuid'],
             'access_key': row['access_key'],
             'status': row['status'].name,
             'status_info': row['status_info'],
@@ -323,9 +329,10 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             return count[0]
 
     @staticmethod
-    async def load_slice(context, limit, offset, access_key=None, status=None):
+    async def load_slice(context, limit, offset, access_key=None, status=None, group_id=None):
         async with context['dbpool'].acquire() as conn:
             # TODO: optimization for pagination using subquery, join
+            domain_name = context['user']['domain_name']
             query = (sa.select([kernels])
                        .select_from(kernels)
                        .where(kernels.c.role == 'master')
@@ -337,16 +344,21 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 query = query.where(kernels.c.status == status)
             if access_key is not None:
                 query = query.where(kernels.c.access_key == access_key)
+            if domain_name is not None:
+                query = query.where(kernels.c.domain_name == domain_name)
+            if group_id is not None:
+                query = query.where(kernels.c.group_id == group_id)
             result = await conn.execute(query)
             rows = await result.fetchall()
             return [ComputeSession.from_row(context, r) for r in rows]
 
     @staticmethod
-    async def load_all(context, status=None):
+    async def load_all(context, status=None, group_id=None):
         async with context['dbpool'].acquire() as conn:
-            status = status if status else KernelStatus['RUNNING']
+            # status = status if status else KernelStatus['RUNNING']
             if isinstance(status, str):
                 status = KernelStatus[status]  # for legacy
+            domain_name = context['user']['domain_name']
             query = (sa.select([kernels])
                        .select_from(kernels)
                        .where(kernels.c.role == 'master')
@@ -354,12 +366,17 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                        .limit(100))
             if status is not None:
                 query = query.where(kernels.c.status == status)
+            if domain_name is not None:
+                query = query.where(kernels.c.domain_name == domain_name)
+            if group_id is not None:
+                query = query.where(kernels.c.group_id == group_id)
             result = await conn.execute(query)
             rows = await result.fetchall()
             return [ComputeSession.from_row(context, r) for r in rows]
 
-    async def batch_load(context, access_keys, *, status=None):
+    async def batch_load(context, access_keys, *, status=None, group_id=None):
         async with context['dbpool'].acquire() as conn:
+            domain_name = context['user']['domain_name']
             query = (sa.select([kernels])
                        .select_from(kernels)
                        .where((kernels.c.access_key.in_(access_keys)) &
@@ -368,6 +385,10 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                        .limit(100))
             if status is not None:
                 query = query.where(kernels.c.status == status)
+            if domain_name is not None:
+                query = query.where(kernels.c.domain_name == domain_name)
+            if group_id is not None:
+                query = query.where(kernels.c.group_id == group_id)
             objs_per_key = OrderedDict()
             for k in access_keys:
                 objs_per_key[k] = list()
@@ -381,6 +402,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
         async with context['dbpool'].acquire() as conn:
             # TODO: Extend to return terminated sessions (we need unique identifier).
             status = KernelStatus[status] if status else KernelStatus['RUNNING']
+            domain_name = context['user']['domain_name']
             query = (sa.select([kernels])
                        .select_from(kernels)
                        .where((kernels.c.role == 'master') &
@@ -389,6 +411,8 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 query = query.where(kernels.c.status == status)
             if access_key is not None:
                 query = query.where(kernels.c.access_key == access_key)
+            if domain_name is not None:
+                query = query.where(kernels.c.domain_name == domain_name)
             sess_info = []
             async for row in conn.execute(query):
                 o = ComputeSession.from_row(context, row)
@@ -425,6 +449,7 @@ class ComputeWorker(SessionCommons, graphene.ObjectType):
     @staticmethod
     async def batch_load(context, sess_ids, *, status=None, access_key=None):
         async with context['dbpool'].acquire() as conn:
+            domain_name = context['user']['domain_name']
             query = (sa.select([kernels])
                        .select_from(kernels)
                        .where((kernels.c.sess_id.in_(sess_ids)) &
@@ -436,6 +461,8 @@ class ComputeWorker(SessionCommons, graphene.ObjectType):
                 # For user queries, ensure only the user's own workers
                 # even when he/she knows other users' session IDs.
                 query = query.where(kernels.c.access_key == access_key)
+            if domain_name is not None:
+                query = query.where(kernels.c.domain_name == domain_name)
             objs_per_key = OrderedDict()
             for k in sess_ids:
                 objs_per_key[k] = list()
