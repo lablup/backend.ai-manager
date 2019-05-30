@@ -8,6 +8,7 @@ import psycopg2 as pg
 import sqlalchemy as sa
 
 from .base import metadata, GUID, IDColumn
+from .user import UserRole
 
 
 __all__ = (
@@ -73,7 +74,10 @@ class Group(graphene.ObjectType):
     @staticmethod
     async def load_all(context, domain_name, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
-            current_domain_name = context['user']['domain_name']
+            if context['user']['role'] == UserRole.SUPERADMIN:
+                current_domain_name = None
+            else:
+                current_domain_name = context['user']['domain_name']
             query = (sa.select([groups])
                        .select_from(groups)
                        .where(groups.c.domain_name == domain_name))
@@ -90,7 +94,10 @@ class Group(graphene.ObjectType):
     @staticmethod
     async def batch_load_by_id(context, ids=None):
         async with context['dbpool'].acquire() as conn:
-            current_domain_name = context['user']['domain_name']
+            if context['user']['role'] == UserRole.SUPERADMIN:
+                current_domain_name = None
+            else:
+                current_domain_name = context['user']['domain_name']
             query = (sa.select([groups])
                        .select_from(groups)
                        .where(groups.c.id.in_(ids)))
@@ -129,25 +136,24 @@ class GroupMutationMixin:
         from .user import UserRole
         user = info.context['user']
         permitted = False
-        if user['role'] == UserRole.ADMIN:
-            if user['domain_name'] is None:  # global admin
-                permitted = True
-            else:
-                if domain_name is None and gid is not None:  # get target group's domain
-                    async with info.context['dbpool'].acquire() as conn, conn.begin():
-                        query = groups.select().where(groups.c.id == gid)
-                        try:
+        if user['role'] == UserRole.SUPERADMIN:
+            permitted = True
+        elif user['role'] == UserRole.ADMIN:
+            if domain_name is None and gid is not None:  # get target group's domain
+                async with info.context['dbpool'].acquire() as conn, conn.begin():
+                    query = groups.select().where(groups.c.id == gid)
+                    try:
+                        result = await conn.execute(query)
+                        if result.rowcount > 0:
                             result = await conn.execute(query)
-                            if result.rowcount > 0:
-                                result = await conn.execute(query)
-                                o = Group.from_row(await result.first())
-                                domain_name = o.domain_name
-                        except (asyncio.CancelledError, asyncio.TimeoutError):
-                            raise
-                        except Exception:
-                            pass
-                if user['domain_name'] == domain_name:
-                    permitted = True
+                            o = Group.from_row(await result.first())
+                            domain_name = o.domain_name
+                    except (asyncio.CancelledError, asyncio.TimeoutError):
+                        raise
+                    except Exception:
+                        pass
+            if user['domain_name'] == domain_name:
+                permitted = True
         return permitted
 
 

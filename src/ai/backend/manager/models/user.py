@@ -153,8 +153,8 @@ class UserMutationMixin:
     def check_perm(info):
         from .user import UserRole
         user = info.context['user']
-        if user['role'] == UserRole.ADMIN and user['domain_name'] is None:
-            return True  # only global admin is allowed to mutate, currently
+        if user['role'] == UserRole.SUPERADMIN:
+            return True  # only superadmin is allowed to mutate, currently
         return False
 
 
