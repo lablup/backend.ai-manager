@@ -180,7 +180,7 @@ async def auth_middleware(request, handler):
                 if row['keypairs_is_admin']:
                     request['is_admin'] = True
                 if request['user']['role'] == 'superadmin':
-                    request['is_superamdin'] = True
+                    request['is_superadmin'] = True
 
     # No matter if authenticated or not, pass-through to the handler.
     # (if it's required, auth_required decorator will handle the situation.)

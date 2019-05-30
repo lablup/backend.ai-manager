@@ -31,7 +31,7 @@ from .auth import auth_required
 from .utils import catch_unexpected, get_access_key_scopes
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (
-    association_groups_users,
+    association_groups_users, groups,
     keypairs, kernels, vfolders,
     AgentStatus, KernelStatus,
     query_accessible_vfolders,
@@ -99,6 +99,14 @@ async def create(request) -> web.Response:
                 row = await rows.fetchone()
                 assert row is not None, 'user does not belong to any group'
                 group_id = row.group_id
+            elif request['is_superadmin']:  # superadmin can spawn container in any group
+                query = (sa.select([groups.c.domain_name])
+                           .select_from(groups)
+                           .where(groups.c.id == group_id))
+                rows = await conn.execute(query)
+                row = await rows.fetchone()
+                assert row is not None, 'no such group'
+                domain_name = row.domain_name
             else:  # check if the group_id is associated with one of user's group.
                 query = (sa.select([association_groups_users.c.user_id])
                            .select_from(association_groups_users)
