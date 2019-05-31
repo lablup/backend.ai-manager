@@ -278,11 +278,25 @@ class PaginatedList(graphene.Interface):
 
 
 def populate_fixture(db_connection, fixture_data):
+
+    def insert(table, row):
+        # convert enumtype to native values
+        for col in table.columns:
+            if isinstance(col.type, EnumType):
+                row[col.name] = col.type._enum_cls[row[col.name]]
+            elif isinstance(col.type, EnumValueType):
+                row[col.name] = col.type._enum_cls(row[col.name])
+        db_connection.execute(table.insert(), [row])
+
     for table_name, rows in fixture_data.items():
         table = getattr(models, table_name)
-        cols = table.columns
         pk_cols = table.primary_key.columns
         for row in rows:
+            if len(pk_cols) == 0:
+                # some tables may not have primary keys.
+                # (e.g., m2m relationship)
+                insert(table, row)
+                continue
             # compose pk match where clause
             pk_match = functools.reduce(lambda x, y: x & y, [
                 (col == row[col.name])
@@ -291,13 +305,7 @@ def populate_fixture(db_connection, fixture_data):
             ret = db_connection.execute(
                 sa.select(pk_cols).select_from(table).where(pk_match))
             if ret.rowcount == 0:
-                # convert enumtype to native values
-                for col in cols:
-                    if isinstance(col.type, EnumType):
-                        row[col.name] = col.type._enum_cls[row[col.name]]
-                    elif isinstance(col.type, EnumValueType):
-                        row[col.name] = col.type._enum_cls(row[col.name])
-                db_connection.execute(table.insert(), [row])
+                insert(table, row)
             else:
                 pk_tuple = tuple(row[col.name] for col in pk_cols)
                 log.info('skipped inserting {} to {} as the row already exists.',
