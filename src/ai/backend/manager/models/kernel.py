@@ -81,6 +81,7 @@ kernels = sa.Table(
     sa.Column('status_info', sa.Unicode(), nullable=True, default=sa.null()),
 
     # Resource metrics measured upon termination
+    sa.Column('num_queries', sa.BigInteger(), default=0),
     sa.Column('last_stat', pgsql.JSONB(), nullable=True, default=sa.null()),
 
     sa.Index('ix_kernels_sess_id_role', 'sess_id', 'role', unique=False),
@@ -178,25 +179,25 @@ class SessionCommons:
         return await self._resolve_legacy_metric(info, 'cpu-util', 'pct', float)
 
     async def resolve_mem_max_bytes(self, info):
-        return await self._resolve_legacy_metric(info, 'mem-used', 'max-usage', int)
+        return await self._resolve_legacy_metric(info, 'mem', 'usage.max', int)
 
     async def resolve_mem_cur_bytes(self, info):
-        return await self._resolve_legacy_metric(info, 'mem-used', 'usage', int)
+        return await self._resolve_legacy_metric(info, 'mem', 'usage', int)
 
     async def resolve_net_rx_bytes(self, info):
-        return await self._resolve_legacy_metric(info, 'net-rx', 'usage', int)
+        return await self._resolve_legacy_metric(info, 'net-rx', 'usage.accum', int)
 
     async def resolve_net_tx_bytes(self, info):
-        return await self._resolve_legacy_metric(info, 'net-tx', 'usage', int)
+        return await self._resolve_legacy_metric(info, 'net-tx', 'usage.accum', int)
 
     async def resolve_io_read_bytes(self, info):
-        return await self._resolve_legacy_metric(info, 'io-read', 'usage', int)
+        return await self._resolve_legacy_metric(info, 'io-read', 'usage.accum', int)
 
     async def resolve_io_write_bytes(self, info):
-        return await self._resolve_legacy_metric(info, 'io-write', 'usage', int)
+        return await self._resolve_legacy_metric(info, 'io-write', 'usage.accum', int)
 
     async def resolve_io_max_scratch_size(self, info):
-        return await self._resolve_legacy_metric(info, 'io-scratch-size', 'max-usage', int)
+        return await self._resolve_legacy_metric(info, 'io-scratch-size', 'usage.max', int)
 
     async def resolve_io_cur_scratch_size(self, info):
         return await self._resolve_legacy_metric(info, 'io-scratch-size', 'usage', int)
