@@ -31,7 +31,8 @@ from .auth import auth_required
 from .utils import catch_unexpected, get_access_key_scopes
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (
-    association_groups_users, groups,
+    domains, users,
+    association_groups_users as agus, groups,
     keypairs, kernels, vfolders,
     AgentStatus, KernelStatus,
     query_accessible_vfolders,
@@ -64,9 +65,10 @@ async def create(request) -> web.Response:
         assert _rx_sess_token.fullmatch(sess_id), \
                'clientSessionToken contains invalid characters.'
         requester_access_key, owner_access_key = get_access_key_scopes(request)
-        domain_name = request['user']['domain_name']
-        group_id = params.get('group_id', None)
         user_uuid = request['user']['uuid']
+        domain_name = params.get('domain_name', request['user']['domain_name'])
+        group_name = params.get('group_name', None)
+        assert group_name is not None, 'group_name is required'
         log.info('GET_OR_CREATE (u:{0}/{1}, image:{2}, tag:{3}, token:{4})',
                  requester_access_key, owner_access_key, image,
                  params.get('tag', None), sess_id)
@@ -91,29 +93,27 @@ async def create(request) -> web.Response:
                        .where(keypairs.c.access_key == owner_access_key))
             await conn.execute(query)
 
-            if group_id is None:  # set requester's first group_id if not delivered
-                query = (sa.select([association_groups_users.c.group_id])
-                           .select_from(association_groups_users)
-                           .where(association_groups_users.c.user_id == user_uuid))
-                rows = await conn.execute(query)
-                row = await rows.fetchone()
-                assert row is not None, 'user does not belong to any group'
-                group_id = row.group_id
-            elif request['is_superadmin']:  # superadmin can spawn container in any group
-                query = (sa.select([groups.c.domain_name])
+            if request['is_superadmin']:  # superadmin can spawn container in any domain and group
+                query = (sa.select([groups.c.domain_name, groups.c.id])
                            .select_from(groups)
-                           .where(groups.c.id == group_id))
+                           .where(domains.c.name == domain_name)
+                           .where(groups.c.name == group_name))
                 rows = await conn.execute(query)
                 row = await rows.fetchone()
                 assert row is not None, 'no such group'
-                domain_name = row.domain_name
-            else:  # check if the group_id is associated with one of user's group.
-                query = (sa.select([association_groups_users.c.user_id])
-                           .select_from(association_groups_users)
-                           .where(association_groups_users.c.group_id == group_id))
+                domain_name = row.domain_name  # replace domain_name
+                group_id = row.id
+            else:  # check if the group_name is associated with one of user's group.
+                j = agus.join(groups, agus.c.group_id == groups.c.id)
+                query = (sa.select([agus])
+                           .select_from(j)
+                           .where(agus.c.user_id == user_uuid)
+                           .where(groups.c.domain_name == domain_name)
+                           .where(groups.c.name == group_name))
                 rows = await conn.execute(query)
                 row = await rows.fetchone()
                 assert row is not None, 'user does not belong to the provided group'
+                group_id = row.group_id
 
         creation_config = {
             'mounts': None,
