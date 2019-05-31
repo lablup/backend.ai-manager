@@ -26,7 +26,7 @@
             "full_name": "Admin Lablup",
             "description": "Lablup's Admin Account",
             "is_active": true,
-            "domain_name": null,
+            "domain_name": "default",
             "role": "admin"
         },
         {
