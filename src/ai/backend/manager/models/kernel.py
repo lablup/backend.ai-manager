@@ -13,6 +13,7 @@ from .base import (
     ResourceSlotColumn,
     Item, PaginatedList,
 )
+from .group import groups
 from .user import UserRole
 
 __all__ = (
@@ -128,6 +129,9 @@ class SessionCommons:
     gpu_slot = graphene.Float()
     tpu_slot = graphene.Float()
 
+    # Dynamic fields
+    group_name = graphene.String()
+
     # TODO: add dynamic stats for intrinsic/accelerator metrics
 
     num_queries = BigInt()
@@ -241,6 +245,7 @@ class SessionCommons:
     def parse_row(cls, context, row):
         assert row is not None
         mega = 2 ** 20
+        print(row['name'])
         return {
             'sess_id': row['sess_id'],
             'id': row['id'],
@@ -261,6 +266,8 @@ class SessionCommons:
             'occupied_slots': row['occupied_slots'].to_json(),
             'occupied_shares': row['occupied_shares'],
             'num_queries': row['num_queries'],
+            # Dynamic fields
+            'group_name': row['name'],
             # live statistics
             # NOTE: currently graphene always uses resolve methods!
             'cpu_used': row['cpu_used'],
@@ -341,8 +348,9 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             # TODO: optimization for pagination using subquery, join
             domain_name = None if context['user']['role'] == UserRole.SUPERADMIN \
                     else context['user']['domain_name']
-            query = (sa.select([kernels])
-                       .select_from(kernels)
+            j = kernels.join(groups, groups.c.id == kernels.c.group_id)
+            query = (sa.select([kernels, groups.c.name])
+                       .select_from(j)
                        .where(kernels.c.role == 'master')
                        .order_by(sa.desc(kernels.c.created_at))
                        .limit(limit)
@@ -367,8 +375,9 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             if isinstance(status, str):
                 status = KernelStatus[status]  # for legacy
             domain_name = context['user']['domain_name']
-            query = (sa.select([kernels])
-                       .select_from(kernels)
+            j = kernels.join(groups, groups.c.id == kernels.c.group_id)
+            query = (sa.select([kernels, groups.c.name])
+                       .select_from(j)
                        .where(kernels.c.role == 'master')
                        .order_by(sa.desc(kernels.c.created_at))
                        .limit(100))
@@ -385,8 +394,9 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
     async def batch_load(context, access_keys, *, status=None, group_id=None):
         async with context['dbpool'].acquire() as conn:
             domain_name = context['user']['domain_name']
-            query = (sa.select([kernels])
-                       .select_from(kernels)
+            j = kernels.join(groups, groups.c.id == kernels.c.group_id)
+            query = (sa.select([kernels, groups.c.name])
+                       .select_from(j)
                        .where((kernels.c.access_key.in_(access_keys)) &
                               (kernels.c.role == 'master'))
                        .order_by(sa.desc(kernels.c.created_at))
@@ -411,8 +421,9 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             # TODO: Extend to return terminated sessions (we need unique identifier).
             status = KernelStatus[status] if status else KernelStatus['RUNNING']
             domain_name = context['user']['domain_name']
-            query = (sa.select([kernels])
-                       .select_from(kernels)
+            j = kernels.join(groups, groups.c.id == kernels.c.group_id)
+            query = (sa.select([kernels, groups.c.name])
+                       .select_from(j)
                        .where((kernels.c.role == 'master') &
                               (kernels.c.sess_id.in_(sess_ids))))
             if status is not None:
