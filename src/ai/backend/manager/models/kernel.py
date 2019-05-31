@@ -164,6 +164,8 @@ class SessionCommons:
             return convert_type(value)
         else:
             kstat = await type(self)._resolve_live_stat(rs, str(self.id))
+            if kstat is None:
+                return convert_type(0)
             metric = kstat.get(metric_key)
             if metric is None:
                 return convert_type(0)
