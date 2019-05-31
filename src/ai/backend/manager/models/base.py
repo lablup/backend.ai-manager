@@ -20,7 +20,7 @@ from sqlalchemy.types import (
 from sqlalchemy.dialects.postgresql import UUID, ENUM, JSONB
 
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import ResourceSlot
+from ai.backend.common.types import BinarySize, ResourceSlot
 from .. import models
 
 SAFE_MIN_INT = -9007199254740991
@@ -127,6 +127,10 @@ class ResourceSlotColumn(TypeDecorator):
         return value.to_json() if value is not None else None
 
     def process_result_value(self, value: str, dialect):
+        # legacy handling
+        mem = value.get('mem')
+        if isinstance(mem, str) and not mem.isdigit():
+            value['mem'] = BinarySize.from_str(mem)
         return ResourceSlot.from_json(value) if value is not None else None
 
     def copy(self):
