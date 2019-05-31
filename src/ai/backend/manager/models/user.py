@@ -93,7 +93,7 @@ class User(graphene.ObjectType):
     async def load_all(context, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
             query = sa.select([users]).select_from(users)
-            if context['user'].get('domain_name', None) is not None:
+            if context['user']['role'] != UserRole.SUPERADMIN:
                 query = query.where(users.c.domain_name == context['user']['domain_name'])
             if is_active is not None:
                 query = query.where(users.c.is_active == is_active)
@@ -109,7 +109,7 @@ class User(graphene.ObjectType):
             query = (sa.select([users])
                        .select_from(users)
                        .where(users.c.email.in_(emails)))
-            if context['user'].get('domain_name', None) is not None:
+            if context['user']['role'] != UserRole.SUPERADMIN:
                 query = query.where(users.c.domain_name == context['user']['domain_name'])
             objs_per_key = OrderedDict()
             # For each email, there is only one user.
@@ -131,6 +131,7 @@ class UserInput(graphene.InputObjectType):
     is_active = graphene.Boolean(required=False, default=True)
     domain_name = graphene.String(required=True, default='default')
     role = graphene.String(required=False, default=UserRole.USER)
+    group_ids = graphene.List(lambda: graphene.String, required=False)
 
     # When creating, you MUST set all fields.
     # When modifying, set the field to "None" to skip setting the value.
@@ -145,6 +146,7 @@ class ModifyUserInput(graphene.InputObjectType):
     is_active = graphene.Boolean(required=False)
     domain_name = graphene.String(required=False)
     role = graphene.String(required=False)
+    group_ids = graphene.List(lambda: graphene.String, required=False)
 
 
 class UserMutationMixin:
@@ -184,15 +186,22 @@ class CreateUser(UserMutationMixin, graphene.Mutation):
                 'domain_name': props.domain_name,
                 'role': UserRole(props.role),
             }
-            query = (users.insert().values(data))
-
             try:
+                query = (users.insert().values(data))
                 result = await conn.execute(query)
                 if result.rowcount > 0:
                     # Read the created user data from DB.
                     checkq = users.select().where(users.c.email == email)
                     result = await conn.execute(checkq)
                     o = User.from_row(await result.first())
+
+                    # Add user to groups if group_ids parameter is provided.
+                    from .group import association_groups_users
+                    if props.group_ids:
+                        values = [{'user_id': o.uuid, 'group_id': gid} for gid in props.group_ids]
+                        query = sa.insert(association_groups_users).values(values)
+                        await conn.execute(query)
+
                     return cls(ok=True, msg='success', user=o)
                 else:
                     return cls(ok=False, msg='failed to create user', user=None)
@@ -237,8 +246,11 @@ class ModifyUser(UserMutationMixin, graphene.Mutation):
             set_if_set('domain_name')
             set_if_set('role')
 
-            query = (users.update().values(data).where(users.c.email == email))
+            if not data and not props.group_ids:
+                return cls(ok=False, msg='nothing to update', user=None)
+
             try:
+                query = (users.update().values(data).where(users.c.email == email))
                 result = await conn.execute(query)
                 if result.rowcount > 0:
                     checkq = users.select().where(users.c.email == email)
@@ -247,6 +259,21 @@ class ModifyUser(UserMutationMixin, graphene.Mutation):
                     return cls(ok=True, msg='success', user=o)
                 else:
                     return cls(ok=False, msg='no such user', user=None)
+
+                # Update user's group if group_ids parameter is provided.
+                from .group import association_groups_users
+                if props.group_ids:
+                    # TODO: isn't it dangerous if second execution breaks,
+                    #       which results in user lost all of groups?
+                    # Clear previous groups associated with the user.
+                    query = (association_groups_users
+                             .delete()
+                             .where(association_groups_users.c.user_id == o.uuid))
+                    await conn.execute(query)
+                    # Add user to new groups.
+                    values = [{'user_id': o.uuid, 'group_id': gid} for gid in props.group_ids]
+                    query = sa.insert(association_groups_users).values(values)
+                    await conn.execute(query)
             except (pg.IntegrityError, sa.exc.IntegrityError) as e:
                 return cls(ok=False, msg=f'integrity error: {e}', user=None)
             except (asyncio.CancelledError, asyncio.TimeoutError):
