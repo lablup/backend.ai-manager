@@ -69,13 +69,20 @@ class User(graphene.ObjectType):
     created_at = GQLDateTime()
     domain_name = graphene.String()
     role = graphene.String()
-    # Authentication
-    password_correct = graphene.Boolean()
+    # Dynamic fields
+    groups = graphene.List(lambda: graphene.String)
 
     @classmethod
     def from_row(cls, row):
         if row is None:
             return None
+        if 'id' in row and row.id is not None and 'name' in row and row.name is not None:
+            groups = [{
+                'id': str(row['id']),
+                'name': row['name'],
+            }]
+        else:
+            groups = None
         return cls(
             uuid=row['uuid'],
             username=row['username'],
@@ -87,18 +94,33 @@ class User(graphene.ObjectType):
             created_at=row['created_at'],
             domain_name=row['domain_name'],
             role=row['role'],
+            # Dynamic fields
+            groups=groups,  # group information
         )
 
     @staticmethod
     async def load_all(context, *, is_active=None):
+        '''
+        Load user's information. Group names associated with the user are also returned.
+        '''
         async with context['dbpool'].acquire() as conn:
-            query = sa.select([users]).select_from(users)
+            from .group import groups, association_groups_users as agus
+            j = (users.join(agus, agus.c.user_id == users.c.uuid, isouter=True)
+                      .join(groups, agus.c.group_id == groups.c.id, isouter=True))
+            query = sa.select([users, groups.c.name, groups.c.id]).select_from(j)
             if context['user']['role'] != UserRole.SUPERADMIN:
                 query = query.where(users.c.domain_name == context['user']['domain_name'])
             if is_active is not None:
                 query = query.where(users.c.is_active == is_active)
             objs = []
+            emails = []
             async for row in conn.execute(query):
+                if row.email in emails:
+                    # If same user is already saved, just append group name
+                    idx = emails.index(row.email)
+                    objs[idx].groups.append({'id': str(row.id), 'name': row.name})
+                    continue
+                emails.append(row.email)
                 o = User.from_row(row)
                 objs.append(o)
         return objs
@@ -106,8 +128,11 @@ class User(graphene.ObjectType):
     @staticmethod
     async def batch_load_by_email(context, emails=None, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
-            query = (sa.select([users])
-                       .select_from(users)
+            from .group import groups, association_groups_users as agus
+            j = (users.join(agus, agus.c.user_id == users.c.uuid, isouter=True)
+                      .join(groups, agus.c.group_id == groups.c.id, isouter=True))
+            query = (sa.select([users, groups.c.name, groups.c.id])
+                       .select_from(j)
                        .where(users.c.email.in_(emails)))
             if context['user']['role'] != UserRole.SUPERADMIN:
                 query = query.where(users.c.domain_name == context['user']['domain_name'])
@@ -117,6 +142,9 @@ class User(graphene.ObjectType):
             for k in emails:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
+                if objs_per_key[row.email] is not None:
+                    objs_per_key[row.email].groups.append({'id': str(row.id), 'name': row.name})
+                    continue
                 o = User.from_row(row)
                 objs_per_key[row.email] = o
         return tuple(objs_per_key.values())
