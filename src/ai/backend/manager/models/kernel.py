@@ -175,34 +175,34 @@ class SessionCommons:
             return convert_type(value)
 
     async def resolve_cpu_used(self, info):
-        return await self._resolve_legacy_metric(info, 'cpu-used', 'usage', float)
+        return await self._resolve_legacy_metric(info, 'cpu_used', 'current', float)
 
     async def resolve_cpu_using(self, info):
-        return await self._resolve_legacy_metric(info, 'cpu-util', 'pct', float)
+        return await self._resolve_legacy_metric(info, 'cpu_util', 'pct', float)
 
     async def resolve_mem_max_bytes(self, info):
-        return await self._resolve_legacy_metric(info, 'mem', 'usage.max', int)
+        return await self._resolve_legacy_metric(info, 'mem', 'stats.max', int)
 
     async def resolve_mem_cur_bytes(self, info):
-        return await self._resolve_legacy_metric(info, 'mem', 'usage', int)
+        return await self._resolve_legacy_metric(info, 'mem', 'current', int)
 
     async def resolve_net_rx_bytes(self, info):
-        return await self._resolve_legacy_metric(info, 'net-rx', 'usage.accum', int)
+        return await self._resolve_legacy_metric(info, 'net_rx', 'stats.rate', int)
 
     async def resolve_net_tx_bytes(self, info):
-        return await self._resolve_legacy_metric(info, 'net-tx', 'usage.accum', int)
+        return await self._resolve_legacy_metric(info, 'net_tx', 'stats.rate', int)
 
     async def resolve_io_read_bytes(self, info):
-        return await self._resolve_legacy_metric(info, 'io-read', 'usage.accum', int)
+        return await self._resolve_legacy_metric(info, 'io_read', 'current', int)
 
     async def resolve_io_write_bytes(self, info):
-        return await self._resolve_legacy_metric(info, 'io-write', 'usage.accum', int)
+        return await self._resolve_legacy_metric(info, 'io_write', 'current', int)
 
     async def resolve_io_max_scratch_size(self, info):
-        return await self._resolve_legacy_metric(info, 'io-scratch-size', 'usage.max', int)
+        return await self._resolve_legacy_metric(info, 'io_scratch_size', 'stats.max', int)
 
     async def resolve_io_cur_scratch_size(self, info):
-        return await self._resolve_legacy_metric(info, 'io-scratch-size', 'usage', int)
+        return await self._resolve_legacy_metric(info, 'io_scratch_size', 'current', int)
 
     @classmethod
     def parse_row(cls, context, row):
