@@ -715,7 +715,8 @@ class AgentRegistry:
             except KernelNotFound:
                 raise
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
-                return await rpc.call.destroy_kernel(str(kernel['id']))
+                last_stat = await rpc.call.destroy_kernel(str(kernel['id']))
+                return last_stat
 
     async def restart_session(self, sess_id, access_key):
         async with self.handle_kernel_exception(
