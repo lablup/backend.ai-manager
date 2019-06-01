@@ -1087,7 +1087,7 @@ class AgentRegistry:
             if stat_type == 'string':
                 kern_stat = await self.redis_stat.get(kernel_id, encoding=None)
                 if kern_stat is not None:
-                    updates['last_stat'] = kern_stat
+                    updates['last_stat'] = msgpack.unpackb(kern_stat)
             else:
                 kern_stat = await self.redis_stat.hgetall(kernel_id)
                 if kern_stat is not None and 'cpu_used' in kern_stat:
