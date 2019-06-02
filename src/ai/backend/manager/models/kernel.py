@@ -7,8 +7,9 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common.types import BinarySize
+from ai.backend.common import msgpack
 from .base import (
-    metadata, zero_if_none,
+    metadata,
     BigInt, GUID, IDColumn, EnumType,
     ResourceSlotColumn,
     Item, PaginatedList,
@@ -80,15 +81,9 @@ kernels = sa.Table(
               default=KernelStatus.PREPARING, index=True),
     sa.Column('status_info', sa.Unicode(), nullable=True, default=sa.null()),
 
-    # Live stats
+    # Resource metrics measured upon termination
     sa.Column('num_queries', sa.BigInteger(), default=0),
-    sa.Column('cpu_used', sa.BigInteger(), default=0),       # msec
-    sa.Column('mem_max_bytes', sa.BigInteger(), default=0),
-    sa.Column('net_rx_bytes', sa.BigInteger(), default=0),
-    sa.Column('net_tx_bytes', sa.BigInteger(), default=0),
-    sa.Column('io_read_bytes', sa.BigInteger(), default=0),
-    sa.Column('io_write_bytes', sa.BigInteger(), default=0),
-    sa.Column('io_max_scratch_size', sa.BigInteger(), default=0),
+    sa.Column('last_stat', pgsql.JSONB(), nullable=True, default=sa.null()),
 
     sa.Index('ix_kernels_sess_id_role', 'sess_id', 'role', unique=False),
     sa.Index('ix_kernels_unique_sess_token', 'access_key', 'sess_id',
@@ -122,20 +117,19 @@ class SessionCommons:
     occupied_slots = graphene.JSONString()
     occupied_shares = graphene.JSONString()
 
+    num_queries = BigInt()
+    live_stat = graphene.JSONString()
+    last_stat = graphene.JSONString()
+    group_name = graphene.String()
+
     # Legacy fields
     lang = graphene.String()
     mem_slot = graphene.Int()
     cpu_slot = graphene.Float()
     gpu_slot = graphene.Float()
     tpu_slot = graphene.Float()
-
-    # Dynamic fields
-    group_name = graphene.String()
-
-    # TODO: add dynamic stats for intrinsic/accelerator metrics
-
-    num_queries = BigInt()
     cpu_used = BigInt()
+    cpu_using = graphene.Float()
     mem_max_bytes = BigInt()
     mem_cur_bytes = BigInt()
     net_rx_bytes = BigInt()
@@ -144,102 +138,73 @@ class SessionCommons:
     io_write_bytes = BigInt()
     io_max_scratch_size = BigInt()
     io_cur_scratch_size = BigInt()
-    cpu_using = graphene.Float()
+
+    @classmethod
+    async def _resolve_live_stat(cls, redis_stat, kernel_id):
+        cstat = await redis_stat.get(kernel_id, encoding=None)
+        if cstat is not None:
+            cstat = msgpack.unpackb(cstat)
+        return cstat
+
+    async def resolve_live_stat(self, info):
+        rs = info.context['redis_stat']
+        return await type(self)._resolve_live_stat(rs, str(self.id))
+
+    async def _resolve_legacy_metric(self, info, metric_key, metric_field, convert_type):
+        if not hasattr(self, 'status'):
+            return None
+        rs = info.context['redis_stat']
+        if self.status not in LIVE_STATUS:
+            if self.last_stat is None:
+                return convert_type(0)
+            metric = self.last_stat.get(metric_key)
+            if metric is None:
+                return convert_type(0)
+            value = metric.get(metric_field)
+            if value is None:
+                return convert_type(0)
+            return convert_type(value)
+        else:
+            kstat = await type(self)._resolve_live_stat(rs, str(self.id))
+            if kstat is None:
+                return convert_type(0)
+            metric = kstat.get(metric_key)
+            if metric is None:
+                return convert_type(0)
+            value = metric.get(metric_field)
+            if value is None:
+                return convert_type(0)
+            return convert_type(value)
 
     async def resolve_cpu_used(self, info):
-        if not hasattr(self, 'status'):
-            return None
-        if self.status not in LIVE_STATUS:
-            return zero_if_none(self.cpu_used)
-        rs = info.context['redis_stat']
-        ret = await rs.hget(str(self.id), 'cpu_used')
-        return float(ret) if ret is not None else 0
-
-    async def resolve_mem_max_bytes(self, info):
-        if not hasattr(self, 'status'):
-            return None
-        if self.status not in LIVE_STATUS:
-            return zero_if_none(self.mem_max_bytes)
-        rs = info.context['redis_stat']
-        ret = await rs.hget(str(self.id), 'mem_max_bytes')
-        return int(ret) if ret is not None else 0
-
-    async def resolve_mem_cur_bytes(self, info):
-        if not hasattr(self, 'status'):
-            return None
-        if self.status not in LIVE_STATUS:
-            return 0
-        rs = info.context['redis_stat']
-        ret = await rs.hget(str(self.id), 'mem_cur_bytes')
-        return int(ret) if ret is not None else 0
-
-    async def resolve_net_rx_bytes(self, info):
-        if not hasattr(self, 'status'):
-            return None
-        if self.status not in LIVE_STATUS:
-            return zero_if_none(self.net_rx_bytes)
-        rs = info.context['redis_stat']
-        ret = await rs.hget(str(self.id), 'net_rx_bytes')
-        return int(ret) if ret is not None else 0
-
-    async def resolve_net_tx_bytes(self, info):
-        if not hasattr(self, 'status'):
-            return None
-        if self.status not in LIVE_STATUS:
-            return zero_if_none(self.net_tx_bytes)
-        rs = info.context['redis_stat']
-        ret = await rs.hget(str(self.id), 'net_tx_bytes')
-        return int(ret) if ret is not None else 0
-
-    async def resolve_io_read_bytes(self, info):
-        if not hasattr(self, 'status'):
-            return None
-        if self.status not in LIVE_STATUS:
-            return zero_if_none(self.io_read_bytes)
-        rs = info.context['redis_stat']
-        ret = await rs.hget(str(self.id), 'io_read_bytes')
-        return int(ret) if ret is not None else 0
-
-    async def resolve_io_write_bytes(self, info):
-        if not hasattr(self, 'status'):
-            return None
-        if self.status not in LIVE_STATUS:
-            return zero_if_none(self.io_write_bytes)
-        rs = info.context['redis_stat']
-        ret = await rs.hget(str(self.id), 'io_write_bytes')
-        return int(ret) if ret is not None else 0
-
-    async def resolve_io_max_scratch_size(self, info):
-        if not hasattr(self, 'status'):
-            return None
-        if self.status not in LIVE_STATUS:
-            return zero_if_none(self.io_max_scratch_size)
-        rs = info.context['redis_stat']
-        ret = await rs.hget(str(self.id), 'io_max_scratch_size')
-        return int(ret) if ret is not None else 0
-
-    async def resolve_io_cur_scratch_size(self, info):
-        if not hasattr(self, 'status'):
-            return None
-        if self.status not in LIVE_STATUS:
-            return 0
-        rs = info.context['redis_stat']
-        ret = await rs.hget(str(self.id), 'io_cur_scratch_size')
-        return int(ret) if ret is not None else 0
+        return await self._resolve_legacy_metric(info, 'cpu_used', 'current', float)
 
     async def resolve_cpu_using(self, info):
-        if not hasattr(self, 'status'):
-            return None
-        if self.status not in LIVE_STATUS:
-            return 0
-        rs = info.context['redis_stat']
-        cpu_used = await rs.hget(str(self.id), 'cpu_used')
-        precpu_used = await rs.hget(str(self.id), 'precpu_used')
-        ret = 0
-        if cpu_used is not None and precpu_used is not None:
-            ret = (float(cpu_used) - float(precpu_used)) / 10
-            # cpu_used(ms), precpu_used(ms), interval=1s, ret(%)
-        return round(float(ret), 2)
+        return await self._resolve_legacy_metric(info, 'cpu_util', 'pct', float)
+
+    async def resolve_mem_max_bytes(self, info):
+        return await self._resolve_legacy_metric(info, 'mem', 'stats.max', int)
+
+    async def resolve_mem_cur_bytes(self, info):
+        return await self._resolve_legacy_metric(info, 'mem', 'current', int)
+
+    async def resolve_net_rx_bytes(self, info):
+        return await self._resolve_legacy_metric(info, 'net_rx', 'stats.rate', int)
+
+    async def resolve_net_tx_bytes(self, info):
+        return await self._resolve_legacy_metric(info, 'net_tx', 'stats.rate', int)
+
+    async def resolve_io_read_bytes(self, info):
+        return await self._resolve_legacy_metric(info, 'io_read', 'current', int)
+
+    async def resolve_io_write_bytes(self, info):
+        return await self._resolve_legacy_metric(info, 'io_write', 'current', int)
+
+    async def resolve_io_max_scratch_size(self, info):
+        return await self._resolve_legacy_metric(info, 'io_scratch_size', 'stats.max', int)
+
+    async def resolve_io_cur_scratch_size(self, info):
+        return await self._resolve_legacy_metric(info, 'io_scratch_size', 'current', int)
 
     @classmethod
     def parse_row(cls, context, row):
@@ -265,20 +230,20 @@ class SessionCommons:
             'occupied_slots': row['occupied_slots'].to_json(),
             'occupied_shares': row['occupied_shares'],
             'num_queries': row['num_queries'],
-            # Dynamic fields
+            'live_stat': cls._resolve_live_stat(context['redis_stat'], row['id']),
+            'last_stat': row['last_stat'],
             'group_name': row['name'],
-            # live statistics
+            # Legacy fields
             # NOTE: currently graphene always uses resolve methods!
-            'cpu_used': row['cpu_used'],
-            'mem_max_bytes': row['mem_max_bytes'],
+            'cpu_used': 0,
+            'mem_max_bytes': 0,
             'mem_cur_bytes': 0,
-            'net_rx_bytes': row['net_rx_bytes'],
-            'net_tx_bytes': row['net_tx_bytes'],
-            'io_read_bytes': row['io_read_bytes'],
-            'io_write_bytes': row['io_write_bytes'],
-            'io_max_scratch_size': row['io_max_scratch_size'],
+            'net_rx_bytes': 0,
+            'net_tx_bytes': 0,
+            'io_read_bytes': 0,
+            'io_write_bytes': 0,
+            'io_max_scratch_size': 0,
             'io_cur_scratch_size': 0,
-            # legacy fields
             'lang': row['image'],
             'mem_slot': BinarySize.from_str(
                 row['occupied_slots'].get('mem', 0)) // mega,

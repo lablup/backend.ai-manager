@@ -715,7 +715,8 @@ class AgentRegistry:
             except KernelNotFound:
                 raise
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
-                return await rpc.call.destroy_kernel(str(kernel['id']))
+                last_stat = await rpc.call.destroy_kernel(str(kernel['id']))
+                return last_stat
 
     async def restart_session(self, sess_id, access_key):
         async with self.handle_kernel_exception(
@@ -967,6 +968,8 @@ class AgentRegistry:
                     'addr': agent_info['addr'],
                     'first_contact': now,
                     'lost_at': None,
+                    'version': agent_info['version'],
+                    'compute_plugins': agent_info['compute_plugins'],
                 })
                 result = await conn.execute(query)
                 assert result.rowcount == 1
@@ -992,6 +995,8 @@ class AgentRegistry:
                                'addr': agent_info['addr'],
                                'lost_at': None,
                                'available_slots': available_slots,
+                               'version': agent_info['version'],
+                               'compute_plugins': agent_info['compute_plugins'],
                            })
                            .where(agents.c.id == agent_id))
                 await conn.execute(query)
@@ -1087,8 +1092,7 @@ class AgentRegistry:
             if stat_type == 'string':
                 kern_stat = await self.redis_stat.get(kernel_id, encoding=None)
                 if kern_stat is not None:
-                    print(msgpack.unpackb(kern_stat))
-                # TODO: updates['final_stats'] = kern_stat
+                    updates['last_stat'] = msgpack.unpackb(kern_stat)
             else:
                 kern_stat = await self.redis_stat.hgetall(kernel_id)
                 if kern_stat is not None and 'cpu_used' in kern_stat:
