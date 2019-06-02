@@ -31,7 +31,7 @@ from .auth import auth_required
 from .utils import catch_unexpected, get_access_key_scopes
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (
-    association_groups_users,
+    association_groups_users, groups,
     keypairs, kernels, vfolders,
     AgentStatus, KernelStatus,
     query_accessible_vfolders,
@@ -91,14 +91,30 @@ async def create(request) -> web.Response:
                        .where(keypairs.c.access_key == owner_access_key))
             await conn.execute(query)
 
-            if group_id is None:
+            if group_id is None:  # set requester's first group_id if not delivered
                 query = (sa.select([association_groups_users.c.group_id])
                            .select_from(association_groups_users)
                            .where(association_groups_users.c.user_id == user_uuid))
                 rows = await conn.execute(query)
                 row = await rows.fetchone()
-                assert row is not None, 'group_id should be provided'
+                assert row is not None, 'user does not belong to any group'
                 group_id = row.group_id
+            elif request['is_superadmin']:  # superadmin can spawn container in any group
+                query = (sa.select([groups.c.domain_name])
+                           .select_from(groups)
+                           .where(groups.c.id == group_id))
+                rows = await conn.execute(query)
+                row = await rows.fetchone()
+                assert row is not None, 'no such group'
+                domain_name = row.domain_name
+            else:  # check if the group_id is associated with one of user's group.
+                query = (sa.select([association_groups_users.c.user_id])
+                           .select_from(association_groups_users)
+                           .where(association_groups_users.c.group_id == group_id))
+                rows = await conn.execute(query)
+                row = await rows.fetchone()
+                assert row is not None, 'user does not belong to the provided group'
+
         creation_config = {
             'mounts': None,
             'environ': None,

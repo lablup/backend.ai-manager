@@ -101,10 +101,9 @@ class DomainMutationMixin:
     def check_perm(info):
         from .user import UserRole
         user = info.context['user']
-        if user['role'] == UserRole.ADMIN and user['domain_name'] is None:
+        if user['role'] == UserRole.SUPERADMIN:
             return True
-        else:
-            return False
+        return False
 
 
 class CreateDomain(DomainMutationMixin, graphene.Mutation):
