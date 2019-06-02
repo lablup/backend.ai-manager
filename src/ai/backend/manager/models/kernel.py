@@ -245,7 +245,6 @@ class SessionCommons:
     def parse_row(cls, context, row):
         assert row is not None
         mega = 2 ** 20
-        print(row['name'])
         return {
             'sess_id': row['sess_id'],
             'id': row['id'],
@@ -374,7 +373,8 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             # status = status if status else KernelStatus['RUNNING']
             if isinstance(status, str):
                 status = KernelStatus[status]  # for legacy
-            domain_name = context['user']['domain_name']
+            domain_name = None if context['user']['role'] == UserRole.SUPERADMIN \
+                    else context['user']['domain_name']
             j = kernels.join(groups, groups.c.id == kernels.c.group_id)
             query = (sa.select([kernels, groups.c.name])
                        .select_from(j)
@@ -393,7 +393,8 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
 
     async def batch_load(context, access_keys, *, status=None, group_id=None):
         async with context['dbpool'].acquire() as conn:
-            domain_name = context['user']['domain_name']
+            domain_name = None if context['user']['role'] == UserRole.SUPERADMIN \
+                    else context['user']['domain_name']
             j = kernels.join(groups, groups.c.id == kernels.c.group_id)
             query = (sa.select([kernels, groups.c.name])
                        .select_from(j)
@@ -420,7 +421,8 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
         async with context['dbpool'].acquire() as conn:
             # TODO: Extend to return terminated sessions (we need unique identifier).
             status = KernelStatus[status] if status else KernelStatus['RUNNING']
-            domain_name = context['user']['domain_name']
+            domain_name = None if context['user']['role'] == UserRole.SUPERADMIN \
+                    else context['user']['domain_name']
             j = kernels.join(groups, groups.c.id == kernels.c.group_id)
             query = (sa.select([kernels, groups.c.name])
                        .select_from(j)

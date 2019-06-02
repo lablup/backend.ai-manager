@@ -230,6 +230,25 @@ class CreateUser(UserMutationMixin, graphene.Mutation):
                     result = await conn.execute(checkq)
                     o = User.from_row(await result.first())
 
+                    # Create user's first access_key and secret_key.
+                    from .keypair import generate_keypair, keypairs
+                    ak, sk = generate_keypair()
+                    is_admin = True if data['role'] in [UserRole.SUPERADMIN, UserRole.ADMIN] else False
+                    kp_data = {
+                        'user_id': email,
+                        'access_key': ak,
+                        'secret_key': sk,
+                        'is_active': True,
+                        'is_admin': is_admin,
+                        'resource_policy': 'default',
+                        'concurrency_used': 0,
+                        'rate_limit': 1000,
+                        'num_queries': 0,
+                        'user': o.uuid,
+                    }
+                    query = (keypairs.insert().values(kp_data))
+                    await conn.execute(query)
+
                     # Add user to groups if group_ids parameter is provided.
                     from .group import association_groups_users
                     if props.group_ids:
