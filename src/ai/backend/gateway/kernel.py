@@ -100,7 +100,8 @@ async def create(request) -> web.Response:
                            .where(groups.c.name == group_name))
                 rows = await conn.execute(query)
                 row = await rows.fetchone()
-                assert row is not None, 'no such group'
+                if row is None:
+                    raise BackendError('no such group')
                 domain_name = row.domain_name  # replace domain_name
                 group_id = row.id
             else:  # check if the group_name is associated with one of user's group.
@@ -112,7 +113,8 @@ async def create(request) -> web.Response:
                            .where(groups.c.name == group_name))
                 rows = await conn.execute(query)
                 row = await rows.fetchone()
-                assert row is not None, 'user does not belong to the provided group'
+                if row is None:
+                    raise BackendError('no such group')
                 group_id = row.group_id
 
         creation_config = {

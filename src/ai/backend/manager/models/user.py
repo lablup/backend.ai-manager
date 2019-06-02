@@ -128,21 +128,28 @@ class User(graphene.ObjectType):
     @staticmethod
     async def batch_load_by_email(context, emails=None, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
+            try:  # determine whether email is given as uuid
+                import uuid
+                uuid.UUID(emails[0])
+                pk_type = 'uuid'
+            except ValueError:
+                pk_type = 'email'
             from .group import groups, association_groups_users as agus
             j = (users.join(agus, agus.c.user_id == users.c.uuid, isouter=True)
                       .join(groups, agus.c.group_id == groups.c.id, isouter=True))
             query = (sa.select([users, groups.c.name, groups.c.id])
-                       .select_from(j)
-                       .where(users.c.email.in_(emails)))
+                       .select_from(j))
+            if pk_type == 'uuid':
+                query = query.where(users.c.uuid.in_(emails))
+            else:
+                query = query.where(users.c.email.in_(emails))
             if context['user']['role'] != UserRole.SUPERADMIN:
                 query = query.where(users.c.domain_name == context['user']['domain_name'])
             objs_per_key = OrderedDict()
             # For each email, there is only one user.
             # So we don't build lists in objs_per_key variable.
-            for k in emails:
-                objs_per_key[k] = None
             async for row in conn.execute(query):
-                if objs_per_key[row.email] is not None:
+                if row.email in objs_per_key:
                     objs_per_key[row.email].groups.append({'id': str(row.id), 'name': row.name})
                     continue
                 o = User.from_row(row)
