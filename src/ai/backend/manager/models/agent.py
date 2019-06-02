@@ -5,6 +5,7 @@ import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 
+from ai.backend.common import msgpack
 from ai.backend.common.types import BinarySize
 from .base import metadata, EnumType, Item, PaginatedList, ResourceSlotColumn
 
@@ -51,6 +52,7 @@ class Agent(graphene.ObjectType):
     addr = graphene.String()
     first_contact = GQLDateTime()
     lost_at = GQLDateTime()
+    live_stat = graphene.JSONString()
 
     # Legacy fields
     mem_slots = graphene.Int()
@@ -61,8 +63,6 @@ class Agent(graphene.ObjectType):
     used_cpu_slots = graphene.Float()
     used_gpu_slots = graphene.Float()
     used_tpu_slots = graphene.Float()
-
-    # TODO: Dynamic fields
     cpu_cur_pct = graphene.Float()
     mem_cur_bytes = graphene.Float()
 
@@ -95,6 +95,24 @@ class Agent(graphene.ObjectType):
             used_gpu_slots=float(row['occupied_slots'].get('cuda.device', 0)),
             used_tpu_slots=float(row['occupied_slots'].get('tpu.device', 0)),
         )
+
+    async def resolve_live_stat(self, info):
+        rs = info.context['redis_stat']
+        live_stat = await rs.get(str(self.id), encoding=None)
+        live_stat = msgpack.unpackb(live_stat)
+        return live_stat
+
+    async def resolve_cpu_cur_pct(self, info):
+        rs = info.context['redis_stat']
+        live_stat = await rs.get(str(self.id), encoding=None)
+        live_stat = msgpack.unpackb(live_stat)
+        return float(live_stat['node']['cpu_util']['pct'])
+
+    async def resolve_mem_cur_bytes(self, info):
+        rs = info.context['redis_stat']
+        live_stat = await rs.get(str(self.id), encoding=None)
+        live_stat = msgpack.unpackb(live_stat)
+        return float(live_stat['node']['mem']['current'])
 
     async def resolve_computations(self, info, status=None):
         '''
@@ -134,18 +152,8 @@ class Agent(graphene.ObjectType):
             _agents = []
             for r in rows:
                 _agent = Agent.from_row(context, r)
-                await Agent._append_dynamic_fields(context, _agent)
                 _agents.append(_agent)
             return _agents
-
-    async def _append_dynamic_fields(context, agent):
-        rs = context['redis_stat']
-        cpu_pct, mem_cur_bytes = await rs.hmget(
-            str(agent.id),
-            'cpu_pct', 'mem_cur_bytes',
-        )
-        agent.cpu_cur_pct = cpu_pct
-        agent.mem_cur_bytes = mem_cur_bytes
 
     @staticmethod
     async def load_all(context, status=None):
@@ -160,7 +168,6 @@ class Agent(graphene.ObjectType):
             _agents = []
             for r in rows:
                 _agent = Agent.from_row(context, r)
-                await Agent._append_dynamic_fields(context, _agent)
                 _agents.append(_agent)
             return _agents
 
@@ -179,7 +186,6 @@ class Agent(graphene.ObjectType):
                 objs_per_key[k] = None
             async for row in conn.execute(query):
                 o = Agent.from_row(context, row)
-                await Agent._append_dynamic_fields(context, o)
                 objs_per_key[row.id] = o
         return tuple(objs_per_key.values())
 
