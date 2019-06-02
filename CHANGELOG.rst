@@ -1,6 +1,29 @@
 Changes
 =======
 
+19.06.0a1 (2018-06-03)
+----------------------
+
+* Add support for extended live/on-termination collection of updated resource metrics.
+  (#151, lablup/backend.ai-agent#109)
+
+* Add domain and group models to partition resource usage by different customer and user sets.
+  Also add "superadmin" level for administrators who have the access/manipulation privilege across all
+  domains.  (#148)
+
+  - Without explicit creation of domains and groups, all users and kernels belong to the "default" domain
+    and the "default" group.  This applies to the DB migration as well.
+
+  - Currently, the user IDs and keypairs are 1:1 mapped.
+
+  - Users are no longer able to see the agent information and only domain admins and superadmins can do.
+
+  - Add a new API: "/auth/authorize" to allow implementation of token-based 3rd-party authorization.
+    Currently the returned token is just the API keypair associated with the user, but later we plan to
+    support JWT as well.
+
+  - Explicit group association is required when launching new kernels.
+
 19.03.1 (2018-04-21)
 --------------------
 
