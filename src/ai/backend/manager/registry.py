@@ -968,6 +968,8 @@ class AgentRegistry:
                     'addr': agent_info['addr'],
                     'first_contact': now,
                     'lost_at': None,
+                    'version': agent_info['version'],
+                    'compute_plugins': agent_info['compute_plugins'],
                 })
                 result = await conn.execute(query)
                 assert result.rowcount == 1
@@ -993,6 +995,8 @@ class AgentRegistry:
                                'addr': agent_info['addr'],
                                'lost_at': None,
                                'available_slots': available_slots,
+                               'version': agent_info['version'],
+                               'compute_plugins': agent_info['compute_plugins'],
                            })
                            .where(agents.c.id == agent_id))
                 await conn.execute(query)

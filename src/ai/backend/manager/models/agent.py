@@ -4,6 +4,7 @@ import enum
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common import msgpack
 from ai.backend.common.types import BinarySize
@@ -36,6 +37,9 @@ agents = sa.Table(
     sa.Column('first_contact', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
     sa.Column('lost_at', sa.DateTime(timezone=True), nullable=True),
+
+    sa.Column('version', sa.String(length=64), nullable=False),
+    sa.Column('compute_plugins', pgsql.JSONB(), nullable=False, default={}),
 )
 
 
@@ -53,6 +57,8 @@ class Agent(graphene.ObjectType):
     first_contact = GQLDateTime()
     lost_at = GQLDateTime()
     live_stat = graphene.JSONString()
+    version = graphene.String()
+    compute_plugins = graphene.JSONString()
 
     # Legacy fields
     mem_slots = graphene.Int()
@@ -84,6 +90,8 @@ class Agent(graphene.ObjectType):
             addr=row['addr'],
             first_contact=row['first_contact'],
             lost_at=row['lost_at'],
+            version=row['version'],
+            compute_plugins=row['compute_plugins'],
             # legacy fields
             mem_slots=BinarySize.from_str(row['available_slots']['mem']) // mega,
             cpu_slots=row['available_slots']['cpu'],
