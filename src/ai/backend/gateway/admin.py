@@ -162,7 +162,7 @@ class QueryForAdmin(graphene.ObjectType):
 
     groups = graphene.List(
         Group,
-        domain_name=graphene.String(required=True),
+        domain_name=graphene.String(),
         is_active=graphene.Boolean())
 
     image = graphene.Field(
@@ -255,11 +255,9 @@ class QueryForAdmin(graphene.ObjectType):
 
     @staticmethod
     async def resolve_domain(executor, info, name=None):
-        manager = info.context['dlmgr']  # superadmin
-        if info.context['user']['role'] == UserRole.SUPERADMIN:
-            assert name is not None, 'no domain for this user'
-        else:  # domain admin
-            name = info.context['user']['domain_name'] if name is None else name
+        manager = info.context['dlmgr']
+        name = info.context['user']['domain_name'] if name is None else name
+        if info.context['user']['role'] != UserRole.SUPERADMIN:
             assert name == info.context['user']['domain_name'], 'no such domain'
         loader = manager.get_loader('Domain.by_name')
         return await loader.load(name)
@@ -277,8 +275,9 @@ class QueryForAdmin(graphene.ObjectType):
         return await loader.load(id)
 
     @staticmethod
-    async def resolve_groups(executor, info, domain_name, *, is_active=None):
-        return await Group.load_all(info.context, domain_name=domain_name, is_active=is_active)
+    async def resolve_groups(executor, info, domain_name=None, is_active=None):
+        domain_name = info.context['user']['domain_name'] if domain_name is None else domain_name
+        return await Group.load_all(info.context, domain_name, is_active=is_active)
 
     @staticmethod
     async def resolve_image(executor, info, reference):
@@ -398,7 +397,9 @@ class QueryForUser(graphene.ObjectType):
     Available GraphQL queries for the user priveilege.
     It only allows use of the access key specified in the authorization header.
     '''
-    domain = graphene.Field(Domain)
+    domain = graphene.Field(
+        Domain,
+        name=graphene.String())
 
     group = graphene.Field(
         Group,
@@ -406,7 +407,7 @@ class QueryForUser(graphene.ObjectType):
 
     groups = graphene.List(
         Group,
-        domain_name=graphene.String(required=True),
+        domain_name=graphene.String(),
         is_active=graphene.Boolean())
 
     image = graphene.Field(
@@ -476,8 +477,9 @@ class QueryForUser(graphene.ObjectType):
         return await loader.load(id)
 
     @staticmethod
-    async def resolve_groups(executor, info, domain_name, *, is_active=None):
-        return await Group.load_all(info.context, domain_name=domain_name, is_active=is_active)
+    async def resolve_groups(executor, info, domain_name=None, is_active=None):
+        domain_name = info.context['user']['domain_name']
+        return await Group.load_all(info.context, domain_name, is_active=is_active)
 
     @staticmethod
     async def resolve_image(executor, info, reference):

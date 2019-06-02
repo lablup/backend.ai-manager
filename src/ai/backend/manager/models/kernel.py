@@ -14,6 +14,7 @@ from .base import (
     ResourceSlotColumn,
     Item, PaginatedList,
 )
+from .group import groups
 from .user import UserRole
 
 __all__ = (
@@ -119,6 +120,7 @@ class SessionCommons:
     num_queries = BigInt()
     live_stat = graphene.JSONString()
     last_stat = graphene.JSONString()
+    group_name = graphene.String()
 
     # Legacy fields
     lang = graphene.String()
@@ -230,6 +232,7 @@ class SessionCommons:
             'num_queries': row['num_queries'],
             'live_stat': cls._resolve_live_stat(context['redis_stat'], row['id']),
             'last_stat': row['last_stat'],
+            'group_name': row['name'],
             # Legacy fields
             # NOTE: currently graphene always uses resolve methods!
             'cpu_used': 0,
@@ -309,8 +312,9 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             # TODO: optimization for pagination using subquery, join
             domain_name = None if context['user']['role'] == UserRole.SUPERADMIN \
                     else context['user']['domain_name']
-            query = (sa.select([kernels])
-                       .select_from(kernels)
+            j = kernels.join(groups, groups.c.id == kernels.c.group_id)
+            query = (sa.select([kernels, groups.c.name])
+                       .select_from(j)
                        .where(kernels.c.role == 'master')
                        .order_by(sa.desc(kernels.c.created_at))
                        .limit(limit)
@@ -334,9 +338,11 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             # status = status if status else KernelStatus['RUNNING']
             if isinstance(status, str):
                 status = KernelStatus[status]  # for legacy
-            domain_name = context['user']['domain_name']
-            query = (sa.select([kernels])
-                       .select_from(kernels)
+            domain_name = None if context['user']['role'] == UserRole.SUPERADMIN \
+                    else context['user']['domain_name']
+            j = kernels.join(groups, groups.c.id == kernels.c.group_id)
+            query = (sa.select([kernels, groups.c.name])
+                       .select_from(j)
                        .where(kernels.c.role == 'master')
                        .order_by(sa.desc(kernels.c.created_at))
                        .limit(100))
@@ -352,9 +358,11 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
 
     async def batch_load(context, access_keys, *, status=None, group_id=None):
         async with context['dbpool'].acquire() as conn:
-            domain_name = context['user']['domain_name']
-            query = (sa.select([kernels])
-                       .select_from(kernels)
+            domain_name = None if context['user']['role'] == UserRole.SUPERADMIN \
+                    else context['user']['domain_name']
+            j = kernels.join(groups, groups.c.id == kernels.c.group_id)
+            query = (sa.select([kernels, groups.c.name])
+                       .select_from(j)
                        .where((kernels.c.access_key.in_(access_keys)) &
                               (kernels.c.role == 'master'))
                        .order_by(sa.desc(kernels.c.created_at))
@@ -378,9 +386,11 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
         async with context['dbpool'].acquire() as conn:
             # TODO: Extend to return terminated sessions (we need unique identifier).
             status = KernelStatus[status] if status else KernelStatus['RUNNING']
-            domain_name = context['user']['domain_name']
-            query = (sa.select([kernels])
-                       .select_from(kernels)
+            domain_name = None if context['user']['role'] == UserRole.SUPERADMIN \
+                    else context['user']['domain_name']
+            j = kernels.join(groups, groups.c.id == kernels.c.group_id)
+            query = (sa.select([kernels, groups.c.name])
+                       .select_from(j)
                        .where((kernels.c.role == 'master') &
                               (kernels.c.sess_id.in_(sess_ids))))
             if status is not None:
