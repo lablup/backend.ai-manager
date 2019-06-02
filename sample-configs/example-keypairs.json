@@ -27,7 +27,7 @@
             "description": "Lablup's Admin Account",
             "is_active": true,
             "domain_name": "default",
-            "role": "admin"
+            "role": "superadmin"
         },
         {
             "uuid": "4f13d193-f646-425a-a340-270c4d2b9860",
