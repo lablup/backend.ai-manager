@@ -312,11 +312,14 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             # TODO: optimization for pagination using subquery, join
             domain_name = None if context['user']['role'] == UserRole.SUPERADMIN \
                     else context['user']['domain_name']
+            order_col = (kernels.c.terminated_at
+                         if status is not None and status == KernelStatus.TERMINATED
+                         else kernels.c.created_at)
             j = kernels.join(groups, groups.c.id == kernels.c.group_id)
             query = (sa.select([kernels, groups.c.name])
                        .select_from(j)
                        .where(kernels.c.role == 'master')
-                       .order_by(sa.desc(kernels.c.created_at))
+                       .order_by(sa.desc(order_col))
                        .limit(limit)
                        .offset(offset))
             if status is not None:
@@ -340,11 +343,14 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 status = KernelStatus[status]  # for legacy
             domain_name = None if context['user']['role'] == UserRole.SUPERADMIN \
                     else context['user']['domain_name']
+            order_col = (kernels.c.terminated_at
+                         if status is not None and status == KernelStatus.TERMINATED
+                         else kernels.c.created_at)
             j = kernels.join(groups, groups.c.id == kernels.c.group_id)
             query = (sa.select([kernels, groups.c.name])
                        .select_from(j)
                        .where(kernels.c.role == 'master')
-                       .order_by(sa.desc(kernels.c.created_at))
+                       .order_by(sa.desc(order_col))
                        .limit(100))
             if status is not None:
                 query = query.where(kernels.c.status == status)
@@ -360,12 +366,15 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
         async with context['dbpool'].acquire() as conn:
             domain_name = None if context['user']['role'] == UserRole.SUPERADMIN \
                     else context['user']['domain_name']
+            order_col = (kernels.c.terminated_at
+                         if status is not None and status == KernelStatus.TERMINATED
+                         else kernels.c.created_at)
             j = kernels.join(groups, groups.c.id == kernels.c.group_id)
             query = (sa.select([kernels, groups.c.name])
                        .select_from(j)
                        .where((kernels.c.access_key.in_(access_keys)) &
                               (kernels.c.role == 'master'))
-                       .order_by(sa.desc(kernels.c.created_at))
+                       .order_by(sa.desc(order_col))
                        .limit(100))
             if status is not None:
                 query = query.where(kernels.c.status == status)
