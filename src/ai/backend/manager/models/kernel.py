@@ -232,7 +232,7 @@ class SessionCommons:
             'num_queries': row['num_queries'],
             'live_stat': cls._resolve_live_stat(context['redis_stat'], row['id']),
             'last_stat': row['last_stat'],
-            'group_name': row['name'],
+            'group_name': row['name'],  # group.name (group is omitted since use_labels=True is not used)
             # Legacy fields
             # NOTE: currently graphene always uses resolve methods!
             'cpu_used': 0,
