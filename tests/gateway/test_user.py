@@ -23,7 +23,7 @@ class TestUserAdminQuery:
         assert rsp_json['user']['password'] is None  # password should not be delivered
         assert not rsp_json['user']['need_password_change']
         assert rsp_json['user']['is_active']
-        assert rsp_json['user']['role'] == 'admin'
+        assert rsp_json['user']['role'] == 'superadmin'
 
     async def test_query_other_user(self, create_app_and_client, get_headers):
         app, client = await create_app_and_client(modules=['auth', 'admin', 'manager'])
