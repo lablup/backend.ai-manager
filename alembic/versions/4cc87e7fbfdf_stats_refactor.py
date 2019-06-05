@@ -25,21 +25,19 @@ branch_labels = None
 depends_on = None
 
 
-# previous table def used for migration
-old_kernels = sa.Table(
-    'kernels', metadata,
-    sa.Column('cpu_used', sa.BigInteger(), default=0),       # msec
-    sa.Column('mem_max_bytes', sa.BigInteger(), default=0),
-    sa.Column('net_rx_bytes', sa.BigInteger(), default=0),
-    sa.Column('net_tx_bytes', sa.BigInteger(), default=0),
-    sa.Column('io_read_bytes', sa.BigInteger(), default=0),
-    sa.Column('io_write_bytes', sa.BigInteger(), default=0),
-    sa.Column('io_max_scratch_size', sa.BigInteger(), default=0),
-    extend_existing=True,
-)
-
-
 def upgrade():
+    # previous table def used for migration
+    old_kernels = sa.Table(
+        'kernels', metadata,
+        sa.Column('cpu_used', sa.BigInteger(), default=0),       # msec
+        sa.Column('mem_max_bytes', sa.BigInteger(), default=0),
+        sa.Column('net_rx_bytes', sa.BigInteger(), default=0),
+        sa.Column('net_tx_bytes', sa.BigInteger(), default=0),
+        sa.Column('io_read_bytes', sa.BigInteger(), default=0),
+        sa.Column('io_write_bytes', sa.BigInteger(), default=0),
+        sa.Column('io_max_scratch_size', sa.BigInteger(), default=0),
+        extend_existing=True,
+    )
     op.add_column('kernels', sa.Column('last_stat', postgresql.JSONB(astext_type=sa.Text()),
                                        nullable=True))
 
@@ -142,5 +140,45 @@ def downgrade():
     op.add_column('kernels', sa.Column('net_rx_bytes', sa.BIGINT(), autoincrement=False, nullable=True))
     op.add_column('kernels', sa.Column('io_max_scratch_size', sa.BIGINT(),
                                        autoincrement=False, nullable=True))
-    op.drop_column('kernels', 'last_stat')
     # ### end Alembic commands ###
+
+    # Restore old stats
+    sa.Table(
+        'kernels', metadata,
+        sa.Column('cpu_used', sa.BigInteger(), default=0),       # msec
+        sa.Column('mem_max_bytes', sa.BigInteger(), default=0),
+        sa.Column('net_rx_bytes', sa.BigInteger(), default=0),
+        sa.Column('net_tx_bytes', sa.BigInteger(), default=0),
+        sa.Column('io_read_bytes', sa.BigInteger(), default=0),
+        sa.Column('io_write_bytes', sa.BigInteger(), default=0),
+        sa.Column('io_max_scratch_size', sa.BigInteger(), default=0),
+        extend_existing=True,
+    )
+    connection = op.get_bind()
+    query = sa.select([kernels.c.id, kernels.c.last_stat]).select_from(kernels)
+    results = connection.execute(query).fetchall()
+    updates = []
+    for row in results:
+        last_stat = row['last_stat']
+        updates.append({
+            'row_id': row['id'],
+            'cpu_used': Decimal(last_stat['cpu_used']['current']),
+            'io_read_bytes': int(last_stat['io_read']['current']),
+            'io_write_bytes': int(last_stat['io_write']['current']),
+            'mem_max_bytes': int(last_stat['mem']['stats.max']),
+            'io_max_scratch_size': int(last_stat['io_scratch_size']['stats.max']),
+        })
+    query = (sa.update(kernels)
+             .values({
+                 'cpu_used': bindparam('cpu_used'),
+                 'io_read_bytes': bindparam('io_read_bytes'),
+                 'io_write_bytes': bindparam('io_write_bytes'),
+                 'mem_max_bytes': bindparam('mem_max_bytes'),
+                 'net_tx_bytes': 0,
+                 'net_rx_bytes': 0,
+                 'io_max_scratch_size': bindparam('io_max_scratch_size'),
+             })
+             .where(kernels.c.id == bindparam('row_id')))
+    connection.execute(query, updates)
+
+    op.drop_column('kernels', 'last_stat')
