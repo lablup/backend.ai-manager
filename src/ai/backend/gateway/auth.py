@@ -1,10 +1,9 @@
-import base64
 from datetime import datetime, timedelta
 import functools
 import hashlib, hmac
-import json
 import logging
 import secrets
+from typing import Any
 
 from aiohttp import web
 import aiohttp_cors
@@ -211,18 +210,13 @@ def admin_required(handler):
     return wrapped
 
 
-@auth_required
 @atomic
-async def test(request: web.Request) -> web.Response:
-    try:
-        params = json.loads(await request.text())
-        params = t.Dict({
-            t.Key('echo'): t.String,
-        }).check(params)
-    except json.decoder.JSONDecodeError:
-        raise InvalidAPIParameters('Malformed body')
-    except t.DataError as e:
-        raise InvalidAPIParameters(f'Input validation error: {e}')
+@auth_required
+@check_api_params(
+    t.Dict({
+        t.Key('echo'): t.String,
+    }))
+async def test(request: web.Request, params: Any) -> web.Response:
     resp_data = {'authorized': 'yes'}
     if 'echo' in params:
         resp_data['echo'] = params['echo']
@@ -232,10 +226,10 @@ async def test(request: web.Request) -> web.Response:
 @atomic
 @check_api_params(
     t.Dict({
-            t.Key('type'): t.Enum('keypair', 'jwt'),
-            t.Key('domain'): t.String,
-            t.Key('username'): t.String,
-            t.Key('password'): t.String,
+        t.Key('type'): t.Enum('keypair', 'jwt'),
+        t.Key('domain'): t.String,
+        t.Key('username'): t.String,
+        t.Key('password'): t.String,
     }))
 async def authorize(request: web.Request) -> web.Response:
     params = await request.json()
