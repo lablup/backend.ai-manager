@@ -207,7 +207,7 @@ def admin_required(handler):
             return (await handler(request))
         raise AuthorizationFailed
 
-    set_handler_attr(wrapped, 'admin_required', True)
+    set_handler_attr(wrapped, 'auth_required', True)
     return wrapped
 
 
