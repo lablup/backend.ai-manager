@@ -90,7 +90,7 @@ import logging
 import json
 from pathlib import Path
 import re
-from typing import Union
+from typing import Any, Mapping, Union
 
 import aiohttp
 from aiohttp import web
@@ -98,6 +98,7 @@ import aiohttp_cors
 import aiojobs
 from aiojobs.aiohttp import atomic
 import aiotools
+import trafaret as t
 import yaml
 import yarl
 
@@ -115,9 +116,10 @@ from ai.backend.common.docker import (
     login as registry_login,
     get_registry_info
 )
-from .exceptions import ServerMisconfiguredError
+from .auth import admin_required
+from .exceptions import InvalidAPIParameters, ServerMisconfiguredError
 from .manager import ManagerStatus
-from .utils import chunked
+from .utils import chunked, check_api_params
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
 
@@ -565,12 +567,75 @@ async def get_resource_slots(request) -> web.Response:
     return web.json_response(known_slots, status=200)
 
 
-async def init(app):
+@atomic
+@admin_required
+@check_api_params(
+    t.Dict({
+        t.Key('key'): t.String,
+        t.Key('prefix', default=False): t.Bool,
+    }))
+async def get_config(request: web.Request, params: Any) -> web.Response:
+    etcd = request.app['config_server'].etcd
+    if params['prefix']:
+        value = await etcd.get_prefix_dict(params['key'])
+    else:
+        value = await etcd.get(params['key'])
+    return web.json_response({'result': value})
+
+
+@atomic
+@admin_required
+@check_api_params(
+    t.Dict({
+        t.Key('key'): t.String,
+        t.Key('value'): t.Or(t.String(allow_blank=True),
+                             t.Mapping(t.String, t.Any)),
+    }))
+async def set_config(request: web.Request, params: Any) -> web.Response:
+    etcd = request.app['config_server'].etcd
+    if isinstance(params['value'], Mapping):
+        updates = {}
+
+        def flatten(prefix, o):
+            for k, v in o.items():
+                inner_prefix = prefix if k == '' else f'{prefix}/{k}'
+                if isinstance(v, Mapping):
+                    flatten(inner_prefix, v)
+                updates[inner_prefix] = v
+
+        flatten(params['key'], params['value'])
+        # TODO: chunk support if there are too many keys
+        if len(params) > 16:
+            raise InvalidAPIParameters(
+                'Too large update! Split into smaller key-value pair sets.')
+        await etcd.put_dict(updates)
+    else:
+        await etcd.put(params['key'], params['value'])
+    return web.json_response({'result': 'ok'})
+
+
+@atomic
+@admin_required
+@check_api_params(
+    t.Dict({
+        t.Key('key'): t.String,
+        t.Key('prefix', default=False): t.Bool,
+    }))
+async def delete_config(request: web.Request, params: Any) -> web.Response:
+    etcd = request.app['config_server'].etcd
+    if params['prefix']:
+        await etcd.delete_prefix(params['key'])
+    else:
+        await etcd.delete(params['key'])
+    return web.json_response({'result': 'ok'})
+
+
+async def init(app: web.Application):
     if app['pidx'] == 0:
         await app['config_server'].register_myself(app['config'])
 
 
-async def shutdown(app):
+async def shutdown(app: web.Application):
     if app['pidx'] == 0:
         await app['config_server'].deregister_myself()
 
@@ -579,7 +644,11 @@ def create_app(default_cors_options):
     app = web.Application()
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
+    app['prefix'] = 'config'
     app['api_versions'] = (3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
-    cors.add(app.router.add_route('GET',   r'/resource-slots', get_resource_slots))
+    cors.add(app.router.add_route('GET',  r'/resource-slots', get_resource_slots))
+    cors.add(app.router.add_route('POST', r'/get', get_config))
+    cors.add(app.router.add_route('POST', r'/set', set_config))
+    cors.add(app.router.add_route('POST', r'/delete', delete_config))
     return app, []
