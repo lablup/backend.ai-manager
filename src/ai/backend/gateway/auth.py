@@ -25,7 +25,7 @@ from ..manager.models import (
 )
 from ..manager.models.user import check_credential
 from ..manager.models.keypair import generate_keypair
-from .utils import TZINFOS, set_handler_attr, get_handler_attr
+from .utils import TZINFOS, check_api_params, set_handler_attr, get_handler_attr
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.auth'))
 
@@ -230,19 +230,15 @@ async def test(request: web.Request) -> web.Response:
 
 
 @atomic
-async def authorize(request: web.Request) -> web.Response:
-    try:
-        params = await request.json()
-        params = t.Dict({
+@check_api_params(
+    t.Dict({
             t.Key('type'): t.Enum('keypair', 'jwt'),
             t.Key('domain'): t.String,
             t.Key('username'): t.String,
             t.Key('password'): t.String,
-        }).check(params)
-    except json.decoder.JSONDecodeError:
-        raise InvalidAPIParameters('Malformed body')
-    except t.DataError as e:
-        raise InvalidAPIParameters(f'Input validation error: {e}')
+    }))
+async def authorize(request: web.Request) -> web.Response:
+    params = await request.json()
     if params['type'] != 'keypair':
         # other types are not implemented yet.
         raise InvalidAPIParameters('Unsupported authorization type')

@@ -4,19 +4,23 @@ import functools
 import io
 import inspect
 import itertools
+import json
 import logging
 import numbers
 import re
 import time
 import traceback
+from typing import Any, Callable, Sequence
 
 from aiohttp import web
 from dateutil.tz import gettz
+import trafaret as t
+from trafaret.lib import _empty
 import pytz
 
 from ai.backend.common.logging import BraceStyleAdapter
 
-from .exceptions import GenericForbidden, QueryNotImplemented
+from .exceptions import InvalidAPIParameters, GenericForbidden, QueryNotImplemented
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.utils'))
 
@@ -40,6 +44,68 @@ def get_access_key_scopes(request):
                 'Only admins can access or control sessions owned by others.')
         return requester_access_key, owner_access_key
     return requester_access_key, requester_access_key
+
+
+def check_api_params(checker: t.Trafaret, loads: Callable = None) -> Any:
+
+    def wrap(handler: Callable[[web.Request], web.Response]):
+
+        @functools.wraps(handler)
+        async def wrapped(request: web.Request) -> web.Response:
+            try:
+                params = await request.json(loads=loads)
+                params = checker.check(params)
+            except json.decoder.JSONDecodeError:
+                raise InvalidAPIParameters('Malformed body')
+            except t.DataError as e:
+                raise InvalidAPIParameters(f'Input validation error',
+                                           extra_data=e.as_dict())
+            return await handler(request, params)
+
+        return wrapped
+
+    return wrap
+
+
+class AliasedKey(t.Key):
+    '''
+    An extension to trafaret.Key which accepts multiple aliases of a single key.
+    When successfully matched, the returned key name is the first one of the given aliases
+    or the renamed key set via ``to_name()`` method or the ``>>`` operator.
+    '''
+
+    def __init__(self, names: Sequence[str], **kwargs):
+        super().__init__(names[0], **kwargs)
+        self.names = names
+
+    def __call__(self, data, context=None):
+        for name in self.names:
+            if name in data:
+                key = name
+                break
+        else:
+            key = None
+        if key is not None or self.default is not _empty:
+            if callable(self.default):
+                default = self.default()
+            else:
+                default = self.default
+            error = None
+            try:
+                result = self.trafaret(self.get_data(data, key, default), context=context)
+            except t.DataError as de:
+                error = de
+            if error:
+                yield key, error, self.names
+            else:
+                yield self.get_name(), result, self.names
+            return
+
+        if not self.optional:
+            yield key, t.DataError(error='is required'), self.names
+
+    def get_data(self, data, key, default):
+        return data.get(key, default)
 
 
 class _Infinity(numbers.Number):
