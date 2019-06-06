@@ -66,14 +66,22 @@ async def create(request: web.Request, params: Any) -> web.Response:
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
     requester_access_key, owner_access_key = get_access_key_scopes(request)
+    requester_uuid = request['user']['uuid']
     log.info('GET_OR_CREATE (u:{0}/{1}, image:{2}, tag:{3}, token:{4})',
              requester_access_key, owner_access_key,
              params['image'], params['tag'], params['sess_id'])
     resp = {}
     try:
-        user_uuid = request['user']['uuid']
         resource_policy = request['keypair']['resource_policy']
         async with request.app['dbpool'].acquire() as conn, conn.begin():
+            if requester_access_key != owner_access_key:
+                query = (sa.select([keypairs.c.user])
+                           .select_from(keypairs)
+                           .where(keypairs.c.access_key == owner_access_key))
+                owner_uuid = await conn.scalar(query)
+            else:
+                owner_uuid = requester_uuid
+
             query = (sa.select([keypairs.c.concurrency_used], for_update=True)
                        .select_from(keypairs)
                        .where(keypairs.c.access_key == owner_access_key))
@@ -97,19 +105,19 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 row = await rows.fetchone()
                 if row is None:
                     raise BackendError(f"no such group in domain {params['domain']}")
-                domain_name = row.domain_name  # replace domain_name
+                params['domain'] = row.domain_name  # replace domain_name
                 group_id = row.id
             else:  # check if the group_name is associated with one of user's group.
                 j = agus.join(groups, agus.c.group_id == groups.c.id)
                 query = (sa.select([agus])
                            .select_from(j)
-                           .where(agus.c.user_id == user_uuid)
-                           .where(groups.c.domain_name == domain_name)
+                           .where(agus.c.user_id == owner_uuid)
+                           .where(groups.c.domain_name == params['domain'])
                            .where(groups.c.name == params['group']))
                 rows = await conn.execute(query)
                 row = await rows.fetchone()
                 if row is None:
-                    raise BackendError('no such group in domain ' + domain_name)
+                    raise BackendError('no such group in domain ' + params['domain'])
                 group_id = row.group_id
 
         creation_config = {
@@ -142,7 +150,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 mount_details = []
                 matched_mounts = set()
                 matched_vfolders = await query_accessible_vfolders(
-                    conn, owner_access_key,
+                    conn, owner_uuid,
                     extra_vf_conds=(vfolders.c.name.in_(creation_config['mounts'])))
                 for item in matched_vfolders:
                     matched_mounts.add(item['name'])
@@ -160,7 +168,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 params['sess_id'], owner_access_key,
                 params['image'], creation_config,
                 resource_policy,
-                domain_name=params['domain'], group_id=group_id, user_uuid=user_uuid,
+                domain_name=params['domain'], group_id=group_id, user_uuid=owner_uuid,
                 tag=params.get('tag', None))
             resp['kernelId'] = str(kernel['sess_id'])
             resp['servicePorts'] = kernel['service_ports']
