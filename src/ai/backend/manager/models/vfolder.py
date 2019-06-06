@@ -48,8 +48,9 @@ vfolders = sa.Table(
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
     sa.Column('last_used', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('belongs_to', sa.String(length=20),
-              sa.ForeignKey('keypairs.access_key'), nullable=False),
+
+    sa.Column('user', GUID, sa.ForeignKey('users.uuid'), nullable=True),
+    sa.Column('group', GUID, sa.ForeignKey('groups.id'), nullable=True),
 )
 
 
@@ -93,9 +94,7 @@ vfolder_permissions = sa.Table(
                             onupdate='CASCADE',
                             ondelete='CASCADE'),
               nullable=False),
-    sa.Column('access_key', sa.String(length=20),
-              sa.ForeignKey('keypairs.access_key'),
-              nullable=False)
+    sa.Column('user', GUID, sa.ForeignKey('users.uuid'), nullable=False),
 )
 
 
