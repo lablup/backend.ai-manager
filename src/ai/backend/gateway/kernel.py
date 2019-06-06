@@ -302,7 +302,7 @@ async def stats_monitor_update_timer(app):
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def destroy(request) -> web.Response:
+async def destroy(request: web.Request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     requester_access_key, owner_access_key = get_access_key_scopes(request)
@@ -320,10 +320,10 @@ async def destroy(request) -> web.Response:
         return web.json_response(resp, status=200)
 
 
+@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
-async def get_info(request) -> web.Response:
+async def get_info(request: web.Request) -> web.Response:
     # NOTE: This API should be replaced with GraphQL version.
     resp = {}
     registry = request.app['registry']
@@ -358,10 +358,10 @@ async def get_info(request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
-async def restart(request) -> web.Response:
+async def restart(request: web.Request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     requester_access_key, owner_access_key = get_access_key_scopes(request)
@@ -382,7 +382,7 @@ async def restart(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def execute(request) -> web.Response:
+async def execute(request: web.Request) -> web.Response:
     resp = {}
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
@@ -462,10 +462,10 @@ async def execute(request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
-async def interrupt(request) -> web.Response:
+async def interrupt(request: web.Request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     requester_access_key, owner_access_key = get_access_key_scopes(request)
@@ -480,10 +480,10 @@ async def interrupt(request) -> web.Response:
     return web.Response(status=204)
 
 
+@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
-async def complete(request) -> web.Response:
+async def complete(request: web.Request) -> web.Response:
     resp = {
         'result': {
             'status': 'finished',
@@ -515,7 +515,7 @@ async def complete(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def upload_files(request) -> web.Response:
+async def upload_files(request: web.Request) -> web.Response:
     loop = asyncio.get_event_loop()
     reader = await request.multipart()
     registry = request.app['registry']
@@ -558,7 +558,7 @@ async def upload_files(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def download_files(request) -> web.Response:
+async def download_files(request: web.Request) -> web.Response:
     try:
         registry = request.app['registry']
         sess_id = request.match_info['sess_id']
@@ -596,10 +596,10 @@ async def download_files(request) -> web.Response:
         return web.Response(body=mpwriter, status=200)
 
 
+@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
-async def list_files(request) -> web.Response:
+async def list_files(request: web.Request) -> web.Response:
     try:
         sess_id = request.match_info['sess_id']
         requester_access_key, owner_access_key = get_access_key_scopes(request)
@@ -630,10 +630,10 @@ async def list_files(request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
-async def get_logs(request) -> web.Response:
+async def get_logs(request: web.Request) -> web.Response:
     resp = {'result': {'logs': ''}}
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
@@ -650,7 +650,7 @@ async def get_logs(request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-async def init(app):
+async def init(app: web.Application):
     event_dispatcher = app['event_dispatcher']
     event_dispatcher.add_handler('kernel_terminated', app, kernel_terminated)
     event_dispatcher.add_handler('instance_started', app, instance_started)
@@ -665,7 +665,7 @@ async def init(app):
             functools.partial(check_agent_lost, app), 1.0)
 
 
-async def shutdown(app):
+async def shutdown(app: web.Application):
     if app['pidx'] == 0:
         app['agent_lost_checker'].cancel()
         await app['agent_lost_checker']

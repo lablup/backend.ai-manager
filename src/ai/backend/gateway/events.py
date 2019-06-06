@@ -97,11 +97,11 @@ async def event_subscriber(dispatcher):
         ctx.term()
 
 
-async def init(app):
+async def init(app: web.Application):
     pass
 
 
-async def shutdown(app):
+async def shutdown(app: web.Application):
     pass
 
 
