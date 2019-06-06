@@ -8,6 +8,7 @@ import pytest
 import sqlalchemy as sa
 
 from ai.backend.manager.models import (
+    keypairs, users,
     vfolders, vfolder_invitations, vfolder_permissions,
     VFolderPermission,
 )
@@ -58,208 +59,190 @@ async def other_host(folder_mount, folder_fsprefix):
 
 
 @pytest.mark.asyncio
-async def test_create_vfolder_in_default_host(prepare_vfolder, folder_host):
-    app, client, create_vfolder = prepare_vfolder
-    folder_info = await create_vfolder()
+class TestVFolder:
 
-    assert 'id' in folder_info
-    assert 'name' in folder_info
-    assert folder_info.get('host', None) == folder_host
+    async def test_create_vfolder_in_default_host(self, prepare_vfolder, folder_host):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await create_vfolder()
 
+        assert 'id' in folder_info
+        assert 'name' in folder_info
+        assert folder_info.get('host', None) == folder_host
 
-@pytest.mark.asyncio
-async def test_create_vfolder_in_user_specified_host(
-        prepare_vfolder, folder_mount, folder_fsprefix):
-    app, client, create_vfolder = prepare_vfolder
+    async def test_create_vfolder_in_user_specified_host(
+            self, prepare_vfolder, folder_mount, folder_fsprefix):
+        app, client, create_vfolder = prepare_vfolder
 
-    # prepare for user-specified mount folder.
-    user_specified_host = 'user-specified-host'
-    base_path = folder_mount / user_specified_host / folder_fsprefix
-    base_path.mkdir(parents=True, exist_ok=True)
+        # prepare for user-specified mount folder.
+        user_specified_host = 'user-specified-host'
+        base_path = folder_mount / user_specified_host / folder_fsprefix
+        base_path.mkdir(parents=True, exist_ok=True)
 
-    folder_info = await create_vfolder(user_specified_host)
+        folder_info = await create_vfolder(user_specified_host)
 
-    assert 'id' in folder_info
-    assert 'name' in folder_info
-    assert folder_info.get('host', None) == user_specified_host
+        assert 'id' in folder_info
+        assert 'name' in folder_info
+        assert folder_info.get('host', None) == user_specified_host
 
+    async def test_create_vfolder_with_same_name_in_other_host(self, prepare_vfolder,
+                                                               other_host):
+        app, client, create_vfolder = prepare_vfolder
 
-@pytest.mark.asyncio
-async def test_create_vfolder_with_same_name_in_other_host(prepare_vfolder,
-                                                           other_host):
-    app, client, create_vfolder = prepare_vfolder
+        await create_vfolder()
+        folder_info = await create_vfolder(other_host)
 
-    await create_vfolder()
-    folder_info = await create_vfolder(other_host)
+        assert 'id' in folder_info
+        assert 'name' in folder_info
+        assert folder_info.get('host', None) == other_host
 
-    assert 'id' in folder_info
-    assert 'name' in folder_info
-    assert folder_info.get('host', None) == other_host
+    async def test_cannot_create_vfolder_in_not_existing_host(self, prepare_vfolder,
+                                                              get_headers):
+        app, client, create_vfolder = prepare_vfolder
 
+        url = '/v3/folders/'
+        req_bytes = json.dumps({
+            'name': 'test-vfolder',
+            'host': 'not-existing-host',
+        }).encode()
+        headers = get_headers('POST', url, req_bytes)
+        ret = await client.post(url, data=req_bytes, headers=headers)
 
-@pytest.mark.asyncio
-async def test_cannot_create_vfolder_in_not_existing_host(prepare_vfolder,
-                                                          get_headers):
-    app, client, create_vfolder = prepare_vfolder
+        assert ret.status == 400
 
-    url = '/v3/folders/'
-    req_bytes = json.dumps({
-        'name': 'test-vfolder',
-        'host': 'not-existing-host',
-    }).encode()
-    headers = get_headers('POST', url, req_bytes)
-    ret = await client.post(url, data=req_bytes, headers=headers)
+    async def test_cannot_create_vfolder_with_duplicated_name(self, prepare_vfolder,
+                                                              get_headers):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await create_vfolder()
 
-    assert ret.status == 400
+        url = '/v3/folders/'
+        req_bytes = json.dumps({'name': folder_info['name']}).encode()
+        headers = get_headers('POST', url, req_bytes)
+        ret = await client.post(url, data=req_bytes, headers=headers)
 
+        async with app['dbpool'].acquire() as conn:
+            query = (sa.select('*').select_from(vfolders))
+            result = await conn.execute(query)
 
-@pytest.mark.asyncio
-async def test_cannot_create_vfolder_with_duplicated_name(prepare_vfolder,
-                                                          get_headers):
-    app, client, create_vfolder = prepare_vfolder
-    folder_info = await create_vfolder()
+        assert ret.status == 400
+        assert result.rowcount == 1
 
-    url = '/v3/folders/'
-    req_bytes = json.dumps({'name': folder_info['name']}).encode()
-    headers = get_headers('POST', url, req_bytes)
-    ret = await client.post(url, data=req_bytes, headers=headers)
+    async def test_list_vfolders(self, prepare_vfolder, get_headers, other_host):
+        app, client, create_vfolder = prepare_vfolder
 
-    async with app['dbpool'].acquire() as conn:
-        query = (sa.select('*').select_from(vfolders))
-        result = await conn.execute(query)
+        # Ensure there's no test folders
+        url = '/v3/folders/'
+        req_bytes = json.dumps({}).encode()
+        headers = get_headers('GET', url, req_bytes)
+        ret = await client.get(url, data=req_bytes, headers=headers)
 
-    assert ret.status == 400
-    assert result.rowcount == 1
+        assert ret.status == 200
+        assert len(await ret.json()) == 0
 
+        # Create a vfolder
+        folder_info1 = await create_vfolder()
+        folder_info2 = await create_vfolder(other_host)
 
-@pytest.mark.asyncio
-async def test_list_vfolders(prepare_vfolder, get_headers, other_host):
-    app, client, create_vfolder = prepare_vfolder
+        headers = get_headers('GET', url, req_bytes)
+        ret = await client.get(url, data=req_bytes, headers=headers)
 
-    # Ensure there's no test folders
-    url = '/v3/folders/'
-    req_bytes = json.dumps({}).encode()
-    headers = get_headers('GET', url, req_bytes)
-    ret = await client.get(url, data=req_bytes, headers=headers)
+        assert ret.status == 200
+        rsp_json = await ret.json()
+        assert len(rsp_json) == 2
+        rsp_info_pairs = []
+        if rsp_json[0]['id'] == folder_info1['id']:
+            rsp_info_pairs.append((rsp_json[0], folder_info1))
+            rsp_info_pairs.append((rsp_json[1], folder_info2))
+        else:
+            rsp_info_pairs.append((rsp_json[0], folder_info2))
+            rsp_info_pairs.append((rsp_json[1], folder_info1))
 
-    assert ret.status == 200
-    assert len(await ret.json()) == 0
+        for rsp_json, folder_info in rsp_info_pairs:
+            assert rsp_json['id'] == folder_info['id']
+            assert rsp_json['name'] == folder_info['name']
+            assert rsp_json['is_owner']
+            assert rsp_json['permission'] == VFolderPermission.OWNER_PERM.value
+            assert rsp_json['host'] == folder_info['host']
 
-    # Create a vfolder
-    folder_info1 = await create_vfolder()
-    folder_info2 = await create_vfolder(other_host)
+    async def test_cannot_list_other_users_vfolders(self, prepare_vfolder, get_headers,
+                                                    user_keypair):
+        # Create admin's vfolder
+        app, client, create_vfolder = prepare_vfolder
+        await create_vfolder()
 
-    headers = get_headers('GET', url, req_bytes)
-    ret = await client.get(url, data=req_bytes, headers=headers)
+        # Ensure other user's vfolder is not listed.
+        url = '/v3/folders/'
+        req_bytes = json.dumps({}).encode()
+        headers = get_headers('GET', url, req_bytes, keypair=user_keypair)
+        ret = await client.get(url, data=req_bytes, headers=headers)
+        rsp_json = await ret.json()
 
-    assert ret.status == 200
-    rsp_json = await ret.json()
-    assert len(rsp_json) == 2
-    rsp_info_pairs = []
-    if rsp_json[0]['id'] == folder_info1['id']:
-        rsp_info_pairs.append((rsp_json[0], folder_info1))
-        rsp_info_pairs.append((rsp_json[1], folder_info2))
-    else:
-        rsp_info_pairs.append((rsp_json[0], folder_info2))
-        rsp_info_pairs.append((rsp_json[1], folder_info1))
+        assert ret.status == 200
+        assert len(rsp_json) == 0
 
-    for rsp_json, folder_info in rsp_info_pairs:
+    async def test_get_info(self, prepare_vfolder, get_headers, other_host):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await create_vfolder(other_host)
+
+        url = f'/v3/folders/{folder_info["name"]}'
+        req_bytes = json.dumps({}).encode()
+        headers = get_headers('GET', url, req_bytes)
+        ret = await client.get(url, data=req_bytes, headers=headers)
+        rsp_json = await ret.json()
+
+        assert ret.status == 200
         assert rsp_json['id'] == folder_info['id']
         assert rsp_json['name'] == folder_info['name']
+        assert rsp_json['host'] == folder_info['host']
+        assert rsp_json['numFiles'] == 0
         assert rsp_json['is_owner']
         assert rsp_json['permission'] == VFolderPermission.OWNER_PERM.value
-        assert rsp_json['host'] == folder_info['host']
 
+    async def test_cannot_get_info_other_users_vfolders(self, prepare_vfolder, get_headers,
+                                                        user_keypair):
+        # Create admin's vfolder.
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await create_vfolder()
 
-@pytest.mark.asyncio
-async def test_cannot_list_other_users_vfolders(prepare_vfolder, get_headers,
-                                                user_keypair):
-    # Create admin's vfolder
-    app, client, create_vfolder = prepare_vfolder
-    await create_vfolder()
+        url = f'/v3/folders/{folder_info["name"]}'
+        req_bytes = json.dumps({}).encode()
+        headers = get_headers('GET', url, req_bytes, keypair=user_keypair)
+        ret = await client.get(url, data=req_bytes, headers=headers)
 
-    # Ensure other user's vfolder is not listed.
-    url = '/v3/folders/'
-    req_bytes = json.dumps({}).encode()
-    headers = get_headers('GET', url, req_bytes, keypair=user_keypair)
-    ret = await client.get(url, data=req_bytes, headers=headers)
-    rsp_json = await ret.json()
+        assert ret.status == 404
 
-    assert ret.status == 200
-    assert len(rsp_json) == 0
+    async def test_delete_vfolder(self, prepare_vfolder, get_headers,
+                                  folder_mount, folder_host, folder_fsprefix):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await create_vfolder()
+        folder_path = (folder_mount / folder_host / folder_fsprefix / folder_info['id'])
 
+        assert folder_path.exists()
 
-@pytest.mark.asyncio
-async def test_get_info(prepare_vfolder, get_headers, other_host):
-    app, client, create_vfolder = prepare_vfolder
-    folder_info = await create_vfolder(other_host)
+        url = f'/v3/folders/{folder_info["name"]}'
+        req_bytes = json.dumps({}).encode()
+        headers = get_headers('DELETE', url, req_bytes)
+        ret = await client.delete(url, data=req_bytes, headers=headers)
 
-    url = f'/v3/folders/{folder_info["name"]}'
-    req_bytes = json.dumps({}).encode()
-    headers = get_headers('GET', url, req_bytes)
-    ret = await client.get(url, data=req_bytes, headers=headers)
+        assert ret.status == 204
+        assert not folder_path.exists()
 
-    assert ret.status == 200
-    rsp_json = await ret.json()
-    assert rsp_json['id'] == folder_info['id']
-    assert rsp_json['name'] == folder_info['name']
-    assert rsp_json['host'] == folder_info['host']
-    assert rsp_json['numFiles'] == 0
-    assert rsp_json['is_owner']
-    assert rsp_json['permission'] == VFolderPermission.OWNER_PERM.value
+    async def test_cannot_delete_others_vfolder(
+            self, prepare_vfolder, get_headers,
+            folder_mount, folder_host, folder_fsprefix,
+            user_keypair):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await create_vfolder()
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
 
+        assert folder_path.exists()
 
-@pytest.mark.asyncio
-async def test_cannot_get_info_other_users_vfolders(prepare_vfolder, get_headers,
-                                                    user_keypair):
-    # Create admin's vfolder.
-    app, client, create_vfolder = prepare_vfolder
-    folder_info = await create_vfolder()
+        url = f'/v3/folders/{folder_info["name"]}'
+        req_bytes = json.dumps({}).encode()
+        headers = get_headers('DELETE', url, req_bytes, keypair=user_keypair)
+        ret = await client.delete(url, data=req_bytes, headers=headers)
 
-    url = f'/v3/folders/{folder_info["name"]}'
-    req_bytes = json.dumps({}).encode()
-    headers = get_headers('GET', url, req_bytes, keypair=user_keypair)
-    ret = await client.get(url, data=req_bytes, headers=headers)
-
-    assert ret.status == 404
-
-
-@pytest.mark.asyncio
-async def test_delete_vfolder(prepare_vfolder, get_headers,
-                              folder_mount, folder_host, folder_fsprefix):
-    app, client, create_vfolder = prepare_vfolder
-    folder_info = await create_vfolder()
-    folder_path = (folder_mount / folder_host / folder_fsprefix / folder_info['id'])
-
-    assert folder_path.exists()
-
-    url = f'/v3/folders/{folder_info["name"]}'
-    req_bytes = json.dumps({}).encode()
-    headers = get_headers('DELETE', url, req_bytes)
-    ret = await client.delete(url, data=req_bytes, headers=headers)
-
-    assert ret.status == 204
-    assert not folder_path.exists()
-
-
-@pytest.mark.asyncio
-async def test_cannot_delete_others_vfolder(
-        prepare_vfolder, get_headers,
-        folder_mount, folder_host, folder_fsprefix,
-        user_keypair):
-    app, client, create_vfolder = prepare_vfolder
-    folder_info = await create_vfolder()
-    folder_path = (folder_mount / folder_host /
-                   folder_fsprefix / folder_info['id'])
-
-    assert folder_path.exists()
-
-    url = f'/v3/folders/{folder_info["name"]}'
-    req_bytes = json.dumps({}).encode()
-    headers = get_headers('DELETE', url, req_bytes, keypair=user_keypair)
-    ret = await client.delete(url, data=req_bytes, headers=headers)
-
-    assert ret.status == 404
+        assert ret.status == 404
 
 
 class TestFiles:
@@ -566,20 +549,20 @@ class TestInvitation:
             await conn.execute(query)
 
         url = f'/v3/folders/invitations/accept'
-        req_bytes = json.dumps({'inv_id': inv_id,
-                                'inv_ak': user_keypair['access_key']}).encode()
+        req_bytes = json.dumps({'inv_id': inv_id}).encode()
         headers = get_headers('POST', url, req_bytes, keypair=user_keypair)
         ret = await client.post(url, data=req_bytes, headers=headers)
 
         async with app['dbpool'].acquire() as conn:
-            query = (sa.select('*')
-                       .select_from(vfolder_permissions)
-                       .where(vfolder_permissions.c.access_key ==
-                              user_keypair['access_key']))
+            j = sa.join(vfolder_permissions, users,
+                        vfolder_permissions.c.user == users.c.uuid)
+            query = (sa.select([vfolder_permissions])
+                       .select_from(j)
+                       .where(users.c.email == 'user@lablup.com'))
             result = await conn.execute(query)
             perm = await result.first()
 
-            query = (sa.select('*')
+            query = (sa.select([vfolder_invitations])
                        .select_from(vfolder_invitations)
                        .where(vfolder_invitations.c.invitee == 'user@lablup.com'))
             result = await conn.execute(query)
@@ -612,37 +595,42 @@ class TestInvitation:
             await conn.execute(query)
 
             # Invitee already has vfolder with the same name as invitation.
+            query = (sa.select([keypairs.c.user])
+                       .select_from(keypairs)
+                       .where(keypairs.c.access_key == user_keypair['access_key']))
+            result = await conn.execute(query)
+            row = await result.fetchone()
             query = (vfolders.insert().values({
                 'id': uuid.uuid4().hex,
                 'name': folder_info['name'],
                 'host': 'local',
                 'last_used': None,
-                'belongs_to': user_keypair['access_key'],
+                'user': row.user,
             }))
             await conn.execute(query)
 
         url = f'/v3/folders/invitations/accept'
-        req_bytes = json.dumps({'inv_id': inv_id,
-                                'inv_ak': user_keypair['access_key']}).encode()
+        req_bytes = json.dumps({'inv_id': inv_id}).encode()
         headers = get_headers('POST', url, req_bytes, keypair=user_keypair)
         ret = await client.post(url, data=req_bytes, headers=headers)
 
         async with app['dbpool'].acquire() as conn:
-            query = (sa.select('*')
-                       .select_from(vfolder_permissions)
-                       .where(vfolder_permissions.c.access_key ==
-                              user_keypair['access_key']))
+            j = sa.join(vfolder_permissions, users,
+                        vfolder_permissions.c.user == users.c.uuid)
+            query = (sa.select([vfolder_permissions])
+                       .select_from(j)
+                       .where(users.c.email == 'user@lablup.com'))
             result = await conn.execute(query)
-            perm = await result.fetchall()
+            perm = await result.first()
 
-            query = (sa.select('*')
+            query = (sa.select([vfolder_invitations])
                        .select_from(vfolder_invitations)
                        .where(vfolder_invitations.c.invitee == 'user@lablup.com'))
             result = await conn.execute(query)
             invitations = await result.fetchall()
 
         assert ret.status == 400
-        assert len(perm) == 0
+        assert perm is None
         assert len(invitations) == 1
         assert invitations[0]['state'] == 'pending'
 
@@ -672,14 +660,15 @@ class TestInvitation:
         ret = await client.delete(url, data=req_bytes, headers=headers)
 
         async with app['dbpool'].acquire() as conn:
-            query = (sa.select('*')
-                       .select_from(vfolder_permissions)
-                       .where(vfolder_permissions.c.access_key ==
-                              user_keypair['access_key']))
+            j = sa.join(vfolder_permissions, users,
+                        vfolder_permissions.c.user == users.c.uuid)
+            query = (sa.select([vfolder_permissions])
+                       .select_from(j)
+                       .where(users.c.email == 'user@lablup.com'))
             result = await conn.execute(query)
             perms = await result.fetchall()
 
-            query = (sa.select('*')
+            query = (sa.select([vfolder_invitations])
                        .select_from(vfolder_invitations)
                        .where(vfolder_invitations.c.invitee == 'user@lablup.com'))
             result = await conn.execute(query)
@@ -703,10 +692,15 @@ class TestJoinedVfolderManipulations:
 
         # Create vfolder_permission.
         async with app['dbpool'].acquire() as conn:
+            query = (sa.select([keypairs.c.user])
+                       .select_from(keypairs)
+                       .where(keypairs.c.access_key == user_keypair['access_key']))
+            result = await conn.execute(query)
+            user_uuid = (await result.fetchone()).user
             query = (vfolder_permissions.insert().values({
                 'permission': VFolderPermission.READ_ONLY,
                 'vfolder': folder_info['id'],
-                'access_key': user_keypair['access_key']
+                'user': user_uuid,
             }))
             await conn.execute(query)
 
@@ -731,10 +725,15 @@ class TestJoinedVfolderManipulations:
 
         # Create vfolder_permission.
         async with app['dbpool'].acquire() as conn:
+            query = (sa.select([keypairs.c.user])
+                       .select_from(keypairs)
+                       .where(keypairs.c.access_key == user_keypair['access_key']))
+            result = await conn.execute(query)
+            user_uuid = (await result.fetchone()).user
             query = (vfolder_permissions.insert().values({
                 'permission': VFolderPermission.READ_ONLY,
                 'vfolder': folder_info['id'],
-                'access_key': user_keypair['access_key']
+                'user': user_uuid,
             }))
             await conn.execute(query)
 
@@ -756,10 +755,15 @@ class TestJoinedVfolderManipulations:
         app, client, create_vfolder = prepare_vfolder
         folder_info = await create_vfolder()
         async with app['dbpool'].acquire() as conn:
+            query = (sa.select([keypairs.c.user])
+                       .select_from(keypairs)
+                       .where(keypairs.c.access_key == user_keypair['access_key']))
+            result = await conn.execute(query)
+            user_uuid = (await result.fetchone()).user
             query = (vfolder_permissions.insert().values({
                 'permission': VFolderPermission.READ_ONLY,
                 'vfolder': folder_info['id'],
-                'access_key': user_keypair['access_key']
+                'user': user_uuid,
             }))
             await conn.execute(query)
 
@@ -783,10 +787,15 @@ class TestJoinedVfolderManipulations:
         app, client, create_vfolder = prepare_vfolder
         folder_info = await create_vfolder()
         async with app['dbpool'].acquire() as conn:
+            query = (sa.select([keypairs.c.user])
+                       .select_from(keypairs)
+                       .where(keypairs.c.access_key == user_keypair['access_key']))
+            result = await conn.execute(query)
+            user_uuid = (await result.fetchone()).user
             query = (vfolder_permissions.insert().values({
                 'permission': VFolderPermission.READ_WRITE,
                 'vfolder': folder_info['id'],
-                'access_key': user_keypair['access_key']
+                'user': user_uuid,
             }))
             await conn.execute(query)
 
@@ -819,10 +828,15 @@ class TestJoinedVfolderManipulations:
         app, client, create_vfolder = prepare_vfolder
         folder_info = await create_vfolder()
         async with app['dbpool'].acquire() as conn:
+            query = (sa.select([keypairs.c.user])
+                       .select_from(keypairs)
+                       .where(keypairs.c.access_key == user_keypair['access_key']))
+            result = await conn.execute(query)
+            user_uuid = (await result.fetchone()).user
             query = (vfolder_permissions.insert().values({
                 'permission': VFolderPermission.READ_ONLY,
                 'vfolder': folder_info['id'],
-                'access_key': user_keypair['access_key']
+                'user': user_uuid,
             }))
             await conn.execute(query)
 
@@ -857,10 +871,15 @@ class TestJoinedVfolderManipulations:
         with open(folder_path / 'hello.txt', 'w') as f:
             f.write('hello vfolder!')
         async with app['dbpool'].acquire() as conn:
+            query = (sa.select([keypairs.c.user])
+                       .select_from(keypairs)
+                       .where(keypairs.c.access_key == user_keypair['access_key']))
+            result = await conn.execute(query)
+            user_uuid = (await result.fetchone()).user
             query = (vfolder_permissions.insert().values({
                 'permission': VFolderPermission.READ_ONLY,
                 'vfolder': folder_info['id'],
-                'access_key': user_keypair['access_key']
+                'user': user_uuid,
             }))
             await conn.execute(query)
 
@@ -895,10 +914,15 @@ class TestJoinedVfolderManipulations:
         with open(folder_path / 'hello.txt', 'w') as f:
             f.write('hello vfolder!')
         async with app['dbpool'].acquire() as conn:
+            query = (sa.select([keypairs.c.user])
+                       .select_from(keypairs)
+                       .where(keypairs.c.access_key == user_keypair['access_key']))
+            result = await conn.execute(query)
+            user_uuid = (await result.fetchone()).user
             query = (vfolder_permissions.insert().values({
                 'permission': VFolderPermission.READ_ONLY,
                 'vfolder': folder_info['id'],
-                'access_key': user_keypair['access_key']
+                'user': user_uuid,
             }))
             await conn.execute(query)
 
@@ -922,10 +946,15 @@ class TestJoinedVfolderManipulations:
         with open(folder_path / 'hello.txt', 'w') as f:
             f.write('hello vfolder!')
         async with app['dbpool'].acquire() as conn:
+            query = (sa.select([keypairs.c.user])
+                       .select_from(keypairs)
+                       .where(keypairs.c.access_key == user_keypair['access_key']))
+            result = await conn.execute(query)
+            user_uuid = (await result.fetchone()).user
             query = (vfolder_permissions.insert().values({
                 'permission': VFolderPermission.RW_DELETE,
                 'vfolder': folder_info['id'],
-                'access_key': user_keypair['access_key']
+                'user': user_uuid,
             }))
             await conn.execute(query)
 
@@ -952,10 +981,15 @@ class TestJoinedVfolderManipulations:
         with open(folder_path / 'hello.txt', 'w') as f:
             f.write('hello vfolder!')
         async with app['dbpool'].acquire() as conn:
+            query = (sa.select([keypairs.c.user])
+                       .select_from(keypairs)
+                       .where(keypairs.c.access_key == user_keypair['access_key']))
+            result = await conn.execute(query)
+            user_uuid = (await result.fetchone()).user
             query = (vfolder_permissions.insert().values({
                 'permission': VFolderPermission.READ_ONLY,
                 'vfolder': folder_info['id'],
-                'access_key': user_keypair['access_key']
+                'user': user_uuid,
             }))
             await conn.execute(query)
 

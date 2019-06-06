@@ -98,7 +98,7 @@ vfolder_permissions = sa.Table(
 )
 
 
-async def query_accessible_vfolders(conn, access_key, *,
+async def query_accessible_vfolders(conn, user_uuid, *,
                                     extra_vf_conds=None,
                                     extra_vfperm_conds=None):
     entries = []
@@ -113,7 +113,7 @@ async def query_accessible_vfolders(conn, access_key, *,
                    vfolders.c.max_size,
                ])
                .select_from(vfolders)
-               .where(vfolders.c.belongs_to == access_key))
+               .where(vfolders.c.user == user_uuid))
     if extra_vf_conds is not None:
         query = query.where(extra_vf_conds)
     result = await conn.execute(query)
@@ -143,7 +143,7 @@ async def query_accessible_vfolders(conn, access_key, *,
                    vfolder_permissions.c.permission,
                ])
                .select_from(j)
-               .where(vfolder_permissions.c.access_key == access_key))
+               .where(vfolder_permissions.c.user == user_uuid))
     if extra_vf_conds is not None:
         query = query.where(extra_vf_conds)
     if extra_vfperm_conds is not None:
@@ -201,17 +201,17 @@ class VirtualFolder(graphene.ObjectType):
         return 0
 
     @staticmethod
-    async def batch_load(context, access_keys):
+    async def batch_load(context, user_uuids):
         async with context['dbpool'].acquire() as conn:
             # TODO: num_attached count group-by
             query = (sa.select([vfolders])
                        .select_from(vfolders)
-                       .where(vfolders.c.belongs_to.in_(access_keys))
+                       .where(vfolders.c.user.in_(user_uuids))
                        .order_by(sa.desc(vfolders.c.created_at)))
             objs_per_key = OrderedDict()
-            for k in access_keys:
-                objs_per_key[k] = list()
+            for u in user_uuids:
+                objs_per_key[u] = list()
             async for row in conn.execute(query):
                 o = VirtualFolder.from_row(row)
-                objs_per_key[row.belongs_to].append(o)
+                objs_per_key[row.user].append(o)
         return tuple(objs_per_key.values())
