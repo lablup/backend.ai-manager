@@ -230,7 +230,7 @@ class SessionCommons:
             'occupied_slots': row['occupied_slots'].to_json(),
             'occupied_shares': row['occupied_shares'],
             'num_queries': row['num_queries'],
-            'live_stat': cls._resolve_live_stat(context['redis_stat'], row['id']),
+            # live_stat is resolved by Graphene
             'last_stat': row['last_stat'],
             'group_name': row['name'],  # group.name (group is omitted since use_labels=True is not used)
             # Legacy fields

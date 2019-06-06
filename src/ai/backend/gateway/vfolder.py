@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+from typing import Any, Callable, Mapping
 import uuid
 
 import aiohttp
@@ -15,6 +16,7 @@ from aiojobs.aiohttp import atomic
 import aiotools
 import sqlalchemy as sa
 import psycopg2
+import trafaret as t
 
 from ai.backend.common.logging import BraceStyleAdapter
 
@@ -25,6 +27,7 @@ from .exceptions import (
 from .manager import (
     READ_ALLOWED, ALL_ALLOWED,
     server_status_required)
+from .utils import check_api_params
 from ..manager.models import (
     keypairs, vfolders, vfolder_invitations, vfolder_permissions,
     VFolderPermission, query_accessible_vfolders)
@@ -32,6 +35,8 @@ from ..manager.models import (
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
 
 _rx_slug = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$')
+
+VFolderRow = Mapping[str, Any]
 
 
 def vfolder_permission_required(perm: VFolderPermission):
@@ -44,10 +49,10 @@ def vfolder_permission_required(perm: VFolderPermission):
     which contains a dict object describing the matched VirtualFolder table row.
     '''
 
-    def _wrapper(handler):
+    def _wrapper(handler: Callable[[web.Request, VFolderRow], web.Response]):
 
         @functools.wraps(handler)
-        async def _wrapped(request):
+        async def _wrapped(request: web.Request) -> web.Response:
             dbpool = request.app['dbpool']
             access_key = request['keypair']['access_key']
             folder_name = request.match_info['name']
@@ -87,7 +92,7 @@ def vfolder_permission_required(perm: VFolderPermission):
     return _wrapper
 
 
-def vfolder_check_exists(handler):
+def vfolder_check_exists(handler: Callable[[web.Request, VFolderRow], web.Response]):
     '''
     Checks if the target vfolder exists and is owned
     by the current access key.
@@ -97,7 +102,7 @@ def vfolder_check_exists(handler):
     '''
 
     @functools.wraps(handler)
-    async def _wrapped(request):
+    async def _wrapped(request: web.Request) -> web.Response:
         dbpool = request.app['dbpool']
         access_key = request['keypair']['access_key']
         folder_name = request.match_info['name']
@@ -125,7 +130,7 @@ def vfolder_check_exists(handler):
 
 @server_status_required(ALL_ALLOWED)
 @auth_required
-async def create(request):
+async def create(request: web.Request) -> web.Response:
     resp = {}
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
@@ -195,7 +200,7 @@ async def create(request):
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def list_folders(request):
+async def list_folders(request: web.Request) -> web.Response:
     resp = []
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
@@ -213,10 +218,10 @@ async def list_folders(request):
     return web.json_response(resp, status=200)
 
 
+@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
-async def list_hosts(request):
+async def list_hosts(request: web.Request) -> web.Response:
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.LIST_HOSTS (u:{0})', access_key)
     config = request.app['config_server']
@@ -240,7 +245,7 @@ async def list_hosts(request):
 @server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
-async def get_info(request, row):
+async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
     resp = {}
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
@@ -268,11 +273,11 @@ async def get_info(request, row):
     return web.json_response(resp, status=200)
 
 
+@atomic
 @server_status_required(ALL_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.OWNER_PERM)
-@atomic
-async def rename(request, row):
+async def rename(request: web.Request, row: VFolderRow) -> web.Response:
     dbpool = request.app['dbpool']
     old_name = request.match_info['name']
     access_key = request['keypair']['access_key']
@@ -306,7 +311,7 @@ async def rename(request, row):
 @server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_WRITE)
-async def mkdir(request, row):
+async def mkdir(request: web.Request, row: VFolderRow) -> web.Response:
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     params = await request.json()
@@ -328,7 +333,7 @@ async def mkdir(request, row):
 @server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_WRITE)
-async def upload(request, row):
+async def upload(request: web.Request, row: VFolderRow) -> web.Response:
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.UPLOAD (u:{0}, f:{1})', access_key, folder_name)
@@ -362,7 +367,7 @@ async def upload(request, row):
 @server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.RW_DELETE)
-async def delete_files(request, row):
+async def delete_files(request: web.Request, row: VFolderRow) -> web.Response:
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     params = await request.json()
@@ -393,7 +398,7 @@ async def delete_files(request, row):
 @server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
-async def download(request, row):
+async def download(request: web.Request, row: VFolderRow) -> web.Response:
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     params = await request.json()
@@ -423,7 +428,7 @@ async def download(request, row):
 @server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
-async def download_single(request, row):
+async def download_single(request: web.Request, row: VFolderRow) -> web.Response:
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     if request.can_read_body:
@@ -447,7 +452,7 @@ async def download_single(request, row):
 @server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
-async def list_files(request, row):
+async def list_files(request: web.Request, row: VFolderRow) -> web.Response:
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     if request.can_read_body:
@@ -482,10 +487,10 @@ async def list_files(request, row):
     return web.json_response(resp, status=200)
 
 
+@atomic
 @server_status_required(ALL_ALLOWED)
 @auth_required
-@atomic
-async def invite(request):
+async def invite(request: web.Request) -> web.Response:
     dbpool = request.app['dbpool']
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
@@ -558,10 +563,10 @@ async def invite(request):
     return web.json_response(resp, status=201)
 
 
+@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
-async def invitations(request):
+async def invitations(request: web.Request) -> web.Response:
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.INVITATION (u:{0})', access_key)
@@ -589,13 +594,17 @@ async def invitations(request):
     return web.json_response(resp, status=200)
 
 
+@atomic
 @server_status_required(ALL_ALLOWED)
 @auth_required
-@atomic
-async def accept_invitation(request):
+@check_api_params(
+    t.Dict({
+        t.Key('inv_id'): t.String,
+        t.Key('inv_ak'): t.String,
+    }))
+async def accept_invitation(request: web.Request, params: Any) -> web.Response:
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
-    params = await request.json()
     inv_id = params['inv_id']
     inv_ak = params['inv_ak']
     log.info('VFOLDER.ACCEPT_INVITATION (u:{0})', access_key)
@@ -666,13 +675,16 @@ async def accept_invitation(request):
     return web.json_response({'msg': msg}, status=201)
 
 
+@atomic
 @server_status_required(ALL_ALLOWED)
 @auth_required
-@atomic
-async def delete_invitation(request):
+@check_api_params(
+    t.Dict({
+        t.Key('inv_id'): t.String,
+    }))
+async def delete_invitation(request: web.Request, params: Any) -> web.Response:
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
-    params = await request.json()
     inv_id = params['inv_id']
     log.info('VFOLDER.DELETE_INVITATION (u:{0})', access_key)
     async with dbpool.acquire() as conn:
@@ -698,7 +710,7 @@ async def delete_invitation(request):
 
 @server_status_required(ALL_ALLOWED)
 @auth_required
-async def delete(request):
+async def delete(request: web.Request) -> web.Response:
     dbpool = request.app['dbpool']
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']

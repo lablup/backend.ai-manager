@@ -1,8 +1,7 @@
 import asyncio
 import inspect
-import json
 import logging
-from typing import Mapping
+from typing import Any
 
 from aiohttp import web
 import aiohttp_cors
@@ -10,15 +9,17 @@ from aiojobs.aiohttp import atomic
 import graphene
 from graphql.execution.executors.asyncio import AsyncioExecutor
 from graphql.error import GraphQLError, format_error
+import trafaret as t
 
 from ai.backend.common.logging import BraceStyleAdapter
 
 from .manager import GQLMutationUnfrozenRequiredMiddleware
 from .exceptions import (
-    InvalidAPIParameters, GenericForbidden,
+    GenericForbidden,
     GraphQLError as BackendGQLError
 )
 from .auth import auth_required
+from .utils import check_api_params
 from ..manager.models.base import DataLoaderManager
 from ..manager.models import (
     Agent, AgentList, Image, RescanImages, AliasImage, DealiasImage,
@@ -37,32 +38,19 @@ from ..manager.models import (
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
 
 
-@auth_required
 @atomic
-async def handle_gql(request: web.Request) -> web.Response:
+@auth_required
+@check_api_params(
+    t.Dict({
+        t.Key('query'): t.String,
+        t.Key('variables', default=None): t.Or(t.Mapping(t.String, t.Any), t.Null),
+    }))
+async def handle_gql(request: web.Request, params: Any) -> web.Response:
     executor = request.app['admin.gql_executor']
     if request['is_admin']:
         schema = request.app['admin.gql_schema_admin']
     else:
         schema = request.app['admin.gql_schema_user']
-    try:
-        body = await request.json(loads=json.loads)
-    except (asyncio.TimeoutError, json.decoder.JSONDecodeError):
-        raise InvalidAPIParameters('Malformed request body.')
-    try:
-        assert 'query' in body, \
-               'The request must have "query" JSON field.'
-        assert isinstance(body['query'], str), \
-               'The "query" field must be a JSON string.'
-        if 'variables' in body:
-            assert (body['variables'] is None or
-                    isinstance(body['variables'], Mapping)), \
-                   'The "variables" field must be an JSON object or null.'
-        else:
-            body['variables'] = None
-    except AssertionError as e:
-        raise InvalidAPIParameters(e.args[0])
-
     manager_status = await request.app['config_server'].get_manager_status()
     known_slot_types = await request.app['config_server'].get_resource_slots()
     context = {
@@ -77,8 +65,8 @@ async def handle_gql(request: web.Request) -> web.Response:
     }
     dlmanager = DataLoaderManager(context)
     result = schema.execute(
-        body['query'], executor,
-        variable_values=body['variables'],
+        params['query'], executor,
+        variable_values=params['variables'],
         context_value={
             'dlmgr': dlmanager,
             **context,
@@ -593,7 +581,7 @@ class QueryForUser(graphene.ObjectType):
         return await loader.load(sess_id)
 
 
-async def init(app):
+async def init(app: web.Application):
     loop = asyncio.get_event_loop()
     app['admin.gql_executor'] = AsyncioExecutor(loop=loop)
     app['admin.gql_schema_admin'] = graphene.Schema(
@@ -606,7 +594,7 @@ async def init(app):
         auto_camelcase=False)
 
 
-async def shutdown(app):
+async def shutdown(app: web.Application):
     pass
 
 

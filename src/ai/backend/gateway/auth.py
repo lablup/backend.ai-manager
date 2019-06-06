@@ -1,10 +1,9 @@
-import base64
 from datetime import datetime, timedelta
 import functools
 import hashlib, hmac
-import json
 import logging
 import secrets
+from typing import Any
 
 from aiohttp import web
 import aiohttp_cors
@@ -25,7 +24,7 @@ from ..manager.models import (
 )
 from ..manager.models.user import check_credential
 from ..manager.models.keypair import generate_keypair
-from .utils import TZINFOS, set_handler_attr, get_handler_attr
+from .utils import TZINFOS, check_api_params, set_handler_attr, get_handler_attr
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.auth'))
 
@@ -207,22 +206,17 @@ def admin_required(handler):
             return (await handler(request))
         raise AuthorizationFailed
 
-    set_handler_attr(wrapped, 'admin_required', True)
+    set_handler_attr(wrapped, 'auth_required', True)
     return wrapped
 
 
-@auth_required
 @atomic
-async def test(request: web.Request) -> web.Response:
-    try:
-        params = json.loads(await request.text())
-        params = t.Dict({
-            t.Key('echo'): t.String,
-        }).check(params)
-    except json.decoder.JSONDecodeError:
-        raise InvalidAPIParameters('Malformed body')
-    except t.DataError as e:
-        raise InvalidAPIParameters(f'Input validation error: {e}')
+@auth_required
+@check_api_params(
+    t.Dict({
+        t.Key('echo'): t.String,
+    }))
+async def test(request: web.Request, params: Any) -> web.Response:
     resp_data = {'authorized': 'yes'}
     if 'echo' in params:
         resp_data['echo'] = params['echo']
@@ -230,19 +224,15 @@ async def test(request: web.Request) -> web.Response:
 
 
 @atomic
+@check_api_params(
+    t.Dict({
+        t.Key('type'): t.Enum('keypair', 'jwt'),
+        t.Key('domain'): t.String,
+        t.Key('username'): t.String,
+        t.Key('password'): t.String,
+    }))
 async def authorize(request: web.Request) -> web.Response:
-    try:
-        params = await request.json()
-        params = t.Dict({
-            t.Key('type'): t.Enum('keypair', 'jwt'),
-            t.Key('domain'): t.String,
-            t.Key('username'): t.String,
-            t.Key('password'): t.String,
-        }).check(params)
-    except json.decoder.JSONDecodeError:
-        raise InvalidAPIParameters('Malformed body')
-    except t.DataError as e:
-        raise InvalidAPIParameters(f'Input validation error: {e}')
+    params = await request.json()
     if params['type'] != 'keypair':
         # other types are not implemented yet.
         raise InvalidAPIParameters('Unsupported authorization type')

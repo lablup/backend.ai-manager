@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import secrets
+from typing import Any
 
 import aiohttp
 from aiohttp import web
@@ -19,6 +20,7 @@ import aiotools
 from dateutil.tz import tzutc
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import true, null
+import trafaret as t
 
 from ai.backend.common.exception import UnknownImageReference
 from ai.backend.common.logging import BraceStyleAdapter
@@ -28,10 +30,13 @@ from .exceptions import (
     KernelNotFound, VFolderNotFound,
     BackendError, InternalServerError)
 from .auth import auth_required
-from .utils import catch_unexpected, get_access_key_scopes
+from .utils import (
+    AliasedKey,
+    catch_unexpected, check_api_params, get_access_key_scopes,
+)
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (
-    domains, users,
+    domains,
     association_groups_users as agus, groups,
     keypairs, kernels, vfolders,
     AgentStatus, KernelStatus,
@@ -42,41 +47,31 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.kernel'))
 
 grace_events = []
 
-_rx_sess_token = re.compile(r'\w[\w.-]*\w', re.ASCII)
-
 _json_loads = functools.partial(json.loads, parse_float=Decimal)
 
 
 @server_status_required(ALL_ALLOWED)
 @auth_required
-async def create(request) -> web.Response:
-    try:
-        params = await request.json(loads=_json_loads)
-        image = params.get('image')
-        if image is None:
-            image = params.get('lang')
-        assert image is not None, \
-               'lang or image is missing or empty!'
-        assert params.get('clientSessionToken'), \
-               'clientSessionToken is missing or empty!'
-        sess_id = params['clientSessionToken']
-        assert 4 <= len(sess_id) <= 64, \
-               'clientSessionToken is too short or long (4 to 64 bytes required)!'
-        assert _rx_sess_token.fullmatch(sess_id), \
-               'clientSessionToken contains invalid characters.'
-        requester_access_key, owner_access_key = get_access_key_scopes(request)
-        user_uuid = request['user']['uuid']
-        domain_name = params.get('domain_name', request['user']['domain_name'])
-        group_name = params.get('group_name', None)
-        assert group_name is not None, 'group_name is required'
-        log.info('GET_OR_CREATE (u:{0}/{1}, image:{2}, tag:{3}, token:{4})',
-                 requester_access_key, owner_access_key, image,
-                 params.get('tag', None), sess_id)
-    except (json.decoder.JSONDecodeError, AssertionError) as e:
-        log.warning('GET_OR_CREATE: invalid/missing parameters, {0!r}', e)
-        raise InvalidAPIParameters(extra_msg=str(e.args[0]))
+@check_api_params(
+    t.Dict({
+        t.Key('clientSessionToken') >> 'sess_id': t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
+        AliasedKey(['image', 'lang']): t.String,
+        AliasedKey(['group', 'groupName', 'group_name']): t.String,
+        AliasedKey(['domain', 'domainName', 'domain_name'], default=None): t.String,
+        t.Key('config', default=dict): t.Mapping(t.String, t.Any),
+        t.Key('tag', default=None): t.Or(t.String, t.Null),
+    }),
+    loads=_json_loads)
+async def create(request: web.Request, params: Any) -> web.Response:
+    if params['domain'] is None:
+        params['domain'] = request['user']['domain_name']
+    requester_access_key, owner_access_key = get_access_key_scopes(request)
+    log.info('GET_OR_CREATE (u:{0}/{1}, image:{2}, tag:{3}, token:{4})',
+             requester_access_key, owner_access_key,
+             params['image'], params['tag'], params['sess_id'])
     resp = {}
     try:
+        user_uuid = request['user']['uuid']
         resource_policy = request['keypair']['resource_policy']
         async with request.app['dbpool'].acquire() as conn, conn.begin():
             query = (sa.select([keypairs.c.concurrency_used], for_update=True)
@@ -96,12 +91,12 @@ async def create(request) -> web.Response:
             if request['is_superadmin']:  # superadmin can spawn container in any domain and group
                 query = (sa.select([groups.c.domain_name, groups.c.id])
                            .select_from(groups)
-                           .where(domains.c.name == domain_name)
-                           .where(groups.c.name == group_name))
+                           .where(domains.c.name == params['domain'])
+                           .where(groups.c.name == params['group']))
                 rows = await conn.execute(query)
                 row = await rows.fetchone()
                 if row is None:
-                    raise BackendError('no such group in domain ' + domain_name)
+                    raise BackendError(f"no such group in domain {params['domain']}")
                 domain_name = row.domain_name  # replace domain_name
                 group_id = row.id
             else:  # check if the group_name is associated with one of user's group.
@@ -110,7 +105,7 @@ async def create(request) -> web.Response:
                            .select_from(j)
                            .where(agus.c.user_id == user_uuid)
                            .where(groups.c.domain_name == domain_name)
-                           .where(groups.c.name == group_name))
+                           .where(groups.c.name == params['group']))
                 rows = await conn.execute(query)
                 row = await rows.fetchone()
                 if row is None:
@@ -162,10 +157,10 @@ async def create(request) -> web.Response:
                 creation_config['mounts'] = mount_details
 
             kernel, created = await request.app['registry'].get_or_create_session(
-                sess_id, owner_access_key,
-                image, creation_config,
+                params['sess_id'], owner_access_key,
+                params['image'], creation_config,
                 resource_policy,
-                domain_name=domain_name, group_id=group_id, user_uuid=user_uuid,
+                domain_name=params['domain'], group_id=group_id, user_uuid=user_uuid,
                 tag=params.get('tag', None))
             resp['kernelId'] = str(kernel['sess_id'])
             resp['servicePorts'] = kernel['service_ports']
@@ -185,7 +180,7 @@ async def create(request) -> web.Response:
         log.exception('GET_OR_CREATE: exception')
         raise
     except UnknownImageReference:
-        raise InvalidAPIParameters(f'Unknown image reference: {image}')
+        raise InvalidAPIParameters(f"Unknown image reference: {params['image']}")
     except Exception:
         request.app['error_monitor'].capture_exception()
         log.exception('GET_OR_CREATE: unexpected error!')
@@ -307,7 +302,7 @@ async def stats_monitor_update_timer(app):
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def destroy(request) -> web.Response:
+async def destroy(request: web.Request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     requester_access_key, owner_access_key = get_access_key_scopes(request)
@@ -325,10 +320,10 @@ async def destroy(request) -> web.Response:
         return web.json_response(resp, status=200)
 
 
+@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
-async def get_info(request) -> web.Response:
+async def get_info(request: web.Request) -> web.Response:
     # NOTE: This API should be replaced with GraphQL version.
     resp = {}
     registry = request.app['registry']
@@ -363,10 +358,10 @@ async def get_info(request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
-async def restart(request) -> web.Response:
+async def restart(request: web.Request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     requester_access_key, owner_access_key = get_access_key_scopes(request)
@@ -387,7 +382,7 @@ async def restart(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def execute(request) -> web.Response:
+async def execute(request: web.Request) -> web.Response:
     resp = {}
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
@@ -467,10 +462,10 @@ async def execute(request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
-async def interrupt(request) -> web.Response:
+async def interrupt(request: web.Request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     requester_access_key, owner_access_key = get_access_key_scopes(request)
@@ -485,10 +480,10 @@ async def interrupt(request) -> web.Response:
     return web.Response(status=204)
 
 
+@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
-async def complete(request) -> web.Response:
+async def complete(request: web.Request) -> web.Response:
     resp = {
         'result': {
             'status': 'finished',
@@ -520,7 +515,7 @@ async def complete(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def upload_files(request) -> web.Response:
+async def upload_files(request: web.Request) -> web.Response:
     loop = asyncio.get_event_loop()
     reader = await request.multipart()
     registry = request.app['registry']
@@ -563,7 +558,7 @@ async def upload_files(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def download_files(request) -> web.Response:
+async def download_files(request: web.Request) -> web.Response:
     try:
         registry = request.app['registry']
         sess_id = request.match_info['sess_id']
@@ -601,10 +596,10 @@ async def download_files(request) -> web.Response:
         return web.Response(body=mpwriter, status=200)
 
 
+@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
-async def list_files(request) -> web.Response:
+async def list_files(request: web.Request) -> web.Response:
     try:
         sess_id = request.match_info['sess_id']
         requester_access_key, owner_access_key = get_access_key_scopes(request)
@@ -635,10 +630,10 @@ async def list_files(request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
-async def get_logs(request) -> web.Response:
+async def get_logs(request: web.Request) -> web.Response:
     resp = {'result': {'logs': ''}}
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
@@ -655,7 +650,7 @@ async def get_logs(request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-async def init(app):
+async def init(app: web.Application):
     event_dispatcher = app['event_dispatcher']
     event_dispatcher.add_handler('kernel_terminated', app, kernel_terminated)
     event_dispatcher.add_handler('instance_started', app, instance_started)
@@ -670,7 +665,7 @@ async def init(app):
             functools.partial(check_agent_lost, app), 1.0)
 
 
-async def shutdown(app):
+async def shutdown(app: web.Application):
     if app['pidx'] == 0:
         app['agent_lost_checker'].cancel()
         await app['agent_lost_checker']
