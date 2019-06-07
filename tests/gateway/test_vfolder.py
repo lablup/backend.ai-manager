@@ -8,9 +8,13 @@ import pytest
 import sqlalchemy as sa
 
 from ai.backend.manager.models import (
-    keypairs, users,
+    groups, keypairs, keypair_resource_policies, users,
     vfolders, vfolder_invitations, vfolder_permissions,
     VFolderPermission,
+)
+from tests.model_factory import (
+    get_random_string,
+    AssociationGroupsUsersFactory, GroupFactory, UserFactory, VFolderFactory,
 )
 
 
@@ -31,16 +35,21 @@ async def prepare_vfolder(event_loop, request, create_app_and_client, get_header
 
     request.addfinalizer(_remove_folder_mount)
 
-    async def create_vfolder(host=None):
-        nonlocal folder_id
+    async def create_vfolder(name=None, host=None, group=None):
+        nonlocal folder_name, folder_id
+        folder_name = name if name is not None else folder_name
 
         url = '/v3/folders/'
-        req_bytes = json.dumps({'name': folder_name, 'host': host}).encode()
+        req_bytes = json.dumps({
+            'name': folder_name,
+            'host': host,
+            'group': group,
+        }).encode()
         headers = get_headers('POST', url, req_bytes)
         ret = await client.post(url, data=req_bytes, headers=headers)
+        rsp_json = await ret.json()
 
         assert ret.status == 201
-        rsp_json = await ret.json()
         folder_id = rsp_json['id']
         assert rsp_json['name'] == folder_name
 
@@ -54,7 +63,6 @@ async def other_host(folder_mount, folder_fsprefix):
     other_host = 'other-host'
     other_host_path = folder_mount / other_host / folder_fsprefix
     other_host_path.mkdir(parents=True, exist_ok=True)
-
     return other_host
 
 
@@ -69,27 +77,19 @@ class TestVFolder:
         assert 'name' in folder_info
         assert folder_info.get('host', None) == folder_host
 
-    async def test_create_vfolder_in_user_specified_host(
-            self, prepare_vfolder, folder_mount, folder_fsprefix):
+    async def test_create_vfolder_in_other_host(
+            self, prepare_vfolder, folder_mount, other_host):
         app, client, create_vfolder = prepare_vfolder
-
-        # prepare for user-specified mount folder.
-        user_specified_host = 'user-specified-host'
-        base_path = folder_mount / user_specified_host / folder_fsprefix
-        base_path.mkdir(parents=True, exist_ok=True)
-
-        folder_info = await create_vfolder(user_specified_host)
-
+        folder_info = await create_vfolder(host=other_host)
         assert 'id' in folder_info
         assert 'name' in folder_info
-        assert folder_info.get('host', None) == user_specified_host
+        assert folder_info.get('host', None) == other_host
 
-    async def test_create_vfolder_with_same_name_in_other_host(self, prepare_vfolder,
-                                                               other_host):
+    async def test_create_vfolder_with_same_name_in_other_host(
+            self, prepare_vfolder, other_host):
         app, client, create_vfolder = prepare_vfolder
-
         await create_vfolder()
-        folder_info = await create_vfolder(other_host)
+        folder_info = await create_vfolder(host=other_host)
 
         assert 'id' in folder_info
         assert 'name' in folder_info
@@ -144,9 +144,9 @@ class TestVFolder:
 
         headers = get_headers('GET', url, req_bytes)
         ret = await client.get(url, data=req_bytes, headers=headers)
+        rsp_json = await ret.json()
 
         assert ret.status == 200
-        rsp_json = await ret.json()
         assert len(rsp_json) == 2
         rsp_info_pairs = []
         if rsp_json[0]['id'] == folder_info1['id']:
@@ -210,6 +210,44 @@ class TestVFolder:
 
         assert ret.status == 404
 
+    async def test_rename_vfolder(self, prepare_vfolder, get_headers):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await create_vfolder()
+
+        url = f'/v3/folders/{folder_info["name"]}/rename'
+        req_bytes = json.dumps({'new_name': 'renamed-test-default-vf'}).encode()
+        headers = get_headers('POST', url, req_bytes)
+        ret = await client.post(url, data=req_bytes, headers=headers)
+
+        assert ret.status == 201
+        async with app['dbpool'].acquire() as conn:
+            query = (sa.select([vfolders])
+                       .select_from(vfolders)
+                       .where(vfolders.c.id == folder_info['id']))
+            result = await conn.execute(query)
+            vfolder = await result.first()
+        assert vfolder.name == 'renamed-test-default-vf'
+
+    async def test_cannot_rename_other_users_vfolder(self, prepare_vfolder, get_headers,
+                                                     user_keypair):
+        # Create admin's vfolder.
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await create_vfolder()
+
+        url = f'/v3/folders/{folder_info["name"]}/rename'
+        req_bytes = json.dumps({'new_name': 'renamed-test-default-vf'}).encode()
+        headers = get_headers('POST', url, req_bytes, keypair=user_keypair)
+        ret = await client.post(url, data=req_bytes, headers=headers)
+
+        assert ret.status != 201
+        async with app['dbpool'].acquire() as conn:
+            query = (sa.select([vfolders])
+                       .select_from(vfolders)
+                       .where(vfolders.c.id == folder_info['id']))
+            result = await conn.execute(query)
+            vfolder = await result.first()
+        assert vfolder.name != 'renamed-test-default-vf'
+
     async def test_delete_vfolder(self, prepare_vfolder, get_headers,
                                   folder_mount, folder_host, folder_fsprefix):
         app, client, create_vfolder = prepare_vfolder
@@ -243,6 +281,282 @@ class TestVFolder:
         ret = await client.delete(url, data=req_bytes, headers=headers)
 
         assert ret.status == 404
+
+
+@pytest.mark.asyncio
+class TestGroupVFolder:
+
+    async def create_group_vfolder(self, app, create_vfolder, name=None, host=None):
+        # Create a group vfolder with group_id of the default group.
+        async with app['dbpool'].acquire() as conn:
+            query = (sa.select([groups.c.id])
+                       .select_from(groups)
+                       .where(groups.c.domain_name == 'default')
+                       .where(groups.c.name == 'default'))
+            group_id = str(await conn.scalar(query))
+        folder_info = await create_vfolder(group=group_id, name=name, host=host)
+        return folder_info
+
+    async def test_admin_create_gvfolder_in_default_host(self, prepare_vfolder):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder)
+
+        async with app['dbpool'].acquire() as conn:
+            query = (sa.select([vfolders])
+                       .select_from(vfolders)
+                       .where(vfolders.c.id == folder_info['id']))
+            result = await conn.execute(query)
+            vfolder = await result.first()
+        assert vfolder.user is None
+        assert vfolder.group is not None
+
+    async def test_cannot_create_gvfolder_in_not_existing_host(self, prepare_vfolder,
+                                                               get_headers):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder)
+
+        url = '/v3/folders/'
+        req_bytes = json.dumps({
+            'name': folder_info['name'],
+            'host': 'not-existing-host',
+            'group': folder_info['group'],
+        }).encode()
+        headers = get_headers('POST', url, req_bytes)
+        ret = await client.post(url, data=req_bytes, headers=headers)
+
+        assert ret.status == 400
+
+    async def test_cannot_create_gvfolder_with_duplicated_name(self, prepare_vfolder,
+                                                               get_headers):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder)
+
+        url = '/v3/folders/'
+        req_bytes = json.dumps({
+            'name': folder_info['name'],
+            'group': folder_info['group'],
+        }).encode()
+        headers = get_headers('POST', url, req_bytes)
+        ret = await client.post(url, data=req_bytes, headers=headers)
+
+        async with app['dbpool'].acquire() as conn:
+            query = (sa.select([groups.c.id])
+                       .select_from(groups)
+                       .where(groups.c.domain_name == 'default')
+                       .where(groups.c.name == 'default'))
+            result = await conn.execute(query)
+            rows = await result.fetchall()
+        assert ret.status == 400
+        assert len(rows) == 1
+
+    async def test_list_gvfolders(self, prepare_vfolder, get_headers, other_host):
+        app, client, create_vfolder = prepare_vfolder
+
+        # Ensure there's no test folders
+        url = '/v3/folders/'
+        req_bytes = json.dumps({}).encode()
+        headers = get_headers('GET', url, req_bytes)
+        ret = await client.get(url, data=req_bytes, headers=headers)
+
+        assert ret.status == 200
+        assert len(await ret.json()) == 0
+
+        # Create a vfolder
+        folder_info1 = await self.create_group_vfolder(app, create_vfolder)
+        folder_info2 = await self.create_group_vfolder(
+            app, create_vfolder, name='list-gvfolders-2', host=other_host)
+
+        headers = get_headers('GET', url, req_bytes)
+        ret = await client.get(url, data=req_bytes, headers=headers)
+
+        assert ret.status == 200
+        rsp_json = await ret.json()
+        assert len(rsp_json) == 2
+        rsp_info_pairs = []
+        if rsp_json[0]['id'] == folder_info1['id']:
+            rsp_info_pairs.append((rsp_json[0], folder_info1))
+            rsp_info_pairs.append((rsp_json[1], folder_info2))
+        else:
+            rsp_info_pairs.append((rsp_json[0], folder_info2))
+            rsp_info_pairs.append((rsp_json[1], folder_info1))
+
+        for rsp_json, folder_info in rsp_info_pairs:
+            assert rsp_json['id'] == folder_info['id']
+            assert rsp_json['name'] == folder_info['name']
+            assert not rsp_json['is_owner']
+            assert rsp_json['permission'] == VFolderPermission.READ_WRITE.value
+            assert rsp_json['host'] == folder_info['host']
+
+    async def test_list_gvfolder_by_group_member(self, prepare_vfolder, get_headers,
+                                                 user_keypair):
+        # Create admin's vfolder
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder)
+
+        # Ensure other user's vfolder is not listed.
+        url = '/v3/folders/'
+        req_bytes = json.dumps({}).encode()
+        headers = get_headers('GET', url, req_bytes, keypair=user_keypair)
+        ret = await client.get(url, data=req_bytes, headers=headers)
+        rsp_json = await ret.json()
+
+        assert ret.status == 200
+        assert len(rsp_json) == 1
+        assert rsp_json[0]['id'] == folder_info['id']
+        assert rsp_json[0]['name'] == folder_info['name']
+
+    async def test_cannot_list_gvfolder_in_other_group(self, prepare_vfolder, get_headers):
+        # Create admin's vfolder in default group.
+        app, client, create_vfolder = prepare_vfolder
+        await self.create_group_vfolder(app, create_vfolder)
+
+        # Create user in other group in default domain.
+        user_in_other_group = await UserFactory(app).create()
+        other_group = await GroupFactory(app).create()
+        await AssociationGroupsUsersFactory(app).create(
+            user_id=user_in_other_group['uuid'],
+            group_id=other_group['id'])
+
+        # Ensure user in other group cannot see group vfolder in the default group.
+        url = '/v3/folders/'
+        req_bytes = json.dumps({}).encode()
+        headers = get_headers('GET', url, req_bytes, keypair=user_in_other_group['keypair'])
+        ret = await client.get(url, data=req_bytes, headers=headers)
+        rsp_json = await ret.json()
+
+        assert ret.status == 200
+        assert len(rsp_json) == 0
+
+    async def test_get_gvfolder_info(self, prepare_vfolder, get_headers, other_host):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder)
+
+        url = f'/v3/folders/{folder_info["name"]}'
+        req_bytes = json.dumps({}).encode()
+        headers = get_headers('GET', url, req_bytes)
+        ret = await client.get(url, data=req_bytes, headers=headers)
+        rsp_json = await ret.json()
+
+        assert ret.status == 200
+        assert rsp_json['id'] == folder_info['id']
+        assert rsp_json['name'] == folder_info['name']
+        assert rsp_json['host'] == folder_info['host']
+        assert rsp_json['numFiles'] == 0
+        assert not rsp_json['is_owner']
+        assert rsp_json['permission'] == VFolderPermission.READ_WRITE.value
+
+    async def test_cannot_get_info_in_other_group(self, prepare_vfolder, get_headers,
+                                                  user_keypair):
+        # Create admin's vfolder in default group.
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder)
+
+        # Create user in other group in default domain.
+        user_in_other_group = await UserFactory(app).create()
+        other_group = await GroupFactory(app).create()
+        await AssociationGroupsUsersFactory(app).create(
+            user_id=user_in_other_group['uuid'],
+            group_id=other_group['id'])
+
+        # Ensure user in other group cannot get group vfolder info in the default group.
+        url = f'/v3/folders/{folder_info["name"]}'
+        req_bytes = json.dumps({}).encode()
+        headers = get_headers('GET', url, req_bytes, keypair=user_in_other_group['keypair'])
+        ret = await client.get(url, data=req_bytes, headers=headers)
+
+        assert ret.status == 404
+
+    async def test_rename_gvfolder_by_domain_admin(self, prepare_vfolder, get_headers,
+                                                   default_domain_keypair):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder)
+
+        url = f'/v3/folders/{folder_info["name"]}/rename'
+        req_bytes = json.dumps({'new_name': 'renamed-test-default-gvf'}).encode()
+        headers = get_headers('POST', url, req_bytes, keypair=default_domain_keypair)
+        ret = await client.post(url, data=req_bytes, headers=headers)
+
+        assert ret.status == 201
+        async with app['dbpool'].acquire() as conn:
+            query = (sa.select([vfolders])
+                       .select_from(vfolders)
+                       .where(vfolders.c.id == folder_info['id']))
+            result = await conn.execute(query)
+            vfolder = await result.first()
+        assert vfolder.name == 'renamed-test-default-gvf'
+
+    async def test_cannot_rename_gvfolder_by_superadmin(self, prepare_vfolder, get_headers):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder)
+
+        url = f'/v3/folders/{folder_info["name"]}/rename'
+        req_bytes = json.dumps({'new_name': 'renamed-test-default-gvf'}).encode()
+        headers = get_headers('POST', url, req_bytes)
+        ret = await client.post(url, data=req_bytes, headers=headers)
+
+        assert ret.status != 201
+        async with app['dbpool'].acquire() as conn:
+            query = (sa.select([vfolders])
+                       .select_from(vfolders)
+                       .where(vfolders.c.id == folder_info['id']))
+            result = await conn.execute(query)
+            vfolder = await result.first()
+        assert vfolder.name != 'renamed-test-default-gvf'
+
+    async def test_cannot_rename_gvfolder_by_member(self, prepare_vfolder, get_headers,
+                                                    user_keypair):
+        # Create admin's vfolder.
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder)
+
+        url = f'/v3/folders/{folder_info["name"]}/rename'
+        req_bytes = json.dumps({'new_name': 'renamed-test-default-gvf'}).encode()
+        headers = get_headers('POST', url, req_bytes, keypair=user_keypair)
+        ret = await client.post(url, data=req_bytes, headers=headers)
+
+        assert ret.status != 201
+        async with app['dbpool'].acquire() as conn:
+            query = (sa.select([vfolders])
+                       .select_from(vfolders)
+                       .where(vfolders.c.id == folder_info['id']))
+            result = await conn.execute(query)
+            vfolder = await result.first()
+        assert vfolder.name != 'renamed-test-default-gvf'
+
+    async def test_delete_gvfolder_by_domain_admin(self, prepare_vfolder, get_headers,
+                                                   folder_mount, folder_host, folder_fsprefix,
+                                                   default_domain_keypair):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder)
+        folder_path = (folder_mount / folder_host / folder_fsprefix / folder_info['id'])
+
+        assert folder_path.exists()
+
+        url = f'/v3/folders/{folder_info["name"]}'
+        req_bytes = json.dumps({'group': folder_info['group']}).encode()
+        headers = get_headers('DELETE', url, req_bytes, keypair=default_domain_keypair)
+        ret = await client.delete(url, data=req_bytes, headers=headers)
+
+        assert ret.status == 204
+        assert not folder_path.exists()
+
+    async def test_cannot_delete_gvfolder_by_member(
+            self, prepare_vfolder, get_headers,
+            folder_mount, folder_host, folder_fsprefix,
+            user_keypair):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder)
+        folder_path = (folder_mount / folder_host / folder_fsprefix / folder_info['id'])
+
+        assert folder_path.exists()
+
+        url = f'/v3/folders/{folder_info["name"]}'
+        req_bytes = json.dumps({'group': folder_info['group']}).encode()
+        headers = get_headers('DELETE', url, req_bytes, keypair=user_keypair)
+        ret = await client.delete(url, data=req_bytes, headers=headers)
+
+        assert ret.status == 403
+        assert folder_path.exists()
 
 
 class TestFiles:

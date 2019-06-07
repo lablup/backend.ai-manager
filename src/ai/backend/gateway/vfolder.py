@@ -23,13 +23,13 @@ from ai.backend.common.logging import BraceStyleAdapter
 from .auth import auth_required
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
-    InvalidAPIParameters)
+    GenericForbidden, InvalidAPIParameters)
 from .manager import (
     READ_ALLOWED, ALL_ALLOWED,
     server_status_required)
-from .utils import check_api_params
+from .utils import AliasedKey, check_api_params
 from ..manager.models import (
-    keypairs, vfolders, vfolder_invitations, vfolder_permissions,
+    groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
     VFolderPermission, query_accessible_vfolders)
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
@@ -129,17 +129,22 @@ def vfolder_check_exists(handler: Callable[[web.Request, VFolderRow], web.Respon
 
 @server_status_required(ALL_ALLOWED)
 @auth_required
-async def create(request: web.Request) -> web.Response:
+@check_api_params(
+    t.Dict({
+        t.Key('name'): t.Regexp('^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$', re.ASCII),
+        t.Key('host', default=None) >> 'folder_host': t.Or(t.String, t.Null),
+        AliasedKey(['group', 'groupId', 'group_id'], default=None): t.Or(t.String, t.Null),
+    }),
+)
+async def create(request: web.Request, params: Any) -> web.Response:
     resp = {}
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
     user_uuid = request['user']['uuid']
     resource_policy = request['keypair']['resource_policy']
-    params = await request.json()
     log.info('VFOLDER.CREATE (u:{0})', access_key)
-    assert _rx_slug.search(params.get('name', '')) is not None, 'invalid name format'
     # Resolve host for the new virtual folder.
-    folder_host = params.get('host', None)
+    folder_host = params['folder_host']
     if not folder_host:
         folder_host = \
             await request.app['config_server'].etcd.get('volumes/_default_host')
@@ -147,6 +152,7 @@ async def create(request: web.Request) -> web.Response:
             raise InvalidAPIParameters(
                 'You must specify the vfolder host '
                 'because the default host is not configured.')
+
     # Check resource policy's allowed_vfolder_hosts
     if folder_host not in resource_policy['allowed_vfolder_hosts']:
         raise InvalidAPIParameters('You are not allowed to use this vfolder host.')
@@ -167,9 +173,23 @@ async def create(request: web.Request) -> web.Response:
         # Prevent creation of vfolder with duplicated name.
         entries = await query_accessible_vfolders(
             conn, user_uuid,
-            extra_vf_conds=(vfolders.c.name == params['name']))
+            extra_vf_conds=(sa.and_(vfolders.c.name == params['name'],
+                                    vfolders.c.host == folder_host))
+        )
         if len(entries) > 0:
             raise VFolderAlreadyExists
+
+        # Check if group exists.
+        if params['group']:
+            if not request['is_admin']:
+                raise GenericForbidden('no permission')
+            query = (sa.select([groups.c.id])
+                       .select_from(groups)
+                       .where(groups.c.domain_name == request['user']['domain_name'])
+                       .where(groups.c.id == params['group']))
+            gid = await conn.scalar(query)
+            if str(gid) != str(params['group']):
+                raise InvalidAPIParameters('No such group.')
 
         try:
             folder_id = uuid.uuid4().hex
@@ -178,17 +198,22 @@ async def create(request: web.Request) -> web.Response:
             folder_path.mkdir(parents=True, exist_ok=True)
         except OSError:
             raise VFolderCreationFailed
+        user_uuid = str(user_uuid) if params['group'] is None else None
+        group_uuid = str(params['group']) if params['group'] is not None else None
         query = (vfolders.insert().values({
             'id': folder_id,
             'name': params['name'],
             'host': folder_host,
             'last_used': None,
             'user': user_uuid,
+            'group': group_uuid,
         }))
         resp = {
             'id': folder_id,
             'name': params['name'],
             'host': folder_host,
+            'user': user_uuid,
+            'group': group_uuid,
         }
         try:
             result = await conn.execute(query)
@@ -215,6 +240,8 @@ async def list_folders(request: web.Request) -> web.Response:
                 'host': entry['host'],
                 'is_owner': entry['is_owner'],
                 'permission': entry['permission'].value,
+                'user': str(entry['user']),
+                'group': str(entry['group']),
             })
     return web.json_response(resp, status=200)
 
@@ -255,7 +282,7 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
         is_owner = True
         permission = VFolderPermission.OWNER_PERM
     else:
-        is_owner = False
+        is_owner = row['is_owner']
         permission = row['permission']
     # TODO: handle nested directory structure
     folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
@@ -268,6 +295,8 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
         'numFiles': num_files,  # legacy
         'num_files': num_files,
         'created': str(row['created_at']),
+        'user': str(row['user']),
+        'group': str(row['group']),
         'is_owner': is_owner,
         'permission': permission,
     }
@@ -701,17 +730,36 @@ async def delete_invitation(request: web.Request, params: Any) -> web.Response:
 
 @server_status_required(ALL_ALLOWED)
 @auth_required
-async def delete(request: web.Request) -> web.Response:
+@check_api_params(
+    t.Dict({
+        AliasedKey(['group', 'groupId', 'group_id'], default=None): t.Or(t.String, t.Null),
+    }))
+async def delete(request: web.Request, params: Any) -> web.Response:
     dbpool = request.app['dbpool']
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     user_uuid = request['user']['uuid']
     log.info('VFOLDER.DELETE (u:{0}, f:{1})', access_key, folder_name)
     async with dbpool.acquire() as conn, conn.begin():
+        # Check if group exists.
+        if params['group']:
+            if not request['is_admin']:
+                raise GenericForbidden('no permission')
+            query = (sa.select([groups.c.id])
+                       .select_from(groups)
+                       .where(groups.c.domain_name == request['user']['domain_name'])
+                       .where(groups.c.id == params['group']))
+            gid = await conn.scalar(query)
+            if str(gid) != str(params['group']):
+                raise InvalidAPIParameters('No such group.')
+
         query = (sa.select('*', for_update=True)
                    .select_from(vfolders)
-                   .where((vfolders.c.user == user_uuid) &
-                          (vfolders.c.name == folder_name)))
+                   .where(vfolders.c.name == folder_name))
+        if params['group']:
+            query = query.where(vfolders.c.group == params['group'])
+        else:
+            query = query.where(vfolders.c.user == user_uuid)
         try:
             result = await conn.execute(query)
         except psycopg2.DataError:

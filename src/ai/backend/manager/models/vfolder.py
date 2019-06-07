@@ -111,6 +111,8 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                    vfolders.c.last_used,
                    vfolders.c.max_files,
                    vfolders.c.max_size,
+                   vfolders.c.user,
+                   vfolders.c.group,
                ])
                .select_from(vfolders)
                .where(vfolders.c.user == user_uuid))
@@ -126,8 +128,52 @@ async def query_accessible_vfolders(conn, user_uuid, *,
             'last_used': row.last_used,
             'max_size': row.max_size,
             'max_files': row.max_files,
+            'user': row.user,
+            'group': row.group,
             'is_owner': True,
             'permission': VFolderPermission.OWNER_PERM,
+        })
+    # Scan group vfolders.
+    from ai.backend.manager.models import users, association_groups_users as agus
+    j = sa.join(agus, users, agus.c.user_id == users.c.uuid)
+    query = (sa.select([agus.c.group_id, users.c.role])
+               .select_from(j)
+               .where(agus.c.user_id == user_uuid))
+    result = await conn.execute(query)
+    groups = await result.fetchall()
+    group_ids = [g.group_id for g in groups]
+    user_role = groups[0].role
+    query = (sa.select([
+                   vfolders.c.name,
+                   vfolders.c.id,
+                   vfolders.c.host,
+                   vfolders.c.created_at,
+                   vfolders.c.last_used,
+                   vfolders.c.max_files,
+                   vfolders.c.max_size,
+                   vfolders.c.user,
+                   vfolders.c.group,
+               ])
+               .select_from(vfolders)
+               .where(vfolders.c.group.in_(group_ids)))
+    if extra_vf_conds is not None:
+        query = query.where(extra_vf_conds)
+    result = await conn.execute(query)
+    is_owner = (user_role == 'admin')
+    perm = VFolderPermission.OWNER_PERM if is_owner else VFolderPermission.READ_WRITE
+    async for row in result:
+        entries.append({
+            'name': row.name,
+            'id': row.id,
+            'host': row.host,
+            'created_at': row.created_at,
+            'last_used': row.last_used,
+            'max_size': row.max_size,
+            'max_files': row.max_files,
+            'user': str(row.user),
+            'group': str(row.group),
+            'is_owner': is_owner,
+            'permission': perm,
         })
     # Scan vfolders shared with me.
     j = sa.join(vfolders, vfolder_permissions,
@@ -140,6 +186,8 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                    vfolders.c.last_used,
                    vfolders.c.max_files,
                    vfolders.c.max_size,
+                   vfolders.c.user,
+                   vfolders.c.group,
                    vfolder_permissions.c.permission,
                ])
                .select_from(j)
@@ -158,6 +206,8 @@ async def query_accessible_vfolders(conn, user_uuid, *,
             'last_used': row.last_used,
             'max_size': row.max_size,
             'max_files': row.max_files,
+            'user': str(row.user),
+            'group': str(row.group),
             'is_owner': False,
             'permission': row.permission,
         })

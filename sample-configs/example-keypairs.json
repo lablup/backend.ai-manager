@@ -94,7 +94,7 @@
             "max_vfolder_count": 10,
             "max_vfolder_size": 0,
             "idle_timeout": 600,
-            "allowed_vfolder_hosts": ["local"]
+            "allowed_vfolder_hosts": ["local", "other-host"]
         }
     ],
     "keypairs": [
