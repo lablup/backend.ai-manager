@@ -39,11 +39,21 @@ class ModelFactory(ABC):
         row = await self.after_creation(row)
         return row
 
-    async def get(self):
-        raise NotImplementedError
+    async def get(self, **kwargs):
+        async with self.app['dbpool'].acquire() as conn:
+            filters = [sa.sql.column(key) == value for key, value in kwargs.items()]
+            query = sa.select([self.model]).where(sa.and_(*filters))
+            result = await conn.execute(query)
+            rows = await result.fetchall()
+            assert len(rows) < 2, 'Multiple items found'
+            return rows[0] if len(rows) == 1 else None
 
-    async def list(self):
-        raise NotImplementedError
+    async def list(self, **kwargs):
+        async with self.app['dbpool'].acquire() as conn:
+            filters = [sa.sql.column(key) == value for key, value in kwargs.items()]
+            query = sa.select([self.model]).where(sa.and_(*filters))
+            result = await conn.execute(query)
+            return await result.fetchall()
 
 
 class KeyPairFactory(ModelFactory):

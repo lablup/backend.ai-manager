@@ -181,7 +181,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
 
         # Check if group exists.
         if params['group']:
-            if not request['is_admin']:
+            if not request['is_admin'] or request['is_superadmin']:
+                # Superadmin will not manipulate group's vfolder (at least currently).
                 raise GenericForbidden('no permission')
             query = (sa.select([groups.c.id])
                        .select_from(groups)
@@ -743,7 +744,7 @@ async def delete(request: web.Request, params: Any) -> web.Response:
     async with dbpool.acquire() as conn, conn.begin():
         # Check if group exists.
         if params['group']:
-            if not request['is_admin']:
+            if not request['is_admin'] or request['is_superadmin']:
                 raise GenericForbidden('no permission')
             query = (sa.select([groups.c.id])
                        .select_from(groups)
