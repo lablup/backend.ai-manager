@@ -819,6 +819,281 @@ class TestFiles:
         assert (folder_path / 'hello.txt').exists()
 
 
+class TestFilesInGroupVFolder:
+
+    async def create_group_vfolder(self, app, create_vfolder, name=None,
+                                   host=None, keypair=None):
+        # Create a group vfolder with group_id of the default group.
+        async with app['dbpool'].acquire() as conn:
+            query = (sa.select([groups.c.id])
+                       .select_from(groups)
+                       .where(groups.c.domain_name == 'default')
+                       .where(groups.c.name == 'default'))
+            group_id = str(await conn.scalar(query))
+        folder_info = await create_vfolder(group=group_id, name=name, host=host,
+                                           keypair=keypair)
+        return folder_info
+
+    @pytest.mark.asyncio
+    async def test_upload_file_by_domain_admin(
+            self, prepare_vfolder, get_headers, tmpdir, folder_mount, folder_host,
+            folder_fsprefix, default_domain_keypair):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder,
+                                                      keypair=default_domain_keypair)
+
+        # Create files and prepare form data
+        p1 = tmpdir.join('test1.txt')
+        p1.write('1357')
+        p2 = tmpdir.join('test2.txt')
+        p2.write('35711')
+        data = aiohttp.FormData()
+        data.add_field('file', open(p1, 'rb'))
+        data.add_field('file', open(p2, 'rb'))
+
+        # Upload the file
+        url = f'/v3/folders/{folder_info["name"]}/upload'
+        headers = get_headers('POST', url, b'', ctype='multipart/form-data',
+                              keypair=default_domain_keypair)
+        ret = await client.post(url, data=data, headers=headers)
+
+        # Get paths for files uploaded to virtual folder
+        vf_fname1 = p1.strpath.split('/')[-1]
+        vf_fname2 = p2.strpath.split('/')[-1]
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
+
+        assert ret.status == 201
+        assert 2 == len(list(folder_path.glob('**/*.txt')))
+        assert (folder_path / vf_fname1).exists()
+        assert (folder_path / vf_fname2).exists()
+
+    @pytest.mark.asyncio
+    async def test_group_member_upload_to_gvfolder(
+            self, prepare_vfolder, get_headers, tmpdir, folder_mount, folder_host,
+            folder_fsprefix, default_domain_keypair, user_keypair):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder,
+                                                      keypair=default_domain_keypair)
+
+        # Create a file and prepare form data
+        p1 = tmpdir.join('test1.txt')
+        p1.write('1357')
+        data = aiohttp.FormData()
+        data.add_field('file', open(p1, 'rb'))
+
+        # Upload the file
+        url = f'/v3/folders/{folder_info["name"]}/upload'
+        headers = get_headers('POST', url, b'', ctype='multipart/form-data',
+                              keypair=user_keypair)
+        ret = await client.post(url, data=data, headers=headers)
+
+        # Get paths for files uploaded to virtual folder
+        vf_fname1 = p1.strpath.split('/')[-1]
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
+
+        assert ret.status == 201
+        assert 1 == len(list(folder_path.glob('**/*.txt')))
+        assert (folder_path / vf_fname1).exists()
+
+    @pytest.mark.asyncio
+    async def test_cannot_upload_to_gvfolder_in_other_group(
+            self, prepare_vfolder, get_headers, tmpdir, folder_mount,
+            folder_host, folder_fsprefix, default_domain_keypair):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder,
+                                                      keypair=default_domain_keypair)
+
+        # Create user in other group in default domain.
+        user_in_other_group = await UserFactory(app).create()
+        other_group = await GroupFactory(app).create()
+        await AssociationGroupsUsersFactory(app).create(
+            user_id=user_in_other_group['uuid'],
+            group_id=other_group['id'])
+
+        # Create file
+        p1 = tmpdir.join('test1.txt')
+        p1.write('1357')
+
+        # Prepare form data
+        data = aiohttp.FormData()
+        data.add_field('file', open(p1, 'rb'))
+
+        # Upload the file
+        url = f'/v3/folders/{folder_info["name"]}/upload'
+        headers = get_headers('POST', url, b'', ctype='multipart/form-data',
+                              keypair=user_in_other_group['keypair'])
+        ret = await client.post(url, data=data, headers=headers)
+
+        vf_fname1 = p1.strpath.split('/')[-1]
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
+        assert ret.status == 404
+        assert not (folder_path / vf_fname1).exists()
+
+    @pytest.mark.asyncio
+    async def test_download_by_member(self, prepare_vfolder, get_headers, folder_mount,
+                                      folder_host, folder_fsprefix,
+                                      default_domain_keypair, user_keypair):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder,
+                                                      keypair=default_domain_keypair)
+
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
+        with open(folder_path / 'hello.txt', 'w') as f:
+            f.write('hello vfolder!')
+        assert (folder_path / 'hello.txt').exists()
+
+        url = f'/v3/folders/{folder_info["name"]}/download'
+        req_bytes = json.dumps({'files': ['hello.txt']}).encode()
+        headers = get_headers('GET', url, req_bytes, keypair=user_keypair)
+        ret = await client.get(url, data=req_bytes, headers=headers)
+
+        # Decode multipart response. Here, there's only one part.
+        reader = aiohttp.MultipartReader.from_response(ret)
+        part = await reader.next()
+        encoding = part.headers['Content-Encoding']
+        zlib_mode = (16 + zlib.MAX_WBITS
+                         if encoding == 'gzip'
+                         else -zlib.MAX_WBITS)
+        decompressor = zlib.decompressobj(wbits=zlib_mode)
+        content = decompressor.decompress(await part.read())
+
+        assert content == b'hello vfolder!'
+        assert ret.status == 200
+
+    @pytest.mark.asyncio
+    async def test_cannot_download_from_other_groups_vfolder(
+            self, prepare_vfolder, get_headers, folder_mount, folder_host,
+            folder_fsprefix, default_domain_keypair):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder,
+                                                      keypair=default_domain_keypair)
+
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
+        with open(folder_path / 'hello.txt', 'w') as f:
+            f.write('hello vfolder!')
+        assert (folder_path / 'hello.txt').exists()
+
+        # Create user in other group in default domain.
+        user_in_other_group = await UserFactory(app).create()
+        other_group = await GroupFactory(app).create()
+        await AssociationGroupsUsersFactory(app).create(
+            user_id=user_in_other_group['uuid'],
+            group_id=other_group['id'])
+
+        url = f'/v3/folders/{folder_info["name"]}/download'
+        req_bytes = json.dumps({'files': ['hello.txt']}).encode()
+        headers = get_headers('GET', url, req_bytes, keypair=user_in_other_group['keypair'])
+        ret = await client.get(url, data=req_bytes, headers=headers)
+
+        assert ret.status == 404
+
+    @pytest.mark.asyncio
+    async def test_list_gvfolder_files_by_member(
+            self, prepare_vfolder, get_headers, folder_mount, folder_host,
+            folder_fsprefix, default_domain_keypair, user_keypair):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder,
+                                                      keypair=default_domain_keypair)
+
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
+        with open(folder_path / 'hello.txt', 'w') as f:
+            f.write('hello vfolder!')
+        assert (folder_path / 'hello.txt').exists()
+
+        url = f'/v3/folders/{folder_info["name"]}/files'
+        req_bytes = json.dumps({'path': '.'}).encode()
+        headers = get_headers('GET', url, req_bytes, keypair=user_keypair)
+        ret = await client.get(url, data=req_bytes, headers=headers)
+        rsp_json = await ret.json()
+        files = json.loads(rsp_json['files'])
+
+        assert files[0]['filename'] == 'hello.txt'
+
+    @pytest.mark.asyncio
+    async def test_cannot_list_other_groups_vfolder_files_by_member(
+            self, prepare_vfolder, get_headers, folder_mount, folder_host,
+            folder_fsprefix, default_domain_keypair):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder,
+                                                      keypair=default_domain_keypair)
+
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
+        with open(folder_path / 'hello.txt', 'w') as f:
+            f.write('hello vfolder!')
+        assert (folder_path / 'hello.txt').exists()
+
+        # Create user in other group in default domain.
+        user_in_other_group = await UserFactory(app).create()
+        other_group = await GroupFactory(app).create()
+        await AssociationGroupsUsersFactory(app).create(
+            user_id=user_in_other_group['uuid'],
+            group_id=other_group['id'])
+
+        url = f'/v3/folders/{folder_info["name"]}/files'
+        req_bytes = json.dumps({'path': '.'}).encode()
+        headers = get_headers('GET', url, req_bytes, keypair=user_in_other_group['keypair'])
+        ret = await client.get(url, data=req_bytes, headers=headers)
+        assert ret.status == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_files_by_member(self, prepare_vfolder, get_headers, folder_mount,
+                                          folder_host, folder_fsprefix, default_domain_keypair,
+                                          user_keypair):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder,
+                                                      keypair=default_domain_keypair)
+
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
+        with open(folder_path / 'hello.txt', 'w') as f:
+            f.write('hello vfolder!')
+        assert (folder_path / 'hello.txt').exists()
+
+        url = f'/v3/folders/{folder_info["name"]}/delete_files'
+        req_bytes = json.dumps({'files': ['hello.txt']}).encode()
+        headers = get_headers('DELETE', url, req_bytes, keypair=user_keypair)
+        ret = await client.delete(url, data=req_bytes, headers=headers)
+
+        assert ret.status == 200
+        assert not (folder_path / 'hello.txt').exists()
+
+    @pytest.mark.asyncio
+    async def test_cannot_delete_other_groups_vfolder_files_by_member(
+            self, prepare_vfolder, get_headers, folder_mount, folder_host,
+            folder_fsprefix, default_domain_keypair):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder,
+                                                      keypair=default_domain_keypair)
+
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
+        with open(folder_path / 'hello.txt', 'w') as f:
+            f.write('hello vfolder!')
+        assert (folder_path / 'hello.txt').exists()
+
+        # Create user in other group in default domain.
+        user_in_other_group = await UserFactory(app).create()
+        other_group = await GroupFactory(app).create()
+        await AssociationGroupsUsersFactory(app).create(
+            user_id=user_in_other_group['uuid'],
+            group_id=other_group['id'])
+
+        url = f'/v3/folders/{folder_info["name"]}/delete_files'
+        req_bytes = json.dumps({'files': ['hello.txt']}).encode()
+        headers = get_headers('DELETE', url, req_bytes, keypair=user_in_other_group['keypair'])
+        ret = await client.delete(url, data=req_bytes, headers=headers)
+
+        assert ret.status == 404
+        assert (folder_path / 'hello.txt').exists()
+
+
 class TestInvitation:
 
     @pytest.mark.asyncio
