@@ -283,7 +283,7 @@ class TestVFolder:
         headers = get_headers('DELETE', url, req_bytes, keypair=user_keypair)
         ret = await client.delete(url, data=req_bytes, headers=headers)
 
-        assert ret.status == 404
+        assert ret.status == 400
 
 
 @pytest.mark.asyncio
@@ -617,7 +617,7 @@ class TestGroupVFolder:
         headers = get_headers('DELETE', url, req_bytes, keypair=user_keypair)
         ret = await client.delete(url, data=req_bytes, headers=headers)
 
-        assert ret.status == 403
+        assert ret.status == 400
         assert folder_path.exists()
 
 

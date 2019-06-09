@@ -243,6 +243,7 @@ async def list_folders(request: web.Request) -> web.Response:
                 'permission': entry['permission'].value,
                 'user': str(entry['user']),
                 'group': str(entry['group']),
+                'type': 'user' if entry['user'] is not None else 'group',
             })
     return web.json_response(resp, status=200)
 
@@ -298,6 +299,7 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
         'created': str(row['created_at']),
         'user': str(row['user']),
         'group': str(row['group']),
+        'type': 'user' if row['user'] is not None else 'group',
         'is_owner': is_owner,
         'permission': permission,
     }
@@ -742,41 +744,25 @@ async def delete(request: web.Request, params: Any) -> web.Response:
     user_uuid = request['user']['uuid']
     log.info('VFOLDER.DELETE (u:{0}, f:{1})', access_key, folder_name)
     async with dbpool.acquire() as conn, conn.begin():
-        # Check if group exists.
-        if params['group']:
-            if not request['is_admin'] or request['is_superadmin']:
-                raise GenericForbidden('no permission')
-            query = (sa.select([groups.c.id])
-                       .select_from(groups)
-                       .where(groups.c.domain_name == request['user']['domain_name'])
-                       .where(groups.c.id == params['group']))
-            gid = await conn.scalar(query)
-            if str(gid) != str(params['group']):
-                raise InvalidAPIParameters('No such group.')
-
-        query = (sa.select('*', for_update=True)
-                   .select_from(vfolders)
-                   .where(vfolders.c.name == folder_name))
-        if params['group']:
-            query = query.where(vfolders.c.group == params['group'])
+        entries = await query_accessible_vfolders(conn, user_uuid)
+        for entry in entries:
+            if entry['name'] == folder_name:
+                if not entry['is_owner']:
+                    raise InvalidAPIParameters(
+                        'Cannot delete the vfolder '
+                        'that is not owned by me.')
+                break
         else:
-            query = query.where(vfolders.c.user == user_uuid)
-        try:
-            result = await conn.execute(query)
-        except psycopg2.DataError:
-            raise InvalidAPIParameters
-        row = await result.first()
-        if row is None:
-            raise VFolderNotFound()
-        folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
-                       request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
+            raise InvalidAPIParameters('No such group.')
+        folder_path = (request.app['VFOLDER_MOUNT'] / entry['host'] /
+                       request.app['VFOLDER_FSPREFIX'] / entry['id'].hex)
         try:
             shutil.rmtree(folder_path)
         except IOError:
             pass
         # TODO: mark it deleted instead of really deleting
         query = (vfolders.delete()
-                         .where(vfolders.c.id == row['id']))
+                         .where(vfolders.c.id == entry['id']))
         result = await conn.execute(query)
     return web.Response(status=204)
 
