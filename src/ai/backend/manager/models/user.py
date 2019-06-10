@@ -151,12 +151,12 @@ class User(graphene.ObjectType):
             for k in emails:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
-                # if row.email in objs_per_key:
-                if objs_per_key[row.email] is not None:
-                    objs_per_key[row.email].groups.append({'id': str(row.id), 'name': row.name})
+                key = str(row.uuid) if pk_type == 'uuid' else row.email
+                if objs_per_key[key] is not None:
+                    objs_per_key[key].groups.append({'id': str(row.id), 'name': row.name})
                     continue
                 o = User.from_row(row)
-                objs_per_key[row.email] = o
+                objs_per_key[key] = o
         return tuple(objs_per_key.values())
 
 
@@ -164,8 +164,8 @@ class UserInput(graphene.InputObjectType):
     username = graphene.String(required=True)
     password = graphene.String(required=True)
     need_password_change = graphene.Boolean(required=True)
-    full_name = graphene.String(required=False)
-    description = graphene.String(required=False)
+    full_name = graphene.String(required=False, default='')
+    description = graphene.String(required=False, default='')
     is_active = graphene.Boolean(required=False, default=True)
     domain_name = graphene.String(required=True, default='default')
     role = graphene.String(required=False, default=UserRole.USER)
