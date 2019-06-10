@@ -85,27 +85,27 @@ class AliasedKey(t.Key):
                 break
         else:
             key = None
-        if key is not None or self.default is not _empty:
-            if callable(self.default):
-                default = self.default()
-            else:
-                default = self.default
-            error = None
+
+        if key is None:  # not specified
+            if self.default is not _empty:
+                default = self.default() if callable(self.default) else self.default
+                try:
+                    result = self.trafaret(default, context=context)
+                except t.DataError as inner_error:
+                    yield self.get_name(), inner_error, self.names
+                else:
+                    yield self.get_name(), result, self.names
+                return
+            if not self.optional:
+                yield self.get_name(), t.DataError(error='is required'), self.names
+            # if optional, just bypass
+        else:
             try:
-                result = self.trafaret(self.get_data(data, key, default), context=context)
-            except t.DataError as de:
-                error = de
-            if error:
-                yield key, error, self.names
+                result = self.trafaret(data[key], context=context)
+            except t.DataError as inner_error:
+                yield key, inner_error, self.names
             else:
                 yield self.get_name(), result, self.names
-            return
-
-        if not self.optional:
-            yield key, t.DataError(error='is required'), self.names
-
-    def get_data(self, data, key, default):
-        return data.get(key, default)
 
 
 class _Infinity(numbers.Number):
