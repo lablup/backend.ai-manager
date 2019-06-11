@@ -5,9 +5,6 @@ Revises: 0e558d06e0e3, 352fa4f88f61
 Create Date: 2018-12-24 22:42:54.188099
 
 """
-from alembic import op
-import sqlalchemy as sa
-import ai.backend.manager.models.base  # noqa
 
 
 # revision identifiers, used by Alembic.

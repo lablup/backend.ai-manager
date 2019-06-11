@@ -8,9 +8,6 @@ Create Date: 2019-05-29 23:17:17.762968
 import textwrap
 
 from alembic import op
-import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
-import ai.backend.manager.models.base  # noqa
 from ai.backend.manager.models import UserRole
 
 

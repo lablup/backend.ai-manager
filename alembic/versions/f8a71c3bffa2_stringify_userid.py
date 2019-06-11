@@ -7,8 +7,7 @@ Create Date: 2018-06-17 13:52:13.346856
 """
 from alembic import op
 import sqlalchemy as sa
-import ai.backend.manager.models.base  # noqa
-from ai.backend.manager.models import keypairs
+from ai.backend.manager.models.base import convention
 
 
 # revision identifiers, used by Alembic.
@@ -19,6 +18,11 @@ depends_on = None
 
 
 def upgrade():
+    metadata = sa.MetaData(naming_convention=convention)
+    keypairs = sa.Table(
+        'keypairs', metadata,
+        sa.Column('user_id', sa.String(length=256), index=True),
+    )
 
     print('Choose keypairs.user_id column migrate option:')
     print(' [a] Convert all numeric user IDs to strings directly')
