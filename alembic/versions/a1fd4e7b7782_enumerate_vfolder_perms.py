@@ -7,7 +7,6 @@ Create Date: 2018-09-05 16:51:49.973195
 """
 from alembic import op
 import sqlalchemy as sa
-import ai.backend.manager.models.base  # noqa
 from ai.backend.manager.models import VFolderPermission
 from sqlalchemy.dialects import postgresql
 

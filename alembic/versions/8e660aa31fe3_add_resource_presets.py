@@ -8,7 +8,7 @@ Create Date: 2019-03-30 01:45:07.525096
 from alembic import op
 from decimal import Decimal
 import sqlalchemy as sa
-import ai.backend.manager.models.base  # noqa
+from ai.backend.manager.models.base import ResourceSlotColumn
 from ai.backend.manager.models import keypair_resource_policies
 from ai.backend.common.types import BinarySize, ResourceSlot
 
@@ -26,7 +26,7 @@ def upgrade():
         'resource_presets',
         sa.Column('name', sa.String(length=256), nullable=False),
         sa.Column('resource_slots',
-                  ai.backend.manager.models.base.ResourceSlotColumn(),
+                  ResourceSlotColumn(),
                   nullable=False),
         sa.PrimaryKeyConstraint('name', name=op.f('pk_resource_presets'))
     )

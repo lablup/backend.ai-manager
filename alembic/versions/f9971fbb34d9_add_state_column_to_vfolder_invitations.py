@@ -7,7 +7,6 @@ Create Date: 2018-07-12 23:30:14.942845
 """
 from alembic import op
 import sqlalchemy as sa
-import ai.backend.manager.models.base  # noqa
 
 
 # revision identifiers, used by Alembic.
