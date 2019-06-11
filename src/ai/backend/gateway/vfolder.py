@@ -233,7 +233,9 @@ async def list_folders(request: web.Request) -> web.Response:
     user_uuid = request['user']['uuid']
     log.info('VFOLDER.LIST (u:{0})', access_key)
     async with dbpool.acquire() as conn:
-        if request['is_superadmin']:  # list all folders for superadmin
+        params = await request.json() if request.can_read_body else request.query
+        if request['is_superadmin'] and params.get('all', False):
+            # List all folders for superadmin if all is specified
             query = sa.select([vfolders]).select_from(vfolders)
             result = await conn.execute(query)
             entries = []
