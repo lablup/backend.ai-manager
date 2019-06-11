@@ -233,12 +233,33 @@ async def list_folders(request: web.Request) -> web.Response:
     user_uuid = request['user']['uuid']
     log.info('VFOLDER.LIST (u:{0})', access_key)
     async with dbpool.acquire() as conn:
-        entries = await query_accessible_vfolders(conn, user_uuid)
+        if request['is_superadmin']:  # list all folders for superadmin
+            query = sa.select([vfolders]).select_from(vfolders)
+            result = await conn.execute(query)
+            entries = []
+            async for row in result:
+                is_owner = True if row.user == user_uuid else False
+                permission = VFolderPermission.OWNER_PERM if is_owner \
+                        else VFolderPermission.READ_ONLY
+                entries.append({
+                    'name': row.name,
+                    'id': row.id,
+                    'host': row.host,
+                    'created_at': row.created_at,
+                    'is_owner': is_owner,
+                    'permission': permission,
+                    'user': str(row.user) if row.user else None,
+                    'group': str(row.group) if row.group else None,
+                    'type': 'user' if row['user'] is not None else 'group',
+                })
+        else:
+            entries = await query_accessible_vfolders(conn, user_uuid)
         for entry in entries:
             resp.append({
                 'name': entry['name'],
                 'id': entry['id'].hex,
                 'host': entry['host'],
+                'created_at': str(entry['created_at']),
                 'is_owner': entry['is_owner'],
                 'permission': entry['permission'].value,
                 'user': str(entry['user']),
@@ -296,7 +317,9 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
         'host': row['host'],
         'numFiles': num_files,  # legacy
         'num_files': num_files,
-        'created': str(row['created_at']),
+        'created': str(row['created_at']),  # legacy
+        'created_at': str(row['created_at']),
+        'last_used': str(row['created_at']),
         'user': str(row['user']),
         'group': str(row['group']),
         'type': 'user' if row['user'] is not None else 'group',
