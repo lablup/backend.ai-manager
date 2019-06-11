@@ -14,7 +14,7 @@ from ai.backend.manager.models import (
 )
 from tests.model_factory import (
     get_random_string,
-    AssociationGroupsUsersFactory, GroupFactory, UserFactory, VFolderFactory,
+    AssociationGroupsUsersFactory, DomainFactory, GroupFactory, UserFactory, VFolderFactory,
 )
 
 
@@ -933,6 +933,42 @@ class TestFilesInGroupVFolder:
         assert not (folder_path / vf_fname1).exists()
 
     @pytest.mark.asyncio
+    async def test_cannot_upload_to_gvfolder_in_other_domain_by_domain_admin(
+            self, prepare_vfolder, get_headers, tmpdir, folder_mount,
+            folder_host, folder_fsprefix, default_domain_keypair):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder,
+                                                      keypair=default_domain_keypair)
+
+        # Create domain admin in other domain's group.
+        other_domain = await DomainFactory(app).create()
+        other_group = await GroupFactory(app).create(domain_name=other_domain['name'])
+        user_in_other_group = await UserFactory(app).create()
+        await AssociationGroupsUsersFactory(app).create(
+            user_id=user_in_other_group['uuid'],
+            group_id=other_group['id'])
+
+        # Create file
+        p1 = tmpdir.join('test1.txt')
+        p1.write('1357')
+
+        # Prepare form data
+        data = aiohttp.FormData()
+        data.add_field('file', open(p1, 'rb'))
+
+        # Upload the file
+        url = f'/v3/folders/{folder_info["name"]}/upload'
+        headers = get_headers('POST', url, b'', ctype='multipart/form-data',
+                              keypair=user_in_other_group['keypair'])
+        ret = await client.post(url, data=data, headers=headers)
+
+        vf_fname1 = p1.strpath.split('/')[-1]
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
+        assert ret.status == 404
+        assert not (folder_path / vf_fname1).exists()
+
+    @pytest.mark.asyncio
     async def test_download_by_member(self, prepare_vfolder, get_headers, folder_mount,
                                       folder_host, folder_fsprefix,
                                       default_domain_keypair, user_keypair):
@@ -981,6 +1017,35 @@ class TestFilesInGroupVFolder:
         # Create user in other group in default domain.
         user_in_other_group = await UserFactory(app).create()
         other_group = await GroupFactory(app).create()
+        await AssociationGroupsUsersFactory(app).create(
+            user_id=user_in_other_group['uuid'],
+            group_id=other_group['id'])
+
+        url = f'/v3/folders/{folder_info["name"]}/download'
+        req_bytes = json.dumps({'files': ['hello.txt']}).encode()
+        headers = get_headers('GET', url, req_bytes, keypair=user_in_other_group['keypair'])
+        ret = await client.get(url, data=req_bytes, headers=headers)
+
+        assert ret.status == 404
+
+    @pytest.mark.asyncio
+    async def test_cannot_download_from_other_domain_admin(
+            self, prepare_vfolder, get_headers, folder_mount, folder_host,
+            folder_fsprefix, default_domain_keypair):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await self.create_group_vfolder(app, create_vfolder,
+                                                      keypair=default_domain_keypair)
+
+        folder_path = (folder_mount / folder_host /
+                       folder_fsprefix / folder_info['id'])
+        with open(folder_path / 'hello.txt', 'w') as f:
+            f.write('hello vfolder!')
+        assert (folder_path / 'hello.txt').exists()
+
+        # Create domain admin in other domain's group.
+        other_domain = await DomainFactory(app).create()
+        other_group = await GroupFactory(app).create(domain_name=other_domain['name'])
+        user_in_other_group = await UserFactory(app).create()
         await AssociationGroupsUsersFactory(app).create(
             user_id=user_in_other_group['uuid'],
             group_id=other_group['id'])

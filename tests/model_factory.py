@@ -98,6 +98,17 @@ class UserFactory(ModelFactory):
         return row
 
 
+class DomainFactory(ModelFactory):
+
+    model = models.domains
+
+    def get_creation_defaults(self, **kwargs):
+        return {
+            'name': f'test-domain-{get_random_string()}',
+            'total_resource_slots': {},
+        }
+
+
 class GroupFactory(ModelFactory):
 
     model = models.groups
