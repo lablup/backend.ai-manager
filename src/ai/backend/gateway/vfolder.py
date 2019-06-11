@@ -758,11 +758,7 @@ async def delete_invitation(request: web.Request, params: Any) -> web.Response:
 
 @server_status_required(ALL_ALLOWED)
 @auth_required
-@check_api_params(
-    t.Dict({
-        AliasedKey(['group', 'groupId', 'group_id'], default=None): t.Or(t.String, t.Null),
-    }))
-async def delete(request: web.Request, params: Any) -> web.Response:
+async def delete(request: web.Request) -> web.Response:
     dbpool = request.app['dbpool']
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
