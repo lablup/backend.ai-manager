@@ -3,6 +3,8 @@ import textwrap
 
 import pytest
 
+from tests.model_factory import DomainFactory
+
 
 @pytest.mark.asyncio
 class TestDomainAdminQuery:
@@ -198,7 +200,9 @@ class TestDomainAdminQuery:
         headers = get_headers('POST', self.url, payload)
         ret = await client.post(self.url, data=payload, headers=headers)
 
+        domain = await DomainFactory(app).get(name=domain_name)
         assert ret.status == 200
+        assert not domain['is_active']
 
     async def test_domain_user_cannot_mutate_domain(self, create_app_and_client, get_headers,
                                                     default_domain_keypair):

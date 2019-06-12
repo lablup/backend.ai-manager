@@ -352,6 +352,11 @@ class ModifyUser(UserMutationMixin, graphene.Mutation):
 
 
 class DeleteUser(UserMutationMixin, graphene.Mutation):
+    '''
+    Instead of deleting user, just inactive the account.
+
+    All related keypairs will also be inactivated.
+    '''
 
     class Arguments:
         email = graphene.String(required=True)
@@ -364,7 +369,15 @@ class DeleteUser(UserMutationMixin, graphene.Mutation):
         assert cls.check_perm(info), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             try:
-                query = (users.delete().where(users.c.email == email))
+                # query = (users.delete().where(users.c.email == email))
+                # Make all user keypairs inactive.
+                from ai.backend.manager.models import keypairs
+                query = (keypairs.update()
+                                 .values(is_active=False)
+                                 .where(keypairs.c.user_id == email))
+                await conn.execute(query)
+                # Inactivate user.
+                query = (users.update().values(is_active=False).where(users.c.email == email))
                 result = await conn.execute(query)
                 if result.rowcount > 0:
                     return cls(ok=True, msg='success')

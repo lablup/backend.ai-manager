@@ -3,7 +3,9 @@ import textwrap
 
 import pytest
 
-from tests.model_factory import AssociationGroupsUsersFactory, DomainFactory, GroupFactory
+from tests.model_factory import (
+    AssociationGroupsUsersFactory, DomainFactory, GroupFactory, KeyPairFactory, UserFactory
+)
 
 
 @pytest.mark.asyncio
@@ -255,7 +257,11 @@ class TestUserAdminQuery:
         headers = get_headers('POST', self.url, payload)
         ret = await client.post(self.url, data=payload, headers=headers)
 
+        user = await UserFactory(app).get(email=email)
+        keypair = await KeyPairFactory(app).get(user=str(user.uuid))
         assert ret.status == 200
+        assert not user['is_active']
+        assert not keypair['is_active']
 
     async def test_domain_admin_cannot_mutate_user(
             self, create_app_and_client, get_headers, default_domain_keypair):
