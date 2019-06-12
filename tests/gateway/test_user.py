@@ -3,6 +3,8 @@ import textwrap
 
 import pytest
 
+from tests.model_factory import AssociationGroupsUsersFactory, DomainFactory, GroupFactory
+
 
 @pytest.mark.asyncio
 class TestUserAdminQuery:
@@ -148,12 +150,23 @@ class TestUserAdminQuery:
     async def test_mutate_user(self, create_app_and_client, get_headers):
         app, client = await create_app_and_client(modules=['auth', 'admin', 'manager'])
 
+        other_domain = await DomainFactory(app).create()
+        group_factory = GroupFactory(app)
+        group1 = await group_factory.create(domain_name='default')
+        group2 = await group_factory.create(domain_name='default')
+        group3 = await group_factory.create(domain_name='default')
+        group4 = await group_factory.create(domain_name='default')
+        other_group1 = await group_factory.create(domain_name=other_domain['name'])
+        other_group2 = await group_factory.create(domain_name=other_domain['name'])
+
         # Create a user.
         email = 'newuser@lablup.com'
         query = textwrap.dedent('''\
         mutation($email: String!, $input: UserInput!) {
             create_user(email: $email, props: $input) {
-                ok msg user { username email password full_name description is_active domain_name role }
+                ok msg user {
+                    uuid username email password full_name description is_active domain_name role
+                }
             }
         }''')
         variables = {
@@ -167,6 +180,7 @@ class TestUserAdminQuery:
                 'is_active': True,
                 'domain_name': 'default',
                 'role': 'monitor',
+                'group_ids': [str(group1['id']), str(group2['id']), str(other_group1['id'])],
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -183,12 +197,20 @@ class TestUserAdminQuery:
         assert rsp_json['create_user']['user']['is_active']
         assert rsp_json['create_user']['user']['domain_name'] == 'default'
         assert rsp_json['create_user']['user']['role'] == 'monitor'
+        agu_factory = AssociationGroupsUsersFactory(app)
+        agu1 = await agu_factory.get(group_id=group1['id'])
+        assert str(agu1.user_id) == str(rsp_json['create_user']['user']['uuid'])
+        agu2 = await agu_factory.get(group_id=group2['id'])
+        assert str(agu2.user_id) == str(rsp_json['create_user']['user']['uuid'])
+        assert await agu_factory.get(group_id=other_group1['id']) is None
 
         # Update the user.
         query = textwrap.dedent('''\
         mutation($email: String!, $input: ModifyUserInput!) {
             modify_user(email: $email, props: $input) {
-                ok msg user { username email password full_name description is_active role }
+                ok msg user {
+                    uuid username email password full_name description is_active role
+                }
             }
         }''')
         variables = {
@@ -201,6 +223,7 @@ class TestUserAdminQuery:
                 'description': 'New user-mod',
                 'is_active': False,
                 'role': 'user',
+                'group_ids': [str(group3['id']), str(group4['id']), str(other_group2['id'])],
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -216,6 +239,11 @@ class TestUserAdminQuery:
         assert rsp_json['modify_user']['user']['description'] == 'New user-mod'
         assert not rsp_json['modify_user']['user']['is_active']
         assert rsp_json['modify_user']['user']['role'] == 'user'
+        agu3 = await agu_factory.get(group_id=group3['id'])
+        assert str(agu3.user_id) == str(rsp_json['modify_user']['user']['uuid'])
+        agu4 = await agu_factory.get(group_id=group4['id'])
+        assert str(agu4.user_id) == str(rsp_json['modify_user']['user']['uuid'])
+        assert await agu_factory.get(group_id=other_group2['id']) is None
 
         # Delete the user.
         query = textwrap.dedent('''\

@@ -253,12 +253,18 @@ class CreateUser(UserMutationMixin, graphene.Mutation):
                     await conn.execute(query)
 
                     # Add user to groups if group_ids parameter is provided.
-                    from .group import association_groups_users
+                    from .group import association_groups_users, groups
                     if props.group_ids:
-                        values = [{'user_id': o.uuid, 'group_id': gid} for gid in props.group_ids]
-                        query = sa.insert(association_groups_users).values(values)
-                        await conn.execute(query)
-
+                        query = (sa.select([groups.c.id])
+                                   .select_from(groups)
+                                   .where(groups.c.domain_name == info.context['user']['domain_name'])
+                                   .where(groups.c.id.in_(props.group_ids)))
+                        result = await conn.execute(query)
+                        grps = await result.fetchall()
+                        if grps:
+                            values = [{'user_id': o.uuid, 'group_id': grp.id} for grp in grps]
+                            query = association_groups_users.insert().values(values)
+                            await conn.execute(query)
                     return cls(ok=True, msg='success', user=o)
                 else:
                     return cls(ok=False, msg='failed to create user', user=None)
@@ -313,13 +319,11 @@ class ModifyUser(UserMutationMixin, graphene.Mutation):
                     checkq = users.select().where(users.c.email == email)
                     result = await conn.execute(checkq)
                     o = User.from_row(await result.first())
-                    return cls(ok=True, msg='success', user=o)
                 else:
                     return cls(ok=False, msg='no such user', user=None)
-
                 # Update user's group if group_ids parameter is provided.
-                from .group import association_groups_users
-                if props.group_ids:
+                if props.group_ids and o is not None:
+                    from .group import association_groups_users, groups
                     # TODO: isn't it dangerous if second execution breaks,
                     #       which results in user lost all of groups?
                     # Clear previous groups associated with the user.
@@ -328,9 +332,17 @@ class ModifyUser(UserMutationMixin, graphene.Mutation):
                              .where(association_groups_users.c.user_id == o.uuid))
                     await conn.execute(query)
                     # Add user to new groups.
-                    values = [{'user_id': o.uuid, 'group_id': gid} for gid in props.group_ids]
-                    query = sa.insert(association_groups_users).values(values)
-                    await conn.execute(query)
+                    query = (sa.select([groups.c.id])
+                               .select_from(groups)
+                               .where(groups.c.domain_name == info.context['user']['domain_name'])
+                               .where(groups.c.id.in_(props.group_ids)))
+                    result = await conn.execute(query)
+                    grps = await result.fetchall()
+                    if grps:
+                        values = [{'user_id': o.uuid, 'group_id': grp.id} for grp in grps]
+                        query = association_groups_users.insert().values(values)
+                        await conn.execute(query)
+                return cls(ok=True, msg='success', user=o)
             except (pg.IntegrityError, sa.exc.IntegrityError) as e:
                 return cls(ok=False, msg=f'integrity error: {e}', user=None)
             except (asyncio.CancelledError, asyncio.TimeoutError):
