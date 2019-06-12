@@ -12,6 +12,7 @@ from ai.backend.manager.models import (
     vfolders, vfolder_invitations, vfolder_permissions,
     VFolderPermission,
 )
+from ai.backend.manager.models.user import UserRole
 from tests.model_factory import (
     get_random_string,
     AssociationGroupsUsersFactory, DomainFactory, GroupFactory, UserFactory, VFolderFactory,
@@ -450,7 +451,7 @@ class TestGroupVFolder:
 
     async def test_cannot_list_gvfolder_in_other_group(self, prepare_vfolder, get_headers,
                                                        default_domain_keypair):
-        # Create admin's vfolder in default group.
+        # Create group vfolder in default group.
         app, client, create_vfolder = prepare_vfolder
         await self.create_group_vfolder(app, create_vfolder, keypair=default_domain_keypair)
 
@@ -465,6 +466,30 @@ class TestGroupVFolder:
         url = '/v3/folders/'
         req_bytes = json.dumps({}).encode()
         headers = get_headers('GET', url, req_bytes, keypair=user_in_other_group['keypair'])
+        ret = await client.get(url, data=req_bytes, headers=headers)
+        rsp_json = await ret.json()
+
+        assert ret.status == 200
+        assert len(rsp_json) == 0
+
+    async def test_cannot_list_gvfolder_in_other_domain_by_domain_admin(
+            self, prepare_vfolder, get_headers, default_domain_keypair):
+        # Create group vfolder in default group.
+        app, client, create_vfolder = prepare_vfolder
+        await self.create_group_vfolder(app, create_vfolder, keypair=default_domain_keypair)
+
+        # Create other domain and domain admin for it.
+        other_domain = await DomainFactory(app).create()
+        other_group = await GroupFactory(app).create(domain_name=other_domain['name'])
+        admin_in_other_domain = await UserFactory(app).create(role=UserRole.ADMIN)
+        await AssociationGroupsUsersFactory(app).create(
+            user_id=admin_in_other_domain['uuid'],
+            group_id=other_group['id'])
+
+        # Ensure other domain's admin cannot see group vfolder in the default group.
+        url = '/v3/folders/'
+        req_bytes = json.dumps({}).encode()
+        headers = get_headers('GET', url, req_bytes, keypair=admin_in_other_domain['keypair'])
         ret = await client.get(url, data=req_bytes, headers=headers)
         rsp_json = await ret.json()
 
@@ -1045,7 +1070,7 @@ class TestFilesInGroupVFolder:
         # Create domain admin in other domain's group.
         other_domain = await DomainFactory(app).create()
         other_group = await GroupFactory(app).create(domain_name=other_domain['name'])
-        user_in_other_group = await UserFactory(app).create()
+        user_in_other_group = await UserFactory(app).create(role=UserRole.ADMIN)
         await AssociationGroupsUsersFactory(app).create(
             user_id=user_in_other_group['uuid'],
             group_id=other_group['id'])
