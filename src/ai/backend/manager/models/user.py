@@ -300,7 +300,7 @@ class ModifyUser(UserMutationMixin, graphene.Mutation):
             set_if_set('full_name')
             set_if_set('description')
             set_if_set('is_active')
-            set_if_set('domain_name')
+            # set_if_set('domain_name')  # prevent changing domain_name
             set_if_set('role')
 
             if not data and not props.group_ids:
@@ -313,24 +313,24 @@ class ModifyUser(UserMutationMixin, graphene.Mutation):
                     checkq = users.select().where(users.c.email == email)
                     result = await conn.execute(checkq)
                     o = User.from_row(await result.first())
-                    return cls(ok=True, msg='success', user=o)
+                    if not props.group_ids:
+                        return cls(ok=True, msg='success', user=o)
                 else:
                     return cls(ok=False, msg='no such user', user=None)
 
                 # Update user's group if group_ids parameter is provided.
                 from .group import association_groups_users
-                if props.group_ids:
-                    # TODO: isn't it dangerous if second execution breaks,
-                    #       which results in user lost all of groups?
-                    # Clear previous groups associated with the user.
-                    query = (association_groups_users
-                             .delete()
-                             .where(association_groups_users.c.user_id == o.uuid))
-                    await conn.execute(query)
-                    # Add user to new groups.
-                    values = [{'user_id': o.uuid, 'group_id': gid} for gid in props.group_ids]
-                    query = sa.insert(association_groups_users).values(values)
-                    await conn.execute(query)
+                # TODO: isn't it dangerous if second execution breaks,
+                #       which results in user lost all of groups?
+                # Clear previous groups associated with the user.
+                query = (association_groups_users
+                         .delete()
+                         .where(association_groups_users.c.user_id == o.uuid))
+                await conn.execute(query)
+                # Add user to new groups.
+                values = [{'user_id': o.uuid, 'group_id': gid} for gid in props.group_ids]
+                query = sa.insert(association_groups_users).values(values)
+                await conn.execute(query)
             except (pg.IntegrityError, sa.exc.IntegrityError) as e:
                 return cls(ok=False, msg=f'integrity error: {e}', user=None)
             except (asyncio.CancelledError, asyncio.TimeoutError):
