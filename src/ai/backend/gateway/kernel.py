@@ -150,7 +150,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 mount_details = []
                 matched_mounts = set()
                 matched_vfolders = await query_accessible_vfolders(
-                    conn, owner_uuid,
+                    conn, owner_access_key,
                     extra_vf_conds=(vfolders.c.name.in_(creation_config['mounts'])))
                 for item in matched_vfolders:
                     matched_mounts.add(item['name'])
