@@ -107,19 +107,22 @@ class Agent(graphene.ObjectType):
     async def resolve_live_stat(self, info):
         rs = info.context['redis_stat']
         live_stat = await rs.get(str(self.id), encoding=None)
-        live_stat = msgpack.unpackb(live_stat)
+        if live_stat is not None:
+            live_stat = msgpack.unpackb(live_stat)
         return live_stat
 
     async def resolve_cpu_cur_pct(self, info):
         rs = info.context['redis_stat']
         live_stat = await rs.get(str(self.id), encoding=None)
-        live_stat = msgpack.unpackb(live_stat)
+        if live_stat is not None:
+            live_stat = msgpack.unpackb(live_stat)
         return float(live_stat['node']['cpu_util']['pct'])
 
     async def resolve_mem_cur_bytes(self, info):
         rs = info.context['redis_stat']
         live_stat = await rs.get(str(self.id), encoding=None)
-        live_stat = msgpack.unpackb(live_stat)
+        if live_stat is not None:
+            live_stat = msgpack.unpackb(live_stat)
         return float(live_stat['node']['mem']['current'])
 
     async def resolve_computations(self, info, status=None):
