@@ -306,7 +306,7 @@ class ModifyUser(UserMutationMixin, graphene.Mutation):
             set_if_set('full_name')
             set_if_set('description')
             set_if_set('is_active')
-            set_if_set('domain_name')
+            # set_if_set('domain_name')  # prevent changing domain_name
             set_if_set('role')
 
             if not data and not props.group_ids:
