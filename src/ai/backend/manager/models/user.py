@@ -1,6 +1,7 @@
 import asyncio
 from collections import OrderedDict
 import enum
+import json
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -70,7 +71,7 @@ class User(graphene.ObjectType):
     domain_name = graphene.String()
     role = graphene.String()
     # Dynamic fields
-    groups = graphene.List(lambda: graphene.String)
+    groups = graphene.List(lambda: graphene.JSONString)
 
     @classmethod
     def from_row(cls, row):
