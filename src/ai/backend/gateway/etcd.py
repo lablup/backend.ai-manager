@@ -111,6 +111,7 @@ from ai.backend.common.etcd import (
     make_dict_from_pairs,
     quote as etcd_quote,
     unquote as etcd_unquote,
+    ConfigScopes,
 )
 from ai.backend.common.docker import (
     login as registry_login,
@@ -143,7 +144,10 @@ class ConfigServer:
                 'user': etcd_user,
                 'password': etcd_password,
             }
-        self.etcd = AsyncEtcd(etcd_addr, namespace, credentials=credentials)
+        scope_prefix_map = {
+            ConfigScopes.GLOBAL: '',
+        }
+        self.etcd = AsyncEtcd(etcd_addr, namespace, scope_prefix_map, credentials=credentials)
 
     async def get(self, key, allow_null=True):
         value = await self.etcd.get(key)
