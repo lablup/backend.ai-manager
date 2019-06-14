@@ -198,16 +198,13 @@ class ConfigServer:
         log.info('Done.')
 
     async def _scan_reverse_aliases(self):
-        kvpairs = dict(await self.etcd.get_prefix('images/_aliases'))
+        aliases = await self.etcd.get_prefix('images/_aliases')
         result = defaultdict(list)
-        for key, value in kvpairs.items():
-            kpath = key.split('/')
-            result[value].append(etcd_unquote(kpath[2]))
+        for key, value in aliases.items():
+            result[value].append(etcd_unquote(key))
         return result
 
-    async def _parse_image(self, image_ref, kvpairs, reverse_aliases):
-        tag_path = image_ref.tag_path
-        item = make_dict_from_pairs(tag_path, kvpairs)
+    async def _parse_image(self, image_ref, item, reverse_aliases):
         installed = (
             await self.context['redis_image'].scard(image_ref.canonical)
         ) > 0
@@ -260,34 +257,27 @@ class ConfigServer:
         else:
             ref = reference
         reverse_aliases = await self._scan_reverse_aliases()
-        kvpairs = dict(await self.etcd.get_prefix(ref.tag_path))
-        if not kvpairs or not kvpairs.get(ref.tag_path):
+        image_info = await self.etcd.get_prefix(ref.tag_path)
+        if not image_info:
             raise UnknownImageReference(reference)
-        return await self._parse_image(ref, kvpairs, reverse_aliases)
+        return await self._parse_image(ref, image_info, reverse_aliases)
 
     async def list_images(self):
         known_registries = await get_known_registries(self.etcd)
         reverse_aliases = await self._scan_reverse_aliases()
-        kvpairs = dict(await self.etcd.get_prefix('images'))
-        rx_tag_digest_key = re.compile(
-            r'^images/(?P<registry>(?!_aliases)[^/]+)/'
-            r'(?P<image>[^/]+)/(?P<tag>[^/]+)$')
-        image_set = {}
-        for key, value in kvpairs.items():
-            match = rx_tag_digest_key.search(key)
-            if match is None:
-                continue
-            image_tuple = (
-                etcd_unquote(match.group('registry')),
-                etcd_unquote(match.group('image')),
-                match.group('tag'),
-            )
-            image_set[image_tuple] = key
-
+        data = await self.etcd.get_prefix('images')
         coros = []
-        for (registry, image, tag), tag_path in image_set.items():
-            ref = ImageRef(f'{registry}/{image}:{tag}', known_registries)
-            coros.append(self._parse_image(ref, kvpairs, reverse_aliases))
+        for registry, images in data.items():
+            if registry == '_aliases':
+                continue
+            for image, tags in images.items():
+                if image == '':
+                    continue
+                for tag, image_info in tags.items():
+                    if tag == '':
+                        continue
+                    ref = ImageRef(f'{registry}/{image}:{tag}', known_registries)
+                    coros.append(self._parse_image(ref, image_info, reverse_aliases))
         return await asyncio.gather(*coros)
 
     async def set_image_resource_limit(self, reference: str,
@@ -433,11 +423,10 @@ class ConfigServer:
     async def rescan_images(self, registry: str = None):
         if registry is None:
             registries = []
-            pairs = await self.etcd.get_prefix('config/docker/registry')
-            for key, val in pairs:
-                match = re.search(r'^config/docker/registry/([^/]+)$', key)
-                if match is not None:
-                    registries.append(etcd_unquote(match.group(1)))
+            data = await self.etcd.get_prefix('config/docker/registry')
+            for key, val in data.items():
+                if key:
+                    registries.append(etcd_unquote(key))
         else:
             registries = [registry]
         coros = []

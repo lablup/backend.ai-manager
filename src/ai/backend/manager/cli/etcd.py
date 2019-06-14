@@ -7,7 +7,7 @@ import sys
 
 import aioredis
 
-from ai.backend.common.etcd import AsyncEtcd
+from ai.backend.common.etcd import AsyncEtcd, ConfigScopes
 from ai.backend.common.logging import BraceStyleAdapter
 
 from . import register_command
@@ -34,7 +34,10 @@ def etcd_ctx(args):
             'user': args.etcd_user,
             'password': args.etcd_password,
         }
-    etcd = AsyncEtcd(args.etcd_addr, args.namespace, credentials=creds)
+    scope_prefix_map = {
+        ConfigScopes.GLOBAL: '',
+    }
+    etcd = AsyncEtcd(args.etcd_addr, args.namespace, scope_prefix_map, credentials=creds)
     with contextlib.closing(loop):
         yield loop, etcd
     asyncio.set_event_loop(None)
@@ -81,9 +84,9 @@ def get(args):
     '''Get the value of a key in the configured etcd namespace.'''
     with etcd_ctx(args) as (loop, etcd):
         if args.prefix:
-            val = loop.run_until_complete(etcd.get_prefix(args.key))
-            for x in val:
-                print(x)
+            data = loop.run_until_complete(etcd.get_prefix(args.key))
+            data = dict(data)  # make a single dict from ChainMap
+            pprint(data)
         else:
             val = loop.run_until_complete(etcd.get(args.key))
             if val is None:
