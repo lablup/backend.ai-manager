@@ -1,8 +1,34 @@
 '''
-Configuration Schema on etcd:
+Configuration Schema on etcd
+----------------------------
 
-Note that {image} does not contain the common "<registry>/kernel-" prefix
-while the real images on the registry have that.
+The etcd (v3) itself is a flat key-value storage, but we use its prefix-based filtering
+by using a directory-like configuration structure.
+At the root, it contains "/sorna/{namespace}" as the common prefix.
+
+In most cases, a single global configurations are sufficient, but cluster administrators
+may want to apply different settings (e.g., resource slot types, vGPU sizes, etc.)
+to different scaling groups or even each node.
+
+To support such requireemnts, we add another level of prefix named "configuration scope".
+There are three types of configuration scopes:
+
+ * Global
+ * Scaling group
+ * Node
+
+When reading configurations, the underlying `ai.backend.common.etcd.AsyncEtcd` class
+reeturns a `collections.ChainMap` instance that merges three configuration scopes
+in the order of node, scaling group, and global, so that node-level configs override
+scaling-group configs, and scaling-group configs override global configs if they exist.
+
+Note that the global scope prefix may be an empty string; this allows use of legacy
+etcd databases without explicit migration.  When the global scope prefix is an empty string,
+it does not make a new depth in the directory structure, so "{namespace}/config/x" (not
+"{namespace}//config/x"!) is recognized as the global config.
+
+Notes on Docker registry configurations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 A registry name contains the host, port (only for non-standards), and the path.
 So, they must be URL-quoted (including slashes) to avoid parsing
@@ -10,27 +36,62 @@ errors due to intermediate slashes and colons.
 Alias keys are also URL-quoted in the same way.
 
 {namespace}
- + config
-   + api
-     - allow-origins: "*"
-   + docker
-     + registry
-       - lablup: https://registry-1.docker.io
-         - username: "lablup"
-       + {registry-name}: {registry-URL}  # {registry-name} is url-quoted
-         - username: {username}
-         - password: {password}
-         - auth: {auth-json-cached-from-config.json}
+ + ''  # ConfigScoeps.GLOBAL
+   + config
+     + api
+       - allow-origins: "*"
+     + docker
+       + registry
+         - lablup: https://registry-1.docker.io
+           - username: "lablup"
+         + {registry-name}: {registry-URL}  # {registry-name} is url-quoted
+           - username: {username}
+           - password: {password}
+           - auth: {auth-json-cached-from-config.json}
+         ...
+     + resource_slots
+       + {"cuda.device"}: {"count"}
+       + {"cuda.mem"}: {"bytes"}
+       + {"cuda.smp"}: {"count"}
        ...
-   + resource_slots
-     + {"cuda.device"}: {"count"}
-     + {"cuda.mem"}: {"bytes"}
-     + {"cuda.smp"}: {"count"}
+     + plugins
+       + "cuda"
+         - allocation_mode: "discrete"
+         ...
+   + volumes
+     - _mount: {path-to-mount-root-for-vfolder-partitions}
+     - _default_host: {default-vfolder-partition-name}
+     - _fsprefix: {path-prefix-inside-host-mounts}
+   + images
+     + _aliases
+       - {alias}: "{registry}/{image}:{tag}"   # {alias} is url-quoted
+       ...
+     + {registry}   # url-quoted
+       + {image}    # url-quoted
+         + {tag}: {digest-of-config-layer}
+           - size_bytes: {image-size-in-bytes}
+           - accelerators: "{accel-name-1},{accel-name-2},..."
+           + labels
+             - {key}: {value}
+             ...
+           + resource
+             + cpu
+               - min
+               - max   # may not be defined
+             + mem
+               - min
+               - max   # may not be defined
+             + {"cuda.smp"}
+               - min
+               - max   # treated as 0 if not defined
+             + {"cuda.mem"}
+               - min
+               - max   # treated as 0 if not defined
+             ...
+         ...
+       ...
      ...
-   + plugins
-     + "cuda"
-       - allocation_mode: "discrete"
-       ...
+   ...
  + nodes
    + manager: {instance-id}
      - event_addr: {"tcp://manager:5001"}
@@ -38,42 +99,9 @@ Alias keys are also URL-quoted in the same way.
    + redis: {"tcp://redis:6379"}
      - password: {redis-auth-password}
    + agents
-     - {instance-id}: {"starting","running"}
- + volumes
-   - _mount: {path-to-mount-root-for-vfolder-partitions}
-   - _default_host: {default-vfolder-partition-name}
-   - _fsprefix: {path-prefix-inside-host-mounts}
- + images
-   + _aliases
-     - {alias}: "{registry}/{image}:{tag}"   # {alias} is url-quoted
-     ...
-   + {registry}   # url-quoted
-     + {image}    # url-quoted
-       + {tag}: {digest-of-config-layer}
-         - size_bytes: {image-size-in-bytes}
-         - accelerators: "{accel-name-1},{accel-name-2},..."
-         + labels
-           - {key}: {value}
-           ...
-         + resource
-           + cpu
-             - min
-             - max   # may not be defined
-           + mem
-             - min
-             - max   # may not be defined
-           + {"cuda.smp"}
-             - min
-             - max   # treated as 0 if not defined
-           + {"cuda.mem"}
-             - min
-             - max   # treated as 0 if not defined
-           ...
-       ...
-     ...
-   ...
- + scaling-groups
-   + {name}
+     - {instance-id}: {"starting","running"}  # ConfigScopes.NODE
+ + sgroup
+   + {name}  # ConfigScopes.SGROUP
      - swarm-manager/token
      - swarm-manager/host
      - swarm-worker/token
@@ -89,7 +117,6 @@ from decimal import Decimal
 import logging
 import json
 from pathlib import Path
-import re
 from typing import Any, Mapping, Union
 
 import aiohttp
@@ -108,7 +135,6 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ImageRef, BinarySize, ResourceSlot
 from ai.backend.common.exception import UnknownImageReference
 from ai.backend.common.etcd import (
-    make_dict_from_pairs,
     quote as etcd_quote,
     unquote as etcd_unquote,
     ConfigScopes,
@@ -598,7 +624,7 @@ async def set_config(request: web.Request, params: Any) -> web.Response:
 
         flatten(params['key'], params['value'])
         # TODO: chunk support if there are too many keys
-        if len(params) > 16:
+        if len(updates) > 16:
             raise InvalidAPIParameters(
                 'Too large update! Split into smaller key-value pair sets.')
         await etcd.put_dict(updates)
