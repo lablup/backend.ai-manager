@@ -223,7 +223,7 @@ class Client:
 
 
 @pytest.fixture
-async def app(event_loop, test_ns, test_db, unused_tcp_port):
+async def app(event_loop, test_ns, test_db, unused_tcp_port_factory):
     """ For tests that do not require actual server running.
     """
     app = web.Application(middlewares=[
@@ -250,7 +250,8 @@ async def app(event_loop, test_ns, test_db, unused_tcp_port):
     app['config'].namespace = test_ns
     app['config'].heartbeat_timeout = 10.0
     app['config'].service_ip = '127.0.0.1'
-    app['config'].service_port = unused_tcp_port
+    app['config'].service_port = unused_tcp_port_factory()
+    # app['config'].events_port = unused_tcp_port_factory()
     app['config'].verbose = False
     # import ssl
     # app['config'].ssl_cert = here / 'sample-ssl-cert' / 'sample.crt'

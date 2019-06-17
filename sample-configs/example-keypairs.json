@@ -13,7 +13,8 @@
             "name": "default",
             "description": "Default group in default domain",
             "is_active": true,
-            "domain_name": "default"
+            "domain_name": "default",
+            "total_resource_slots": {}
         }
     ],
     "users": [

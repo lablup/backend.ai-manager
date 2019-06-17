@@ -50,6 +50,8 @@ users = sa.Table(
     sa.Column('is_active', sa.Boolean, default=True),
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
+    #: Field for synchronization with external services.
+    sa.Column('integration_id', sa.String(length=512)),
 
     # Note: admins without domain_name is global admin.
     sa.Column('domain_name', sa.String(length=64),
@@ -115,17 +117,15 @@ class User(graphene.ObjectType):
                 query = query.where(users.c.domain_name == context['user']['domain_name'])
             if is_active is not None:
                 query = query.where(users.c.is_active == is_active)
-            objs = []
-            emails = []
+            objs_per_key = OrderedDict()
             async for row in conn.execute(query):
-                if row.email in emails:
-                    # If same user is already saved, just append group name
-                    idx = emails.index(row.email)
-                    objs[idx].groups.append(UserGroup(id=str(row.id), name=row.name))
+                if row.email in objs_per_key:
+                    # If same user is already saved, just append group information.
+                    objs_per_key[row.email].groups.append(UserGroup(id=row.id, name=row.name))
                     continue
-                emails.append(row.email)
                 o = User.from_row(row)
-                objs.append(o)
+                objs_per_key[row.email] = o
+            objs = list(objs_per_key.values())
         return objs
 
     @staticmethod
