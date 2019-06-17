@@ -7,7 +7,8 @@ from graphene.types.datetime import DateTime as GQLDateTime
 import psycopg2 as pg
 import sqlalchemy as sa
 
-from .base import metadata, GUID, IDColumn
+from ai.backend.common.types import ResourceSlot
+from .base import metadata, GUID, IDColumn, ResourceSlotColumn
 from .user import UserRole
 
 
@@ -40,10 +41,14 @@ groups = sa.Table(
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
     sa.Column('modified_at', sa.DateTime(timezone=True),
               server_default=sa.func.now(), onupdate=sa.func.current_timestamp()),
+    #: Field for synchronization with external services.
+    sa.Column('integration_id', sa.String(length=512)),
 
     sa.Column('domain_name', sa.String(length=64),
               sa.ForeignKey('domains.name', onupdate='CASCADE', ondelete='CASCADE'),
               nullable=False, index=True),
+    # TODO: separate resource-related fields with new domain resource policy table when needed.
+    sa.Column('total_resource_slots', ResourceSlotColumn(), default='{}'),
     sa.UniqueConstraint('name', 'domain_name', name='uq_groups_name_domain_name')
 )
 
@@ -56,6 +61,7 @@ class Group(graphene.ObjectType):
     created_at = GQLDateTime()
     modified_at = GQLDateTime()
     domain_name = graphene.String()
+    total_resource_slots = graphene.JSONString()
 
     @classmethod
     def from_row(cls, row):
@@ -69,6 +75,7 @@ class Group(graphene.ObjectType):
             created_at=row['created_at'],
             modified_at=row['modified_at'],
             domain_name=row['domain_name'],
+            total_resource_slots=row['total_resource_slots'].to_json(),
         )
 
     @staticmethod
@@ -118,6 +125,7 @@ class GroupInput(graphene.InputObjectType):
     description = graphene.String(required=False)
     is_active = graphene.Boolean(required=False, default=True)
     domain_name = graphene.String(required=True)
+    total_resource_slots = graphene.JSONString(required=False)
 
 
 class ModifyGroupInput(graphene.InputObjectType):
@@ -125,6 +133,7 @@ class ModifyGroupInput(graphene.InputObjectType):
     description = graphene.String(required=False)
     is_active = graphene.Boolean(required=False)
     domain_name = graphene.String(required=False)
+    total_resource_slots = graphene.JSONString(required=False)
     user_update_mode = graphene.String(required=False)
     user_uuids = graphene.List(lambda: graphene.String, required=False)
 
@@ -170,6 +179,7 @@ class CreateGroup(GroupMutationMixin, graphene.Mutation):
     @classmethod
     async def mutate(cls, root, info, name, props):
         assert await cls.check_perm(info, domain_name=props.domain_name), 'no permission'
+        known_slot_types = await info.context['config_server'].get_resource_slots()
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             assert _rx_slug.search(name) is not None, 'invalid name format. slug format required.'
             data = {
@@ -177,6 +187,8 @@ class CreateGroup(GroupMutationMixin, graphene.Mutation):
                 'description': props.description,
                 'is_active': props.is_active,
                 'domain_name': props.domain_name,
+                'total_resource_slots': ResourceSlot.from_user_input(
+                    props.total_resource_slots, known_slot_types),
             }
             query = (groups.insert().values(data))
             try:
@@ -210,6 +222,7 @@ class ModifyGroup(GroupMutationMixin, graphene.Mutation):
     @classmethod
     async def mutate(cls, root, info, gid, props):
         assert await cls.check_perm(info, gid=gid), 'no permission'
+        known_slot_types = await info.context['config_server'].get_resource_slots()
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
 
@@ -219,10 +232,14 @@ class ModifyGroup(GroupMutationMixin, graphene.Mutation):
                 if v is not None:
                     data[name] = v
 
+            def clean_resource_slot(v):
+                return ResourceSlot.from_user_input(v, known_slot_types)
+
             set_if_set('name')
             set_if_set('description')
             set_if_set('is_active')
             set_if_set('domain_name')
+            set_if_set('total_resource_slots', clean_resource_slot)
 
             if 'name' in data:
                 assert _rx_slug.search(data['name']) is not None, \

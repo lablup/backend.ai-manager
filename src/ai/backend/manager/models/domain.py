@@ -28,7 +28,9 @@ domains = sa.Table(
     sa.Column('modified_at', sa.DateTime(timezone=True),
               server_default=sa.func.now(), onupdate=sa.func.current_timestamp()),
     # TODO: separate resource-related fields with new domain resource policy table when needed.
-    sa.Column('total_resource_slots', ResourceSlotColumn(), nullable=False),
+    sa.Column('total_resource_slots', ResourceSlotColumn(), default='{}'),
+    #: Field for synchronization with external services.
+    sa.Column('integration_id', sa.String(length=512)),
 )
 
 
@@ -85,7 +87,7 @@ class Domain(graphene.ObjectType):
 class DomainInput(graphene.InputObjectType):
     description = graphene.String(required=False)
     is_active = graphene.Boolean(required=False, default=True)
-    total_resource_slots = graphene.JSONString(required=True)
+    total_resource_slots = graphene.JSONString(required=False)
 
 
 class ModifyDomainInput(graphene.InputObjectType):
