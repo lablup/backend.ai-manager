@@ -58,6 +58,11 @@ users = sa.Table(
 )
 
 
+class UserGroup(graphene.ObjectType):
+    id = graphene.UUID()
+    name = graphene.String()
+
+
 class User(graphene.ObjectType):
     uuid = graphene.UUID()
     username = graphene.String()
@@ -71,17 +76,14 @@ class User(graphene.ObjectType):
     domain_name = graphene.String()
     role = graphene.String()
     # Dynamic fields
-    groups = graphene.List(lambda: graphene.JSONString)
+    groups = graphene.List(lambda: UserGroup)
 
     @classmethod
     def from_row(cls, row):
         if row is None:
             return None
         if 'id' in row and row.id is not None and 'name' in row and row.name is not None:
-            groups = [{
-                'id': str(row['id']),
-                'name': row['name'],
-            }]
+            groups = [UserGroup(id=row['id'], name=row['name'])]
         else:
             groups = None
         return cls(
@@ -119,7 +121,7 @@ class User(graphene.ObjectType):
                 if row.email in emails:
                     # If same user is already saved, just append group name
                     idx = emails.index(row.email)
-                    objs[idx].groups.append({'id': str(row.id), 'name': row.name})
+                    objs[idx].groups.append(UserGroup(id=str(row.id), name=row.name))
                     continue
                 emails.append(row.email)
                 o = User.from_row(row)
