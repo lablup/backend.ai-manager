@@ -302,7 +302,8 @@ class ConfigServer:
                 for tag, image_info in tags.items():
                     if tag == '':
                         continue
-                    ref = ImageRef(f'{registry}/{image}:{tag}', known_registries)
+                    raw_ref = f'{etcd_unquote(registry)}/{etcd_unquote(image)}:{tag}'
+                    ref = ImageRef(raw_ref, known_registries)
                     coros.append(self._parse_image(ref, image_info, reverse_aliases))
         return await asyncio.gather(*coros)
 
