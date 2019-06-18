@@ -23,13 +23,13 @@ from ai.backend.common.logging import BraceStyleAdapter
 from .auth import auth_required
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
-    InvalidAPIParameters)
+    GenericForbidden, InvalidAPIParameters)
 from .manager import (
     READ_ALLOWED, ALL_ALLOWED,
     server_status_required)
-from .utils import check_api_params
+from .utils import AliasedKey, check_api_params
 from ..manager.models import (
-    keypairs, vfolders, vfolder_invitations, vfolder_permissions,
+    groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
     VFolderPermission, query_accessible_vfolders)
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
@@ -54,7 +54,7 @@ def vfolder_permission_required(perm: VFolderPermission):
         @functools.wraps(handler)
         async def _wrapped(request: web.Request) -> web.Response:
             dbpool = request.app['dbpool']
-            access_key = request['keypair']['access_key']
+            user_uuid = request['user']['uuid']
             folder_name = request.match_info['name']
             if perm == VFolderPermission.READ_ONLY:
                 # if READ_ONLY is requested, any permission accepts.
@@ -79,7 +79,7 @@ def vfolder_permission_required(perm: VFolderPermission):
                 perm_cond = (vfolder_permissions.c.permission == perm)
             async with dbpool.acquire() as conn:
                 entries = await query_accessible_vfolders(
-                    conn, access_key,
+                    conn, user_uuid,
                     extra_vf_conds=(vfolders.c.name == folder_name),
                     extra_vfperm_conds=perm_cond)
                 if len(entries) == 0:
@@ -94,8 +94,7 @@ def vfolder_permission_required(perm: VFolderPermission):
 
 def vfolder_check_exists(handler: Callable[[web.Request, VFolderRow], web.Response]):
     '''
-    Checks if the target vfolder exists and is owned
-    by the current access key.
+    Checks if the target vfolder exists and is owned by the current user.
 
     The decorated handler should accept an extra "row" argument
     which contains the matched VirtualFolder table row.
@@ -104,7 +103,7 @@ def vfolder_check_exists(handler: Callable[[web.Request, VFolderRow], web.Respon
     @functools.wraps(handler)
     async def _wrapped(request: web.Request) -> web.Response:
         dbpool = request.app['dbpool']
-        access_key = request['keypair']['access_key']
+        user_uuid = request['user']['uuid']
         folder_name = request.match_info['name']
         async with dbpool.acquire() as conn:
             j = sa.join(
@@ -113,8 +112,8 @@ def vfolder_check_exists(handler: Callable[[web.Request, VFolderRow], web.Respon
             query = (
                 sa.select('*')
                 .select_from(j)
-                .where(((vfolders.c.belongs_to == access_key) |
-                        (vfolder_permissions.c.access_key == access_key)) &
+                .where(((vfolders.c.user == user_uuid) |
+                        (vfolder_permissions.c.user == user_uuid)) &
                        (vfolders.c.name == folder_name)))
             try:
                 result = await conn.execute(query)
@@ -130,16 +129,22 @@ def vfolder_check_exists(handler: Callable[[web.Request, VFolderRow], web.Respon
 
 @server_status_required(ALL_ALLOWED)
 @auth_required
-async def create(request: web.Request) -> web.Response:
+@check_api_params(
+    t.Dict({
+        t.Key('name'): t.Regexp('^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$', re.ASCII),
+        t.Key('host', default=None) >> 'folder_host': t.Or(t.String, t.Null),
+        AliasedKey(['group', 'groupId', 'group_id'], default=None): t.Or(t.String, t.Null),
+    }),
+)
+async def create(request: web.Request, params: Any) -> web.Response:
     resp = {}
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
     resource_policy = request['keypair']['resource_policy']
-    params = await request.json()
     log.info('VFOLDER.CREATE (u:{0})', access_key)
-    assert _rx_slug.search(params.get('name', '')) is not None, 'invalid name format'
     # Resolve host for the new virtual folder.
-    folder_host = params.get('host', None)
+    folder_host = params['folder_host']
     if not folder_host:
         folder_host = \
             await request.app['config_server'].etcd.get('volumes/_default_host')
@@ -147,6 +152,7 @@ async def create(request: web.Request) -> web.Response:
             raise InvalidAPIParameters(
                 'You must specify the vfolder host '
                 'because the default host is not configured.')
+
     # Check resource policy's allowed_vfolder_hosts
     if folder_host not in resource_policy['allowed_vfolder_hosts']:
         raise InvalidAPIParameters('You are not allowed to use this vfolder host.')
@@ -159,17 +165,32 @@ async def create(request: web.Request) -> web.Response:
         # Check resource policy's max_vfolder_count
         if resource_policy['max_vfolder_count'] > 0:
             query = (sa.select([sa.func.count()])
-                       .where(vfolders.c.belongs_to == access_key))
+                       .where(vfolders.c.user == user_uuid))
             result = await conn.scalar(query)
             if result >= resource_policy['max_vfolder_count']:
                 raise InvalidAPIParameters('You cannot create more vfolders.')
 
         # Prevent creation of vfolder with duplicated name.
         entries = await query_accessible_vfolders(
-            conn, access_key,
-            extra_vf_conds=(vfolders.c.name == params['name']))
+            conn, user_uuid,
+            extra_vf_conds=(sa.and_(vfolders.c.name == params['name'],
+                                    vfolders.c.host == folder_host))
+        )
         if len(entries) > 0:
             raise VFolderAlreadyExists
+
+        # Check if group exists.
+        if params['group']:
+            if not request['is_admin'] or request['is_superadmin']:
+                # Superadmin will not manipulate group's vfolder (at least currently).
+                raise GenericForbidden('no permission')
+            query = (sa.select([groups.c.id])
+                       .select_from(groups)
+                       .where(groups.c.domain_name == request['user']['domain_name'])
+                       .where(groups.c.id == params['group']))
+            gid = await conn.scalar(query)
+            if str(gid) != str(params['group']):
+                raise InvalidAPIParameters('No such group.')
 
         try:
             folder_id = uuid.uuid4().hex
@@ -178,17 +199,22 @@ async def create(request: web.Request) -> web.Response:
             folder_path.mkdir(parents=True, exist_ok=True)
         except OSError:
             raise VFolderCreationFailed
+        user_uuid = str(user_uuid) if params['group'] is None else None
+        group_uuid = str(params['group']) if params['group'] is not None else None
         query = (vfolders.insert().values({
             'id': folder_id,
             'name': params['name'],
             'host': folder_host,
             'last_used': None,
-            'belongs_to': access_key,
+            'user': user_uuid,
+            'group': group_uuid,
         }))
         resp = {
             'id': folder_id,
             'name': params['name'],
             'host': folder_host,
+            'user': user_uuid,
+            'group': group_uuid,
         }
         try:
             result = await conn.execute(query)
@@ -204,16 +230,43 @@ async def list_folders(request: web.Request) -> web.Response:
     resp = []
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
     log.info('VFOLDER.LIST (u:{0})', access_key)
     async with dbpool.acquire() as conn:
-        entries = await query_accessible_vfolders(conn, access_key)
+        params = await request.json() if request.can_read_body else request.query
+        if request['is_superadmin'] and params.get('all', False):
+            # List all folders for superadmin if all is specified
+            query = sa.select([vfolders]).select_from(vfolders)
+            result = await conn.execute(query)
+            entries = []
+            async for row in result:
+                is_owner = True if row.user == user_uuid else False
+                permission = VFolderPermission.OWNER_PERM if is_owner \
+                        else VFolderPermission.READ_ONLY
+                entries.append({
+                    'name': row.name,
+                    'id': row.id,
+                    'host': row.host,
+                    'created_at': row.created_at,
+                    'is_owner': is_owner,
+                    'permission': permission,
+                    'user': str(row.user) if row.user else None,
+                    'group': str(row.group) if row.group else None,
+                    'type': 'user' if row['user'] is not None else 'group',
+                })
+        else:
+            entries = await query_accessible_vfolders(conn, user_uuid)
         for entry in entries:
             resp.append({
                 'name': entry['name'],
                 'id': entry['id'].hex,
                 'host': entry['host'],
+                'created_at': str(entry['created_at']),
                 'is_owner': entry['is_owner'],
                 'permission': entry['permission'].value,
+                'user': str(entry['user']),
+                'group': str(entry['group']),
+                'type': 'user' if entry['user'] is not None else 'group',
             })
     return web.json_response(resp, status=200)
 
@@ -254,7 +307,7 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
         is_owner = True
         permission = VFolderPermission.OWNER_PERM
     else:
-        is_owner = False
+        is_owner = row['is_owner']
         permission = row['permission']
     # TODO: handle nested directory structure
     folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
@@ -266,7 +319,12 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
         'host': row['host'],
         'numFiles': num_files,  # legacy
         'num_files': num_files,
-        'created': str(row['created_at']),
+        'created': str(row['created_at']),  # legacy
+        'created_at': str(row['created_at']),
+        'last_used': str(row['created_at']),
+        'user': str(row['user']),
+        'group': str(row['group']),
+        'type': 'user' if row['user'] is not None else 'group',
         'is_owner': is_owner,
         'permission': permission,
     }
@@ -281,13 +339,14 @@ async def rename(request: web.Request, row: VFolderRow) -> web.Response:
     dbpool = request.app['dbpool']
     old_name = request.match_info['name']
     access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
     params = await request.json()
     new_name = params.get('new_name', '')
     assert _rx_slug.search(new_name) is not None, 'invalid name format'
     log.info('VFOLDER.RENAME (u:{0}, f:{1} -> {2})',
              access_key, old_name, new_name)
     async with dbpool.acquire() as conn:
-        entries = await query_accessible_vfolders(conn, access_key)
+        entries = await query_accessible_vfolders(conn, user_uuid)
         for entry in entries:
             if entry['name'] == new_name:
                 raise InvalidAPIParameters(
@@ -494,6 +553,7 @@ async def invite(request: web.Request) -> web.Response:
     dbpool = request.app['dbpool']
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
     params = await request.json()
     perm = params.get('perm', VFolderPermission.READ_WRITE.value)
     perm = VFolderPermission(perm)
@@ -504,7 +564,7 @@ async def invite(request: web.Request) -> web.Response:
         # Get virtual folder.
         query = (sa.select('*')
                    .select_from(vfolders)
-                   .where((vfolders.c.belongs_to == access_key) &
+                   .where((vfolders.c.user == user_uuid) &
                           (vfolders.c.name == folder_name)))
         try:
             result = await conn.execute(query)
@@ -597,28 +657,34 @@ async def invitations(request: web.Request) -> web.Response:
 @atomic
 @server_status_required(ALL_ALLOWED)
 @auth_required
-@check_api_params(
-    t.Dict({
-        t.Key('inv_id'): t.String,
-        t.Key('inv_ak'): t.String,
-    }))
+@check_api_params(t.Dict({t.Key('inv_id'): t.String}))
 async def accept_invitation(request: web.Request, params: Any) -> web.Response:
+    '''Accept invitation by invitee.
+
+    * `inv_ak` parameter is removed from 19.06 since virtual folder's ownership is
+    moved from keypair to a user or a group.
+
+    :params inv_id: ID of vfolder_invitations row.
+    '''
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
     inv_id = params['inv_id']
-    inv_ak = params['inv_ak']
     log.info('VFOLDER.ACCEPT_INVITATION (u:{0})', access_key)
     async with dbpool.acquire() as conn:
         # Get invitation.
-        query = (sa.select('*')
+        query = (sa.select([vfolder_invitations])
                    .select_from(vfolder_invitations)
                    .where((vfolder_invitations.c.id == inv_id) &
                           (vfolder_invitations.c.state == 'pending')))
         result = await conn.execute(query)
         invitation = await result.first()
+        if invitation is None:
+            resp = {'msg': 'No such invitation found.'}
+            return web.json_response(resp, status=404)
 
         # Get target virtual folder.
-        query = (sa.select('*')
+        query = (sa.select([vfolders.c.name])
                    .select_from(vfolders)
                    .where(vfolders.c.id == invitation.vfolder))
         result = await conn.execute(query)
@@ -632,36 +698,18 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
                     vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
         query = (sa.select('*')
                    .select_from(j)
-                   .where(((vfolders.c.belongs_to == inv_ak) |
-                           (vfolder_permissions.c.access_key == inv_ak)) &
+                   .where(((vfolders.c.user == user_uuid) |
+                           (vfolder_permissions.c.user == user_uuid)) &
                           (vfolders.c.name == target_vfolder.name)))
         result = await conn.execute(query)
         if result.rowcount > 0:
             raise VFolderAlreadyExists
 
-        if invitation is None:
-            resp = {'msg': 'No such invitation found.'}
-            return web.json_response(resp, status=404)
-
-        # Check the access_key is valid by comparing with invitation info.
-        query = (sa.select('*')
-                   .select_from(keypairs)
-                   .where(keypairs.c.access_key == inv_ak))
-        try:
-            result = await conn.execute(query)
-        except psycopg2.DataError:
-            raise InvalidAPIParameters
-        row = await result.first()
-        if row is None:
-            invitation = {'msg': 'Invalid invitee access_key'}
-            return web.json_response(resp, status=404)
-        assert row['user_id'] == invitation.invitee
-
         # Create permission relation between the vfolder and the invitee.
         query = (vfolder_permissions.insert().values({
             'permission': VFolderPermission(invitation.permission),
             'vfolder': invitation.vfolder,
-            'access_key': inv_ak,
+            'user': user_uuid,
         }))
         await conn.execute(query)
 
@@ -670,7 +718,7 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
                                     .where(vfolder_invitations.c.id == inv_id)
                                     .values(state='accepted'))
         await conn.execute(query)
-    msg = (f'Access key ({inv_ak} by {invitation.invitee}) now can access '
+    msg = (f'User {invitation.invitee} now can access '
            f'vfolder {invitation.vfolder}.')
     return web.json_response({'msg': msg}, status=201)
 
@@ -714,28 +762,28 @@ async def delete(request: web.Request) -> web.Response:
     dbpool = request.app['dbpool']
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
     log.info('VFOLDER.DELETE (u:{0}, f:{1})', access_key, folder_name)
     async with dbpool.acquire() as conn, conn.begin():
-        query = (sa.select('*', for_update=True)
-                   .select_from(vfolders)
-                   .where((vfolders.c.belongs_to == access_key) &
-                          (vfolders.c.name == folder_name)))
-        try:
-            result = await conn.execute(query)
-        except psycopg2.DataError:
-            raise InvalidAPIParameters
-        row = await result.first()
-        if row is None:
-            raise VFolderNotFound()
-        folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
-                       request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
+        entries = await query_accessible_vfolders(conn, user_uuid)
+        for entry in entries:
+            if entry['name'] == folder_name:
+                if not entry['is_owner']:
+                    raise InvalidAPIParameters(
+                        'Cannot delete the vfolder '
+                        'that is not owned by me.')
+                break
+        else:
+            raise InvalidAPIParameters('No such group.')
+        folder_path = (request.app['VFOLDER_MOUNT'] / entry['host'] /
+                       request.app['VFOLDER_FSPREFIX'] / entry['id'].hex)
         try:
             shutil.rmtree(folder_path)
         except IOError:
             pass
         # TODO: mark it deleted instead of really deleting
         query = (vfolders.delete()
-                         .where(vfolders.c.id == row['id']))
+                         .where(vfolders.c.id == entry['id']))
         result = await conn.execute(query)
     return web.Response(status=204)
 

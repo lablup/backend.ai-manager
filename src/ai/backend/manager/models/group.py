@@ -294,7 +294,8 @@ class DeleteGroup(GroupMutationMixin, graphene.Mutation):
         assert await cls.check_perm(info, gid=gid), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             try:
-                query = groups.delete().where(groups.c.id == gid)
+                # query = groups.delete().where(groups.c.id == gid)
+                query = groups.update().values(is_active=False).where(groups.c.id == gid)
                 result = await conn.execute(query)
                 if result.rowcount > 0:
                     return cls(ok=True, msg='success')

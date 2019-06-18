@@ -216,7 +216,8 @@ class DeleteDomain(DomainMutationMixin, graphene.Mutation):
         assert cls.check_perm(info), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             try:
-                query = domains.delete().where(domains.c.name == name)
+                # query = domains.delete().where(domains.c.name == name)
+                query = domains.update().values(is_active=False).where(domains.c.name == name)
                 result = await conn.execute(query)
                 if result.rowcount > 0:
                     return cls(ok=True, msg='success')

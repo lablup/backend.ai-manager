@@ -5,6 +5,7 @@ import pytest
 import sqlalchemy as sa
 
 from ai.backend.manager.models import association_groups_users, groups
+from tests.model_factory import GroupFactory
 
 
 @pytest.mark.asyncio
@@ -277,7 +278,9 @@ class TestGroupAdminQuery:
         headers = get_headers('POST', self.url, payload, keypair=default_domain_keypair)
         ret = await client.post(self.url, data=payload, headers=headers)
 
+        grp = await GroupFactory(app).get(id=gid)
         assert ret.status == 200
+        assert not grp['is_active']
 
     async def test_cannot_mutate_group_in_other_domain(self, create_app_and_client, get_headers,
                                                        default_domain_keypair):

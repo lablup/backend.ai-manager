@@ -48,8 +48,9 @@ vfolders = sa.Table(
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
     sa.Column('last_used', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('belongs_to', sa.String(length=20),
-              sa.ForeignKey('keypairs.access_key'), nullable=False),
+
+    sa.Column('user', GUID, sa.ForeignKey('users.uuid'), nullable=True),
+    sa.Column('group', GUID, sa.ForeignKey('groups.id'), nullable=True),
 )
 
 
@@ -93,13 +94,11 @@ vfolder_permissions = sa.Table(
                             onupdate='CASCADE',
                             ondelete='CASCADE'),
               nullable=False),
-    sa.Column('access_key', sa.String(length=20),
-              sa.ForeignKey('keypairs.access_key'),
-              nullable=False)
+    sa.Column('user', GUID, sa.ForeignKey('users.uuid'), nullable=False),
 )
 
 
-async def query_accessible_vfolders(conn, access_key, *,
+async def query_accessible_vfolders(conn, user_uuid, *,
                                     extra_vf_conds=None,
                                     extra_vfperm_conds=None):
     entries = []
@@ -112,9 +111,11 @@ async def query_accessible_vfolders(conn, access_key, *,
                    vfolders.c.last_used,
                    vfolders.c.max_files,
                    vfolders.c.max_size,
+                   vfolders.c.user,
+                   vfolders.c.group,
                ])
                .select_from(vfolders)
-               .where(vfolders.c.belongs_to == access_key))
+               .where(vfolders.c.user == user_uuid))
     if extra_vf_conds is not None:
         query = query.where(extra_vf_conds)
     result = await conn.execute(query)
@@ -127,8 +128,52 @@ async def query_accessible_vfolders(conn, access_key, *,
             'last_used': row.last_used,
             'max_size': row.max_size,
             'max_files': row.max_files,
+            'user': str(row.user) if row.user else None,
+            'group': str(row.group) if row.group else None,
             'is_owner': True,
             'permission': VFolderPermission.OWNER_PERM,
+        })
+    # Scan group vfolders.
+    from ai.backend.manager.models import users, association_groups_users as agus
+    j = sa.join(agus, users, agus.c.user_id == users.c.uuid)
+    query = (sa.select([agus.c.group_id, users.c.role])
+               .select_from(j)
+               .where(agus.c.user_id == user_uuid))
+    result = await conn.execute(query)
+    groups = await result.fetchall()
+    group_ids = [g.group_id for g in groups]
+    user_role = groups[0].role
+    query = (sa.select([
+                   vfolders.c.name,
+                   vfolders.c.id,
+                   vfolders.c.host,
+                   vfolders.c.created_at,
+                   vfolders.c.last_used,
+                   vfolders.c.max_files,
+                   vfolders.c.max_size,
+                   vfolders.c.user,
+                   vfolders.c.group,
+               ])
+               .select_from(vfolders)
+               .where(vfolders.c.group.in_(group_ids)))
+    if extra_vf_conds is not None:
+        query = query.where(extra_vf_conds)
+    result = await conn.execute(query)
+    is_owner = (user_role == 'admin')
+    perm = VFolderPermission.OWNER_PERM if is_owner else VFolderPermission.READ_WRITE
+    async for row in result:
+        entries.append({
+            'name': row.name,
+            'id': row.id,
+            'host': row.host,
+            'created_at': row.created_at,
+            'last_used': row.last_used,
+            'max_size': row.max_size,
+            'max_files': row.max_files,
+            'user': str(row.user) if row.user else None,
+            'group': str(row.group) if row.group else None,
+            'is_owner': is_owner,
+            'permission': perm,
         })
     # Scan vfolders shared with me.
     j = sa.join(vfolders, vfolder_permissions,
@@ -141,10 +186,12 @@ async def query_accessible_vfolders(conn, access_key, *,
                    vfolders.c.last_used,
                    vfolders.c.max_files,
                    vfolders.c.max_size,
+                   vfolders.c.user,
+                   vfolders.c.group,
                    vfolder_permissions.c.permission,
                ])
                .select_from(j)
-               .where(vfolder_permissions.c.access_key == access_key))
+               .where(vfolder_permissions.c.user == user_uuid))
     if extra_vf_conds is not None:
         query = query.where(extra_vf_conds)
     if extra_vfperm_conds is not None:
@@ -159,6 +206,8 @@ async def query_accessible_vfolders(conn, access_key, *,
             'last_used': row.last_used,
             'max_size': row.max_size,
             'max_files': row.max_files,
+            'user': str(row.user) if row.user else None,
+            'group': str(row.group) if row.group else None,
             'is_owner': False,
             'permission': row.permission,
         })
@@ -202,17 +251,17 @@ class VirtualFolder(graphene.ObjectType):
         return 0
 
     @staticmethod
-    async def batch_load(context, access_keys):
+    async def batch_load(context, user_uuids):
         async with context['dbpool'].acquire() as conn:
             # TODO: num_attached count group-by
             query = (sa.select([vfolders])
                        .select_from(vfolders)
-                       .where(vfolders.c.belongs_to.in_(access_keys))
+                       .where(vfolders.c.user.in_(user_uuids))
                        .order_by(sa.desc(vfolders.c.created_at)))
             objs_per_key = OrderedDict()
-            for k in access_keys:
-                objs_per_key[k] = list()
+            for u in user_uuids:
+                objs_per_key[u] = list()
             async for row in conn.execute(query):
                 o = VirtualFolder.from_row(row)
-                objs_per_key[row.belongs_to].append(o)
+                objs_per_key[row.user].append(o)
         return tuple(objs_per_key.values())
