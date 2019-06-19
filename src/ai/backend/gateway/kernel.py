@@ -104,7 +104,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 rows = await conn.execute(query)
                 row = await rows.fetchone()
                 if row is None:
-                    raise BackendError(f"no such group in domain {params['domain']}")
+                    raise BackendError(f"{params['group']}: no such group in domain {params['domain']}")
                 params['domain'] = row.domain_name  # replace domain_name
                 group_id = row.id
             else:  # check if the group_name is associated with one of user's group.
@@ -117,7 +117,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 rows = await conn.execute(query)
                 row = await rows.fetchone()
                 if row is None:
-                    raise BackendError('no such group in domain ' + params['domain'])
+                    raise BackendError(f"{params['group']}: no such group in domain {params['domain']}")
                 group_id = row.group_id
 
         creation_config = {

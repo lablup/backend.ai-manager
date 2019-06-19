@@ -83,11 +83,16 @@ class Group(graphene.ObjectType):
         async with context['dbpool'].acquire() as conn:
             if context['user']['role'] == UserRole.SUPERADMIN:
                 current_domain_name = None
-            else:
+                query = (sa.select([groups])
+                           .select_from(groups)
+                           .where(groups.c.domain_name == domain_name))
+            else:  # list groups only associated with requester
                 current_domain_name = context['user']['domain_name']
-            query = (sa.select([groups])
-                       .select_from(groups)
-                       .where(groups.c.domain_name == domain_name))
+                j = association_groups_users.join(
+                    groups, association_groups_users.c.group_id == groups.c.id)
+                query = (sa.select([groups])
+                           .select_from(j)
+                           .where(association_groups_users.c.user_id == context['user']['uuid']))
             if is_active is not None:
                 query = query.where(groups.c.is_active == is_active)
             if current_domain_name is not None:  # prevent querying group in other domain
