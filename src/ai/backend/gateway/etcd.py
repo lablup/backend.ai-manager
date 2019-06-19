@@ -50,14 +50,16 @@ Alias keys are also URL-quoted in the same way.
            - auth: {auth-json-cached-from-config.json}
          ...
      + resource_slots
-       + {"cuda.device"}: {"count"}
-       + {"cuda.mem"}: {"bytes"}
-       + {"cuda.smp"}: {"count"}
+       - {"cuda.device"}: {"count"}
+       - {"cuda.mem"}: {"bytes"}
+       - {"cuda.smp"}: {"count"}
        ...
      + plugins
        + "cuda"
          - allocation_mode: "discrete"
          ...
+     + network
+       - subnet: "0.0.0.0"
    + volumes
      - _mount: {path-to-mount-root-for-vfolder-partitions}
      - _default_host: {default-vfolder-partition-name}
