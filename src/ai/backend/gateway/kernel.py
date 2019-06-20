@@ -649,59 +649,65 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
         result = await conn.execute(query)
         rows = await result.fetchall()
     objs_per_group = {}
-    async for row in rows:
+    for row in rows:
+        group_id = str(row.group_id)
+        last_stat = row.last_stat
         c_info = {
             # TODO: fill in these values when fields spec is fixed.
-            'c_id': row['id'],
+            'c_id': str(row['id']),
             'c_name': row['sess_id'],
-            'c_cpu_used': row['last_stat']['cpu_used']['current'],
-            'c_mem_used': row['last_stat']['mem']['capacity'],
-            'c_shared_memory': '?',
-            'c_disk_used': '?',
-            'c_used_time': row['terminated_at'] - row['created_at'],
-            'c_daily_used_time': '?',
-            'c_device_type': '?',
-            'c_smp': '?',
-            'c_nfs': '?',
-            'c_image_id': row['image']['id'],
-            'c_image_name': row['image']['name'],
-            'c_create_date': row['created_at'],
-            'c_terminated_date': row['terminated_at'],
+            'c_cpu_used': float(last_stat['cpu_used']['current']) if last_stat else 0,
+            'c_mem_used': int(last_stat['mem']['capacity']) if last_stat else 0,
+            'c_shared_memory': 0,
+            'c_disk_used': 0,
+            'c_used_time': str(row['terminated_at'] - row['created_at']),
+            'c_daily_used_time': None,
+            'c_device_type': None,
+            'c_smp': 0,
+            'c_nfs': None,
+            'c_image_id': None,
+            'c_image_name': row['image'],
+            'c_create_date': str(row['created_at']),
+            'c_terminated_date': str(row['terminated_at']),
         }
-        if row.group_id not in objs_per_group:
-            objs_per_group[row.group_id] = {
-                'p_id': row.group_id,
+        if group_id not in objs_per_group:
+            objs_per_group[group_id] = {
+                'p_id': group_id,
                 'p_cpu_used': 0,
                 'p_mem_used': 0,
                 'p_disk_used': 0,
                 'p_shared_memory': 0,
-                'p_device_type': set(),
+                'p_device_type': list(),
                 'p_smp': 0,
                 'c_infos': [c_info],
             }
         else:
-            objs_per_group[row.group_id]['p_cpu_used'] += c_info['c_cpu_used']
-            objs_per_group[row.group_id]['p_mem_used'] += c_info['c_mem_used']
-            objs_per_group[row.group_id]['p_disk_used'] += c_info['c_disk_used']
-            objs_per_group[row.group_id]['p_shared_memory'] += c_info['c_shared_memory']
-            objs_per_group[row.group_id]['p_device_type'].add(c_info['c_device_type'])
-            objs_per_group[row.group_id]['p_smp'] += c_info['c_smp']
-            objs_per_group[row.group_id]['c_infos'].append(c_info)
-        return list(objs_per_group.values())
+            objs_per_group[group_id]['p_cpu_used'] += c_info['c_cpu_used']
+            objs_per_group[group_id]['p_mem_used'] += c_info['c_mem_used']
+            objs_per_group[group_id]['p_disk_used'] += c_info['c_disk_used']
+            objs_per_group[group_id]['p_shared_memory'] += c_info['c_shared_memory']
+            if c_info['c_device_type'] not in objs_per_group[group_id]['p_device_type']:
+                objs_per_group[group_id]['p_device_type'].append(c_info['c_device_type'])
+            objs_per_group[group_id]['p_smp'] += c_info['c_smp']
+            objs_per_group[group_id]['c_infos'].append(c_info)
+    return list(objs_per_group.values())
 
 
 @atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def usage_per_month(request: web.Request) -> web.Response:
+@check_api_params(
+    t.Dict({
+        AliasedKey(['group_ids', 'project_ids'], default=list): t.List(t.String),
+    }),
+    loads=_json_loads)
+async def usage_per_month(request: web.Request, params: Any) -> web.Response:
+    if not request['is_superadmin']:
+        raise BackendError(extra_msg='not enough permission')
     try:
-        month = request.match_info['month']
+        month = int(request.match_info['month'])
         requester_access_key, owner_access_key = get_access_key_scopes(request)
-        if request.can_read_body:
-            params = await request.json()
-        else:
-            params = request.query
-        group_ids = params.get('group_ids', [])
+        group_ids = params['group_ids']
         log.info('USAGE_PER_MONTH (u:{0}/{1}, month:{2})',
                  requester_access_key, owner_access_key, month)
     except (asyncio.TimeoutError, AssertionError,
@@ -713,7 +719,7 @@ async def usage_per_month(request: web.Request) -> web.Response:
         year = now.year if now.month >= month else now.year - 1
         start_date = f'{year}-{month:02}-01 00:00:00.000000+00:00'
         end_date = f'{year}-{month+1:02}-01 00:00:00.000000+00:00'
-        resp = get_container_stats_for_period(request, start_date, end_date, group_ids)
+        resp = await get_container_stats_for_period(request, start_date, end_date, group_ids)
         log.debug('container list are retrieved for month {0}', month)
     except asyncio.CancelledError:
         raise
@@ -731,6 +737,8 @@ async def usage_per_month(request: web.Request) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def usage_per_period(request: web.Request) -> web.Response:
+    if not request['is_superadmin']:
+        raise BackendError(extra_msg='not enough permission')
     try:
         group_id = request.match_info['group_id']
         requester_access_key, owner_access_key = get_access_key_scopes(request)
@@ -750,7 +758,7 @@ async def usage_per_period(request: web.Request) -> web.Response:
         log.warning('USAGE_PER_PERIOD: invalid/missing parameters, {0!r}', e)
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
     try:
-        resp = get_container_stats_for_period(request, start_date, end_date, group_ids=[group_id])
+        resp = await get_container_stats_for_period(request, start_date, end_date, group_ids=[group_id])
         resp = resp[0]  # only one group (project)
         resp['start_date'] = start_date
         resp['end_date'] = end_date
@@ -758,11 +766,11 @@ async def usage_per_period(request: web.Request) -> web.Response:
     except asyncio.CancelledError:
         raise
     except BackendError:
-        log.exception('LIST_FILES: exception')
+        log.exception('USAGE_PER_PERIOD: exception')
         raise
     except Exception:
         request.app['error_monitor'].capture_exception()
-        log.exception('LIST_FILES: unexpected error!')
+        log.exception('USAGE_PER_PERIOD: unexpected error!')
         raise InternalServerError
     return web.json_response(resp, status=200)
 

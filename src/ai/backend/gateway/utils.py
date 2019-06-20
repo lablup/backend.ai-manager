@@ -53,7 +53,10 @@ def check_api_params(checker: t.Trafaret, loads: Callable = None) -> Any:
         @functools.wraps(handler)
         async def wrapped(request: web.Request) -> web.Response:
             try:
-                params = await request.json(loads=loads or json.loads)
+                if request.can_read_body:
+                    params = await request.json(loads=loads or json.loads)
+                else:
+                    params = request.params
                 params = checker.check(params)
             except json.decoder.JSONDecodeError:
                 raise InvalidAPIParameters('Malformed body')
