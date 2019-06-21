@@ -1,7 +1,6 @@
 import asyncio
 from collections import OrderedDict
 import enum
-import json
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -411,6 +410,9 @@ async def check_credential(dbpool, domain: str, email: str, password: str):
         result = await conn.execute(query)
         row = await result.first()
         if row is None:
+            return None
+        if row['password'] is None:
+            # user password is not set.
             return None
         if _verify_password(password, row['password']):
             return row
