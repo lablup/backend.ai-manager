@@ -640,8 +640,9 @@ async def list_files(request: web.Request) -> web.Response:
 
 async def get_container_stats_for_period(request, start_date, end_date, group_ids=None):
     async with request.app['dbpool'].acquire() as conn, conn.begin():
-        query = (sa.select([kernels])
-                   .select_from(kernels)
+        j = (sa.join(kernels, groups, kernels.c.group_id == groups.c.id))
+        query = (sa.select([kernels, groups.c.name])
+                   .select_from(j)
                    .where(kernels.c.terminated_at >= start_date)
                    .where(kernels.c.terminated_at < end_date)
                    .order_by(sa.asc(kernels.c.terminated_at)))
@@ -674,6 +675,8 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
         if group_id not in objs_per_group:
             objs_per_group[group_id] = {
                 'p_id': group_id,
+                'p_name': row['name'],  # this is group's name
+                'domain_name': row['domain_name'],
                 'p_cpu_used': 0,
                 'p_mem_used': 0,
                 'p_disk_used': 0,
