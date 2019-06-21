@@ -643,7 +643,8 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
         query = (sa.select([kernels])
                    .select_from(kernels)
                    .where(kernels.c.terminated_at >= start_date)
-                   .where(kernels.c.terminated_at < end_date))
+                   .where(kernels.c.terminated_at < end_date)
+                   .order_by(sa.asc(kernels.c.terminated_at)))
         if group_ids:
             query = query.where(kernels.c.group_id.in_(group_ids))
         result = await conn.execute(query)
@@ -698,7 +699,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
 @auth_required
 @check_api_params(
     t.Dict({
-        AliasedKey(['group_ids', 'project_ids'], default=list): t.List(t.String),
+        AliasedKey(['group_ids', 'project_ids', 'group', 'project']): t.List(t.String),
     }),
     loads=_json_loads)
 async def usage_per_month(request: web.Request, params: Any) -> web.Response:
@@ -736,21 +737,26 @@ async def usage_per_month(request: web.Request, params: Any) -> web.Response:
 @atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def usage_per_period(request: web.Request) -> web.Response:
+@check_api_params(
+    t.Dict({
+        t.Key('start_date'): t.Regexp(r'^\d{8}$', re.ASCII),
+        t.Key('end_date'): t.Regexp(r'^\d{8}$', re.ASCII),
+    }),
+    loads=_json_loads)
+async def usage_per_period(request: web.Request, params: Any) -> web.Response:
+    '''
+    Return usage statistics of terminated containers for specified period.
+
+    :param start_date str: yyyymmdd format.
+    :param end_date str: yyyymmdd format.
+    '''
     if not request['is_superadmin']:
         raise BackendError(extra_msg='not enough permission')
     try:
         group_id = request.match_info['group_id']
         requester_access_key, owner_access_key = get_access_key_scopes(request)
-        if request.can_read_body:
-            params = await request.json()
-        else:
-            params = request.query
-        # TODO: what input type for start_date and end_date?
         start_date = params.get('start_date')
         end_date = params.get('end_date')
-        assert start_date, 'no start_date given'
-        assert end_date, 'no end_date given'
         log.info('USAGE_PER_MONTH (u:{0}/{1}, start_date:{2}, end_date:{3})',
                  requester_access_key, owner_access_key, start_date, end_date)
     except (asyncio.TimeoutError, AssertionError,
