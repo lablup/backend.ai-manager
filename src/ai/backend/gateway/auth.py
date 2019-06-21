@@ -231,8 +231,7 @@ async def test(request: web.Request, params: Any) -> web.Response:
         t.Key('username'): t.String,
         t.Key('password'): t.String,
     }))
-async def authorize(request: web.Request) -> web.Response:
-    params = await request.json()
+async def authorize(request: web.Request, params: Any) -> web.Response:
     if params['type'] != 'keypair':
         # other types are not implemented yet.
         raise InvalidAPIParameters('Unsupported authorization type')
