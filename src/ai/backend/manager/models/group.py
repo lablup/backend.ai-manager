@@ -79,13 +79,13 @@ class Group(graphene.ObjectType):
         )
 
     @staticmethod
-    async def load_all(context, domain_name, *, is_active=None):
+    async def load_all(context, domain_name, *, is_active=None, all=False):
         async with context['dbpool'].acquire() as conn:
             if context['user']['role'] == UserRole.SUPERADMIN:
                 current_domain_name = None
-                query = (sa.select([groups])
-                           .select_from(groups)
-                           .where(groups.c.domain_name == domain_name))
+                query = (sa.select([groups]).select_from(groups))
+                if not all:
+                    query = query.where(groups.c.domain_name == domain_name)
             else:  # list groups only associated with requester
                 current_domain_name = context['user']['domain_name']
                 j = association_groups_users.join(

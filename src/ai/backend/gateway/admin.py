@@ -151,6 +151,7 @@ class QueryForAdmin(graphene.ObjectType):
     groups = graphene.List(
         Group,
         domain_name=graphene.String(),
+        all=graphene.Boolean(),
         is_active=graphene.Boolean())
 
     image = graphene.Field(
@@ -263,9 +264,9 @@ class QueryForAdmin(graphene.ObjectType):
         return await loader.load(id)
 
     @staticmethod
-    async def resolve_groups(executor, info, domain_name=None, is_active=None):
+    async def resolve_groups(executor, info, domain_name=None, is_active=None, all=False):
         domain_name = info.context['user']['domain_name'] if domain_name is None else domain_name
-        return await Group.load_all(info.context, domain_name, is_active=is_active)
+        return await Group.load_all(info.context, domain_name, is_active=is_active, all=all)
 
     @staticmethod
     async def resolve_image(executor, info, reference):
