@@ -15,8 +15,8 @@ from yarl import URL
 import zmq
 
 from ai.backend.common import msgpack
-from ai.backend.common.docker import get_registry_info, get_known_registries
-from ai.backend.common.types import DefaultForUnspecified, ImageRef, ResourceSlot
+from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
+from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
 from ai.backend.common.logging import BraceStyleAdapter
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,

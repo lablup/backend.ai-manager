@@ -132,9 +132,9 @@ import yaml
 import yarl
 
 from ai.backend.common.identity import get_instance_id, get_instance_ip
-from ai.backend.common.docker import get_known_registries
+from ai.backend.common.docker import ImageRef, get_known_registries
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import ImageRef, BinarySize, ResourceSlot
+from ai.backend.common.types import BinarySize, ResourceSlot
 from ai.backend.common.exception import UnknownImageReference
 from ai.backend.common.etcd import (
     quote as etcd_quote,
