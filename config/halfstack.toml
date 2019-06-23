@@ -43,7 +43,7 @@ ssl-enabled = false
 event-listen-addr = { host = "127.0.0.1", port = 5002 }    # env: BACKEND_ADVERTISED_MANAGER_HOST, BACKEND_EVENTS_PORT
 
 # Set the timeout for agent heartbeats in seconds.
-heatbeat-timeout = 5.0
+heartbeat-timeout = 10.0
 
 # Override the name of this manager node.
 # If empty or unspecified, the agent builds this from the hostname by prefixing it with "i-",
