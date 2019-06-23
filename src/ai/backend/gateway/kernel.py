@@ -100,7 +100,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 query = (sa.select([groups.c.domain_name, groups.c.id])
                            .select_from(groups)
                            .where(domains.c.name == params['domain'])
-                           .where(groups.c.name == params['group']))
+                           .where(domains.c.is_active)
+                           .where(groups.c.name == params['group'])
+                           .where(groups.c.is_active))
                 rows = await conn.execute(query)
                 row = await rows.fetchone()
                 if row is None:
@@ -113,7 +115,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
                            .select_from(j)
                            .where(agus.c.user_id == owner_uuid)
                            .where(groups.c.domain_name == params['domain'])
-                           .where(groups.c.name == params['group']))
+                           .where(domains.c.is_active is True)
+                           .where(groups.c.name == params['group'])
+                           .where(groups.c.is_active is True))
                 rows = await conn.execute(query)
                 row = await rows.fetchone()
                 if row is None:

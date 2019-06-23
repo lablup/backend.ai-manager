@@ -117,6 +117,7 @@ class GroupFactory(ModelFactory):
         return {
             'name': f'test-group-{get_random_string()}',
             'domain_name': 'default',
+            'total_resource_slots': {},
         }
 
 
