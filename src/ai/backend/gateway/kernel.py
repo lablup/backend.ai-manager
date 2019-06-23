@@ -24,6 +24,7 @@ import trafaret as t
 
 from ai.backend.common.exception import UnknownImageReference
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common import validators as tx
 
 from .exceptions import (
     InvalidAPIParameters, QuotaExceeded,
@@ -31,7 +32,6 @@ from .exceptions import (
     BackendError, InternalServerError)
 from .auth import auth_required
 from .utils import (
-    AliasedKey,
     catch_unexpected, check_api_params, get_access_key_scopes,
 )
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
@@ -55,11 +55,11 @@ _json_loads = functools.partial(json.loads, parse_float=Decimal)
 @check_api_params(
     t.Dict({
         t.Key('clientSessionToken') >> 'sess_id': t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
-        AliasedKey(['image', 'lang']): t.String,
-        AliasedKey(['group', 'groupName', 'group_name']): t.String,
-        AliasedKey(['domain', 'domainName', 'domain_name'], default=None): t.String,
+        tx.AliasedKey(['image', 'lang']): t.String,
+        tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
+        tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
         t.Key('config', default=dict): t.Mapping(t.String, t.Any),
-        t.Key('tag', default=None): t.Or(t.String, t.Null),
+        t.Key('tag', default=None): t.Null | t.String,
     }),
     loads=_json_loads)
 async def create(request: web.Request, params: Any) -> web.Response:
@@ -235,7 +235,7 @@ async def instance_heartbeat(app, agent_id, agent_info):
 async def check_agent_lost(app, interval):
     try:
         now = datetime.now(tzutc())
-        timeout = timedelta(seconds=app['config'].heartbeat_timeout)
+        timeout = timedelta(seconds=app['config']['manager']['heartbeat-timeout'])
         async for agent_id, prev in app['redis_live'].ihscan('last_seen'):
             prev = datetime.fromtimestamp(float(prev), tzutc())
             if now - prev > timeout:
@@ -702,7 +702,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
 @auth_required
 @check_api_params(
     t.Dict({
-        AliasedKey(['group_ids', 'project_ids', 'group', 'project']): t.List(t.String),
+        tx.AliasedKey(['group_ids', 'project_ids', 'group', 'project']): t.List(t.String),
     }),
     loads=_json_loads)
 async def usage_per_month(request: web.Request, params: Any) -> web.Response:

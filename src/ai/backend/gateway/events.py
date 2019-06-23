@@ -27,7 +27,7 @@ def event_router(_, pidx, args):
     ctx = zmq.Context()
     ctx.linger = 50
     in_sock = ctx.socket(zmq.PULL)
-    in_sock.bind(f'tcp://*:{args[0].events_port}')
+    in_sock.bind("tcp://{0.host}:{0.port}".format(args[0]['manager']['event-listen-addr']))
     out_sock = ctx.socket(zmq.PUSH)
     ipc_base_path.mkdir(parents=True, exist_ok=True)
     out_sock.bind(EVENT_IPC_ADDR)

@@ -43,7 +43,7 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
 @check_api_params(
     t.Dict({
         t.Key('query'): t.String,
-        t.Key('variables', default=None): t.Or(t.Mapping(t.String, t.Any), t.Null),
+        t.Key('variables', default=None): t.Null | t.Mapping(t.String, t.Any),
     }))
 async def handle_gql(request: web.Request, params: Any) -> web.Response:
     executor = request.app['admin.gql_executor']

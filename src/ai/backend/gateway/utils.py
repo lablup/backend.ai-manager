@@ -10,12 +10,11 @@ import numbers
 import re
 import time
 import traceback
-from typing import Any, Callable, Sequence
+from typing import Any, Callable
 
 from aiohttp import web
 from dateutil.tz import gettz
 import trafaret as t
-from trafaret.lib import _empty
 import pytz
 
 from ai.backend.common.logging import BraceStyleAdapter
@@ -68,47 +67,6 @@ def check_api_params(checker: t.Trafaret, loads: Callable = None) -> Any:
         return wrapped
 
     return wrap
-
-
-class AliasedKey(t.Key):
-    '''
-    An extension to trafaret.Key which accepts multiple aliases of a single key.
-    When successfully matched, the returned key name is the first one of the given aliases
-    or the renamed key set via ``to_name()`` method or the ``>>`` operator.
-    '''
-
-    def __init__(self, names: Sequence[str], **kwargs):
-        super().__init__(names[0], **kwargs)
-        self.names = names
-
-    def __call__(self, data, context=None):
-        for name in self.names:
-            if name in data:
-                key = name
-                break
-        else:
-            key = None
-
-        if key is None:  # not specified
-            if self.default is not _empty:
-                default = self.default() if callable(self.default) else self.default
-                try:
-                    result = self.trafaret(default, context=context)
-                except t.DataError as inner_error:
-                    yield self.get_name(), inner_error, self.names
-                else:
-                    yield self.get_name(), result, self.names
-                return
-            if not self.optional:
-                yield self.get_name(), t.DataError(error='is required'), self.names
-            # if optional, just bypass
-        else:
-            try:
-                result = self.trafaret(data[key], context=context)
-            except t.DataError as inner_error:
-                yield key, inner_error, self.names
-            else:
-                yield self.get_name(), result, self.names
 
 
 class _Infinity(numbers.Number):

@@ -49,6 +49,9 @@ Alias keys are also URL-quoted in the same way.
            - password: {password}
            - auth: {auth-json-cached-from-config.json}
          ...
+     + redis
+       - addr: "{redis-host}:{redis-port}"
+       - password: {password}
      + resource_slots
        - {"cuda.device"}: {"count"}
        - {"cuda.mem"}: {"bytes"}
@@ -188,24 +191,13 @@ class ConfigServer:
 
     async def register_myself(self, app_config):
         instance_id = await get_instance_id()
-        if app_config.advertised_manager_host:
-            instance_ip = app_config.advertised_manager_host
-            log.info('manually set advertised manager host: {0}', instance_ip)
-        else:
-            # fall back 1: read private IP from cloud instance metadata
-            # fall back 2: read hostname and resolve it
-            # fall back 3: "127.0.0.1"
-            instance_ip = await get_instance_ip()
-        event_addr = f'{instance_ip}:{app_config.events_port}'
+        event_addr = app_config['manager']['event-listen-addr']
+        log.info('manager event-listening host: {0}', event_addr.host)
+        event_addr = '{0.host}:{0.port}'.format(event_addr)
         manager_info = {
             'nodes/manager': instance_id,
-            'nodes/redis': app_config.redis_addr,
             'nodes/manager/event_addr': event_addr,
         }
-        if not app_config.redis_password:
-            await self.etcd.delete('/nodes/redis/password')
-        else:
-            manager_info['nodes/redis/password'] = app_config.redis_password
         await self.etcd.put_dict(manager_info)
 
     async def deregister_myself(self):
@@ -396,7 +388,7 @@ class ConfigServer:
 
         ssl_ctx = None  # default
         app_config = self.context.get('config')
-        if app_config is not None and app_config.skip_sslcert_validation:
+        if app_config is not None and app_config['docker-registry']['ssl-verify']:
             ssl_ctx = False
         connector = aiohttp.TCPConnector(ssl=ssl_ctx)
         async with aiohttp.ClientSession(connector=connector) as sess:
