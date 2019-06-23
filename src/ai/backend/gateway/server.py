@@ -453,7 +453,7 @@ def main(ctx, config_path, debug):
     }).allow_extra('*').merge(config.etcd_config_iv)
 
     # Determine where to read configuration.
-    raw_cfg = config.read_from_file(config_path, 'manager')
+    raw_cfg, cfg_src_path = config.read_from_file(config_path, 'manager')
 
     # Override the read config with environment variables (for legacy).
     config.override_with_env(raw_cfg, ('etcd', 'namespace'), 'BACKEND_NAMESPACE')
@@ -491,6 +491,7 @@ def main(ctx, config_path, debug):
         if 'debug'in cfg and cfg['debug']['enabled']:
             print('== Agent configuration ==')
             pprint(cfg)
+        cfg['_src'] = cfg_src_path
     except config.ConfigurationError as e:
         print('Validation of agent configuration has failed:', file=sys.stderr)
         print(pformat(e.invalid_data), file=sys.stderr)

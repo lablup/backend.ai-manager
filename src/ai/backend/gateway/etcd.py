@@ -192,7 +192,7 @@ class ConfigServer:
     async def register_myself(self, app_config):
         instance_id = await get_instance_id()
         event_addr = app_config['manager']['event-listen-addr']
-        log.info('manager event-listening host: {0}', event_addr.host)
+        log.info('manager is listening agent events at {}', event_addr)
         event_addr = '{0.host}:{0.port}'.format(event_addr)
         manager_info = {
             'nodes/manager': instance_id,
