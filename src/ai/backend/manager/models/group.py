@@ -231,7 +231,7 @@ class ModifyGroup(GroupMutationMixin, graphene.Mutation):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
 
-            def set_if_set(name):
+            def set_if_set(name, clean=lambda v: v):
                 v = getattr(props, name)
                 # NOTE: unset optional fields are passed as null.
                 if v is not None:
