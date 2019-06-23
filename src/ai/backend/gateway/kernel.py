@@ -150,11 +150,14 @@ async def create(request: web.Request, params: Any) -> web.Response:
         # sanity check for vfolders
         try:
             kernel = None
+            allowed_vfolder_types = ['user', 'group']
+            # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
             if creation_config['mounts']:
                 mount_details = []
                 matched_mounts = set()
                 matched_vfolders = await query_accessible_vfolders(
                     conn, owner_access_key,
+                    allowed_vfolder_types=allowed_vfolder_types,
                     extra_vf_conds=(vfolders.c.name.in_(creation_config['mounts'])))
                 for item in matched_vfolders:
                     matched_mounts.add(item['name'])
