@@ -115,9 +115,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
                            .select_from(j)
                            .where(agus.c.user_id == owner_uuid)
                            .where(groups.c.domain_name == params['domain'])
-                           .where(domains.c.is_active is True)
+                           .where(domains.c.is_active)
                            .where(groups.c.name == params['group'])
-                           .where(groups.c.is_active is True))
+                           .where(groups.c.is_active))
                 rows = await conn.execute(query)
                 row = await rows.fetchone()
                 if row is None:
