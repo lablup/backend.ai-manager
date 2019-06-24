@@ -122,7 +122,7 @@ from decimal import Decimal
 import logging
 import json
 from pathlib import Path
-from typing import Any, Mapping, Union
+from typing import Any, Mapping, Optional, Union, Tuple
 
 import aiohttp
 from aiohttp import web
@@ -134,7 +134,7 @@ import trafaret as t
 import yaml
 import yarl
 
-from ai.backend.common.identity import get_instance_id, get_instance_ip
+from ai.backend.common.identity import get_instance_id
 from ai.backend.common.docker import ImageRef, get_known_registries
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import BinarySize, ResourceSlot
@@ -177,6 +177,7 @@ class ConfigServer:
             }
         scope_prefix_map = {
             ConfigScopes.GLOBAL: '',
+            # TODO: provide a way to specify other scope prefixes
         }
         self.etcd = AsyncEtcd(etcd_addr, namespace, scope_prefix_map, credentials=credentials)
 
@@ -301,15 +302,13 @@ class ConfigServer:
                     coros.append(self._parse_image(ref, image_info, reverse_aliases))
         return await asyncio.gather(*coros)
 
-    async def set_image_resource_limit(self, reference: str,
-                                       slot_type: str,
-                                       value: str,
-                                       is_min: bool = True):
-        # TODO: add some validation
+    async def set_image_resource_limit(self, reference: str, slot_type: str,
+                                       value_range: Tuple[Optional[Decimal], Optional[Decimal]]):
         ref = await self._check_image(reference)
-        realm = 'min' if is_min else 'max'
-        await self.etcd.put(f'{ref.tag_path}/resource/{slot_type}/{realm}',
-                            value)
+        if value_range[0] is not None:
+            await self.etcd.put(f'{ref.tag_path}/resource/{slot_type}/min', str(value_range[0]))
+        if value_range[1] is not None:
+            await self.etcd.put(f'{ref.tag_path}/resource/{slot_type}/max', str(value_range[1]))
 
     async def _rescan_images(self, registry_name: str,
                              registry_url: yarl.URL,

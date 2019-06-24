@@ -1,64 +1,74 @@
 import asyncio
 import contextlib
+import io
+import json
 import logging
 from pathlib import Path
 from pprint import pprint
 import sys
 
 import aioredis
+import click
 
+from ai.backend.common.cli import EnumChoice, MinMaxRange
 from ai.backend.common.etcd import AsyncEtcd, ConfigScopes
 from ai.backend.common.logging import BraceStyleAdapter
-
-from . import register_command
-from ...gateway.defs import REDIS_IMAGE_DB
-from ...gateway.etcd import ConfigServer
+from ai.backend.gateway.config import redis_config_iv
+from ai.backend.gateway.defs import REDIS_IMAGE_DB
+from ai.backend.gateway.etcd import ConfigServer
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
 
-@register_command
-def etcd(args):
+@click.group()
+def cli():
     '''Provides commands to manage etcd-based Backend.AI cluster configs
     and a simple etcd client functionality'''
     pass
 
 
 @contextlib.contextmanager
-def etcd_ctx(args):
+def etcd_ctx(cli_ctx):
+    config = cli_ctx.config
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     creds = None
-    if args.etcd_user:
+    if config['etcd']['user']:
         creds = {
-            'user': args.etcd_user,
-            'password': args.etcd_password,
+            'user': config['etcd']['user'],
+            'password': config['etcd']['password'],
         }
     scope_prefix_map = {
         ConfigScopes.GLOBAL: '',
+        # TODO: provide a way to specify other scope prefixes
     }
-    etcd = AsyncEtcd(args.etcd_addr, args.namespace, scope_prefix_map, credentials=creds)
+    etcd = AsyncEtcd(config['etcd']['addr'], config['etcd']['namespace'],
+                     scope_prefix_map, credentials=creds)
     with contextlib.closing(loop):
         yield loop, etcd
     asyncio.set_event_loop(None)
 
 
 @contextlib.contextmanager
-def config_ctx(args):
+def config_ctx(cli_ctx):
+    config = cli_ctx.config
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     ctx = {}
-    ctx['config'] = args
+    ctx['config'] = config
+    # scope_prefix_map is created inside ConfigServer
+    config_server = ConfigServer(
+        ctx, config['etcd']['addr'],
+        config['etcd']['user'], config['etcd']['password'],
+        config['etcd']['namespace'])
+    raw_redis_config = loop.run_until_complete(config_server.etcd.get_prefix('config/redis'))
+    config['redis'] = redis_config_iv.check(raw_redis_config)
     ctx['redis_image'] = loop.run_until_complete(aioredis.create_redis(
-        args.redis_addr.as_sockaddr(),
-        password=args.redis_password if args.redis_password else None,
+        config['redis']['addr'].as_sockaddr(),
+        password=config['redis']['password'] if config['redis']['password'] else None,
         timeout=3.0,
         encoding='utf8',
         db=REDIS_IMAGE_DB))
-    config_server = ConfigServer(
-        ctx, args.etcd_addr,
-        args.etcd_user, args.etcd_password,
-        args.namespace)
     with contextlib.closing(loop):
         try:
             yield loop, config_server
@@ -68,55 +78,89 @@ def config_ctx(args):
     asyncio.set_event_loop(None)
 
 
-@etcd.register_command
-def put(args):
-    '''Set the value of a key in the configured etcd namespace.'''
-    with etcd_ctx(args) as (loop, etcd):
-        loop.run_until_complete(etcd.put(args.key, args.value))
+@cli.command()
+@click.argument('key')
+@click.argument('value')
+@click.option('-s', '--scope', type=EnumChoice(ConfigScopes), default=ConfigScopes.GLOBAL,
+              help='The configuration scope to put the value.')
+@click.pass_obj
+def put(cli_ctx, key, value, scope):
+    '''Put a single key-value pair into the etcd.'''
+    with cli_ctx.logger, etcd_ctx(cli_ctx) as (loop, etcd):
+        loop.run_until_complete(
+            etcd.put(key, value, scope=scope))
 
 
-put.add('key', type=str, help='The key.')
-put.add('value', type=str, help='The value.')
+@cli.command()
+@click.argument('key', type=str)
+@click.argument('file', type=click.File('rb'))
+@click.option('-s', '--scope', type=EnumChoice(ConfigScopes),
+              default=ConfigScopes.GLOBAL,
+              help='The configuration scope to put the value.')
+@click.pass_obj
+def put_json(cli_ctx, key, file, scope):
+    '''
+    Put a JSON object from FILE to the etcd as flattened key-value pairs
+    under the given KEY prefix.
+    '''
+    with etcd_ctx(cli_ctx) as (loop, etcd):
+        with contextlib.closing(io.BytesIO()) as buf:
+            while True:
+                part = file.read(65536)
+                if not part:
+                    break
+                buf.write(part)
+            value = json.loads(buf.getvalue())
+            value = {f'{key}/{k}': v for k, v in value.items()}
+            loop.run_until_complete(
+                etcd.put_dict(value, scope=scope))
 
 
-@etcd.register_command
-def get(args):
-    '''Get the value of a key in the configured etcd namespace.'''
-    with etcd_ctx(args) as (loop, etcd):
-        if args.prefix:
-            data = loop.run_until_complete(etcd.get_prefix(args.key))
-            data = dict(data)  # make a single dict from ChainMap
-            pprint(data)
+@cli.command()
+@click.argument('key')
+@click.option('--prefix', is_flag=True,
+              help='Get all key-value pairs prefixed with the given key as a JSON form.')
+@click.option('-s', '--scope', type=EnumChoice(ConfigScopes),
+              default=ConfigScopes.GLOBAL,
+              help='The configuration scope to put the value.')
+@click.pass_obj
+def get(cli_ctx, key, prefix, scope):
+    '''
+    Get the value of a key in the configured etcd namespace.
+    '''
+    with cli_ctx.logger, etcd_ctx(cli_ctx) as (loop, etcd):
+        if prefix:
+            data = loop.run_until_complete(etcd.get_prefix(key, scope=scope))
+            print(json.dumps(dict(data), indent=4))
         else:
-            val = loop.run_until_complete(etcd.get(args.key))
+            val = loop.run_until_complete(etcd.get(key, scope=scope))
             if val is None:
                 sys.exit(1)
             print(val)
 
 
-get.add('key', type=str, help='The key.')
-get.add('--prefix', action='store_true', default=False, help='get key prefixed.')
-
-
-@etcd.register_command
-def delete(args):
+@cli.command()
+@click.argument('key')
+@click.option('--prefix', is_flag=True,
+              help='Delete all keys prefixed with the given key.')
+@click.option('-s', '--scope', type=EnumChoice(ConfigScopes),
+              default=ConfigScopes.GLOBAL,
+              help='The configuration scope to put the value.')
+@click.pass_obj
+def delete(cli_ctx, key, prefix, scope):
     '''Delete the key in the configured etcd namespace.'''
-    with etcd_ctx(args) as (loop, etcd):
-        if args.prefix:
-            loop.run_until_complete(etcd.delete_prefix(args.key))
+    with cli_ctx.logger, etcd_ctx(cli_ctx) as (loop, etcd):
+        if prefix:
+            loop.run_until_complete(etcd.delete_prefix(key, scope=scope))
         else:
-            loop.run_until_complete(etcd.delete(args.key))
+            loop.run_until_complete(etcd.delete(key, scope=scope))
 
 
-delete.add('key', type=str, help='The key.')
-delete.add('--prefix', action='store_true', default=False,
-           help='Delete all keys prefixed with the given key.')
-
-
-@etcd.register_command
-def list_images(args):
+@cli.command()
+@click.pass_obj
+def list_images(cli_ctx):
     '''List everything about images.'''
-    with config_ctx(args) as (loop, config_server):
+    with cli_ctx.logger, config_ctx(cli_ctx) as (loop, config_server):
         try:
             items = loop.run_until_complete(
                 config_server.list_images())
@@ -125,108 +169,68 @@ def list_images(args):
             log.exception('An error occurred.')
 
 
-@etcd.register_command
-def inspect_image(args):
+@cli.command()
+@click.argument('reference')
+@click.pass_obj
+def inspect_image(cli_ctx, reference):
     '''List everything about images.'''
-    with config_ctx(args) as (loop, config_server):
+    with cli_ctx.logger, config_ctx(cli_ctx) as (loop, config_server):
         try:
             item = loop.run_until_complete(
-                config_server.inspect_image(args.reference))
+                config_server.inspect_image(reference))
             pprint(item)
         except Exception:
             log.exception('An error occurred.')
 
 
-inspect_image.add('reference', type=str, help='The reference to an image.')
-
-
-@etcd.register_command
-def set_image_resource_limit(args):
-    '''List everything about images.'''
-    with config_ctx(args) as (loop, config_server):
+@cli.command()
+@click.argument('reference')
+@click.argument('slot_type')
+@click.argument('range_value', type=MinMaxRange)
+@click.pass_obj
+def set_image_resource_limit(cli_ctx, reference, slot_type, range_value):
+    '''Set the MIN:MAX values of a SLOT_TYPE limit for the given image REFERENCE.'''
+    with cli_ctx.logger, config_ctx(cli_ctx) as (loop, config_server):
         try:
             loop.run_until_complete(
-                config_server.set_image_resource_limit(
-                    args.reference, args.slot_type, args.value, args.min))
+                config_server.set_image_resource_limit(reference, slot_type, range_value))
         except Exception:
             log.exception('An error occurred.')
 
 
-set_image_resource_limit.add('--min', action='store_true', default=False,
-                             help='Set the minimum value instead of the maximum.')
-set_image_resource_limit.add('reference', type=str,
-                             help='The reference to an image.')
-set_image_resource_limit.add('slot_type', type=str,
-                             help='The resource slot name.')
-set_image_resource_limit.add('value', type=str,
-                             help='The maximum value allowed.')
+@cli.command()
+@click.argument('registry')
+@click.pass_obj
+def rescan_images(cli_ctx, registry):
+    '''
+    Update the kernel image metadata from all configured docker registries.
 
-
-@etcd.register_command
-def rescan_images(args):
-    '''Update the kernel image metadata from all configured docker registries.'''
-    with config_ctx(args) as (loop, config_server):
+    Pass the name (usually hostname or "lablup") of the Docker registry configured as REGISTRY.
+    '''
+    with cli_ctx.logger, config_ctx(cli_ctx) as (loop, config_server):
         try:
             loop.run_until_complete(
-                config_server.rescan_images(args.registry))
+                config_server.rescan_images(registry))
         except Exception:
             log.exception('An error occurred.')
 
 
-rescan_images.add('-r', '--registry',
-                  type=str, metavar='NAME', default=None,
-                  help='The name (usually hostname or "lablup") '
-                       'of the Docker registry configured.')
-
-
-@etcd.register_command
-def alias(args):
-    '''Add an image alias.'''
-    with config_ctx(args) as (loop, config_server):
+@cli.command()
+@click.argument('alias')
+@click.argument('target')
+@click.pass_obj
+def alias(cli_ctx, alias, target):
+    '''Add an image alias from the given alias to the target image reference.'''
+    with cli_ctx.logger, config_ctx(cli_ctx) as (loop, config_server):
         loop.run_until_complete(
-            config_server.alias(args.alias, args.target))
+            config_server.alias(alias, target))
 
 
-alias.add('alias', type=str, help='The alias of an image to add.')
-alias.add('target', type=str, help='The target image.')
-
-
-@etcd.register_command
-def dealias(args):
-    '''Remove an image alias.'''
-    with config_ctx(args) as (loop, config_server):
+@cli.command()
+@click.argument('alias')
+@click.pass_obj
+def dealias(cli_ctx, alias):
+    '''Remove an alias.'''
+    with cli_ctx.logger, config_ctx(cli_ctx) as (loop, config_server):
         loop.run_until_complete(
-            config_server.dealias(args.alias))
-
-
-dealias.add('alias', type=str, help='The alias of an image to remove.')
-
-
-@etcd.register_command
-def update_aliases(args):
-    '''Update the image aliase list.'''
-    with config_ctx(args) as (loop, config_server):
-        if not args.file:
-            log.error('Please specify the file path using "-f" option.')
-            return
-        loop.run_until_complete(
-            config_server.update_aliases_from_file(args.file))
-
-
-update_aliases.add('-f', '--file', type=Path, metavar='PATH',
-                   help='A config file to use.')
-
-
-@etcd.register_command
-def update_volumes(args):
-    '''Update the volume information.'''
-    with config_ctx(args) as (loop, config_server):
-        if not args.file:
-            log.error('Please specify the file path using "-f" option.')
-            return
-        loop.run_until_complete(
-            config_server.update_volumes_from_file(args.file))
-
-
-update_volumes.add('-f', '--file', type=Path, metavar='PATH',
-                   help='A config file to use.')
+            config_server.dealias(alias))
