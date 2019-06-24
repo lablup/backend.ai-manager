@@ -10,7 +10,7 @@ In most cases, a single global configurations are sufficient, but cluster admini
 may want to apply different settings (e.g., resource slot types, vGPU sizes, etc.)
 to different scaling groups or even each node.
 
-To support such requireemnts, we add another level of prefix named "configuration scope".
+To support such requirements, we add another level of prefix named "configuration scope".
 There are three types of configuration scopes:
 
  * Global
@@ -18,7 +18,7 @@ There are three types of configuration scopes:
  * Node
 
 When reading configurations, the underlying `ai.backend.common.etcd.AsyncEtcd` class
-reeturns a `collections.ChainMap` instance that merges three configuration scopes
+returns a `collections.ChainMap` instance that merges three configuration scopes
 in the order of node, scaling group, and global, so that node-level configs override
 scaling-group configs, and scaling-group configs override global configs if they exist.
 

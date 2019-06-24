@@ -5,7 +5,7 @@ import pytest
 import sqlalchemy as sa
 
 from ai.backend.manager.models import association_groups_users, groups
-from tests.model_factory import GroupFactory
+from tests.model_factory import AssociationGroupsUsersFactory, GroupFactory
 
 
 @pytest.mark.asyncio
@@ -74,6 +74,7 @@ class TestGroupAdminQuery:
             'name': group_name,
             'input': {
                 'domain_name': domain_name,
+                'total_resource_slots': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -189,6 +190,7 @@ class TestGroupAdminQuery:
             'name': new_group_name,
             'input': {
                 'domain_name': new_domain_name,
+                'total_resource_slots': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -229,6 +231,7 @@ class TestGroupAdminQuery:
                 'description': 'desc',
                 'is_active': True,
                 'domain_name': 'default',
+                'total_resource_slots': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -318,6 +321,7 @@ class TestGroupAdminQuery:
             'input': {
                 'is_active': True,
                 'domain_name': domain_name,
+                'total_resource_slots': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -339,6 +343,7 @@ class TestGroupAdminQuery:
             'input': {
                 'is_active': True,
                 'domain_name': domain_name,
+                'total_resource_slots': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -405,6 +410,7 @@ class TestGroupAdminQuery:
                 'description': 'desc',
                 'is_active': True,
                 'domain_name': 'default',
+                'total_resource_slots': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -431,6 +437,7 @@ class TestGroupAdminQuery:
                 'description': 'desc',
                 'is_active': True,
                 'domain_name': 'default',
+                'total_resource_slots': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -517,14 +524,16 @@ class TestGroupAdminQuery:
         ret = await client.post(self.url, data=payload, headers=headers)
         assert ret.status == 200
 
-        # Check remaining association is removed.
+        # Check group is inactivated, and association is not deleted.
         async with app['dbpool'].acquire() as conn:
             query = (sa.select([association_groups_users.c.user_id])
                        .select_from(association_groups_users)
                        .where(association_groups_users.c.group_id == gid))
             result = await conn.execute(query)
             rows = await result.fetchall()
-        assert len(rows) == 0
+        assert len(rows) == 1
+        grp = await GroupFactory(app).get(id=gid)
+        assert not grp['is_active']
 
 
 @pytest.mark.asyncio
@@ -593,6 +602,7 @@ class TestGroupUserQuery:
             'name': group_name,
             'input': {
                 'domain_name': domain_name,
+                'total_resource_slots': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -709,6 +719,7 @@ class TestGroupUserQuery:
             'name': new_group_name,
             'input': {
                 'domain_name': new_domain_name,
+                'total_resource_slots': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()

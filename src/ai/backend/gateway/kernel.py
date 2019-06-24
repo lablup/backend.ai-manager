@@ -100,7 +100,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 query = (sa.select([groups.c.domain_name, groups.c.id])
                            .select_from(groups)
                            .where(domains.c.name == params['domain'])
-                           .where(groups.c.name == params['group']))
+                           .where(domains.c.is_active)
+                           .where(groups.c.name == params['group'])
+                           .where(groups.c.is_active))
                 rows = await conn.execute(query)
                 row = await rows.fetchone()
                 if row is None:
@@ -113,7 +115,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
                            .select_from(j)
                            .where(agus.c.user_id == owner_uuid)
                            .where(groups.c.domain_name == params['domain'])
-                           .where(groups.c.name == params['group']))
+                           .where(domains.c.is_active is True)
+                           .where(groups.c.name == params['group'])
+                           .where(groups.c.is_active is True))
                 rows = await conn.execute(query)
                 row = await rows.fetchone()
                 if row is None:
@@ -146,11 +150,14 @@ async def create(request: web.Request, params: Any) -> web.Response:
         # sanity check for vfolders
         try:
             kernel = None
+            allowed_vfolder_types = ['user', 'group']
+            # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
             if creation_config['mounts']:
                 mount_details = []
                 matched_mounts = set()
                 matched_vfolders = await query_accessible_vfolders(
                     conn, owner_access_key,
+                    allowed_vfolder_types=allowed_vfolder_types,
                     extra_vf_conds=(vfolders.c.name.in_(creation_config['mounts'])))
                 for item in matched_vfolders:
                     matched_mounts.add(item['name'])
@@ -656,43 +663,50 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
         last_stat = row.last_stat
         c_info = {
             # TODO: fill in these values when fields spec is fixed.
-            'c_id': str(row['id']),
-            'c_name': row['sess_id'],
-            'c_cpu_used': float(last_stat['cpu_used']['current']) if last_stat else 0,
-            'c_mem_used': int(last_stat['mem']['capacity']) if last_stat else 0,
-            'c_shared_memory': 0,
-            'c_disk_used': 0,
-            'c_used_time': str(row['terminated_at'] - row['created_at']),
-            'c_daily_used_time': None,
-            'c_device_type': None,
-            'c_smp': 0,
-            'c_nfs': None,
-            'c_image_id': None,
-            'c_image_name': row['image'],
-            'c_create_date': str(row['created_at']),
-            'c_terminated_date': str(row['terminated_at']),
+            'id': str(row['id']),
+            'name': row['sess_id'],
+            'cpu_used': float(last_stat['cpu_used']['current']) if last_stat else 0,
+            'mem_allocated': int(row.occupied_slots['mem']),
+            'mem_used': int(last_stat['mem']['capacity']) if last_stat else 0,
+            'shared_memory': 0,  # TODO: how to get?
+            'disk_used': int(last_stat['io_scratch_size']['stats.max']) if last_stat else 0,
+            'io_read': int(last_stat['io_read']['current']) if last_stat else 0,
+            'io_write': int(last_stat['io_write']['current']) if last_stat else 0,
+            'used_time': str(row['terminated_at'] - row['created_at']),
+            'used_days': None,  # TODO: calculate!
+            'device_type': None,
+            'smp': int(row.occupied_slots['cpu']),
+            'nfs': None,  # TODO: what value to write here?
+            'image_id': None,  # TODO: get image id
+            'image_name': row['image'],
+            'created_at': str(row['created_at']),
+            'terminated_at': str(row['terminated_at']),
         }
         if group_id not in objs_per_group:
             objs_per_group[group_id] = {
-                'p_id': group_id,
-                'p_name': row['name'],  # this is group's name
                 'domain_name': row['domain_name'],
-                'p_cpu_used': 0,
-                'p_mem_used': 0,
-                'p_disk_used': 0,
-                'p_shared_memory': 0,
-                'p_device_type': list(),
-                'p_smp': 0,
+                'g_id': group_id,
+                'g_name': row['name'],  # this is group's name
+                'g_cpu_used': 0,
+                'g_mem_used': 0,
+                'g_shared_memory': 0,
+                'g_disk_used': 0,
+                'g_io_read': 0,
+                'g_io_write': 0,
+                'g_device_type': list(),
+                'g_smp': 0,
                 'c_infos': [c_info],
             }
         else:
-            objs_per_group[group_id]['p_cpu_used'] += c_info['c_cpu_used']
-            objs_per_group[group_id]['p_mem_used'] += c_info['c_mem_used']
-            objs_per_group[group_id]['p_disk_used'] += c_info['c_disk_used']
-            objs_per_group[group_id]['p_shared_memory'] += c_info['c_shared_memory']
-            if c_info['c_device_type'] not in objs_per_group[group_id]['p_device_type']:
-                objs_per_group[group_id]['p_device_type'].append(c_info['c_device_type'])
-            objs_per_group[group_id]['p_smp'] += c_info['c_smp']
+            objs_per_group[group_id]['g_cpu_used'] += c_info['cpu_used']
+            objs_per_group[group_id]['g_mem_used'] += c_info['mem_used']
+            objs_per_group[group_id]['g_shared_memory'] += c_info['shared_memory']
+            objs_per_group[group_id]['g_disk_used'] += c_info['disk_used']
+            objs_per_group[group_id]['g_io_read'] += c_info['io_read']
+            objs_per_group[group_id]['g_io_write'] += c_info['io_write']
+            if c_info['device_type'] not in objs_per_group[group_id]['g_device_type']:
+                objs_per_group[group_id]['g_device_type'].append(c_info['device_type'])
+            objs_per_group[group_id]['g_smp'] += c_info['smp']
             objs_per_group[group_id]['c_infos'].append(c_info)
     return list(objs_per_group.values())
 

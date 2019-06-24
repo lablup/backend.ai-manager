@@ -57,6 +57,8 @@ def vfolder_permission_required(perm: VFolderPermission):
             dbpool = request.app['dbpool']
             user_uuid = request['user']['uuid']
             folder_name = request.match_info['name']
+            allowed_vfolder_types = ['user', 'group']
+            # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
             if perm == VFolderPermission.READ_ONLY:
                 # if READ_ONLY is requested, any permission accepts.
                 perm_cond = vfolder_permissions.c.permission.in_([
@@ -81,6 +83,7 @@ def vfolder_permission_required(perm: VFolderPermission):
             async with dbpool.acquire() as conn:
                 entries = await query_accessible_vfolders(
                     conn, user_uuid,
+                    allowed_vfolder_types=allowed_vfolder_types,
                     extra_vf_conds=(vfolders.c.name == folder_name),
                     extra_vfperm_conds=perm_cond)
                 if len(entries) == 0:
@@ -153,6 +156,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
             raise InvalidAPIParameters(
                 'You must specify the vfolder host '
                 'because the default host is not configured.')
+    # TODO: configurable vfolder_type
+    allowed_vfolder_types = ['user', 'group']
+    # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
 
     # Check resource policy's allowed_vfolder_hosts
     if folder_host not in resource_policy['allowed_vfolder_hosts']:
@@ -174,6 +180,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
         # Prevent creation of vfolder with duplicated name.
         entries = await query_accessible_vfolders(
             conn, user_uuid,
+            allowed_vfolder_types=allowed_vfolder_types,
             extra_vf_conds=(sa.and_(vfolders.c.name == params['name'],
                                     vfolders.c.host == folder_host))
         )
@@ -182,6 +189,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
 
         # Check if group exists.
         if params['group']:
+            if 'group' not in allowed_vfolder_types:
+                raise InvalidAPIParameters('group vfolder cannot be created in this host')
             if not request['is_admin'] or request['is_superadmin']:
                 # Superadmin will not manipulate group's vfolder (at least currently).
                 raise GenericForbidden('no permission')
@@ -192,7 +201,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
             gid = await conn.scalar(query)
             if str(gid) != str(params['group']):
                 raise InvalidAPIParameters('No such group.')
-
+        else:
+            if 'user' not in allowed_vfolder_types:
+                raise InvalidAPIParameters('user vfolder cannot be created in this host')
         try:
             folder_id = uuid.uuid4().hex
             folder_path = (request.app['VFOLDER_MOUNT'] / folder_host /
@@ -235,6 +246,8 @@ async def list_folders(request: web.Request) -> web.Response:
     log.info('VFOLDER.LIST (u:{0})', access_key)
     async with dbpool.acquire() as conn:
         params = await request.json() if request.can_read_body else request.query
+        allowed_vfolder_types = ['user', 'group']
+        # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
         if request['is_superadmin'] and params.get('all', False):
             # List all folders for superadmin if all is specified
             query = sa.select([vfolders]).select_from(vfolders)
@@ -256,7 +269,8 @@ async def list_folders(request: web.Request) -> web.Response:
                     'type': 'user' if row['user'] is not None else 'group',
                 })
         else:
-            entries = await query_accessible_vfolders(conn, user_uuid)
+            entries = await query_accessible_vfolders(
+                conn, user_uuid, allowed_vfolder_types=allowed_vfolder_types)
         for entry in entries:
             resp.append({
                 'name': entry['name'],
@@ -344,10 +358,13 @@ async def rename(request: web.Request, row: VFolderRow) -> web.Response:
     params = await request.json()
     new_name = params.get('new_name', '')
     assert _rx_slug.search(new_name) is not None, 'invalid name format'
+    allowed_vfolder_types = ['user', 'group']
+    # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
     log.info('VFOLDER.RENAME (u:{0}, f:{1} -> {2})',
              access_key, old_name, new_name)
     async with dbpool.acquire() as conn:
-        entries = await query_accessible_vfolders(conn, user_uuid)
+        entries = await query_accessible_vfolders(
+            conn, user_uuid, allowed_vfolder_types=allowed_vfolder_types)
         for entry in entries:
             if entry['name'] == new_name:
                 raise InvalidAPIParameters(
@@ -764,9 +781,12 @@ async def delete(request: web.Request) -> web.Response:
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     user_uuid = request['user']['uuid']
+    allowed_vfolder_types = ['user', 'group']
+    # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
     log.info('VFOLDER.DELETE (u:{0}, f:{1})', access_key, folder_name)
     async with dbpool.acquire() as conn, conn.begin():
-        entries = await query_accessible_vfolders(conn, user_uuid)
+        entries = await query_accessible_vfolders(
+            conn, user_uuid,  allowed_vfolder_types=allowed_vfolder_types)
         for entry in entries:
             if entry['name'] == folder_name:
                 if not entry['is_owner']:
@@ -785,7 +805,7 @@ async def delete(request: web.Request) -> web.Response:
         # TODO: mark it deleted instead of really deleting
         query = (vfolders.delete()
                          .where(vfolders.c.id == entry['id']))
-        result = await conn.execute(query)
+        await conn.execute(query)
     return web.Response(status=204)
 
 
