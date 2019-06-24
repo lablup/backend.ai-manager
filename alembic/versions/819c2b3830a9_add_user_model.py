@@ -15,13 +15,6 @@ from ai.backend.manager.models.user import PasswordColumn
 from ai.backend.manager.models import UserRole
 # from ai.backend.manager.models import keypairs, users, UserRole
 
-try:
-    from ai.backend.manager.models.user import _hash_password
-except ImportError:
-    from passlib.hash import bcrypt  # bcrypt is required
-    def _hash_password(password):
-        return bcrypt.hash(password, rounds=12)
-
 
 # revision identifiers, used by Alembic.
 revision = '819c2b3830a9'
@@ -113,7 +106,7 @@ def upgrade():
         else:
             # Create new user (set username with email)
             role = UserRole.ADMIN if is_admin else UserRole.USER
-            temp_password = _hash_password(keypair['secret_key'][:8])
+            temp_password = keypair['secret_key'][:8]
             query = (sa.insert(users)
                        .returning(users.c.uuid)
                        .values(username=email, email=email,
