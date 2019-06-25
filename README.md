@@ -40,34 +40,41 @@ $ git clone https://github.com/lablup/backend.ai-manager manager
 $ cd manager
 $ pyenv virtualenv venv-manager
 $ pyenv local venv-manager
-$ pip install -U pip setuptools   # ensure latest versions
+$ pip install -U pip setuptools
 $ pip install -U -r requirements-dev.txt
 ```
 
 From now on, let's assume all shell commands are executed inside the virtualenv.
 
-### Halfstack (single-node testing)
+### Halfstack (single-node development & testing)
 
 First install it:
-
 ```console
 $ cp config/halfstack.toml ./manager.toml
 $ cp config/halfstack.alembic.ini alembic.ini
+```
 
-# Set up Redis
+Set up Redis:
+```console
 $ python -m ai.backend.manager.cli etcd put config/redis/addr 127.0.0.1:8120
+```
 
-# Set up Docker registry
+Set up the public Docker registry:
+```console
 $ python -m ai.backend.manager.cli etcd put config/docker/registry/index.docker.io "https://registry-1.docker.io"
 $ python -m ai.backend.manager.cli etcd put config/docker/registry/index.docker.io/username "lablup"
 $ python -m ai.backend.manager.cli rescan-images
+```
 
-# Set up vfolder paths
+Set up the vfolder paths:
+```console
 $ mkdir -p "$HOME/vfroot/local"
 $ python -m ai.backend.manager.cli etcd put vfolder/_mount "$HOME/vfroot"
 $ python -m ai.backend.manager.cli etcd put vfolder/_default_host local
+```
 
-# Set up database
+Set up the database:
+```console
 $ python -m ai.backend.manager.cli schema oneshot
 $ python -m ai.backend.manager.cli fixture populate sample-configs/example-keypairs.json
 $ python -m ai.backend.manager.cli fixture populate sample-configs/example-resource_presets.json
@@ -82,9 +89,33 @@ $ python -m ai.backend.gateway.server
 To run tests:
 
 ```console
-$ python -m pytest -m 'not integration'
+$ python -m flake8 src tests
+$ python -m pytest -m 'not integration' tests
 ```
 
 To run tests including integration tests, you first need to install the agent in the same virtualenv.
 Please refer [the README of Backend.AI Agent](https://github.com/lablup/backend.ai-agent) for
 installation instructions, while keeping the same virtualenv.
+
+## Deployment
+
+### Configuration
+
+Put a TOML-formatted manager configuration (see the sample in `config/sample.toml`)
+in one of the following locations:
+
+ * `manager.toml` (current working directory)
+ * `~/.config/backend.ai/manager.toml` (user-config directory)
+ * `/etc/backend.ai/manager.toml` (system-config directory)
+
+Only the first found one is used by the daemon.
+
+### Running from a command line
+
+The minimal command to execute:
+
+```sh
+python -m ai.backend.gateway.server
+```
+
+For more arguments and options, run the command with `--help` option.
