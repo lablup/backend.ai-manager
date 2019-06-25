@@ -69,8 +69,8 @@ $ python -m ai.backend.manager.cli rescan-images
 Set up the vfolder paths:
 ```console
 $ mkdir -p "$HOME/vfroot/local"
-$ python -m ai.backend.manager.cli etcd put vfolder/_mount "$HOME/vfroot"
-$ python -m ai.backend.manager.cli etcd put vfolder/_default_host local
+$ python -m ai.backend.manager.cli etcd put volumes/_mount "$HOME/vfroot"
+$ python -m ai.backend.manager.cli etcd put volumes/_default_host local
 ```
 
 Set up the database:
@@ -109,6 +109,21 @@ in one of the following locations:
  * `/etc/backend.ai/manager.toml` (system-config directory)
 
 Only the first found one is used by the daemon.
+
+Also many configurations shared by both manager and agent are stored in etcd.
+As you might have noticed above, the manager provides a CLI interface to access and manipulate the etcd
+data.  Check out the help page of our etcd command set:
+
+```console
+$ python -m ai.backend.manager.cli etcd --help
+```
+
+If you run etcd as a Docker container (e.g., via halfstack), you may use the native client as well.
+In this case, PLEASE BE WARNED that you must prefix the keys with "/sorna/{namespace}" manaully:
+
+```console
+$ docker exec -it ${ETCD_CONTAINER_ID} /bin/ash -c 'ETCDCTL_API=3 etcdctl ...'
+```
 
 ### Running from a command line
 
