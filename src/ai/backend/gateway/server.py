@@ -168,6 +168,7 @@ async def gw_init(app, default_cors_options):
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     # should be done in create_app() in other modules.
     cors.add(app.router.add_route('GET', r'', hello))
+    cors.add(app.router.add_route('GET', r'/', hello))
 
     # legacy redirects
     cors.add(app.router.add_route('GET', r'/v{version:\d+}/authorize',
