@@ -1,4 +1,6 @@
 language: python
+dist: xenial
+sudo: required
 cache: pip
 addons:
   postgresql: "9.6"
@@ -6,6 +8,10 @@ services:
   - docker
   - postgresql
   - redis-server
+addons:
+  apt:
+    packages:
+    - libsnappy-dev
 
 # stage decl.
 stages:
@@ -14,64 +20,63 @@ stages:
     if: tag IS present
 
 # build matrix for test stage
-python:
-  - "3.6"
 os:
   - linux
-env:
-  global:
-    - BACKEND_ETCD_ADDR=localhost:2379
-    - BACKEND_REDIS_ADDR=localhost:6379
-    - BACKEND_DB_ADDR=localhost:5432
-    - BACKEND_DB_USER=postgres
-    - BACKEND_DB_PASSWORD=
-    # namespace and db_name are random-generated.
+python:
+  - "3.6"
+  - "3.7"
+
+install:
+  - pip install -U pip setuptools
+  - pip install -U -r requirements-ci.txt
+  - mkdir -p ~/.config/backend.ai
+  - psql -c 'create database testing;' -U postgres
+  - cp config/ci.toml ~/.config/backend.ai/manager.toml
+  - mkdir -p /tmp/scratches
+  - mkdir -p /tmp/vfroot/local
+  ## install backend.ai-agent from github
+  #- cd ${HOME}/build/lablup
+  #- git clone https://github.com/lablup/backend.ai-agent.git
+  #- cd backend.ai-agent
+  #- pip install -U -e .
+  #- cd ../backend.ai-manager
+before_script:
+  # etcd
+  - mkdir -p /tmp/etcd
+  - docker run -d -p 2379:2379 -p 2380:2380
+     -v /tmp/etcd:/etcd-data
+     --name backendai-etcd
+     quay.io/coreos/etcd:v3.3.12
+     /usr/local/bin/etcd
+     --name backendai-etcd
+     --data-dir /etcd-data
+     --listen-client-urls http://0.0.0.0:2379
+     --advertise-client-urls http://0.0.0.0:2379
+     --listen-peer-urls http://0.0.0.0:2380
+     --initial-advertise-peer-urls http://0.0.0.0:2380
+     --initial-cluster backendai-etcd=http://0.0.0.0:2380
+     --initial-cluster-token backendai-etcd-token
+     --initial-cluster-state new
+     --auto-compaction-retention 1
+  - docker exec -it backendai-etcd /bin/ash -c 'ETCDCTL_API=3 etcdctl put /sorna/testing/config/docker/registry/index.docker.io "https://registry-1.docker.io"'
+  - docker exec -it backendai-etcd /bin/ash -c 'ETCDCTL_API=3 etcdctl put /sorna/testing/config/docker/registry/index.docker.io/username "lablup"'
+  - docker exec -it backendai-etcd /bin/ash -c 'ETCDCTL_API=3 etcdctl put /sorna/testing/config/redis/addr 127.0.0.1:6379'
+  - docker exec -it backendai-etcd /bin/ash -c 'ETCDCTL_API=3 etcdctl put /sorna/testing/volumes/_mount /tmp/vfroot'
+  - docker exec -it backendai-etcd /bin/ash -c 'ETCDCTL_API=3 etcdctl put /sorna/testing/volumes/_default_host local'
+  # set capabilities to python binary
+  - sudo setcap cap_sys_ptrace,cap_sys_admin,cap_dac_override+eip $(readlink -f $(which python))
+  # pull minimal kernel images
+  - docker pull lablup/lua:5.3-alpine3.8
+script:
+  - python -m flake8 src tests
+  - python -m pytest -m 'not integration' -v --cov=src
+after_success:
+  - codecov
 
 # stage def.
 jobs:
   include:
-
-    - stage: test
-      install:
-        - pip install -U pip setuptools
-        - sudo apt-get install libsnappy-dev
-        # install backend.ai-agent from github
-        - cd ${HOME}/build/lablup
-        - git clone https://github.com/lablup/backend.ai-agent.git
-        - cd backend.ai-agent
-        - pip install -U -e .
-        - cd ../backend.ai-manager
-        # install manager requirements
-        - if [ -z "$TRAVIS_BRANCH" ]; then BRANCH="master"; else BRANCH="$TRAVIS_BRANCH"; fi
-        - sed -i'' -e "s/{BRANCH}/$BRANCH/g" requirements-ci.txt
-        - pip install -U -r requirements-ci.txt
-      before_script:
-        # etcd
-        - mkdir -p /tmp/etcd/vroot
-        - docker run -d -p 2379:2379 -p 2380:2380
-           -v /tmp/etcd:/etcd-data
-           --name backendai-etcd
-           quay.io/coreos/etcd:v3.2.8
-           /usr/local/bin/etcd
-           --name backendai-etcd
-           --data-dir /etcd-data
-           --listen-client-urls http://0.0.0.0:2379
-           --advertise-client-urls http://0.0.0.0:2379
-           --listen-peer-urls http://0.0.0.0:2380
-           --initial-advertise-peer-urls http://0.0.0.0:2380
-           --initial-cluster backendai-etcd=http://0.0.0.0:2380
-           --initial-cluster-token backendai-etcd-token
-           --initial-cluster-state new
-           --auto-compaction-retention 1
-        # load agent server
-        - mkdir -p /tmp/scratches
-        - docker pull lablup/kernel-lua:5.3-alpine
-      script:
-        - python -m flake8 src tests
-        - python -m pytest -m 'not integration' -v --cov=src
-      after_success:
-        - codecov
-
+    # test stage is implicitly included.
     - stage: deploy
       python: "3.6"
       install: skip
@@ -85,6 +90,8 @@ jobs:
         user: lablup
         password:
           secure: "WrXihyliutPMclOWZZE5CsXBbVmaZv19dqGf0JSjuDpbc2Be+t4+940fpEKJIknQ86+zMqj3Ku/0MeZ3gYAqo5Z8oQnQ7teqahyK11f/nDQXZxmQfr87bC/DQ2SDLjMQkGyaHRqw9lqp22q3RILJUjP1ZOvhpKMKEsekjSTFwttUGVxl2pYRdXqDhz+YrE29vIR7HNZ/K8sECfgcCNcMCC1TJIvOv5Bx60dFCaYkkXq/bNAGWe5/mLWD95m4MKGnsr8x/uu65XHlfwgBLbEskjIa+5nX7hb27B+MIPIP9tTsqntu/TZo6hrueD0aylW5IdjCzuMOF0xkF/nV+lBFXwdEE0DcKBs1T9MXWv6zqNs5JIq0Y4YFv4BrX5RrzUlj061DZ6PixcNdaFHUkJ6yjCkn6+PxEg/t35WALX4LVCxE2zgCOfJ4EQzKZfpQZo8U9o/S6Ne7sT3EQATs+i88LN0e9WcXOFNm9NMwnzr2nCnAyz/iRaIkNl4n80JSyQvyCy96xcmsgIrmID17ADOPqrnaIeMiH9Ad8bsP2zsHcaxwnq/h0c2Vo2Ala0RAM8i45FaVVoDq8gnNaUEcs3Ml6jmOS4lsFg0SY2Ksq2yrrcxpjInlzO5zNoZ4Jly4HYrxCajA0XocDPk2ycsC3PPRE7bOxq34E3+xEqxu22Hkh7I="
+  allow_failures:
+    - python: "3.7"
 
 notifications:
   webhooks:

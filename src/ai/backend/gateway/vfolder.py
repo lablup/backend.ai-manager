@@ -18,6 +18,7 @@ import sqlalchemy as sa
 import psycopg2
 import trafaret as t
 
+from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
 
 from .auth import auth_required
@@ -27,7 +28,7 @@ from .exceptions import (
 from .manager import (
     READ_ALLOWED, ALL_ALLOWED,
     server_status_required)
-from .utils import AliasedKey, check_api_params
+from .utils import check_api_params
 from ..manager.models import (
     groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
     VFolderPermission, query_accessible_vfolders)
@@ -136,7 +137,7 @@ def vfolder_check_exists(handler: Callable[[web.Request, VFolderRow], web.Respon
     t.Dict({
         t.Key('name'): t.Regexp('^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$', re.ASCII),
         t.Key('host', default=None) >> 'folder_host': t.Or(t.String, t.Null),
-        AliasedKey(['group', 'groupId', 'group_id'], default=None): t.Or(t.String, t.Null),
+        tx.AliasedKey(['group', 'groupId', 'group_id'], default=None): t.Or(t.String, t.Null),
     }),
 )
 async def create(request: web.Request, params: Any) -> web.Response:

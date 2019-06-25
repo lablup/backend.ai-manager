@@ -5,26 +5,24 @@ The main web / websocket server
 import asyncio
 import functools
 import importlib
-from ipaddress import ip_address
 import logging
 import os
 import ssl
 import sys
 import traceback
 
-import aiohttp
 from aiohttp import web
 import aiohttp_cors
 import aiojobs.aiohttp
 import aioredis
 import aiotools
 from aiopg.sa import create_engine
+import click
+from pathlib import Path
 from setproctitle import setproctitle
 import uvloop
 
-from ai.backend.common.argparse import (
-    ipaddr, path, port_no,
-)
+from ai.backend.common.cli import LazyGroup
 from ai.backend.common.utils import env_info
 from ai.backend.common.monitor import DummyStatsMonitor, DummyErrorMonitor
 from ai.backend.common.logging import Logger, BraceStyleAdapter
@@ -32,12 +30,12 @@ from ai.backend.common.plugin import (
     discover_entrypoints, install_plugins, add_plugin_args)
 from ..manager import __version__
 from ..manager.registry import AgentRegistry
+from .config import load as load_config, redis_config_iv
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
 from .etcd import ConfigServer
 from .events import EventDispatcher, event_subscriber
 from .exceptions import (BackendError, MethodNotAllowed, GenericNotFound,
                          GenericBadRequest, InternalServerError)
-from .config import load_config
 from .events import event_router
 from . import ManagerStatus
 
@@ -152,7 +150,7 @@ async def exception_middleware(request, handler):
     except Exception as e:
         app['error_monitor'].capture_exception()
         log.exception('Uncaught exception in HTTP request handlers {0!r}', e)
-        if app['config'].debug:
+        if app['config']['debug']['enabled']:
             raise InternalServerError(traceback.format_exc())
         else:
             raise InternalServerError()
@@ -177,37 +175,41 @@ async def gw_init(app, default_cors_options):
 
     # populate public interfaces
     app['config_server'] = ConfigServer(
-        app, app['config'].etcd_addr,
-        app['config'].etcd_user, app['config'].etcd_password,
-        app['config'].namespace)
+        app, app['config']['etcd']['addr'],
+        app['config']['etcd']['user'], app['config']['etcd']['password'],
+        app['config']['etcd']['namespace'])
     if app['pidx'] == 0:
         await app['config_server'].update_manager_status(ManagerStatus.PREPARING)
     app['dbpool'] = await create_engine(
-        host=app['config'].db_addr[0], port=app['config'].db_addr[1],
-        user=app['config'].db_user, password=app['config'].db_password,
-        dbname=app['config'].db_name,
-        echo=bool(app['config'].verbose),
+        host=app['config']['db']['addr'].host, port=app['config']['db']['addr'].port,
+        user=app['config']['db']['user'], password=app['config']['db']['password'],
+        dbname=app['config']['db']['name'],
+        echo=bool(app['config']['logging']['level'] == 'DEBUG'),
         minsize=8, maxsize=256,
         timeout=60, pool_recycle=120,
     )
+
+    redis_config = await app['config_server'].etcd.get_prefix('config/redis')
+    app['config']['redis'] = redis_config_iv.check(redis_config)
+
     app['redis_live'] = await aioredis.create_redis(
-        app['config'].redis_addr.as_sockaddr(),
-        password=(app['config'].redis_password
-                  if app['config'].redis_password else None),
+        app['config']['redis']['addr'].as_sockaddr(),
+        password=(app['config']['redis']['password']
+                  if app['config']['redis']['password'] else None),
         timeout=3.0,
         encoding='utf8',
         db=REDIS_LIVE_DB)
     app['redis_stat'] = await aioredis.create_redis(
-        app['config'].redis_addr.as_sockaddr(),
-        password=(app['config'].redis_password
-                  if app['config'].redis_password else None),
+        app['config']['redis']['addr'].as_sockaddr(),
+        password=(app['config']['redis']['password']
+                  if app['config']['redis']['password'] else None),
         timeout=3.0,
         encoding='utf8',
         db=REDIS_STAT_DB)
     app['redis_image'] = await aioredis.create_redis(
-        app['config'].redis_addr.as_sockaddr(),
-        password=(app['config'].redis_password
-                  if app['config'].redis_password else None),
+        app['config']['redis']['addr'].as_sockaddr(),
+        password=(app['config']['redis']['password']
+                  if app['config']['redis']['password'] else None),
         timeout=3.0,
         encoding='utf8',
         db=REDIS_IMAGE_DB)
@@ -303,18 +305,13 @@ async def server_main(loop, pidx, _args):
     }
     app.on_response_prepare.append(on_prepare)
     app['config'] = _args[0]
-    app['config'].app_name = 'backend.ai-manager'
-    if app['config'].disable_plugins:
-        app['config'].disable_plugins = app['config'].disable_plugins.split(',')
-    else:
-        app['config'].disable_plugins = []
     app['sslctx'] = None
-    if app['config'].ssl_cert and app['config'].ssl_key:
-        app['sslctx'] = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
-        app['sslctx'].load_cert_chain(str(app['config'].ssl_cert),
-                                      str(app['config'].ssl_key))
-    if app['config'].service_port == 0:
-        app['config'].service_port = 8443 if app['sslctx'] else 8080
+    if app['config']['manager']['ssl-enabled']:
+        app['sslctx'] = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        app['sslctx'].load_cert_chain(
+            str(app['config']['manager']['ssl-cert']),
+            str(app['config']['manager']['ssl-privkey']),
+        )
     app['pidx'] = pidx
 
     subapp_pkgs = [
@@ -370,7 +367,7 @@ async def server_main(loop, pidx, _args):
         'webapp',
     ]
     for plugin_info in discover_entrypoints(
-            plugins, disable_plugins=app['config'].disable_plugins):
+            plugins, disable_plugins=app['config']['manager']['disabled-plugins']):
         plugin_group, plugin_name, entrypoint = plugin_info
         if pidx == 0:
             log.info('Loading app plugin: {0}', entrypoint.module_name)
@@ -384,8 +381,8 @@ async def server_main(loop, pidx, _args):
     await runner.setup()
     site = web.TCPSite(
         runner,
-        str(app['config'].service_ip),
-        app['config'].service_port,
+        str(app['config']['manager']['api-listen-addr'].host),
+        app['config']['manager']['api-listen-addr'].port,
         backlog=1024,
         reuse_port=True,
         ssl_context=app['sslctx'],
@@ -401,43 +398,6 @@ async def server_main(loop, pidx, _args):
 
 
 def gw_args(parser):
-    parser.add('-n', '--num-proc', env_var='BACKEND_GATEWAY_NPROC',
-               type=int, default=min(os.cpu_count(), 4),
-               help='The number of worker processes to handle API requests.')
-    parser.add('--heartbeat-timeout', env_var='BACKEND_HEARTBEAT_TIMEOUT',
-               type=float, default=5.0,
-               help='The timeout for agent heartbeats.')
-    parser.add('--advertised-manager-host',
-               env_var='BACKEND_ADVERTISED_MANAGER_HOST',
-               type=str, default=None,
-               help='Manually set the manager hostname or IP address advertised '
-                    'to the agents in this cluster via etcd.  '
-                    'If not set, the manager tries the followings in order: '
-                    '1) get the private IP address from the instance metadata in '
-                    'supported cloud environments, '
-                    '2) resolve the current hostname, or '
-                    '3) return "127.0.0.1".')
-    parser.add('--events-port', env_var='BACKEND_EVENTS_PORT',
-               type=port_no, default=5002,
-               help='The TCP port number where the event server listens on.')
-    parser.add('--service-ip', env_var='BACKEND_SERVICE_IP',
-               type=ipaddr, default=ip_address('0.0.0.0'),
-               help='The IP where the API gateway server listens on.')
-    parser.add('--service-port', env_var='BACKEND_SERVICE_PORT',
-               type=port_no, default=0,
-               help='The TCP port number where the API gateway server listens on. '
-                    '(if unpsecified, it becomes 8080 and 8443 when SSL is enabled) '
-                    'To run in production, you need the root privilege '
-                    'to use the standard 80/443 ports or use a reverse-proxy '
-                    'such as nginx.')
-    parser.add('--ssl-cert', env_var='BACKEND_SSL_CERT',
-               type=path, default=None,
-               help='The path to an SSL certificate file. '
-                    'It may contain inter/root CA certificates as well.')
-    parser.add('--ssl-key', env_var='BACKEND_SSL_KEY',
-               type=path, default=None,
-               help='The path to the private key used to make requests '
-                    'for the SSL certificate.')
 
     plugins = [
         'stats_monitor',
@@ -446,35 +406,50 @@ def gw_args(parser):
     add_plugin_args(parser, plugins)
 
 
-def main():
+@click.group(invoke_without_command=True)
+@click.option('-f', '--config-path', '--config', type=Path, default=None,
+              help='The config file path. (default: ./manager.conf and /etc/backend.ai/manager.conf)')
+@click.option('--debug', is_flag=True,
+              help='Enable the debug mode and override the global log level to DEBUG.')
+@click.pass_context
+def main(ctx, config_path, debug):
 
-    config = load_config(extra_args_funcs=(gw_args, Logger.update_log_args))
-    setproctitle(f'backend.ai: manager {config.namespace} '
-                 f'{config.service_ip}:{config.service_port}')
-    logger = Logger(config)
-    logger.add_pkg('aiotools')
-    logger.add_pkg('aiopg')
-    logger.add_pkg('ai.backend')
-    with logger:
-        log.info('Backend.AI Gateway {0}', __version__)
-        log.info('runtime: {0}', env_info())
-        log_config = logging.getLogger('ai.backend.gateway.config')
-        log_config.debug('debug mode enabled.')
-        if config.debug:
-            aiohttp.log.server_logger.setLevel('DEBUG')
-            aiohttp.log.access_logger.setLevel('DEBUG')
-        else:
-            aiohttp.log.server_logger.setLevel('WARNING')
-            aiohttp.log.access_logger.setLevel('WARNING')
+    cfg = load_config(config_path)
 
-        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+    if ctx.invoked_subcommand is None:
+        cfg['manager']['pid-file'].write_text(str(os.getpid()))
         try:
-            aiotools.start_server(server_main, num_workers=config.num_proc,
-                                  extra_procs=[event_router],
-                                  args=(config,))
+            logger = Logger(cfg['logging'])
+            with logger:
+                ns = cfg['etcd']['namespace']
+                service_addr = "{0.host}:{0.port}".format(cfg['manager']['api-listen-addr'])
+                setproctitle(f"backend.ai: manager {ns} {service_addr}")
+                log.info('Backend.AI Gateway {0}', __version__)
+                log.info('runtime: {0}', env_info())
+                log_config = logging.getLogger('ai.backend.gateway.config')
+                log_config.debug('debug mode enabled.')
+
+                asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+                try:
+                    aiotools.start_server(server_main,
+                                          num_workers=cfg['manager']['num-proc'],
+                                          extra_procs=[event_router],
+                                          args=(cfg,))
+                finally:
+                    log.info('terminated.')
         finally:
-            log.info('terminated.')
+            if cfg['manager']['pid-file'].is_file():
+                # check is_file() to prevent deleting /dev/null!
+                cfg['manager']['pid-file'].unlink()
+    else:
+        # Click is going to invoke a subcommand.
+        pass
+
+
+@main.group(cls=LazyGroup, import_name='ai.backend.gateway.auth:cli')
+def auth():
+    pass
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

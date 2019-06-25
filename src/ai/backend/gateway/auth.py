@@ -8,6 +8,7 @@ from typing import Any
 from aiohttp import web
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
+import click
 from dateutil.tz import tzutc
 from dateutil.parser import parse as dtparse
 import sqlalchemy as sa
@@ -18,12 +19,11 @@ from .exceptions import (
     InvalidAuthParameters, AuthorizationFailed,
     InvalidAPIParameters,
 )
-from .config import load_config
 from ..manager.models import (
     keypairs, keypair_resource_policies, users,
 )
 from ..manager.models.user import check_credential
-from ..manager.models.keypair import generate_keypair
+from ..manager.models.keypair import generate_keypair as _gen_keypair
 from .utils import TZINFOS, check_api_params, set_handler_attr, get_handler_attr
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.auth'))
@@ -271,18 +271,25 @@ def create_app(default_cors_options):
     return app, [auth_middleware]
 
 
-if __name__ == '__main__':
+@click.group()
+def cli():
+    pass
 
-    def auth_args(parser):
-        parser.add('--generate-keypair',
-                   action='store_true', default=False,
-                   help='Generate a pair of access key and secret key.')
 
-    config = load_config(extra_args_funcs=(auth_args, Logger.update_log_args))
-    logger = Logger(config)
-    logger.add_pkg('ai.backend')
+@cli.command()
+def generate_keypair():
+    logger = Logger({
+        'level': 'INFO',
+        'drivers': ['console'],
+        'pkg-ns': {'ai.backend': 'INFO'},
+        'console': {'colored': True, 'format': 'verbose'},
+    })
     with logger:
-        if config.generate_keypair:
-            ak, sk = generate_keypair()
-            print(f'Access Key: {ak} ({len(ak)} bytes)')
-            print(f'Secret Key: {sk} ({len(sk)} bytes)')
+        log.info('generating keypair...')
+        ak, sk = _gen_keypair()
+        print(f'Access Key: {ak} ({len(ak)} bytes)')
+        print(f'Secret Key: {sk} ({len(sk)} bytes)')
+
+
+if __name__ == '__main__':
+    cli()

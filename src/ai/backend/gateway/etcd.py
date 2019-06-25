@@ -49,6 +49,9 @@ Alias keys are also URL-quoted in the same way.
            - password: {password}
            - auth: {auth-json-cached-from-config.json}
          ...
+     + redis
+       - addr: "{redis-host}:{redis-port}"
+       - password: {password}
      + resource_slots
        - {"cuda.device"}: {"count"}
        - {"cuda.mem"}: {"bytes"}
@@ -119,7 +122,7 @@ from decimal import Decimal
 import logging
 import json
 from pathlib import Path
-from typing import Any, Mapping, Union
+from typing import Any, Mapping, Optional, Union, Tuple
 
 import aiohttp
 from aiohttp import web
@@ -131,10 +134,10 @@ import trafaret as t
 import yaml
 import yarl
 
-from ai.backend.common.identity import get_instance_id, get_instance_ip
-from ai.backend.common.docker import get_known_registries
+from ai.backend.common.identity import get_instance_id
+from ai.backend.common.docker import ImageRef, get_known_registries
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import ImageRef, BinarySize, ResourceSlot
+from ai.backend.common.types import BinarySize, ResourceSlot
 from ai.backend.common.exception import UnknownImageReference
 from ai.backend.common.etcd import (
     quote as etcd_quote,
@@ -174,6 +177,7 @@ class ConfigServer:
             }
         scope_prefix_map = {
             ConfigScopes.GLOBAL: '',
+            # TODO: provide a way to specify other scope prefixes
         }
         self.etcd = AsyncEtcd(etcd_addr, namespace, scope_prefix_map, credentials=credentials)
 
@@ -188,24 +192,13 @@ class ConfigServer:
 
     async def register_myself(self, app_config):
         instance_id = await get_instance_id()
-        if app_config.advertised_manager_host:
-            instance_ip = app_config.advertised_manager_host
-            log.info('manually set advertised manager host: {0}', instance_ip)
-        else:
-            # fall back 1: read private IP from cloud instance metadata
-            # fall back 2: read hostname and resolve it
-            # fall back 3: "127.0.0.1"
-            instance_ip = await get_instance_ip()
-        event_addr = f'{instance_ip}:{app_config.events_port}'
+        event_addr = app_config['manager']['event-listen-addr']
+        log.info('manager is listening agent events at {}', event_addr)
+        event_addr = '{0.host}:{0.port}'.format(event_addr)
         manager_info = {
             'nodes/manager': instance_id,
-            'nodes/redis': app_config.redis_addr,
             'nodes/manager/event_addr': event_addr,
         }
-        if not app_config.redis_password:
-            await self.etcd.delete('/nodes/redis/password')
-        else:
-            manager_info['nodes/redis/password'] = app_config.redis_password
         await self.etcd.put_dict(manager_info)
 
     async def deregister_myself(self):
@@ -309,15 +302,13 @@ class ConfigServer:
                     coros.append(self._parse_image(ref, image_info, reverse_aliases))
         return await asyncio.gather(*coros)
 
-    async def set_image_resource_limit(self, reference: str,
-                                       slot_type: str,
-                                       value: str,
-                                       is_min: bool = True):
-        # TODO: add some validation
+    async def set_image_resource_limit(self, reference: str, slot_type: str,
+                                       value_range: Tuple[Optional[Decimal], Optional[Decimal]]):
         ref = await self._check_image(reference)
-        realm = 'min' if is_min else 'max'
-        await self.etcd.put(f'{ref.tag_path}/resource/{slot_type}/{realm}',
-                            value)
+        if value_range[0] is not None:
+            await self.etcd.put(f'{ref.tag_path}/resource/{slot_type}/min', str(value_range[0]))
+        if value_range[1] is not None:
+            await self.etcd.put(f'{ref.tag_path}/resource/{slot_type}/max', str(value_range[1]))
 
     async def _rescan_images(self, registry_name: str,
                              registry_url: yarl.URL,
@@ -396,7 +387,7 @@ class ConfigServer:
 
         ssl_ctx = None  # default
         app_config = self.context.get('config')
-        if app_config is not None and app_config.skip_sslcert_validation:
+        if app_config is not None and app_config['docker-registry']['ssl-verify']:
             ssl_ctx = False
         connector = aiohttp.TCPConnector(ssl=ssl_ctx)
         async with aiohttp.ClientSession(connector=connector) as sess:

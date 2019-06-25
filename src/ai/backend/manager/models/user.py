@@ -1,6 +1,7 @@
 import asyncio
 from collections import OrderedDict
 import enum
+from typing import Any
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -401,7 +402,8 @@ def _verify_password(guess, hashed):
     return bcrypt.verify(guess, hashed)
 
 
-async def check_credential(dbpool, domain: str, email: str, password: str):
+async def check_credential(dbpool, domain: str, email: str, password: str) \
+                          -> Any:
     async with dbpool.acquire() as conn:
         query = (sa.select([users])
                    .select_from(users)
@@ -409,11 +411,15 @@ async def check_credential(dbpool, domain: str, email: str, password: str):
                           (users.c.domain_name == domain)))
         result = await conn.execute(query)
         row = await result.first()
+        print(type(row))
         if row is None:
             return None
         if row['password'] is None:
             # user password is not set.
             return None
-        if _verify_password(password, row['password']):
-            return row
+        try:
+            if _verify_password(password, row['password']):
+                return row
+        except ValueError:
+            return None
         return None
