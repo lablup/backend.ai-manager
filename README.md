@@ -95,9 +95,10 @@ $ python -m flake8 src tests
 $ python -m pytest -m 'not integration' tests
 ```
 
-To run tests including integration tests, you first need to install the agent in the same virtualenv.
-Please refer [the README of Backend.AI Agent](https://github.com/lablup/backend.ai-agent/blob/master/README.md)
-for installation instructions, while keeping the same virtualenv.
+Now you are ready to install the agent.
+Head to [the README of Backend.AI Agent](https://github.com/lablup/backend.ai-agent/blob/master/README.md).
+
+NOTE: To run tests including integration tests, you first need to install and run the agent on the same host.
 
 ## Deployment
 
