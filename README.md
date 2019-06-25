@@ -20,7 +20,7 @@ Please visit [the installation guides](https://github.com/lablup/backend.ai/wiki
 * `libnsappy-dev` or `snappy-devel` system package depending on your distro
 * Python 3.6 or higher with [pyenv](https://github.com/pyenv/pyenv)
 and [pyenv-virtualenv](https://github.com/pyenv/pyenv-virtualenv) (optional but recommneded)
-* Docker 17.03 or later with docker-compose (18.03 or later is recommended)
+* Docker 18.03 or later with docker-compose (18.09 or later is recommended)
 
 Clone [the meta repository](https://github.com/lablup/backend.ai) and install a "halfstack"
 configuration.  The halfstack configuration installs and runs several dependency daemons such as etcd in
