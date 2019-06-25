@@ -409,13 +409,13 @@ def gw_args(parser):
 
 @click.group(invoke_without_command=True)
 @click.option('-f', '--config-path', '--config', type=Path, default=None,
-              help='The config file path. (default: ./manager.conf and /etc/backend.ai/manager.conf)')
+              help='The config file path. (default: ./manager.toml and /etc/backend.ai/manager.toml)')
 @click.option('--debug', is_flag=True,
               help='Enable the debug mode and override the global log level to DEBUG.')
 @click.pass_context
 def main(ctx, config_path, debug):
 
-    cfg = load_config(config_path)
+    cfg = load_config(config_path, debug)
 
     if ctx.invoked_subcommand is None:
         cfg['manager']['pid-file'].write_text(str(os.getpid()))

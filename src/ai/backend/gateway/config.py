@@ -82,11 +82,11 @@ def load(config_path: Path, debug: bool = False):
     try:
         cfg = config.check(raw_cfg, manager_config_iv)
         if 'debug'in cfg and cfg['debug']['enabled']:
-            print('== Agent configuration ==')
+            print('== Manager configuration ==')
             pprint(cfg)
         cfg['_src'] = cfg_src_path
     except config.ConfigurationError as e:
-        print('Validation of agent configuration has failed:', file=sys.stderr)
+        print('Validation of manager configuration has failed:', file=sys.stderr)
         print(pformat(e.invalid_data), file=sys.stderr)
         raise click.Abort()
     else:
