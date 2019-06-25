@@ -26,7 +26,7 @@ def load(config_path: Path, debug: bool = False):
         }),
         t.Key('manager'): t.Dict({
             t.Key('num-proc', default=max_cpu_count): t.Int[1:max_cpu_count],
-            t.Key('api-listen-addr', default=('0.0.0.0', 8080)): tx.HostPortPair,
+            t.Key('service-addr', default=('0.0.0.0', 8080)): tx.HostPortPair,
             t.Key('event-listen-addr', default=('127.0.0.1', 5002)): tx.HostPortPair,
             t.Key('heartbeat-timeout', default=5.0): t.Float[1.0:],
             t.Key('ssl-enabled', default=False): t.Bool,
@@ -43,7 +43,7 @@ def load(config_path: Path, debug: bool = False):
         t.Key('debug'): t.Dict({
             t.Key('enabled', default=False): t.Bool,
         }).allow_extra('*'),
-    }).allow_extra('*').merge(config.etcd_config_iv)
+    }).merge(config.etcd_config_iv).allow_extra('*')
 
     # Determine where to read configuration.
     raw_cfg, cfg_src_path = config.read_from_file(config_path, 'manager')

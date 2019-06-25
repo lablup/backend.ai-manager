@@ -63,6 +63,8 @@ Alias keys are also URL-quoted in the same way.
          ...
      + network
        - subnet: "0.0.0.0"
+     + watcher
+       - token: {some-secret}
    + volumes
      - _mount: {path-to-mount-root-for-vfolder-partitions}
      - _default_host: {default-vfolder-partition-name}

@@ -306,10 +306,10 @@ async def server_main(loop, pidx, _args):
     }
     app.on_response_prepare.append(on_prepare)
     app['config'] = _args[0]
-    app['sslctx'] = None
+    ssl_ctx = None
     if app['config']['manager']['ssl-enabled']:
-        app['sslctx'] = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        app['sslctx'].load_cert_chain(
+        ssl_ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        ssl_ctx.load_cert_chain(
             str(app['config']['manager']['ssl-cert']),
             str(app['config']['manager']['ssl-privkey']),
         )
@@ -380,16 +380,17 @@ async def server_main(loop, pidx, _args):
 
     runner = web.AppRunner(app)
     await runner.setup()
+    service_addr = app['config']['manager']['service-addr']
     site = web.TCPSite(
         runner,
-        str(app['config']['manager']['api-listen-addr'].host),
-        app['config']['manager']['api-listen-addr'].port,
+        str(service_addr.host),
+        service_addr.port,
         backlog=1024,
         reuse_port=True,
-        ssl_context=app['sslctx'],
+        ssl_context=ssl_ctx,
     )
     await site.start()
-    log.info('started.')
+    log.info('started handling API requests at {}', service_addr)
 
     try:
         yield
@@ -423,8 +424,7 @@ def main(ctx, config_path, debug):
             logger = Logger(cfg['logging'])
             with logger:
                 ns = cfg['etcd']['namespace']
-                service_addr = "{0.host}:{0.port}".format(cfg['manager']['api-listen-addr'])
-                setproctitle(f"backend.ai: manager {ns} {service_addr}")
+                setproctitle(f"backend.ai: manager {ns}")
                 log.info('Backend.AI Gateway {0}', __version__)
                 log.info('runtime: {0}', env_info())
                 log_config = logging.getLogger('ai.backend.gateway.config')

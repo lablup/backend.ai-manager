@@ -22,6 +22,8 @@ Please visit [the installation guides](https://github.com/lablup/backend.ai/wiki
 and [pyenv-virtualenv](https://github.com/pyenv/pyenv-virtualenv) (optional but recommneded)
 * Docker 18.03 or later with docker-compose (18.09 or later is recommended)
 
+#### Common steps
+
 Clone [the meta repository](https://github.com/lablup/backend.ai) and install a "halfstack"
 configuration.  The halfstack configuration installs and runs several dependency daemons such as etcd in
 the background.
@@ -80,7 +82,7 @@ $ python -m ai.backend.manager.cli fixture populate sample-configs/example-keypa
 $ python -m ai.backend.manager.cli fixture populate sample-configs/example-resource_presets.json
 ```
 
-Then run it (for debugging, append a "--debug" flag):
+Then, run it (for debugging, append a `--debug` flag):
 
 ```console
 $ python -m ai.backend.gateway.server
@@ -94,8 +96,8 @@ $ python -m pytest -m 'not integration' tests
 ```
 
 To run tests including integration tests, you first need to install the agent in the same virtualenv.
-Please refer [the README of Backend.AI Agent](https://github.com/lablup/backend.ai-agent) for
-installation instructions, while keeping the same virtualenv.
+Please refer [the README of Backend.AI Agent](https://github.com/lablup/backend.ai-agent/blob/master/README.md)
+for installation instructions, while keeping the same virtualenv.
 
 ## Deployment
 

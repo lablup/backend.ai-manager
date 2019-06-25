@@ -32,7 +32,8 @@ password = "develove"                       # env: BACKEND_DB_PASSWORD
 num-proc = 4                                               # env: BACKEND_GATEWAY_NPROC
 
 # Set the service hostname/port to accept API requests.
-api-listen-addr = { host = "0.0.0.0", port = 8080 }        # env: BACKEND_SERVICE_IP, BACKEND_SERVICE_PORT
+service-addr = { host = "0.0.0.0", port = 8080 }
+# env: BACKEND_SERVICE_IP, BACKEND_SERVICE_PORT
 
 # Set the SSL certificate chain and the private keys used for serving the API requests.
 ssl-enabled = false
@@ -40,7 +41,8 @@ ssl-enabled = false
 #ssl-privkey = "/etc/backend.ai/ssl/apiserver-privkey.pem"  # env: BACKNED_SSL_KEY
 
 # Set the event-listener hostname/port to accept heartbeats and event messages from agents.
-event-listen-addr = { host = "127.0.0.1", port = 5002 }    # env: BACKEND_ADVERTISED_MANAGER_HOST, BACKEND_EVENTS_PORT
+event-listen-addr = { host = "127.0.0.1", port = 5002 }
+# env: BACKEND_ADVERTISED_MANAGER_HOST, BACKEND_EVENTS_PORT
 
 # Set the timeout for agent heartbeats in seconds.
 heartbeat-timeout = 30.0
