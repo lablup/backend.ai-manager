@@ -70,7 +70,10 @@ venv*/
 .python-version
 
 # for local integration tests
-ai/backend/agent
+src/ai/backend/agent
 
 # User configuratinos
 alembic.ini
+
+# Local config
+manager.toml
