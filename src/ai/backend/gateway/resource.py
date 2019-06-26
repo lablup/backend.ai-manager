@@ -261,6 +261,8 @@ async def usage_per_period(request: web.Request, params: Any) -> web.Response:
         end_date = datetime.strptime(params['end_date'], '%Y%m%d').replace(tzinfo=local_tz)
     except ValueError:
         raise InvalidAPIParameters(extra_msg='Invalid date values')
+    if end_date <= start_date:
+        raise InvalidAPIParameters(extra_msg='end_date must be later than start_date.')
     log.info('USAGE_PER_MONTH (g:{0}, start_date:{1}, end_date:{2})',
              group_id, start_date, end_date)
     resp = await get_container_stats_for_period(request, start_date, end_date, group_ids=[group_id])
