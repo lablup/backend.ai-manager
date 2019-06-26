@@ -223,8 +223,11 @@ async def usage_per_month(request: web.Request, params: Any) -> web.Response:
     log.info('USAGE_PER_MONTH (g:[{0}], month:{1})',
              ','.join(params['group_ids']), params['month'])
     local_tz = request.app['config']['system']['timezone']
-    start_date = datetime.strptime(params['month'], '%Y%m').replace(tzinfo=local_tz)
-    end_date = start_date + relativedelta(months=+1)
+    try:
+        start_date = datetime.strptime(params['month'], '%Y%m').replace(tzinfo=local_tz)
+        end_date = start_date + relativedelta(months=+1)
+    except ValueError:
+        raise InvalidAPIParameters(extra_msg='Invalid date values')
     resp = await get_container_stats_for_period(request, start_date, end_date, params['group_ids'])
     log.debug('container list are retrieved for month {0}', params['month'])
     return web.json_response(resp, status=200)
@@ -253,8 +256,11 @@ async def usage_per_period(request: web.Request, params: Any) -> web.Response:
         raise GenericForbidden()
     group_id = params['group_id']
     local_tz = request.app['config']['system']['timezone']
-    start_date = datetime.strptime(params['start_date'], '%Y%m%d').replace(tzinfo=local_tz)
-    end_date = datetime.strptime(params['end_date'], '%Y%m%d').replace(tzinfo=local_tz)
+    try:
+        start_date = datetime.strptime(params['start_date'], '%Y%m%d').replace(tzinfo=local_tz)
+        end_date = datetime.strptime(params['end_date'], '%Y%m%d').replace(tzinfo=local_tz)
+    except ValueError:
+        raise InvalidAPIParameters(extra_msg='Invalid date values')
     log.info('USAGE_PER_MONTH (g:{0}, start_date:{1}, end_date:{2})',
              group_id, start_date, end_date)
     resp = await get_container_stats_for_period(request, start_date, end_date, group_ids=[group_id])
