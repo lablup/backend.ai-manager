@@ -24,7 +24,7 @@ from ..manager.models import (
 )
 from ..manager.models.user import check_credential
 from ..manager.models.keypair import generate_keypair as _gen_keypair
-from .utils import TZINFOS, check_api_params, set_handler_attr, get_handler_attr
+from .utils import check_api_params, set_handler_attr, get_handler_attr
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.auth'))
 
@@ -67,8 +67,10 @@ def check_date(request) -> bool:
     if not raw_date:
         return False
     try:
-        # abbr timezones are not automatically parsable without tzinfos
-        date = dtparse(raw_date, tzinfos=TZINFOS)
+        # HTTP standard says "Date" header must be in GMT only.
+        # However, dateutil.parser can recognize other commonly used
+        # timezone names and offsets.
+        date = dtparse(raw_date)
         if date.tzinfo is None:
             date = date.replace(tzinfo=tzutc())  # assume as UTC
         now = datetime.now(tzutc())

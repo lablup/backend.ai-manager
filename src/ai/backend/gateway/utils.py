@@ -13,9 +13,7 @@ import traceback
 from typing import Any, Callable
 
 from aiohttp import web
-from dateutil.tz import gettz
 import trafaret as t
-import pytz
 
 from ai.backend.common.logging import BraceStyleAdapter
 
@@ -126,23 +124,6 @@ def catch_unexpected(log, raven=None):
         return _wrapped
 
     return _wrap
-
-
-def gen_tzinfos():
-    """ Yield abbreviated timezone name and tzinfo"""
-    for zone in pytz.common_timezones:
-        try:
-            tzdate = pytz.timezone(zone).localize(datetime.utcnow(), is_dst=None)
-        except pytz.NonExistentTimeError:
-            pass
-        else:
-            tzinfo = gettz(zone)
-
-            if tzinfo:
-                yield tzdate.tzname(), tzinfo
-
-
-TZINFOS = dict(gen_tzinfos())
 
 
 def set_handler_attr(func, key, value):
