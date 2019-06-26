@@ -6,6 +6,7 @@ import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import psycopg2 as pg
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common.types import ResourceSlot
 from .base import metadata, GUID, IDColumn, ResourceSlotColumn
@@ -49,6 +50,7 @@ groups = sa.Table(
               nullable=False, index=True),
     # TODO: separate resource-related fields with new domain resource policy table when needed.
     sa.Column('total_resource_slots', ResourceSlotColumn(), default='{}'),
+    sa.Column('allowed_vfolder_hosts', pgsql.ARRAY(sa.String), default='{}'),
     sa.UniqueConstraint('name', 'domain_name', name='uq_groups_name_domain_name')
 )
 
@@ -62,6 +64,8 @@ class Group(graphene.ObjectType):
     modified_at = GQLDateTime()
     domain_name = graphene.String()
     total_resource_slots = graphene.JSONString()
+    allowed_vfolder_hosts = graphene.List(lambda: graphene.String)
+    integration_id = graphene.String()
 
     @classmethod
     def from_row(cls, row):
@@ -76,6 +80,8 @@ class Group(graphene.ObjectType):
             modified_at=row['modified_at'],
             domain_name=row['domain_name'],
             total_resource_slots=row['total_resource_slots'].to_json(),
+            allowed_vfolder_hosts=row['allowed_vfolder_hosts'],
+            integration_id=row['integration_id'],
         )
 
     @staticmethod
@@ -131,6 +137,8 @@ class GroupInput(graphene.InputObjectType):
     is_active = graphene.Boolean(required=False, default=True)
     domain_name = graphene.String(required=True)
     total_resource_slots = graphene.JSONString(required=False)
+    allowed_vfolder_hosts = graphene.List(lambda: graphene.String, required=False)
+    integration_id = graphene.String(required=False)
 
 
 class ModifyGroupInput(graphene.InputObjectType):
@@ -141,6 +149,8 @@ class ModifyGroupInput(graphene.InputObjectType):
     total_resource_slots = graphene.JSONString(required=False)
     user_update_mode = graphene.String(required=False)
     user_uuids = graphene.List(lambda: graphene.String, required=False)
+    allowed_vfolder_hosts = graphene.List(lambda: graphene.String, required=False)
+    integration_id = graphene.String(required=False)
 
 
 class GroupMutationMixin:
@@ -194,6 +204,8 @@ class CreateGroup(GroupMutationMixin, graphene.Mutation):
                 'domain_name': props.domain_name,
                 'total_resource_slots': ResourceSlot.from_user_input(
                     props.total_resource_slots, known_slot_types),
+                'allowed_vfolder_hosts': props.allowed_vfolder_hosts,
+                'integration_id': props.integration_id,
             }
             query = (groups.insert().values(data))
             try:
@@ -245,6 +257,8 @@ class ModifyGroup(GroupMutationMixin, graphene.Mutation):
             set_if_set('is_active')
             set_if_set('domain_name')
             set_if_set('total_resource_slots', clean_resource_slot)
+            set_if_set('allowed_vfolder_hosts')
+            set_if_set('integration_id')
 
             if 'name' in data:
                 assert _rx_slug.search(data['name']) is not None, \

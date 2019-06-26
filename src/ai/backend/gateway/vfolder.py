@@ -30,7 +30,8 @@ from .manager import (
     server_status_required)
 from .utils import check_api_params
 from ..manager.models import (
-    groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
+    association_groups_users,
+    domains, groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
     VFolderPermission, query_accessible_vfolders)
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
@@ -146,6 +147,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
     access_key = request['keypair']['access_key']
     user_uuid = request['user']['uuid']
     resource_policy = request['keypair']['resource_policy']
+    domain_name = request['user']['domain_name']
+    group_id = params['group']
     log.info('VFOLDER.CREATE (u:{0})', access_key)
     # Resolve host for the new virtual folder.
     folder_host = params['folder_host']
@@ -160,15 +163,30 @@ async def create(request: web.Request, params: Any) -> web.Response:
     allowed_vfolder_types = ['user', 'group']
     # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
 
-    # Check resource policy's allowed_vfolder_hosts
-    if folder_host not in resource_policy['allowed_vfolder_hosts']:
-        raise InvalidAPIParameters('You are not allowed to use this vfolder host.')
-    vfroot = (request.app['VFOLDER_MOUNT'] / folder_host /
-              request.app['VFOLDER_FSPREFIX'])
-    if not vfroot.is_dir():
-        raise InvalidAPIParameters(f'Invalid vfolder host: {folder_host}')
-
     async with dbpool.acquire() as conn:
+        # Check resource policy's allowed_vfolder_hosts
+        allowed_hosts = []
+        query = (sa.select([domains.c.allowed_vfolder_hosts])
+                   .where(domains.c.name == domain_name))
+        _allowed_domain_hosts = await conn.scalar(query)
+        if _allowed_domain_hosts:
+            allowed_hosts.extend(_allowed_domain_hosts)
+        if group_id is not None:
+            query = (sa.select([groups.c.allowed_vfolder_hosts])
+                       .where(domains.c.name == domain_name)
+                       .where(groups.c.id == group_id))
+            _allowed_group_hosts = await conn.scalar(query)
+            if _allowed_group_hosts:
+                allowed_hosts.extend(_allowed_group_hosts)
+        allowed_hosts.extend(resource_policy['allowed_vfolder_hosts'])
+        allowed_hosts = set(allowed_hosts)
+        if folder_host not in allowed_hosts:
+            raise InvalidAPIParameters('You are not allowed to use this vfolder host.')
+        vfroot = (request.app['VFOLDER_MOUNT'] / folder_host /
+                  request.app['VFOLDER_FSPREFIX'])
+        if not vfroot.is_dir():
+            raise InvalidAPIParameters(f'Invalid vfolder host: {folder_host}')
+
         # Check resource policy's max_vfolder_count
         if resource_policy['max_vfolder_count'] > 0:
             query = (sa.select([sa.func.count()])
@@ -188,7 +206,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             raise VFolderAlreadyExists
 
         # Check if group exists.
-        if params['group']:
+        if group_id is not None:
             if 'group' not in allowed_vfolder_types:
                 raise InvalidAPIParameters('group vfolder cannot be created in this host')
             if not request['is_admin'] or request['is_superadmin']:
@@ -196,10 +214,10 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 raise GenericForbidden('no permission')
             query = (sa.select([groups.c.id])
                        .select_from(groups)
-                       .where(groups.c.domain_name == request['user']['domain_name'])
-                       .where(groups.c.id == params['group']))
-            gid = await conn.scalar(query)
-            if str(gid) != str(params['group']):
+                       .where(groups.c.domain_name == domain_name)
+                       .where(groups.c.id == group_id))
+            _gid = await conn.scalar(query)
+            if str(_gid) != str(group_id):
                 raise InvalidAPIParameters('No such group.')
         else:
             if 'user' not in allowed_vfolder_types:
@@ -211,8 +229,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
             folder_path.mkdir(parents=True, exist_ok=True)
         except OSError:
             raise VFolderCreationFailed
-        user_uuid = str(user_uuid) if params['group'] is None else None
-        group_uuid = str(params['group']) if params['group'] is not None else None
+        user_uuid = str(user_uuid) if group_id is None else None
+        group_uuid = str(group_id) if group_id is not None else None
         query = (vfolders.insert().values({
             'id': folder_id,
             'name': params['name'],
@@ -293,8 +311,28 @@ async def list_hosts(request: web.Request) -> web.Response:
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.LIST_HOSTS (u:{0})', access_key)
     config = request.app['config_server']
-    allowed_hosts = set(
-        request['keypair']['resource_policy']['allowed_vfolder_hosts'])
+    dbpool = request.app['dbpool']
+    domain_name = request['user']['domain_name']
+    resource_policy = request['keypair']['resource_policy']
+    allowed_hosts = []
+    # Query allowed vfolder hosts in domain-/group-level.
+    async with dbpool.acquire() as conn:
+        query = (sa.select([domains.c.allowed_vfolder_hosts])
+                   .where(domains.c.name == domain_name))
+        _allowed_domain_hosts = await conn.scalar(query)
+        if _allowed_domain_hosts:
+            allowed_hosts.extend(_allowed_domain_hosts)
+        j = association_groups_users.join(
+            groups, association_groups_users.c.user_id == request['user']['uuid'])
+        query = (sa.select([groups.c.allowed_vfolder_hosts])
+                   .select_from(j)
+                   .where(domains.c.name == domain_name))
+        result = await conn.execute(query)
+        rows = await result.fetchall()
+        for row in rows:
+            allowed_hosts.extend(row['allowed_vfolder_hosts'])
+    allowed_hosts.extend(resource_policy['allowed_vfolder_hosts'])
+    allowed_hosts = set(allowed_hosts)
     mount_prefix = await config.get('volumes/_mount')
     if mount_prefix is None:
         mount_prefix = '/mnt'

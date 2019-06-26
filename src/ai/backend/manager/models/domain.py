@@ -6,6 +6,7 @@ import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import psycopg2 as pg
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common.types import ResourceSlot
 from .base import metadata, ResourceSlotColumn
@@ -29,6 +30,7 @@ domains = sa.Table(
               server_default=sa.func.now(), onupdate=sa.func.current_timestamp()),
     # TODO: separate resource-related fields with new domain resource policy table when needed.
     sa.Column('total_resource_slots', ResourceSlotColumn(), default='{}'),
+    sa.Column('allowed_vfolder_hosts', pgsql.ARRAY(sa.String), default='{}'),
     #: Field for synchronization with external services.
     sa.Column('integration_id', sa.String(length=512)),
 )
@@ -41,6 +43,8 @@ class Domain(graphene.ObjectType):
     created_at = GQLDateTime()
     modified_at = GQLDateTime()
     total_resource_slots = graphene.JSONString()
+    allowed_vfolder_hosts = graphene.List(lambda: graphene.String)
+    integration_id = graphene.String()
 
     @classmethod
     def from_row(cls, row):
@@ -53,6 +57,8 @@ class Domain(graphene.ObjectType):
             created_at=row['created_at'],
             modified_at=row['modified_at'],
             total_resource_slots=row['total_resource_slots'].to_json(),
+            allowed_vfolder_hosts=row['allowed_vfolder_hosts'],
+            integration_id=row['integration_id'],
         )
 
     @staticmethod
@@ -88,6 +94,8 @@ class DomainInput(graphene.InputObjectType):
     description = graphene.String(required=False)
     is_active = graphene.Boolean(required=False, default=True)
     total_resource_slots = graphene.JSONString(required=False)
+    allowed_vfolder_hosts = graphene.List(lambda: graphene.String, required=False)
+    integration_id = graphene.String(required=False)
 
 
 class ModifyDomainInput(graphene.InputObjectType):
@@ -95,6 +103,8 @@ class ModifyDomainInput(graphene.InputObjectType):
     description = graphene.String(required=False)
     is_active = graphene.Boolean(required=False)
     total_resource_slots = graphene.JSONString(required=False)
+    allowed_vfolder_hosts = graphene.List(lambda: graphene.String, required=False)
+    integration_id = graphene.String(required=False)
 
 
 class DomainMutationMixin:
@@ -130,6 +140,8 @@ class CreateDomain(DomainMutationMixin, graphene.Mutation):
                 'is_active': props.is_active,
                 'total_resource_slots': ResourceSlot.from_user_input(
                     props.total_resource_slots, known_slot_types),
+                'allowed_vfolder_hosts': props.allowed_vfolder_hosts,
+                'integration_id': props.integration_id,
             }
             query = (domains.insert().values(data))
             try:
@@ -179,6 +191,8 @@ class ModifyDomain(DomainMutationMixin, graphene.Mutation):
             set_if_set('description')
             set_if_set('is_active')
             set_if_set('total_resource_slots', clean_resource_slot)
+            set_if_set('allowed_vfolder_hosts')
+            set_if_set('integration_id')
 
             if 'name' in data:
                 assert _rx_slug.search(data['name']) is not None, \
