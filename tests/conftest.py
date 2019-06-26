@@ -19,7 +19,6 @@ import aiohttp
 from aiohttp import web
 import aiohttp_cors
 import aiojobs.aiohttp
-from aiopg.sa import create_engine
 from async_timeout import timeout
 from dateutil.tz import tzutc
 import sqlalchemy as sa
@@ -27,10 +26,11 @@ import psycopg2 as pg
 import pytest
 
 from ai.backend.common.argparse import host_port_pair
-from ai.backend.gateway.config import load_config
+from ai.backend.common.types import HostPortPair
+from ai.backend.gateway.config import load as load_config
 from ai.backend.gateway.events import event_router
 from ai.backend.gateway.server import (
-    gw_init, gw_shutdown, gw_args,
+    gw_init, gw_shutdown,
     exception_middleware, api_middleware,
     _get_legacy_handler,
     PUBLIC_INTERFACES)
@@ -80,9 +80,10 @@ def prepare_and_cleanup_databases(request, test_ns, test_db,
     os.environ['BACKEND_DB_NAME'] = test_db
 
     # Clear and reset etcd namespace using CLI functions.
-    etcd_addr = host_port_pair(os.environ['BACKEND_ETCD_ADDR'])
-    etcd_user = os.environ.get('BACKEND_ETCD_USER')
-    etcd_password = os.environ.get('BACKEND_ETCD_PASSWORD')
+    cfg = load_config()
+    etcd_addr = cfg['etcd']['addr']
+    etcd_user = cfg['etcd']['user']
+    etcd_password = cfg['etcd']['password']
     args = Namespace(key='volumes/_mount', value=str(folder_mount),
                      etcd_user=etcd_user, etcd_password=etcd_password,
                      etcd_addr=etcd_addr, namespace=test_ns)
@@ -110,9 +111,9 @@ def prepare_and_cleanup_databases(request, test_ns, test_db,
     request.addfinalizer(finalize_etcd)
 
     # Create database using low-level psycopg2 API.
-    db_addr = host_port_pair(os.environ['BACKEND_DB_ADDR'])
-    db_user = os.environ['BACKEND_DB_USER']
-    db_pass = os.environ['BACKEND_DB_PASSWORD']
+    db_addr = cfg['db']['addr']
+    db_user = cfg['db']['user']
+    db_pass = cfg['db']['password']
     if db_pass:
         # TODO: escape/urlquote db_pass
         db_url = f'postgresql://{db_user}:{db_pass}@{db_addr}'
@@ -224,35 +225,22 @@ class Client:
 
 @pytest.fixture
 async def app(event_loop, test_ns, test_db, unused_tcp_port_factory):
-    """ For tests that do not require actual server running.
+    """
+    For tests that do not require actual server running.
     """
     app = web.Application(middlewares=[
         exception_middleware,
         api_middleware,
     ])
-    app['config'] = load_config(argv=[], extra_args_funcs=(gw_args,))
-    app['config'].debug = True
+    app['config'] = load_config()
 
-    app['config'].etcd_addr = host_port_pair(os.environ['BACKEND_ETCD_ADDR'])
-    app['config'].etcd_user = os.environ.get('BACKEND_ETCD_USER')
-    app['config'].etcd_password = os.environ.get('BACKEND_ETCD_PASSWORD')
-
-    app['config'].redis_addr = host_port_pair(os.environ['BACKEND_REDIS_ADDR'])
-    app['config'].redis_password = os.environ.get('BACKEND_REDIS_PASSWORD')
-
-    # Override basic settings.
-    # Change these configs if local servers have different port numbers.
-    app['config'].db_addr = host_port_pair(os.environ['BACKEND_DB_ADDR'])
-    app['config'].db_name = test_db
-    app['config'].docker_registry = 'lablup'
-
-    # Override extra settings
-    app['config'].namespace = test_ns
-    app['config'].heartbeat_timeout = 10.0
-    app['config'].service_ip = '127.0.0.1'
-    app['config'].service_port = unused_tcp_port_factory()
-    # app['config'].events_port = unused_tcp_port_factory()
-    app['config'].verbose = False
+    # Override settings for testing.
+    app['config']['db']['name'] = test_db
+    app['config']['etcd']['namespace'] = test_ns
+    app['config']['manager']['num-proc'] = 2
+    app['config']['manager']['heartbeat-timeout'] = 10.0
+    app['config']['manager']['service-addr'] = HostPortPair(
+        '127.0.0.1', unused_tcp_port_factory())
     # import ssl
     # app['config'].ssl_cert = here / 'sample-ssl-cert' / 'sample.crt'
     # app['config'].ssl_key = here / 'sample-ssl-cert' / 'sample.key'
@@ -260,7 +248,6 @@ async def app(event_loop, test_ns, test_db, unused_tcp_port_factory):
     # app['sslctx'].load_cert_chain(str(app['config'].ssl_cert),
     #                            str(app['config'].ssl_key))
 
-    # num_workers = 1
     app['pidx'] = 0
     return app
 
