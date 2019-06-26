@@ -169,7 +169,6 @@ async def create(request: web.Request, params: Any) -> web.Response:
         # Check resource policy's allowed_vfolder_hosts
         allowed_hosts = await get_allowed_vfolder_hosts_by_group(conn, resource_policy,
                                                                  domain_name, group_id)
-        print(allowed_hosts)
         if folder_host not in allowed_hosts:
             raise InvalidAPIParameters('You are not allowed to use this vfolder host.')
         vfroot = (request.app['VFOLDER_MOUNT'] / folder_host /
@@ -307,7 +306,6 @@ async def list_hosts(request: web.Request) -> web.Response:
     async with dbpool.acquire() as conn:
         allowed_hosts = await get_allowed_vfolder_hosts_by_user(conn, resource_policy,
                                                                 domain_name, request['user']['uuid'])
-        print(allowed_hosts)
     mount_prefix = await config.get('volumes/_mount')
     if mount_prefix is None:
         mount_prefix = '/mnt'
