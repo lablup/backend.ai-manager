@@ -160,7 +160,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                     allowed_vfolder_types=allowed_vfolder_types,
                     extra_vf_conds=(vfolders.c.name.in_(creation_config['mounts'])))
                 for item in matched_vfolders:
-                    if item['group'] is not None and item['group'] != group_id:
+                    if item['group'] is not None and item['group'] != str(group_id):
                         # User's accessible group vfolders should not be mounted
                         # if not belong to the execution kernel.
                         continue
