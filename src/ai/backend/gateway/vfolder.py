@@ -32,7 +32,9 @@ from .utils import check_api_params
 from ..manager.models import (
     association_groups_users,
     domains, groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
-    VFolderPermission, query_accessible_vfolders)
+    VFolderPermission, query_accessible_vfolders,
+    get_allowed_vfolder_hosts_by_group, get_allowed_vfolder_hosts_by_user,
+)
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
 
@@ -165,21 +167,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
 
     async with dbpool.acquire() as conn:
         # Check resource policy's allowed_vfolder_hosts
-        allowed_hosts = []
-        query = (sa.select([domains.c.allowed_vfolder_hosts])
-                   .where(domains.c.name == domain_name))
-        _allowed_domain_hosts = await conn.scalar(query)
-        if _allowed_domain_hosts:
-            allowed_hosts.extend(_allowed_domain_hosts)
-        if group_id is not None:
-            query = (sa.select([groups.c.allowed_vfolder_hosts])
-                       .where(domains.c.name == domain_name)
-                       .where(groups.c.id == group_id))
-            _allowed_group_hosts = await conn.scalar(query)
-            if _allowed_group_hosts:
-                allowed_hosts.extend(_allowed_group_hosts)
-        allowed_hosts.extend(resource_policy['allowed_vfolder_hosts'])
-        allowed_hosts = set(allowed_hosts)
+        allowed_hosts = await get_allowed_vfolder_hosts_by_group(conn, resource_policy,
+                                                                 domain_name, group_id)
+        print(allowed_hosts)
         if folder_host not in allowed_hosts:
             raise InvalidAPIParameters('You are not allowed to use this vfolder host.')
         vfroot = (request.app['VFOLDER_MOUNT'] / folder_host /
@@ -314,25 +304,10 @@ async def list_hosts(request: web.Request) -> web.Response:
     dbpool = request.app['dbpool']
     domain_name = request['user']['domain_name']
     resource_policy = request['keypair']['resource_policy']
-    allowed_hosts = []
-    # Query allowed vfolder hosts in domain-/group-level.
     async with dbpool.acquire() as conn:
-        query = (sa.select([domains.c.allowed_vfolder_hosts])
-                   .where(domains.c.name == domain_name))
-        _allowed_domain_hosts = await conn.scalar(query)
-        if _allowed_domain_hosts:
-            allowed_hosts.extend(_allowed_domain_hosts)
-        j = association_groups_users.join(
-            groups, association_groups_users.c.user_id == request['user']['uuid'])
-        query = (sa.select([groups.c.allowed_vfolder_hosts])
-                   .select_from(j)
-                   .where(domains.c.name == domain_name))
-        result = await conn.execute(query)
-        rows = await result.fetchall()
-        for row in rows:
-            allowed_hosts.extend(row['allowed_vfolder_hosts'])
-    allowed_hosts.extend(resource_policy['allowed_vfolder_hosts'])
-    allowed_hosts = set(allowed_hosts)
+        allowed_hosts = await get_allowed_vfolder_hosts_by_user(conn, resource_policy,
+                                                                domain_name, request['user']['uuid'])
+        print(allowed_hosts)
     mount_prefix = await config.get('volumes/_mount')
     if mount_prefix is None:
         mount_prefix = '/mnt'

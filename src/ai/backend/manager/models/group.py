@@ -50,7 +50,7 @@ groups = sa.Table(
               nullable=False, index=True),
     # TODO: separate resource-related fields with new domain resource policy table when needed.
     sa.Column('total_resource_slots', ResourceSlotColumn(), default='{}'),
-    sa.Column('allowed_vfolder_hosts', pgsql.ARRAY(sa.String), default='{}'),
+    sa.Column('allowed_vfolder_hosts', pgsql.ARRAY(sa.String), nullable=False, default='{}'),
     sa.UniqueConstraint('name', 'domain_name', name='uq_groups_name_domain_name')
 )
 

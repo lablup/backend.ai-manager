@@ -14,6 +14,8 @@ __all__ = (
     'VirtualFolder',
     'VFolderPermission',
     'query_accessible_vfolders',
+    'get_allowed_vfolder_hosts_by_group',
+    'get_allowed_vfolder_hosts_by_user',
 )
 
 
@@ -218,6 +220,58 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                 'permission': perm,
             })
     return entries
+
+
+async def get_allowed_vfolder_hosts_by_group(conn, resource_policy,
+                                             domain_name, group_id=None):
+    '''
+    Union `allowed_vfolder_hosts` from domain, group, and keypair_resource_policy.
+
+    If `group_id` is not None, `allowed_vfolder_hosts` from the group is also merged.
+    '''
+    from . import domains, groups
+    # Domain's allowed_vfolder_hosts.
+    allowed_hosts = set()
+    query = (sa.select([domains.c.allowed_vfolder_hosts])
+               .where(domains.c.name == domain_name))
+    allowed_hosts.update(await conn.scalar(query))
+    # Group's allowed_vfolder_hosts.
+    if group_id is not None:
+        query = (sa.select([groups.c.allowed_vfolder_hosts])
+                   .where(domains.c.name == domain_name)
+                   .where(groups.c.id == group_id))
+        allowed_hosts.update(await conn.scalar(query))
+    # Keypair Resource Policy's allowed_vfolder_hosts
+    allowed_hosts.update(resource_policy['allowed_vfolder_hosts'])
+    return allowed_hosts
+
+
+async def get_allowed_vfolder_hosts_by_user(conn, resource_policy,
+                                            domain_name, user_uuid):
+    '''
+    Union `allowed_vfolder_hosts` from domain, groups, and keypair_resource_policy.
+
+    All available `allowed_vfolder_hosts` of groups which requester associated will be merged.
+    '''
+    from . import association_groups_users, domains, groups
+    # Domain's allowed_vfolder_hosts.
+    allowed_hosts = set()
+    query = (sa.select([domains.c.allowed_vfolder_hosts])
+               .where(domains.c.name == domain_name))
+    allowed_hosts.update(await conn.scalar(query))
+    # User's Groups' allowed_vfolder_hosts.
+    j = association_groups_users.join(
+        groups, association_groups_users.c.user_id == user_uuid)
+    query = (sa.select([groups.c.allowed_vfolder_hosts])
+               .select_from(j)
+               .where(domains.c.name == domain_name))
+    result = await conn.execute(query)
+    rows = await result.fetchall()
+    for row in rows:
+        allowed_hosts.update(row['allowed_vfolder_hosts'])
+    # Keypair Resource Policy's allowed_vfolder_hosts
+    allowed_hosts.update(resource_policy['allowed_vfolder_hosts'])
+    return allowed_hosts
 
 
 class VirtualFolder(graphene.ObjectType):
