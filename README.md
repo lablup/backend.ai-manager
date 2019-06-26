@@ -55,7 +55,7 @@ From now on, let's assume all shell commands are executed inside the virtualenv.
 * `backend.ai-dev`
   - `manager` (git clone from this repo)
   - `agent` (git clone from [the agent repo](https://github.com/lablup/backend.ai-agent))
-  - `common` (git clone from [the client-py repo](https://github.com/lablup/backend.ai-common))
+  - `common` (git clone from [the common repo](https://github.com/lablup/backend.ai-common))
 
 Install `backend.ai-common` as an editable package in the manager (and the agent) virtualenvs
 to keep the codebase up-to-date.
