@@ -50,7 +50,24 @@ From now on, let's assume all shell commands are executed inside the virtualenv.
 
 ### Halfstack (single-node development & testing)
 
-First install it:
+#### Recommended directory structure
+
+* `backend.ai-dev`
+  - `manager` (git clone from this repo)
+  - `agent` (git clone from [the agent repo](https://github.com/lablup/backend.ai-agent))
+  - `common` (git clone from [the common repo](https://github.com/lablup/backend.ai-common))
+
+Install `backend.ai-common` as an editable package in the manager (and the agent) virtualenvs
+to keep the codebase up-to-date.
+
+```console
+$ cd manager
+$ pip install -U -e ../common
+```
+
+#### Steps
+
+Copy (or symlink) the halfstack configs:
 ```console
 $ cp config/halfstack.toml ./manager.toml
 $ cp config/halfstack.alembic.ini alembic.ini
@@ -65,7 +82,7 @@ Set up the public Docker registry:
 ```console
 $ python -m ai.backend.manager.cli etcd put config/docker/registry/index.docker.io "https://registry-1.docker.io"
 $ python -m ai.backend.manager.cli etcd put config/docker/registry/index.docker.io/username "lablup"
-$ python -m ai.backend.manager.cli rescan-images
+$ python -m ai.backend.manager.cli rescan-images index.docker.io
 ```
 
 Set up the vfolder paths:
