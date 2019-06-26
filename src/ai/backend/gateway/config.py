@@ -1,49 +1,96 @@
 import os
 import sys
 from pathlib import Path
-from pprint import pformat, pprint
+from pprint import pformat
 
 import click
 import trafaret as t
 from ai.backend.common import config, validators as tx
+from ai.backend.common.etcd import AsyncEtcd
+
+max_cpu_count = os.cpu_count()
+
+manager_config_iv = t.Dict({
+    t.Key('db'): t.Dict({
+        t.Key('type', default='postgresql'): t.Enum('postgresql'),
+        t.Key('addr'): tx.HostPortPair,
+        t.Key('name'): tx.Slug[2:64],
+        t.Key('user'): t.String,
+        t.Key('password'): t.String,
+    }),
+    t.Key('manager'): t.Dict({
+        t.Key('num-proc', default=max_cpu_count): t.Int[1:max_cpu_count],
+        t.Key('service-addr', default=('0.0.0.0', 8080)): tx.HostPortPair,
+        t.Key('event-listen-addr', default=('127.0.0.1', 5002)): tx.HostPortPair,
+        t.Key('heartbeat-timeout', default=5.0): t.Float[1.0:],
+        t.Key('ssl-enabled', default=False): t.Bool | t.StrBool,
+        t.Key('ssl-cert', default=None): t.Null | tx.Path(type='file'),
+        t.Key('ssl-privkey', default=None): t.Null | tx.Path(type='file'),
+        t.Key('pid-file', default=os.devnull): tx.Path(type='file',
+                                                       allow_nonexisting=True,
+                                                       allow_devnull=True),
+    }).allow_extra('*'),
+    t.Key('docker-registry'): t.Dict({
+        t.Key('ssl-verify', default=True): t.Bool | t.StrBool,
+    }).allow_extra('*'),
+    t.Key('logging'): t.Any,  # checked in ai.backend.common.logging
+    t.Key('debug'): t.Dict({
+        t.Key('enabled', default=False): t.Bool | t.StrBool,
+    }).allow_extra('*'),
+}).merge(config.etcd_config_iv).allow_extra('*')
 
 redis_config_iv = t.Dict({
     t.Key('addr', default=('127.0.0.1', 6379)): tx.HostPortPair,
     t.Key('password', default=None): t.Null | t.String,
 }).allow_extra('*')
 
+_shdefs = {
+    'system': {
+        'timezone': 'UTC',
+    },
+    'api': {
+        'allow-origins': '*',
+    },
+    'redis': {
+        'addr': '127.0.0.1:6379',
+        'password': None,
+    },
+    'network': {
+        'subnet': {
+            'agent': '0.0.0.0/0',
+            'container': '0.0.0.0/0',
+        },
+    },
+    'watcher': {
+        'token': None,
+    }
+}
 
-def load(config_path: Path, debug: bool = False):
-    max_cpu_count = os.cpu_count()
+shared_config_iv = t.Dict({
+    t.Key('system', default=_shdefs['system']): t.Dict({
+        t.Key('timezone', default=_shdefs['system']['timezone']): tx.TimeZone,
+    }).allow_extra('*'),
+    t.Key('api', default=_shdefs['api']): t.Dict({
+        t.Key('allow-origins', default=_shdefs['api']['allow-origins']): t.String,
+    }).allow_extra('*'),
+    t.Key('redis', default=_shdefs['redis']): t.Dict({
+        t.Key('addr', default=_shdefs['redis']['addr']): tx.HostPortPair,
+        t.Key('password', default=_shdefs['redis']['password']): t.Null | t.String,
+    }).allow_extra('*'),
+    t.Key('plugins', default={}): t.Mapping(t.String, t.Mapping(t.String, t.Any)),
+    t.Key('network', default=_shdefs['network']): t.Dict({
+        t.Key('subnet', default=_shdefs['network']['subnet']): t.Dict({
+            t.Key('agent', default=_shdefs['network']['subnet']['agent']): tx.IPNetwork,
+            t.Key('container', default=_shdefs['network']['subnet']['container']): tx.IPNetwork,
+        }).allow_extra('*'),
+    }).allow_extra('*'),
+    t.Key('watcher', default=_shdefs['watcher']): t.Dict({
+        t.Key('token', default=_shdefs['watcher']['token']): t.Null | t.String,
+    }).allow_extra('*'),
+}).allow_extra('*')
 
-    manager_config_iv = t.Dict({
-        t.Key('db'): t.Dict({
-            t.Key('type', default='postgresql'): t.Enum('postgresql'),
-            t.Key('addr'): tx.HostPortPair,
-            t.Key('name'): tx.Slug[2:64],
-            t.Key('user'): t.String,
-            t.Key('password'): t.String,
-        }),
-        t.Key('manager'): t.Dict({
-            t.Key('num-proc', default=max_cpu_count): t.Int[1:max_cpu_count],
-            t.Key('service-addr', default=('0.0.0.0', 8080)): tx.HostPortPair,
-            t.Key('event-listen-addr', default=('127.0.0.1', 5002)): tx.HostPortPair,
-            t.Key('heartbeat-timeout', default=5.0): t.Float[1.0:],
-            t.Key('ssl-enabled', default=False): t.Bool,
-            t.Key('ssl-cert', default=None): t.Null | tx.Path(type='file'),
-            t.Key('ssl-privkey', default=None): t.Null | tx.Path(type='file'),
-            t.Key('pid-file', default=os.devnull): tx.Path(type='file',
-                                                           allow_nonexisting=True,
-                                                           allow_devnull=True),
-        }).allow_extra('*'),
-        t.Key('docker-registry'): t.Dict({
-            t.Key('ssl-verify', default=True): t.Bool,
-        }).allow_extra('*'),
-        t.Key('logging'): t.Any,  # checked in ai.backend.common.logging
-        t.Key('debug'): t.Dict({
-            t.Key('enabled', default=False): t.Bool,
-        }).allow_extra('*'),
-    }).merge(config.etcd_config_iv).allow_extra('*')
+
+def load(config_path: Path = None, debug: bool = False):
 
     # Determine where to read configuration.
     raw_cfg, cfg_src_path = config.read_from_file(config_path, 'manager')
@@ -82,11 +129,23 @@ def load(config_path: Path, debug: bool = False):
     try:
         cfg = config.check(raw_cfg, manager_config_iv)
         if 'debug'in cfg and cfg['debug']['enabled']:
-            print('== Manager configuration ==')
-            pprint(cfg)
+            print('== Manager configuration ==', file=sys.stderr)
+            print(pformat(cfg), file=sys.stderr)
         cfg['_src'] = cfg_src_path
     except config.ConfigurationError as e:
         print('Validation of manager configuration has failed:', file=sys.stderr)
+        print(pformat(e.invalid_data), file=sys.stderr)
+        raise click.Abort()
+    else:
+        return cfg
+
+
+async def load_shared(etcd: AsyncEtcd):
+    raw_cfg = await etcd.get_prefix('config')
+    try:
+        cfg = shared_config_iv.check(raw_cfg)
+    except config.ConfigurationError as e:
+        print('Validation of shared etcd configuration has failed:', file=sys.stderr)
         print(pformat(e.invalid_data), file=sys.stderr)
         raise click.Abort()
     else:
