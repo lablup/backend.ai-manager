@@ -62,7 +62,9 @@ Alias keys are also URL-quoted in the same way.
          - allocation_mode: "discrete"
          ...
      + network
-       - subnet: "0.0.0.0"
+       + subnet
+         - agent: "0.0.0.0"
+         - container: "0.0.0.0"
      + watcher
        - token: {some-secret}
    + volumes
