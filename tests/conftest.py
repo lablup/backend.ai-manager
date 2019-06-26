@@ -27,7 +27,7 @@ import psycopg2 as pg
 import pytest
 
 from ai.backend.common.argparse import host_port_pair
-from ai.backend.gateway.config import load_config
+from ai.backend.gateway.config import load as load_config
 from ai.backend.gateway.events import event_router
 from ai.backend.gateway.server import (
     gw_init, gw_shutdown, gw_args,
