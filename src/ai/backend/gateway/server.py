@@ -30,7 +30,7 @@ from ai.backend.common.plugin import (
     discover_entrypoints, install_plugins, add_plugin_args)
 from ..manager import __version__
 from ..manager.registry import AgentRegistry
-from .config import load as load_config, redis_config_iv
+from .config import load as load_config, load_shared as load_shared_config, redis_config_iv
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
 from .etcd import ConfigServer
 from .events import EventDispatcher, event_subscriber
@@ -181,6 +181,13 @@ async def gw_init(app, default_cors_options):
         app['config']['etcd']['namespace'])
     if app['pidx'] == 0:
         await app['config_server'].update_manager_status(ManagerStatus.PREPARING)
+
+    shared_config = await load_shared_config(app['config_server'].etcd)
+    app['config'].update(shared_config)
+
+    if app['pidx'] == 0:
+        log.info('Configured timezone: {}', app['config']['system']['timezone'])
+
     app['dbpool'] = await create_engine(
         host=app['config']['db']['addr'].host, port=app['config']['db']['addr'].port,
         user=app['config']['db']['user'], password=app['config']['db']['password'],
