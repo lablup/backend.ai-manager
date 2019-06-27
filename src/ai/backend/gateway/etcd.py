@@ -38,11 +38,13 @@ Alias keys are also URL-quoted in the same way.
 {namespace}
  + ''  # ConfigScoeps.GLOBAL
    + config
+     + system
+       - timezone: "UTC"   # pytz-compatible timezone names (e.g., "Asia/Seoul")
      + api
        - allow-origins: "*"
      + docker
        + registry
-         - lablup: https://registry-1.docker.io
+         + "index.docker.io": "https://registry-1.docker.io"
            - username: "lablup"
          + {registry-name}: {registry-URL}  # {registry-name} is url-quoted
            - username: {username}
@@ -63,8 +65,8 @@ Alias keys are also URL-quoted in the same way.
          ...
      + network
        + subnet
-         - agent: "0.0.0.0"
-         - container: "0.0.0.0"
+         - agent: "0.0.0.0/0"
+         - container: "0.0.0.0/0"
      + watcher
        - token: {some-secret}
    + volumes

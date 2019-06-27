@@ -70,12 +70,12 @@ $ pip install -U -e ../common
 Copy (or symlink) the halfstack configs:
 ```console
 $ cp config/halfstack.toml ./manager.toml
-$ cp config/halfstack.alembic.ini alembic.ini
+$ cp config/halfstack.alembic.ini ./alembic.ini
 ```
 
 Set up Redis:
 ```console
-$ python -m ai.backend.manager.cli etcd put config/redis/addr 127.0.0.1:8120
+$ python -m ai.backend.manager.cli etcd put config/redis/addr 127.0.0.1:8110
 ```
 
 Set up the public Docker registry:
@@ -96,7 +96,7 @@ Set up the database:
 ```console
 $ python -m ai.backend.manager.cli schema oneshot
 $ python -m ai.backend.manager.cli fixture populate sample-configs/example-keypairs.json
-$ python -m ai.backend.manager.cli fixture populate sample-configs/example-resource_presets.json
+$ python -m ai.backend.manager.cli fixture populate sample-configs/example-resource-presets.json
 ```
 
 Then, run it (for debugging, append a `--debug` flag):
