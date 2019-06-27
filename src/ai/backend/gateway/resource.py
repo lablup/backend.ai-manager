@@ -20,7 +20,7 @@ import trafaret as t
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
-from .auth import auth_required
+from .auth import auth_required, superadmin_required
 from .exceptions import (
     InvalidAPIParameters, GenericForbidden,
 )
@@ -202,7 +202,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
 
 @atomic
 @server_status_required(READ_ALLOWED)
-@auth_required
+@superadmin_required
 @check_api_params(
     t.Dict({
         tx.AliasedKey(['group_ids', 'project_ids', 'group', 'project']): t.List(t.String),
@@ -218,8 +218,6 @@ async def usage_per_month(request: web.Request, params: Any) -> web.Response:
     :param year int: The year.
     :param month int: The month.
     '''
-    if not request['is_superadmin']:
-        raise GenericForbidden()
     log.info('USAGE_PER_MONTH (g:[{0}], month:{1})',
              ','.join(params['group_ids']), params['month'])
     local_tz = request.app['config']['system']['timezone']
@@ -235,7 +233,7 @@ async def usage_per_month(request: web.Request, params: Any) -> web.Response:
 
 @atomic
 @server_status_required(READ_ALLOWED)
-@auth_required
+@superadmin_required
 @check_api_params(
     t.Dict({
         tx.AliasedKey(['group_id', 'project_id', 'group', 'project']): t.String,
@@ -252,8 +250,6 @@ async def usage_per_period(request: web.Request, params: Any) -> web.Response:
     :param start_date str: "yyyymmdd" format.
     :param end_date str: "yyyymmdd" format.
     '''
-    if not request['is_superadmin']:
-        raise GenericForbidden()
     group_id = params['group_id']
     local_tz = request.app['config']['system']['timezone']
     try:
@@ -267,8 +263,8 @@ async def usage_per_period(request: web.Request, params: Any) -> web.Response:
              group_id, start_date, end_date)
     resp = await get_container_stats_for_period(request, start_date, end_date, group_ids=[group_id])
     resp = resp[0]  # only one group (project)
-    resp['start_date'] = start_date
-    resp['end_date'] = end_date
+    resp['start_date'] = params['start_date']
+    resp['end_date'] = params['end_date']
     log.debug('container list are retrieved from {0} to {1}', start_date, end_date)
     return web.json_response(resp, status=200)
 

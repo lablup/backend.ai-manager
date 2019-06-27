@@ -212,6 +212,18 @@ def admin_required(handler):
     return wrapped
 
 
+def superadmin_required(handler):
+
+    @functools.wraps(handler)
+    async def wrapped(request):
+        if request.get('is_authorized', False) and request.get('is_superadmin', False):
+            return (await handler(request))
+        raise AuthorizationFailed
+
+    set_handler_attr(wrapped, 'auth_required', True)
+    return wrapped
+
+
 @atomic
 @auth_required
 @check_api_params(
