@@ -8,6 +8,8 @@ import shutil
 import stat
 from typing import Any, Callable, Mapping
 import uuid
+import jwt
+import datetime
 
 import aiohttp
 from aiohttp import web
@@ -540,6 +542,47 @@ async def download_single(request: web.Request, row: VFolderRow) -> web.Response
 @server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
+async def request_download(request, row):
+    folder_name = request.match_info['name']
+    access_key = request['keypair']['access_key']
+    if request.can_read_body:
+        params = await request.json()
+    else:
+        params = request.query
+    assert params.get('file'), 'no file(s) specified!'
+    p = {}
+    p['file'] = params.get('file')
+    p['host'] = row['host']
+    p['id'] = row['id'].hex
+    p['exp'] = datetime.utcnow() + datetime.timedelta(minutes=2)
+    resp = {}
+    resp['token'] = jwt.encode(p, 'SECRET_IDEA_NEEDED', algorithm='HS256').decode('UTF-8')
+    return web.json_response(resp, status=200)
+
+
+async def download_with_token(request):
+    try:
+        params = jwt.decode(request.query.get('token'), 'SECRET_IDEA_NEEDED', algorithms=['HS256'])
+    except:
+        return web.Response(status=401)
+
+    assert params.get('file'), 'no file(s) specified!'
+    fn = params.get('file')
+    log.info('VFOLDER.DOWNLOAD_WITH_TOKEN (id:{0}, name:{1})', params['id'], fn)
+    folder_path = (request.app['VFOLDER_MOUNT'] / params['host'] /
+                   request.app['VFOLDER_FSPREFIX'] / params['id'])
+    path = folder_path / fn
+    if not (path).is_file():
+        raise InvalidAPIParameters(
+            f'You cannot download "{fn}" because it is not a regular file.')
+
+    data = open(folder_path / fn, 'rb')
+    return web.Response(body=data, status=200)
+
+
+@server_status_required(READ_ALLOWED)
+@auth_required
+@vfolder_permission_required(VFolderPermission.READ_ONLY)
 async def list_files(request: web.Request, row: VFolderRow) -> web.Response:
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
@@ -852,6 +895,8 @@ def create_app(default_cors_options):
     cors.add(add_route('DELETE', r'/{name}/delete_files', delete_files))
     cors.add(add_route('GET',    r'/{name}/download', download))
     cors.add(add_route('GET',    r'/{name}/download_single', download_single))
+    cors.add(add_route('GET',    r'/{name}/request_download', request_download))
+    cors.add(add_route('GET',    r'/{name}/download_with_token', download_with_token))
     cors.add(add_route('GET',    r'/{name}/files', list_files))
     cors.add(add_route('POST',   r'/{name}/invite', invite))
     cors.add(add_route('GET',    r'/invitations/list', invitations))
