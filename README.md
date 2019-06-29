@@ -154,3 +154,30 @@ python -m ai.backend.gateway.server
 ```
 
 For more arguments and options, run the command with `--help` option.
+
+### Networking
+
+The manager and agent should run in the same local network or different
+networks reachable via VPNs, whereas the manager's API service must be exposed to
+the public network or another private network that users have access to.
+
+The manager requires access to the etcd, the PostgreSQL database, and the Redis server.
+
+| User-to-Manager TCP Ports | Usage |
+|:-------------------------:|-------|
+| manager:{80,443}          | Backend.AI API access |
+
+| Manager-to-X TCP Ports | Usage |
+|:----------------------:|-------|
+| etcd:2379              | etcd API access |
+| postgres:5432          | Database access |
+| redis:6379             | Redis API access |
+
+The manager must also be able to access TCP ports 6001, 6009, and 30000 to 31000 of the agents in default
+configurations.  You can of course change those port numbers and ranges in the configuration.
+
+| Manager-to-Agent TCP Ports | Usage |
+|:--------------------------:|-------|
+| 6001                       | ZeroMQ-based RPC calls from managers to agents |
+| 6009                       | HTTP watcher API |
+| 30000-31000                | Port pool for in-container services |
