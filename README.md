@@ -82,7 +82,7 @@ Set up the public Docker registry:
 ```console
 $ python -m ai.backend.manager.cli etcd put config/docker/registry/index.docker.io "https://registry-1.docker.io"
 $ python -m ai.backend.manager.cli etcd put config/docker/registry/index.docker.io/username "lablup"
-$ python -m ai.backend.manager.cli rescan-images index.docker.io
+$ python -m ai.backend.manager.cli etcd rescan-images index.docker.io
 ```
 
 Set up the vfolder paths:
