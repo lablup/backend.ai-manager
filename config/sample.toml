@@ -1,8 +1,8 @@
 [etcd]
 namespace = "local"                         # env: BACKEND_NAMESPACE
 addr = { host = "127.0.0.1", port = 2379 }  # env: BACKEND_ETCD_ADDR (host:port)
-user = ""                                   # env: BACKEND_ETCD_USER
-password = ""				    # env: BACKEND_ETCD_PASSWORD
+user = "ETCD_USER"                          # env: BACKEND_ETCD_USER
+password = "ETCD_PASSWORD"                  # env: BACKEND_ETCD_PASSWORD
 
 
 [db]
@@ -20,7 +20,7 @@ name = "backend"                            # env: BACKEND_DB_NAME
 
 # Database account credentials.
 user = "postgres"                           # env: BACKEND_DB_USER
-password = "develove"                       # env: BACKEND_DB_PASSWORD
+password = "DB_PASSWORD"                    # env: BACKEND_DB_PASSWORD
 
 
 # NOTE: Redis settings are configured in etcd as it is shared by both the manager and agents.
@@ -63,7 +63,7 @@ disabled-plugins = []
 
 [docker-registry]
 # Enable or disable SSL certificate verification when accessing Docker registries.
-ssl-verify = false			 # env: BACKEND_SKIP_SSLCERT_VALIDATION
+ssl-verify = false                       # env: BACKEND_SKIP_SSLCERT_VALIDATION
 
 
 [logging]
