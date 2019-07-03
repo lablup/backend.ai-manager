@@ -322,6 +322,10 @@ async def server_main(loop, pidx, _args):
         )
     app['pidx'] = pidx
 
+    if os.geteuid() == 0:
+        os.setuid(app['config']['manager']['user'])
+        os.setgid(app['config']['manager']['group'])
+
     subapp_pkgs = [
         '.etcd', '.events',
         '.auth', '.ratelimit',

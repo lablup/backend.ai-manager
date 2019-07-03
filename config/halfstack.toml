@@ -16,6 +16,8 @@ password = "develove"
 [manager]
 num-proc = 4
 service-addr = { host = "127.0.0.1", port = 8081 }
+#user = "nobody"
+#group = "nobody"
 ssl-enabled = false
 #ssl-cert = "/etc/backend.ai/ssl/apiserver-fullchain.pem"   # env: BACKNED_SSL_CERT
 #ssl-privkey = "/etc/backend.ai/ssl/apiserver-privkey.pem"  # env: BACKNED_SSL_KEY
