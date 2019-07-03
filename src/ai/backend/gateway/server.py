@@ -7,6 +7,7 @@ import functools
 import importlib
 import logging
 import os
+import pwd, grp
 import ssl
 import sys
 import traceback
@@ -323,8 +324,14 @@ async def server_main(loop, pidx, _args):
     app['pidx'] = pidx
 
     if os.geteuid() == 0:
-        os.setuid(app['config']['manager']['user'])
-        os.setgid(app['config']['manager']['group'])
+        uid = app['config']['manager']['user']
+        gid = app['config']['manager']['group']
+        os.setgroups([
+            g.gr_gid for g in grp.getgrall()
+            if pwd.getpwuid(uid).pw_name in g.gr_mem
+        ])
+        os.setgid(gid)
+        os.setuid(uid)
 
     subapp_pkgs = [
         '.etcd', '.events',
