@@ -3,6 +3,7 @@ The main web / websocket server
 '''
 
 import asyncio
+from datetime import datetime
 import functools
 import importlib
 import logging
@@ -187,7 +188,8 @@ async def gw_init(app, default_cors_options):
     app['config'].update(shared_config)
 
     if app['pidx'] == 0:
-        log.info('Configured timezone: {}', app['config']['system']['timezone'])
+        tz = app['config']['system']['timezone']
+        log.info('Configured timezone: {}', tz.tzname(datetime.now()))
 
     app['dbpool'] = await create_engine(
         host=app['config']['db']['addr'].host, port=app['config']['db']['addr'].port,
@@ -323,16 +325,6 @@ async def server_main(loop, pidx, _args):
         )
     app['pidx'] = pidx
 
-    if os.geteuid() == 0:
-        uid = app['config']['manager']['user']
-        gid = app['config']['manager']['group']
-        os.setgroups([
-            g.gr_gid for g in grp.getgrall()
-            if pwd.getpwuid(uid).pw_name in g.gr_mem
-        ])
-        os.setgid(gid)
-        os.setuid(uid)
-
     subapp_pkgs = [
         '.etcd', '.events',
         '.auth', '.ratelimit',
@@ -408,6 +400,17 @@ async def server_main(loop, pidx, _args):
         ssl_context=ssl_ctx,
     )
     await site.start()
+
+    if os.geteuid() == 0:
+        uid = app['config']['manager']['user']
+        gid = app['config']['manager']['group']
+        os.setgroups([
+            g.gr_gid for g in grp.getgrall()
+            if pwd.getpwuid(uid).pw_name in g.gr_mem
+        ])
+        os.setgid(gid)
+        os.setuid(uid)
+        log.info('changed process uid and gid to {}:{}', uid, gid)
     log.info('started handling API requests at {}', service_addr)
 
     try:
