@@ -45,17 +45,28 @@ VALID_VERSIONS = frozenset([
     'v1.20160915',  # deprecated
     'v2.20170315',  # deprecated
     'v3.20170615',
-    'v4.20181215',  # authentication changed not to use request bodies
-    'v4.20190115',  # added & enabled streaming-execute API
-    'v4.20190315',  # resource/image changes
+
+    # authentication changed not to use request bodies
+    'v4.20181215',
+
+    # added & enabled streaming-execute API
+    'v4.20190115',
+
+    # changed resource/image formats
+    'v4.20190315',
+
+    # added user mgmt and ID/password authentication
+    # added domain/group/scaling-group
+    # added domain/group/scaling-group ref. fields to user/keypair/vfolder objects
+    'v4.20190615',
 ])
 LATEST_REV_DATES = {
     1: '20160915',
     2: '20170915',
     3: '20181215',
-    4: '20190315',
+    4: '20190615',
 }
-LATEST_API_VERSION = 'v4.20190315'
+LATEST_API_VERSION = 'v4.20190615'
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 
