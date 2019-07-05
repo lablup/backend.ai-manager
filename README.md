@@ -155,6 +155,37 @@ python -m ai.backend.gateway.server
 
 For more arguments and options, run the command with `--help` option.
 
+### Writing a wrapper script
+
+To use with systemd, crontab, and other system-level daemons, you may need to write a shell script
+that executes specific CLI commands provided by Backend.AI modules.
+
+The following example shows how to set up pyenv and virtualenv for the script-local environment.
+It runs the gateway server if no arguments are given, and execute the given arguments as a shell command
+if any.
+For instance, you may get/set configurations like: `run-manager.sh python -m ai.backend.manager.etcd ...`
+where the name of scripts is `run-manager.sh`.
+
+```bash
+#! /bin/bash
+if [ -z "$HOME" ]; then
+  export HOME="/home/devops"
+fi
+if [ -z "$PYENV_ROOT" ]; then
+  export PYENV_ROOT="$HOME/.pyenv"
+  export PATH="$PYENV_ROOT/bin:$PATH"
+fi
+eval "$(pyenv init -)"
+eval "$(pyenv virtualenv-init -)"
+pyenv activate venv-bai-manager
+
+if [ "$#" -eq 0 ]; then
+  exec python -m ai.backend.gateway.server
+else
+  exec "$@"
+fi
+```
+
 ### Networking
 
 The manager and agent should run in the same local network or different
