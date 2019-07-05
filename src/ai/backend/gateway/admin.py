@@ -358,8 +358,8 @@ class QueryForAdmin(graphene.ObjectType):
             status = KernelStatus[status]
         if access_key is not None:
             manager = info.context['dlmgr']
-            loader = manager.get_loader('ComputeSession', status=status)
-            return await loader.load(access_key, group_id=group_id)
+            loader = manager.get_loader('ComputeSession', status=status, group_id=group_id)
+            return await loader.load(access_key)
         else:
             return await ComputeSession.load_all(info.context, status=status,
                                                  group_id=group_id)
