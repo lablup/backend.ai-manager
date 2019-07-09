@@ -13,6 +13,41 @@ Installation
 
 Please visit [the installation guides](https://github.com/lablup/backend.ai/wiki).
 
+
+### Kernel/system configuration
+
+#### Recommended resource limits:
+
+**`/etc/security/limits.conf`**
+```
+root hard nofile 512000
+root soft nofile 512000
+root hard nproc 65536
+root soft nproc 65536
+user hard nofile 512000
+user soft nofile 512000
+user hard nproc 65536
+user soft nproc 65536
+```
+
+**sysctl**
+```
+fs.file-max=2048000
+net.core.somaxconn=1024
+net.ipv4.tcp_max_syn_backlog=1024
+net.ipv4.tcp_slow_start_after_idle=0
+net.ipv4.tcp_fin_timeout=10
+net.ipv4.tcp_window_scaling=1
+net.ipv4.tcp_tw_reuse=1
+net.ipv4.tcp_early_retrans=1
+net.ipv4.ip_local_port_range="10000 65000"
+net.core.rmem_max=16777216
+net.core.wmem_max=16777216
+net.ipv4.tcp_rmem=4096 12582912 16777216
+net.ipv4.tcp_wmem=4096 12582912 16777216
+```
+
+
 ### For development
 
 #### Prerequisites
