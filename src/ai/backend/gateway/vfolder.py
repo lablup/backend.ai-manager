@@ -533,6 +533,8 @@ async def download_single(request: web.Request, row: VFolderRow) -> web.Response
     file_path = (folder_path / fn).resolve()
     try:
         file_path.relative_to(folder_path)
+        if not file_path.exists():
+            raise FileNotFoundError
     except (ValueError, FileNotFoundError):
         raise InvalidAPIParameters('The file is not found.')
     if not file_path.is_file():
@@ -579,6 +581,8 @@ async def download_with_token(request):
     file_path = (folder_path / fn).resolve()
     try:
         file_path.relative_to(folder_path)
+        if not file_path.exists():
+            raise FileNotFoundError
     except (ValueError, FileNotFoundError):
         raise InvalidAPIParameters('The file is not found.')
     if not file_path.is_file():
