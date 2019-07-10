@@ -2,6 +2,7 @@
 Resource preset APIs.
 '''
 
+from collections import defaultdict
 from decimal import Decimal
 import functools
 import json
@@ -21,7 +22,8 @@ from .exceptions import (
 from .manager import READ_ALLOWED, server_status_required
 from ..manager.models import (
     agents, resource_presets,
-    AgentStatus,
+    kernels, keypairs,
+    AgentStatus, KernelStatus,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.kernel'))
@@ -123,6 +125,41 @@ async def check_presets(request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
+@superadmin_required
+@atomic
+async def recalculate_usage(request) -> web.Response:
+    '''
+    Update `keypairs.c.concurrency_used` and `agents.c.occupied_slots`.
+
+    Those two values are sometimes out of sync. In that case, calling this API
+    re-calculates the values for running containers and updates them in DB.
+    '''
+    async with request.app['dbpool'].acquire() as conn, conn.begin():
+        query = (sa.select([kernels.c.access_key, kernels.c.agent, kernels.c.occupied_slots])
+                   .where(kernels.c.status != KernelStatus.TERMINATED)
+                   .order_by(sa.asc(kernels.c.access_key)))
+        concurrency_used_per_key = defaultdict(lambda: 0)
+        occupied_slots_per_agent = defaultdict(lambda: ResourceSlot({'cpu': 0, 'mem': 0}))
+        async for row in conn.execute(query):
+            concurrency_used_per_key[row.access_key] += 1
+            occupied_slots_per_agent[row.agent] += ResourceSlot(row.occupied_slots)
+        kp_params = [{'ak': k, 'used': v} for k, v in concurrency_used_per_key.items()]
+        agt_params = [{'aid': k, 'slots': v} for k, v in occupied_slots_per_agent.items()]
+        # NOTE: aiopg does not support executemany.
+        for item in kp_params:
+            query = (sa.update(keypairs)
+                       .values(concurrency_used=item['used'])
+                       .where(keypairs.c.access_key == item['ak']))
+            await conn.execute(query)
+        for item in agt_params:
+            query = (sa.update(agents)
+                       .values(occupied_slots=item['slots'])
+                       .where(agents.c.id == item['aid']))
+            await conn.execute(query, agt_params)
+    return web.json_response({}, status=200)
+
+
 def create_app(default_cors_options):
     app = web.Application()
     app['api_versions'] = (4,)
@@ -130,4 +167,5 @@ def create_app(default_cors_options):
     add_route = app.router.add_route
     cors.add(add_route('GET', '/presets', list_presets))
     cors.add(add_route('POST', '/check-presets', check_presets))
+    cors.add(add_route('POST', '/recalculate-usage', recalculate_usage))
     return app, []
