@@ -136,6 +136,8 @@ async def recalculate_usage(request) -> web.Response:
     re-calculates the values for running containers and updates them in DB.
     '''
     async with request.app['dbpool'].acquire() as conn, conn.begin():
+        # Query running containers and calculate concurrency_used per AK and
+        # occupied_slots per agent.
         query = (sa.select([kernels.c.access_key, kernels.c.agent, kernels.c.occupied_slots])
                    .where(kernels.c.status != KernelStatus.TERMINATED)
                    .order_by(sa.asc(kernels.c.access_key)))
@@ -144,19 +146,31 @@ async def recalculate_usage(request) -> web.Response:
         async for row in conn.execute(query):
             concurrency_used_per_key[row.access_key] += 1
             occupied_slots_per_agent[row.agent] += ResourceSlot(row.occupied_slots)
-        kp_params = [{'ak': k, 'used': v} for k, v in concurrency_used_per_key.items()]
-        agt_params = [{'aid': k, 'slots': v} for k, v in occupied_slots_per_agent.items()]
-        # NOTE: aiopg does not support executemany.
-        for item in kp_params:
+
+        # Update concurrency_used for keypairs with running containers.
+        for ak, used in concurrency_used_per_key.items():
             query = (sa.update(keypairs)
-                       .values(concurrency_used=item['used'])
-                       .where(keypairs.c.access_key == item['ak']))
+                       .values(concurrency_used=used)
+                       .where(keypairs.c.access_key == ak))
             await conn.execute(query)
-        for item in agt_params:
+        # Update all other keypairs to have concurrency_used = 0.
+        query = (sa.update(keypairs)
+                   .values(concurrency_used=0)
+                   .where(sa.not_(keypairs.c.access_key.in_(concurrency_used_per_key.keys()))))
+        await conn.execute(query)
+
+        # Update occupied_slots for agents with running containers.
+        for aid, slots in occupied_slots_per_agent.items():
             query = (sa.update(agents)
-                       .values(occupied_slots=item['slots'])
-                       .where(agents.c.id == item['aid']))
-            await conn.execute(query, agt_params)
+                       .values(occupied_slots=slots)
+                       .where(agents.c.id == aid))
+            await conn.execute(query)
+        # Update all other agents to have empty occupied_slots.
+        query = (sa.update(agents)
+                   .values(occupied_slots=ResourceSlot({}))
+                   .where(agents.c.status == AgentStatus.ALIVE)
+                   .where(sa.not_(agents.c.id.in_(occupied_slots_per_agent.keys()))))
+        await conn.execute(query)
     return web.json_response({}, status=200)
 
 
