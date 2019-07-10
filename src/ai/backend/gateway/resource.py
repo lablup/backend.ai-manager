@@ -15,7 +15,7 @@ import sqlalchemy as sa
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
-from .auth import auth_required
+from .auth import admin_required, auth_required
 from .exceptions import (
     InvalidAPIParameters,
 )
@@ -126,7 +126,7 @@ async def check_presets(request) -> web.Response:
 
 
 @server_status_required(READ_ALLOWED)
-@superadmin_required
+@admin_required
 @atomic
 async def recalculate_usage(request) -> web.Response:
     '''
