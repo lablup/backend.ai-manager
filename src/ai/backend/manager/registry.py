@@ -279,6 +279,13 @@ class AgentRegistry:
                                   (kernels.c.role == 'master'))
                            .limit(1).offset(0))
             else:
+                if cols == '*':
+                    cols = [kernels,
+                            agents.c.id.label('agent_id'), agents.c.status.label('agent_status'),
+                            agents.c.region, agents.c.available_slots.label('agent_available_slots'),
+                            agents.c.occupied_slots.label('agent_occupied_slots'),
+                            agents.c.addr, agents.c.first_contact, agents.c.lost_at,
+                            agents.c.version, agents.c.compute_plugins]
                 query = (sa.select(cols, for_update=for_update)
                            .select_from(kernels.join(agents))
                            .where((kernels.c.sess_id == sess_id) &

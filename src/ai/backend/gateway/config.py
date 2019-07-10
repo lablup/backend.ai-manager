@@ -8,7 +8,8 @@ import trafaret as t
 from ai.backend.common import config, validators as tx
 from ai.backend.common.etcd import AsyncEtcd
 
-max_cpu_count = os.cpu_count()
+_max_cpu_count = os.cpu_count()
+_file_perm = (Path(__file__).parent / 'server.py').stat()
 
 manager_config_iv = t.Dict({
     t.Key('db'): t.Dict({
@@ -19,7 +20,9 @@ manager_config_iv = t.Dict({
         t.Key('password'): t.String,
     }),
     t.Key('manager'): t.Dict({
-        t.Key('num-proc', default=max_cpu_count): t.Int[1:max_cpu_count],
+        t.Key('num-proc', default=_max_cpu_count): t.Int[1:_max_cpu_count],
+        t.Key('user', default=None): tx.UserID(default_uid=_file_perm.st_uid),
+        t.Key('group', default=None): tx.GroupID(default_gid=_file_perm.st_gid),
         t.Key('service-addr', default=('0.0.0.0', 8080)): tx.HostPortPair,
         t.Key('event-listen-addr', default=('127.0.0.1', 5002)): tx.HostPortPair,
         t.Key('heartbeat-timeout', default=5.0): t.Float[1.0:],

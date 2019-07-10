@@ -153,6 +153,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             # TODO: fill in these values when fields spec is fixed.
             'id': str(row['id']),
             'name': row['sess_id'],
+            'access_key': row['access_key'],
             'cpu_used': float(last_stat['cpu_used']['current']) if last_stat else 0,
             'mem_allocated': int(row.occupied_slots['mem']),
             'mem_used': int(last_stat['mem']['capacity']) if last_stat else 0,
@@ -163,7 +164,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'used_time': str(row['terminated_at'] - row['created_at']),
             'used_days': (row['terminated_at'].astimezone(local_tz).toordinal() -
                           row['created_at'].astimezone(local_tz).toordinal() + 1),
-            'device_type': None,
+            'device_type': None,  # TODO: gpu device type
             'smp': int(row.occupied_slots['cpu']),
             'nfs': None,  # TODO: what value to write here?
             'image_id': None,  # TODO: get image id

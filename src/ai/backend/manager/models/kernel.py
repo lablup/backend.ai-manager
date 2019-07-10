@@ -362,6 +362,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             rows = await result.fetchall()
             return [ComputeSession.from_row(context, r) for r in rows]
 
+    @staticmethod
     async def batch_load(context, access_keys, *, status=None, group_id=None):
         async with context['dbpool'].acquire() as conn:
             domain_name = None if context['user']['role'] == UserRole.SUPERADMIN \

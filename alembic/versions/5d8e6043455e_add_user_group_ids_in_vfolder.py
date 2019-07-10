@@ -72,11 +72,12 @@ def upgrade():
     results = connection.execute(query).fetchall()
     updates = [{'_vfolder': row.vfolder, '_access_key': row.access_key, '_user': row.user}
                for row in results]
-    query = (sa.update(vfolder_permissions)
-               .values(user=bindparam('_user'))
-               .where(vfolder_permissions.c.vfolder == bindparam('_vfolder'))
-               .where(vfolder_permissions.c.access_key == bindparam('_access_key')))
-    connection.execute(query, updates)
+    if updates:
+        query = (sa.update(vfolder_permissions)
+                   .values(user=bindparam('_user'))
+                   .where(vfolder_permissions.c.vfolder == bindparam('_vfolder'))
+                   .where(vfolder_permissions.c.access_key == bindparam('_access_key')))
+        connection.execute(query, updates)
 
     op.drop_constraint('fk_vfolders_belongs_to_keypairs', 'vfolders', type_='foreignkey')
     op.drop_column('vfolders', 'belongs_to')

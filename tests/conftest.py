@@ -26,6 +26,7 @@ import psycopg2 as pg
 import pytest
 
 from ai.backend.common.argparse import host_port_pair
+from ai.backend.common.etcd import AsyncEtcd, ConfigScopes
 from ai.backend.common.types import HostPortPair
 from ai.backend.gateway.config import load as load_config
 from ai.backend.gateway.events import event_router
@@ -81,33 +82,21 @@ def prepare_and_cleanup_databases(request, test_ns, test_db,
 
     # Clear and reset etcd namespace using CLI functions.
     cfg = load_config()
-    etcd_addr = cfg['etcd']['addr']
-    etcd_user = cfg['etcd']['user']
-    etcd_password = cfg['etcd']['password']
-    args = Namespace(key='volumes/_mount', value=str(folder_mount),
-                     etcd_user=etcd_user, etcd_password=etcd_password,
-                     etcd_addr=etcd_addr, namespace=test_ns)
-    put(args)
-    args = Namespace(key='volumes/_fsprefix', value=str(folder_fsprefix),
-                     etcd_user=etcd_user, etcd_password=etcd_password,
-                     etcd_addr=etcd_addr, namespace=test_ns)
-    put(args)
-    args = Namespace(key='volumes/_default_host', value=str(folder_host),
-                     etcd_user=etcd_user, etcd_password=etcd_password,
-                     etcd_addr=etcd_addr, namespace=test_ns)
-    put(args)
-    args = Namespace(key='config/docker/registry/index.docker.io',
-                     value='https://registry-1.docker.io',
-                     etcd_user=etcd_user, etcd_password=etcd_password,
-                     etcd_addr=etcd_addr, namespace=test_ns)
-    put(args)
+    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
+                     'volumes/_mount', str(folder_mount)])
+    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
+                     'volumes/_fsprefix', str(folder_fsprefix)])
+    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
+                     'volumes/_default_host', str(folder_host)])
+    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
+                     'config/docker/registry/index.docker.io',
+                     'https://registry-1.docker.io'])
+    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
+                     'config/redis/addr', '127.0.0.1:8110'])
 
     def finalize_etcd():
-        args = Namespace(key='', prefix=True,
-                         etcd_user=etcd_user, etcd_password=etcd_password,
-                         etcd_addr=etcd_addr, namespace=test_ns)
-        delete(args)
-
+        subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'delete',
+                         '', '--prefix'])
     request.addfinalizer(finalize_etcd)
 
     # Create database using low-level psycopg2 API.
@@ -150,10 +139,8 @@ def prepare_and_cleanup_databases(request, test_ns, test_db,
             alembic_cfg_data, flags=re.M)
         alembic_cfg.write(alembic_cfg_data)
         alembic_cfg.flush()
-        args = Namespace(
-            config=Path(alembic_cfg.name),
-            schema_version='head')
-        oneshot(args)
+        subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'schema', 'oneshot',
+                         '-f', alembic_cfg.name])
 
     # Populate example_keypair fixture
     fixtures = {}
@@ -312,7 +299,7 @@ def get_headers(app, default_keypair, prepare_docker_images):
                       hash_type='sha256', api_version='v4.20181215',
                       keypair=default_keypair):
         now = datetime.now(tzutc())
-        hostname = f"localhost:{app['config'].service_port}"
+        hostname = f"localhost:{app['config']['manager']['service-addr'].port}"
         headers = {
             'Date': now.isoformat(),
             'Content-Type': ctype,
@@ -401,8 +388,8 @@ async def create_app_and_client(request, test_id, test_ns,
         await runner.setup()
         site = web.TCPSite(
             runner,
-            app['config'].service_ip,
-            app['config'].service_port,
+            app['config']['manager']['service-addr'].host,
+            app['config']['manager']['service-addr'].port,
             ssl_context=app.get('sslctx'),
             **server_params,
         )
@@ -450,7 +437,7 @@ async def create_app_and_client(request, test_id, test_ns,
             with timeout(10.0):
                 await task
 
-        port = app['config'].service_port
+        port = app['config']['manager']['service-addr'].port
         if app.get('sslctx'):
             url = f'https://localhost:{port}'
             client_params['connector'] = aiohttp.TCPConnector(verify_ssl=False)

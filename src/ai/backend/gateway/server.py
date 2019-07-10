@@ -3,10 +3,12 @@ The main web / websocket server
 '''
 
 import asyncio
+from datetime import datetime
 import functools
 import importlib
 import logging
 import os
+import pwd, grp
 import ssl
 import sys
 import traceback
@@ -43,17 +45,28 @@ VALID_VERSIONS = frozenset([
     'v1.20160915',  # deprecated
     'v2.20170315',  # deprecated
     'v3.20170615',
-    'v4.20181215',  # authentication changed not to use request bodies
-    'v4.20190115',  # added & enabled streaming-execute API
-    'v4.20190315',  # resource/image changes
+
+    # authentication changed not to use request bodies
+    'v4.20181215',
+
+    # added & enabled streaming-execute API
+    'v4.20190115',
+
+    # changed resource/image formats
+    'v4.20190315',
+
+    # added user mgmt and ID/password authentication
+    # added domain/group/scaling-group
+    # added domain/group/scaling-group ref. fields to user/keypair/vfolder objects
+    'v4.20190615',
 ])
 LATEST_REV_DATES = {
     1: '20160915',
     2: '20170915',
     3: '20181215',
-    4: '20190315',
+    4: '20190615',
 }
-LATEST_API_VERSION = 'v4.20190315'
+LATEST_API_VERSION = 'v4.20190615'
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 
@@ -186,7 +199,8 @@ async def gw_init(app, default_cors_options):
     app['config'].update(shared_config)
 
     if app['pidx'] == 0:
-        log.info('Configured timezone: {}', app['config']['system']['timezone'])
+        tz = app['config']['system']['timezone']
+        log.info('Configured timezone: {}', tz.tzname(datetime.now()))
 
     app['dbpool'] = await create_engine(
         host=app['config']['db']['addr'].host, port=app['config']['db']['addr'].port,
@@ -397,6 +411,17 @@ async def server_main(loop, pidx, _args):
         ssl_context=ssl_ctx,
     )
     await site.start()
+
+    if os.geteuid() == 0:
+        uid = app['config']['manager']['user']
+        gid = app['config']['manager']['group']
+        os.setgroups([
+            g.gr_gid for g in grp.getgrall()
+            if pwd.getpwuid(uid).pw_name in g.gr_mem
+        ])
+        os.setgid(gid)
+        os.setuid(uid)
+        log.info('changed process uid and gid to {}:{}', uid, gid)
     log.info('started handling API requests at {}', service_addr)
 
     try:
