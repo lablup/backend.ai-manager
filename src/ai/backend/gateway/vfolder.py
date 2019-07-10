@@ -530,21 +530,21 @@ async def download_single(request: web.Request, row: VFolderRow) -> web.Response
     log.info('VFOLDER.DOWNLOAD (u:{0}, f:{1})', access_key, folder_name)
     folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
                    request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
-    path = folder_path / fn
-    if not (path).is_file():
-        raise InvalidAPIParameters(
-            f'You cannot download "{fn}" because it is not a regular file.')
+    file_path = (folder_path / fn).resolve()
+    try:
+        file_path.relative_to(folder_path)
+    except (ValueError, FileNotFoundError):
+        raise InvalidAPIParameters('The file is not found.')
+    if not file_path.is_file():
+        raise InvalidAPIParameters('The file is not a regular file.')
 
-    data = open(folder_path / fn, 'rb')
-    return web.Response(body=data, status=200)
+    return web.FileResponse(file_path)
 
 
 @server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
 async def request_download(request, row):
-    folder_name = request.match_info['name']
-    access_key = request['keypair']['access_key']
     if request.can_read_body:
         params = await request.json()
     else:
@@ -571,13 +571,15 @@ async def download_with_token(request):
     log.info('VFOLDER.DOWNLOAD_WITH_TOKEN (id:{0}, name:{1})', params['id'], fn)
     folder_path = (request.app['VFOLDER_MOUNT'] / params['host'] /
                    request.app['VFOLDER_FSPREFIX'] / params['id'])
-    path = folder_path / fn
-    if not (path).is_file():
-        raise InvalidAPIParameters(
-            f'You cannot download "{fn}" because it is not a regular file.')
+    file_path = (folder_path / fn).resolve()
+    try:
+        file_path.relative_to(folder_path)
+    except (ValueError, FileNotFoundError):
+        raise InvalidAPIParameters('The file is not found.')
+    if not file_path.is_file():
+        raise InvalidAPIParameters('The file is not a regular file.')
 
-    data = open(folder_path / fn, 'rb')
-    return web.Response(body=data, status=200)
+    return web.FileResponse(file_path)
 
 
 @server_status_required(READ_ALLOWED)
