@@ -140,6 +140,8 @@ class KeyPair(graphene.ObjectType):
 
 
 class KeyPairInput(graphene.InputObjectType):
+    access_key = graphene.String(required=False, default='')
+    secret_key = graphene.String(required=False, default='')
     is_active = graphene.Boolean(required=False, default=True)
     is_admin = graphene.Boolean(required=False, default=False)
     resource_policy = graphene.String(required=True)
@@ -151,6 +153,7 @@ class KeyPairInput(graphene.InputObjectType):
 
 
 class ModifyKeyPairInput(graphene.InputObjectType):
+    secret_key = graphene.String(required=False)
     is_active = graphene.Boolean(required=False)
     is_admin = graphene.Boolean(required=False)
     resource_policy = graphene.String(required=False)
@@ -171,8 +174,9 @@ class CreateKeyPair(graphene.Mutation):
     @classmethod
     async def mutate(cls, root, info, user_id, props):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
-            ak = 'AKIA' + base64.b32encode(secrets.token_bytes(10)).decode('ascii')
-            sk = secrets.token_urlsafe(30)
+            ak = props.access_key if props.access_key else \
+                 'AKIA' + base64.b32encode(secrets.token_bytes(10)).decode('ascii')
+            sk = props.secret_key if props.secret_key else secrets.token_urlsafe(30)
             data = {
                 'user_id': user_id,
                 'access_key': ak,
@@ -226,6 +230,7 @@ class ModifyKeyPair(graphene.Mutation):
                 if v is not None:
                     data[name] = v
 
+            set_if_set('secret_key')
             set_if_set('is_active')
             set_if_set('is_admin')
             set_if_set('resource_policy')
