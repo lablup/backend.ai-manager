@@ -1,4 +1,5 @@
 import os
+import secrets
 import sys
 from pathlib import Path
 from pprint import pformat
@@ -26,6 +27,7 @@ manager_config_iv = t.Dict({
         t.Key('service-addr', default=('0.0.0.0', 8080)): tx.HostPortPair,
         t.Key('event-listen-addr', default=('127.0.0.1', 5002)): tx.HostPortPair,
         t.Key('heartbeat-timeout', default=5.0): t.Float[1.0:],
+        t.Key('secret', default=None): t.Null | t.String,
         t.Key('ssl-enabled', default=False): t.Bool | t.StrBool,
         t.Key('ssl-cert', default=None): t.Null | tx.Path(type='file'),
         t.Key('ssl-privkey', default=None): t.Null | tx.Path(type='file'),
@@ -135,6 +137,8 @@ def load(config_path: Path = None, debug: bool = False):
             print('== Manager configuration ==', file=sys.stderr)
             print(pformat(cfg), file=sys.stderr)
         cfg['_src'] = cfg_src_path
+        if cfg['manager']['secret'] is None:
+            cfg['manager']['secret'] = secrets.token_urlsafe(16)
     except config.ConfigurationError as e:
         print('Validation of manager configuration has failed:', file=sys.stderr)
         print(pformat(e.invalid_data), file=sys.stderr)
