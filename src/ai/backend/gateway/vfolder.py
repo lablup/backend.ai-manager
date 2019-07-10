@@ -7,6 +7,8 @@ import re
 import shutil
 import stat
 import uuid
+import jwt
+from datetime import datetime, timedelta
 
 import aiohttp
 from aiohttp import web
@@ -435,13 +437,65 @@ async def download_single(request, row):
     log.info('VFOLDER.DOWNLOAD (u:{0}, f:{1})', access_key, folder_name)
     folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
                    request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
-    path = folder_path / fn
-    if not (path).is_file():
-        raise InvalidAPIParameters(
-            f'You cannot download "{fn}" because it is not a regular file.')
+    file_path = (folder_path / fn).resolve()
+    try:
+        file_path.relative_to(folder_path)
+        if not file_path.exists():
+            raise FileNotFoundError
+    except (ValueError, FileNotFoundError):
+        raise InvalidAPIParameters('The file is not found.')
+    if not file_path.is_file():
+        raise InvalidAPIParameters('The file is not a regular file.')
 
-    data = open(folder_path / fn, 'rb')
-    return web.Response(body=data, status=200)
+    return web.FileResponse(file_path)
+
+
+@server_status_required(READ_ALLOWED)
+@auth_required
+@vfolder_permission_required(VFolderPermission.READ_ONLY)
+async def request_download(request, row):
+    if request.can_read_body:
+        params = await request.json()
+    else:
+        params = request.query
+    assert params.get('file'), 'no file(s) specified!'
+    secret = request.app['config']['manager']['secret']
+    p = {}
+    p['file'] = params.get('file')
+    p['host'] = row['host']
+    p['id'] = row['id'].hex
+    p['exp'] = datetime.utcnow() + timedelta(minutes=2)
+    resp = {
+        'token': jwt.encode(p, secret, algorithm='HS256').decode('UTF-8')
+    }
+    return web.json_response(resp, status=200)
+
+
+async def download_with_token(request):
+    try:
+        secret = request.app['config']['manager']['secret']
+        token = request.query.get('token', '')
+        params = jwt.decode(token, secret, algorithms=['HS256'])
+    except jwt.PyJWTError:
+        log.exception('jwt error while parsing "{}"', token)
+        raise InvalidAPIParameters('Could not validate the download token.')
+
+    assert params.get('file'), 'no file(s) specified!'
+    fn = params.get('file')
+    log.info('VFOLDER.DOWNLOAD_WITH_TOKEN (id:{0}, name:{1})', params['id'], fn)
+    folder_path = (request.app['VFOLDER_MOUNT'] / params['host'] /
+                   request.app['VFOLDER_FSPREFIX'] / params['id'])
+    file_path = (folder_path / fn).resolve()
+    try:
+        file_path.relative_to(folder_path)
+        if not file_path.exists():
+            raise FileNotFoundError
+    except (ValueError, FileNotFoundError):
+        raise InvalidAPIParameters('The file is not found.')
+    if not file_path.is_file():
+        raise InvalidAPIParameters('The file is not a regular file.')
+
+    return web.FileResponse(file_path)
 
 
 @server_status_required(READ_ALLOWED)
@@ -754,12 +808,14 @@ def create_app(default_cors_options):
     cors.add(vfolder_resource.add_route('GET',    get_info))
     cors.add(vfolder_resource.add_route('DELETE', delete))
     cors.add(add_route('GET',    r'/_/hosts', list_hosts))
+    cors.add(add_route('GET',    r'/_/download_with_token', download_with_token))
     cors.add(add_route('POST',   r'/{name}/rename', rename))
     cors.add(add_route('POST',   r'/{name}/mkdir', mkdir))
     cors.add(add_route('POST',   r'/{name}/upload', upload))
     cors.add(add_route('DELETE', r'/{name}/delete_files', delete_files))
     cors.add(add_route('GET',    r'/{name}/download', download))
     cors.add(add_route('GET',    r'/{name}/download_single', download_single))
+    cors.add(add_route('POST',   r'/{name}/request_download', request_download))
     cors.add(add_route('GET',    r'/{name}/files', list_files))
     cors.add(add_route('POST',   r'/{name}/invite', invite))
     cors.add(add_route('GET',    r'/invitations/list', invitations))
