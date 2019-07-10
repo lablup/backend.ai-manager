@@ -9,7 +9,7 @@ import stat
 from typing import Any, Callable, Mapping
 import uuid
 import jwt
-import datetime
+from datetime import datetime, timedelta
 
 import aiohttp
 from aiohttp import web
@@ -550,21 +550,26 @@ async def request_download(request, row):
     else:
         params = request.query
     assert params.get('file'), 'no file(s) specified!'
+    secret = request.app['config']['manager']['secret']
     p = {}
     p['file'] = params.get('file')
     p['host'] = row['host']
     p['id'] = row['id'].hex
-    p['exp'] = datetime.utcnow() + datetime.timedelta(minutes=2)
-    resp = {}
-    resp['token'] = jwt.encode(p, 'SECRET_IDEA_NEEDED', algorithm='HS256').decode('UTF-8')
+    p['exp'] = datetime.utcnow() + timedelta(minutes=2)
+    resp = {
+        'token': jwt.encode(p, secret, algorithm='HS256').decode('UTF-8')
+    }
     return web.json_response(resp, status=200)
 
 
 async def download_with_token(request):
     try:
-        params = jwt.decode(request.query.get('token'), 'SECRET_IDEA_NEEDED', algorithms=['HS256'])
-    except:
-        return web.Response(status=401)
+        secret = request.app['config']['manager']['secret']
+        token = request.query.get('token', '')
+        params = jwt.decode(token, secret, algorithms=['HS256'])
+    except jwt.PyJWTError:
+        log.exception('jwt error while parsing "{}"', token)
+        raise InvalidAPIParameters('Could not validate the download token.')
 
     assert params.get('file'), 'no file(s) specified!'
     fn = params.get('file')
@@ -891,14 +896,14 @@ def create_app(default_cors_options):
     cors.add(vfolder_resource.add_route('GET',    get_info))
     cors.add(vfolder_resource.add_route('DELETE', delete))
     cors.add(add_route('GET',    r'/_/hosts', list_hosts))
+    cors.add(add_route('GET',    r'/_/download_with_token', download_with_token))
     cors.add(add_route('POST',   r'/{name}/rename', rename))
     cors.add(add_route('POST',   r'/{name}/mkdir', mkdir))
     cors.add(add_route('POST',   r'/{name}/upload', upload))
     cors.add(add_route('DELETE', r'/{name}/delete_files', delete_files))
     cors.add(add_route('GET',    r'/{name}/download', download))
     cors.add(add_route('GET',    r'/{name}/download_single', download_single))
-    cors.add(add_route('GET',    r'/{name}/request_download', request_download))
-    cors.add(add_route('GET',    r'/{name}/download_with_token', download_with_token))
+    cors.add(add_route('POST',   r'/{name}/request_download', request_download))
     cors.add(add_route('GET',    r'/{name}/files', list_files))
     cors.add(add_route('POST',   r'/{name}/invite', invite))
     cors.add(add_route('GET',    r'/invitations/list', invitations))
