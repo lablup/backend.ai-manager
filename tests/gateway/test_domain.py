@@ -149,6 +149,7 @@ class TestDomainAdminQuery:
                 'description': 'desc',
                 'is_active': True,
                 'total_resource_slots': '{}',
+                'allowed_vfolder_hosts': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
