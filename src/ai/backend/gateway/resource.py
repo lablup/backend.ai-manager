@@ -156,6 +156,7 @@ async def recalculate_usage(request) -> web.Response:
         # Update all other keypairs to have concurrency_used = 0.
         query = (sa.update(keypairs)
                    .values(concurrency_used=0)
+                   .where(keypairs.c.concurrency_used != 0)
                    .where(sa.not_(keypairs.c.access_key.in_(concurrency_used_per_key.keys()))))
         await conn.execute(query)
 
