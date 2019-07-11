@@ -132,9 +132,9 @@ async def test_api_ver(test_client):
     assert resp.status == 200
     assert inner_request['api_version'][0] == 2
 
-    # calling with invalid version
-    resp = await client.post('/v0/test', headers={
-        'X-BackendAI-Version': 'v2.20170315',
+    # calling with invalid version, request header check has to fail during check in the middleware
+    resp = await client.post('/v2/test', headers={
+        'X-BackendAI-Version': 'v2.20505050',
     })
     assert resp.status == 400
     assert 'Unsupported' in (await resp.text())
