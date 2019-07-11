@@ -355,8 +355,7 @@ async def server_main(loop, pidx, _args):
     aiojobs.aiohttp.setup(app, **scheduler_opts)
     await gw_init(app, cors_options)
 
-    def init_subapp(create_subapp):
-        subapp, global_middlewares = create_subapp(cors_options)
+    def _init_subapp(subapp, global_middlewares):
         assert isinstance(subapp, web.Application)
         subapp.on_response_prepare.append(on_prepare)
         # Allow subapp's access to the root app properties.
@@ -379,6 +378,14 @@ async def server_main(loop, pidx, _args):
                 handler = _get_legacy_handler(r.handler, subapp, version)
                 app.router.add_route(r.method, legacy_path, handler)
 
+    def init_subapp(create_subapp):
+        subapp, global_middlewares = create_subapp(cors_options)
+        _init_subapp(subapp, global_middlewares)
+
+    def init_extapp(create_subapp):
+        subapp, global_middlewares = create_subapp(app['config']['plugins'], cors_options)
+        _init_subapp(subapp, global_middlewares)
+
     for pkgname in subapp_pkgs:
         if pidx == 0:
             log.info('Loading module: {0}', pkgname[1:])
@@ -386,7 +393,7 @@ async def server_main(loop, pidx, _args):
         init_subapp(getattr(subapp_mod, 'create_app'))
 
     plugins = [
-        'webapp',
+        'hanati_webapp',
     ]
     for plugin_info in discover_entrypoints(
             plugins, disable_plugins=app['config']['manager']['disabled-plugins']):
@@ -394,7 +401,7 @@ async def server_main(loop, pidx, _args):
         if pidx == 0:
             log.info('Loading app plugin: {0}', entrypoint.module_name)
         plugin = entrypoint.load()
-        init_subapp(getattr(plugin, 'create_app'))
+        init_extapp(getattr(plugin, 'create_app'))
 
     app.on_shutdown.append(gw_shutdown)
     app.on_cleanup.append(gw_cleanup)

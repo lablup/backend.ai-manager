@@ -1,3 +1,4 @@
+import asyncio
 from collections import defaultdict
 from datetime import datetime
 import functools
@@ -205,3 +206,9 @@ async def call_non_bursty(key, coro, *, max_bursts=64, max_idle=100):
             return await coro()
         else:
             return coro()
+
+
+if hasattr(asyncio, 'get_running_loop'):  # Python 3.7+
+    current_loop = asyncio.get_running_loop
+else:
+    current_loop = asyncio.get_event_loop
