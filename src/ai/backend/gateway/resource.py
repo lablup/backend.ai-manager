@@ -216,9 +216,8 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'used_days': (row['terminated_at'].astimezone(local_tz).toordinal() -
                           row['created_at'].astimezone(local_tz).toordinal() + 1),
             'device_type': None,  # TODO: gpu device type
-            'smp': int(row.occupied_slots['cpu']),
+            'smp': None,  # TODO: gpu smp?
             'nfs': None,  # TODO: what value to write here?
-            'image_id': None,  # TODO: get image id
             'image_name': row['image'],
             'created_at': str(row['created_at']),
             'terminated_at': str(row['terminated_at']),
