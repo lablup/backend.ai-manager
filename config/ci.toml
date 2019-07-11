@@ -10,7 +10,7 @@ type = "postgresql"
 addr = { host = "localhost", port = 5432 }
 name = "testing"
 user = "postgres"
-password = "postgres"
+password = ""
 
 
 [manager]
