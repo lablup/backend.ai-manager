@@ -7,6 +7,7 @@ from ai.backend.manager.models import (
     agents, kernels, vfolders, AgentStatus, KernelStatus
 )
 from ai.backend.common.types import ResourceSlot
+import datetime
 
 
 class TestAdminQuery:
@@ -31,12 +32,15 @@ class TestAdminQuery:
                     'cpu': '1',
                     'mem': '0',
                 }),
-                'addr': '127.0.0.1',
+                'first_contact': datetime.datetime.now(),
                 'lost_at': None,
+                'addr': '127.0.0.1',
+                'version': '19.06.0a1',
+                'compute_plugins': {},
             })
             await conn.execute(query)
 
-        query = '{ agent(agent_id: "test-agent-id") { status region addr } }'
+        query = '{ agent(agent_id: "test-agent-id") { status region addr version} }'
         payload = json.dumps({'query': query}).encode()
         headers = get_headers('POST', self.url, payload)
         ret = await client.post(self.url, data=payload, headers=headers)
@@ -46,6 +50,7 @@ class TestAdminQuery:
         assert rsp_json['agent']['status'] == 'ALIVE'
         assert rsp_json['agent']['region'] == 'local'
         assert rsp_json['agent']['addr'] == '127.0.0.1'
+        assert rsp_json['agent']['version'] == '19.06.0a1'
 
     @pytest.mark.asyncio
     async def test_query_agents(self, create_app_and_client, get_headers):
@@ -67,12 +72,15 @@ class TestAdminQuery:
                         'cpu': '0',
                         'mem': '0',
                     }),
-                    'addr': '127.0.0.1',
+                    'first_contact': datetime.datetime.now(),
                     'lost_at': None,
+                    'addr': '127.0.0.1',
+                    'version': '19.06.0a1',
+                    'compute_plugins': {},
                 })
                 await conn.execute(query)
 
-        query = '{ agents { status region addr } }'
+        query = '{ agents { status region addr version} }'
         payload = json.dumps({'query': query}).encode()
         headers = get_headers('POST', self.url, payload)
         ret = await client.post(self.url, data=payload, headers=headers)
@@ -82,9 +90,11 @@ class TestAdminQuery:
         assert rsp_json['agents'][0]['status'] == 'ALIVE'
         assert rsp_json['agents'][0]['region'] == 'local'
         assert rsp_json['agents'][0]['addr'] == '127.0.0.1'
+        assert rsp_json['agents'][0]['version'] == '19.06.0a1'
         assert rsp_json['agents'][1]['status'] == 'ALIVE'
         assert rsp_json['agents'][1]['region'] == 'local'
         assert rsp_json['agents'][1]['addr'] == '127.0.0.1'
+        assert rsp_json['agents'][0]['version'] == '19.06.0a1'
 
         # query with status
         query = '{ agents(status: "LOST") { status region addr } }'
