@@ -18,7 +18,7 @@ manager_config_iv = t.Dict({
         t.Key('addr'): tx.HostPortPair,
         t.Key('name'): tx.Slug[2:64],
         t.Key('user'): t.String,
-        t.Key('password'): t.String(),
+        t.Key('password'): t.String,
     }),
     t.Key('manager'): t.Dict({
         t.Key('num-proc', default=_max_cpu_count): t.Int[1:_max_cpu_count],
