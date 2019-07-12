@@ -5,10 +5,10 @@ Changes
 --------------------
 
 - NEW: Add a new API for downloading large files from vfolders via streaming based on JWT-based
-  authentication.
+  authentication. (#159)
 
 - NEW: Add a new API for recalculating keypair/agent resource usage when there are database
-  synchronization errors.
+  synchronization errors. (#161)
 
 - CHANGE: Allow users to provide their own custom access key and secret key when creating or
   modifying their keypairs (for human-readable keys)
