@@ -1,7 +1,7 @@
 Changes
 =======
 
-19.03.2 (2018-07-12)
+19.03.2 (2019-07-12)
 --------------------
 
 - NEW: Add a new API for downloading large files from vfolders via streaming based on JWT-based
@@ -13,7 +13,7 @@ Changes
 - CHANGE: Allow users to provide their own custom access key and secret key when creating or
   modifying their keypairs (for human-readable keys)
 
-19.03.1 (2018-04-21)
+19.03.1 (2019-04-21)
 --------------------
 
 - Fix various non-critical warnings and exceptions that occurs when users
@@ -24,7 +24,7 @@ Changes
   This has caused intermittent but permanent agent-lost timeouts in public network
   environments.
 
-19.03.0 (2018-04-10)
+19.03.0 (2019-04-10)
 --------------------
 
 - NEW: resource preset API which provides a way to check resource availability
@@ -40,7 +40,7 @@ Changes
 
 - Fix consistency corruption of keypairs.concurrency_used field.
 
-19.03.0rc2 (2018-03-25)
+19.03.0rc2 (2019-03-25)
 -----------------------
 
 - NEW: Add an explicit "owner_access_key" query parameter to all session-related APIs
@@ -67,7 +67,7 @@ Changes
 
 - Other bug fixes and improvements.
 
-19.03.0rc1 (2018-02-25)
+19.03.0rc1 (2019-02-25)
 -----------------------
 
 - NEW: It now supports authentication with etcd and Redis for better security.
@@ -85,7 +85,7 @@ Changes
 
 - Minor bug fixes and improvements.
 
-19.03.0b9 (2018-02-15)
+19.03.0b9 (2019-02-15)
 ----------------------
 
 - NEW: Add pagination support to the GraphQL API (#132)
@@ -101,7 +101,7 @@ Changes
   environments where locally bound sockets are not accessible via the node's
   network-local IP address.
 
-19.03.0b8 (2018-02-08)
+19.03.0b8 (2019-02-08)
 ----------------------
 
 - NEW: resource policy for keypairs (#134)
@@ -130,7 +130,7 @@ Changes
 - Add "--skip-sslcert-validation" CLI option and "BACKEND_SKIP_SSLCERT_VALIDATION"
   environment variable for setups using privately-signed SSL certificates
 
-19.03.0b7 (2018-02-03)
+19.03.0b7 (2019-02-03)
 ----------------------
 
 - Fix various issues related to resource slot type *changes*.
@@ -151,7 +151,7 @@ Changes
 - Now "occupied_slots" field and "available_slots" field in the Admin GraphQL APIs
   returns a consistent set of keys from the known resource slot types.
 
-19.03.0b6 (2018-01-31)
+19.03.0b6 (2019-01-31)
 ----------------------
 
 - Various small-but-required bug fixes
@@ -175,12 +175,12 @@ Changes
   - Fix a missing check for "is_active" status of keypairs during API request
     authentication.
 
-19.03.0b5 (2018-01-31)
+19.03.0b5 (2019-01-31)
 ----------------------
 
 - Fix various migration issues related to JSON fields and SQL.
 
-19.03.0b4 (2018-01-30)
+19.03.0b4 (2019-01-30)
 ----------------------
 
 - Add "installed" field to GraphQL image/images query results so that
@@ -192,7 +192,7 @@ Changes
 - Fix a regression in the query/batch mode code execution due to old codes
   in the websocket handlers.
 
-19.03.0b3 (2018-01-30)
+19.03.0b3 (2019-01-30)
 ----------------------
 
 - Add missing support for legacy GraphQL "image" / "images" queries.
@@ -203,7 +203,7 @@ Changes
 
 - Fix a logical error preventing session creation when min/max are same.
 
-19.03.0b2 (2018-01-30)
+19.03.0b2 (2019-01-30)
 ----------------------
 
 - Support legacy GraphQL clients by interpolating new JSON-based resource fields.
@@ -211,7 +211,7 @@ Changes
 - Fix interpretation of private docker image references without explicit repository
   subpaths. Previously it was assume to be under "lablup/" always.
 
-19.03.0b1 (2018-01-30)
+19.03.0b1 (2019-01-30)
 ----------------------
 
 - BIG: Support for dynamic resource slots and full private Docker registries. (#127)
@@ -223,7 +223,7 @@ Changes
 - Support bodyless (query params intead) GET requests for vfolder/kernel file
   download APIs.
 
-19.03.0a2 (2018-01-21)
+19.03.0a2 (2019-01-21)
 ----------------------
 
 - Bump API version from v4.20181215 to v4.20190115 to allow clients to distinguish
@@ -231,7 +231,7 @@ Changes
 
 - Fix the backend.ai-common dependency version follow the 19.03 series.
 
-19.03.0a1 (2018-01-18)
+19.03.0a1 (2019-01-18)
 ----------------------
 
 - Add support for NVIDIA GPU Cloud images.
@@ -239,7 +239,7 @@ Changes
 - Internally changed a resource slot name from "gpu" to "cuda".
   Still the API and database uses the old name for backward-compatibility.
 
-18.12.0 (2018-01-06)
+18.12.0 (2019-01-06)
 --------------------
 
 - Version numbers now follow year.month releases like Docker.
