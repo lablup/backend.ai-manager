@@ -131,10 +131,11 @@ def upgrade():
         }
         updates.append({'row_id': row['id'], 'last_stat': last_stat})
 
-    query = (sa.update(kernels)
-               .values(last_stat=bindparam('last_stat'))
-               .where(kernels.c.id == bindparam('row_id')))
-    connection.execute(query, updates)
+    if updates:
+        query = (sa.update(kernels)
+                   .values(last_stat=bindparam('last_stat'))
+                   .where(kernels.c.id == bindparam('row_id')))
+        connection.execute(query, updates)
 
     op.drop_column('kernels', 'io_max_scratch_size')
     op.drop_column('kernels', 'net_rx_bytes')
@@ -198,17 +199,18 @@ def downgrade():
             'mem_max_bytes': int(last_stat['mem']['stats.max']),
             'io_max_scratch_size': int(last_stat['io_scratch_size']['stats.max']),
         })
-    query = (sa.update(kernels)
-             .values({
-                 'cpu_used': bindparam('cpu_used'),
-                 'io_read_bytes': bindparam('io_read_bytes'),
-                 'io_write_bytes': bindparam('io_write_bytes'),
-                 'mem_max_bytes': bindparam('mem_max_bytes'),
-                 'net_tx_bytes': 0,
-                 'net_rx_bytes': 0,
-                 'io_max_scratch_size': bindparam('io_max_scratch_size'),
-             })
-             .where(kernels.c.id == bindparam('row_id')))
-    connection.execute(query, updates)
+    if updates:
+        query = (sa.update(kernels)
+                 .values({
+                     'cpu_used': bindparam('cpu_used'),
+                     'io_read_bytes': bindparam('io_read_bytes'),
+                     'io_write_bytes': bindparam('io_write_bytes'),
+                     'mem_max_bytes': bindparam('mem_max_bytes'),
+                     'net_tx_bytes': 0,
+                     'net_rx_bytes': 0,
+                     'io_max_scratch_size': bindparam('io_max_scratch_size'),
+                 })
+                 .where(kernels.c.id == bindparam('row_id')))
+        connection.execute(query, updates)
 
     op.drop_column('kernels', 'last_stat')

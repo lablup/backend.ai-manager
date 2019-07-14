@@ -59,10 +59,11 @@ def upgrade():
     query = sa.select([vfolders.c.id, keypairs.c.user]).select_from(j)
     results = connection.execute(query).fetchall()
     updates = [{'vid': row.id, 'user': row.user} for row in results]
-    query = (sa.update(vfolders)
-               .values(user=bindparam('user'))
-               .where(vfolders.c.id == bindparam('vid')))
-    connection.execute(query, updates)
+    if updates:
+        query = (sa.update(vfolders)
+                   .values(user=bindparam('user'))
+                   .where(vfolders.c.id == bindparam('vid')))
+        connection.execute(query, updates)
 
     # Migrate vfolder_permissions' access_key into user.
     j = vfolder_permissions.join(keypairs,
@@ -131,10 +132,11 @@ def downgrade():
     query = sa.select([vfolders.c.id, keypairs.c.access_key]).select_from(j)
     results = connection.execute(query).fetchall()
     updates = [{'vid': row.id, 'belongs_to': row.access_key} for row in results]
-    query = (sa.update(vfolders)
-               .values(belongs_to=bindparam('belongs_to'))
-               .where(vfolders.c.id == bindparam('vid')))
-    connection.execute(query, updates)
+    if updates:
+        query = (sa.update(vfolders)
+                   .values(belongs_to=bindparam('belongs_to'))
+                   .where(vfolders.c.id == bindparam('vid')))
+        connection.execute(query, updates)
 
     # Migrate vfolder_permissions' used into access_key.
     j = (vfolder_permissions.join(keypairs, vfolder_permissions.c.user == keypairs.c.user))
@@ -143,11 +145,12 @@ def downgrade():
     results = connection.execute(query).fetchall()
     updates = [{'_vfolder': row.vfolder, '_access_key': row.access_key, '_user': row.user} \
                for row in results]
-    query = (sa.update(vfolder_permissions)
-               .values(access_key=bindparam('_access_key'))
-               .where(vfolder_permissions.c.vfolder == bindparam('_vfolder'))
-               .where(vfolder_permissions.c.user == bindparam('_user')))
-    connection.execute(query, updates)
+    if updates:
+        query = (sa.update(vfolder_permissions)
+                   .values(access_key=bindparam('_access_key'))
+                   .where(vfolder_permissions.c.vfolder == bindparam('_vfolder'))
+                   .where(vfolder_permissions.c.user == bindparam('_user')))
+        connection.execute(query, updates)
 
     op.alter_column('vfolders', 'belongs_to', nullable=False)
     op.alter_column('vfolder_permissions', 'access_key', nullable=False)
