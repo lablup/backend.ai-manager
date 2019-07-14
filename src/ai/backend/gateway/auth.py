@@ -278,8 +278,8 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         t.Key('email'): t.String,
         t.Key('password'): t.String,
         t.Key('username', default=None): t.Null | t.String,
-        t.Key('full_name', default=''): t.Null | t.String,
-        t.Key('description', default=''): t.Null | t.String,
+        t.Key('full_name', default=None): t.Null | t.String,
+        t.Key('description', default=None): t.Null | t.String,
     }))
 async def signup(request: web.Request, params: Any) -> web.Response:
     dbpool = request.app['dbpool']
