@@ -277,34 +277,39 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         t.Key('domain'): t.String,
         t.Key('email'): t.String,
         t.Key('password'): t.String,
-        t.Key('username', default=None): t.Null | t.String,
-        t.Key('full_name', default=None): t.Null | t.String,
-        t.Key('description', default=None): t.Null | t.String,
     }))
 async def signup(request: web.Request, params: Any) -> web.Response:
     dbpool = request.app['dbpool']
+    # TODO: assume only one hook (hanati) and bound method (very dirty, but no time now)
+    # Check if email exists in hanati
+    assert 'hanati_hook' in request.app
+    check_user = request.app['hanati_hook'].get_handlers()[0][0][1]
+    hana_user = await check_user(params['email'])  # exception will be raised if not found
+    if isinstance(hana_user, dict) and not hana_user['success']:
+        return web.json_response({'error_msg': 'no such cloudia user'}, status=404)
+
     async with dbpool.acquire() as conn:
         # Check if email already exists.
         query = (sa.select([users])
                    .select_from(users)
-                   .where((users.c.email == params['username'])))
+                   .where((users.c.email == params['email'])))
         result = await conn.execute(query)
         row = await result.first()
         if row is not None:
             raise GenericBadRequest('Email already exists')
 
         # Create a user.
-        username = params['username'] if params['username'] else params['email']
         data = {
-            'username': username,
+            'domain_name': params['domain'],
+            'username': params['email'],
             'email': params['email'],
             'password': params['password'],
             'need_password_change': False,
-            'full_name': params['full_name'],
-            'description': params['description'],
+            'full_name': hana_user.name,
+            'description': f'Cloudia user in {hana_user.company.name}',
             'is_active': True,
-            'domain_name': params['domain'],
             'role': UserRole.USER,
+            'integration_id': hana_user.idx,
         }
         query = (users.insert().values(data))
         result = await conn.execute(query)

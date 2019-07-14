@@ -82,6 +82,7 @@ PUBLIC_INTERFACES = [
     'event_dispatcher',
     'stats_monitor',
     'error_monitor',
+    'hanati_hook',
 ]
 
 
@@ -258,8 +259,13 @@ async def gw_init(app, default_cors_options):
     plugins = [
         'stats_monitor',
         'error_monitor',
+        'hanati_hook',
     ]
     install_plugins(plugins, app, 'dict', app['config'])
+    # TODO: assume only one hook (hanati) and bound method (dirty, but no time now)
+    #       init should not be called here.
+    if 'hanati_hook' in app:
+        await app['hanati_hook'].init()
 
 
 async def gw_shutdown(app):
