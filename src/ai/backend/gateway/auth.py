@@ -283,7 +283,6 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
     }))
 async def signup(request: web.Request, params: Any) -> web.Response:
     dbpool = request.app['dbpool']
-    print('##############3')
     async with dbpool.acquire() as conn:
         # Check if email already exists.
         query = (sa.select([users])
