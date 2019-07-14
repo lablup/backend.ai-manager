@@ -25,6 +25,7 @@ from ..manager.models import (
 )
 from ..manager.models.user import UserRole, check_credential
 from ..manager.models.keypair import generate_keypair as _gen_keypair
+from ..manager.models.group import association_groups_users, groups
 from .utils import check_api_params, set_handler_attr, get_handler_attr
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.auth'))
@@ -316,7 +317,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
         if result.rowcount > 0:
             checkq = users.select().where(users.c.email == params['email'])
             result = await conn.execute(checkq)
-            row = await result.first()
+            user = await result.first()
             # Create user's first access_key and secret_key.
             ak, sk = _gen_keypair()
             kp_data = {
@@ -329,9 +330,20 @@ async def signup(request: web.Request, params: Any) -> web.Response:
                 'concurrency_used': 0,
                 'rate_limit': 1000,
                 'num_queries': 0,
-                'user': row.uuid,
+                'user': user.uuid,
             }
             query = (keypairs.insert().values(kp_data))
+            await conn.execute(query)
+
+            # Add user to the default group.
+            query = (sa.select([groups.c.id])
+                       .select_from(groups)
+                       .where(groups.c.domain_name == params['domain'])
+                       .where(groups.c.name == 'default'))
+            result = await conn.execute(query)
+            grp = await result.fetchone()
+            values = [{'user_id': user.uuid, 'group_id': grp.id}]
+            query = association_groups_users.insert().values(values)
             await conn.execute(query)
         else:
             raise InternalServerError('Error creating user account')
