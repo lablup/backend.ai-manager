@@ -1,6 +1,11 @@
 Changes
 =======
 
+19.06.0b2 (2019-07-15)
+----------------------
+
+* Add the user signup endpoint and related plugins support
+
 19.06.0b1 (2019-07-14)
 ----------------------
 
