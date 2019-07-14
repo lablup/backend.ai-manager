@@ -16,13 +16,14 @@ import trafaret as t
 
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from .exceptions import (
+    GenericBadRequest, InternalServerError,
     InvalidAuthParameters, AuthorizationFailed,
     InvalidAPIParameters,
 )
 from ..manager.models import (
     keypairs, keypair_resource_policies, users,
 )
-from ..manager.models.user import check_credential
+from ..manager.models.user import UserRole, check_credential
 from ..manager.models.keypair import generate_keypair as _gen_keypair
 from .utils import check_api_params, set_handler_attr, get_handler_attr
 
@@ -270,6 +271,74 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
     })
 
 
+@atomic
+@check_api_params(
+    t.Dict({
+        t.Key('domain'): t.String,
+        t.Key('email'): t.String,
+        t.Key('password'): t.String,
+        t.Key('username', default=None): t.Null | t.String,
+        t.Key('full_name', default=''): t.Null | t.String,
+        t.Key('description', default=''): t.Null | t.String,
+    }))
+async def signup(request: web.Request, params: Any) -> web.Response:
+    dbpool = request.app['dbpool']
+    print('##############3')
+    async with dbpool.acquire() as conn:
+        # Check if email already exists.
+        query = (sa.select([users])
+                   .select_from(users)
+                   .where((users.c.email == params['username'])))
+        result = await conn.execute(query)
+        row = await result.first()
+        if row is not None:
+            raise GenericBadRequest('Email already exists')
+
+        # Create a user.
+        username = params['username'] if params['username'] else params['email']
+        data = {
+            'username': username,
+            'email': params['email'],
+            'password': params['password'],
+            'need_password_change': False,
+            'full_name': params['full_name'],
+            'description': params['description'],
+            'is_active': True,
+            'domain_name': params['domain'],
+            'role': UserRole.USER,
+        }
+        query = (users.insert().values(data))
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            checkq = users.select().where(users.c.email == params['email'])
+            result = await conn.execute(checkq)
+            row = await result.first()
+            # Create user's first access_key and secret_key.
+            ak, sk = _gen_keypair()
+            kp_data = {
+                'user_id': params['email'],
+                'access_key': ak,
+                'secret_key': sk,
+                'is_active': True,
+                'is_admin': False,
+                'resource_policy': 'default',
+                'concurrency_used': 0,
+                'rate_limit': 1000,
+                'num_queries': 0,
+                'user': row.uuid,
+            }
+            query = (keypairs.insert().values(kp_data))
+            await conn.execute(query)
+        else:
+            raise InternalServerError('Error creating user account')
+    return web.json_response({
+        'data': {
+            'access_key': ak,
+            'secret_key': sk,
+        },
+    })
+
+
 def create_app(default_cors_options):
     app = web.Application()
     app['prefix'] = 'auth'  # slashed to distinguish with "/vN/authorize"
@@ -282,6 +351,7 @@ def create_app(default_cors_options):
     cors.add(test_resource.add_route('GET', test))
     cors.add(test_resource.add_route('POST', test))
     cors.add(app.router.add_route('POST', '/authorize', authorize))
+    cors.add(app.router.add_route('POST', '/signup', signup))
     return app, [auth_middleware]
 
 

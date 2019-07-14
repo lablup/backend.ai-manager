@@ -411,7 +411,6 @@ async def check_credential(dbpool, domain: str, email: str, password: str) \
                           (users.c.domain_name == domain)))
         result = await conn.execute(query)
         row = await result.first()
-        print(type(row))
         if row is None:
             return None
         if row['password'] is None:
