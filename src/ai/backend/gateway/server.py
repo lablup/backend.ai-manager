@@ -367,7 +367,8 @@ async def server_main(loop, pidx, _args):
         # Allow subapp's access to the root app properties.
         # These are the public APIs exposed to extensions as well.
         for key in PUBLIC_INTERFACES:
-            subapp[key] = app[key]
+            if key in app:
+                subapp[key] = app[key]
         prefix = subapp.get('prefix', pkgname.split('.')[-1].replace('_', '-'))
         aiojobs.aiohttp.setup(subapp, **scheduler_opts)
         app.add_subapp('/' + prefix, subapp)
