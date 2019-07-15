@@ -86,13 +86,11 @@ class CreateResourcePreset(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, name, props):
-        known_slot_types = \
-            await info.context['config_server'].get_resource_slots()
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {
                 'name': name,
                 'resource_slots': ResourceSlot.from_user_input(
-                    props.resource_slots, known_slot_types),
+                    props.resource_slots, None),
             }
             query = (resource_presets.insert().values(data))
             try:
@@ -131,8 +129,6 @@ class ModifyResourcePreset(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, name, props):
-        known_slot_types = \
-            await info.context['config_server'].get_resource_slots()
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
 
@@ -143,7 +139,7 @@ class ModifyResourcePreset(graphene.Mutation):
                     data[name] = clean(v)
 
             def clean_resource_slot(v):
-                return ResourceSlot.from_user_input(v, known_slot_types)
+                return ResourceSlot.from_user_input(v, None)
 
             set_if_set('resource_slots', clean_resource_slot)
 

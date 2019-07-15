@@ -194,7 +194,6 @@ class CreateGroup(GroupMutationMixin, graphene.Mutation):
     @classmethod
     async def mutate(cls, root, info, name, props):
         assert await cls.check_perm(info, domain_name=props.domain_name), 'no permission'
-        known_slot_types = await info.context['config_server'].get_resource_slots()
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             assert _rx_slug.search(name) is not None, 'invalid name format. slug format required.'
             data = {
@@ -203,7 +202,7 @@ class CreateGroup(GroupMutationMixin, graphene.Mutation):
                 'is_active': props.is_active,
                 'domain_name': props.domain_name,
                 'total_resource_slots': ResourceSlot.from_user_input(
-                    props.total_resource_slots, known_slot_types),
+                    props.total_resource_slots, None),
                 'allowed_vfolder_hosts': props.allowed_vfolder_hosts,
                 'integration_id': props.integration_id,
             }
@@ -239,7 +238,6 @@ class ModifyGroup(GroupMutationMixin, graphene.Mutation):
     @classmethod
     async def mutate(cls, root, info, gid, props):
         assert await cls.check_perm(info, gid=gid), 'no permission'
-        known_slot_types = await info.context['config_server'].get_resource_slots()
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
 
@@ -250,7 +248,7 @@ class ModifyGroup(GroupMutationMixin, graphene.Mutation):
                     data[name] = v
 
             def clean_resource_slot(v):
-                return ResourceSlot.from_user_input(v, known_slot_types)
+                return ResourceSlot.from_user_input(v, None)
 
             set_if_set('name')
             set_if_set('description')
