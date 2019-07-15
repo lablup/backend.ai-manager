@@ -192,15 +192,13 @@ class CreateKeyPairResourcePolicy(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, name, props):
-        known_slot_types = \
-            await info.context['config_server'].get_resource_slots()
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {
                 'name': name,
                 'default_for_unspecified':
                     DefaultForUnspecified[props.default_for_unspecified],
                 'total_resource_slots': ResourceSlot.from_user_input(
-                    props.total_resource_slots, known_slot_types),
+                    props.total_resource_slots, None),
                 'max_concurrent_sessions': props.max_concurrent_sessions,
                 'max_containers_per_session': props.max_containers_per_session,
                 'idle_timeout': props.idle_timeout,
@@ -245,8 +243,6 @@ class ModifyKeyPairResourcePolicy(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, name, props):
-        known_slot_types = \
-            await info.context['config_server'].get_resource_slots()
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
 
@@ -257,7 +253,7 @@ class ModifyKeyPairResourcePolicy(graphene.Mutation):
                     data[name] = clean(v)
 
             def clean_resource_slot(v):
-                return ResourceSlot.from_user_input(v, known_slot_types)
+                return ResourceSlot.from_user_input(v, None)
 
             set_if_set('default_for_unspecified', lambda v: DefaultForUnspecified[v])
             set_if_set('total_resource_slots', clean_resource_slot)
