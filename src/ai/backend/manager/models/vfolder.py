@@ -1,9 +1,11 @@
 from collections import OrderedDict
 import enum
+from typing import Any
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
+import trafaret as t
 
 from .base import metadata, EnumValueType, GUID, IDColumn
 
@@ -13,6 +15,7 @@ __all__ = (
     'vfolder_permissions',
     'VirtualFolder',
     'VFolderPermission',
+    'VFolderPermissionValidator',
     'query_accessible_vfolders',
     'get_allowed_vfolder_hosts_by_group',
     'get_allowed_vfolder_hosts_by_user',
@@ -27,6 +30,13 @@ class VFolderPermission(str, enum.Enum):
     READ_ONLY = 'ro'
     READ_WRITE = 'rw'
     RW_DELETE = 'wd'
+
+
+class VFolderPermissionValidator(t.Trafaret):
+    def check_and_return(self, value: Any) -> str:
+        if value not in ['ro', 'rw', 'wd']:
+            self._failure(f'one of "ro", "rw", or "wd" required', value=value)
+        return value
 
 
 '''
@@ -73,8 +83,8 @@ vfolder_invitations = sa.Table(
     IDColumn('id'),
     sa.Column('permission', EnumValueType(VFolderPermission),
               default=VFolderPermission.READ_WRITE),
-    sa.Column('inviter', sa.String(length=256)),
-    sa.Column('invitee', sa.String(length=256), nullable=False),
+    sa.Column('inviter', sa.String(length=256)),  # email
+    sa.Column('invitee', sa.String(length=256), nullable=False),  # email
     # State of the infitation: pending, accepted, rejected
     sa.Column('state', sa.String(length=10), default='pending'),
     sa.Column('created_at', sa.DateTime(timezone=True),

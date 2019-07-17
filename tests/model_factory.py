@@ -142,5 +142,27 @@ class VFolderFactory(ModelFactory):
 
     async def before_creation(self):
         if 'user' not in self.defaults and 'group' not in self.defaults:
-            user = await UserFactory(self.app).create(self.defaults)
-            self.defaults['user'] = user.uuid
+            user = await UserFactory(self.app).create()
+            self.defaults['user'] = user['uuid']
+
+
+class VFolderInvitationFactory(ModelFactory):
+
+    model = models.vfolder_invitations
+
+    def get_creation_defaults(self, **kwargs):
+        return {
+            'permission': models.VFolderPermission('ro'),
+            'state': 'pending',
+        }
+
+    async def before_creation(self):
+        if 'vfolder' not in self.defaults:
+            vf = await VFolderFactory(self.app).create()
+            self.defaults['vfolder'] = vf['id']
+        if 'inviter' not in self.defaults:
+            user = await UserFactory(self.app).create()
+            self.defaults['inviter'] = user['email']
+        if 'invitee' not in self.defaults:
+            user = await UserFactory(self.app).create()
+            self.defaults['invitee'] = user['email']

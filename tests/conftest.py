@@ -93,6 +93,13 @@ def prepare_and_cleanup_databases(request, test_ns, test_db,
                      'https://registry-1.docker.io'])
     subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
                      'config/redis/addr', '127.0.0.1:8110'])
+    # Add fake plugin settings.
+    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
+                     'config/plugins/cloudia/base_url', '127.0.0.1:8090'])
+    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
+                     'config/plugins/cloudia/user', 'fake-cloudia-user@lablup.com'])
+    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
+                     'config/plugins/cloudia/password', 'fake-password'])
 
     def finalize_etcd():
         subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'delete',

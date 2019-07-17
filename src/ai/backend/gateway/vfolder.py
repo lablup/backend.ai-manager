@@ -34,7 +34,7 @@ from .utils import check_api_params
 from ..manager.models import (
     association_groups_users,
     domains, groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
-    VFolderPermission, query_accessible_vfolders,
+    VFolderPermission, VFolderPermissionValidator, query_accessible_vfolders,
     get_allowed_vfolder_hosts_by_group, get_allowed_vfolder_hosts_by_user,
 )
 
@@ -629,6 +629,65 @@ async def list_files(request: web.Request, row: VFolderRow) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
+@auth_required
+async def list_sent_invitations(request: web.Request) -> web.Response:
+    dbpool = request.app['dbpool']
+    access_key = request['keypair']['access_key']
+    log.info('VFOLDER.LIST_SENT_INVITATIONS (u:{0})', access_key)
+    async with dbpool.acquire() as conn:
+        j = sa.join(vfolders, vfolder_invitations,
+                    vfolders.c.id == vfolder_invitations.c.vfolder)
+        query = (sa.select([vfolder_invitations, vfolders.c.name])
+                   .select_from(j)
+                   .where((vfolder_invitations.c.inviter == request['user']['email']) &
+                          (vfolder_invitations.c.state == 'pending')))
+        result = await conn.execute(query)
+        invitations = await result.fetchall()
+    invs_info = []
+    for inv in invitations:
+        invs_info.append({
+            'id': str(inv.id),
+            'inviter': inv.inviter,
+            'invitee': inv.invitee,
+            'perm': inv.permission,
+            'state': inv.state,
+            'created_at': str(inv.created_at),
+            'vfolder_id': str(inv.vfolder),
+            'vfolder_name': inv.name,
+        })
+    resp = {'invitations': invs_info}
+    return web.json_response(resp, status=200)
+
+
+@atomic
+@server_status_required(ALL_ALLOWED)
+@auth_required
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['perm', 'permission']): VFolderPermissionValidator,
+    })
+)
+async def update_invitation(request: web.Request, params: Any) -> web.Response:
+    '''
+    Update sent invitation's permission. Other fields are not allowed to be updated.
+    '''
+    dbpool = request.app['dbpool']
+    access_key = request['keypair']['access_key']
+    inv_id = request.match_info['inv_id']
+    perm = params['perm']
+    log.info('VFOLDER.UPDATE_INVITATION (u:{0})', access_key)
+    async with dbpool.acquire() as conn:
+        query = (sa.update(vfolder_invitations)
+                   .values(permission=VFolderPermission(perm))
+                   .where(vfolder_invitations.c.id == inv_id)
+                   .where(vfolder_invitations.c.inviter == request['user']['email'])
+                   .where(vfolder_invitations.c.state == 'pending'))
+        await conn.execute(query)
+    resp = {'msg': f'vfolder invitation updated: {inv_id}.'}
+    return web.json_response(resp, status=200)
+
+
 @atomic
 @server_status_required(ALL_ALLOWED)
 @auth_required
@@ -712,26 +771,27 @@ async def invite(request: web.Request) -> web.Response:
 async def invitations(request: web.Request) -> web.Response:
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
-    log.info('VFOLDER.INVITATION (u:{0})', access_key)
+    log.info('VFOLDER.INVITATIONS (u:{0})', access_key)
     async with dbpool.acquire() as conn:
-        query = (sa.select('*')
-                   .select_from(vfolder_invitations)
+        j = sa.join(vfolders, vfolder_invitations,
+                    vfolders.c.id == vfolder_invitations.c.vfolder)
+        query = (sa.select([vfolder_invitations, vfolders.c.name])
+                   .select_from(j)
                    .where((vfolder_invitations.c.invitee == request['user']['id']) &
                           (vfolder_invitations.c.state == 'pending')))
-        try:
-            result = await conn.execute(query)
-        except psycopg2.DataError:
-            raise InvalidAPIParameters
+        result = await conn.execute(query)
         invitations = await result.fetchall()
     invs_info = []
     for inv in invitations:
         invs_info.append({
             'id': str(inv.id),
             'inviter': inv.inviter,
+            'invitee': inv.invitee,
             'perm': inv.permission,
             'state': inv.state,
             'created_at': str(inv.created_at),
             'vfolder_id': str(inv.vfolder),
+            'vfolder_name': inv.name,
         })
     resp = {'invitations': invs_info}
     return web.json_response(resp, status=200)
@@ -910,6 +970,8 @@ def create_app(default_cors_options):
     cors.add(add_route('POST',   r'/{name}/request_download', request_download))
     cors.add(add_route('GET',    r'/{name}/files', list_files))
     cors.add(add_route('POST',   r'/{name}/invite', invite))
+    cors.add(add_route('GET',    r'/invitations/list_sent', list_sent_invitations))
+    cors.add(add_route('POST',   r'/invitations/update/{inv_id}', update_invitation))
     cors.add(add_route('GET',    r'/invitations/list', invitations))
     cors.add(add_route('POST',   r'/invitations/accept', accept_invitation))
     cors.add(add_route('DELETE', r'/invitations/delete', delete_invitation))
