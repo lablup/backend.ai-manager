@@ -16,7 +16,7 @@ from ai.backend.manager.models.user import UserRole
 from tests.model_factory import (
     get_random_string,
     AssociationGroupsUsersFactory, DomainFactory, GroupFactory, UserFactory,
-    VFolderFactory, VFolderInvitationFactory,
+    VFolderFactory, VFolderInvitationFactory, VFolderPermissionFactory
 )
 
 
@@ -1491,6 +1491,56 @@ class TestInvitation:
         assert len(perms) == 0
         assert len(invitations) == 1
         assert invitations[0]['state'] == 'rejected'
+
+    @pytest.mark.asyncio
+    async def test_list_shared_vfolders(self, prepare_vfolder, get_headers,
+                                        folder_mount, folder_host, folder_fsprefix):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await create_vfolder()
+
+        shared_to = await UserFactory(app).get(email='user@lablup.com')
+        vfinv = await VFolderPermissionFactory(app).create(
+            vfolder=folder_info['id'], user=shared_to['uuid'],
+            permission=VFolderPermission('rw'))
+
+        url = f'/v3/folders/_/shared'
+        req_bytes = json.dumps({}).encode()
+        headers = get_headers('GET', url, req_bytes)
+        ret = await client.get(url, data=req_bytes, headers=headers)
+        rsp_json = await ret.json()
+
+        assert len(rsp_json['shared']) == 1
+        assert uuid.UUID(rsp_json['shared'][0]['vfolder_id']).hex == folder_info['id']
+        assert rsp_json['shared'][0]['vfolder_name'] == folder_info['name']
+        assert rsp_json['shared'][0]['shared_by'] == 'admin@lablup.com'
+        assert rsp_json['shared'][0]['shared_to'] == 'user@lablup.com'
+        assert rsp_json['shared'][0]['perm'] == 'rw'
+
+    @pytest.mark.asyncio
+    async def test_update_shared_vfolder(self, prepare_vfolder, get_headers,
+                                         folder_mount, folder_host, folder_fsprefix):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await create_vfolder()
+
+        shared_to = await UserFactory(app).get(email='user@lablup.com')
+        vfinv = await VFolderPermissionFactory(app).create(
+            vfolder=folder_info['id'], user=shared_to['uuid'],
+            permission=VFolderPermission('ro'))
+
+        url = f'/v3/folders/_/shared'
+        req_bytes = json.dumps({
+            'vfolder': folder_info['id'],
+            'user': str(shared_to['uuid']),
+            'perm': 'rw',
+        }).encode()
+        headers = get_headers('POST', url, req_bytes)
+        ret = await client.post(url, data=req_bytes, headers=headers)
+
+        vfperm = await VFolderPermissionFactory(app).get(vfolder=folder_info['id'],
+                                                         user=shared_to['uuid'])
+        assert ret.status == 200
+        assert vfperm['permission'] == 'rw'
+
 
 
 class TestJoinedVfolderManipulations:
