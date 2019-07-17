@@ -944,6 +944,8 @@ async def list_shared_vfolders(request: web.Request) -> web.Response:
     '''
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
+    params = await request.json() if request.can_read_body else request.query
+    target_vfid = params.get('vfolder_id', None)
     log.info('VFOLDER.LIST_SHARED_VFOLDERS (u:{0})', access_key)
     async with dbpool.acquire() as conn:
         j = (vfolder_permissions
@@ -954,6 +956,8 @@ async def list_shared_vfolders(request: web.Request) -> web.Response:
                             users.c.email])
                    .select_from(j)
                    .where((vfolders.c.user == request['user']['uuid'])))
+        if target_vfid is not None:
+            query = query.where(vfolders.c.id == target_vfid)
         result = await conn.execute(query)
         shared_list = await result.fetchall()
     shared_info = []

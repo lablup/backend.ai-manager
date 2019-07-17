@@ -1516,6 +1516,29 @@ class TestInvitation:
         assert rsp_json['shared'][0]['shared_to']['email'] == 'user@lablup.com'
         assert rsp_json['shared'][0]['perm'] == 'rw'
 
+        # Request with target vfolder_id.
+        url = f'/v3/folders/_/shared'
+        req_bytes = json.dumps({'vfolder_id': folder_info['id']}).encode()
+        headers = get_headers('GET', url, req_bytes)
+        ret = await client.get(url, data=req_bytes, headers=headers)
+        rsp_json = await ret.json()
+
+        assert len(rsp_json['shared']) == 1
+        assert uuid.UUID(rsp_json['shared'][0]['vfolder_id']).hex == folder_info['id']
+        assert rsp_json['shared'][0]['vfolder_name'] == folder_info['name']
+        assert rsp_json['shared'][0]['shared_by'] == 'admin@lablup.com'
+        assert rsp_json['shared'][0]['shared_to']['email'] == 'user@lablup.com'
+        assert rsp_json['shared'][0]['perm'] == 'rw'
+
+        # Request with invalid target vfolder_id.
+        url = f'/v3/folders/_/shared'
+        req_bytes = json.dumps({'vfolder_id': str(uuid.uuid4())}).encode()
+        headers = get_headers('GET', url, req_bytes)
+        ret = await client.get(url, data=req_bytes, headers=headers)
+        rsp_json = await ret.json()
+
+        assert len(rsp_json['shared']) == 0
+
     @pytest.mark.asyncio
     async def test_update_shared_vfolder(self, prepare_vfolder, get_headers,
                                          folder_mount, folder_host, folder_fsprefix):
