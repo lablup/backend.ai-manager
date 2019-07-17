@@ -1513,7 +1513,7 @@ class TestInvitation:
         assert uuid.UUID(rsp_json['shared'][0]['vfolder_id']).hex == folder_info['id']
         assert rsp_json['shared'][0]['vfolder_name'] == folder_info['name']
         assert rsp_json['shared'][0]['shared_by'] == 'admin@lablup.com'
-        assert rsp_json['shared'][0]['shared_to'] == 'user@lablup.com'
+        assert rsp_json['shared'][0]['shared_to']['email'] == 'user@lablup.com'
         assert rsp_json['shared'][0]['perm'] == 'rw'
 
     @pytest.mark.asyncio

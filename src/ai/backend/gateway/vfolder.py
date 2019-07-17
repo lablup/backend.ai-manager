@@ -962,7 +962,10 @@ async def list_shared_vfolders(request: web.Request) -> web.Response:
             'vfolder_id': str(shared.id),
             'vfolder_name': str(shared.name),
             'shared_by': request['user']['email'],
-            'shared_to': shared.email,
+            'shared_to': {
+                'uuid': str(shared.user),
+                'email': shared.email,
+            },
             'perm': shared.permission.value,
         })
     resp = {'shared': shared_info}
