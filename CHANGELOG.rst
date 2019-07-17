@@ -1,6 +1,14 @@
 Changes
 =======
 
+19.06.0b3 (2019-07-17)
+----------------------
+
+* CHANGE: Accept typeless resource slots for resource policy configurations
+  (lablup/backend.ai-common#7)
+
+* FIX: Register public interface only when the app exists
+
 19.06.0b2 (2019-07-15)
 ----------------------
 
