@@ -1,6 +1,12 @@
 Changes
 =======
 
+19.03.3 (2019-07-17)
+--------------------
+
+- CHANGE/BACKPORT: Accept typeless resource slots for resource policy configurations
+  (lablup/backend.ai-common#7)
+
 19.03.2 (2019-07-12)
 --------------------
 
