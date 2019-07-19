@@ -10,12 +10,13 @@ import sqlalchemy as sa
 from ai.backend.manager.models import (
     groups, keypairs, keypair_resource_policies, users,
     vfolders, vfolder_invitations, vfolder_permissions,
-    VFolderPermission,
+    VFolderPermission
 )
 from ai.backend.manager.models.user import UserRole
 from tests.model_factory import (
     get_random_string,
-    AssociationGroupsUsersFactory, DomainFactory, GroupFactory, UserFactory, VFolderFactory,
+    AssociationGroupsUsersFactory, DomainFactory, GroupFactory, UserFactory,
+    VFolderFactory, VFolderInvitationFactory, VFolderPermissionFactory
 )
 
 
@@ -1242,6 +1243,77 @@ class TestInvitation:
         assert rsp_json['invitations'][0]['state'] == 'pending'
 
     @pytest.mark.asyncio
+    async def test_list_sent_invitations(self, prepare_vfolder, get_headers,
+                                         folder_mount, folder_host, folder_fsprefix):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await create_vfolder()
+
+        inviter = 'admin@lablup.com'
+        invitee = 'user@lablup.com'
+        vfinv = await VFolderInvitationFactory(app).create(
+            inviter=inviter, invitee=invitee,
+            vfolder=folder_info['id'])
+
+        url = f'/v3/folders/invitations/list_sent'
+        req_bytes = json.dumps({}).encode()
+        headers = get_headers('GET', url, req_bytes)
+        ret = await client.get(url, data=req_bytes, headers=headers)
+        rsp_json = await ret.json()
+
+        assert len(rsp_json['invitations']) == 1
+        assert rsp_json['invitations'][0]['vfolder_name'] == folder_info['name']
+        assert rsp_json['invitations'][0]['inviter'] == inviter
+        assert rsp_json['invitations'][0]['invitee'] == invitee
+        assert uuid.UUID(rsp_json['invitations'][0]['vfolder_id']).hex == folder_info['id']
+
+    @pytest.mark.asyncio
+    async def test_update_invitation(self, prepare_vfolder, get_headers,
+                                     folder_mount, folder_host, folder_fsprefix):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await create_vfolder()
+
+        inviter = 'admin@lablup.com'
+        invitee = 'user@lablup.com'
+        vfinv = await VFolderInvitationFactory(app).create(
+            inviter=inviter, invitee=invitee,
+            permission=VFolderPermission('ro'),
+            vfolder=folder_info['id'])
+
+        url = f'/v3/folders/invitations/update/{vfinv["id"]}'
+        req_bytes = json.dumps({'perm': 'rw'}).encode()
+        headers = get_headers('POST', url, req_bytes)
+        ret = await client.post(url, data=req_bytes, headers=headers)
+
+        vfinv = await VFolderInvitationFactory(app).get(id=vfinv['id'])
+        assert ret.status == 200
+        assert vfinv['permission'] == 'rw'
+
+    @pytest.mark.asyncio
+    async def test_list_received_invitations(self, prepare_vfolder, get_headers,
+                                             folder_mount, folder_host, folder_fsprefix,
+                                             user_keypair):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await create_vfolder()
+
+        inviter = 'admin@lablup.com'
+        invitee = 'user@lablup.com'
+        vfinv = await VFolderInvitationFactory(app).create(
+            inviter=inviter, invitee=invitee,
+            vfolder=folder_info['id'])
+
+        url = f'/v3/folders/invitations/list'
+        req_bytes = json.dumps({}).encode()
+        headers = get_headers('GET', url, req_bytes, keypair=user_keypair)
+        ret = await client.get(url, data=req_bytes, headers=headers)
+        rsp_json = await ret.json()
+
+        assert len(rsp_json['invitations']) == 1
+        assert rsp_json['invitations'][0]['vfolder_name'] == folder_info['name']
+        assert rsp_json['invitations'][0]['inviter'] == inviter
+        assert rsp_json['invitations'][0]['invitee'] == invitee
+        assert uuid.UUID(rsp_json['invitations'][0]['vfolder_id']).hex == folder_info['id']
+
+    @pytest.mark.asyncio
     async def test_not_list_finished_invitations(
             self, prepare_vfolder, get_headers,
             folder_mount, folder_host, folder_fsprefix,
@@ -1419,6 +1491,79 @@ class TestInvitation:
         assert len(perms) == 0
         assert len(invitations) == 1
         assert invitations[0]['state'] == 'rejected'
+
+    @pytest.mark.asyncio
+    async def test_list_shared_vfolders(self, prepare_vfolder, get_headers,
+                                        folder_mount, folder_host, folder_fsprefix):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await create_vfolder()
+
+        shared_to = await UserFactory(app).get(email='user@lablup.com')
+        vfinv = await VFolderPermissionFactory(app).create(
+            vfolder=folder_info['id'], user=shared_to['uuid'],
+            permission=VFolderPermission('rw'))
+
+        url = f'/v3/folders/_/shared'
+        req_bytes = json.dumps({}).encode()
+        headers = get_headers('GET', url, req_bytes)
+        ret = await client.get(url, data=req_bytes, headers=headers)
+        rsp_json = await ret.json()
+
+        assert len(rsp_json['shared']) == 1
+        assert uuid.UUID(rsp_json['shared'][0]['vfolder_id']).hex == folder_info['id']
+        assert rsp_json['shared'][0]['vfolder_name'] == folder_info['name']
+        assert rsp_json['shared'][0]['shared_by'] == 'admin@lablup.com'
+        assert rsp_json['shared'][0]['shared_to']['email'] == 'user@lablup.com'
+        assert rsp_json['shared'][0]['perm'] == 'rw'
+
+        # Request with target vfolder_id.
+        url = f'/v3/folders/_/shared'
+        req_bytes = json.dumps({'vfolder_id': folder_info['id']}).encode()
+        headers = get_headers('GET', url, req_bytes)
+        ret = await client.get(url, data=req_bytes, headers=headers)
+        rsp_json = await ret.json()
+
+        assert len(rsp_json['shared']) == 1
+        assert uuid.UUID(rsp_json['shared'][0]['vfolder_id']).hex == folder_info['id']
+        assert rsp_json['shared'][0]['vfolder_name'] == folder_info['name']
+        assert rsp_json['shared'][0]['shared_by'] == 'admin@lablup.com'
+        assert rsp_json['shared'][0]['shared_to']['email'] == 'user@lablup.com'
+        assert rsp_json['shared'][0]['perm'] == 'rw'
+
+        # Request with invalid target vfolder_id.
+        url = f'/v3/folders/_/shared'
+        req_bytes = json.dumps({'vfolder_id': str(uuid.uuid4())}).encode()
+        headers = get_headers('GET', url, req_bytes)
+        ret = await client.get(url, data=req_bytes, headers=headers)
+        rsp_json = await ret.json()
+
+        assert len(rsp_json['shared']) == 0
+
+    @pytest.mark.asyncio
+    async def test_update_shared_vfolder(self, prepare_vfolder, get_headers,
+                                         folder_mount, folder_host, folder_fsprefix):
+        app, client, create_vfolder = prepare_vfolder
+        folder_info = await create_vfolder()
+
+        shared_to = await UserFactory(app).get(email='user@lablup.com')
+        vfinv = await VFolderPermissionFactory(app).create(
+            vfolder=folder_info['id'], user=shared_to['uuid'],
+            permission=VFolderPermission('ro'))
+
+        url = f'/v3/folders/_/shared'
+        req_bytes = json.dumps({
+            'vfolder': folder_info['id'],
+            'user': str(shared_to['uuid']),
+            'perm': 'rw',
+        }).encode()
+        headers = get_headers('POST', url, req_bytes)
+        ret = await client.post(url, data=req_bytes, headers=headers)
+
+        vfperm = await VFolderPermissionFactory(app).get(vfolder=folder_info['id'],
+                                                         user=shared_to['uuid'])
+        assert ret.status == 200
+        assert vfperm['permission'] == 'rw'
+
 
 
 class TestJoinedVfolderManipulations:

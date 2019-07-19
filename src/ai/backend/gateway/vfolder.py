@@ -32,9 +32,9 @@ from .manager import (
     server_status_required)
 from .utils import check_api_params
 from ..manager.models import (
-    association_groups_users,
+    association_groups_users, users,
     domains, groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
-    VFolderPermission, query_accessible_vfolders,
+    VFolderPermission, VFolderPermissionValidator, query_accessible_vfolders,
     get_allowed_vfolder_hosts_by_group, get_allowed_vfolder_hosts_by_user,
 )
 
@@ -629,6 +629,65 @@ async def list_files(request: web.Request, row: VFolderRow) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
+@auth_required
+async def list_sent_invitations(request: web.Request) -> web.Response:
+    dbpool = request.app['dbpool']
+    access_key = request['keypair']['access_key']
+    log.info('VFOLDER.LIST_SENT_INVITATIONS (u:{0})', access_key)
+    async with dbpool.acquire() as conn:
+        j = sa.join(vfolders, vfolder_invitations,
+                    vfolders.c.id == vfolder_invitations.c.vfolder)
+        query = (sa.select([vfolder_invitations, vfolders.c.name])
+                   .select_from(j)
+                   .where((vfolder_invitations.c.inviter == request['user']['email']) &
+                          (vfolder_invitations.c.state == 'pending')))
+        result = await conn.execute(query)
+        invitations = await result.fetchall()
+    invs_info = []
+    for inv in invitations:
+        invs_info.append({
+            'id': str(inv.id),
+            'inviter': inv.inviter,
+            'invitee': inv.invitee,
+            'perm': inv.permission,
+            'state': inv.state,
+            'created_at': str(inv.created_at),
+            'vfolder_id': str(inv.vfolder),
+            'vfolder_name': inv.name,
+        })
+    resp = {'invitations': invs_info}
+    return web.json_response(resp, status=200)
+
+
+@atomic
+@server_status_required(ALL_ALLOWED)
+@auth_required
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['perm', 'permission']): VFolderPermissionValidator,
+    })
+)
+async def update_invitation(request: web.Request, params: Any) -> web.Response:
+    '''
+    Update sent invitation's permission. Other fields are not allowed to be updated.
+    '''
+    dbpool = request.app['dbpool']
+    access_key = request['keypair']['access_key']
+    inv_id = request.match_info['inv_id']
+    perm = params['perm']
+    log.info('VFOLDER.UPDATE_INVITATION (u:{0})', access_key)
+    async with dbpool.acquire() as conn:
+        query = (sa.update(vfolder_invitations)
+                   .values(permission=VFolderPermission(perm))
+                   .where(vfolder_invitations.c.id == inv_id)
+                   .where(vfolder_invitations.c.inviter == request['user']['email'])
+                   .where(vfolder_invitations.c.state == 'pending'))
+        await conn.execute(query)
+    resp = {'msg': f'vfolder invitation updated: {inv_id}.'}
+    return web.json_response(resp, status=200)
+
+
 @atomic
 @server_status_required(ALL_ALLOWED)
 @auth_required
@@ -712,26 +771,27 @@ async def invite(request: web.Request) -> web.Response:
 async def invitations(request: web.Request) -> web.Response:
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
-    log.info('VFOLDER.INVITATION (u:{0})', access_key)
+    log.info('VFOLDER.INVITATIONS (u:{0})', access_key)
     async with dbpool.acquire() as conn:
-        query = (sa.select('*')
-                   .select_from(vfolder_invitations)
+        j = sa.join(vfolders, vfolder_invitations,
+                    vfolders.c.id == vfolder_invitations.c.vfolder)
+        query = (sa.select([vfolder_invitations, vfolders.c.name])
+                   .select_from(j)
                    .where((vfolder_invitations.c.invitee == request['user']['id']) &
                           (vfolder_invitations.c.state == 'pending')))
-        try:
-            result = await conn.execute(query)
-        except psycopg2.DataError:
-            raise InvalidAPIParameters
+        result = await conn.execute(query)
         invitations = await result.fetchall()
     invs_info = []
     for inv in invitations:
         invs_info.append({
             'id': str(inv.id),
             'inviter': inv.inviter,
+            'invitee': inv.invitee,
             'perm': inv.permission,
             'state': inv.state,
             'created_at': str(inv.created_at),
             'vfolder_id': str(inv.vfolder),
+            'vfolder_name': inv.name,
         })
     resp = {'invitations': invs_info}
     return web.json_response(resp, status=200)
@@ -874,6 +934,78 @@ async def delete(request: web.Request) -> web.Response:
     return web.Response(status=204)
 
 
+@server_status_required(READ_ALLOWED)
+@auth_required
+async def list_shared_vfolders(request: web.Request) -> web.Response:
+    '''
+    List shared vfolders.
+
+    Not available for group vfolders.
+    '''
+    dbpool = request.app['dbpool']
+    access_key = request['keypair']['access_key']
+    params = await request.json() if request.can_read_body else request.query
+    target_vfid = params.get('vfolder_id', None)
+    log.info('VFOLDER.LIST_SHARED_VFOLDERS (u:{0})', access_key)
+    async with dbpool.acquire() as conn:
+        j = (vfolder_permissions
+             .join(vfolders, vfolders.c.id == vfolder_permissions.c.vfolder)
+             .join(users, users.c.uuid == vfolder_permissions.c.user))
+        query = (sa.select([vfolder_permissions,
+                            vfolders.c.id, vfolders.c.name,
+                            users.c.email])
+                   .select_from(j)
+                   .where((vfolders.c.user == request['user']['uuid'])))
+        if target_vfid is not None:
+            query = query.where(vfolders.c.id == target_vfid)
+        result = await conn.execute(query)
+        shared_list = await result.fetchall()
+    shared_info = []
+    for shared in shared_list:
+        shared_info.append({
+            'vfolder_id': str(shared.id),
+            'vfolder_name': str(shared.name),
+            'shared_by': request['user']['email'],
+            'shared_to': {
+                'uuid': str(shared.user),
+                'email': shared.email,
+            },
+            'perm': shared.permission.value,
+        })
+    resp = {'shared': shared_info}
+    return web.json_response(resp, status=200)
+
+
+@atomic
+@server_status_required(ALL_ALLOWED)
+@auth_required
+@check_api_params(
+    t.Dict({
+        t.Key('vfolder'): tx.UUID,
+        t.Key('user'): tx.UUID,
+        tx.AliasedKey(['perm', 'permission']): VFolderPermissionValidator,
+    })
+)
+async def update_shared_vfolder(request: web.Request, params: Any) -> web.Response:
+    '''
+    Update permission for shared vfolders.
+    '''
+    dbpool = request.app['dbpool']
+    access_key = request['keypair']['access_key']
+    vfolder_id = params['vfolder']
+    user_uuid = params['user']
+    perm = params['perm']
+    log.info('VFOLDER.UPDATE_SHARED_VFOLDER(u:{0})', access_key)
+    async with dbpool.acquire() as conn:
+        query = (sa.update(vfolder_permissions)
+                   .values(permission=VFolderPermission(perm))
+                   .where(vfolder_permissions.c.vfolder == vfolder_id)
+                   .where(vfolder_permissions.c.user == user_uuid))
+        await conn.execute(query)
+    resp = {'msg': f'shared vfolder permission updated'}
+    return web.json_response(resp, status=200)
+
+
 async def init(app):
     mount_prefix = await app['config_server'].get('volumes/_mount')
     fs_prefix = await app['config_server'].get('volumes/_fsprefix')
@@ -910,7 +1042,11 @@ def create_app(default_cors_options):
     cors.add(add_route('POST',   r'/{name}/request_download', request_download))
     cors.add(add_route('GET',    r'/{name}/files', list_files))
     cors.add(add_route('POST',   r'/{name}/invite', invite))
+    cors.add(add_route('GET',    r'/invitations/list_sent', list_sent_invitations))
+    cors.add(add_route('POST',   r'/invitations/update/{inv_id}', update_invitation))
     cors.add(add_route('GET',    r'/invitations/list', invitations))
     cors.add(add_route('POST',   r'/invitations/accept', accept_invitation))
     cors.add(add_route('DELETE', r'/invitations/delete', delete_invitation))
+    cors.add(add_route('GET',    r'/_/shared', list_shared_vfolders))
+    cors.add(add_route('POST',   r'/_/shared', update_shared_vfolder))
     return app, []
