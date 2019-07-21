@@ -6,6 +6,7 @@ import zlib
 import aiohttp
 import pytest
 import sqlalchemy as sa
+import subprocess
 
 from ai.backend.manager.models import (
     groups, keypairs, keypair_resource_policies, users,
@@ -290,6 +291,13 @@ class TestVFolder:
 
 @pytest.mark.asyncio
 class TestGroupVFolder:
+    @pytest.fixture(autouse=True)
+    def set_vfolder_type_to_group(self):
+        subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
+                         'config/volumes/_type', 'group'])
+        yield
+        subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'delete',
+                         'config/volumes/_type'])
 
     async def create_group_vfolder(self, app, create_vfolder, name=None, host=None,
                                    keypair=None):
@@ -846,6 +854,14 @@ class TestFiles:
 
 
 class TestFilesInGroupVFolder:
+
+    @pytest.fixture(autouse=True)
+    def set_vfolder_type_to_group(self):
+        subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
+                         'config/volumes/_type', 'group'])
+        yield
+        subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'delete',
+                         'config/volumes/_type'])
 
     async def create_group_vfolder(self, app, create_vfolder, name=None,
                                    host=None, keypair=None):

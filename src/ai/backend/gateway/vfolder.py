@@ -26,7 +26,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from .auth import auth_required
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
-    GenericForbidden, InvalidAPIParameters)
+    GenericForbidden, InvalidAPIParameters, ServerMisconfiguredError)
 from .manager import (
     READ_ALLOWED, ALL_ALLOWED,
     server_status_required)
@@ -163,9 +163,13 @@ async def create(request: web.Request, params: Any) -> web.Response:
             raise InvalidAPIParameters(
                 'You must specify the vfolder host '
                 'because the default host is not configured.')
-    # TODO: configurable vfolder_type
-    allowed_vfolder_types = ['user', 'group']
-    # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
+    allowed_vfolder_types = await request.app['config_server'].etcd.get('config/volumes/_type')
+    if allowed_vfolder_types is None:
+        allowed_vfolder_types = ['user']  # fallback to user-type
+    elif allowed_vfolder_types not in ('user', 'group'):
+        raise ServerMisconfiguredError(
+            f'Invalid vfolder type(s): {str(allowed_vfolder_types)}.'
+            ' Only "user" or "group" is allowed.')
 
     async with dbpool.acquire() as conn:
         # Check resource policy's allowed_vfolder_hosts
