@@ -193,9 +193,9 @@ async def auth_middleware(request, handler):
 def auth_required(handler):
 
     @functools.wraps(handler)
-    async def wrapped(request):
+    async def wrapped(request, *args, **kwargs):
         if request.get('is_authorized', False):
-            return (await handler(request))
+            return (await handler(request, *args, **kwargs))
         raise AuthorizationFailed
 
     set_handler_attr(wrapped, 'auth_required', True)
@@ -205,9 +205,9 @@ def auth_required(handler):
 def admin_required(handler):
 
     @functools.wraps(handler)
-    async def wrapped(request):
+    async def wrapped(request, *args, **kwargs):
         if request.get('is_authorized', False) and request.get('is_admin', False):
-            return (await handler(request))
+            return (await handler(request, *args, **kwargs))
         raise AuthorizationFailed
 
     set_handler_attr(wrapped, 'auth_required', True)
@@ -217,9 +217,9 @@ def admin_required(handler):
 def superadmin_required(handler):
 
     @functools.wraps(handler)
-    async def wrapped(request):
+    async def wrapped(request, *args, **kwargs):
         if request.get('is_authorized', False) and request.get('is_superadmin', False):
-            return (await handler(request))
+            return (await handler(request, *args, **kwargs))
         raise AuthorizationFailed
 
     set_handler_attr(wrapped, 'auth_required', True)
