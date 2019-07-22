@@ -1,6 +1,13 @@
 Changes
 =======
 
+19.06.0b4 (2019-xx-xx)
+----------------------
+
+* CHANGE: Vfolder (storage) names may have a single dot prefix (e.g., ".local").
+
+* Extend support for group/shared vfolder invitations.
+
 19.06.0b3 (2019-07-17)
 ----------------------
 
