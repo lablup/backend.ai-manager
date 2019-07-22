@@ -130,8 +130,8 @@ $ python -m ai.backend.manager.cli etcd put volumes/_default_host local
 Set up the allowed types of vfolder. Allowed values are "user" or "group".
 If none is specified, "user" type is set implicitly:
 ```console
-$ python -m ai.backend.manager.cli etcd put config/volumes/_type group  # use group vfolder
-$ python -m ai.backend.manager.cli etcd put config/volumes/_type user   # use user vfolder
+$ python -m ai.backend.manager.cli etcd put volumes/_types/user ""   # enable user vfolder
+$ python -m ai.backend.manager.cli etcd put volumes/_types/group ""  # enable group vfolder
 ```
 
 Set up the database:

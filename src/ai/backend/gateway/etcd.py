@@ -518,6 +518,17 @@ class ConfigServer:
         configured_slots = await self.etcd.get_prefix_dict('config/resource_slots')
         return {**intrinsic_slots, **configured_slots}
 
+    @aiotools.lru_cache(maxsize=1, expire_after=60.0)
+    async def get_vfolder_types(self):
+        '''
+        Returns the vfolder types currently set. One of "user" and/or "group".
+        If none is specified, "user" type is implicitly assumed.
+        '''
+        vf_types = await self.etcd.get_prefix_dict('volumes/_types')
+        if not vf_types:
+            vf_types = {'user': ''}
+        return vf_types.keys()
+
     @aiotools.lru_cache(maxsize=1, expire_after=2.0)
     async def get_manager_status(self):
         status = await self.etcd.get('manager/status')
@@ -584,6 +595,12 @@ class ConfigServer:
 async def get_resource_slots(request) -> web.Response:
     known_slots = await request.app['config_server'].get_resource_slots()
     return web.json_response(known_slots, status=200)
+
+
+@atomic
+async def get_vfolder_types(request) -> web.Response:
+    vfolder_types = await request.app['config_server'].get_vfolder_types()
+    return web.json_response(vfolder_types, status=200)
 
 
 @atomic
@@ -667,6 +684,7 @@ def create_app(default_cors_options):
     app['api_versions'] = (3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     cors.add(app.router.add_route('GET',  r'/resource-slots', get_resource_slots))
+    cors.add(app.router.add_route('GET',  r'/vfolder-types', get_vfolder_types))
     cors.add(app.router.add_route('POST', r'/get', get_config))
     cors.add(app.router.add_route('POST', r'/set', set_config))
     cors.add(app.router.add_route('POST', r'/delete', delete_config))

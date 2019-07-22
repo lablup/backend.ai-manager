@@ -58,8 +58,7 @@ def vfolder_permission_required(perm: VFolderPermission):
             dbpool = request.app['dbpool']
             user_uuid = request['user']['uuid']
             folder_name = request.match_info['name']
-            allowed_vfolder_types = ['user', 'group']
-            # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
+            allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
             if perm == VFolderPermission.READ_ONLY:
                 # if READ_ONLY is requested, any permission accepts.
                 perm_cond = vfolder_permissions.c.permission.in_([
@@ -159,13 +158,12 @@ async def create(request: web.Request, params: Any) -> web.Response:
             raise InvalidAPIParameters(
                 'You must specify the vfolder host '
                 'because the default host is not configured.')
-    allowed_vfolder_types = await request.app['config_server'].etcd.get('config/volumes/_type')
-    if allowed_vfolder_types is None:
-        allowed_vfolder_types = ['user']  # fallback to user-type
-    elif allowed_vfolder_types not in ('user', 'group'):
-        raise ServerMisconfiguredError(
-            f'Invalid vfolder type(s): {str(allowed_vfolder_types)}.'
-            ' Only "user" or "group" is allowed.')
+    allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
+    for vf_type in allowed_vfolder_types:
+        if vf_type not in ('user', 'group'):
+            raise ServerMisconfiguredError(
+                f'Invalid vfolder type(s): {str(allowed_vfolder_types)}.'
+                ' Only "user" or "group" is allowed.')
 
     async with dbpool.acquire() as conn:
         # Check resource policy's allowed_vfolder_hosts
@@ -255,8 +253,7 @@ async def list_folders(request: web.Request) -> web.Response:
     log.info('VFOLDER.LIST (u:{0})', access_key)
     async with dbpool.acquire() as conn:
         params = await request.json() if request.can_read_body else request.query
-        allowed_vfolder_types = ['user', 'group']
-        # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
+        allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
         if request['is_superadmin'] and params.get('all', False):
             # List all folders for superadmin if all is specified
             query = sa.select([vfolders]).select_from(vfolders)
@@ -373,8 +370,7 @@ async def rename(request: web.Request, params: Any, row: VFolderRow) -> web.Resp
     access_key = request['keypair']['access_key']
     user_uuid = request['user']['uuid']
     new_name = params['new_name']
-    allowed_vfolder_types = ['user', 'group']
-    # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
+    allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
     log.info('VFOLDER.RENAME (u:{0}, f:{1} -> {2})',
              access_key, old_name, new_name)
     async with dbpool.acquire() as conn:
@@ -927,8 +923,7 @@ async def delete(request: web.Request) -> web.Response:
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     user_uuid = request['user']['uuid']
-    allowed_vfolder_types = ['user', 'group']
-    # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
+    allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
     log.info('VFOLDER.DELETE (u:{0}, f:{1})', access_key, folder_name)
     async with dbpool.acquire() as conn, conn.begin():
         entries = await query_accessible_vfolders(
