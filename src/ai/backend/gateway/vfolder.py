@@ -3,7 +3,6 @@ import json
 import logging
 import os
 from pathlib import Path
-import re
 import shutil
 import stat
 from typing import Any, Callable, Mapping
@@ -32,15 +31,12 @@ from .manager import (
     server_status_required)
 from .utils import check_api_params
 from ..manager.models import (
-    association_groups_users, users,
-    domains, groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
+    users, groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
     VFolderPermission, VFolderPermissionValidator, query_accessible_vfolders,
     get_allowed_vfolder_hosts_by_group, get_allowed_vfolder_hosts_by_user,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
-
-_rx_slug = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$')
 
 VFolderRow = Mapping[str, Any]
 
@@ -140,7 +136,7 @@ def vfolder_check_exists(handler: Callable[[web.Request, VFolderRow], web.Respon
 @auth_required
 @check_api_params(
     t.Dict({
-        t.Key('name'): t.Regexp('^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$', re.ASCII),
+        t.Key('name'): tx.Slug(allow_dot=True),
         t.Key('host', default=None) >> 'folder_host': t.Or(t.String, t.Null),
         tx.AliasedKey(['group', 'groupId', 'group_id'], default=None): t.Or(t.String, t.Null),
     }),
@@ -367,14 +363,16 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
 @server_status_required(ALL_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.OWNER_PERM)
-async def rename(request: web.Request, row: VFolderRow) -> web.Response:
+@check_api_params(
+    t.Dict({
+        t.Key('new_name'): tx.Slug(allow_dot=True),
+    }))
+async def rename(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     dbpool = request.app['dbpool']
     old_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     user_uuid = request['user']['uuid']
-    params = await request.json()
-    new_name = params.get('new_name', '')
-    assert _rx_slug.search(new_name) is not None, 'invalid name format'
+    new_name = params['new_name']
     allowed_vfolder_types = ['user', 'group']
     # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
     log.info('VFOLDER.RENAME (u:{0}, f:{1} -> {2})',
@@ -405,13 +403,14 @@ async def rename(request: web.Request, row: VFolderRow) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.READ_WRITE)
-async def mkdir(request: web.Request, row: VFolderRow) -> web.Response:
+@check_api_params(
+    t.Dict({
+        t.Key('path'): t.String,
+    }))
+async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
-    params = await request.json()
-    path = params.get('path')
-    assert path, 'path not specified!'
-    path = Path(path)
+    path = Path(params['path'])
     log.info('VFOLDER.MKDIR (u:{0}, f:{1})', access_key, folder_name)
     folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
                    request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
@@ -439,7 +438,11 @@ async def upload(request: web.Request, row: VFolderRow) -> web.Response:
         if file_count == 10:  # TODO: make it configurable
             raise InvalidAPIParameters('Too many files!')
         file_count += 1
-        file_path = folder_path / file.filename
+        try:
+            file_path = (folder_path / file.filename).resolve()
+            file_path.relative_to(folder_path)
+        except ValueError:
+            raise InvalidAPIParameters('One of target paths is out of the folder.')
         if file_path.exists() and not file_path.is_file():
             raise InvalidAPIParameters(
                 f'Cannot overwrite "{file.filename}" because '
@@ -461,19 +464,26 @@ async def upload(request: web.Request, row: VFolderRow) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @auth_required
 @vfolder_permission_required(VFolderPermission.RW_DELETE)
-async def delete_files(request: web.Request, row: VFolderRow) -> web.Response:
+@check_api_params(
+    t.Dict({
+        t.Key('files'): t.List[t.String],
+        t.Key('recursive', default=False): t.Bool,
+    }))
+async def delete_files(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
-    params = await request.json()
-    files = params.get('files')
-    assert files, 'no file(s) specified!'
-    recursive = params.get('recursive', False)
+    recursive = params['recursive']
     log.info('VFOLDER.DELETE_FILES (u:{0}, f:{1})', access_key, folder_name)
     folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
                    request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
     ops = []
-    for file in files:
-        file_path = folder_path / file
+    for file in params['files']:
+        try:
+            file_path = (folder_path / file).resolve()
+            file_path.relative_to(folder_path)
+        except ValueError:
+            # path is out of folder
+            continue
         if file_path.is_dir():
             if recursive:
                 ops.append(functools.partial(shutil.rmtree, file_path))
@@ -502,7 +512,12 @@ async def download(request: web.Request, row: VFolderRow) -> web.Response:
     folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
                    request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
     for file in files:
-        if not (folder_path / file).is_file():
+        try:
+            file_path = (folder_path / file).resolve()
+            file_path.relative_to(folder_path)
+        except ValueError:
+            raise InvalidAPIParameters('The requested path is out of the folder')
+        if not file_path.is_file():
             raise InvalidAPIParameters(
                 f'You cannot download "{file}" because it is not a regular file.')
     with aiohttp.MultipartWriter('mixed') as mpwriter:
@@ -534,8 +549,8 @@ async def download_single(request: web.Request, row: VFolderRow) -> web.Response
     log.info('VFOLDER.DOWNLOAD (u:{0}, f:{1})', access_key, folder_name)
     folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
                    request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
-    file_path = (folder_path / fn).resolve()
     try:
+        file_path = (folder_path / fn).resolve()
         file_path.relative_to(folder_path)
         if not file_path.exists():
             raise FileNotFoundError
@@ -582,8 +597,8 @@ async def download_with_token(request):
     log.info('VFOLDER.DOWNLOAD_WITH_TOKEN (id:{0}, name:{1})', params['id'], fn)
     folder_path = (request.app['VFOLDER_MOUNT'] / params['host'] /
                    request.app['VFOLDER_FSPREFIX'] / params['id'])
-    file_path = (folder_path / fn).resolve()
     try:
+        file_path = (folder_path / fn).resolve()
         file_path.relative_to(folder_path)
         if not file_path.exists():
             raise FileNotFoundError
@@ -610,9 +625,11 @@ async def list_files(request: web.Request, row: VFolderRow) -> web.Response:
     base_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
                  request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
     folder_path = base_path / params['path'] if 'path' in params else base_path
-    if not str(folder_path).startswith(str(base_path)):
-        resp = {'error_msg': 'No such file or directory'}
-        return web.json_response(resp, status=404)
+    try:
+        folder_path.resolve()
+        folder_path.relative_to(base_path)
+    except ValueError:
+        raise VFolderNotFound('No such file or directory.')
     files = []
     for f in os.scandir(folder_path):
         fstat = f.stat()
