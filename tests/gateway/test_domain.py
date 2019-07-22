@@ -161,7 +161,7 @@ class TestDomainAdminQuery:
         assert rsp_json['create_domain']['domain']['name'] == 'new-domain'
         assert rsp_json['create_domain']['domain']['description'] == 'desc'
         assert rsp_json['create_domain']['domain']['is_active']
-        assert rsp_json['create_domain']['domain']['total_resource_slots'] == '{"cpu": "0", "mem": "0"}'
+        assert rsp_json['create_domain']['domain']['total_resource_slots'] == '{}'
 
         # Update the domain.
         query = textwrap.dedent('''\

@@ -527,7 +527,7 @@ class ConfigServer:
         vf_types = await self.etcd.get_prefix_dict('volumes/_types')
         if not vf_types:
             vf_types = {'user': ''}
-        return vf_types.keys()
+        return list(vf_types.keys())
 
     @aiotools.lru_cache(maxsize=1, expire_after=2.0)
     async def get_manager_status(self):
