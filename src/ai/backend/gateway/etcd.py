@@ -393,7 +393,7 @@ class ConfigServer:
 
         ssl_ctx = None  # default
         app_config = self.context.get('config')
-        if app_config is not None and app_config['docker-registry']['ssl-verify']:
+        if app_config is not None and not app_config['docker-registry']['ssl-verify']:
             ssl_ctx = False
         connector = aiohttp.TCPConnector(ssl=ssl_ctx)
         async with aiohttp.ClientSession(connector=connector) as sess:
