@@ -1,12 +1,16 @@
 Changes
 =======
 
-19.06.0b4 (2019-xx-xx)
+19.06.0b4 (2019-07-24)
 ----------------------
 
-* CHANGE: Vfolder (storage) names may have a single dot prefix (e.g., ".local").
+* CHANGE: vfolder (storage) names may have a single dot prefix (e.g., ".local").
 
-* Extend support for group/shared vfolder invitations.
+* FIX: inversion of docker-registry.ssl-verify option
+
+* Updated kernel's get_info REST API to work with latest compute session models. (#160)
+
+* Extend support for group/shared vfolders and invitation-related APIs. (#149, #166)
 
 19.06.0b3 (2019-07-17)
 ----------------------
