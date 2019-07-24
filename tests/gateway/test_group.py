@@ -55,6 +55,7 @@ class TestGroupAdminQuery:
             'name': domain_name,
             'input': {
                 'total_resource_slots': '{}',
+                'allowed_vfolder_hosts': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -75,6 +76,7 @@ class TestGroupAdminQuery:
             'input': {
                 'domain_name': domain_name,
                 'total_resource_slots': '{}',
+                'allowed_vfolder_hosts': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -171,6 +173,7 @@ class TestGroupAdminQuery:
             'name': new_domain_name,
             'input': {
                 'total_resource_slots': '{}',
+                'allowed_vfolder_hosts': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -191,6 +194,7 @@ class TestGroupAdminQuery:
             'input': {
                 'domain_name': new_domain_name,
                 'total_resource_slots': '{}',
+                'allowed_vfolder_hosts': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -232,6 +236,7 @@ class TestGroupAdminQuery:
                 'is_active': True,
                 'domain_name': 'default',
                 'total_resource_slots': '{}',
+                'allowed_vfolder_hosts': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -301,6 +306,7 @@ class TestGroupAdminQuery:
             'name': domain_name,
             'input': {
                 'total_resource_slots': '{}',
+                'allowed_vfolder_hosts': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -322,6 +328,7 @@ class TestGroupAdminQuery:
                 'is_active': True,
                 'domain_name': domain_name,
                 'total_resource_slots': '{}',
+                'allowed_vfolder_hosts': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -344,6 +351,7 @@ class TestGroupAdminQuery:
                 'is_active': True,
                 'domain_name': domain_name,
                 'total_resource_slots': '{}',
+                'allowed_vfolder_hosts': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -438,6 +446,7 @@ class TestGroupAdminQuery:
                 'is_active': True,
                 'domain_name': 'default',
                 'total_resource_slots': '{}',
+                'allowed_vfolder_hosts': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -583,6 +592,7 @@ class TestGroupUserQuery:
             'name': domain_name,
             'input': {
                 'total_resource_slots': '{}',
+                'allowed_vfolder_hosts': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -603,6 +613,7 @@ class TestGroupUserQuery:
             'input': {
                 'domain_name': domain_name,
                 'total_resource_slots': '{}',
+                'allowed_vfolder_hosts': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -700,6 +711,7 @@ class TestGroupUserQuery:
             'name': new_domain_name,
             'input': {
                 'total_resource_slots': '{}',
+                'allowed_vfolder_hosts': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -720,6 +732,7 @@ class TestGroupUserQuery:
             'input': {
                 'domain_name': new_domain_name,
                 'total_resource_slots': '{}',
+                'allowed_vfolder_hosts': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()

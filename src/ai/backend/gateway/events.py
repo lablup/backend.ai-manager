@@ -30,9 +30,11 @@ def event_router(_, pidx, args):
     in_sock.bind("tcp://{0.host}:{0.port}".format(args[0]['manager']['event-listen-addr']))
     out_sock = ctx.socket(zmq.PUSH)
     ipc_base_path.mkdir(parents=True, exist_ok=True)
-    out_sock.bind(EVENT_IPC_ADDR)
     try:
+        out_sock.bind(EVENT_IPC_ADDR)
         zmq.proxy(in_sock, out_sock)
+    except zmq.error.ZMQError:
+        log.error('Cannot bind the event router socket to {}', EVENT_IPC_ADDR)
     except (KeyboardInterrupt, SystemExit):
         pass
     except:

@@ -16,14 +16,16 @@ import trafaret as t
 
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from .exceptions import (
+    GenericBadRequest, InternalServerError,
     InvalidAuthParameters, AuthorizationFailed,
     InvalidAPIParameters,
 )
 from ..manager.models import (
     keypairs, keypair_resource_policies, users,
 )
-from ..manager.models.user import check_credential
+from ..manager.models.user import UserRole, check_credential
 from ..manager.models.keypair import generate_keypair as _gen_keypair
+from ..manager.models.group import association_groups_users, groups
 from .utils import check_api_params, set_handler_attr, get_handler_attr
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.auth'))
@@ -191,9 +193,9 @@ async def auth_middleware(request, handler):
 def auth_required(handler):
 
     @functools.wraps(handler)
-    async def wrapped(request):
+    async def wrapped(request, *args, **kwargs):
         if request.get('is_authorized', False):
-            return (await handler(request))
+            return (await handler(request, *args, **kwargs))
         raise AuthorizationFailed
 
     set_handler_attr(wrapped, 'auth_required', True)
@@ -203,9 +205,9 @@ def auth_required(handler):
 def admin_required(handler):
 
     @functools.wraps(handler)
-    async def wrapped(request):
+    async def wrapped(request, *args, **kwargs):
         if request.get('is_authorized', False) and request.get('is_admin', False):
-            return (await handler(request))
+            return (await handler(request, *args, **kwargs))
         raise AuthorizationFailed
 
     set_handler_attr(wrapped, 'auth_required', True)
@@ -215,9 +217,9 @@ def admin_required(handler):
 def superadmin_required(handler):
 
     @functools.wraps(handler)
-    async def wrapped(request):
+    async def wrapped(request, *args, **kwargs):
         if request.get('is_authorized', False) and request.get('is_superadmin', False):
-            return (await handler(request))
+            return (await handler(request, *args, **kwargs))
         raise AuthorizationFailed
 
     set_handler_attr(wrapped, 'auth_required', True)
@@ -270,6 +272,89 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
     })
 
 
+@atomic
+@check_api_params(
+    t.Dict({
+        t.Key('domain'): t.String,
+        t.Key('email'): t.String,
+        t.Key('password'): t.String,
+    }))
+async def signup(request: web.Request, params: Any) -> web.Response:
+    dbpool = request.app['dbpool']
+    # TODO: assume only one hook (hanati) and bound method (very dirty, but no time now)
+    # Check if email exists in hanati
+    assert 'hanati_hook' in request.app
+    check_user = request.app['hanati_hook'].get_handlers()[0][0][1]
+    hana_user = await check_user(params['email'])  # exception will be raised if not found
+    if isinstance(hana_user, dict) and not hana_user['success']:
+        return web.json_response({'error_msg': 'no such cloudia user'}, status=404)
+
+    async with dbpool.acquire() as conn:
+        # Check if email already exists.
+        query = (sa.select([users])
+                   .select_from(users)
+                   .where((users.c.email == params['email'])))
+        result = await conn.execute(query)
+        row = await result.first()
+        if row is not None:
+            raise GenericBadRequest('Email already exists')
+
+        # Create a user.
+        data = {
+            'domain_name': params['domain'],
+            'username': params['email'],
+            'email': params['email'],
+            'password': params['password'],
+            'need_password_change': False,
+            'full_name': hana_user.name,
+            'description': f'Cloudia user in {hana_user.company.name}',
+            'is_active': True,
+            'role': UserRole.USER,
+            'integration_id': hana_user.idx,
+        }
+        query = (users.insert().values(data))
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            checkq = users.select().where(users.c.email == params['email'])
+            result = await conn.execute(checkq)
+            user = await result.first()
+            # Create user's first access_key and secret_key.
+            ak, sk = _gen_keypair()
+            kp_data = {
+                'user_id': params['email'],
+                'access_key': ak,
+                'secret_key': sk,
+                'is_active': True,
+                'is_admin': False,
+                'resource_policy': 'default',
+                'concurrency_used': 0,
+                'rate_limit': 1000,
+                'num_queries': 0,
+                'user': user.uuid,
+            }
+            query = (keypairs.insert().values(kp_data))
+            await conn.execute(query)
+
+            # Add user to the default group.
+            query = (sa.select([groups.c.id])
+                       .select_from(groups)
+                       .where(groups.c.domain_name == params['domain'])
+                       .where(groups.c.name == 'default'))
+            result = await conn.execute(query)
+            grp = await result.fetchone()
+            values = [{'user_id': user.uuid, 'group_id': grp.id}]
+            query = association_groups_users.insert().values(values)
+            await conn.execute(query)
+        else:
+            raise InternalServerError('Error creating user account')
+    return web.json_response({
+        'data': {
+            'access_key': ak,
+            'secret_key': sk,
+        },
+    })
+
+
 def create_app(default_cors_options):
     app = web.Application()
     app['prefix'] = 'auth'  # slashed to distinguish with "/vN/authorize"
@@ -282,6 +367,7 @@ def create_app(default_cors_options):
     cors.add(test_resource.add_route('GET', test))
     cors.add(test_resource.add_route('POST', test))
     cors.add(app.router.add_route('POST', '/authorize', authorize))
+    cors.add(app.router.add_route('POST', '/signup', signup))
     return app, [auth_middleware]
 
 

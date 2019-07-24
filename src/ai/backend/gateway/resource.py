@@ -2,6 +2,7 @@
 Resource preset APIs.
 '''
 
+from collections import defaultdict
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from decimal import Decimal
@@ -27,8 +28,8 @@ from .exceptions import (
 from .manager import READ_ALLOWED, server_status_required
 from ..manager.models import (
     agents, resource_presets,
-    groups, kernels,
-    AgentStatus,
+    groups, kernels, keypairs,
+    AgentStatus, KernelStatus,
 )
 from .utils import check_api_params
 
@@ -131,6 +132,56 @@ async def check_presets(request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
+@superadmin_required
+@atomic
+async def recalculate_usage(request) -> web.Response:
+    '''
+    Update `keypairs.c.concurrency_used` and `agents.c.occupied_slots`.
+
+    Those two values are sometimes out of sync. In that case, calling this API
+    re-calculates the values for running containers and updates them in DB.
+    '''
+    async with request.app['dbpool'].acquire() as conn, conn.begin():
+        # Query running containers and calculate concurrency_used per AK and
+        # occupied_slots per agent.
+        query = (sa.select([kernels.c.access_key, kernels.c.agent, kernels.c.occupied_slots])
+                   .where(kernels.c.status != KernelStatus.TERMINATED)
+                   .order_by(sa.asc(kernels.c.access_key)))
+        concurrency_used_per_key = defaultdict(lambda: 0)
+        occupied_slots_per_agent = defaultdict(lambda: ResourceSlot({'cpu': 0, 'mem': 0}))
+        async for row in conn.execute(query):
+            concurrency_used_per_key[row.access_key] += 1
+            occupied_slots_per_agent[row.agent] += ResourceSlot(row.occupied_slots)
+
+        # Update concurrency_used for keypairs with running containers.
+        for ak, used in concurrency_used_per_key.items():
+            query = (sa.update(keypairs)
+                       .values(concurrency_used=used)
+                       .where(keypairs.c.access_key == ak))
+            await conn.execute(query)
+        # Update all other keypairs to have concurrency_used = 0.
+        query = (sa.update(keypairs)
+                   .values(concurrency_used=0)
+                   .where(keypairs.c.concurrency_used != 0)
+                   .where(sa.not_(keypairs.c.access_key.in_(concurrency_used_per_key.keys()))))
+        await conn.execute(query)
+
+        # Update occupied_slots for agents with running containers.
+        for aid, slots in occupied_slots_per_agent.items():
+            query = (sa.update(agents)
+                       .values(occupied_slots=slots)
+                       .where(agents.c.id == aid))
+            await conn.execute(query)
+        # Update all other agents to have empty occupied_slots.
+        query = (sa.update(agents)
+                   .values(occupied_slots=ResourceSlot({}))
+                   .where(agents.c.status == AgentStatus.ALIVE)
+                   .where(sa.not_(agents.c.id.in_(occupied_slots_per_agent.keys()))))
+        await conn.execute(query)
+    return web.json_response({}, status=200)
+
+
 async def get_container_stats_for_period(request, start_date, end_date, group_ids=None):
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         j = (sa.join(kernels, groups, kernels.c.group_id == groups.c.id))
@@ -165,9 +216,8 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'used_days': (row['terminated_at'].astimezone(local_tz).toordinal() -
                           row['created_at'].astimezone(local_tz).toordinal() + 1),
             'device_type': None,  # TODO: gpu device type
-            'smp': int(row.occupied_slots['cpu']),
+            'smp': None,  # TODO: gpu smp?
             'nfs': None,  # TODO: what value to write here?
-            'image_id': None,  # TODO: get image id
             'image_name': row['image'],
             'created_at': str(row['created_at']),
             'terminated_at': str(row['terminated_at']),
@@ -277,6 +327,7 @@ def create_app(default_cors_options):
     add_route = app.router.add_route
     cors.add(add_route('GET',  '/presets', list_presets))
     cors.add(add_route('POST', '/check-presets', check_presets))
+    cors.add(add_route('POST', '/recalculate-usage', recalculate_usage))
     cors.add(add_route('GET',  '/usage/month', usage_per_month))
     cors.add(add_route('GET',  '/usage/period', usage_per_period))
     return app, []

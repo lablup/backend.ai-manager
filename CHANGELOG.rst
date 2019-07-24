@@ -1,13 +1,53 @@
 Changes
 =======
 
-19.06.0a2 (2019-xx-xx)
+19.06.0b4 (2019-xx-xx)
 ----------------------
 
-* Add "config/get", "config/set", "config/delete" APIs for administrators to manipulate etcd
+* CHANGE: Vfolder (storage) names may have a single dot prefix (e.g., ".local").
+
+* Extend support for group/shared vfolder invitations.
+
+19.06.0b3 (2019-07-17)
+----------------------
+
+* CHANGE: Accept typeless resource slots for resource policy configurations
+  (lablup/backend.ai-common#7)
+
+* FIX: Register public interface only when the app exists
+
+19.06.0b2 (2019-07-15)
+----------------------
+
+* Add the user signup endpoint and related plugins support
+
+19.06.0b1 (2019-07-14)
+----------------------
+
+* The API version is now "v4.20190615" (latest prior was "v4.20190315").
+
+* NEW: Add an API for manually recalculating resource usage for keypair and agents (#161)
+
+* NEW: Add an API for token-based streaming download from vfolders (#159)
+
+* NEW: Add "config/get", "config/set", "config/delete" APIs for administrators to manipulate etcd
   configurations.
 
+* NEW: Add resource statistics API for admins (#154, #156, #157)
+
+* NEW: vfolder now has two types: per-user and per-group (#148, #152)
+
+* BREAKING CHANGE: configurations are now read from TOML files (#155)
+
+  - Redis address is no longer configured in the manager-side config.
+    It must be set as "config/redis/addr" (and "config/redis/password" optionally) in the etcd directly.
+
 * BREAKING CHANGE: "etcd/resource-slots" -> "config/resource-slots"
+
+* Now etcd user/password authentication works with automatic auth-token refreshes and reconnections.
+
+* Alembic migrations are updated to have self-contained table definitions so that they are not affetced
+  by the current version of manager models.
 
 19.06.0a1 (2019-06-03)
 ----------------------
@@ -31,6 +71,18 @@ Changes
     support JWT as well.
 
   - Explicit group association is required when launching new kernels.
+
+19.03.2 (2019-07-12)
+--------------------
+
+- NEW: Add a new API for downloading large files from vfolders via streaming based on JWT-based
+  authentication. (#159)
+
+- NEW: Add a new API for recalculating keypair/agent resource usage when there are database
+  synchronization errors. (#161)
+
+- CHANGE: Allow users to provide their own custom access key and secret key when creating or
+  modifying their keypairs (for human-readable keys)
 
 19.03.1 (2019-04-21)
 --------------------

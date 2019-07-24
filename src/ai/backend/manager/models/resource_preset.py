@@ -86,13 +86,11 @@ class CreateResourcePreset(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, name, props):
-        known_slot_types = \
-            await info.context['config_server'].get_resource_slots()
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {
                 'name': name,
                 'resource_slots': ResourceSlot.from_user_input(
-                    props.resource_slots, known_slot_types),
+                    props.resource_slots, None),
             }
             query = (resource_presets.insert().values(data))
             try:
@@ -104,20 +102,20 @@ class CreateResourcePreset(graphene.Mutation):
                     result = await conn.execute(checkq)
                     o = ResourcePreset.from_row(
                         info.context, await result.first())
-                    return cls(ok=True, msg='success', resource_policy=o)
+                    return cls(ok=True, msg='success', resource_preset=o)
                 else:
-                    return cls(ok=False, msg='failed to create resource policy',
-                               resource_policy=None)
+                    return cls(ok=False, msg='failed to create resource preset',
+                               resource_preset=None)
             except (pg.IntegrityError, sa.exc.IntegrityError) as e:
                 return cls(ok=False, msg=f'integrity error: {e}',
-                           resource_policy=None)
+                           resource_preset=None)
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 raise
             except Exception as e:
                 return cls(
                     ok=False,
                     msg=f'unexpected error ({type(e).__name__}): {e}',
-                    resource_policy=None)
+                    resource_preset=None)
 
 
 class ModifyResourcePreset(graphene.Mutation):
@@ -131,8 +129,6 @@ class ModifyResourcePreset(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, name, props):
-        known_slot_types = \
-            await info.context['config_server'].get_resource_slots()
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
 
@@ -143,7 +139,7 @@ class ModifyResourcePreset(graphene.Mutation):
                     data[name] = clean(v)
 
             def clean_resource_slot(v):
-                return ResourceSlot.from_user_input(v, known_slot_types)
+                return ResourceSlot.from_user_input(v, None)
 
             set_if_set('resource_slots', clean_resource_slot)
 
@@ -156,7 +152,7 @@ class ModifyResourcePreset(graphene.Mutation):
                 if result.rowcount > 0:
                     return cls(ok=True, msg='success')
                 else:
-                    return cls(ok=False, msg='no such resource policy')
+                    return cls(ok=False, msg='no such resource preset')
             except (pg.IntegrityError, sa.exc.IntegrityError) as e:
                 return cls(ok=False,
                            msg=f'integrity error: {e}')
@@ -186,7 +182,7 @@ class DeleteResourcePreset(graphene.Mutation):
                 if result.rowcount > 0:
                     return cls(ok=True, msg='success')
                 else:
-                    return cls(ok=False, msg='no such resource policy')
+                    return cls(ok=False, msg='no such resource preset')
             except (pg.IntegrityError, sa.exc.IntegrityError) as e:
                 return cls(ok=False,
                            msg=f'integrity error: {e}')

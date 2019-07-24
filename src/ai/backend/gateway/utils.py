@@ -1,3 +1,4 @@
+import asyncio
 from collections import defaultdict
 from datetime import datetime
 import functools
@@ -45,22 +46,22 @@ def get_access_key_scopes(request):
 
 def check_api_params(checker: t.Trafaret, loads: Callable = None) -> Any:
 
-    def wrap(handler: Callable[[web.Request], web.Response]):
+    def wrap(handler: Callable[[web.Request, Any], web.Response]):
 
         @functools.wraps(handler)
-        async def wrapped(request: web.Request) -> web.Response:
+        async def wrapped(request: web.Request, *args, **kwargs) -> web.Response:
             try:
                 if request.can_read_body:
                     params = await request.json(loads=loads or json.loads)
                 else:
-                    params = request.params
+                    params = request.query
                 params = checker.check(params)
             except json.decoder.JSONDecodeError:
                 raise InvalidAPIParameters('Malformed body')
             except t.DataError as e:
                 raise InvalidAPIParameters(f'Input validation error',
                                            extra_data=e.as_dict())
-            return await handler(request, params)
+            return await handler(request, params, *args, **kwargs)
 
         return wrapped
 
@@ -205,3 +206,9 @@ async def call_non_bursty(key, coro, *, max_bursts=64, max_idle=100):
             return await coro()
         else:
             return coro()
+
+
+if hasattr(asyncio, 'get_running_loop'):  # Python 3.7+
+    current_loop = asyncio.get_running_loop
+else:
+    current_loop = asyncio.get_event_loop
