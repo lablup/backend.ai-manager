@@ -252,6 +252,16 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         # other types are not implemented yet.
         raise InvalidAPIParameters('Unsupported authorization type')
     dbpool = request.app['dbpool']
+    if 'hanati_hook' in request.app:
+        from ai.backend.integration.hanati.cloudia import CloudiaAPIError
+        try:
+            check_user = request.app['hanati_hook'].get_handlers()[0][0][1]
+            hana_user = await check_user(params['username'])
+        except CloudiaAPIError:
+            return web.json_response({
+                'error_msg': 'Create account on Cloudia first',
+            }, status=404)
+
     user = await check_credential(
         dbpool,
         params['domain'], params['username'], params['password'])
