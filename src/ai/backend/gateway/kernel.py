@@ -353,23 +353,34 @@ async def get_info(request: web.Request) -> web.Response:
     try:
         await registry.increment_session_usage(sess_id, owner_access_key)
         kern = await registry.get_session(sess_id, owner_access_key, field='*')
+        resp['domainName'] = kern.domain_name
+        resp['groupId'] = str(kern.group_id)
+        resp['userId'] = str(kern.user_uuid)
         resp['lang'] = kern.image  # legacy
         resp['image'] = kern.image
         resp['registry'] = kern.registry
         resp['tag'] = kern.tag
+        
+        #Resource occupation
+        resp['containerId'] = str(kern.container_id)
+        resp['occupiedSlots'] = str(kern.occupied_slots)
+        resp['occupiedShares'] = str(kern.occupied_shares)
+        resp['environ'] = str(kern.environ)
+
+        #Lifecycle
+        resp['status'] = kern.status.name # "e.g. 'KernelStatus.RUNNING' -> 'RUNNING' "
+        resp['statusInfo'] = str(kern.status_info)
         age = datetime.now(tzutc()) - kern.created_at
-        resp['age'] = age.total_seconds() * 1000
-        # Resource limits collected from agent heartbeats
-        # TODO: factor out policy/image info as a common repository
-        resp['queryTimeout']  = -1  # deprecated
-        resp['idleTimeout']   = -1  # deprecated
-        resp['memoryLimit']   = kern.mem_max_bytes >> 10  # KiB
-        resp['maxCpuCredit']  = -1  # deprecated
-        # Stats collected from agent heartbeats
+        resp['age'] = int(age.total_seconds() * 1000) #age in milliseconds
+        resp['creationTime'] = str(kern.created_at)
+        resp['terminationTime'] = str(kern.terminated_at) if kern.terminated_at else None
+
         resp['numQueriesExecuted'] = kern.num_queries
-        resp['idle']          = -1  # deprecated
-        resp['memoryUsed']    = -1  # deprecated
-        resp['cpuCreditUsed'] = kern.cpu_used
+        resp['lastStat'] = kern.last_stat
+        
+        # Resource limits collected from agent heartbeats were erased, as they were deprecated
+        # TODO: factor out policy/image info as a common repository
+        
         log.info('information retrieved: {0!r}', resp)
     except BackendError:
         log.exception('GETINFO: exception')
