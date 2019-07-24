@@ -260,9 +260,9 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
     if 'hanati_hook' in request.app:
         check_user = request.app['hanati_hook'].get_handlers()[0][0][1]
         hana_user = await check_user(params['username'])
-        if 'success' in hana_user and not hana_user['success']:
+        if isinstance(hana_user, dict) and not hana_user['success']:
             return web.json_response({
-                'error_msg': 'Create account on Cloudia first',
+                'message': 'Create account on Cloudia first',
             }, status=404)
     async with dbpool.acquire() as conn:
         query = (sa.select([keypairs.c.access_key, keypairs.c.secret_key])
