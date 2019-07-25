@@ -76,29 +76,32 @@ async def query_allowed_sgroups(db_conn: object,
                                 domain: str,
                                 group: Union[uuid.UUID, str],
                                 access_key: str):
-    query = (sa.select([sgroups_for_domains.c.scaling_group])
+    query = (sa.select([sgroups_for_domains])
                .where(sgroups_for_domains.c.name == domain))
     result = await db_conn.execute(query)
     from_domain = {row['scaling_group'] async for row in result}
 
     if isinstance(group, uuid.UUID):
-        query = (sa.select([sgroups_for_groups.c.scaling_group])
+        query = (sa.select([sgroups_for_groups])
                    .where(sgroups_for_groups.c.id == group))
     elif isinstance(group, str):
-        query = (sa.select([sgroups_for_groups.c.scaling_group])
+        query = (sa.select([sgroups_for_groups])
                    .where(sgroups_for_groups.c.name == group))
     else:
         raise ValueError('unexpected type for group', group)
     result = await db_conn.execute(query)
     from_group = {row['scaling_group'] async for row in result}
 
-    query = (sa.select([sgroups_for_keypairs.c.scaling_group])
+    query = (sa.select([sgroups_for_keypairs])
                .where(sgroups_for_keypairs.c.access_key == access_key))
     result = await db_conn.execute(query)
     from_keypair = {row['scaling_group'] async for row in result}
 
     sgroups = from_domain | from_group | from_keypair
     query = (sa.select([scaling_groups])
-               .where(scaling_groups.c.name.in_(sgroups)))
+               .where(
+                   (scaling_groups.c.name.in_(sgroups)) &
+                   (scaling_groups.c.is_active == True)   # noqa: E712
+               ))
     result = await db_conn.execute(query)
     return [row async for row in result]
