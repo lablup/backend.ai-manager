@@ -4,7 +4,8 @@
             "name": "default",
             "description": "Default domain",
             "is_active": true,
-            "total_resource_slots": {}
+            "total_resource_slots": {},
+            "allowed_vfolder_hosts": {}
         }
     ],
     "groups": [
@@ -14,7 +15,8 @@
             "description": "Default group in default domain",
             "is_active": true,
             "domain_name": "default",
-            "total_resource_slots": {}
+            "total_resource_slots": {},
+            "allowed_vfolder_hosts": {}
         }
     ],
     "users": [
