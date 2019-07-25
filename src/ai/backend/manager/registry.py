@@ -1033,6 +1033,7 @@ class AgentRegistry:
         # Check and update status of the agent record in DB
         async with self.dbpool.acquire() as conn, conn.begin():
             query = (sa.select([agents.c.status,
+                                agents.c.scaling_group,
                                 agents.c.available_slots],
                                for_update=True)
                        .select_from(agents)
@@ -1046,6 +1047,7 @@ class AgentRegistry:
             available_slots = ResourceSlot({
                 k: v[1] for k, v in
                 agent_info['resource_slots'].items()})
+            sgroup = agent_info.get('scaling_group', 'default')
 
             # compare and update etcd slot_keys
 
@@ -1056,6 +1058,7 @@ class AgentRegistry:
                     'id': agent_id,
                     'status': AgentStatus.ALIVE,
                     'region': agent_info['region'],
+                    'scaling_group': sgroup,
                     'available_slots': available_slots,
                     'occupied_slots': {},
                     'addr': agent_info['addr'],
@@ -1070,9 +1073,10 @@ class AgentRegistry:
                 await self.config_server.update_resource_slots(slot_key_and_units)
             elif row.status == AgentStatus.ALIVE:
                 updates = {}
-                current_avail_slots = row.available_slots
-                if available_slots != current_avail_slots:
+                if row.available_slots != available_slots:
                     updates['available_slots'] = available_slots
+                if row.scaling_group != sgroup:
+                    updates['scaling_group'] = sgroup
                 # occupied_slots are updated when kernels starts/terminates
                 if updates:
                     query = (sa.update(agents)
@@ -1085,6 +1089,7 @@ class AgentRegistry:
                            .values({
                                'status': AgentStatus.ALIVE,
                                'region': agent_info['region'],
+                               'scaling_group': sgroup,
                                'addr': agent_info['addr'],
                                'lost_at': None,
                                'available_slots': available_slots,
