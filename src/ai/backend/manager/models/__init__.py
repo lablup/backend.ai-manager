@@ -10,6 +10,7 @@ from .user import *     # noqa
 from .vfolder import *  # noqa
 from .resource_policy import *  # noqa
 from .resource_preset import *  # noqa
+from .scaling_group import *  # noqa
 
 __all__ = (
     'metadata',
@@ -23,4 +24,5 @@ __all__ = (
     vfolder.__all__,  # noqa
     resource_policy.__all__,  # noqa
     resource_preset.__all__,  # noqa
+    scaling_group.__all__,  # noqa
 )

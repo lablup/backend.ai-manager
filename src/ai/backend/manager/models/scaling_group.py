@@ -5,6 +5,13 @@ import uuid
 
 from .base import metadata
 
+__all__ = (
+    'scaling_groups',
+    'sgroups_for_domains',
+    'sgroups_for_groups',
+    'sgroups_for_keypairs',
+)
+
 
 scaling_groups = sa.Table(
     'scaling_groups', metadata,
