@@ -47,6 +47,8 @@ kernels = sa.Table(
     IDColumn(),
     sa.Column('sess_id', sa.String(length=64), unique=False, index=True),
     sa.Column('role', sa.String(length=16), nullable=False, default='master'),
+    sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True,
+              nullable=False, server_default='default', default='default'),
     sa.Column('agent', sa.String(length=64), sa.ForeignKey('agents.id')),
     sa.Column('agent_addr', sa.String(length=128), nullable=False),
     sa.Column('domain_name', sa.String(length=64), sa.ForeignKey('domains.name'), nullable=False),
@@ -102,6 +104,7 @@ class SessionCommons:
     registry = graphene.String()
     domain_name = graphene.String()
     group_id = graphene.UUID()
+    scaling_group = graphene.String()
     user_uuid = graphene.UUID()
     access_key = graphene.String()
 
@@ -218,6 +221,7 @@ class SessionCommons:
             'registry': row['registry'],
             'domain_name': row['domain_name'],
             'group_id': row['group_id'],
+            'scaling_group': row['scaling_group'],
             'user_uuid': row['user_uuid'],
             'access_key': row['access_key'],
             'status': row['status'].name,
