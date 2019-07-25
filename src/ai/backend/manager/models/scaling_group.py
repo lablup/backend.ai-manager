@@ -6,10 +6,13 @@ import uuid
 from .base import metadata
 
 __all__ = (
+    # table defs
     'scaling_groups',
     'sgroups_for_domains',
     'sgroups_for_groups',
     'sgroups_for_keypairs',
+    # functions
+    'query_allowed_sgroups',
 )
 
 
@@ -84,16 +87,19 @@ async def query_allowed_sgroups(db_conn: object,
                                 group: Union[uuid.UUID, str],
                                 access_key: str):
     query = (sa.select([sgroups_for_domains])
-               .where(sgroups_for_domains.c.name == domain))
+               .where(sgroups_for_domains.c.domain == domain))
     result = await db_conn.execute(query)
     from_domain = {row['scaling_group'] async for row in result}
 
     if isinstance(group, uuid.UUID):
         query = (sa.select([sgroups_for_groups])
-                   .where(sgroups_for_groups.c.id == group))
+                   .where(sgroups_for_groups.c.group == group))
     elif isinstance(group, str):
+        j = sa.join(sgroups_for_groups, scaling_groups,
+                    sgroups_for_groups.c.group == scaling_groups.c.id)
         query = (sa.select([sgroups_for_groups])
-                   .where(sgroups_for_groups.c.name == group))
+                   .select_from(j)
+                   .where(scaling_groups.c.name == group))
     else:
         raise ValueError('unexpected type for group', group)
     result = await db_conn.execute(query)

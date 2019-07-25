@@ -28,6 +28,7 @@ from ..gateway.exceptions import (
 from .models import (
     agents, domains, groups, kernels, keypairs,
     AgentStatus, KernelStatus,
+    query_allowed_sgroups,
 )
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
@@ -380,7 +381,7 @@ class AgentRegistry:
                              creation_config: dict,
                              resource_policy: dict,
                              domain_name: str,
-                             group_id: str,
+                             group_id: uuid.UUID,
                              user_uuid: str,
                              session_tag=None):
         agent_id = None
@@ -528,6 +529,26 @@ class AgentRegistry:
 
         async with self.dbpool.acquire() as conn, conn.begin():
 
+            # Check the scaling groups.
+            sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
+            target_sgroup_names = []
+            preferred_sgroup_name = creation_config.get('scalingGroup')
+            if preferred_sgroup_name is not None:
+                for sgroup in sgroups:
+                    if preferred_sgroup_name == sgroup['name']:
+                        break
+                else:
+                    raise InvalidAPIParameters(
+                        'The given preferred scaling group is not available. ({})'
+                        .format(preferred_sgroup_name)
+                    )
+                # Consider agents only in the preferred scaling group.
+                target_sgroup_names = [preferred_sgroup_name]
+            else:
+                # Consider all agents in all allowed scaling groups.
+                target_sgroup_names = [sgroup['name'] for sgroup in sgroups]
+            log.debug('considered scaling groups: {}', target_sgroup_names)
+
             # Fetch all agent available slots and normalize them to "remaining" slots
             possible_agent_slots = []
             query = (
@@ -536,7 +557,10 @@ class AgentRegistry:
                     agents.c.available_slots,
                     agents.c.occupied_slots,
                 ], for_update=True)
-                .where(agents.c.status == AgentStatus.ALIVE)
+                .where(
+                    (agents.c.status == AgentStatus.ALIVE) &
+                    (agents.c.scaling_group.in_(target_sgroup_names))
+                )
             )
             async for row in conn.execute(query):
                 capacity_slots = row['available_slots']
