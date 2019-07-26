@@ -257,13 +257,6 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         params['domain'], params['username'], params['password'])
     if user is None:
         raise AuthorizationFailed('User credential mismatch.')
-    if 'hanati_hook' in request.app:
-        check_user = request.app['hanati_hook'].get_handlers()[0][0][1]
-        hana_user = await check_user(params['username'])
-        if isinstance(hana_user, dict) and not hana_user['success']:
-            return web.json_response({
-                'message': 'Create account on Cloudia first',
-            }, status=404)
     async with dbpool.acquire() as conn:
         query = (sa.select([keypairs.c.access_key, keypairs.c.secret_key])
                    .select_from(users)
