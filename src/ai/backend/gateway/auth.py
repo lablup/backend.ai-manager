@@ -355,6 +355,30 @@ async def signup(request: web.Request, params: Any) -> web.Response:
     })
 
 
+@atomic
+@check_api_params(
+    t.Dict({
+        t.Key('domain'): t.String,
+        t.Key('email'): t.String,
+        t.Key('password'): t.String,
+    }))
+async def signout(request: web.Request, params: Any) -> web.Response:
+    dbpool = request.app['dbpool']
+    user = await check_credential(
+        dbpool,
+        params['domain'], params['email'], params['password'])
+    # Inactivate the user.
+    async with dbpool.acquire() as conn, conn.begin():
+        query = (users.update()
+                      .values(is_active=False)
+                      .where(users.c.email == email))
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            return cls(ok=True, msg='success')
+        else:
+            return cls(ok=False, msg='error on signout process')
+
+
 def create_app(default_cors_options):
     app = web.Application()
     app['prefix'] = 'auth'  # slashed to distinguish with "/vN/authorize"
@@ -368,6 +392,7 @@ def create_app(default_cors_options):
     cors.add(test_resource.add_route('POST', test))
     cors.add(app.router.add_route('POST', '/authorize', authorize))
     cors.add(app.router.add_route('POST', '/signup', signup))
+    cors.add(app.router.add_route('POST', '/signout', signout))
     return app, [auth_middleware]
 
 
