@@ -337,7 +337,7 @@ class ModifyUser(UserMutationMixin, graphene.Mutation):
                     # Add user to new groups.
                     query = (sa.select([groups.c.id])
                                .select_from(groups)
-                               .where(groups.c.domain_name == info.context['user']['domain_name'])
+                               .where(groups.c.domain_name == o.domain_name)
                                .where(groups.c.id.in_(props.group_ids)))
                     result = await conn.execute(query)
                     grps = await result.fetchall()
