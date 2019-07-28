@@ -1,3 +1,4 @@
+import asyncio
 from collections import OrderedDict
 from typing import Union
 import uuid
@@ -6,8 +7,10 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
+import psycopg2 as pg
 
-from .base import metadata
+from .base import metadata, privileged_mutation
+from .user import UserRole
 
 __all__ = (
     # table defs
@@ -18,6 +21,9 @@ __all__ = (
     # functions
     'query_allowed_sgroups',
     'ScalingGroup',
+    'CreateScalingGroup',
+    'ModifyScalingGroup',
+    'DeleteScalingGroup',
 )
 
 
@@ -177,3 +183,147 @@ class ScalingGroup(graphene.ObjectType):
                 o = ScalingGroup.from_row(row)
                 objs_per_key[row.access_key] = o
         return tuple(objs_per_key.values())
+
+
+class CreateScalingGroupInput(graphene.InputObjectType):
+    description = graphene.String(required=False, default='')
+    is_active = graphene.Boolean(required=False, default=True)
+    driver = graphene.String(required=True)
+    driver_opts = graphene.JSONString(required=False, default={})
+    scheduler = graphene.String(required=True)
+    scheduler_opts = graphene.JSONString(required=False, default={})
+
+
+class ModifyScalingGroupInput(graphene.InputObjectType):
+    description = graphene.String(required=False)
+    is_active = graphene.Boolean(required=False)
+    driver = graphene.String(required=False)
+    driver_opts = graphene.JSONString(required=False)
+    scheduler = graphene.String(required=False)
+    scheduler_opts = graphene.JSONString(required=False)
+
+
+class CreateScalingGroup(graphene.Mutation):
+
+    class Arguments:
+        name = graphene.String(required=True)
+        props = CreateScalingGroupInput(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+    scaling_group = graphene.Field(lambda: ScalingGroup)
+
+    @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
+    async def mutate(cls, root, info, name, props):
+        async with info.context['dbpool'].acquire() as conn, conn.begin():
+            data = {
+                'name': name,
+                'description': props.description,
+                'is_active': bool(props.is_active),
+                'driver': props.driver,
+                'driver_opts': props.driver_opts,
+                'scheduler': props.scheduler,
+                'scheduler_opts': props.scheduler_opts,
+            }
+            query = (scaling_groups.insert().values(data))
+            try:
+                result = await conn.execute(query)
+                if result.rowcount > 0:
+                    # Read the created key data from DB.
+                    checkq = scaling_groups.select().where(scaling_groups.c.name == name)
+                    result = await conn.execute(checkq)
+                    o = ScalingGroup.from_row(await result.first())
+                    return cls(ok=True, msg='success', scaling_group=o)
+                else:
+                    return cls(ok=False, msg='failed to create scaling group',
+                               scaling_group=None)
+            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+                return cls(ok=False, msg=f'integrity error: {e}',
+                           scaling_group=None)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                raise
+            except Exception as e:
+                return cls(ok=False, msg=f'unexpected error: {e}',
+                           scaling_group=None)
+
+
+class ModifyScalingGroup(graphene.Mutation):
+
+    class Arguments:
+        name = graphene.String(required=True)
+        props = ModifyScalingGroupInput(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
+    async def mutate(cls, root, info, name, props):
+        async with info.context['dbpool'].acquire() as conn, conn.begin():
+            data = {}
+
+            def set_if_set(name):
+                v = getattr(props, name)
+                # NOTE: unset optional fields are passed as null.
+                if v is not None:
+                    data[name] = v
+
+            set_if_set('description')
+            set_if_set('is_active')
+            set_if_set('driver')
+            set_if_set('driver_opts')
+            set_if_set('scheduler')
+            set_if_set('scheduler_opts')
+
+            try:
+                query = (
+                    scaling_groups.update()
+                    .values(data)
+                    .where(scaling_groups.c.name == name)
+                )
+                result = await conn.execute(query)
+                if result.rowcount > 0:
+                    return cls(ok=True, msg='success')
+                else:
+                    return cls(ok=False, msg='no such scaling group')
+            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+                return cls(ok=False,
+                           msg=f'integrity error: {e}')
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                raise
+            except Exception as e:
+                return cls(ok=False,
+                           msg=f'unexpected error: {e}')
+
+
+class DeleteScalingGroup(graphene.Mutation):
+
+    class Arguments:
+        access_key = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
+    async def mutate(cls, root, info, name):
+        async with info.context['dbpool'].acquire() as conn, conn.begin():
+            try:
+                query = (
+                    scaling_groups.delete()
+                    .where(scaling_groups.c.name == name)
+                )
+                result = await conn.execute(query)
+                if result.rowcount > 0:
+                    return cls(ok=True, msg='success')
+                else:
+                    return cls(ok=False, msg='no such scaling group')
+            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+                return cls(ok=False,
+                           msg=f'integrity error: {e}')
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                raise
+            except Exception as e:
+                return cls(ok=False,
+                           msg=f'unexpected error: {e}')

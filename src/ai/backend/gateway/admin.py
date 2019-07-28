@@ -34,6 +34,7 @@ from ..manager.models import (
     ResourcePreset,
     CreateResourcePreset, ModifyResourcePreset, DeleteResourcePreset,
     ScalingGroup,
+    CreateScalingGroup, ModifyScalingGroup, DeleteScalingGroup,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
@@ -45,6 +46,7 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
     t.Dict({
         t.Key('query'): t.String,
         t.Key('variables', default=None): t.Null | t.Mapping(t.String, t.Any),
+        t.Key('operationName', default=None): t.Any,
     }))
 async def handle_gql(request: web.Request, params: Any) -> web.Response:
     executor = request.app['admin.gql_executor']
@@ -109,6 +111,9 @@ class MutationForAdmin(graphene.ObjectType):
     create_resource_preset = CreateResourcePreset.Field()
     modify_resource_preset = ModifyResourcePreset.Field()
     delete_resource_preset = DeleteResourcePreset.Field()
+    create_scaling_group = CreateScalingGroup.Field()
+    modify_scaling_group = ModifyScalingGroup.Field()
+    delete_scaling_group = DeleteScalingGroup.Field()
 
 
 class MutationForUser(graphene.ObjectType):

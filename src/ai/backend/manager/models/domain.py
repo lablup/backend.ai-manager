@@ -9,7 +9,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common.types import ResourceSlot
-from .base import metadata, ResourceSlotColumn
+from .base import metadata, ResourceSlotColumn, privileged_mutation
+from .user import UserRole
 
 
 __all__ = (
@@ -107,18 +108,7 @@ class ModifyDomainInput(graphene.InputObjectType):
     integration_id = graphene.String(required=False)
 
 
-class DomainMutationMixin:
-
-    @staticmethod
-    def check_perm(info):
-        from .user import UserRole
-        user = info.context['user']
-        if user['role'] == UserRole.SUPERADMIN:
-            return True
-        return False
-
-
-class CreateDomain(DomainMutationMixin, graphene.Mutation):
+class CreateDomain(graphene.Mutation):
 
     class Arguments:
         name = graphene.String(required=True)
@@ -129,8 +119,10 @@ class CreateDomain(DomainMutationMixin, graphene.Mutation):
     domain = graphene.Field(lambda: Domain)
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
-        assert cls.check_perm(info), 'no permission'
+        if not cls.check_perm(info):
+            return cls(ok=False, msg='no permission', domain=None)
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             assert _rx_slug.search(name) is not None, 'invalid name format. slug format required.'
             data = {
@@ -160,7 +152,7 @@ class CreateDomain(DomainMutationMixin, graphene.Mutation):
                 return cls(ok=False, msg=f'unexpected error: {e}', domain=None)
 
 
-class ModifyDomain(DomainMutationMixin, graphene.Mutation):
+class ModifyDomain(graphene.Mutation):
 
     class Arguments:
         name = graphene.String(required=True)
@@ -171,8 +163,8 @@ class ModifyDomain(DomainMutationMixin, graphene.Mutation):
     domain = graphene.Field(lambda: Domain)
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
-        assert cls.check_perm(info), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
 
@@ -215,7 +207,7 @@ class ModifyDomain(DomainMutationMixin, graphene.Mutation):
                 return cls(ok=False, msg=f'unexpected error: {e}', domain=None)
 
 
-class DeleteDomain(DomainMutationMixin, graphene.Mutation):
+class DeleteDomain(graphene.Mutation):
 
     class Arguments:
         name = graphene.String(required=True)
@@ -224,8 +216,8 @@ class DeleteDomain(DomainMutationMixin, graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name):
-        assert cls.check_perm(info), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             try:
                 # query = domains.delete().where(domains.c.name == name)

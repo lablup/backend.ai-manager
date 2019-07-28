@@ -281,6 +281,24 @@ class PaginatedList(graphene.Interface):
     total_count = graphene.Int(required=True)
 
 
+def privileged_mutation(required_role):
+
+    def wrap(func):
+
+        @functools.wraps(func)
+        async def wrapped(cls, root, info, *args, **kwargs):
+            user = info.context['user']
+            if user['role'] == required_role:
+                return await func(cls, root, info, *args, **kwargs)
+            # assuming that mutation result objects has 3 fields:
+            # success(bool), message(str), item(object)
+            return cls(False, 'no permission', None)
+
+        return wrapped
+
+    return wrap
+
+
 def populate_fixture(db_connection, fixture_data):
 
     def insert(table, row):

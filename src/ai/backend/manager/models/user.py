@@ -10,7 +10,7 @@ import psycopg2 as pg
 import sqlalchemy as sa
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
-from .base import metadata, EnumValueType, IDColumn
+from .base import metadata, EnumValueType, IDColumn, privileged_mutation
 
 
 __all__ = (
@@ -190,18 +190,7 @@ class ModifyUserInput(graphene.InputObjectType):
     group_ids = graphene.List(lambda: graphene.String, required=False)
 
 
-class UserMutationMixin:
-
-    @staticmethod
-    def check_perm(info):
-        from .user import UserRole
-        user = info.context['user']
-        if user['role'] == UserRole.SUPERADMIN:
-            return True  # only superadmin is allowed to mutate, currently
-        return False
-
-
-class CreateUser(UserMutationMixin, graphene.Mutation):
+class CreateUser(graphene.Mutation):
 
     class Arguments:
         email = graphene.String(required=True)
@@ -212,8 +201,8 @@ class CreateUser(UserMutationMixin, graphene.Mutation):
     user = graphene.Field(lambda: User)
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, email, props):
-        assert cls.check_perm(info), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             username = props.username if props.username else email
             data = {
@@ -279,7 +268,7 @@ class CreateUser(UserMutationMixin, graphene.Mutation):
                 return cls(ok=False, msg=f'unexpected error: {e}', user=None)
 
 
-class ModifyUser(UserMutationMixin, graphene.Mutation):
+class ModifyUser(graphene.Mutation):
 
     class Arguments:
         email = graphene.String(required=True)
@@ -290,8 +279,8 @@ class ModifyUser(UserMutationMixin, graphene.Mutation):
     user = graphene.Field(lambda: User)
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, email, props):
-        assert cls.check_perm(info), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
 
@@ -354,7 +343,7 @@ class ModifyUser(UserMutationMixin, graphene.Mutation):
                 return cls(ok=False, msg=f'unexpected error: {e}', user=None)
 
 
-class DeleteUser(UserMutationMixin, graphene.Mutation):
+class DeleteUser(graphene.Mutation):
     '''
     Instead of deleting user, just inactive the account.
 
@@ -368,8 +357,8 @@ class DeleteUser(UserMutationMixin, graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, email):
-        assert cls.check_perm(info), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             try:
                 # query = (users.delete().where(users.c.email == email))
