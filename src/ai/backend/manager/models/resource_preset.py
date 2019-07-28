@@ -8,7 +8,8 @@ import psycopg2 as pg
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
-from .base import metadata, ResourceSlotColumn
+from .base import metadata, ResourceSlotColumn, privileged_mutation
+from .user import UserRole
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.models'))
 
@@ -85,6 +86,7 @@ class CreateResourcePreset(graphene.Mutation):
     resource_preset = graphene.Field(lambda: ResourcePreset)
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {
@@ -128,6 +130,7 @@ class ModifyResourcePreset(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
@@ -172,6 +175,7 @@ class DeleteResourcePreset(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             query = (

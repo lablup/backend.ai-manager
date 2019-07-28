@@ -11,7 +11,8 @@ import psycopg2 as pg
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
 from . import keypairs
-from .base import metadata, BigInt, EnumType, ResourceSlotColumn
+from .base import metadata, BigInt, EnumType, ResourceSlotColumn, privileged_mutation
+from .user import UserRole
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.models'))
 
@@ -191,6 +192,7 @@ class CreateKeyPairResourcePolicy(graphene.Mutation):
     resource_policy = graphene.Field(lambda: KeyPairResourcePolicy)
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {
@@ -242,6 +244,7 @@ class ModifyKeyPairResourcePolicy(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
@@ -293,6 +296,7 @@ class DeleteKeyPairResourcePolicy(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             query = (
