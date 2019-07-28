@@ -245,7 +245,7 @@ async def test(request: web.Request, params: Any) -> web.Response:
 @auth_required
 @check_api_params(
     t.Dict({
-        t.Key('group', defualt=None): t.Null | tx.UUID,
+        t.Key('group', default=None): t.Null | tx.UUID,
     }))
 async def get_role(request: web.Request, params: Any) -> web.Response:
     group_role = None

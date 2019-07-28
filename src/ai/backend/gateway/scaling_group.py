@@ -36,7 +36,12 @@ async def list_available_sgroups(request: web.Request, params: Any) -> web.Respo
     async with dbpool.acquire() as conn:
         sgroups = await query_allowed_sgroups(
             conn, domain_name, group_id_or_name, access_key)
-        return web.json_response(sgroups, status=200)
+        return web.json_response([
+            {
+                'name': sgroup['name'],
+            }
+            for sgroup in sgroups
+        ], status=200)
 
 
 async def init(app):
