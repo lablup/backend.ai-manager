@@ -399,19 +399,16 @@ async def signup(request: web.Request, params: Any) -> web.Response:
     }))
 async def signout(request: web.Request, params: Any) -> web.Response:
     dbpool = request.app['dbpool']
-    user = await check_credential(
+    await check_credential(
         dbpool,
         params['domain'], params['email'], params['password'])
     # Inactivate the user.
     async with dbpool.acquire() as conn, conn.begin():
         query = (users.update()
                       .values(is_active=False)
-                      .where(users.c.email == email))
-        result = await conn.execute(query)
-        if result.rowcount > 0:
-            return cls(ok=True, msg='success')
-        else:
-            return cls(ok=False, msg='error on signout process')
+                      .where(users.c.email == params['email']))
+        await conn.execute(query)
+        return web.json_response({'message': 'success'})
 
 
 def create_app(default_cors_options):
