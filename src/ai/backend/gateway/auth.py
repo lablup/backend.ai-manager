@@ -15,10 +15,12 @@ import sqlalchemy as sa
 import trafaret as t
 
 from ai.backend.common.logging import Logger, BraceStyleAdapter
+from ai.backend.common import validators as tx
 from .exceptions import (
-    GenericBadRequest, InternalServerError,
+    GenericBadRequest, GenericNotFound,
     InvalidAuthParameters, AuthorizationFailed,
     InvalidAPIParameters,
+    InternalServerError,
 )
 from ..manager.models import (
     keypairs, keypair_resource_policies, users,
@@ -240,6 +242,39 @@ async def test(request: web.Request, params: Any) -> web.Response:
 
 
 @atomic
+@auth_required
+@check_api_params(
+    t.Dict({
+        t.Key('group', defualt=None): t.Null | tx.UUID,
+    }))
+async def get_role(request: web.Request, params: Any) -> web.Response:
+    group_role = None
+    if params['group'] is not None:
+        query = (
+            # TODO: per-group role is not yet implemented.
+            sa.select([association_groups_users.c.group_id])
+            .select_from(association_groups_users)
+            .where(
+                (association_groups_users.c.group_id == params['group']) &
+                (association_groups_users.c.user_id == request['user']['uuid'])
+            )
+        )
+        async with request.app['dbpool'].acquire() as conn:
+            result = await conn.execute(query)
+            row = await result.first()
+            if row is None:
+                raise GenericNotFound('No such user group or '
+                                      'you are not the member of the group.')
+        group_role = 'user'
+    resp_data = {
+        'global_role': 'superadmin' if request['is_superadmin'] else 'user',
+        'domain_role': 'admin' if request['is_admin'] else 'user',
+        'group_role': group_role,
+    }
+    return web.json_response(resp_data)
+
+
+@atomic
 @check_api_params(
     t.Dict({
         t.Key('type'): t.Enum('keypair', 'jwt'),
@@ -259,7 +294,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         raise AuthorizationFailed('User credential mismatch.')
     async with dbpool.acquire() as conn:
         query = (sa.select([keypairs.c.access_key, keypairs.c.secret_key])
-                   .select_from(users)
+                   .select_from(keypairs)
                    .where((keypairs.c.user == user['uuid'])))
         result = await conn.execute(query)
         keypair = await result.first()
@@ -355,6 +390,30 @@ async def signup(request: web.Request, params: Any) -> web.Response:
     })
 
 
+@atomic
+@check_api_params(
+    t.Dict({
+        t.Key('domain'): t.String,
+        t.Key('email'): t.String,
+        t.Key('password'): t.String,
+    }))
+async def signout(request: web.Request, params: Any) -> web.Response:
+    dbpool = request.app['dbpool']
+    user = await check_credential(
+        dbpool,
+        params['domain'], params['email'], params['password'])
+    # Inactivate the user.
+    async with dbpool.acquire() as conn, conn.begin():
+        query = (users.update()
+                      .values(is_active=False)
+                      .where(users.c.email == email))
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            return cls(ok=True, msg='success')
+        else:
+            return cls(ok=False, msg='error on signout process')
+
+
 def create_app(default_cors_options):
     app = web.Application()
     app['prefix'] = 'auth'  # slashed to distinguish with "/vN/authorize"
@@ -367,7 +426,9 @@ def create_app(default_cors_options):
     cors.add(test_resource.add_route('GET', test))
     cors.add(test_resource.add_route('POST', test))
     cors.add(app.router.add_route('POST', '/authorize', authorize))
+    cors.add(app.router.add_route('GET', '/role', get_role))
     cors.add(app.router.add_route('POST', '/signup', signup))
+    cors.add(app.router.add_route('POST', '/signout', signout))
     return app, [auth_middleware]
 
 
