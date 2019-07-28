@@ -235,6 +235,7 @@ def superadmin_required(handler):
         t.Key('echo'): t.String,
     }))
 async def test(request: web.Request, params: Any) -> web.Response:
+    log.info('AUTH.TEST(ak:{})', request['keypair']['access_key'])
     resp_data = {'authorized': 'yes'}
     if 'echo' in params:
         resp_data['echo'] = params['echo']
@@ -249,6 +250,10 @@ async def test(request: web.Request, params: Any) -> web.Response:
     }))
 async def get_role(request: web.Request, params: Any) -> web.Response:
     group_role = None
+    log.info('AUTH.ROLES(ak:{}, d:{}, g:{})',
+             request['keypair']['access_key'],
+             request['user']['domain_name'],
+             params['group'])
     if params['group'] is not None:
         query = (
             # TODO: per-group role is not yet implemented.
@@ -286,6 +291,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
     if params['type'] != 'keypair':
         # other types are not implemented yet.
         raise InvalidAPIParameters('Unsupported authorization type')
+    log.info('AUTH.AUTHORIZE(d:{0.domain}, u:{0.username}, p:****, t:{0.type})', params)
     dbpool = request.app['dbpool']
     user = await check_credential(
         dbpool,
@@ -315,6 +321,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         t.Key('password'): t.String,
     }))
 async def signup(request: web.Request, params: Any) -> web.Response:
+    log.info('AUTH.SIGNUP(d:{0.domain}, e:{0.email}, p:****)', params)
     dbpool = request.app['dbpool']
     # TODO: assume only one hook (hanati) and bound method (very dirty, but no time now)
     # Check if email exists in hanati
@@ -398,6 +405,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
         t.Key('password'): t.String,
     }))
 async def signout(request: web.Request, params: Any) -> web.Response:
+    log.info('AUTH.SIGNOUT(d:{0.domain}, e:{0.email})', params)
     dbpool = request.app['dbpool']
     user = await check_credential(
         dbpool,
