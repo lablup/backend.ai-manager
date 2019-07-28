@@ -185,7 +185,7 @@ class ScalingGroup(graphene.ObjectType):
         return tuple(objs_per_key.values())
 
 
-class CreateScalingGroupInput(graphene.InputObjectType):
+class ScalingGroupInput(graphene.InputObjectType):
     description = graphene.String(required=False, default='')
     is_active = graphene.Boolean(required=False, default=True)
     driver = graphene.String(required=True)
@@ -207,7 +207,7 @@ class CreateScalingGroup(graphene.Mutation):
 
     class Arguments:
         name = graphene.String(required=True)
-        props = CreateScalingGroupInput(required=True)
+        props = ScalingGroupInput(required=True)
 
     ok = graphene.Boolean()
     msg = graphene.String()

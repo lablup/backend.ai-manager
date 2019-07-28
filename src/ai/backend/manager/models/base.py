@@ -281,14 +281,42 @@ class PaginatedList(graphene.Interface):
     total_count = graphene.Int(required=True)
 
 
-def privileged_mutation(required_role):
+def privileged_mutation(required_role, target_func=None):
 
     def wrap(func):
 
         @functools.wraps(func)
         async def wrapped(cls, root, info, *args, **kwargs):
+            from .user import UserRole
+            from .group import association_groups_users
             user = info.context['user']
-            if user['role'] == required_role:
+            if required_role == UserRole.SUPERADMIN:
+                if user['role'] == required_role:
+                    return await func(cls, root, info, *args, **kwargs)
+            elif required_role == UserRole.ADMIN:
+                if target_func is None:
+                    return cls(False, 'misconfigured privileged mutation: no target_func', None)
+                target_domain, target_group = target_func(*args, **kwargs)
+                if target_domain is None and target_group is None:
+                    return cls(False, 'misconfigured privileged mutation: '
+                                      'both target_domain and target_group missing', None)
+                permit_chains = []
+                if target_domain is not None:
+                    if user['domain_name'] == target_domain:
+                        permit_chains.append(True)
+                if target_group is not None:
+                    async with info.context['dbpool'].acquire() as conn, conn.begin():
+                        query = (
+                            association_groups_users.select()
+                            .where(association_groups_users.c.group_id == target_group)
+                        )
+                        result = await conn.execute(query)
+                        # TODO: replace with the user's privilege in the group
+                        if result.rowcount > 0:
+                            permit_chains.append(True)
+                if all(permit_chains):
+                    return await func(cls, root, info, *args, **kwargs)
+            elif required_role == UserRole.USER:
                 return await func(cls, root, info, *args, **kwargs)
             # assuming that mutation result objects has 3 fields:
             # success(bool), message(str), item(object)

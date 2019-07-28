@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common.types import ResourceSlot
-from .base import metadata, GUID, IDColumn, ResourceSlotColumn
+from .base import metadata, GUID, IDColumn, ResourceSlotColumn, privileged_mutation
 from .user import UserRole
 
 
@@ -153,35 +153,7 @@ class ModifyGroupInput(graphene.InputObjectType):
     integration_id = graphene.String(required=False)
 
 
-class GroupMutationMixin:
-
-    @staticmethod
-    async def check_perm(info, *, domain_name=None, gid=None):
-        from .user import UserRole
-        user = info.context['user']
-        permitted = False
-        if user['role'] == UserRole.SUPERADMIN:
-            permitted = True
-        elif user['role'] == UserRole.ADMIN:
-            if domain_name is None and gid is not None:  # get target group's domain
-                async with info.context['dbpool'].acquire() as conn, conn.begin():
-                    query = groups.select().where(groups.c.id == gid)
-                    try:
-                        result = await conn.execute(query)
-                        if result.rowcount > 0:
-                            result = await conn.execute(query)
-                            o = Group.from_row(await result.first())
-                            domain_name = o.domain_name
-                    except (asyncio.CancelledError, asyncio.TimeoutError):
-                        raise
-                    except Exception:
-                        pass
-            if user['domain_name'] == domain_name:
-                permitted = True
-        return permitted
-
-
-class CreateGroup(GroupMutationMixin, graphene.Mutation):
+class CreateGroup(graphene.Mutation):
 
     class Arguments:
         name = graphene.String(required=True)
@@ -192,8 +164,11 @@ class CreateGroup(GroupMutationMixin, graphene.Mutation):
     group = graphene.Field(lambda: Group)
 
     @classmethod
+    @privileged_mutation(
+        UserRole.ADMIN,
+        lambda name, props, **kwargs: (props.domain_name, None)
+    )
     async def mutate(cls, root, info, name, props):
-        assert await cls.check_perm(info, domain_name=props.domain_name), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             assert _rx_slug.search(name) is not None, 'invalid name format. slug format required.'
             data = {
@@ -225,7 +200,7 @@ class CreateGroup(GroupMutationMixin, graphene.Mutation):
                 return cls(ok=False, msg=f'unexpected error: {e}', group=None)
 
 
-class ModifyGroup(GroupMutationMixin, graphene.Mutation):
+class ModifyGroup(graphene.Mutation):
 
     class Arguments:
         gid = graphene.String(required=True)
@@ -236,8 +211,11 @@ class ModifyGroup(GroupMutationMixin, graphene.Mutation):
     group = graphene.Field(lambda: Group)
 
     @classmethod
+    @privileged_mutation(
+        UserRole.ADMIN,
+        lambda gid, **kwargs: (None, gid)
+    )
     async def mutate(cls, root, info, gid, props):
-        assert await cls.check_perm(info, gid=gid), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
 
@@ -298,7 +276,7 @@ class ModifyGroup(GroupMutationMixin, graphene.Mutation):
                 return cls(ok=False, msg=f'unexpected error: {e}', group=None)
 
 
-class DeleteGroup(GroupMutationMixin, graphene.Mutation):
+class DeleteGroup(graphene.Mutation):
 
     class Arguments:
         gid = graphene.String(required=True)
@@ -307,8 +285,11 @@ class DeleteGroup(GroupMutationMixin, graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
+    @privileged_mutation(
+        UserRole.ADMIN,
+        lambda gid, **kwargs: (None, gid)
+    )
     async def mutate(cls, root, info, gid):
-        assert await cls.check_perm(info, gid=gid), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             try:
                 # query = groups.delete().where(groups.c.id == gid)
