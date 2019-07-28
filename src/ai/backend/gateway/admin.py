@@ -33,6 +33,7 @@ from ..manager.models import (
     ModifyKeyPairResourcePolicy, DeleteKeyPairResourcePolicy,
     ResourcePreset,
     CreateResourcePreset, ModifyResourcePreset, DeleteResourcePreset,
+    ScalingGroup,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
@@ -193,6 +194,15 @@ class QueryForAdmin(graphene.ObjectType):
     resource_presets = graphene.List(
         ResourcePreset)
 
+    scaling_group = graphene.Field(
+        ScalingGroup,
+        name=graphene.String())
+
+    scaling_groups = graphene.List(
+        ScalingGroup,
+        name=graphene.String(),
+        is_active=graphene.Boolean())
+
     vfolders = graphene.List(
         VirtualFolder,
         access_key=graphene.String())
@@ -330,6 +340,20 @@ class QueryForAdmin(graphene.ObjectType):
     @staticmethod
     async def resolve_resource_presets(executor, info):
         return await ResourcePreset.load_all(info.context)
+
+    @staticmethod
+    async def resolve_scaling_group(executor, info, name):
+        assert info.context['user']['role'] == UserRole.SUPERADMIN, \
+            'permission error (need to be superadmin)'
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('ScalingGroup.by_name')
+        return await loader.load(name)
+
+    @staticmethod
+    async def resolve_scaling_groups(executor, info, is_active=None):
+        assert info.context['user']['role'] == UserRole.SUPERADMIN, \
+            'permission error (need to be superadmin)'
+        return await ScalingGroup.load_all(info.context, is_active=is_active)
 
     @staticmethod
     async def resolve_vfolders(executor, info, access_key=None):

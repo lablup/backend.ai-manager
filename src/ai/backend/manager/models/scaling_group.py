@@ -1,7 +1,11 @@
-import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql as pgsql
+from collections import OrderedDict
 from typing import Union
 import uuid
+
+import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql as pgsql
+import graphene
+from graphene.types.datetime import DateTime as GQLDateTime
 
 from .base import metadata
 
@@ -13,6 +17,7 @@ __all__ = (
     'sgroups_for_keypairs',
     # functions
     'query_allowed_sgroups',
+    'ScalingGroup',
 )
 
 
@@ -118,3 +123,57 @@ async def query_allowed_sgroups(db_conn: object,
                ))
     result = await db_conn.execute(query)
     return [row async for row in result]
+
+
+class ScalingGroup(graphene.ObjectType):
+    name = graphene.String()
+    description = graphene.String()
+    is_active = graphene.Boolean()
+    created_at = GQLDateTime()
+    driver = graphene.String()
+    driver_opts = graphene.JSONString()
+    scheduler = graphene.String()
+    scheduler_opts = graphene.JSONString()
+
+    @classmethod
+    def from_row(cls, row):
+        if row is None:
+            return None
+        return cls(
+            name=row['name'],
+            description=row['description'],
+            is_active=row['is_active'],
+            created_at=row['created_at'],
+            driver=row['driver'],
+            driver_opts=row['driver_opts'],
+            scheduler=row['scheduler'],
+            scheduler_opts=row['scheduler_opts'],
+        )
+
+    @staticmethod
+    async def load_all(context, *, is_active=None):
+        async with context['dbpool'].acquire() as conn:
+            query = sa.select([scaling_groups]).select_from(scaling_groups)
+            if is_active is not None:
+                query = query.where(scaling_groups.c.is_active == is_active)
+            objs = []
+            async for row in conn.execute(query):
+                o = ScalingGroup.from_row(row)
+                objs.append(o)
+        return objs
+
+    @staticmethod
+    async def batch_load_by_name(context, names):
+        async with context['dbpool'].acquire() as conn:
+            query = (sa.select([scaling_groups])
+                       .select_from(scaling_groups)
+                       .where(scaling_groups.c.name.in_(names)))
+            objs_per_key = OrderedDict()
+            # For each access key, there is only one keypair.
+            # So we don't build lists in objs_per_key variable.
+            for k in names:
+                objs_per_key[k] = None
+            async for row in conn.execute(query):
+                o = ScalingGroup.from_row(row)
+                objs_per_key[row.access_key] = o
+        return tuple(objs_per_key.values())
