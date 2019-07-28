@@ -149,12 +149,12 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 group_id = row.group_id
 
         api_version = request['api_version']
-        if api_version[0] == 1:
-            creation_config = creation_config_v1.check(params['config'])
-        elif 2 <= api_version[0] <= 3:
-            creation_config = creation_config_v2.check(params['config'])
-        elif 4 <= api_version[0] and api_version[1] >= '20190315':
+        if (4, '20190315') <= api_version[0]:
             creation_config = creation_config_v3.check(params['config'])
+        elif 2 <= api_version[0] <= 4:
+            creation_config = creation_config_v2.check(params['config'])
+        elif api_version[0] == 1:
+            creation_config = creation_config_v1.check(params['config'])
         else:
             raise InvalidAPIParameters('API version not supported')
 
