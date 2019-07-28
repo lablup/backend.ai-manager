@@ -22,6 +22,7 @@ from sqlalchemy.dialects.postgresql import UUID, ENUM, JSONB
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import BinarySize, ResourceSlot
 from .. import models
+from ...gateway.exceptions import GenericForbidden
 
 SAFE_MIN_INT = -9007199254740991
 SAFE_MAX_INT = 9007199254740991
@@ -279,6 +280,22 @@ class Item(graphene.Interface):
 class PaginatedList(graphene.Interface):
     items = graphene.List(Item, required=True)
     total_count = graphene.Int(required=True)
+
+
+def privileged_query(required_role):
+
+    def wrap(func):
+
+        @functools.wraps(func)
+        async def wrapped(executor, info, *args, **kwargs):
+            from .user import UserRole
+            if info.context['user']['role'] != UserRole.SUPERADMIN:
+                raise GenericForbidden('superadmin privilege required')
+            return await func(executor, info, *args, **kwargs)
+
+        return wrapped
+
+    return wrap
 
 
 def privileged_mutation(required_role, target_func=None):

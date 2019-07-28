@@ -20,7 +20,7 @@ from .exceptions import (
 )
 from .auth import auth_required
 from .utils import check_api_params
-from ..manager.models.base import DataLoaderManager
+from ..manager.models.base import DataLoaderManager, privileged_query
 from ..manager.models import (
     Agent, AgentList, Image, RescanImages, AliasImage, DealiasImage,
     Domain, CreateDomain, ModifyDomain, DeleteDomain,
@@ -36,6 +36,7 @@ from ..manager.models import (
     ScalingGroup,
     CreateScalingGroup, ModifyScalingGroup, DeleteScalingGroup,
 )
+from .exceptions import GenericNotFound
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
 
@@ -236,23 +237,20 @@ class QueryForAdmin(graphene.ObjectType):
         status=graphene.String())
 
     @staticmethod
+    @privileged_query(UserRole.SUPERADMIN)
     async def resolve_agent(executor, info, agent_id):
-        assert info.context['user']['role'] == UserRole.SUPERADMIN, \
-            'permission error (need to be superadmin)'
         manager = info.context['dlmgr']
         loader = manager.get_loader('Agent', status=None)
         return await loader.load(agent_id)
 
     @staticmethod
+    @privileged_query(UserRole.SUPERADMIN)
     async def resolve_agents(executor, info, status=None):
-        assert info.context['user']['role'] == UserRole.SUPERADMIN, \
-            'permission error (need to be superadmin)'
         return await Agent.load_all(info.context, status=status)
 
     @staticmethod
+    @privileged_query(UserRole.SUPERADMIN)
     async def resolve_agent_list(executor, info, limit, offset, status=None):
-        assert info.context['user']['role'] == UserRole.SUPERADMIN, \
-            'permission error (need to be superadmin)'
         total_count = await Agent.load_count(info.context, status)
         agent_list = await Agent.load_slice(info.context, limit, offset, status)
         return AgentList(agent_list, total_count)
@@ -262,14 +260,15 @@ class QueryForAdmin(graphene.ObjectType):
         manager = info.context['dlmgr']
         name = info.context['user']['domain_name'] if name is None else name
         if info.context['user']['role'] != UserRole.SUPERADMIN:
-            assert name == info.context['user']['domain_name'], 'no such domain'
+            if name != info.context['user']['domain_name']:
+                # prevent querying other domains if not superadmin
+                raise GenericNotFound('no such domain')
         loader = manager.get_loader('Domain.by_name')
         return await loader.load(name)
 
     @staticmethod
+    @privileged_query(UserRole.SUPERADMIN)
     async def resolve_domains(executor, info, is_active=None):
-        assert info.context['user']['role'] == UserRole.SUPERADMIN, \
-            'permission error (need to be superadmin)'
         return await Domain.load_all(info.context, is_active=is_active)
 
     @staticmethod
@@ -347,17 +346,15 @@ class QueryForAdmin(graphene.ObjectType):
         return await ResourcePreset.load_all(info.context)
 
     @staticmethod
+    @privileged_query(UserRole.SUPERADMIN)
     async def resolve_scaling_group(executor, info, name):
-        assert info.context['user']['role'] == UserRole.SUPERADMIN, \
-            'permission error (need to be superadmin)'
         manager = info.context['dlmgr']
         loader = manager.get_loader('ScalingGroup.by_name')
         return await loader.load(name)
 
     @staticmethod
+    @privileged_query(UserRole.SUPERADMIN)
     async def resolve_scaling_groups(executor, info, is_active=None):
-        assert info.context['user']['role'] == UserRole.SUPERADMIN, \
-            'permission error (need to be superadmin)'
         return await ScalingGroup.load_all(info.context, is_active=is_active)
 
     @staticmethod
