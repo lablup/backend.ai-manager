@@ -103,6 +103,7 @@ class SessionCommons:
     image = graphene.String()
     registry = graphene.String()
     domain_name = graphene.String()
+    group_name = graphene.String()
     group_id = graphene.UUID()
     scaling_group = graphene.String()
     user_uuid = graphene.UUID()
@@ -113,8 +114,10 @@ class SessionCommons:
     created_at = GQLDateTime()
     terminated_at = GQLDateTime()
 
-    agent = graphene.String()
-    container_id = graphene.String()
+    # hidden fields:
+    #   - agent
+    #   - container_id
+
     service_ports = graphene.JSONString()
 
     occupied_slots = graphene.JSONString()
@@ -123,7 +126,6 @@ class SessionCommons:
     num_queries = BigInt()
     live_stat = graphene.JSONString()
     last_stat = graphene.JSONString()
-    group_name = graphene.String()
 
     # Legacy fields
     lang = graphene.String()
@@ -220,6 +222,7 @@ class SessionCommons:
             'image': row['image'],
             'registry': row['registry'],
             'domain_name': row['domain_name'],
+            'group_name': row['name'],  # group.name (group is omitted since use_labels=True is not used)
             'group_id': row['group_id'],
             'scaling_group': row['scaling_group'],
             'user_uuid': row['user_uuid'],
@@ -228,15 +231,12 @@ class SessionCommons:
             'status_info': row['status_info'],
             'created_at': row['created_at'],
             'terminated_at': row['terminated_at'],
-            'agent': row['agent'],
-            'container_id': row['container_id'],
             'service_ports': row['service_ports'],
             'occupied_slots': row['occupied_slots'].to_json(),
             'occupied_shares': row['occupied_shares'],
             'num_queries': row['num_queries'],
             # live_stat is resolved by Graphene
             'last_stat': row['last_stat'],
-            'group_name': row['name'],  # group.name (group is omitted since use_labels=True is not used)
             # Legacy fields
             # NOTE: currently graphene always uses resolve methods!
             'cpu_used': 0,
