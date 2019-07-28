@@ -23,7 +23,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
 from .auth import auth_required, superadmin_required
 from .exceptions import (
-    InvalidAPIParameters, GenericForbidden,
+    InvalidAPIParameters,
 )
 from .manager import READ_ALLOWED, server_status_required
 from ..manager.models import (
