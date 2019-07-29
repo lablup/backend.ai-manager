@@ -12,6 +12,7 @@ from graphql.error import GraphQLError, format_error
 import trafaret as t
 
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common import validators as tx
 
 from .manager import GQLMutationUnfrozenRequiredMiddleware
 from .exceptions import (
@@ -47,7 +48,7 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
     t.Dict({
         t.Key('query'): t.String,
         t.Key('variables', default=None): t.Null | t.Mapping(t.String, t.Any),
-        t.Key('operationName', default=None): t.Any,
+        tx.AliasedKey(['operation_name', 'operationName'], default=None): t.Null | t.String,
     }))
 async def handle_gql(request: web.Request, params: Any) -> web.Response:
     executor = request.app['admin.gql_executor']
@@ -71,6 +72,7 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
     result = schema.execute(
         params['query'], executor,
         variable_values=params['variables'],
+        operation_name=params['operation_name'],
         context_value={
             'dlmgr': dlmanager,
             **context,
