@@ -10,7 +10,11 @@ import psycopg2 as pg
 import sqlalchemy as sa
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
-from .base import metadata, EnumValueType, IDColumn, privileged_mutation
+from .base import (
+    metadata, EnumValueType, IDColumn,
+    privileged_mutation,
+    set_if_set,
+)
 
 
 __all__ = (
@@ -282,24 +286,18 @@ class ModifyUser(graphene.Mutation):
     @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, email, props):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
+
             data = {}
-
-            def set_if_set(name):
-                v = getattr(props, name)
-                # NOTE: unset optional fields are passed as null.
-                if v is not None:
-                    if name == 'role':
-                        v = UserRole(v)
-                    data[name] = v
-
-            set_if_set('username')
-            set_if_set('password')
-            set_if_set('need_password_change')
-            set_if_set('full_name')
-            set_if_set('description')
-            set_if_set('is_active')
+            set_if_set(props, data, 'username')
+            set_if_set(props, data, 'password')
+            set_if_set(props, data, 'need_password_change')
+            set_if_set(props, data, 'full_name')
+            set_if_set(props, data, 'description')
+            set_if_set(props, data, 'is_active')
             # set_if_set('domain_name')  # prevent changing domain_name
-            set_if_set('role')
+            set_if_set(props, data, 'role')
+            if 'role' in data:
+                data['role'] = UserRole(data['role'])
 
             if not data and not props.group_ids:
                 return cls(ok=False, msg='nothing to update', user=None)

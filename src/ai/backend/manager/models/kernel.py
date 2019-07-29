@@ -114,9 +114,9 @@ class SessionCommons:
     created_at = GQLDateTime()
     terminated_at = GQLDateTime()
 
-    # hidden fields:
-    #   - agent
-    #   - container_id
+    # hidable fields by configuration
+    agent = graphene.String()
+    container_id = graphene.String()
 
     service_ports = graphene.JSONString()
 

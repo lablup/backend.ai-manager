@@ -1,3 +1,4 @@
+import asyncio
 import enum
 import functools
 import logging
@@ -11,6 +12,7 @@ import graphene
 from graphene.types import Scalar
 from graphql.language import ast
 from graphene.types.scalars import MIN_INT, MAX_INT
+import psycopg2 as pg
 import sqlalchemy as sa
 from sqlalchemy.types import (
     SchemaType,
@@ -355,6 +357,51 @@ def privileged_mutation(required_role, target_func=None):
         return wrapped
 
     return wrap
+
+
+async def simple_db_mutate(result_cls, context, mutation_query):
+    async with context['dbpool'].acquire() as conn, conn.begin():
+        try:
+            result = await conn.execute(mutation_query)
+            if result.rowcount > 0:
+                return result_cls(True, 'success')
+            else:
+                return result_cls(False, 'no matching record')
+        except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+            return result_cls(False, f'integrity error: {e}')
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            raise
+        except Exception as e:
+            return result_cls(False, f'unexpected error: {e}')
+
+
+async def simple_db_mutate_returning_item(result_cls, context, mutation_query, *,
+                                          item_query, item_cls):
+    async with context['dbpool'].acquire() as conn, conn.begin():
+        try:
+            result = await conn.execute(mutation_query)
+            if result.rowcount > 0:
+                result = await conn.execute(item_query)
+                item = await result.first()
+                return result_cls(True, 'success', item_cls.from_row(item))
+            else:
+                return result_cls(False, 'no matching record', None)
+        except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+            return result_cls(False, f'integrity error: {e}', None)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            raise
+        except Exception as e:
+            return result_cls(False, f'unexpected error: {e}', None)
+
+
+def set_if_set(src, target, name, *, clean_func=None):
+    v = getattr(src, name)
+    # NOTE: unset optional fields are passed as null.
+    if v is not None:
+        if callable(clean_func):
+            target[name] = clean_func(v)
+        else:
+            target[name] = v
 
 
 def populate_fixture(db_connection, fixture_data):

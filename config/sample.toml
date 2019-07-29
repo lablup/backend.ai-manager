@@ -68,6 +68,9 @@ heartbeat-timeout = 30.0
 # The list of black-listed manager plugins.
 disabled-plugins = []
 
+# Hide agent and container IDs from GraphQL results unless the API requester is super-admin.
+hide-agents = false
+
 
 [docker-registry]
 # Enable or disable SSL certificate verification when accessing Docker registries.

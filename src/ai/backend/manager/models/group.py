@@ -9,7 +9,11 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common.types import ResourceSlot
-from .base import metadata, GUID, IDColumn, ResourceSlotColumn, privileged_mutation
+from .base import (
+    metadata, GUID, IDColumn, ResourceSlotColumn,
+    privileged_mutation,
+    set_if_set,
+)
 from .user import UserRole
 
 
@@ -218,23 +222,14 @@ class ModifyGroup(graphene.Mutation):
     async def mutate(cls, root, info, gid, props):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
-
-            def set_if_set(name, clean=lambda v: v):
-                v = getattr(props, name)
-                # NOTE: unset optional fields are passed as null.
-                if v is not None:
-                    data[name] = v
-
-            def clean_resource_slot(v):
-                return ResourceSlot.from_user_input(v, None)
-
-            set_if_set('name')
-            set_if_set('description')
-            set_if_set('is_active')
-            set_if_set('domain_name')
-            set_if_set('total_resource_slots', clean_resource_slot)
-            set_if_set('allowed_vfolder_hosts')
-            set_if_set('integration_id')
+            set_if_set(props, data, 'name')
+            set_if_set(props, data, 'description')
+            set_if_set(props, data, 'is_active')
+            set_if_set(props, data, 'domain_name')
+            set_if_set(props, data, 'total_resource_slots',
+                       clean_func=lambda v: ResourceSlot.from_user_input(v, None))
+            set_if_set(props, data, 'allowed_vfolder_hosts')
+            set_if_set(props, data, 'integration_id')
 
             if 'name' in data:
                 assert _rx_slug.search(data['name']) is not None, \

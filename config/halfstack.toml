@@ -28,6 +28,8 @@ heartbeat-timeout = 10.0
 pid-file = "./manager.pid"             # env: BACKEND_PID_FILE
 disabled-plugins = []
 
+hide-agents = true
+
 
 [docker-registry]
 ssl-verify = false

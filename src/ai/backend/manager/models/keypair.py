@@ -9,7 +9,11 @@ import sqlalchemy as sa
 from sqlalchemy.sql.expression import false
 import psycopg2 as pg
 
-from .base import metadata, ForeignKeyIDColumn
+from .base import (
+    metadata, ForeignKeyIDColumn,
+    simple_db_mutate,
+    set_if_set,
+)
 
 __all__ = (
     'keypairs',
@@ -207,9 +211,9 @@ class CreateKeyPair(graphene.Mutation):
                 'num_queries': 0,
                 'user': user_uuid,
             }
-            query = (keypairs.insert().values(data))
+            insert_query = (keypairs.insert().values(data))
             try:
-                result = await conn.execute(query)
+                result = await conn.execute(insert_query)
                 if result.rowcount > 0:
                     # Read the created key data from DB.
                     checkq = keypairs.select().where(keypairs.c.access_key == ak)
@@ -240,37 +244,17 @@ class ModifyKeyPair(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, access_key, props):
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            data = {}
-
-            def set_if_set(name):
-                v = getattr(props, name)
-                # NOTE: unset optional fields are passed as null.
-                if v is not None:
-                    data[name] = v
-
-            set_if_set('is_active')
-            set_if_set('is_admin')
-            set_if_set('resource_policy')
-            set_if_set('rate_limit')
-
-            try:
-                query = (keypairs.update()
-                                 .values(data)
-                                 .where(keypairs.c.access_key == access_key))
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    return cls(ok=True, msg='success')
-                else:
-                    return cls(ok=False, msg='no such keypair')
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False,
-                           msg=f'integrity error: {e}')
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False,
-                           msg=f'unexpected error: {e}')
+        data = {}
+        set_if_set(props, data, 'is_active')
+        set_if_set(props, data, 'is_admin')
+        set_if_set(props, data, 'resource_policy')
+        set_if_set(props, data, 'rate_limit')
+        update_query = (
+            keypairs.update()
+            .values(data)
+            .where(keypairs.c.access_key == access_key)
+        )
+        return await simple_db_mutate(cls, info.context, update_query)
 
 
 class DeleteKeyPair(graphene.Mutation):
@@ -283,23 +267,11 @@ class DeleteKeyPair(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, access_key):
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            try:
-                query = (keypairs.delete()
-                                 .where(keypairs.c.access_key == access_key))
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    return cls(ok=True, msg='success')
-                else:
-                    return cls(ok=False, msg='no such keypair')
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False,
-                           msg=f'integrity error: {e}')
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False,
-                           msg=f'unexpected error: {e}')
+        delete_query = (
+            keypairs.delete()
+            .where(keypairs.c.access_key == access_key)
+        )
+        return await simple_db_mutate(cls, info.context, delete_query)
 
 
 def generate_keypair():
