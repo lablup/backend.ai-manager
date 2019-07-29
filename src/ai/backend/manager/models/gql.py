@@ -213,7 +213,7 @@ class Queries(graphene.ObjectType):
         access_key=graphene.String(required=True),
         is_active=graphene.Boolean())
 
-    vfolders = graphene.List(
+    vfolders = graphene.List(  # legacy non-paginated list
         VirtualFolder,
         access_key=graphene.String())  # must be empty for user requests
 
@@ -239,14 +239,14 @@ class Queries(graphene.ObjectType):
         ComputeSession,
         sess_id=graphene.String(required=True),
         domain_name=graphene.String(),
-        group_id=graphene.String(),
+        access_key=graphene.String(),
     )
 
     compute_workers = graphene.List(  # legacy non-paginated list
         ComputeWorker,
         sess_id=graphene.String(required=True),
         domain_name=graphene.String(),
-        group_id=graphene.String(),
+        access_key=graphene.String(),
         status=graphene.String(),
     )
 
@@ -622,10 +622,14 @@ class Queries(graphene.ObjectType):
         # by other users and in other groups.
         # Let's just protect the domain/user boundary here.
         if client_role == UserRole.SUPERADMIN:
-            domain_name = None
+            pass
         elif client_role == UserRole.ADMIN:
+            if domain_name is not None and domain_name != client_domain:
+                raise GenericForbidden
             domain_name = client_domain
         elif client_role == UserRole.USER:
+            if domain_name is not None and domain_name != client_domain:
+                raise GenericForbidden
             domain_name = client_domain
             if access_key is not None and access_key != client_access_key:
                 raise GenericForbidden
@@ -650,10 +654,14 @@ class Queries(graphene.ObjectType):
         client_access_key = info.context['access_key']
         client_domain = info.context['user']['domain_name']
         if client_role == UserRole.SUPERADMIN:
-            domain_name = None
+            pass
         elif client_role == UserRole.ADMIN:
+            if domain_name is not None and domain_name != client_domain:
+                raise GenericForbidden
             domain_name = client_domain
         elif client_role == UserRole.USER:
+            if domain_name is not None and domain_name != client_domain:
+                raise GenericForbidden
             domain_name = client_domain
             if access_key is not None and access_key != client_access_key:
                 raise GenericForbidden
