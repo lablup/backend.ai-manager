@@ -17,6 +17,7 @@ from ai.backend.common import validators as tx
 from .manager import GQLMutationUnfrozenRequiredMiddleware
 from .exceptions import (
     GenericForbidden,
+    InvalidAPIParameters,
     GraphQLError as BackendGQLError
 )
 from .auth import auth_required
@@ -52,10 +53,7 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
     }))
 async def handle_gql(request: web.Request, params: Any) -> web.Response:
     executor = request.app['admin.gql_executor']
-    if request['is_admin']:
-        schema = request.app['admin.gql_schema_admin']
-    else:
-        schema = request.app['admin.gql_schema_user']
+    schema = request.app['admin.gql_schema']
     manager_status = await request.app['config_server'].get_manager_status()
     known_slot_types = await request.app['config_server'].get_resource_slots()
     context = {
@@ -92,38 +90,49 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
     return web.json_response(result.data, status=200)
 
 
-class MutationForAdmin(graphene.ObjectType):
+class Mutations(graphene.ObjectType):
+    # super-admin only
     create_domain = CreateDomain.Field()
     modify_domain = ModifyDomain.Field()
     delete_domain = DeleteDomain.Field()
+
+    # admin only
     create_group = CreateGroup.Field()
     modify_group = ModifyGroup.Field()
     delete_group = DeleteGroup.Field()
+
+    # admin only
     create_user = CreateUser.Field()
     modify_user = ModifyUser.Field()
     delete_user = DeleteUser.Field()
+
+    # admin only
     create_keypair = CreateKeyPair.Field()
     modify_keypair = ModifyKeyPair.Field()
     delete_keypair = DeleteKeyPair.Field()
+
+    # admin only
     rescan_images = RescanImages.Field()
     alias_image = AliasImage.Field()
     dealias_image = DealiasImage.Field()
+
+    # super-admin only
     create_keypair_resource_policy = CreateKeyPairResourcePolicy.Field()
     modify_keypair_resource_policy = ModifyKeyPairResourcePolicy.Field()
     delete_keypair_resource_policy = DeleteKeyPairResourcePolicy.Field()
+
+    # super-admin only
     create_resource_preset = CreateResourcePreset.Field()
     modify_resource_preset = ModifyResourcePreset.Field()
     delete_resource_preset = DeleteResourcePreset.Field()
+
+    # super-admin only
     create_scaling_group = CreateScalingGroup.Field()
     modify_scaling_group = ModifyScalingGroup.Field()
     delete_scaling_group = DeleteScalingGroup.Field()
 
 
-class MutationForUser(graphene.ObjectType):
-    rescan_images = RescanImages.Field()
-
-
-class QueryForAdmin(graphene.ObjectType):
+class Queries(graphene.ObjectType):
     '''
     Available GraphQL queries for the admin privilege.
     It allows use of any access keys regardless of the one specified in the
@@ -131,16 +140,19 @@ class QueryForAdmin(graphene.ObjectType):
     users.
     '''
 
+    # super-admin only
     agent = graphene.Field(
         Agent,
         agent_id=graphene.String(required=True))
 
+    # super-admin only
     agent_list = graphene.Field(
         AgentList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
         status=graphene.String())
 
+    # super-admin only
     agents = graphene.List(
         Agent,
         status=graphene.String())
@@ -149,6 +161,7 @@ class QueryForAdmin(graphene.ObjectType):
         Domain,
         name=graphene.String())
 
+    # super-admin only
     domains = graphene.List(
         Domain,
         is_active=graphene.Boolean())
@@ -173,7 +186,7 @@ class QueryForAdmin(graphene.ObjectType):
 
     user = graphene.Field(
         User,
-        email=graphene.String())
+        email=graphene.String())  # must be empty for user requests
 
     users = graphene.List(
         User,
@@ -181,7 +194,7 @@ class QueryForAdmin(graphene.ObjectType):
 
     keypair = graphene.Field(
         KeyPair,
-        access_key=graphene.String())
+        access_key=graphene.String())  # must be empty for user requests
 
     keypairs = graphene.List(
         KeyPair,
@@ -202,10 +215,12 @@ class QueryForAdmin(graphene.ObjectType):
     resource_presets = graphene.List(
         ResourcePreset)
 
+    # super-admin only
     scaling_group = graphene.Field(
         ScalingGroup,
         name=graphene.String())
 
+    # super-admin only
     scaling_groups = graphene.List(
         ScalingGroup,
         name=graphene.String(),
@@ -213,7 +228,7 @@ class QueryForAdmin(graphene.ObjectType):
 
     vfolders = graphene.List(
         VirtualFolder,
-        access_key=graphene.String())
+        access_key=graphene.String())  # must be empty for user requests
 
     compute_session_list = graphene.Field(
         ComputeSessionList,
@@ -223,7 +238,7 @@ class QueryForAdmin(graphene.ObjectType):
         status=graphene.String(),
         group_id=graphene.String())
 
-    compute_sessions = graphene.List(
+    compute_sessions = graphene.List(  # legacy non-paginated list
         ComputeSession,
         access_key=graphene.String(),
         status=graphene.String(),
@@ -233,7 +248,7 @@ class QueryForAdmin(graphene.ObjectType):
         ComputeSession,
         sess_id=graphene.String())
 
-    compute_workers = graphene.List(
+    compute_workers = graphene.List(  # legacy non-paginated list
         ComputeWorker,
         sess_id=graphene.String(required=True),
         status=graphene.String())
@@ -275,47 +290,133 @@ class QueryForAdmin(graphene.ObjectType):
 
     @staticmethod
     async def resolve_group(executor, info, id):
+        client_role = info.context['user']['role']
+        client_domain_name = info.context['user']['domain_name']
         manager = info.context['dlmgr']
         loader = manager.get_loader('Group.by_id')
-        return await loader.load(id)
+        group = await loader.load(id)
+        if client_role == UserRole.SUPERADMIN:
+            pass
+        elif client_role == UserRole.ADMIN:
+            if group.domain_name != client_domain_name:
+                raise GenericForbidden
+        elif client_role == UserRole.USER:
+            # TODO: check client is member of this group
+            raise NotImplementedError
+        else:
+            raise InvalidAPIParameters('Unknown client role')
+        return group
 
     @staticmethod
     async def resolve_groups(executor, info, domain_name=None, is_active=None, all=False):
-        domain_name = info.context['user']['domain_name'] if domain_name is None else domain_name
+        client_role = info.context['user']['role']
+        client_domain = info.context['user']['domain_name']
+        if client_role == UserRole.SUPERADMIN:
+            domain_name = client_domain if domain_name is None else domain_name
+        elif client_role == UserRole.ADMIN:
+            if domain_name is not None and domain_name != client_domain:
+                raise GenericForbidden
+            domain_name = client_domain
+        elif client_role == UserRole.USER:
+            # TODO: query groups that have the client as their member
+            raise NotImplementedError
+        else:
+            raise InvalidAPIParameters('Unknown client role')
         return await Group.load_all(info.context, domain_name, is_active=is_active, all=all)
 
     @staticmethod
     async def resolve_image(executor, info, reference):
-        config_server = info.context['config_server']
-        return await Image.load_item(config_server, reference)
+        client_role = info.context['user']['role']
+        client_domain = info.context['user']['domain_name']
+        item = await Image.load_item(info.context, reference)
+        if client_role == UserRole.SUPERADMIN:
+            pass
+        elif client_role in (UserRole.ADMIN, UserRole.USER):
+            # TODO: filter only images from registries allowed for the current domain
+            raise NotImplementedError
+        else:
+            raise InvalidAPIParameters('Unknown client role')
+        return item
 
     @staticmethod
     async def resolve_images(executor, info):
+        # TODO: filter only images from registries allowed for the current domain
         return await Image.load_all(info.context)
 
     @staticmethod
     async def resolve_user(executor, info, email=None):
+        client_role = info.context['user']['role']
+        client_email = info.context['user']['email']
+        if client_role == UserRole.SUPERADMIN:
+            if email is None:
+                email = client_email
+        elif client_role == UserRole.ADMIN:
+            if email is not None:
+                # TODO: check if the given email is in another domain.
+                raise GenericForbidden
+            email = client_email
+        elif client_role == UserRole.USER:
+            if email is not None and email != client_email:
+                raise GenericForbidden
+            email = client_email
+        else:
+            raise InvalidAPIParameters('Unknown client role')
         manager = info.context['dlmgr']
-        if email is None:
-            email = info.context['user']['email']
         loader = manager.get_loader('User.by_email')
         return await loader.load(email)
 
     @staticmethod
     async def resolve_users(executor, info, is_active=None):
+        client_role = info.context['user']['role']
+        client_domain = info.context['user']['domain_name']
+        if client_role == UserRole.SUPERADMIN:
+            pass
+        elif client_role == UserRole.ADMIN:
+            # TODO: filter only users in the client domain
+            raise NotImplementedError
+        elif client_role == UserRole.USER:
+            raise GenericForbidden
+        else:
+            raise InvalidAPIParameters('Unknown client role')
         return await User.load_all(info.context, is_active=is_active)
 
     @staticmethod
     async def resolve_keypair(executor, info, access_key=None):
         manager = info.context['dlmgr']
-        if access_key is None:
-            access_key = info.context['access_key']
+        client_role = info.context['user']['role']
+        client_access_key = info.context['access_key']
+        if client_role == UserRole.SUPERADMIN:
+            if access_key is None:
+                access_key = client_access_key
+        elif client_role == UserRole.ADMIN:
+            # TODO: check if the keypair is in the current domain
+            raise NotImplementedError
+        elif client_role == UserRole.USER:
+            if access_key is not None and access_key != client_access_key:
+                raise GenericForbidden
+            access_key = client_access_key
+        else:
+            raise InvalidAPIParameters('Unknown client role')
         loader = manager.get_loader('KeyPair.by_ak')
         return await loader.load(access_key)
 
     @staticmethod
     async def resolve_keypairs(executor, info, user_id=None, is_active=None):
         manager = info.context['dlmgr']
+        client_role = info.context['user']['role']
+        client_user_id = info.context['user']['uuid']
+        if client_role == UserRole.SUPERADMIN:
+            pass
+        elif client_role == UserRole.ADMIN:
+            # TODO: filter only the keypairs in the current domain
+            raise NotImplementedError
+        elif client_role == UserRole.USER:
+            if user_id is not None and user_id != client_user_id:
+                raise GenericForbidden
+            # Normal users can only query their own keypairs.
+            user_id = client_user_id
+        else:
+            raise InvalidAPIParameters('Unknown client role')
         if user_id is None:
             return await KeyPair.load_all(info.context, is_active=is_active)
         else:
@@ -325,17 +426,27 @@ class QueryForAdmin(graphene.ObjectType):
     @staticmethod
     async def resolve_keypair_resource_policy(executor, info, name=None):
         manager = info.context['dlmgr']
-        access_key = info.context['access_key']
+        client_access_key = info.context['access_key']
         if name is None:
             loader = manager.get_loader('KeyPairResourcePolicy.by_ak')
-            return await loader.load(access_key)
+            return await loader.load(client_access_key)
         else:
             loader = manager.get_loader('KeyPairResourcePolicy.by_name')
             return await loader.load(name)
 
     @staticmethod
     async def resolve_keypair_resource_policies(executor, info):
-        return await KeyPairResourcePolicy.load_all(info.context)
+        client_role = info.context['user']['role']
+        client_access_key = info.context['access_key']
+        if client_role == UserRole.SUPERADMIN:
+            return await KeyPairResourcePolicy.load_all(info.context)
+        elif client_role == UserRole.ADMIN:
+            # TODO: filter resource policies by domains?
+            return await KeyPairResourcePolicy.load_all(info.context)
+        elif client_role == UserRole.USER:
+            return await KeyPairResourcePolicy.load_all_user(info.context, client_access_key)
+        else:
+            raise InvalidAPIParameters('Unknown client role')
 
     @staticmethod
     async def resolve_resource_preset(executor, info, name):
@@ -362,8 +473,24 @@ class QueryForAdmin(graphene.ObjectType):
     @staticmethod
     async def resolve_vfolders(executor, info, access_key=None):
         manager = info.context['dlmgr']
-        if access_key is None:
-            access_key = info.context['access_key']
+        client_role = info.context['user']['role']
+        client_access_key = info.context['access_key']
+        if client_role == UserRole.SUPERADMIN:
+            # TODO: group vfolders?
+            if access_key is None:
+                access_key = client_access_key
+        elif client_role == UserRole.ADMIN:
+            # TODO: filter only vfolders in the client domain
+            # TODO: group vfolders?
+            raise NotImplementedError
+        elif client_role == UserRole.USER:
+            # TODO: filter only sessions in the client groups
+            # TODO: group vfolders?
+            if access_key is not None and access_key != client_access_key:
+                raise GenericForbidden
+            access_key = client_access_key
+        else:
+            raise InvalidAPIParameters('Unknown client role')
         loader = manager.get_loader('VirtualFolder')
         return await loader.load(access_key)
 
@@ -371,6 +498,22 @@ class QueryForAdmin(graphene.ObjectType):
     async def resolve_compute_session_list(executor, info, limit, offset,
                                            access_key=None, status=None,
                                            group_id=None):
+        client_role = info.context['user']['role']
+        client_access_key = info.context['access_key']
+        if client_role == UserRole.SUPERADMIN:
+            if access_key is None:
+                access_key = client_access_key
+        elif client_role == UserRole.ADMIN:
+            # TODO: filter only sessions in the client domain
+            raise NotImplementedError
+        elif client_role == UserRole.USER:
+            # TODO: filter only sessions in the client groups
+            # TODO: if group_id is given, check if the client is a member of it
+            if access_key is not None and access_key != client_access_key:
+                raise GenericForbidden
+            access_key = client_access_key
+        else:
+            raise InvalidAPIParameters('Unknown client role')
         total_count = await ComputeSession.load_count(
             info.context, access_key, status, group_id)
         items = await ComputeSession.load_slice(
@@ -380,6 +523,22 @@ class QueryForAdmin(graphene.ObjectType):
     @staticmethod
     async def resolve_compute_sessions(executor, info, access_key=None,
                                        status=None, group_id=None):
+        client_role = info.context['user']['role']
+        client_access_key = info.context['access_key']
+        if client_role == UserRole.SUPERADMIN:
+            if access_key is None:
+                access_key = client_access_key
+        elif client_role == UserRole.ADMIN:
+            # TODO: filter only sessions in the client domain
+            raise NotImplementedError
+        elif client_role == UserRole.USER:
+            # TODO: filter only sessions in the client groups
+            # TODO: if group_id is given, check if the client is a member of it
+            if access_key is not None and access_key != client_access_key:
+                raise GenericForbidden
+            access_key = client_access_key
+        else:
+            raise InvalidAPIParameters('Unknown client role')
         # TODO: make status a proper graphene.Enum type
         #       (https://github.com/graphql-python/graphene/issues/544)
         if status is not None:
@@ -394,6 +553,17 @@ class QueryForAdmin(graphene.ObjectType):
 
     @staticmethod
     async def resolve_compute_session(executor, info, sess_id, status=None):
+        client_role = info.context['user']['role']
+        if client_role == UserRole.SUPERADMIN:
+            pass
+        elif client_role == UserRole.ADMIN:
+            # TODO: check if session is in the client domain
+            raise NotImplementedError
+        elif client_role == UserRole.USER:
+            # TODO: check if session is owned by the client
+            pass
+        else:
+            raise InvalidAPIParameters('Unknown client role')
         manager = info.context['dlmgr']
         if status is not None:
             status = KernelStatus[status]
@@ -402,6 +572,17 @@ class QueryForAdmin(graphene.ObjectType):
 
     @staticmethod
     async def resolve_compute_workers(executor, info, sess_id, status=None):
+        client_role = info.context['user']['role']
+        if client_role == UserRole.SUPERADMIN:
+            pass
+        elif client_role == UserRole.ADMIN:
+            # TODO: check if session is in the client domain
+            raise NotImplementedError
+        elif client_role == UserRole.USER:
+            # TODO: check if session is owned by the client
+            pass
+        else:
+            raise InvalidAPIParameters('Unknown client role')
         manager = info.context['dlmgr']
         if status is not None:
             status = KernelStatus[status]
@@ -409,217 +590,12 @@ class QueryForAdmin(graphene.ObjectType):
         return await loader.load(sess_id)
 
 
-class QueryForUser(graphene.ObjectType):
-    '''
-    Available GraphQL queries for the user priveilege.
-    It only allows use of the access key specified in the authorization header.
-    '''
-    domain = graphene.Field(
-        Domain,
-        name=graphene.String())
-
-    group = graphene.Field(
-        Group,
-        id=graphene.String(required=True))
-
-    groups = graphene.List(
-        Group,
-        domain_name=graphene.String(),
-        is_active=graphene.Boolean())
-
-    image = graphene.Field(
-        Image,
-        reference=graphene.String(required=True))
-
-    images = graphene.List(
-        Image,
-    )
-
-    user = graphene.Field(User)
-
-    keypair = graphene.Field(lambda: KeyPair)
-
-    keypairs = graphene.List(
-        KeyPair,
-        user_id=graphene.String(),
-        is_active=graphene.Boolean())
-
-    keypair_resource_policy = graphene.Field(
-        KeyPairResourcePolicy,
-        name=graphene.String())
-
-    keypair_resource_policies = graphene.List(
-        KeyPairResourcePolicy)
-
-    resource_preset = graphene.Field(
-        ResourcePreset,
-        name=graphene.String())
-
-    resource_presets = graphene.List(
-        ResourcePreset)
-
-    vfolders = graphene.List(VirtualFolder)
-
-    compute_sessions = graphene.List(
-        ComputeSession,
-        status=graphene.String())
-
-    compute_session = graphene.Field(
-        ComputeSession,
-        sess_id=graphene.String())
-
-    compute_session_list = graphene.Field(
-        ComputeSessionList,
-        limit=graphene.Int(required=True),
-        offset=graphene.Int(required=True),
-        access_key=graphene.String(),
-        status=graphene.String())
-
-    compute_workers = graphene.List(
-        ComputeWorker,
-        sess_id=graphene.String(required=True),
-        status=graphene.String())
-
-    @staticmethod
-    async def resolve_domain(executor, info, name=None):
-        manager = info.context['dlmgr']
-        name = info.context['user']['domain_name']
-        loader = manager.get_loader('Domain.by_name')
-        return await loader.load(name)
-
-    @staticmethod
-    async def resolve_group(executor, info, id):
-        manager = info.context['dlmgr']
-        loader = manager.get_loader('Group.by_id')
-        return await loader.load(id)
-
-    @staticmethod
-    async def resolve_groups(executor, info, domain_name=None, is_active=None):
-        domain_name = info.context['user']['domain_name']
-        return await Group.load_all(info.context, domain_name, is_active=is_active)
-
-    @staticmethod
-    async def resolve_image(executor, info, reference):
-        return await Image.load_item(info.context, reference)
-
-    @staticmethod
-    async def resolve_images(executor, info):
-        return await Image.load_all(info.context)
-
-    @staticmethod
-    async def resolve_user(executor, info):
-        manager = info.context['dlmgr']
-        email = info.context['user']['email']
-        loader = manager.get_loader('User.by_email')
-        return await loader.load(email)
-
-    @staticmethod
-    async def resolve_keypair(executor, info):
-        manager = info.context['dlmgr']
-        access_key = info.context['access_key']
-        loader = manager.get_loader('KeyPair.by_ak')
-        return await loader.load(access_key)
-
-    @staticmethod
-    async def resolve_keypairs(executor, info, user_id=None, is_active=None):
-        manager = info.context['dlmgr']
-        if user_id is None:
-            user_id = info.context['user']['id']
-        elif user_id != info.context['user']['id']:
-            raise GenericForbidden('You cannot request other user\'s keypairs.')
-        loader = manager.get_loader('KeyPair.by_uid', is_active=is_active)
-        return await loader.load(user_id)
-
-    @staticmethod
-    async def resolve_keypair_resource_policy(executor, info, name=None):
-        manager = info.context['dlmgr']
-        access_key = info.context['access_key']
-        if name is None:
-            loader = manager.get_loader('KeyPairResourcePolicy.by_ak')
-            return await loader.load(access_key)
-        else:
-            loader = manager.get_loader('KeyPairResourcePolicy.by_name_user')
-            return await loader.load(name)
-
-    @staticmethod
-    async def resolve_keypair_resource_policies(executor, info):
-        access_key = info.context['access_key']
-        return await KeyPairResourcePolicy.load_all_user(info.context, access_key)
-
-    @staticmethod
-    async def resolve_resource_preset(executor, info, name):
-        manager = info.context['dlmgr']
-        loader = manager.get_loader('ResourcePreset.by_name')
-        return await loader.load(name)
-
-    @staticmethod
-    async def resolve_resource_presets(executor, info):
-        return await ResourcePreset.load_all(info.context)
-
-    @staticmethod
-    async def resolve_vfolders(executor, info):
-        manager = info.context['dlmgr']
-        access_key = info.context['access_key']
-        loader = manager.get_loader('VirtualFolder')
-        return await loader.load(access_key)
-
-    @staticmethod
-    async def resolve_compute_sessions(executor, info, status=None):
-        manager = info.context['dlmgr']
-        access_key = info.context['access_key']
-        # TODO: make status a proper graphene.Enum type
-        #       (https://github.com/graphql-python/graphene/issues/544)
-        if status is not None:
-            status = KernelStatus[status]
-        loader = manager.get_loader('ComputeSession', status=status)
-        return await loader.load(access_key)
-
-    @staticmethod
-    async def resolve_compute_session(executor, info, sess_id, status=None):
-        manager = info.context['dlmgr']
-        access_key = info.context['access_key']
-        if status is not None:
-            status = KernelStatus[status]
-        loader = manager.get_loader('ComputeSession.detail', access_key=access_key,
-                                    status=status)
-        return await loader.load(sess_id)
-
-    @staticmethod
-    async def resolve_compute_session_list(executor, info, limit, offset,
-                                           access_key=None, status=None):
-        if access_key is None:
-            access_key = info.context['access_key']
-        if access_key != info.context['access_key']:
-            raise GenericForbidden(
-                'You can only request session list for '
-                'the current access key being used.')
-        total_count = await ComputeSession.load_count(
-            info.context, access_key, status)
-        items = await ComputeSession.load_slice(
-            info.context, limit, offset, access_key, status)
-        return ComputeSessionList(items, total_count)
-
-    @staticmethod
-    async def resolve_compute_workers(executor, info, sess_id, status=None):
-        manager = info.context['dlmgr']
-        access_key = info.context['access_key']
-        if status is not None:
-            status = KernelStatus[status]
-        loader = manager.get_loader(
-            'ComputeWorker', status=status, access_key=access_key)
-        return await loader.load(sess_id)
-
-
 async def init(app: web.Application):
     loop = asyncio.get_event_loop()
     app['admin.gql_executor'] = AsyncioExecutor(loop=loop)
-    app['admin.gql_schema_admin'] = graphene.Schema(
-        query=QueryForAdmin,
-        mutation=MutationForAdmin,
-        auto_camelcase=False)
-    app['admin.gql_schema_user'] = graphene.Schema(
-        query=QueryForUser,
-        mutation=None,
+    app['admin.gql_schema'] = graphene.Schema(
+        query=Queries,
+        mutation=Mutations,
         auto_camelcase=False)
 
 
@@ -641,15 +617,9 @@ if __name__ == '__main__':
     # If executed as a main program, print all GraphQL schemas.
     # (graphene transforms our object model into a textual representation)
     # This is useful for writing documentation!
-    admin_schema = graphene.Schema(
-        query=QueryForAdmin,
-        mutation=MutationForAdmin,
+    schema = graphene.Schema(
+        query=Queries,
+        mutation=Mutations,
         auto_camelcase=False)
-    user_schema = graphene.Schema(
-        query=QueryForUser,
-        mutation=MutationForUser,
-        auto_camelcase=False)
-    print('======== Admin Schema ========')
-    print(str(admin_schema))
-    print('======== User Schema ========')
-    print(str(user_schema))
+    print('======== GraphQL API Schema ========')
+    print(str(schema))
