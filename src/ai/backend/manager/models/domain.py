@@ -130,8 +130,6 @@ class CreateDomain(graphene.Mutation):
     @classmethod
     @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
-        if not cls.check_perm(info):
-            return cls(False, 'no permission', None)
         if _rx_slug.search(name) is None:
             return cls(False, 'invalid name format. slug format required.', None)
         data = {
@@ -141,6 +139,7 @@ class CreateDomain(graphene.Mutation):
             'total_resource_slots': ResourceSlot.from_user_input(
                 props.total_resource_slots, None),
             'allowed_vfolder_hosts': props.allowed_vfolder_hosts,
+            'allowed_docker_registries': props.allowed_docker_registries,
             'integration_id': props.integration_id,
         }
         insert_query = (
@@ -173,6 +172,7 @@ class ModifyDomain(graphene.Mutation):
         set_if_set(props, data, 'total_resource_slots',
                    clean_func=lambda v: ResourceSlot.from_user_input(v, None))
         set_if_set(props, data, 'allowed_vfolder_hosts')
+        set_if_set(props, data, 'allowed_docker_registries')
         set_if_set(props, data, 'integration_id')
         if 'name' in data:
             assert _rx_slug.search(data['name']) is not None, \
