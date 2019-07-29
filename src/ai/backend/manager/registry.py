@@ -16,10 +16,12 @@ import zmq
 
 from ai.backend.common import msgpack
 from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
+from ai.backend.common.exception import AliasResolutionFailed
 from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
 from ai.backend.common.logging import BraceStyleAdapter
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
+    ImageNotFound,
     InstanceNotAvailable, InstanceNotFound,
     KernelNotFound, KernelAlreadyExists,
     KernelCreationFailed, KernelDestructionFailed,
@@ -355,8 +357,20 @@ class AgentRegistry:
                                     image, creation_config, resource_policy,
                                     domain_name=None, group_id=None, user_uuid=None,
                                     tag=None):
-        requested_image_ref = \
-            await ImageRef.resolve_alias(image, self.config_server.etcd)
+        # Check if image's docker registry is white-listed in domain-level.
+        try:
+            requested_image_ref = \
+                await ImageRef.resolve_alias(image, self.config_server.etcd)
+            async with self.dbpool.acquire() as conn, conn.begin():
+                query = (sa.select([domains.c.allowed_docker_registries])
+                           .select_from(domains)
+                           .where(domains.c.name == domain_name))
+                allowed_registries = await conn.scalar(query)
+                if requested_image_ref.registry not in allowed_registries:
+                    raise AliasResolutionFailed
+        except AliasResolutionFailed:
+            raise ImageNotFound
+
         try:
             kern = await self.get_session(sess_id, access_key)
             running_image_ref = ImageRef(kern['image'], [kern['registry']])
