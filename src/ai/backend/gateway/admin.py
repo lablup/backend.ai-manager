@@ -37,6 +37,9 @@ from ..manager.models import (
     CreateResourcePreset, ModifyResourcePreset, DeleteResourcePreset,
     ScalingGroup,
     CreateScalingGroup, ModifyScalingGroup, DeleteScalingGroup,
+    AssociateScalingGroupWithDomain, DisassociateScalingGroupWithDomain,
+    AssociateScalingGroupWithUserGroup, DisassociateScalingGroupWithUserGroup,
+    AssociateScalingGroupWithKeyPair, DisassociateScalingGroupWithKeyPair,
 )
 from .exceptions import GenericNotFound
 
@@ -130,6 +133,12 @@ class Mutations(graphene.ObjectType):
     create_scaling_group = CreateScalingGroup.Field()
     modify_scaling_group = ModifyScalingGroup.Field()
     delete_scaling_group = DeleteScalingGroup.Field()
+    associate_scaling_group_with_domain     = AssociateScalingGroupWithDomain.Field()
+    associate_scaling_group_with_user_group = AssociateScalingGroupWithUserGroup.Field()
+    associate_scaling_group_with_keypair    = AssociateScalingGroupWithKeyPair.Field()
+    disassociate_scaling_group_with_domain     = DisassociateScalingGroupWithDomain.Field()
+    disassociate_scaling_group_with_user_group = DisassociateScalingGroupWithUserGroup.Field()
+    disassociate_scaling_group_with_keypair    = DisassociateScalingGroupWithKeyPair.Field()
 
 
 class Queries(graphene.ObjectType):

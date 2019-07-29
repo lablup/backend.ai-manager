@@ -24,6 +24,12 @@ __all__ = (
     'CreateScalingGroup',
     'ModifyScalingGroup',
     'DeleteScalingGroup',
+    'AssociateScalingGroupWithDomain',
+    'AssociateScalingGroupWithUserGroup',
+    'AssociateScalingGroupWithKeyPair',
+    'DisassociateScalingGroupWithDomain',
+    'DisassociateScalingGroupWithUserGroup',
+    'DisassociateScalingGroupWithKeyPair',
 )
 
 
@@ -319,6 +325,222 @@ class DeleteScalingGroup(graphene.Mutation):
                     return cls(ok=True, msg='success')
                 else:
                     return cls(ok=False, msg='no such scaling group')
+            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+                return cls(ok=False,
+                           msg=f'integrity error: {e}')
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                raise
+            except Exception as e:
+                return cls(ok=False,
+                           msg=f'unexpected error: {e}')
+
+
+class AssociateScalingGroupWithDomain(graphene.Mutation):
+
+    class Arguments:
+        scaling_group = graphene.String(required=True)
+        domain = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
+    async def mutate(cls, root, info, scaling_group, domain):
+        async with info.context['dbpool'].acquire() as conn, conn.begin():
+            try:
+                query = (
+                    sgroups_for_domains.insert()
+                    .values({
+                        'scaling_group': scaling_group,
+                        'domain': domain,
+                    })
+                )
+                result = await conn.execute(query)
+                if result.rowcount > 0:
+                    return cls(ok=True, msg='success')
+                else:
+                    return cls(ok=False, msg='failed to insert')
+            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+                return cls(ok=False,
+                           msg=f'integrity error: {e}')
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                raise
+            except Exception as e:
+                return cls(ok=False,
+                           msg=f'unexpected error: {e}')
+
+
+class DisassociateScalingGroupWithDomain(graphene.Mutation):
+
+    class Arguments:
+        scaling_group = graphene.String(required=True)
+        domain = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
+    async def mutate(cls, root, info, scaling_group, domain):
+        async with info.context['dbpool'].acquire() as conn, conn.begin():
+            try:
+                query = (
+                    sgroups_for_domains.delete()
+                    .where(
+                        (sgroups_for_domains.c.scaling_group == scaling_group) &
+                        (sgroups_for_domains.c.domain == domain)
+                    )
+                )
+                result = await conn.execute(query)
+                if result.rowcount > 0:
+                    return cls(ok=True, msg='success')
+                else:
+                    return cls(ok=False, msg='failed to delete')
+            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+                return cls(ok=False,
+                           msg=f'integrity error: {e}')
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                raise
+            except Exception as e:
+                return cls(ok=False,
+                           msg=f'unexpected error: {e}')
+
+
+class AssociateScalingGroupWithUserGroup(graphene.Mutation):
+
+    class Arguments:
+        scaling_group = graphene.String(required=True)
+        user_group = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
+    async def mutate(cls, root, info, scaling_group, user_group):
+        async with info.context['dbpool'].acquire() as conn, conn.begin():
+            try:
+                query = (
+                    sgroups_for_groups.insert()
+                    .values({
+                        'scaling_group': scaling_group,
+                        'group': user_group,
+                    })
+                )
+                result = await conn.execute(query)
+                if result.rowcount > 0:
+                    return cls(ok=True, msg='success')
+                else:
+                    return cls(ok=False, msg='failed to insert')
+            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+                return cls(ok=False,
+                           msg=f'integrity error: {e}')
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                raise
+            except Exception as e:
+                return cls(ok=False,
+                           msg=f'unexpected error: {e}')
+
+
+class DisassociateScalingGroupWithUserGroup(graphene.Mutation):
+
+    class Arguments:
+        scaling_group = graphene.String(required=True)
+        user_group = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
+    async def mutate(cls, root, info, scaling_group, user_group):
+        async with info.context['dbpool'].acquire() as conn, conn.begin():
+            try:
+                query = (
+                    sgroups_for_groups.delete()
+                    .where(
+                        (sgroups_for_groups.c.scaling_group == scaling_group) &
+                        (sgroups_for_groups.c.group == user_group)
+                    )
+                )
+                result = await conn.execute(query)
+                if result.rowcount > 0:
+                    return cls(ok=True, msg='success')
+                else:
+                    return cls(ok=False, msg='failed to delete')
+            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+                return cls(ok=False,
+                           msg=f'integrity error: {e}')
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                raise
+            except Exception as e:
+                return cls(ok=False,
+                           msg=f'unexpected error: {e}')
+
+
+class AssociateScalingGroupWithKeyPair(graphene.Mutation):
+
+    class Arguments:
+        scaling_group = graphene.String(required=True)
+        access_key = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
+    async def mutate(cls, root, info, scaling_group, access_key):
+        async with info.context['dbpool'].acquire() as conn, conn.begin():
+            try:
+                query = (
+                    sgroups_for_keypairs.insert()
+                    .values({
+                        'scaling_group': scaling_group,
+                        'access_key': access_key,
+                    })
+                )
+                result = await conn.execute(query)
+                if result.rowcount > 0:
+                    return cls(ok=True, msg='success')
+                else:
+                    return cls(ok=False, msg='failed to insert')
+            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+                return cls(ok=False,
+                           msg=f'integrity error: {e}')
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                raise
+            except Exception as e:
+                return cls(ok=False,
+                           msg=f'unexpected error: {e}')
+
+
+class DisassociateScalingGroupWithKeyPair(graphene.Mutation):
+
+    class Arguments:
+        scaling_group = graphene.String(required=True)
+        access_key = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
+    async def mutate(cls, root, info, scaling_group, access_key):
+        async with info.context['dbpool'].acquire() as conn, conn.begin():
+            try:
+                query = (
+                    sgroups_for_keypairs.delete()
+                    .where(
+                        (sgroups_for_keypairs.c.scaling_group == scaling_group) &
+                        (sgroups_for_keypairs.c.access_key == access_key)
+                    )
+                )
+                result = await conn.execute(query)
+                if result.rowcount > 0:
+                    return cls(ok=True, msg='success')
+                else:
+                    return cls(ok=False, msg='failed to delete')
             except (pg.IntegrityError, sa.exc.IntegrityError) as e:
                 return cls(ok=False,
                            msg=f'integrity error: {e}')
