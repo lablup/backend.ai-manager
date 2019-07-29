@@ -235,6 +235,24 @@ class Queries(graphene.ObjectType):
         name=graphene.String(),
         is_active=graphene.Boolean())
 
+    # super-admin only
+    scaling_groups_for_domain = graphene.List(
+        ScalingGroup,
+        domain=graphene.String(required=True),
+        is_active=graphene.Boolean())
+
+    # super-admin only
+    scaling_groups_for_user_group = graphene.List(
+        ScalingGroup,
+        user_group=graphene.String(required=True),
+        is_active=graphene.Boolean())
+
+    # super-admin only
+    scaling_groups_for_keypair = graphene.List(
+        ScalingGroup,
+        access_key=graphene.String(required=True),
+        is_active=graphene.Boolean())
+
     vfolders = graphene.List(
         VirtualFolder,
         access_key=graphene.String())  # must be empty for user requests
@@ -478,6 +496,24 @@ class Queries(graphene.ObjectType):
     @privileged_query(UserRole.SUPERADMIN)
     async def resolve_scaling_groups(executor, info, is_active=None):
         return await ScalingGroup.load_all(info.context, is_active=is_active)
+
+    @staticmethod
+    @privileged_query(UserRole.SUPERADMIN)
+    async def resolve_scaling_groups_for_domain(executor, info, domain, is_active=None):
+        return await ScalingGroup.load_by_domain(
+            info.context, domain, is_active=is_active)
+
+    @staticmethod
+    @privileged_query(UserRole.SUPERADMIN)
+    async def resolve_scaling_groups_for_group(executor, info, user_group, is_active=None):
+        return await ScalingGroup.load_by_group(
+            info.context, user_group, is_active=is_active)
+
+    @staticmethod
+    @privileged_query(UserRole.SUPERADMIN)
+    async def resolve_scaling_groups_for_keypair(executor, info, access_key, is_active=None):
+        return await ScalingGroup.load_by_keypair(
+            info.context, access_key, is_active=is_active)
 
     @staticmethod
     async def resolve_vfolders(executor, info, access_key=None):

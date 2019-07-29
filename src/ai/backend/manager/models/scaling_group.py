@@ -178,6 +178,63 @@ class ScalingGroup(graphene.ObjectType):
         return objs
 
     @staticmethod
+    async def load_by_domain(context, domain, *, is_active=None):
+        async with context['dbpool'].acquire() as conn:
+            j = sa.join(
+                scaling_groups, sgroups_for_domains,
+                scaling_groups.c.name == sgroups_for_domains.c.scaling_group)
+            query = (
+                sa.select([scaling_groups])
+                .select_from(j)
+                .where(sgroups_for_domains.c.domain == domain)
+            )
+            if is_active is not None:
+                query = query.where(scaling_groups.c.is_active == is_active)
+            objs = []
+            async for row in conn.execute(query):
+                o = ScalingGroup.from_row(row)
+                objs.append(o)
+        return objs
+
+    @staticmethod
+    async def load_by_group(context, group, *, is_active=None):
+        async with context['dbpool'].acquire() as conn:
+            j = sa.join(
+                scaling_groups, sgroups_for_groups,
+                scaling_groups.c.name == sgroups_for_groups.c.scaling_group)
+            query = (
+                sa.select([scaling_groups])
+                .select_from(j)
+                .where(sgroups_for_groups.c.group == group)
+            )
+            if is_active is not None:
+                query = query.where(scaling_groups.c.is_active == is_active)
+            objs = []
+            async for row in conn.execute(query):
+                o = ScalingGroup.from_row(row)
+                objs.append(o)
+        return objs
+
+    @staticmethod
+    async def load_by_keypair(context, access_key, *, is_active=None):
+        async with context['dbpool'].acquire() as conn:
+            j = sa.join(
+                scaling_groups, sgroups_for_keypairs,
+                scaling_groups.c.name == sgroups_for_keypairs.c.scaling_group)
+            query = (
+                sa.select([scaling_groups])
+                .select_from(j)
+                .where(sgroups_for_keypairs.c.access_key == access_key)
+            )
+            if is_active is not None:
+                query = query.where(scaling_groups.c.is_active == is_active)
+            objs = []
+            async for row in conn.execute(query):
+                o = ScalingGroup.from_row(row)
+                objs.append(o)
+        return objs
+
+    @staticmethod
     async def batch_load_by_name(context, names):
         async with context['dbpool'].acquire() as conn:
             query = (sa.select([scaling_groups])
