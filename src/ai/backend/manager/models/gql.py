@@ -49,11 +49,16 @@ from .vfolder import (
 from ...gateway.exceptions import (
     GenericNotFound,
     GenericForbidden,
+    ImageNotFound,
     InvalidAPIParameters,
 )
 
 
 class Mutations(graphene.ObjectType):
+    '''
+    All available GraphQL mutations.
+    '''
+
     # super-admin only
     create_domain = CreateDomain.Field()
     modify_domain = ModifyDomain.Field()
@@ -103,10 +108,7 @@ class Mutations(graphene.ObjectType):
 
 class Queries(graphene.ObjectType):
     '''
-    Available GraphQL queries for the admin privilege.
-    It allows use of any access keys regardless of the one specified in the
-    authorization header as well as querying the keypair information of all
-    users.
+    All available GraphQL queries.
     '''
 
     # super-admin only
@@ -323,7 +325,7 @@ class Queries(graphene.ObjectType):
         return AgentList(agent_list, total_count)
 
     @staticmethod
-    async def resolve_domain(executor, info, name=None):
+    async def resolve_domain(executor, info, *, name=None):
         manager = info.context['dlmgr']
         name = info.context['user']['domain_name'] if name is None else name
         if info.context['user']['role'] != UserRole.SUPERADMIN:
@@ -335,7 +337,7 @@ class Queries(graphene.ObjectType):
 
     @staticmethod
     @privileged_query(UserRole.SUPERADMIN)
-    async def resolve_domains(executor, info, is_active=None):
+    async def resolve_domains(executor, info, *, is_active=None):
         return await Domain.load_all(info.context, is_active=is_active)
 
     @staticmethod
@@ -358,7 +360,7 @@ class Queries(graphene.ObjectType):
         return group
 
     @staticmethod
-    async def resolve_groups(executor, info, domain_name=None, is_active=None, all=False):
+    async def resolve_groups(executor, info, *, domain_name=None, is_active=None, all=False):
         client_role = info.context['user']['role']
         client_domain = info.context['user']['domain_name']
         if client_role == UserRole.SUPERADMIN:
@@ -382,16 +384,26 @@ class Queries(graphene.ObjectType):
         if client_role == UserRole.SUPERADMIN:
             pass
         elif client_role in (UserRole.ADMIN, UserRole.USER):
-            # TODO: filter only images from registries allowed for the current domain
-            raise NotImplementedError
+            items = await Image.filter_allowed(info.context, [item], client_domain)
+            if not items:
+                raise ImageNotFound
+            item = items[0]
         else:
             raise InvalidAPIParameters('Unknown client role')
         return item
 
     @staticmethod
     async def resolve_images(executor, info):
-        # TODO: filter only images from registries allowed for the current domain
-        return await Image.load_all(info.context)
+        client_role = info.context['user']['role']
+        client_domain = info.context['user']['domain_name']
+        items = await Image.load_all(info.context)
+        if client_role == UserRole.SUPERADMIN:
+            pass
+        elif client_role in (UserRole.ADMIN, UserRole.USER):
+            items = await Image.filter_allowed(info.context, items, client_domain)
+        else:
+            raise InvalidAPIParameters('Unknown client role')
+        return items
 
     @staticmethod
     @scoped_query(autofill_user=True, user_key='email')

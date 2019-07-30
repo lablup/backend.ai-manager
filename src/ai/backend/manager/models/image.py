@@ -1,6 +1,7 @@
 import logging
 
 import graphene
+import sqlalchemy as sa
 
 from ai.backend.common.logging import BraceStyleAdapter
 from .base import BigInt, KVPair, ResourceLimit
@@ -67,6 +68,24 @@ class Image(graphene.ObjectType):
             item = cls._convert_from_dict(r)
             items.append(item)
         return items
+
+    @staticmethod
+    async def filter_allowed(context, items, domain_name):
+        from .domain import domains
+        async with context['dbpool'].acquire() as conn:
+            query = (
+                sa.select([domains.c.allowed_docker_registries])
+                .select_from(domains)
+                .where(domains.c.name == domain_name)
+                .as_scalar()
+            )
+            result = await conn.execute(query)
+            row = await result.fetchone()
+            allowed_docker_registries = row[0]
+        return [
+            item for item in items
+            if item.registry in allowed_docker_registries
+        ]
 
 
 class PreloadImage(graphene.Mutation):

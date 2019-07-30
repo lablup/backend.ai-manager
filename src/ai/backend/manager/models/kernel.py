@@ -292,10 +292,12 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                          domain_name=None, group_id=None, access_key=None,
                          status=None):
         async with context['dbpool'].acquire() as conn:
-            query = (sa.select([sa.func.count(kernels.c.sess_id)])
-                       .select_from(kernels)
-                       .where(kernels.c.role == 'master')
-                       .as_scalar())
+            query = (
+                sa.select([sa.func.count(kernels.c.sess_id)])
+                .select_from(kernels)
+                .where(kernels.c.role == 'master')
+                .as_scalar()
+            )
             if domain_name is not None:
                 query = query.where(kernels.c.domain_name == domain_name)
             if group_id is not None:
@@ -326,12 +328,14 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 _ordering = _order_func(getattr(kernels.c, order_key))
             # TODO: optimization for pagination using subquery, join
             j = kernels.join(groups, groups.c.id == kernels.c.group_id)
-            query = (sa.select([kernels, groups.c.name])
-                       .select_from(j)
-                       .where(kernels.c.role == 'master')
-                       .order_by(_ordering)
-                       .limit(limit)
-                       .offset(offset))
+            query = (
+                sa.select([kernels, groups.c.name])
+                .select_from(j)
+                .where(kernels.c.role == 'master')
+                .order_by(_ordering)
+                .limit(limit)
+                .offset(offset)
+            )
             if domain_name is not None:
                 query = query.where(kernels.c.domain_name == domain_name)
             if group_id is not None:

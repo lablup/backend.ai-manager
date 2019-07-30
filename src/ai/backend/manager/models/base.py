@@ -305,6 +305,16 @@ def privileged_query(required_role):
 def scoped_query(*,
                  autofill_user: bool = False,
                  user_key: str = 'access_key'):
+    '''
+    Prepends checks for domain/group/user access rights depending
+    on the client's user and keypair information.
+
+    :param autofill_user: When the *user_key* is not specified,
+        automatically fills out the user data with the current
+        user who is makeing the API request.
+    :param user_key: The key used for storing user identification value
+        in the keyword arguments.
+    '''
 
     def wrap(resolve_func):
 
