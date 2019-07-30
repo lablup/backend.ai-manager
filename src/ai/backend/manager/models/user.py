@@ -108,7 +108,7 @@ class User(graphene.ObjectType):
         )
 
     @staticmethod
-    async def load_all(context, *, is_active=None):
+    async def load_all(context, *, domain_name=None, is_active=None):
         '''
         Load user's information. Group names associated with the user are also returned.
         '''
@@ -119,6 +119,8 @@ class User(graphene.ObjectType):
             query = sa.select([users, groups.c.name, groups.c.id]).select_from(j)
             if context['user']['role'] != UserRole.SUPERADMIN:
                 query = query.where(users.c.domain_name == context['user']['domain_name'])
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
             if is_active is not None:
                 query = query.where(users.c.is_active == is_active)
             objs_per_key = OrderedDict()

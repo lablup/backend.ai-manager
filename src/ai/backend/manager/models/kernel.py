@@ -15,7 +15,6 @@ from .base import (
     Item, PaginatedList,
 )
 from .group import groups
-from .user import UserRole
 
 __all__ = (
     'kernels', 'KernelStatus',

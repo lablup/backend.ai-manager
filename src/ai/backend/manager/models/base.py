@@ -24,7 +24,9 @@ from sqlalchemy.dialects.postgresql import UUID, ENUM, JSONB
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import BinarySize, ResourceSlot
 from .. import models
-from ...gateway.exceptions import GenericForbidden
+from ...gateway.exceptions import (
+    GenericForbidden, InvalidAPIParameters,
+)
 
 SAFE_MIN_INT = -9007199254740991
 SAFE_MAX_INT = 9007199254740991
@@ -294,6 +296,64 @@ def privileged_query(required_role):
             if info.context['user']['role'] != UserRole.SUPERADMIN:
                 raise GenericForbidden('superadmin privilege required')
             return await func(executor, info, *args, **kwargs)
+
+        return wrapped
+
+    return wrap
+
+
+def scoped_query(*,
+                 autofill_user: bool = False,
+                 user_key: str = 'access_key'):
+
+    def wrap(resolve_func):
+
+        @functools.wraps(resolve_func)
+        async def wrapped(executor, info, *args, **kwargs):
+            from .user import UserRole
+            client_role = info.context['user']['role']
+            if user_key == 'access_key':
+                client_user_id = info.context['access_key']
+            else:
+                client_user_id = info.context['user']['uuid']
+            client_domain = info.context['user']['domain_name']
+            domain_name = kwargs.get('domain_name', None)
+            group_id = kwargs.get('group_id', None)
+            user_id = kwargs.get(user_key, None)
+            if client_role == UserRole.SUPERADMIN:
+                if autofill_user:
+                    # We are considering the client's stuffs only.
+                    if user_id is None:
+                        user_id = client_user_id
+            elif client_role == UserRole.ADMIN:
+                if domain_name is not None and domain_name != client_domain:
+                    raise GenericForbidden
+                domain_name = client_domain
+                if group_id is not None:
+                    # TODO: check if the group is a member of the domain
+                    pass
+                if autofill_user:
+                    # We are returning a single item for myself.
+                    if user_id is None:
+                        user_id = client_user_id
+            elif client_role == UserRole.USER:
+                if domain_name is not None and domain_name != client_domain:
+                    raise GenericForbidden
+                domain_name = client_domain
+                if group_id is not None:
+                    # TODO: check if the group is a member of the domain
+                    # TODO: check if the client is a member of the group
+                    pass
+                if user_id is not None and user_id != client_user_id:
+                    raise GenericForbidden
+                user_id = client_user_id
+            else:
+                raise InvalidAPIParameters('Unknown client role')
+            kwargs['domain_name'] = domain_name
+            if group_id is not None:
+                kwargs['group_id'] = group_id
+            kwargs[user_key] = user_id
+            return await resolve_func(executor, info, *args, **kwargs)
 
         return wrapped
 

@@ -103,9 +103,14 @@ class KeyPair(graphene.ObjectType):
         return await loader.load(self.access_key)
 
     @staticmethod
-    async def load_all(context, *, is_active=None):
+    async def load_all(context, *,
+                       domain_name=None, is_active=None):
+        from .user import users
         async with context['dbpool'].acquire() as conn:
-            query = sa.select([keypairs]).select_from(keypairs)
+            j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
+            query = sa.select([keypairs]).select_from(j)
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
             if is_active is not None:
                 query = query.where(keypairs.c.is_active == is_active)
             objs = []
@@ -115,11 +120,16 @@ class KeyPair(graphene.ObjectType):
         return objs
 
     @staticmethod
-    async def batch_load_by_uid(context, user_ids, *, is_active=None):
+    async def batch_load_by_email(context, user_ids, *,
+                                  domain_name=None, is_active=None):
+        from .user import users
         async with context['dbpool'].acquire() as conn:
+            j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
             query = (sa.select([keypairs])
-                       .select_from(keypairs)
+                       .select_from(j)
                        .where(keypairs.c.user_id.in_(user_ids)))
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
             if is_active is not None:
                 query = query.where(keypairs.c.is_active == is_active)
             objs_per_key = OrderedDict()
@@ -131,11 +141,19 @@ class KeyPair(graphene.ObjectType):
         return tuple(objs_per_key.values())
 
     @staticmethod
-    async def batch_load_by_ak(context, access_keys):
+    async def batch_load_by_ak(context, access_keys, *, domain_name=None):
         async with context['dbpool'].acquire() as conn:
-            query = (sa.select([keypairs])
-                       .select_from(keypairs)
-                       .where(keypairs.c.access_key.in_(access_keys)))
+            from .user import users
+            j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
+            query = (
+                sa.select([keypairs])
+                .select_from(j)
+                .where(
+                    keypairs.c.access_key.in_(access_keys)
+                )
+            )
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
             objs_per_key = OrderedDict()
             # For each access key, there is only one keypair.
             # So we don't build lists in objs_per_key variable.

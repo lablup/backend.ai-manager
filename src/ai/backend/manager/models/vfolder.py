@@ -7,7 +7,10 @@ from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 import trafaret as t
 
-from .base import metadata, EnumValueType, GUID, IDColumn
+from .base import (
+    metadata, EnumValueType, GUID, IDColumn,
+    Item, PaginatedList,
+)
 
 __all__ = (
     'vfolders',
@@ -285,7 +288,9 @@ async def get_allowed_vfolder_hosts_by_user(conn, resource_policy,
 
 
 class VirtualFolder(graphene.ObjectType):
-    id = graphene.UUID()
+    class Meta:
+        interfaces = (Item, )
+
     host = graphene.String()
     name = graphene.String()
     max_files = graphene.Int()
@@ -321,13 +326,88 @@ class VirtualFolder(graphene.ObjectType):
         return 0
 
     @staticmethod
-    async def batch_load(context, user_uuids):
+    async def load_count(context, *,
+                         domain_name=None, group_id=None, user_id=None):
+        from .user import users
+        async with context['dbpool'].acquire() as conn:
+            j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
+            query = (
+                sa.select([sa.func.count(vfolders.c.id)])
+                .select_from(j)
+            )
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
+            if group_id is not None:
+                query = query.where(vfolders.c.group == group_id)
+            if user_id is not None:
+                query = query.where(vfolders.c.user == user_id)
+            result = await conn.execute(query)
+            count = await result.fetchone()
+            return count[0]
+
+    @staticmethod
+    async def load_slice(context, limit, offset, *,
+                         domain_name=None, group_id=None, user_id=None):
+        from .user import users
+        async with context['dbpool'].acquire() as conn:
+            j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
+            query = (
+                sa.select([vfolders])
+                .select_from(j)
+                .order_by(sa.desc(vfolders.c.created_at))
+                .limit(limit)
+                .offset(offset)
+            )
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
+            if group_id is not None:
+                query = query.where(vfolders.c.group == group_id)
+            if user_id is not None:
+                query = query.where(vfolders.c.user == user_id)
+            result = await conn.execute(query)
+            rows = await result.fetchall()
+            return [VirtualFolder.from_row(context, r) for r in rows]
+
+    @staticmethod
+    async def load_all(context, *,
+                       domain_name=None, group_id=None, user_id=None):
+        from .user import users
+        async with context['dbpool'].acquire() as conn:
+            j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
+            query = (
+                sa.select([vfolders])
+                .select_from(j)
+                .order_by(sa.desc(vfolders.c.created_at))
+            )
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
+            if group_id is not None:
+                query = query.where(vfolders.c.group == group_id)
+            if user_id is not None:
+                query = query.where(vfolders.c.user == user_id)
+            objs = []
+            async for row in conn.execute(query):
+                o = VirtualFolder.from_row(row)
+                objs.append(o)
+        return objs
+
+    @staticmethod
+    async def batch_load_by_user(context, user_uuids, *,
+                                 domain_name=None, group_id=None):
+        from .user import users
         async with context['dbpool'].acquire() as conn:
             # TODO: num_attached count group-by
-            query = (sa.select([vfolders])
-                       .select_from(vfolders)
-                       .where(vfolders.c.user.in_(user_uuids))
-                       .order_by(sa.desc(vfolders.c.created_at)))
+            j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
+            query = (
+                sa.select([vfolders])
+                .select_from(j)
+                .where(vfolders.c.user.in_(user_uuids))
+                .order_by(sa.desc(vfolders.c.created_at))
+            )
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
+            if group_id is not None:
+                query = query.where(vfolders.c.group == group_id)
             objs_per_key = OrderedDict()
             for u in user_uuids:
                 objs_per_key[u] = list()
@@ -335,3 +415,10 @@ class VirtualFolder(graphene.ObjectType):
                 o = VirtualFolder.from_row(row)
                 objs_per_key[row.user].append(o)
         return tuple(objs_per_key.values())
+
+
+class VirtualFolderList(graphene.ObjectType):
+    class Meta:
+        interfaces = (PaginatedList, )
+
+    items = graphene.List(VirtualFolder, required=True)

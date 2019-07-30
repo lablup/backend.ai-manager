@@ -1,6 +1,6 @@
 import graphene
 
-from .base import privileged_query
+from .base import privileged_query, scoped_query
 from .agent import (
     Agent, AgentList,
 )
@@ -44,7 +44,7 @@ from .user import (
     CreateUser, ModifyUser, DeleteUser,
 )
 from .vfolder import (
-    VirtualFolder,
+    VirtualFolder, VirtualFolderList,
 )
 from ...gateway.exceptions import (
     GenericNotFound,
@@ -213,8 +213,18 @@ class Queries(graphene.ObjectType):
         access_key=graphene.String(required=True),
         is_active=graphene.Boolean())
 
+    vfolder_list = graphene.Field(  # legacy non-paginated list
+        VirtualFolderList,
+        limit=graphene.Int(required=True),
+        offset=graphene.Int(required=True),
+        domain_name=graphene.String(),
+        group_id=graphene.String(),
+        access_key=graphene.String())  # must be empty for user requests
+
     vfolders = graphene.List(  # legacy non-paginated list
         VirtualFolder,
+        domain_name=graphene.String(),
+        group_id=graphene.String(),
         access_key=graphene.String())  # must be empty for user requests
 
     compute_session_list = graphene.Field(
@@ -363,61 +373,66 @@ class Queries(graphene.ObjectType):
         return await loader.load(email)
 
     @staticmethod
-    async def resolve_users(executor, info, is_active=None):
+    async def resolve_users(executor, info, *,
+                            domain_name=None,
+                            is_active=None):
         client_role = info.context['user']['role']
         client_domain = info.context['user']['domain_name']
         if client_role == UserRole.SUPERADMIN:
             pass
         elif client_role == UserRole.ADMIN:
-            # TODO: filter only users in the client domain
-            raise NotImplementedError
+            if domain_name is not None and domain_name != client_domain:
+                raise GenericForbidden
+            domain_name = client_domain
         elif client_role == UserRole.USER:
+            # A user can never query the list of other users.
             raise GenericForbidden
         else:
             raise InvalidAPIParameters('Unknown client role')
-        return await User.load_all(info.context, is_active=is_active)
+        return await User.load_all(
+            info.context,
+            domain_name=domain_name,
+            is_active=is_active)
 
     @staticmethod
-    async def resolve_keypair(executor, info, access_key=None):
+    @scoped_query(autofill_user=True, user_key='access_key')
+    async def resolve_keypair(executor, info, *,
+                              domain_name=None, access_key=None):
         manager = info.context['dlmgr']
-        client_role = info.context['user']['role']
-        client_access_key = info.context['access_key']
-        if client_role == UserRole.SUPERADMIN:
-            if access_key is None:
-                access_key = client_access_key
-        elif client_role == UserRole.ADMIN:
-            # TODO: check if the keypair is in the current domain
-            raise NotImplementedError
-        elif client_role == UserRole.USER:
-            if access_key is not None and access_key != client_access_key:
-                raise GenericForbidden
-            access_key = client_access_key
-        else:
-            raise InvalidAPIParameters('Unknown client role')
-        loader = manager.get_loader('KeyPair.by_ak')
+        loader = manager.get_loader('KeyPair.by_ak', domain_name=domain_name)
         return await loader.load(access_key)
 
     @staticmethod
-    async def resolve_keypairs(executor, info, user_id=None, is_active=None):
-        manager = info.context['dlmgr']
+    async def resolve_keypairs(executor, info, *,
+                               user_id=None, is_active=None):
+        # Here, user_id corresponds to user email.
+        # fetch keypairs from each user_id
         client_role = info.context['user']['role']
-        client_user_id = info.context['user']['uuid']
+        client_domain = info.context['user']['domain_name']
+        client_email = info.context['user']['email']
         if client_role == UserRole.SUPERADMIN:
-            pass
+            domain_name = None
         elif client_role == UserRole.ADMIN:
-            # TODO: filter only the keypairs in the current domain
-            raise NotImplementedError
+            # Domain admins can only query keypairs in their domain.
+            domain_name = client_domain
         elif client_role == UserRole.USER:
-            if user_id is not None and user_id != client_user_id:
-                raise GenericForbidden
             # Normal users can only query their own keypairs.
-            user_id = client_user_id
+            if user_id is not None and user_id != client_email:
+                raise GenericForbidden
+            user_id = client_email
+            domain_name = client_domain
         else:
             raise InvalidAPIParameters('Unknown client role')
         if user_id is None:
-            return await KeyPair.load_all(info.context, is_active=is_active)
+            return await KeyPair.load_all(
+                info.context,
+                domain_name=domain_name,
+                is_active=is_active)
         else:
-            loader = manager.get_loader('KeyPair.by_uid', is_active=is_active)
+            manager = info.context['dlmgr']
+            loader = manager.get_loader('KeyPair.by_email',
+                                        domain_name=domain_name,
+                                        is_active=is_active)
             return await loader.load(user_id)
 
     @staticmethod
@@ -486,67 +501,36 @@ class Queries(graphene.ObjectType):
             info.context, access_key, is_active=is_active)
 
     @staticmethod
-    async def resolve_vfolders(executor, info, access_key=None):
-        manager = info.context['dlmgr']
-        client_role = info.context['user']['role']
-        client_access_key = info.context['access_key']
-        if client_role == UserRole.SUPERADMIN:
-            # TODO: group vfolders?
-            if access_key is None:
-                access_key = client_access_key
-        elif client_role == UserRole.ADMIN:
-            # TODO: filter only vfolders in the client domain
-            # TODO: group vfolders?
-            raise NotImplementedError
-        elif client_role == UserRole.USER:
-            # TODO: filter only sessions in the client groups
-            # TODO: group vfolders?
-            if access_key is not None and access_key != client_access_key:
-                raise GenericForbidden
-            access_key = client_access_key
-        else:
-            raise InvalidAPIParameters('Unknown client role')
-        loader = manager.get_loader('VirtualFolder')
-        return await loader.load(access_key)
+    @scoped_query(autofill_user=False, user_key='user_id')
+    async def resolve_vfolder_list(executor, info, limit, offset, *,
+                                   domain_name=None, group_id=None, user_id=None):
+        total_count = await VirtualFolder.load_count(
+            info.context,
+            domain_name=domain_name,
+            group_id=group_id,
+            user_id=user_id)
+        items = await VirtualFolder.load_slice(
+            info.context, limit, offset,
+            domain_name=domain_name,
+            group_id=group_id,
+            user_id=user_id)
+        return VirtualFolderList(items, total_count)
 
     @staticmethod
-    async def resolve_compute_session_list(executor, info, limit, offset,
-                                           domain_name=None, access_key=None, status=None,
-                                           group_id=None):
-        client_role = info.context['user']['role']
-        client_access_key = info.context['access_key']
-        client_domain = info.context['user']['domain_name']
-        if client_role == UserRole.SUPERADMIN:
-            if domain_name is None:
-                domain_name = client_domain
-            if access_key is None:
-                access_key = client_access_key
-        elif client_role == UserRole.ADMIN:
-            if domain_name is not None and domain_name != client_domain:
-                raise GenericForbidden
-            domain_name = client_domain
-            if group_id is not None:
-                # TODO: check if the group is a member of the domain
-                pass
-            if access_key is not None:
-                # TODO: check if the client is a member of the domain
-                pass
-        elif client_role == UserRole.USER:
-            if domain_name is not None and domain_name != client_domain:
-                raise GenericForbidden
-            domain_name = client_domain
-            if group_id is not None:
-                # TODO: check if the group is a member of the domain
-                # TODO: check if the client is a member of the group
-                pass
-            if access_key is not None:
-                # TODO: check if the client is a member of the domain
-                pass
-            if access_key is not None and access_key != client_access_key:
-                raise GenericForbidden
-            access_key = client_access_key
-        else:
-            raise InvalidAPIParameters('Unknown client role')
+    @scoped_query(autofill_user=False, user_key='user_id')
+    async def resolve_vfolders(executor, info, *,
+                               domain_name=None, group_id=None, user_id=None):
+        return await VirtualFolder.load_all(
+            info.context,
+            domain_name=domain_name,
+            group_id=group_id,
+            user_id=user_id)
+
+    @staticmethod
+    @scoped_query(autofill_user=False, user_key='access_key')
+    async def resolve_compute_session_list(executor, info, limit, offset, *,
+                                           domain_name=None, group_id=None, access_key=None,
+                                           status=None):
         total_count = await ComputeSession.load_count(
             info.context,
             domain_name=domain_name,
@@ -562,43 +546,10 @@ class Queries(graphene.ObjectType):
         return ComputeSessionList(items, total_count)
 
     @staticmethod
-    async def resolve_compute_sessions(executor, info,
+    @scoped_query(autofill_user=False, user_key='access_key')
+    async def resolve_compute_sessions(executor, info, *,
                                        domain_name=None, group_id=None, access_key=None,
                                        status=None):
-        client_role = info.context['user']['role']
-        client_access_key = info.context['access_key']
-        client_domain = info.context['user']['domain_name']
-        if client_role == UserRole.SUPERADMIN:
-            if domain_name is None:
-                domain_name = client_domain
-            if access_key is None:
-                access_key = client_access_key
-        elif client_role == UserRole.ADMIN:
-            if domain_name is not None and domain_name != client_domain:
-                raise GenericForbidden
-            domain_name = client_domain
-            if group_id is not None:
-                # TODO: check if the group is a member of the domain
-                pass
-            if access_key is not None:
-                # TODO: check if the client is a member of the domain
-                pass
-        elif client_role == UserRole.USER:
-            if domain_name is not None and domain_name != client_domain:
-                raise GenericForbidden
-            domain_name = client_domain
-            if group_id is not None:
-                # TODO: check if the group is a member of the domain
-                # TODO: check if the client is a member of the group
-                pass
-            if access_key is not None:
-                # TODO: check if the client is a member of the domain
-                pass
-            if access_key is not None and access_key != client_access_key:
-                raise GenericForbidden
-            access_key = client_access_key
-        else:
-            raise InvalidAPIParameters('Unknown client role')
         # TODO: make status a proper graphene.Enum type
         #       (https://github.com/graphql-python/graphene/issues/544)
         if status is not None:
@@ -611,31 +562,14 @@ class Queries(graphene.ObjectType):
             status=status)
 
     @staticmethod
-    async def resolve_compute_session(executor, info, sess_id,
+    @scoped_query(autofill_user=False, user_key='access_key')
+    async def resolve_compute_session(executor, info, sess_id, *,
                                       domain_name=None, access_key=None,
                                       status=None):
-        client_role = info.context['user']['role']
-        client_access_key = info.context['access_key']
-        client_domain = info.context['user']['domain_name']
         # We need to check the group membership of the designated kernel,
         # but practically a user cannot guess the IDs of kernels launched
         # by other users and in other groups.
         # Let's just protect the domain/user boundary here.
-        if client_role == UserRole.SUPERADMIN:
-            pass
-        elif client_role == UserRole.ADMIN:
-            if domain_name is not None and domain_name != client_domain:
-                raise GenericForbidden
-            domain_name = client_domain
-        elif client_role == UserRole.USER:
-            if domain_name is not None and domain_name != client_domain:
-                raise GenericForbidden
-            domain_name = client_domain
-            if access_key is not None and access_key != client_access_key:
-                raise GenericForbidden
-            access_key = client_access_key
-        else:
-            raise InvalidAPIParameters('Unknown client role')
         manager = info.context['dlmgr']
         if status is not None:
             status = KernelStatus[status]
@@ -647,27 +581,10 @@ class Queries(graphene.ObjectType):
         return await loader.load(sess_id)
 
     @staticmethod
-    async def resolve_compute_workers(executor, info, sess_id,
+    @scoped_query(autofill_user=False, user_key='access_key')
+    async def resolve_compute_workers(executor, info, sess_id, *,
                                       domain_name=None, access_key=None,
                                       status=None):
-        client_role = info.context['user']['role']
-        client_access_key = info.context['access_key']
-        client_domain = info.context['user']['domain_name']
-        if client_role == UserRole.SUPERADMIN:
-            pass
-        elif client_role == UserRole.ADMIN:
-            if domain_name is not None and domain_name != client_domain:
-                raise GenericForbidden
-            domain_name = client_domain
-        elif client_role == UserRole.USER:
-            if domain_name is not None and domain_name != client_domain:
-                raise GenericForbidden
-            domain_name = client_domain
-            if access_key is not None and access_key != client_access_key:
-                raise GenericForbidden
-            access_key = client_access_key
-        else:
-            raise InvalidAPIParameters('Unknown client role')
         manager = info.context['dlmgr']
         if status is not None:
             status = KernelStatus[status]
