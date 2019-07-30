@@ -326,7 +326,7 @@ class ModifyScalingGroup(graphene.Mutation):
 class DeleteScalingGroup(graphene.Mutation):
 
     class Arguments:
-        access_key = graphene.String(required=True)
+        name = graphene.String(required=True)
 
     ok = graphene.Boolean()
     msg = graphene.String()
