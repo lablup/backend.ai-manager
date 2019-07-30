@@ -10,7 +10,11 @@ import psycopg2 as pg
 import sqlalchemy as sa
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
-from .base import metadata, EnumValueType, IDColumn
+from .base import (
+    metadata, EnumValueType, IDColumn,
+    privileged_mutation,
+    set_if_set,
+)
 
 
 __all__ = (
@@ -104,7 +108,9 @@ class User(graphene.ObjectType):
         )
 
     @staticmethod
-    async def load_all(context, *, is_active=None):
+    async def load_all(context, *,
+                       domain_name=None, group_id=None,
+                       is_active=None):
         '''
         Load user's information. Group names associated with the user are also returned.
         '''
@@ -115,6 +121,10 @@ class User(graphene.ObjectType):
             query = sa.select([users, groups.c.name, groups.c.id]).select_from(j)
             if context['user']['role'] != UserRole.SUPERADMIN:
                 query = query.where(users.c.domain_name == context['user']['domain_name'])
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
+            if group_id is not None:
+                query = query.where(groups.c.id == group_id)
             if is_active is not None:
                 query = query.where(users.c.is_active == is_active)
             objs_per_key = OrderedDict()
@@ -129,32 +139,56 @@ class User(graphene.ObjectType):
         return objs
 
     @staticmethod
-    async def batch_load_by_email(context, emails=None, *, is_active=None):
+    async def batch_load_by_email(context, emails=None, *,
+                                  domain_name=None,
+                                  is_active=None):
         async with context['dbpool'].acquire() as conn:
-            try:  # determine whether email is given as uuid
-                import uuid
-                uuid.UUID(emails[0])
-                pk_type = 'uuid'
-            except ValueError:
-                pk_type = 'email'
             from .group import groups, association_groups_users as agus
             j = (users.join(agus, agus.c.user_id == users.c.uuid, isouter=True)
                       .join(groups, agus.c.group_id == groups.c.id, isouter=True))
-            query = (sa.select([users, groups.c.name, groups.c.id])
-                       .select_from(j))
-            if pk_type == 'uuid':
-                query = query.where(users.c.uuid.in_(emails))
-            else:
-                query = query.where(users.c.email.in_(emails))
-            if context['user']['role'] != UserRole.SUPERADMIN:
-                query = query.where(users.c.domain_name == context['user']['domain_name'])
+            query = (
+                sa.select([users, groups.c.name, groups.c.id])
+                .select_from(j)
+                .where(users.c.email.in_(emails))
+            )
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
             objs_per_key = OrderedDict()
             # For each email, there is only one user.
             # So we don't build lists in objs_per_key variable.
             for k in emails:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
-                key = str(row.uuid) if pk_type == 'uuid' else row.email
+                key = row.email
+                if objs_per_key[key] is not None:
+                    objs_per_key[key].groups.append({'id': str(row.id), 'name': row.name})
+                    continue
+                o = User.from_row(row)
+                objs_per_key[key] = o
+        return tuple(objs_per_key.values())
+
+    @staticmethod
+    async def batch_load_by_uuid(context, user_ids=None, *,
+                                 domain_name=None,
+                                 is_active=None):
+        async with context['dbpool'].acquire() as conn:
+            from .group import groups, association_groups_users as agus
+            j = (users.join(agus, agus.c.user_id == users.c.uuid, isouter=True)
+                      .join(groups, agus.c.group_id == groups.c.id, isouter=True))
+            query = (
+                sa.select([users, groups.c.name, groups.c.id])
+                .select_from(j)
+                .where(users.c.uuid.in_(user_ids))
+            )
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
+            objs_per_key = OrderedDict()
+            # For each email, there is only one user.
+            # So we don't build lists in objs_per_key variable.
+            for k in user_ids:
+                objs_per_key[k] = None
+            async for row in conn.execute(query):
+                key = row.email
                 if objs_per_key[key] is not None:
                     objs_per_key[key].groups.append({'id': str(row.id), 'name': row.name})
                     continue
@@ -190,18 +224,7 @@ class ModifyUserInput(graphene.InputObjectType):
     group_ids = graphene.List(lambda: graphene.String, required=False)
 
 
-class UserMutationMixin:
-
-    @staticmethod
-    def check_perm(info):
-        from .user import UserRole
-        user = info.context['user']
-        if user['role'] == UserRole.SUPERADMIN:
-            return True  # only superadmin is allowed to mutate, currently
-        return False
-
-
-class CreateUser(UserMutationMixin, graphene.Mutation):
+class CreateUser(graphene.Mutation):
 
     class Arguments:
         email = graphene.String(required=True)
@@ -212,8 +235,8 @@ class CreateUser(UserMutationMixin, graphene.Mutation):
     user = graphene.Field(lambda: User)
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, email, props):
-        assert cls.check_perm(info), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             username = props.username if props.username else email
             data = {
@@ -279,7 +302,7 @@ class CreateUser(UserMutationMixin, graphene.Mutation):
                 return cls(ok=False, msg=f'unexpected error: {e}', user=None)
 
 
-class ModifyUser(UserMutationMixin, graphene.Mutation):
+class ModifyUser(graphene.Mutation):
 
     class Arguments:
         email = graphene.String(required=True)
@@ -290,27 +313,21 @@ class ModifyUser(UserMutationMixin, graphene.Mutation):
     user = graphene.Field(lambda: User)
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, email, props):
-        assert cls.check_perm(info), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
+
             data = {}
-
-            def set_if_set(name):
-                v = getattr(props, name)
-                # NOTE: unset optional fields are passed as null.
-                if v is not None:
-                    if name == 'role':
-                        v = UserRole(v)
-                    data[name] = v
-
-            set_if_set('username')
-            set_if_set('password')
-            set_if_set('need_password_change')
-            set_if_set('full_name')
-            set_if_set('description')
-            set_if_set('is_active')
+            set_if_set(props, data, 'username')
+            set_if_set(props, data, 'password')
+            set_if_set(props, data, 'need_password_change')
+            set_if_set(props, data, 'full_name')
+            set_if_set(props, data, 'description')
+            set_if_set(props, data, 'is_active')
             # set_if_set('domain_name')  # prevent changing domain_name
-            set_if_set('role')
+            set_if_set(props, data, 'role')
+            if 'role' in data:
+                data['role'] = UserRole(data['role'])
 
             if not data and not props.group_ids:
                 return cls(ok=False, msg='nothing to update', user=None)
@@ -354,7 +371,7 @@ class ModifyUser(UserMutationMixin, graphene.Mutation):
                 return cls(ok=False, msg=f'unexpected error: {e}', user=None)
 
 
-class DeleteUser(UserMutationMixin, graphene.Mutation):
+class DeleteUser(graphene.Mutation):
     '''
     Instead of deleting user, just inactive the account.
 
@@ -368,8 +385,8 @@ class DeleteUser(UserMutationMixin, graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, email):
-        assert cls.check_perm(info), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             try:
                 # query = (users.delete().where(users.c.email == email))

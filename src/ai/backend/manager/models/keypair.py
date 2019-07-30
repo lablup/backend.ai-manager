@@ -9,7 +9,11 @@ import sqlalchemy as sa
 from sqlalchemy.sql.expression import false
 import psycopg2 as pg
 
-from .base import metadata, ForeignKeyIDColumn
+from .base import (
+    metadata, ForeignKeyIDColumn,
+    simple_db_mutate,
+    set_if_set,
+)
 
 __all__ = (
     'keypairs',
@@ -99,9 +103,14 @@ class KeyPair(graphene.ObjectType):
         return await loader.load(self.access_key)
 
     @staticmethod
-    async def load_all(context, *, is_active=None):
+    async def load_all(context, *,
+                       domain_name=None, is_active=None):
+        from .user import users
         async with context['dbpool'].acquire() as conn:
-            query = sa.select([keypairs]).select_from(keypairs)
+            j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
+            query = sa.select([keypairs]).select_from(j)
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
             if is_active is not None:
                 query = query.where(keypairs.c.is_active == is_active)
             objs = []
@@ -111,11 +120,16 @@ class KeyPair(graphene.ObjectType):
         return objs
 
     @staticmethod
-    async def batch_load_by_uid(context, user_ids, *, is_active=None):
+    async def batch_load_by_email(context, user_ids, *,
+                                  domain_name=None, is_active=None):
+        from .user import users
         async with context['dbpool'].acquire() as conn:
+            j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
             query = (sa.select([keypairs])
-                       .select_from(keypairs)
+                       .select_from(j)
                        .where(keypairs.c.user_id.in_(user_ids)))
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
             if is_active is not None:
                 query = query.where(keypairs.c.is_active == is_active)
             objs_per_key = OrderedDict()
@@ -127,11 +141,19 @@ class KeyPair(graphene.ObjectType):
         return tuple(objs_per_key.values())
 
     @staticmethod
-    async def batch_load_by_ak(context, access_keys):
+    async def batch_load_by_ak(context, access_keys, *, domain_name=None):
         async with context['dbpool'].acquire() as conn:
-            query = (sa.select([keypairs])
-                       .select_from(keypairs)
-                       .where(keypairs.c.access_key.in_(access_keys)))
+            from .user import users
+            j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
+            query = (
+                sa.select([keypairs])
+                .select_from(j)
+                .where(
+                    keypairs.c.access_key.in_(access_keys)
+                )
+            )
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
             objs_per_key = OrderedDict()
             # For each access key, there is only one keypair.
             # So we don't build lists in objs_per_key variable.
@@ -207,9 +229,9 @@ class CreateKeyPair(graphene.Mutation):
                 'num_queries': 0,
                 'user': user_uuid,
             }
-            query = (keypairs.insert().values(data))
+            insert_query = (keypairs.insert().values(data))
             try:
-                result = await conn.execute(query)
+                result = await conn.execute(insert_query)
                 if result.rowcount > 0:
                     # Read the created key data from DB.
                     checkq = keypairs.select().where(keypairs.c.access_key == ak)
@@ -240,37 +262,17 @@ class ModifyKeyPair(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, access_key, props):
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            data = {}
-
-            def set_if_set(name):
-                v = getattr(props, name)
-                # NOTE: unset optional fields are passed as null.
-                if v is not None:
-                    data[name] = v
-
-            set_if_set('is_active')
-            set_if_set('is_admin')
-            set_if_set('resource_policy')
-            set_if_set('rate_limit')
-
-            try:
-                query = (keypairs.update()
-                                 .values(data)
-                                 .where(keypairs.c.access_key == access_key))
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    return cls(ok=True, msg='success')
-                else:
-                    return cls(ok=False, msg='no such keypair')
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False,
-                           msg=f'integrity error: {e}')
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False,
-                           msg=f'unexpected error: {e}')
+        data = {}
+        set_if_set(props, data, 'is_active')
+        set_if_set(props, data, 'is_admin')
+        set_if_set(props, data, 'resource_policy')
+        set_if_set(props, data, 'rate_limit')
+        update_query = (
+            keypairs.update()
+            .values(data)
+            .where(keypairs.c.access_key == access_key)
+        )
+        return await simple_db_mutate(cls, info.context, update_query)
 
 
 class DeleteKeyPair(graphene.Mutation):
@@ -283,23 +285,11 @@ class DeleteKeyPair(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, access_key):
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            try:
-                query = (keypairs.delete()
-                                 .where(keypairs.c.access_key == access_key))
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    return cls(ok=True, msg='success')
-                else:
-                    return cls(ok=False, msg='no such keypair')
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False,
-                           msg=f'integrity error: {e}')
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False,
-                           msg=f'unexpected error: {e}')
+        delete_query = (
+            keypairs.delete()
+            .where(keypairs.c.access_key == access_key)
+        )
+        return await simple_db_mutate(cls, info.context, delete_query)
 
 
 def generate_keypair():

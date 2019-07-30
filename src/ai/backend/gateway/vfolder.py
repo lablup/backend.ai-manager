@@ -137,7 +137,7 @@ def vfolder_check_exists(handler: Callable[[web.Request, VFolderRow], web.Respon
     t.Dict({
         t.Key('name'): tx.Slug(allow_dot=True),
         t.Key('host', default=None) >> 'folder_host': t.Or(t.String, t.Null),
-        tx.AliasedKey(['group', 'groupId', 'group_id'], default=None): t.Or(t.String, t.Null),
+        tx.AliasedKey(['group', 'groupId', 'group_id'], default=None): t.Or(tx.UUID, t.Null),
     }),
 )
 async def create(request: web.Request, params: Any) -> web.Response:

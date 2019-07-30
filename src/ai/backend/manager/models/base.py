@@ -1,3 +1,4 @@
+import asyncio
 import enum
 import functools
 import logging
@@ -11,6 +12,7 @@ import graphene
 from graphene.types import Scalar
 from graphql.language import ast
 from graphene.types.scalars import MIN_INT, MAX_INT
+import psycopg2 as pg
 import sqlalchemy as sa
 from sqlalchemy.types import (
     SchemaType,
@@ -22,6 +24,9 @@ from sqlalchemy.dialects.postgresql import UUID, ENUM, JSONB
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import BinarySize, ResourceSlot
 from .. import models
+from ...gateway.exceptions import (
+    GenericForbidden, InvalidAPIParameters,
+)
 
 SAFE_MIN_INT = -9007199254740991
 SAFE_MAX_INT = 9007199254740991
@@ -279,6 +284,194 @@ class Item(graphene.Interface):
 class PaginatedList(graphene.Interface):
     items = graphene.List(Item, required=True)
     total_count = graphene.Int(required=True)
+
+
+def privileged_query(required_role):
+
+    def wrap(func):
+
+        @functools.wraps(func)
+        async def wrapped(executor, info, *args, **kwargs):
+            from .user import UserRole
+            if info.context['user']['role'] != UserRole.SUPERADMIN:
+                raise GenericForbidden('superadmin privilege required')
+            return await func(executor, info, *args, **kwargs)
+
+        return wrapped
+
+    return wrap
+
+
+def scoped_query(*,
+                 autofill_user: bool = False,
+                 user_key: str = 'access_key'):
+    '''
+    Prepends checks for domain/group/user access rights depending
+    on the client's user and keypair information.
+
+    :param autofill_user: When the *user_key* is not specified,
+        automatically fills out the user data with the current
+        user who is makeing the API request.
+    :param user_key: The key used for storing user identification value
+        in the keyword arguments.
+    '''
+
+    def wrap(resolve_func):
+
+        @functools.wraps(resolve_func)
+        async def wrapped(executor, info, *args, **kwargs):
+            from .user import UserRole
+            client_role = info.context['user']['role']
+            if user_key == 'access_key':
+                client_user_id = info.context['access_key']
+            elif user_key == 'email':
+                client_user_id = info.context['user']['email']
+            else:
+                client_user_id = info.context['user']['uuid']
+            client_domain = info.context['user']['domain_name']
+            domain_name = kwargs.get('domain_name', None)
+            group_id = kwargs.get('group_id', None)
+            user_id = kwargs.get(user_key, None)
+            if client_role == UserRole.SUPERADMIN:
+                if autofill_user:
+                    if user_id is None:
+                        user_id = client_user_id
+            elif client_role == UserRole.ADMIN:
+                if domain_name is not None and domain_name != client_domain:
+                    raise GenericForbidden
+                domain_name = client_domain
+                if group_id is not None:
+                    # TODO: check if the group is a member of the domain
+                    pass
+                if autofill_user:
+                    if user_id is None:
+                        user_id = client_user_id
+            elif client_role == UserRole.USER:
+                if domain_name is not None and domain_name != client_domain:
+                    raise GenericForbidden
+                domain_name = client_domain
+                if group_id is not None:
+                    # TODO: check if the group is a member of the domain
+                    # TODO: check if the client is a member of the group
+                    pass
+                if user_id is not None and user_id != client_user_id:
+                    raise GenericForbidden
+                user_id = client_user_id
+            else:
+                raise InvalidAPIParameters('Unknown client role')
+            kwargs['domain_name'] = domain_name
+            if group_id is not None:
+                kwargs['group_id'] = group_id
+            kwargs[user_key] = user_id
+            return await resolve_func(executor, info, *args, **kwargs)
+
+        return wrapped
+
+    return wrap
+
+
+def privileged_mutation(required_role, target_func=None):
+
+    def wrap(func):
+
+        @functools.wraps(func)
+        async def wrapped(cls, root, info, *args, **kwargs):
+            from .user import UserRole
+            from .group import groups  # , association_groups_users
+            user = info.context['user']
+            permitted = False
+            if required_role == UserRole.SUPERADMIN:
+                if user['role'] == required_role:
+                    permitted = True
+            elif required_role == UserRole.ADMIN:
+                if target_func is None:
+                    return cls(False, 'misconfigured privileged mutation: no target_func', None)
+                target_domain, target_group = target_func(*args, **kwargs)
+                if target_domain is None and target_group is None:
+                    return cls(False, 'misconfigured privileged mutation: '
+                                      'both target_domain and target_group missing', None)
+                permit_chains = []
+                if target_domain is not None:
+                    if user['domain_name'] == target_domain:
+                        permit_chains.append(True)
+                if target_group is not None:
+                    async with info.context['dbpool'].acquire() as conn, conn.begin():
+                        # check if the group is part of the requester's domain.
+                        query = (
+                            groups.select()
+                            .where(
+                                (groups.c.id == target_group) &
+                                (groups.c.domain_name == user['domain_name'])
+                            )
+                        )
+                        result = await conn.execute(query)
+                        if result.rowcount > 0:
+                            permit_chains.append(True)
+                        # TODO: check the group permission if implemented
+                        # query = (
+                        #     association_groups_users.select()
+                        #     .where(association_groups_users.c.group_id == target_group)
+                        # )
+                        # result = await conn.execute(query)
+                        # if result.rowcount > 0:
+                        #     permit_chains.append(True)
+                permitted = all(permit_chains)
+            elif required_role == UserRole.USER:
+                permitted = True
+            # assuming that mutation result objects has 3 fields:
+            # success(bool), message(str), item(object)
+            if permitted:
+                return await func(cls, root, info, *args, **kwargs)
+            return cls(False, 'no permission to execute the given mutation', None)
+
+        return wrapped
+
+    return wrap
+
+
+async def simple_db_mutate(result_cls, context, mutation_query):
+    async with context['dbpool'].acquire() as conn, conn.begin():
+        try:
+            result = await conn.execute(mutation_query)
+            if result.rowcount > 0:
+                return result_cls(True, 'success')
+            else:
+                return result_cls(False, 'no matching record')
+        except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+            return result_cls(False, f'integrity error: {e}')
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            raise
+        except Exception as e:
+            return result_cls(False, f'unexpected error: {e}')
+
+
+async def simple_db_mutate_returning_item(result_cls, context, mutation_query, *,
+                                          item_query, item_cls):
+    async with context['dbpool'].acquire() as conn, conn.begin():
+        try:
+            result = await conn.execute(mutation_query)
+            if result.rowcount > 0:
+                result = await conn.execute(item_query)
+                item = await result.first()
+                return result_cls(True, 'success', item_cls.from_row(item))
+            else:
+                return result_cls(False, 'no matching record', None)
+        except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+            return result_cls(False, f'integrity error: {e}', None)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            raise
+        except Exception as e:
+            return result_cls(False, f'unexpected error: {e}', None)
+
+
+def set_if_set(src, target, name, *, clean_func=None):
+    v = getattr(src, name)
+    # NOTE: unset optional fields are passed as null.
+    if v is not None:
+        if callable(clean_func):
+            target[name] = clean_func(v)
+        else:
+            target[name] = v
 
 
 def populate_fixture(db_connection, fixture_data):

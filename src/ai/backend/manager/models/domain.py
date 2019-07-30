@@ -1,15 +1,20 @@
-import asyncio
 from collections import OrderedDict
 import re
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
-import psycopg2 as pg
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common.types import ResourceSlot
-from .base import metadata, ResourceSlotColumn
+from .base import (
+    metadata, ResourceSlotColumn,
+    privileged_mutation,
+    simple_db_mutate,
+    simple_db_mutate_returning_item,
+    set_if_set,
+)
+from .user import UserRole
 
 
 __all__ = (
@@ -112,18 +117,7 @@ class ModifyDomainInput(graphene.InputObjectType):
     integration_id = graphene.String(required=False)
 
 
-class DomainMutationMixin:
-
-    @staticmethod
-    def check_perm(info):
-        from .user import UserRole
-        user = info.context['user']
-        if user['role'] == UserRole.SUPERADMIN:
-            return True
-        return False
-
-
-class CreateDomain(DomainMutationMixin, graphene.Mutation):
+class CreateDomain(graphene.Mutation):
 
     class Arguments:
         name = graphene.String(required=True)
@@ -134,39 +128,31 @@ class CreateDomain(DomainMutationMixin, graphene.Mutation):
     domain = graphene.Field(lambda: Domain)
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
-        assert cls.check_perm(info), 'no permission'
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            assert _rx_slug.search(name) is not None, 'invalid name format. slug format required.'
-            data = {
-                'name': name,
-                'description': props.description,
-                'is_active': props.is_active,
-                'total_resource_slots': ResourceSlot.from_user_input(
-                    props.total_resource_slots, None),
-                'allowed_vfolder_hosts': props.allowed_vfolder_hosts,
-                'allowed_docker_registries': props.allowed_docker_registries,
-                'integration_id': props.integration_id,
-            }
-            query = (domains.insert().values(data))
-            try:
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    checkq = domains.select().where(domains.c.name == name)
-                    result = await conn.execute(checkq)
-                    o = Domain.from_row(await result.first())
-                    return cls(ok=True, msg='success', domain=o)
-                else:
-                    return cls(ok=False, msg='failed to create domain', domain=None)
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False, msg=f'integrity error: {e}', domain=None)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False, msg=f'unexpected error: {e}', domain=None)
+        if _rx_slug.search(name) is None:
+            return cls(False, 'invalid name format. slug format required.', None)
+        data = {
+            'name': name,
+            'description': props.description,
+            'is_active': props.is_active,
+            'total_resource_slots': ResourceSlot.from_user_input(
+                props.total_resource_slots, None),
+            'allowed_vfolder_hosts': props.allowed_vfolder_hosts,
+            'allowed_docker_registries': props.allowed_docker_registries,
+            'integration_id': props.integration_id,
+        }
+        insert_query = (
+            domains.insert()
+            .values(data)
+        )
+        item_query = domains.select().where(domains.c.name == name)
+        return await simple_db_mutate_returning_item(
+            cls, info.context, insert_query,
+            item_query=item_query, item_cls=Domain)
 
 
-class ModifyDomain(DomainMutationMixin, graphene.Mutation):
+class ModifyDomain(graphene.Mutation):
 
     class Arguments:
         name = graphene.String(required=True)
@@ -177,52 +163,33 @@ class ModifyDomain(DomainMutationMixin, graphene.Mutation):
     domain = graphene.Field(lambda: Domain)
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
-        assert cls.check_perm(info), 'no permission'
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            data = {}
-
-            def set_if_set(name, clean=lambda v: v):
-                v = getattr(props, name)
-                # NOTE: unset optional fields are passed as null.
-                if v is not None:
-                    data[name] = clean(v)
-
-            def clean_resource_slot(v):
-                return ResourceSlot.from_user_input(v, None)
-
-            set_if_set('name')  # data['name'] is new domain name
-            set_if_set('description')
-            set_if_set('is_active')
-            set_if_set('total_resource_slots', clean_resource_slot)
-            set_if_set('allowed_vfolder_hosts')
-            set_if_set('allowed_docker_registries')
-            set_if_set('integration_id')
-
-            if 'name' in data:
-                assert _rx_slug.search(data['name']) is not None, \
-                    'invalid name format. slug format required.'
-
-            query = (domains.update().values(data).where(domains.c.name == name))
-            try:
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    new_name = data['name'] if 'name' in data else name
-                    checkq = domains.select().where(domains.c.name == new_name)
-                    result = await conn.execute(checkq)
-                    o = Domain.from_row(await result.first())
-                    return cls(ok=True, msg='success', domain=o)
-                else:
-                    return cls(ok=False, msg='no such domain', domain=None)
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False, msg=f'integrity error: {e}', domain=None)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False, msg=f'unexpected error: {e}', domain=None)
+        data = {}
+        set_if_set(props, data, 'name')  # data['name'] is new domain name
+        set_if_set(props, data, 'description')
+        set_if_set(props, data, 'is_active')
+        set_if_set(props, data, 'total_resource_slots',
+                   clean_func=lambda v: ResourceSlot.from_user_input(v, None))
+        set_if_set(props, data, 'allowed_vfolder_hosts')
+        set_if_set(props, data, 'allowed_docker_registries')
+        set_if_set(props, data, 'integration_id')
+        if 'name' in data:
+            assert _rx_slug.search(data['name']) is not None, \
+                'invalid name format. slug format required.'
+        update_query = (
+            domains.update()
+            .values(data)
+            .where(domains.c.name == name)
+        )
+        # The name may have changed if set.
+        item_query = domains.select().where(domains.c.name == data['name'])
+        return await simple_db_mutate_returning_item(
+            cls, info.context, update_query,
+            item_query=item_query, item_cls=Domain)
 
 
-class DeleteDomain(DomainMutationMixin, graphene.Mutation):
+class DeleteDomain(graphene.Mutation):
 
     class Arguments:
         name = graphene.String(required=True)
@@ -231,20 +198,11 @@ class DeleteDomain(DomainMutationMixin, graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name):
-        assert cls.check_perm(info), 'no permission'
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            try:
-                # query = domains.delete().where(domains.c.name == name)
-                query = domains.update().values(is_active=False).where(domains.c.name == name)
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    return cls(ok=True, msg='success')
-                else:
-                    return cls(ok=False, msg='no such domain')
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False, msg=f'integrity error: {e}')
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False, msg=f'unexpected error: {e}')
+        query = (
+            domains.update()
+            .values(is_active=False)
+            .where(domains.c.name == name)
+        )
+        return await simple_db_mutate(cls, info.context, query)

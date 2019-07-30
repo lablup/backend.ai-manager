@@ -9,7 +9,11 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common.types import ResourceSlot
-from .base import metadata, GUID, IDColumn, ResourceSlotColumn
+from .base import (
+    metadata, GUID, IDColumn, ResourceSlotColumn,
+    privileged_mutation,
+    set_if_set,
+)
 from .user import UserRole
 
 
@@ -85,24 +89,18 @@ class Group(graphene.ObjectType):
         )
 
     @staticmethod
-    async def load_all(context, domain_name, *, is_active=None, all=False):
+    async def load_all(context, *,
+                       domain_name=None,
+                       is_active=None):
         async with context['dbpool'].acquire() as conn:
-            if context['user']['role'] == UserRole.SUPERADMIN:
-                current_domain_name = None
-                query = (sa.select([groups]).select_from(groups))
-                if not all:
-                    query = query.where(groups.c.domain_name == domain_name)
-            else:  # list groups only associated with requester
-                current_domain_name = context['user']['domain_name']
-                j = association_groups_users.join(
-                    groups, association_groups_users.c.group_id == groups.c.id)
-                query = (sa.select([groups])
-                           .select_from(j)
-                           .where(association_groups_users.c.user_id == context['user']['uuid']))
+            query = (
+                sa.select([groups])
+                .select_from(groups)
+            )
+            if domain_name is not None:
+                query = query.where(groups.c.domain_name == domain_name)
             if is_active is not None:
                 query = query.where(groups.c.is_active == is_active)
-            if current_domain_name is not None:  # prevent querying group in other domain
-                query = query.where(groups.c.domain_name == current_domain_name)
             objs = []
             async for row in conn.execute(query):
                 o = Group.from_row(row)
@@ -110,26 +108,39 @@ class Group(graphene.ObjectType):
         return objs
 
     @staticmethod
-    async def batch_load_by_id(context, ids=None):
+    async def batch_load_by_id(context, ids, *,
+                               domain_name=None):
         async with context['dbpool'].acquire() as conn:
-            if context['user']['role'] == UserRole.SUPERADMIN:
-                current_domain_name = None
-            else:
-                current_domain_name = context['user']['domain_name']
-            query = (sa.select([groups])
-                       .select_from(groups)
-                       .where(groups.c.id.in_(ids)))
-            if current_domain_name is not None:  # prevent querying group in other domain
-                query = query.where(groups.c.domain_name == current_domain_name)
+            query = (
+                sa.select([groups])
+                .select_from(groups)
+                .where(groups.c.id.in_(ids))
+            )
+            if domain_name is not None:
+                query = query.where(groups.c.domain_name == domain_name)
             objs_per_key = OrderedDict()
-            # For each id, there is only one group.
-            # So we don't build lists in objs_per_key variable.
             for k in ids:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
                 o = Group.from_row(row)
-                objs_per_key[str(row.id)] = o
-        return tuple(objs_per_key.values())
+                objs_per_key[row.id] = o
+        return [*objs_per_key.values()]
+
+    @staticmethod
+    async def get_groups_for_user(context, user_id):
+        async with context['dbpool'].acquire() as conn:
+            j = sa.join(groups, association_groups_users,
+                        groups.c.id == association_groups_users.c.id)
+            query = (
+                sa.select([groups])
+                .select_from(j)
+                .where(association_groups_users.c.id == user_id)
+            )
+            objs = []
+            async for row in conn.execute(query):
+                o = Group.from_row(row)
+                objs.append(o)
+            return objs
 
 
 class GroupInput(graphene.InputObjectType):
@@ -153,35 +164,7 @@ class ModifyGroupInput(graphene.InputObjectType):
     integration_id = graphene.String(required=False)
 
 
-class GroupMutationMixin:
-
-    @staticmethod
-    async def check_perm(info, *, domain_name=None, gid=None):
-        from .user import UserRole
-        user = info.context['user']
-        permitted = False
-        if user['role'] == UserRole.SUPERADMIN:
-            permitted = True
-        elif user['role'] == UserRole.ADMIN:
-            if domain_name is None and gid is not None:  # get target group's domain
-                async with info.context['dbpool'].acquire() as conn, conn.begin():
-                    query = groups.select().where(groups.c.id == gid)
-                    try:
-                        result = await conn.execute(query)
-                        if result.rowcount > 0:
-                            result = await conn.execute(query)
-                            o = Group.from_row(await result.first())
-                            domain_name = o.domain_name
-                    except (asyncio.CancelledError, asyncio.TimeoutError):
-                        raise
-                    except Exception:
-                        pass
-            if user['domain_name'] == domain_name:
-                permitted = True
-        return permitted
-
-
-class CreateGroup(GroupMutationMixin, graphene.Mutation):
+class CreateGroup(graphene.Mutation):
 
     class Arguments:
         name = graphene.String(required=True)
@@ -192,8 +175,11 @@ class CreateGroup(GroupMutationMixin, graphene.Mutation):
     group = graphene.Field(lambda: Group)
 
     @classmethod
+    @privileged_mutation(
+        UserRole.ADMIN,
+        lambda name, props, **kwargs: (props.domain_name, None)
+    )
     async def mutate(cls, root, info, name, props):
-        assert await cls.check_perm(info, domain_name=props.domain_name), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             assert _rx_slug.search(name) is not None, 'invalid name format. slug format required.'
             data = {
@@ -225,7 +211,7 @@ class CreateGroup(GroupMutationMixin, graphene.Mutation):
                 return cls(ok=False, msg=f'unexpected error: {e}', group=None)
 
 
-class ModifyGroup(GroupMutationMixin, graphene.Mutation):
+class ModifyGroup(graphene.Mutation):
 
     class Arguments:
         gid = graphene.String(required=True)
@@ -236,27 +222,21 @@ class ModifyGroup(GroupMutationMixin, graphene.Mutation):
     group = graphene.Field(lambda: Group)
 
     @classmethod
+    @privileged_mutation(
+        UserRole.ADMIN,
+        lambda gid, **kwargs: (None, gid)
+    )
     async def mutate(cls, root, info, gid, props):
-        assert await cls.check_perm(info, gid=gid), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             data = {}
-
-            def set_if_set(name, clean=lambda v: v):
-                v = getattr(props, name)
-                # NOTE: unset optional fields are passed as null.
-                if v is not None:
-                    data[name] = v
-
-            def clean_resource_slot(v):
-                return ResourceSlot.from_user_input(v, None)
-
-            set_if_set('name')
-            set_if_set('description')
-            set_if_set('is_active')
-            set_if_set('domain_name')
-            set_if_set('total_resource_slots', clean_resource_slot)
-            set_if_set('allowed_vfolder_hosts')
-            set_if_set('integration_id')
+            set_if_set(props, data, 'name')
+            set_if_set(props, data, 'description')
+            set_if_set(props, data, 'is_active')
+            set_if_set(props, data, 'domain_name')
+            set_if_set(props, data, 'total_resource_slots',
+                       clean_func=lambda v: ResourceSlot.from_user_input(v, None))
+            set_if_set(props, data, 'allowed_vfolder_hosts')
+            set_if_set(props, data, 'integration_id')
 
             if 'name' in data:
                 assert _rx_slug.search(data['name']) is not None, \
@@ -298,7 +278,7 @@ class ModifyGroup(GroupMutationMixin, graphene.Mutation):
                 return cls(ok=False, msg=f'unexpected error: {e}', group=None)
 
 
-class DeleteGroup(GroupMutationMixin, graphene.Mutation):
+class DeleteGroup(graphene.Mutation):
 
     class Arguments:
         gid = graphene.String(required=True)
@@ -307,8 +287,11 @@ class DeleteGroup(GroupMutationMixin, graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
+    @privileged_mutation(
+        UserRole.ADMIN,
+        lambda gid, **kwargs: (None, gid)
+    )
     async def mutate(cls, root, info, gid):
-        assert await cls.check_perm(info, gid=gid), 'no permission'
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             try:
                 # query = groups.delete().where(groups.c.id == gid)

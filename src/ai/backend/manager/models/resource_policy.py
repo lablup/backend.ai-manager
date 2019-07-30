@@ -1,4 +1,3 @@
-import asyncio
 from collections import OrderedDict
 import logging
 
@@ -6,12 +5,18 @@ import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
-import psycopg2 as pg
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
 from . import keypairs
-from .base import metadata, BigInt, EnumType, ResourceSlotColumn
+from .base import (
+    metadata, BigInt, EnumType, ResourceSlotColumn,
+    privileged_mutation,
+    simple_db_mutate,
+    simple_db_mutate_returning_item,
+    set_if_set,
+)
+from .user import UserRole
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.models'))
 
@@ -191,45 +196,28 @@ class CreateKeyPairResourcePolicy(graphene.Mutation):
     resource_policy = graphene.Field(lambda: KeyPairResourcePolicy)
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            data = {
-                'name': name,
-                'default_for_unspecified':
-                    DefaultForUnspecified[props.default_for_unspecified],
-                'total_resource_slots': ResourceSlot.from_user_input(
-                    props.total_resource_slots, None),
-                'max_concurrent_sessions': props.max_concurrent_sessions,
-                'max_containers_per_session': props.max_containers_per_session,
-                'idle_timeout': props.idle_timeout,
-                'max_vfolder_count': props.max_vfolder_count,
-                'max_vfolder_size': props.max_vfolder_size,
-                'allowed_vfolder_hosts': props.allowed_vfolder_hosts,
-            }
-            query = (keypair_resource_policies.insert().values(data))
-            try:
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    checkq = (
-                        keypair_resource_policies.select()
-                        .where(keypair_resource_policies.c.name == name))
-                    result = await conn.execute(checkq)
-                    o = KeyPairResourcePolicy.from_row(
-                        info.context, await result.first())
-                    return cls(ok=True, msg='success', resource_policy=o)
-                else:
-                    return cls(ok=False, msg='failed to create resource policy',
-                               resource_policy=None)
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False, msg=f'integrity error: {e}',
-                           resource_policy=None)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(
-                    ok=False,
-                    msg=f'unexpected error ({type(e).__name__}): {e}',
-                    resource_policy=None)
+        data = {
+            'name': name,
+            'default_for_unspecified':
+                DefaultForUnspecified[props.default_for_unspecified],
+            'total_resource_slots': ResourceSlot.from_user_input(
+                props.total_resource_slots, None),
+            'max_concurrent_sessions': props.max_concurrent_sessions,
+            'max_containers_per_session': props.max_containers_per_session,
+            'idle_timeout': props.idle_timeout,
+            'max_vfolder_count': props.max_vfolder_count,
+            'max_vfolder_size': props.max_vfolder_size,
+            'allowed_vfolder_hosts': props.allowed_vfolder_hosts,
+        }
+        insert_query = (keypair_resource_policies.insert().values(data))
+        item_query = (
+            keypair_resource_policies.select()
+            .where(keypair_resource_policies.c.name == name))
+        return await simple_db_mutate_returning_item(
+            cls, info.context, insert_query,
+            item_query=item_query, item_cls=KeyPairResourcePolicy)
 
 
 class ModifyKeyPairResourcePolicy(graphene.Mutation):
@@ -242,46 +230,24 @@ class ModifyKeyPairResourcePolicy(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            data = {}
-
-            def set_if_set(name, clean=lambda v: v):
-                v = getattr(props, name)
-                # NOTE: unset optional fields are passed as null.
-                if v is not None:
-                    data[name] = clean(v)
-
-            def clean_resource_slot(v):
-                return ResourceSlot.from_user_input(v, None)
-
-            set_if_set('default_for_unspecified', lambda v: DefaultForUnspecified[v])
-            set_if_set('total_resource_slots', clean_resource_slot)
-            set_if_set('max_concurrent_sessions')
-            set_if_set('max_containers_per_session')
-            set_if_set('idle_timeout')
-            set_if_set('max_vfolder_count')
-            set_if_set('max_vfolder_size')
-            set_if_set('allowed_vfolder_hosts')
-
-            try:
-                query = (
-                    keypair_resource_policies.update()
-                    .values(data)
-                    .where(keypair_resource_policies.c.name == name))
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    return cls(ok=True, msg='success')
-                else:
-                    return cls(ok=False, msg='no such resource policy')
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False,
-                           msg=f'integrity error: {e}')
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False,
-                           msg=f'unexpected error: {e}')
+        data = {}
+        set_if_set(props, data, 'default_for_unspecified',
+                   clean_func=lambda v: DefaultForUnspecified[v])
+        set_if_set(props, data, 'total_resource_slots',
+                   clean_func=lambda v: ResourceSlot.from_user_input(v, None))
+        set_if_set(props, data, 'max_concurrent_sessions')
+        set_if_set(props, data, 'max_containers_per_session')
+        set_if_set(props, data, 'idle_timeout')
+        set_if_set(props, data, 'max_vfolder_count')
+        set_if_set(props, data, 'max_vfolder_size')
+        set_if_set(props, data, 'allowed_vfolder_hosts')
+        update_query = (
+            keypair_resource_policies.update()
+            .values(data)
+            .where(keypair_resource_policies.c.name == name))
+        return await simple_db_mutate(cls, info.context, update_query)
 
 
 class DeleteKeyPairResourcePolicy(graphene.Mutation):
@@ -293,22 +259,10 @@ class DeleteKeyPairResourcePolicy(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name):
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            query = (
-                keypair_resource_policies.delete()
-                .where(keypair_resource_policies.c.name == name))
-            try:
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    return cls(ok=True, msg='success')
-                else:
-                    return cls(ok=False, msg='no such resource policy')
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False,
-                           msg=f'integrity error: {e}')
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False,
-                           msg=f'unexpected error: {e}')
+        delete_query = (
+            keypair_resource_policies.delete()
+            .where(keypair_resource_policies.c.name == name)
+        )
+        return await simple_db_mutate(cls, info.context, delete_query)

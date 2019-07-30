@@ -30,6 +30,7 @@ from ..gateway.exceptions import (
 from .models import (
     agents, domains, groups, kernels, keypairs,
     AgentStatus, KernelStatus,
+    query_allowed_sgroups,
 )
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
@@ -394,7 +395,7 @@ class AgentRegistry:
                              creation_config: dict,
                              resource_policy: dict,
                              domain_name: str,
-                             group_id: str,
+                             group_id: uuid.UUID,
                              user_uuid: str,
                              session_tag=None):
         agent_id = None
@@ -542,6 +543,26 @@ class AgentRegistry:
 
         async with self.dbpool.acquire() as conn, conn.begin():
 
+            # Check the scaling groups.
+            sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
+            target_sgroup_names = []
+            preferred_sgroup_name = creation_config.get('scalingGroup')
+            if preferred_sgroup_name is not None:
+                for sgroup in sgroups:
+                    if preferred_sgroup_name == sgroup['name']:
+                        break
+                else:
+                    raise InvalidAPIParameters(
+                        'The given preferred scaling group is not available. ({})'
+                        .format(preferred_sgroup_name)
+                    )
+                # Consider agents only in the preferred scaling group.
+                target_sgroup_names = [preferred_sgroup_name]
+            else:
+                # Consider all agents in all allowed scaling groups.
+                target_sgroup_names = [sgroup['name'] for sgroup in sgroups]
+            log.debug('considered scaling groups: {}', target_sgroup_names)
+
             # Fetch all agent available slots and normalize them to "remaining" slots
             possible_agent_slots = []
             query = (
@@ -550,7 +571,10 @@ class AgentRegistry:
                     agents.c.available_slots,
                     agents.c.occupied_slots,
                 ], for_update=True)
-                .where(agents.c.status == AgentStatus.ALIVE)
+                .where(
+                    (agents.c.status == AgentStatus.ALIVE) &
+                    (agents.c.scaling_group.in_(target_sgroup_names))
+                )
             )
             async for row in conn.execute(query):
                 capacity_slots = row['available_slots']
@@ -1023,6 +1047,7 @@ class AgentRegistry:
         # Check and update status of the agent record in DB
         async with self.dbpool.acquire() as conn, conn.begin():
             query = (sa.select([agents.c.status,
+                                agents.c.scaling_group,
                                 agents.c.available_slots],
                                for_update=True)
                        .select_from(agents)
@@ -1036,6 +1061,7 @@ class AgentRegistry:
             available_slots = ResourceSlot({
                 k: v[1] for k, v in
                 agent_info['resource_slots'].items()})
+            sgroup = agent_info.get('scaling_group', 'default')
 
             # compare and update etcd slot_keys
 
@@ -1046,6 +1072,7 @@ class AgentRegistry:
                     'id': agent_id,
                     'status': AgentStatus.ALIVE,
                     'region': agent_info['region'],
+                    'scaling_group': sgroup,
                     'available_slots': available_slots,
                     'occupied_slots': {},
                     'addr': agent_info['addr'],
@@ -1060,9 +1087,10 @@ class AgentRegistry:
                 await self.config_server.update_resource_slots(slot_key_and_units)
             elif row.status == AgentStatus.ALIVE:
                 updates = {}
-                current_avail_slots = row.available_slots
-                if available_slots != current_avail_slots:
+                if row.available_slots != available_slots:
                     updates['available_slots'] = available_slots
+                if row.scaling_group != sgroup:
+                    updates['scaling_group'] = sgroup
                 # occupied_slots are updated when kernels starts/terminates
                 if updates:
                     query = (sa.update(agents)
@@ -1075,6 +1103,7 @@ class AgentRegistry:
                            .values({
                                'status': AgentStatus.ALIVE,
                                'region': agent_info['region'],
+                               'scaling_group': sgroup,
                                'addr': agent_info['addr'],
                                'lost_at': None,
                                'available_slots': available_slots,

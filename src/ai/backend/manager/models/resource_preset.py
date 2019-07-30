@@ -1,14 +1,19 @@
-import asyncio
 from collections import OrderedDict
 import logging
 
 import graphene
 import sqlalchemy as sa
-import psycopg2 as pg
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
-from .base import metadata, ResourceSlotColumn
+from .base import (
+    metadata, ResourceSlotColumn,
+    privileged_mutation,
+    simple_db_mutate,
+    simple_db_mutate_returning_item,
+    set_if_set,
+)
+from .user import UserRole
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.models'))
 
@@ -85,37 +90,20 @@ class CreateResourcePreset(graphene.Mutation):
     resource_preset = graphene.Field(lambda: ResourcePreset)
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            data = {
-                'name': name,
-                'resource_slots': ResourceSlot.from_user_input(
-                    props.resource_slots, None),
-            }
-            query = (resource_presets.insert().values(data))
-            try:
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    checkq = (
-                        resource_presets.select()
-                        .where(resource_presets.c.name == name))
-                    result = await conn.execute(checkq)
-                    o = ResourcePreset.from_row(
-                        info.context, await result.first())
-                    return cls(ok=True, msg='success', resource_preset=o)
-                else:
-                    return cls(ok=False, msg='failed to create resource preset',
-                               resource_preset=None)
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False, msg=f'integrity error: {e}',
-                           resource_preset=None)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(
-                    ok=False,
-                    msg=f'unexpected error ({type(e).__name__}): {e}',
-                    resource_preset=None)
+        data = {
+            'name': name,
+            'resource_slots': ResourceSlot.from_user_input(
+                props.resource_slots, None),
+        }
+        insert_query = (resource_presets.insert().values(data))
+        item_query = (
+            resource_presets.select()
+            .where(resource_presets.c.name == name))
+        return await simple_db_mutate_returning_item(
+            cls, info.context, insert_query,
+            item_query=item_query, item_cls=ResourcePreset)
 
 
 class ModifyResourcePreset(graphene.Mutation):
@@ -128,39 +116,17 @@ class ModifyResourcePreset(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            data = {}
-
-            def set_if_set(name, clean=lambda v: v):
-                v = getattr(props, name)
-                # NOTE: unset optional fields are passed as null.
-                if v is not None:
-                    data[name] = clean(v)
-
-            def clean_resource_slot(v):
-                return ResourceSlot.from_user_input(v, None)
-
-            set_if_set('resource_slots', clean_resource_slot)
-
-            try:
-                query = (
-                    resource_presets.update()
-                    .values(data)
-                    .where(resource_presets.c.name == name))
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    return cls(ok=True, msg='success')
-                else:
-                    return cls(ok=False, msg='no such resource preset')
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False,
-                           msg=f'integrity error: {e}')
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False,
-                           msg=f'unexpected error: {e}')
+        data = {}
+        set_if_set(props, data, 'resource_slots',
+                   clean_func=lambda v: ResourceSlot.from_user_input(v, None))
+        update_query = (
+            resource_presets.update()
+            .values(data)
+            .where(resource_presets.c.name == name)
+        )
+        return await simple_db_mutate(cls, info.context, update_query)
 
 
 class DeleteResourcePreset(graphene.Mutation):
@@ -172,22 +138,10 @@ class DeleteResourcePreset(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name):
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            query = (
-                resource_presets.delete()
-                .where(resource_presets.c.name == name))
-            try:
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    return cls(ok=True, msg='success')
-                else:
-                    return cls(ok=False, msg='no such resource preset')
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False,
-                           msg=f'integrity error: {e}')
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False,
-                           msg=f'unexpected error: {e}')
+        delete_query = (
+            resource_presets.delete()
+            .where(resource_presets.c.name == name)
+        )
+        return await simple_db_mutate(cls, info.context, delete_query)

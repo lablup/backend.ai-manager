@@ -49,6 +49,30 @@ grace_events = []
 
 _json_loads = functools.partial(json.loads, parse_float=Decimal)
 
+creation_config_v1 = t.Dict({
+    t.Key('mounts', default=None): t.Null | t.List(t.String),
+    t.Key('environ', default=None): t.Null | t.Mapping(t.String, t.String),
+    t.Key('clusterSize', default=None): t.Null | t.Int[1:],
+})
+creation_config_v2 = t.Dict({
+    t.Key('mounts', default=None): t.Null | t.List(t.String),
+    t.Key('environ', default=None): t.Null | t.Mapping(t.String, t.String),
+    t.Key('clusterSize', default=None): t.Null | t.Int[1:],
+    t.Key('instanceMemory', default=None): t.Null | tx.BinarySize,
+    t.Key('instanceCores', default=None): t.Null | t.Int,
+    t.Key('instanceGPUs', default=None): t.Null | t.Float,
+    t.Key('instanceTPUs', default=None): t.Null | t.Int,
+})
+creation_config_v3 = t.Dict({
+    t.Key('mounts', default=None): t.Null | t.List(t.String),
+    t.Key('environ', default=None): t.Null | t.Mapping(t.String, t.String),
+    tx.AliasedKey(['clusterSize', 'cluster_size'], default=None):
+        t.Null | t.Int[1:],
+    tx.AliasedKey(['scalingGroup', 'scaling_group'], default=None):
+        t.Null | t.String,
+    t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
+})
+
 
 @server_status_required(ALL_ALLOWED)
 @auth_required
@@ -124,28 +148,15 @@ async def create(request: web.Request, params: Any) -> web.Response:
                     raise BackendError(f"{params['group']}: no such group in domain {params['domain']}")
                 group_id = row.group_id
 
-        creation_config = {
-            'mounts': None,
-            'environ': None,
-            'clusterSize': None,
-        }
         api_version = request['api_version']
-        if api_version[0] == 1:
-            # custom resource limit unsupported
-            pass
-        elif api_version[0] >= 2:
-            creation_config.update(**{
-                'instanceMemory': None,
-                'instanceCores': None,
-                'instanceGPUs': None,
-                'instanceTPUs': None,
-            })
-            creation_config.update(params.get('config', {}))
-        elif api_version[0] >= 4 and api_version[1] >= '20190315':
-            creation_config.update(params.get('config', {}))
-            # "instanceXXX" fields are dropped and changed to
-            # a generalized "resource" map.
-            # TODO: implement
+        if (4, '20190315') <= api_version[0]:
+            creation_config = creation_config_v3.check(params['config'])
+        elif 2 <= api_version[0] <= 4:
+            creation_config = creation_config_v2.check(params['config'])
+        elif api_version[0] == 1:
+            creation_config = creation_config_v1.check(params['config'])
+        else:
+            raise InvalidAPIParameters('API version not supported')
 
         # sanity check for vfolders
         try:
@@ -360,7 +371,7 @@ async def get_info(request: web.Request) -> web.Response:
         resp['image'] = kern.image
         resp['registry'] = kern.registry
         resp['tag'] = kern.tag
-        
+
         #Resource occupation
         resp['containerId'] = str(kern.container_id)
         resp['occupiedSlots'] = str(kern.occupied_slots)
@@ -377,10 +388,10 @@ async def get_info(request: web.Request) -> web.Response:
 
         resp['numQueriesExecuted'] = kern.num_queries
         resp['lastStat'] = kern.last_stat
-        
+
         # Resource limits collected from agent heartbeats were erased, as they were deprecated
         # TODO: factor out policy/image info as a common repository
-        
+
         log.info('information retrieved: {0!r}', resp)
     except BackendError:
         log.exception('GETINFO: exception')

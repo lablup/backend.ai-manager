@@ -34,6 +34,7 @@ manager_config_iv = t.Dict({
         t.Key('pid-file', default=os.devnull): tx.Path(type='file',
                                                        allow_nonexisting=True,
                                                        allow_devnull=True),
+        t.Key('hide-agents', default=False): t.Bool,
     }).allow_extra('*'),
     t.Key('docker-registry'): t.Dict({
         t.Key('ssl-verify', default=True): t.Bool | t.StrBool,
