@@ -89,24 +89,18 @@ class Group(graphene.ObjectType):
         )
 
     @staticmethod
-    async def load_all(context, domain_name, *, is_active=None, all=False):
+    async def load_all(context, *,
+                       domain_name=None,
+                       is_active=None):
         async with context['dbpool'].acquire() as conn:
-            if context['user']['role'] == UserRole.SUPERADMIN:
-                current_domain_name = None
-                query = (sa.select([groups]).select_from(groups))
-                if not all:
-                    query = query.where(groups.c.domain_name == domain_name)
-            else:  # list groups only associated with requester
-                current_domain_name = context['user']['domain_name']
-                j = association_groups_users.join(
-                    groups, association_groups_users.c.group_id == groups.c.id)
-                query = (sa.select([groups])
-                           .select_from(j)
-                           .where(association_groups_users.c.user_id == context['user']['uuid']))
+            query = (
+                sa.select([groups])
+                .select_from(groups)
+            )
+            if domain_name is not None:
+                query = query.where(groups.c.domain_name == domain_name)
             if is_active is not None:
                 query = query.where(groups.c.is_active == is_active)
-            if current_domain_name is not None:  # prevent querying group in other domain
-                query = query.where(groups.c.domain_name == current_domain_name)
             objs = []
             async for row in conn.execute(query):
                 o = Group.from_row(row)
@@ -114,26 +108,39 @@ class Group(graphene.ObjectType):
         return objs
 
     @staticmethod
-    async def batch_load_by_id(context, ids=None):
+    async def batch_load_by_id(context, ids, *,
+                               domain_name=None):
         async with context['dbpool'].acquire() as conn:
-            if context['user']['role'] == UserRole.SUPERADMIN:
-                current_domain_name = None
-            else:
-                current_domain_name = context['user']['domain_name']
-            query = (sa.select([groups])
-                       .select_from(groups)
-                       .where(groups.c.id.in_(ids)))
-            if current_domain_name is not None:  # prevent querying group in other domain
-                query = query.where(groups.c.domain_name == current_domain_name)
+            query = (
+                sa.select([groups])
+                .select_from(groups)
+                .where(groups.c.id.in_(ids))
+            )
+            if domain_name is not None:
+                query = query.where(groups.c.domain_name == domain_name)
             objs_per_key = OrderedDict()
-            # For each id, there is only one group.
-            # So we don't build lists in objs_per_key variable.
             for k in ids:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
                 o = Group.from_row(row)
-                objs_per_key[str(row.id)] = o
-        return tuple(objs_per_key.values())
+                objs_per_key[row.id] = o
+        return [*objs_per_key.values()]
+
+    @staticmethod
+    async def get_groups_for_user(context, user_id):
+        async with context['dbpool'].acquire() as conn:
+            j = sa.join(groups, association_groups_users,
+                        groups.c.id == association_groups_users.c.id)
+            query = (
+                sa.select([groups])
+                .select_from(j)
+                .where(association_groups_users.c.id == user_id)
+            )
+            objs = []
+            async for row in conn.execute(query):
+                o = Group.from_row(row)
+                objs.append(o)
+            return objs
 
 
 class GroupInput(graphene.InputObjectType):

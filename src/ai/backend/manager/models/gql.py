@@ -151,7 +151,6 @@ class Queries(graphene.ObjectType):
     groups = graphene.List(
         Group,
         domain_name=graphene.String(),
-        all=graphene.Boolean(),
         is_active=graphene.Boolean())
 
     image = graphene.Field(
@@ -343,38 +342,43 @@ class Queries(graphene.ObjectType):
     @staticmethod
     async def resolve_group(executor, info, id):
         client_role = info.context['user']['role']
-        client_domain_name = info.context['user']['domain_name']
+        client_domain = info.context['user']['domain_name']
+        client_user_id = info.context['user']['uuid']
         manager = info.context['dlmgr']
         loader = manager.get_loader('Group.by_id')
         group = await loader.load(id)
         if client_role == UserRole.SUPERADMIN:
             pass
         elif client_role == UserRole.ADMIN:
-            if group.domain_name != client_domain_name:
+            if group.domain_name != client_domain:
                 raise GenericForbidden
         elif client_role == UserRole.USER:
-            # TODO: check client is member of this group
-            raise NotImplementedError
+            client_groups = await Group.get_groups_for_user(info.context, client_user_id)
+            if group.id not in (g.id for g in client_groups):
+                raise GenericNotFound
         else:
             raise InvalidAPIParameters('Unknown client role')
         return group
 
     @staticmethod
-    async def resolve_groups(executor, info, *, domain_name=None, is_active=None, all=False):
+    async def resolve_groups(executor, info, *, domain_name=None, is_active=None):
         client_role = info.context['user']['role']
         client_domain = info.context['user']['domain_name']
+        client_user_id = info.context['user']['uuid']
         if client_role == UserRole.SUPERADMIN:
-            domain_name = client_domain if domain_name is None else domain_name
+            pass
         elif client_role == UserRole.ADMIN:
             if domain_name is not None and domain_name != client_domain:
                 raise GenericForbidden
             domain_name = client_domain
         elif client_role == UserRole.USER:
-            # TODO: query groups that have the client as their member
-            raise NotImplementedError
+            return await Group.get_groups_for_user(info.context, client_user_id)
         else:
             raise InvalidAPIParameters('Unknown client role')
-        return await Group.load_all(info.context, domain_name, is_active=is_active, all=all)
+        return await Group.load_all(
+            info.context,
+            domain_name=domain_name,
+            is_active=is_active)
 
     @staticmethod
     async def resolve_image(executor, info, reference):
