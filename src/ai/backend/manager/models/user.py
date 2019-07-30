@@ -108,7 +108,9 @@ class User(graphene.ObjectType):
         )
 
     @staticmethod
-    async def load_all(context, *, domain_name=None, is_active=None):
+    async def load_all(context, *,
+                       domain_name=None, group_id=None,
+                       is_active=None):
         '''
         Load user's information. Group names associated with the user are also returned.
         '''
@@ -121,6 +123,8 @@ class User(graphene.ObjectType):
                 query = query.where(users.c.domain_name == context['user']['domain_name'])
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
+            if group_id is not None:
+                query = query.where(groups.c.id == group_id)
             if is_active is not None:
                 query = query.where(users.c.is_active == is_active)
             objs_per_key = OrderedDict()
@@ -135,32 +139,56 @@ class User(graphene.ObjectType):
         return objs
 
     @staticmethod
-    async def batch_load_by_email(context, emails=None, *, is_active=None):
+    async def batch_load_by_email(context, emails=None, *,
+                                  domain_name=None,
+                                  is_active=None):
         async with context['dbpool'].acquire() as conn:
-            try:  # determine whether email is given as uuid
-                import uuid
-                uuid.UUID(emails[0])
-                pk_type = 'uuid'
-            except ValueError:
-                pk_type = 'email'
             from .group import groups, association_groups_users as agus
             j = (users.join(agus, agus.c.user_id == users.c.uuid, isouter=True)
                       .join(groups, agus.c.group_id == groups.c.id, isouter=True))
-            query = (sa.select([users, groups.c.name, groups.c.id])
-                       .select_from(j))
-            if pk_type == 'uuid':
-                query = query.where(users.c.uuid.in_(emails))
-            else:
-                query = query.where(users.c.email.in_(emails))
-            if context['user']['role'] != UserRole.SUPERADMIN:
-                query = query.where(users.c.domain_name == context['user']['domain_name'])
+            query = (
+                sa.select([users, groups.c.name, groups.c.id])
+                .select_from(j)
+                .where(users.c.email.in_(emails))
+            )
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
             objs_per_key = OrderedDict()
             # For each email, there is only one user.
             # So we don't build lists in objs_per_key variable.
             for k in emails:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
-                key = str(row.uuid) if pk_type == 'uuid' else row.email
+                key = row.email
+                if objs_per_key[key] is not None:
+                    objs_per_key[key].groups.append({'id': str(row.id), 'name': row.name})
+                    continue
+                o = User.from_row(row)
+                objs_per_key[key] = o
+        return tuple(objs_per_key.values())
+
+    @staticmethod
+    async def batch_load_by_uuid(context, user_ids=None, *,
+                                 domain_name=None,
+                                 is_active=None):
+        async with context['dbpool'].acquire() as conn:
+            from .group import groups, association_groups_users as agus
+            j = (users.join(agus, agus.c.user_id == users.c.uuid, isouter=True)
+                      .join(groups, agus.c.group_id == groups.c.id, isouter=True))
+            query = (
+                sa.select([users, groups.c.name, groups.c.id])
+                .select_from(j)
+                .where(users.c.uuid.in_(user_ids))
+            )
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
+            objs_per_key = OrderedDict()
+            # For each email, there is only one user.
+            # So we don't build lists in objs_per_key variable.
+            for k in user_ids:
+                objs_per_key[k] = None
+            async for row in conn.execute(query):
+                key = row.email
                 if objs_per_key[key] is not None:
                     objs_per_key[key].groups.append({'id': str(row.id), 'name': row.name})
                     continue

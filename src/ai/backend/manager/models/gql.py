@@ -155,20 +155,32 @@ class Queries(graphene.ObjectType):
 
     user = graphene.Field(
         User,
-        email=graphene.String())  # must be empty for user requests
+        domain_name=graphene.String(),
+        email=graphene.String())
+
+    user_from_uuid = graphene.Field(
+        User,
+        domain_name=graphene.String(),
+        user_id=graphene.String())
 
     users = graphene.List(
         User,
+        domain_name=graphene.String(),
+        group_id=graphene.String(),
         is_active=graphene.Boolean())
 
     keypair = graphene.Field(
         KeyPair,
-        access_key=graphene.String())  # must be empty for user requests
+        domain_name=graphene.String(),
+        email=graphene.String())
 
     keypairs = graphene.List(
         KeyPair,
-        user_id=graphene.String(),
+        domain_name=graphene.String(),
+        email=graphene.String(),
         is_active=graphene.Boolean())
+
+    # NOTE: maybe add keypairs_from_user_id?
 
     keypair_resource_policy = graphene.Field(
         KeyPairResourcePolicy,
@@ -351,31 +363,26 @@ class Queries(graphene.ObjectType):
         return await Image.load_all(info.context)
 
     @staticmethod
-    async def resolve_user(executor, info, email=None):
-        client_role = info.context['user']['role']
-        client_email = info.context['user']['email']
-        if client_role == UserRole.SUPERADMIN:
-            if email is None:
-                email = client_email
-        elif client_role == UserRole.ADMIN:
-            if email is not None:
-                # TODO: check if the given email is in another domain.
-                raise GenericForbidden
-            email = client_email
-        elif client_role == UserRole.USER:
-            if email is not None and email != client_email:
-                raise GenericForbidden
-            email = client_email
-        else:
-            raise InvalidAPIParameters('Unknown client role')
+    @scoped_query(autofill_user=True, user_key='email')
+    async def resolve_user(executor, info, *,
+                           domain_name=None, email=None):
         manager = info.context['dlmgr']
-        loader = manager.get_loader('User.by_email')
+        loader = manager.get_loader('User.by_email', domain_name=domain_name)
         return await loader.load(email)
 
     @staticmethod
+    @scoped_query(autofill_user=True, user_key='user_id')
+    async def resolve_user_from_uuid(executor, info, *,
+                                     domain_name=None, user_id=None):
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('User.by_uuid', domain_name=domain_name)
+        return await loader.load(user_id)
+
+    @staticmethod
     async def resolve_users(executor, info, *,
-                            domain_name=None,
+                            domain_name=None, group_id=None,
                             is_active=None):
+        from .user import UserRole
         client_role = info.context['user']['role']
         client_domain = info.context['user']['domain_name']
         if client_role == UserRole.SUPERADMIN:
@@ -385,13 +392,14 @@ class Queries(graphene.ObjectType):
                 raise GenericForbidden
             domain_name = client_domain
         elif client_role == UserRole.USER:
-            # A user can never query the list of other users.
-            raise GenericForbidden
+            # Users cannot query other users.
+            raise GenericForbidden()
         else:
             raise InvalidAPIParameters('Unknown client role')
         return await User.load_all(
             info.context,
             domain_name=domain_name,
+            group_id=group_id,
             is_active=is_active)
 
     @staticmethod
@@ -403,27 +411,13 @@ class Queries(graphene.ObjectType):
         return await loader.load(access_key)
 
     @staticmethod
+    @scoped_query(autofill_user=False, user_key='email')
     async def resolve_keypairs(executor, info, *,
-                               user_id=None, is_active=None):
+                               domain_name=None, email=None,
+                               is_active=None):
         # Here, user_id corresponds to user email.
         # fetch keypairs from each user_id
-        client_role = info.context['user']['role']
-        client_domain = info.context['user']['domain_name']
-        client_email = info.context['user']['email']
-        if client_role == UserRole.SUPERADMIN:
-            domain_name = None
-        elif client_role == UserRole.ADMIN:
-            # Domain admins can only query keypairs in their domain.
-            domain_name = client_domain
-        elif client_role == UserRole.USER:
-            # Normal users can only query their own keypairs.
-            if user_id is not None and user_id != client_email:
-                raise GenericForbidden
-            user_id = client_email
-            domain_name = client_domain
-        else:
-            raise InvalidAPIParameters('Unknown client role')
-        if user_id is None:
+        if email is None:
             return await KeyPair.load_all(
                 info.context,
                 domain_name=domain_name,
@@ -433,7 +427,7 @@ class Queries(graphene.ObjectType):
             loader = manager.get_loader('KeyPair.by_email',
                                         domain_name=domain_name,
                                         is_active=is_active)
-            return await loader.load(user_id)
+            return await loader.load(email)
 
     @staticmethod
     async def resolve_keypair_resource_policy(executor, info, name=None):

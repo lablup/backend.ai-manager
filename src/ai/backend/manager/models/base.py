@@ -314,6 +314,8 @@ def scoped_query(*,
             client_role = info.context['user']['role']
             if user_key == 'access_key':
                 client_user_id = info.context['access_key']
+            elif user_key == 'email':
+                client_user_id = info.context['user']['email']
             else:
                 client_user_id = info.context['user']['uuid']
             client_domain = info.context['user']['domain_name']
@@ -322,7 +324,6 @@ def scoped_query(*,
             user_id = kwargs.get(user_key, None)
             if client_role == UserRole.SUPERADMIN:
                 if autofill_user:
-                    # We are considering the client's stuffs only.
                     if user_id is None:
                         user_id = client_user_id
             elif client_role == UserRole.ADMIN:
@@ -333,7 +334,6 @@ def scoped_query(*,
                     # TODO: check if the group is a member of the domain
                     pass
                 if autofill_user:
-                    # We are returning a single item for myself.
                     if user_id is None:
                         user_id = client_user_id
             elif client_role == UserRole.USER:
