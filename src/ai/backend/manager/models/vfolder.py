@@ -347,14 +347,20 @@ class VirtualFolder(graphene.ObjectType):
 
     @staticmethod
     async def load_slice(context, limit, offset, *,
-                         domain_name=None, group_id=None, user_id=None):
+                         domain_name=None, group_id=None, user_id=None,
+                         order_key=None, order_asc=None):
         from .user import users
         async with context['dbpool'].acquire() as conn:
+            if order_key is None:
+                _ordering = vfolders.c.created_at
+            else:
+                _order_func = sa.asc if order_asc else sa.desc
+                _ordering = _order_func(getattr(vfolders.c, order_key))
             j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
             query = (
                 sa.select([vfolders])
                 .select_from(j)
-                .order_by(sa.desc(vfolders.c.created_at))
+                .order_by(_ordering)
                 .limit(limit)
                 .offset(offset)
             )

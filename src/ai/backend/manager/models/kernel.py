@@ -312,17 +312,24 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
     @staticmethod
     async def load_slice(context, limit, offset, *,
                          domain_name=None, group_id=None, access_key=None,
-                         status=None):
+                         status=None,
+                         order_key=None, order_asc=None):
         async with context['dbpool'].acquire() as conn:
+            if order_key is None:
+                _ordering = sa.desc(
+                    kernels.c.terminated_at
+                    if status is not None and status == KernelStatus.TERMINATED
+                    else kernels.c.created_at
+                )
+            else:
+                _order_func = sa.asc if order_asc else sa.desc
+                _ordering = _order_func(getattr(kernels.c, order_key))
             # TODO: optimization for pagination using subquery, join
-            order_col = (kernels.c.terminated_at
-                         if status is not None and status == KernelStatus.TERMINATED
-                         else kernels.c.created_at)
             j = kernels.join(groups, groups.c.id == kernels.c.group_id)
             query = (sa.select([kernels, groups.c.name])
                        .select_from(j)
                        .where(kernels.c.role == 'master')
-                       .order_by(sa.desc(order_col))
+                       .order_by(_ordering)
                        .limit(limit)
                        .offset(offset))
             if domain_name is not None:

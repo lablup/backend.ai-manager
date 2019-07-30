@@ -119,11 +119,18 @@ class Queries(graphene.ObjectType):
         AgentList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
-        status=graphene.String())
+        # ordering customization
+        order_key=graphene.String(),
+        order_asc=graphene.Boolean(),
+        # filters
+        scaling_group=graphene.String(),
+        status=graphene.String(),
+    )
 
     # super-admin only
-    agents = graphene.List(
+    agents = graphene.List(  # legacy non-paginated list
         Agent,
+        scaling_group=graphene.String(),
         status=graphene.String())
 
     domain = graphene.Field(
@@ -229,6 +236,10 @@ class Queries(graphene.ObjectType):
         VirtualFolderList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
+        # ordering customization
+        order_key=graphene.String(),
+        order_asc=graphene.Boolean(),
+        # filters
         domain_name=graphene.String(),
         group_id=graphene.String(),
         access_key=graphene.String())  # must be empty for user requests
@@ -243,6 +254,10 @@ class Queries(graphene.ObjectType):
         ComputeSessionList,
         limit=graphene.Int(required=True),
         offset=graphene.Int(required=True),
+        # ordering customization
+        order_key=graphene.String(),
+        order_asc=graphene.Boolean(),
+        # filters
         domain_name=graphene.String(),
         group_id=graphene.String(),
         access_key=graphene.String(),
@@ -281,14 +296,30 @@ class Queries(graphene.ObjectType):
 
     @staticmethod
     @privileged_query(UserRole.SUPERADMIN)
-    async def resolve_agents(executor, info, status=None):
-        return await Agent.load_all(info.context, status=status)
+    async def resolve_agents(executor, info, *,
+                             scaling_group=None,
+                             status=None):
+        return await Agent.load_all(
+            info.context,
+            scaling_group=scaling_group,
+            status=status)
 
     @staticmethod
     @privileged_query(UserRole.SUPERADMIN)
-    async def resolve_agent_list(executor, info, limit, offset, status=None):
-        total_count = await Agent.load_count(info.context, status)
-        agent_list = await Agent.load_slice(info.context, limit, offset, status)
+    async def resolve_agent_list(executor, info, limit, offset, *,
+                                 scaling_group=None,
+                                 status=None,
+                                 order_key=None, order_asc=None):
+        total_count = await Agent.load_count(
+            info.context,
+            scaling_group=scaling_group,
+            status=status)
+        agent_list = await Agent.load_slice(
+            info.context, limit, offset,
+            scaling_group=scaling_group,
+            status=status,
+            order_key=order_key,
+            order_asc=order_asc)
         return AgentList(agent_list, total_count)
 
     @staticmethod
@@ -497,7 +528,8 @@ class Queries(graphene.ObjectType):
     @staticmethod
     @scoped_query(autofill_user=False, user_key='user_id')
     async def resolve_vfolder_list(executor, info, limit, offset, *,
-                                   domain_name=None, group_id=None, user_id=None):
+                                   domain_name=None, group_id=None, user_id=None,
+                                   order_key=None, order_asc=None):
         total_count = await VirtualFolder.load_count(
             info.context,
             domain_name=domain_name,
@@ -507,7 +539,9 @@ class Queries(graphene.ObjectType):
             info.context, limit, offset,
             domain_name=domain_name,
             group_id=group_id,
-            user_id=user_id)
+            user_id=user_id,
+            order_key=order_key,
+            order_asc=order_asc)
         return VirtualFolderList(items, total_count)
 
     @staticmethod
@@ -524,7 +558,8 @@ class Queries(graphene.ObjectType):
     @scoped_query(autofill_user=False, user_key='access_key')
     async def resolve_compute_session_list(executor, info, limit, offset, *,
                                            domain_name=None, group_id=None, access_key=None,
-                                           status=None):
+                                           status=None,
+                                           order_key=None, order_asc=None):
         total_count = await ComputeSession.load_count(
             info.context,
             domain_name=domain_name,
@@ -536,7 +571,9 @@ class Queries(graphene.ObjectType):
             domain_name=domain_name,
             group_id=group_id,
             access_key=access_key,
-            status=status)
+            status=status,
+            order_key=order_key,
+            order_asc=order_asc)
         return ComputeSessionList(items, total_count)
 
     @staticmethod

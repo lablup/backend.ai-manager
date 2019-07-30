@@ -138,11 +138,17 @@ class Agent(graphene.ObjectType):
         return await loader.load(self.id)
 
     @staticmethod
-    async def load_count(context, status=None):
+    async def load_count(context, *,
+                         scaling_group=None,
+                         status=None):
         async with context['dbpool'].acquire() as conn:
-            query = (sa.select([sa.func.count(agents.c.id)])
-                       .select_from(agents)
-                       .as_scalar())
+            query = (
+                sa.select([sa.func.count(agents.c.id)])
+                .select_from(agents)
+                .as_scalar()
+            )
+            if scaling_group is not None:
+                query = query.where(agents.c.scaling_group == scaling_group)
             if status is not None:
                 status = AgentStatus[status]
                 query = query.where(agents.c.status == status)
@@ -151,14 +157,26 @@ class Agent(graphene.ObjectType):
             return count[0]
 
     @staticmethod
-    async def load_slice(context, limit, offset, status=None):
+    async def load_slice(context, limit, offset, *,
+                         scaling_group=None,
+                         status=None,
+                         order_key=None, order_asc=True):
         async with context['dbpool'].acquire() as conn:
             # TODO: optimization for pagination using subquery, join
-            query = (sa.select([agents])
-                       .select_from(agents)
-                       .order_by(agents.c.id)
-                       .limit(limit)
-                       .offset(offset))
+            if order_key is None:
+                _ordering = agents.c.id
+            else:
+                _order_func = sa.asc if order_asc else sa.desc
+                _ordering = _order_func(getattr(agents.c, order_key))
+            query = (
+                sa.select([agents])
+                .select_from(agents)
+                .order_by(_ordering)
+                .limit(limit)
+                .offset(offset)
+            )
+            if scaling_group is not None:
+                query = query.where(agents.c.scaling_group == scaling_group)
             if status is not None:
                 status = AgentStatus[status]
                 query = query.where(agents.c.status == status)
@@ -171,10 +189,15 @@ class Agent(graphene.ObjectType):
             return _agents
 
     @staticmethod
-    async def load_all(context, status=None):
+    async def load_all(context, *,
+                       scaling_group=None, status=None):
         async with context['dbpool'].acquire() as conn:
-            query = (sa.select([agents])
-                       .select_from(agents))
+            query = (
+                sa.select([agents])
+                .select_from(agents)
+            )
+            if scaling_group is not None:
+                query = query.where(agents.c.scaling_group == scaling_group)
             if status is not None:
                 status = AgentStatus[status]
                 query = query.where(agents.c.status == status)
@@ -187,7 +210,7 @@ class Agent(graphene.ObjectType):
             return _agents
 
     @staticmethod
-    async def batch_load(context, agent_ids, status=None):
+    async def batch_load(context, agent_ids, *, status=None):
         async with context['dbpool'].acquire() as conn:
             query = (sa.select([agents])
                        .select_from(agents)
