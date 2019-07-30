@@ -241,13 +241,11 @@ class ScalingGroup(graphene.ObjectType):
                        .select_from(scaling_groups)
                        .where(scaling_groups.c.name.in_(names)))
             objs_per_key = OrderedDict()
-            # For each access key, there is only one keypair.
-            # So we don't build lists in objs_per_key variable.
             for k in names:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
                 o = ScalingGroup.from_row(row)
-                objs_per_key[row.access_key] = o
+                objs_per_key[row.name] = o
         return tuple(objs_per_key.values())
 
 
