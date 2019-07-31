@@ -30,7 +30,7 @@
             "scheduler_opts": {}
         }
     ],
-    "allowed_scaling_groups_for_domains": [
+    "sgroups_for_domains": [
         {
             "scaling_group": "default",
             "domain": "default"
