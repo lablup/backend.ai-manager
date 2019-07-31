@@ -149,7 +149,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 group_id = row.group_id
 
         api_version = request['api_version']
-        if (4, '20190315') <= api_version[0]:
+        if (4, '20190315') <= api_version:
             creation_config = creation_config_v3.check(params['config'])
         elif 2 <= api_version[0] <= 4:
             creation_config = creation_config_v2.check(params['config'])
