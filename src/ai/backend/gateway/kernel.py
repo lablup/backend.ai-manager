@@ -149,7 +149,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 group_id = row.group_id
 
         api_version = request['api_version']
-        if (4, '20190315') <= api_version[0]:
+        if (4, '20190315') <= api_version:
             creation_config = creation_config_v3.check(params['config'])
         elif 2 <= api_version[0] <= 4:
             creation_config = creation_config_v2.check(params['config'])
@@ -372,17 +372,17 @@ async def get_info(request: web.Request) -> web.Response:
         resp['registry'] = kern.registry
         resp['tag'] = kern.tag
 
-        #Resource occupation
+        # Resource occupation
         resp['containerId'] = str(kern.container_id)
         resp['occupiedSlots'] = str(kern.occupied_slots)
         resp['occupiedShares'] = str(kern.occupied_shares)
         resp['environ'] = str(kern.environ)
 
-        #Lifecycle
-        resp['status'] = kern.status.name # "e.g. 'KernelStatus.RUNNING' -> 'RUNNING' "
+        # Lifecycle
+        resp['status'] = kern.status.name  # "e.g. 'KernelStatus.RUNNING' -> 'RUNNING' "
         resp['statusInfo'] = str(kern.status_info)
         age = datetime.now(tzutc()) - kern.created_at
-        resp['age'] = int(age.total_seconds() * 1000) #age in milliseconds
+        resp['age'] = int(age.total_seconds() * 1000)  # age in milliseconds
         resp['creationTime'] = str(kern.created_at)
         resp['terminationTime'] = str(kern.terminated_at) if kern.terminated_at else None
 

@@ -1,6 +1,5 @@
 import asyncio
 from collections import defaultdict
-from datetime import datetime
 import functools
 import io
 import inspect
@@ -180,8 +179,8 @@ async def call_non_bursty(key, coro, *, max_bursts=64, max_idle=100):
     if now - _burst_last_call > 3.0:
         # garbage-collect keys
         cleaned_keys = []
-        for k, t in _burst_times.items():
-            if now - t > (max_idle / 1e3):
+        for k, tick in _burst_times.items():
+            if now - tick > (max_idle / 1e3):
                 cleaned_keys.append(k)
         for k in cleaned_keys:
             del _burst_times[k]
