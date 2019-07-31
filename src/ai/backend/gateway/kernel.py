@@ -372,17 +372,17 @@ async def get_info(request: web.Request) -> web.Response:
         resp['registry'] = kern.registry
         resp['tag'] = kern.tag
 
-        #Resource occupation
+        # Resource occupation
         resp['containerId'] = str(kern.container_id)
         resp['occupiedSlots'] = str(kern.occupied_slots)
         resp['occupiedShares'] = str(kern.occupied_shares)
         resp['environ'] = str(kern.environ)
 
-        #Lifecycle
-        resp['status'] = kern.status.name # "e.g. 'KernelStatus.RUNNING' -> 'RUNNING' "
+        # Lifecycle
+        resp['status'] = kern.status.name  # "e.g. 'KernelStatus.RUNNING' -> 'RUNNING' "
         resp['statusInfo'] = str(kern.status_info)
         age = datetime.now(tzutc()) - kern.created_at
-        resp['age'] = int(age.total_seconds() * 1000) #age in milliseconds
+        resp['age'] = int(age.total_seconds() * 1000)  # age in milliseconds
         resp['creationTime'] = str(kern.created_at)
         resp['terminationTime'] = str(kern.terminated_at) if kern.terminated_at else None
 
