@@ -22,6 +22,11 @@ __all__ = (
 )
 
 
+class SessionTypes(enum.Enum):
+    INTERACTIVE = 0
+    BATCH = 1
+
+
 class KernelStatus(enum.Enum):
     # values are only meaningful inside the gateway
     PREPARING = 10
@@ -45,6 +50,8 @@ kernels = sa.Table(
     'kernels', metadata,
     IDColumn(),
     sa.Column('sess_id', sa.String(length=64), unique=False, index=True),
+    sa.Column('sess_type', EnumType(SessionTypes), index=True, nullable=False,
+              default=SessionTypes.INTERACTIVE, server_default=SessionTypes.INTERACTIVE.name),
     sa.Column('role', sa.String(length=16), nullable=False, default='master'),
     sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True,
               nullable=False, server_default='default', default='default'),
@@ -98,6 +105,7 @@ kernels = sa.Table(
 
 class SessionCommons:
     sess_id = graphene.String()
+    sess_type = graphene.String()
     id = graphene.ID()
     role = graphene.String()
     image = graphene.String()
@@ -218,6 +226,7 @@ class SessionCommons:
         mega = 2 ** 20
         return {
             'sess_id': row['sess_id'],
+            'sess_type': row['sess_id'].name,
             'id': row['id'],
             'role': row['role'],
             'image': row['image'],
