@@ -180,7 +180,7 @@ class Queries(graphene.ObjectType):
     keypair = graphene.Field(
         KeyPair,
         domain_name=graphene.String(),
-        email=graphene.String())
+        access_key=graphene.String())
 
     keypairs = graphene.List(
         KeyPair,
