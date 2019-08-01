@@ -5,6 +5,8 @@ Revises: c401d78cc7b9
 Create Date: 2019-07-29 11:44:55.593760
 
 """
+import os
+
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
@@ -24,8 +26,14 @@ def upgrade():
     # ### end Alembic commands ###
 
     print('\nSet default allowed_docker_registries.')
+    allowed_registries = os.environ.get('ALLOWED_DOCKER_REGISTRIES', None)
+    if allowed_registries:
+        allowed_registries = allowed_registries.replace(' ', '')
+        allowed_registries = '{index.docker.io,' + allowed_registries + '}'
+    else:
+        allowed_registries = '{index.docker.io}'
     connection = op.get_bind()
-    query = ("UPDATE domains SET allowed_docker_registries = '{index.docker.io}';")
+    query = ("UPDATE domains SET allowed_docker_registries = '{}';".format(allowed_registries))
     connection.execute(query)
 
     op.alter_column('domains', column_name='allowed_docker_registries',
