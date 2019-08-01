@@ -208,6 +208,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'id': str(row['id']),
             'name': row['sess_id'],
             'access_key': row['access_key'],
+            'smp': float(row.occupied_slots['cpu']),  # CPU allocated
             'cpu_used': float(last_stat['cpu_used']['current']) if last_stat else 0,
             'mem_allocated': int(row.occupied_slots['mem']),
             'mem_used': int(last_stat['mem']['capacity']) if last_stat else 0,
@@ -219,7 +220,6 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'used_days': (row['terminated_at'].astimezone(local_tz).toordinal() -
                           row['created_at'].astimezone(local_tz).toordinal() + 1),
             'device_type': None,  # TODO: gpu device type
-            'smp': 0,  # TODO: gpu smp?
             'nfs': nfs,
             'image_name': row['image'],
             'created_at': str(row['created_at']),
