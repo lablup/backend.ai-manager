@@ -98,8 +98,9 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
     NGC images) which has its own Python version installed.
 
     Internally, it launches a temporary kernel in an arbitrary agent within
-    the "default" domain, the "default" group, and the "default" scaling group.
-    (The client may change the group and scaling group using *launchOptions.*)
+    the client's domain, the "default" group, and the "default" scaling group.
+    (The client may change the group and scaling group using *launchOptions.*
+    If the client is a super-admin, it uses the "default" domain.)
 
     This temporary kernel occupies only 1 CPU core and 1 GiB memory.
     The kernel concurrency limit is not applied here, but we choose an agent
@@ -151,7 +152,7 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
 
     kernel, _ = await registry.get_or_create_session(
         sess_id, access_key,
-        f'lablup/importer:{distro}',
+        'lablup/importer:manylinux2010',
         {
             'resources': {'cpu': '1', 'mem': '1g'},
             'scaling_group': params['launchOptions']['scalingGroup'],
