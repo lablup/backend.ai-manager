@@ -19,9 +19,8 @@ async def test_call_non_bursty():
 
     # check run as coroutine
     execution_count = 0
-    await call_non_bursty(key, execute())
-    assert execution_count == 1
-    await asyncio.sleep(0.11)
+    with pytest.raises(TypeError):
+        await call_non_bursty(key, execute())
 
     # check run as coroutinefunction
     execution_count = 0

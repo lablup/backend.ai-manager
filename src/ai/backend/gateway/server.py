@@ -391,7 +391,8 @@ async def server_main(loop, pidx, _args):
         ssl_context=app['sslctx'],
     )
     await site.start()
-    log.info('started.')
+    log.info('started serving API on {}:{}',
+             app['config'].service_ip, app['config'].service_port)
 
     try:
         yield
