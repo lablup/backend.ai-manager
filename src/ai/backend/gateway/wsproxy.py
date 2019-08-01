@@ -71,7 +71,7 @@ class TCPProxy(ServiceProxy):
                             break
                         else:
                             if self.downstream_cb is not None:
-                                await self.downstream_cb(chunk)
+                                await asyncio.shield(self.downstream_cb(chunk))
                 except asyncio.CancelledError:
                     pass
                 finally:

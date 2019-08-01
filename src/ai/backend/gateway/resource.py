@@ -3,7 +3,7 @@ Resource preset APIs.
 '''
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from decimal import Decimal
 import functools
@@ -15,6 +15,7 @@ from typing import Any
 from aiohttp import web
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
+from dateutil.tz import tzutc
 import sqlalchemy as sa
 import trafaret as t
 
@@ -323,6 +324,112 @@ async def usage_per_period(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+async def get_time_binned_monthly_stats(request, user_uuid=None):
+    '''
+    Generate time-binned (15 min) stats for the last one month (2880 points).
+    The structure of the result would be:
+
+        [
+          # [
+          #     timestamp, num_sessions,
+          #     cpu_allocated, mem_allocated, gpu_allocated,
+          #     io_read, io_write, scratch_used,
+          # ]
+            [1562083808.657106, 1, 1.2, 1073741824, ...],
+            [1562084708.657106, 2, 4.0, 1073741824, ...],
+        ]
+
+    Note that the timestamp is in UNIX-timestamp.
+    '''
+    # Get all or user kernels for the last month from DB.
+    time_window = 900  # 15 min
+    now = datetime.now(tzutc())
+    start_date = now - timedelta(days=30)
+    async with request.app['dbpool'].acquire() as conn, conn.begin():
+        query = (sa.select([kernels])
+                   .select_from(kernels)
+                   .where(kernels.c.terminated_at >= start_date)
+                   .order_by(sa.asc(kernels.c.created_at)))
+        if user_uuid is not None:
+            query = query.where(kernels.c.user_uuid == user_uuid)
+        result = await conn.execute(query)
+        rows = await result.fetchall()
+
+    # Build time-series of time-binned stats.
+    rowcount = result.rowcount
+    now = now.timestamp()
+    start_date = start_date.timestamp()
+    ts = start_date
+    idx = 0
+    tseries = []
+    # Iterate over each time window.
+    while ts < now:
+        # Initialize the time-binned stats.
+        num_sessions = 0
+        cpu_allocated = 0
+        mem_allocated = 0
+        gpu_allocated = 0
+        io_read_bytes = 0
+        io_write_bytes = 0
+        disk_used = 0
+        # Accumulate stats for containers overlapping with this time window.
+        while idx < rowcount and \
+              ts + time_window > rows[idx].created_at.timestamp() and \
+              ts < rows[idx].terminated_at.timestamp():
+            # Accumulate stats for overlapping containers in this time window.
+            row = rows[idx]
+            num_sessions += 1
+            cpu_allocated += float(row.occupied_slots['cpu'])
+            mem_allocated += float(row.occupied_slots['mem'])
+            if 'cuda.devices' in row.occupied_slots:
+                gpu_allocated += float(row.occupied_slots['cuda.devices'])
+            if 'cuda.shares' in row.occupied_slots:
+                gpu_allocated += float(row.occupied_slots['cuda.shares'])
+            if row.last_stat:
+                io_read_bytes += int(row.last_stat['io_read']['current'])
+                io_write_bytes += int(row.last_stat['io_write']['current'])
+                disk_used += int(row.last_stat['io_scratch_size']['stats.max'])
+            idx += 1
+        stat = [
+            ts, num_sessions,
+            cpu_allocated, mem_allocated, gpu_allocated,
+            io_read_bytes, io_write_bytes, disk_used,
+        ]
+        # print(stat)
+        tseries.append(stat)
+        ts += time_window
+    # print(rowcount)
+    return tseries
+
+
+@server_status_required(READ_ALLOWED)
+@auth_required
+async def user_month_stats(request: web.Request) -> web.Response:
+    '''
+    Return time-binned (15 min) stats for terminated user sessions
+    over last 30 days.
+    '''
+    access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
+    log.info('USER_LAST_MONTH_STATS (u:[{0}], ak:[{1}])', user_uuid, access_key)
+    stats = await get_time_binned_monthly_stats(request, user_uuid=user_uuid)
+    return web.json_response(stats, status=200)
+
+
+@server_status_required(READ_ALLOWED)
+@superadmin_required
+async def admin_month_stats(request: web.Request) -> web.Response:
+    '''
+    Return time-binned (15 min) stats for all terminated sessions
+    over last 30 days.
+    '''
+    access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
+    log.info('ADMIN_LAST_MONTH_STATS (u:[{0}], ak:[{1}])', user_uuid, access_key)
+    stats = await get_time_binned_monthly_stats(request, user_uuid=None)
+    return web.json_response(stats, status=200)
+
+
 def create_app(default_cors_options):
     app = web.Application()
     app['api_versions'] = (4,)
@@ -333,4 +440,6 @@ def create_app(default_cors_options):
     cors.add(add_route('POST', '/recalculate-usage', recalculate_usage))
     cors.add(add_route('GET',  '/usage/month', usage_per_month))
     cors.add(add_route('GET',  '/usage/period', usage_per_period))
+    cors.add(add_route('GET',  '/stats/user/month', user_month_stats))
+    cors.add(add_route('GET',  '/stats/admin/month', admin_month_stats))
     return app, []
