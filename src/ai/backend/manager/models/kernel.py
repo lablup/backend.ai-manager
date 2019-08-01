@@ -63,6 +63,7 @@ kernels = sa.Table(
     sa.Column('occupied_slots', ResourceSlotColumn(), nullable=False),
     sa.Column('occupied_shares', pgsql.JSONB(), nullable=False, default={}),  # legacy
     sa.Column('environ', sa.ARRAY(sa.String), nullable=True),
+    sa.Column('mounts', sa.ARRAY(sa.String), nullable=True),  # list of list
 
     # Port mappings
     # If kernel_host is NULL, it is assumed to be same to the agent host or IP.
@@ -121,6 +122,7 @@ class SessionCommons:
 
     occupied_slots = graphene.JSONString()
     occupied_shares = graphene.JSONString()
+    mounts = graphene.List(lambda: graphene.List(lambda: graphene.String))
 
     num_queries = BigInt()
     live_stat = graphene.JSONString()
@@ -233,6 +235,7 @@ class SessionCommons:
             'service_ports': row['service_ports'],
             'occupied_slots': row['occupied_slots'].to_json(),
             'occupied_shares': row['occupied_shares'],
+            'mounts': row['mounts'],
             'num_queries': row['num_queries'],
             # live_stat is resolved by Graphene
             'last_stat': row['last_stat'],

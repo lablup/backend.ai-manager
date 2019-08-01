@@ -200,6 +200,9 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
     for row in rows:
         group_id = str(row.group_id)
         last_stat = row.last_stat
+        nfs = None
+        if row.mounts is not None:
+            nfs = list(set([mount[1] for mount in row.mounts]))
         c_info = {
             # TODO: fill in these values when fields spec is fixed.
             'id': str(row['id']),
@@ -217,7 +220,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
                           row['created_at'].astimezone(local_tz).toordinal() + 1),
             'device_type': None,  # TODO: gpu device type
             'smp': 0,  # TODO: gpu smp?
-            'nfs': None,  # TODO: what value to write here?
+            'nfs': nfs,
             'image_name': row['image'],
             'created_at': str(row['created_at']),
             'terminated_at': str(row['terminated_at']),

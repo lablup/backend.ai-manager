@@ -643,6 +643,7 @@ class AgentRegistry:
                 'occupied_slots': requested_slots,
                 'occupied_shares': {},
                 'environ': [f'{k}={v}' for k, v in environ.items()],
+                'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
                 'kernel_host': None,
                 'repl_in_port': 0,
                 'repl_out_port': 0,
