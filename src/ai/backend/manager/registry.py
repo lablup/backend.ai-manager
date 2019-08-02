@@ -3,6 +3,8 @@ from datetime import datetime
 import logging
 import sys
 import uuid
+import json
+import secrets
 
 import aiozmq, aiozmq.rpc
 from aiozmq.rpc.base import GenericError, NotFoundError, ParametersError
@@ -19,6 +21,11 @@ from ai.backend.common.docker import get_registry_info, get_known_registries, Im
 from ai.backend.common.exception import AliasResolutionFailed
 from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.callosum import (
+    Peer,
+    RedisStreamAddress,
+    RedisStreamTransport,
+)
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
     ImageNotFound,
@@ -37,11 +44,12 @@ __all__ = ['AgentRegistry', 'InstanceNotFound']
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.registry'))
 
-agent_peers = {}
-
+agent_peers = {} #Mapping[NewType('agent_id'), RedisStreamAddress]
 
 @aiotools.actxmgr
-async def RPCContext(addr, timeout=None):
+async def RPCContext(agent_id: str, timeout=None):
+    # TODO: modify "get_session" method's variable "cols" to return agent_id
+    # do as to later provide it as argument for this method
     preserved_exceptions = (
         NotFoundError,
         ParametersError,
@@ -50,14 +58,54 @@ async def RPCContext(addr, timeout=None):
         asyncio.InvalidStateError,
     )
     global agent_peers
-    peer = agent_peers.get(addr, None)
+    peer = agent_peers.get(agent_id, None)
     if peer is None:
-        peer = await aiozmq.rpc.connect_rpc(
-            connect=addr, error_table={
-                'concurrent.futures._base.TimeoutError': asyncio.TimeoutError,
-            })
-        peer.transport.setsockopt(zmq.LINGER, 1000)
-        agent_peers[addr] = peer
+
+        # TODO: add correct server address
+        server_addr = "get_agent_server_addr"
+
+        # TODO: add some db operation fetching
+        # the address of the name of the desired
+        # agent initial stream_key
+        initial_stream_key = "some_value_from_database"
+        stream_key = secrets.token_hex(16)
+        # it may be better to separate managers into
+        # different consumer groups during initial stream
+        # so that they receive all messages from that stream,
+        # which guarantees that they receive at least 1 message
+        # as a response and "await invoke" doesn't block.
+        consumer_group = secrets.token_hex(16)
+
+        initial_peer = Peer(connect=RedisStreamAddress(
+                            server_addr, initial_stream_key,
+                            consumer_group, 'consumer1'),
+                            serializer=json.dumps,
+                            deserializer=json.loads,
+                            transport=RedisStreamTransport,
+                            # TODO: add password, from etcd(?)
+                            redis_opts={'password': 'abc'},
+                            invoke_timeout=30.0)
+        await initial_peer.open()
+        #expecting that peer will remember the key
+        response = await initial_peer.invoke('gen_stream_key', {
+            # generating key which will be used 
+            # for peer-to-peer communication
+            'stream_key': stream_key,
+        })
+        assert response['stream_key'] = stream_key
+        await initial_peer.close()
+
+        peer = Peer(connect=RedisStreamAddress(
+                            server_addr, stream_key,
+                            'client-group', 'consumer1'),
+                            serializer=json.dumps,
+                            deserializer=json.loads,
+                            transport=RedisStreamTransport,
+                            # TODO: add password, from etcd(?)
+                            redis_opts={'password': 'abc'},
+                            invoke_timeout=30.0)
+        await initial_peer.open()
+        agent_peers[agent_id] = peer
     try:
         with _timeout(timeout):
             yield peer
@@ -81,7 +129,6 @@ async def RPCContext(addr, timeout=None):
         else:
             e = AgentError(exc_type, exc.args)
             raise e.with_traceback(tb)
-
 
 @aiotools.actxmgr
 async def reenter_txn(pool, conn):
@@ -118,9 +165,9 @@ class AgentRegistry:
     async def shutdown(self):
         global agent_peers
         closing_tasks = []
-        for addr, peer in agent_peers.items():
-            peer.close()
-            closing_tasks.append(peer.wait_closed())
+        for agent_id, peer in agent_peers.items():
+            closing_task = asyncio.create_task(peer.close())
+            closing_tasks.append(closing_task)
         await asyncio.gather(*closing_tasks)
 
     async def get_instance(self, inst_id, field=None):
