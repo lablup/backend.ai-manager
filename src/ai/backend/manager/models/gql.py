@@ -36,6 +36,7 @@ from .scaling_group import (
     ScalingGroup,
     CreateScalingGroup, ModifyScalingGroup, DeleteScalingGroup,
     AssociateScalingGroupWithDomain,    DisassociateScalingGroupWithDomain,
+    DisassociateAllScalingGroupsWithDomain,
     AssociateScalingGroupWithUserGroup, DisassociateScalingGroupWithUserGroup,
     AssociateScalingGroupWithKeyPair,   DisassociateScalingGroupWithKeyPair,
 )
@@ -104,6 +105,7 @@ class Mutations(graphene.ObjectType):
     disassociate_scaling_group_with_domain     = DisassociateScalingGroupWithDomain.Field()
     disassociate_scaling_group_with_user_group = DisassociateScalingGroupWithUserGroup.Field()
     disassociate_scaling_group_with_keypair    = DisassociateScalingGroupWithKeyPair.Field()
+    disassociate_all_scaling_groups_with_domain = DisassociateAllScalingGroupsWithDomain.Field()
 
 
 class Queries(graphene.ObjectType):

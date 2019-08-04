@@ -385,6 +385,24 @@ class DisassociateScalingGroupWithDomain(graphene.Mutation):
         return await simple_db_mutate(cls, info.context, delete_query)
 
 
+class DisassociateAllScalingGroupsWithDomain(graphene.Mutation):
+
+    class Arguments:
+        domain = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @classmethod
+    @privileged_mutation(UserRole.SUPERADMIN)
+    async def mutate(cls, root, info, scaling_group, domain):
+        delete_query = (
+            sgroups_for_domains.delete()
+            .where(sgroups_for_domains.c.domain == domain)
+        )
+        return await simple_db_mutate(cls, info.context, delete_query)
+
+
 class AssociateScalingGroupWithUserGroup(graphene.Mutation):
 
     class Arguments:
