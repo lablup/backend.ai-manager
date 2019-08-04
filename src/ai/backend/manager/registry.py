@@ -751,6 +751,7 @@ class AgentRegistry:
                         'status': KernelStatus.RUNNING,
                         'container_id': created_info['container_id'],
                         'occupied_shares': {},
+                        'attached_devices': created_info.get('attached_devices', {}),
                         'kernel_host': kernel_host,
                         'repl_in_port': created_info['repl_in_port'],
                         'repl_out_port': created_info['repl_out_port'],
