@@ -183,12 +183,12 @@ class User(graphene.ObjectType):
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
             objs_per_key = OrderedDict()
-            # For each email, there is only one user.
+            # For each uuid, there is only one user.
             # So we don't build lists in objs_per_key variable.
             for k in user_ids:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
-                key = row.email
+                key = str(row.uuid)
                 if objs_per_key[key] is not None:
                     objs_per_key[key].groups.append({'id': str(row.id), 'name': row.name})
                     continue
