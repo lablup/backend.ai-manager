@@ -395,7 +395,7 @@ class DisassociateAllScalingGroupsWithDomain(graphene.Mutation):
 
     @classmethod
     @privileged_mutation(UserRole.SUPERADMIN)
-    async def mutate(cls, root, info, scaling_group, domain):
+    async def mutate(cls, root, info, domain):
         delete_query = (
             sgroups_for_domains.delete()
             .where(sgroups_for_domains.c.domain == domain)
