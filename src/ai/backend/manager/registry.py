@@ -60,21 +60,15 @@ async def RPCContext(agent_id: str, timeout=None):
     global agent_peers
     peer = agent_peers.get(agent_id, None)
     if peer is None:
-
-        # TODO: add correct server address
-        server_addr = "get_agent_server_addr"
-
-        # TODO: add some db operation fetching
-        # the address of the name of the desired
-        # agent initial stream_key
+        # TODO: add correct server address and password
+        server_addr = "get_redis_server_addr"
+        server_pw = "get_redis_server_password"
+        # TODO: add db operation fetching initial
+        # stream_key for given agent_id
         initial_stream_key = "some_value_from_database"
-        stream_key = secrets.token_hex(16)
-        # it may be better to separate managers into
-        # different consumer groups during initial stream
-        # so that they receive all messages from that stream,
-        # which guarantees that they receive at least 1 message
-        # as a response and "await invoke" doesn't block.
         consumer_group = secrets.token_hex(16)
+        # unique key for each manager-agent communication
+        stream_key = secrets.token_hex(16)
 
         initial_peer = Peer(connect=RedisStreamAddress(
                             server_addr, initial_stream_key,
@@ -82,14 +76,11 @@ async def RPCContext(agent_id: str, timeout=None):
                             serializer=json.dumps,
                             deserializer=json.loads,
                             transport=RedisStreamTransport,
-                            # TODO: add password, from etcd(?)
-                            redis_opts={'password': 'abc'},
+                            redis_opts={'password': server_pw},
                             invoke_timeout=30.0)
         await initial_peer.open()
-        #expecting that peer will remember the key
+        # invocation is resolved only when corresponding stream_key arrives
         response = await initial_peer.invoke('gen_stream_key', {
-            # generating key which will be used 
-            # for peer-to-peer communication
             'stream_key': stream_key,
         })
         assert response['stream_key'] = stream_key
@@ -101,8 +92,7 @@ async def RPCContext(agent_id: str, timeout=None):
                             serializer=json.dumps,
                             deserializer=json.loads,
                             transport=RedisStreamTransport,
-                            # TODO: add password, from etcd(?)
-                            redis_opts={'password': 'abc'},
+                            redis_opts={'password': server_pw},
                             invoke_timeout=30.0)
         await initial_peer.open()
         agent_peers[agent_id] = peer
