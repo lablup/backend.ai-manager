@@ -161,7 +161,7 @@ class User(graphene.ObjectType):
             async for row in conn.execute(query):
                 key = row.email
                 if objs_per_key[key] is not None:
-                    objs_per_key[key].groups.append({'id': str(row.id), 'name': row.name})
+                    objs_per_key[key].groups.append(UserGroup(id=row.id, name=row.name))
                     continue
                 o = User.from_row(row)
                 objs_per_key[key] = o
@@ -190,7 +190,7 @@ class User(graphene.ObjectType):
             async for row in conn.execute(query):
                 key = str(row.uuid)
                 if objs_per_key[key] is not None:
-                    objs_per_key[key].groups.append({'id': str(row.id), 'name': row.name})
+                    objs_per_key[key].groups.append(UserGroup(id=row.id, name=row.name))
                     continue
                 o = User.from_row(row)
                 objs_per_key[key] = o
