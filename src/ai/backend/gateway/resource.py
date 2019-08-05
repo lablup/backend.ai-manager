@@ -31,6 +31,8 @@ from ..manager.models import (
     agents, resource_presets,
     groups, kernels, keypairs,
     AgentStatus, KernelStatus,
+    association_groups_users,
+    query_allowed_sgroups,
 )
 from .utils import check_api_params
 
@@ -64,10 +66,15 @@ async def list_presets(request) -> web.Response:
         return web.json_response(resp, status=200)
 
 
+@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
-async def check_presets(request) -> web.Response:
+@check_api_params(
+    t.Dict({
+        t.Key('scaling_group', default=None): t.Null | t.String,
+        t.Key('group', default='default'): t.String,
+    }))
+async def check_presets(request: web.Request, params: Any) -> web.Response:
     '''
     Returns the list of all resource presets in the current scaling group,
     with additional information including allocatability of each preset,
@@ -99,15 +106,40 @@ async def check_presets(request) -> web.Response:
         resp['keypair_remaining'] = keypair_remaining.to_json()
         # query all agent's capacity and occupancy
         agent_slots = []
+
+        j = sa.join(groups, association_groups_users,
+                    association_groups_users.c.group_id == groups.c.id)
         query = (
-            sa.select([agents.c.available_slots, agents.c.occupied_slots])
-            .select_from(agents)
-            .where(agents.c.status == AgentStatus.ALIVE))
-        # TODO: add scaling_group as filter condition
-        # query = query.where(resource_presets.c.scaling_group == scaling_group)
+            sa.select([association_groups_users.c.group_id])
+            .select_from(j)
+            .where(
+                (association_groups_users.c.user_id == request['user']['uuid']) &
+                (groups.c.name == params['group'])
+            )
+        )
+        group_id = await conn.scalar(query)
+        if group_id is None:
+            raise InvalidAPIParameters('Unknown user group')
+
+        sgroups = await query_allowed_sgroups(conn, request['user']['domain_name'],
+                                              group_id, access_key)
+        sgroups = [sg.name for sg in sgroups]
+        if params['scaling_group'] is not None:
+            if params['scaling_group'] not in sgroups:
+                raise InvalidAPIParameters('Unknown scaling group')
+            sgroups = [params['scaling_group']]
+
         sgroup_remaining = ResourceSlot({
             k: Decimal(0) for k in known_slot_types.keys()
         })
+        query = (
+            sa.select([agents.c.available_slots, agents.c.occupied_slots])
+            .select_from(agents)
+            .where(
+                (agents.c.status == AgentStatus.ALIVE) &
+                (agents.c.scaling_group.in_(sgroups))
+            )
+        )
         async for row in conn.execute(query):
             remaining = row['available_slots'] - row['occupied_slots']
             sgroup_remaining += remaining
