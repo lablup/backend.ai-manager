@@ -1,6 +1,21 @@
 Changes
 =======
 
+19.09.0b5 (2019-08-05)
+----------------------
+
+* NEW: Scaling groups to partition agents into differently scheduled groups (#73, #167)
+
+* NEW: Image lists are now filtered by docker registries allowed for each domain. (#170)
+
+* NEW: "/auth/role" API to get the current user's role/privilege information
+
+* CHANGE: GraphQL queries are now unified for all levels of users!
+
+  - The allow/deny decision is made per each query and mutation.
+
+* FIX: ``refresh_session()`` was not called to keep service port connections.
+
 19.06.0b4 (2019-07-24)
 ----------------------
 
