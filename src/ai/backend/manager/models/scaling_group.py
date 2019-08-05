@@ -13,6 +13,7 @@ from .base import (
     simple_db_mutate_returning_item,
     set_if_set,
 )
+from .group import groups
 from .user import UserRole
 
 __all__ = (
@@ -111,15 +112,15 @@ async def query_allowed_sgroups(db_conn: object,
     result = await db_conn.execute(query)
     from_domain = {row['scaling_group'] async for row in result}
 
+    if isinstance(group, str):
+        query = (sa.select([groups.c.id])
+                   .select_from(groups)
+                   .where(groups.c.domain_name == domain)
+                   .where(groups.c.name == group))
+        group = await db_conn.scalar(query)
     if isinstance(group, uuid.UUID):
         query = (sa.select([sgroups_for_groups])
                    .where(sgroups_for_groups.c.group == group))
-    elif isinstance(group, str):
-        j = sa.join(sgroups_for_groups, scaling_groups,
-                    sgroups_for_groups.c.group == scaling_groups.c.id)
-        query = (sa.select([sgroups_for_groups])
-                   .select_from(j)
-                   .where(scaling_groups.c.name == group))
     else:
         raise ValueError('unexpected type for group', group)
     result = await db_conn.execute(query)
