@@ -63,9 +63,7 @@ async def RPCContext(agent_id: str, timeout=None):
         # TODO: add correct server address and password
         server_addr = "get_redis_server_addr"
         server_pw = "get_redis_server_password"
-        # TODO: add db operation fetching initial
-        # stream_key for given agent_id
-        initial_stream_key = "some_value_from_database"
+        initial_stream_key = agent_id
         consumer_group = secrets.token_hex(16)
         # unique key for each manager-agent communication
         stream_key = secrets.token_hex(16)
