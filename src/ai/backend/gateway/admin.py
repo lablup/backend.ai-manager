@@ -38,6 +38,7 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
     manager_status = await request.app['config_server'].get_manager_status()
     known_slot_types = await request.app['config_server'].get_resource_slots()
     context = {
+        'config': request.app['config'],
         'config_server': request.app['config_server'],
         'etcd': request.app['config_server'].etcd,
         'user': request['user'],

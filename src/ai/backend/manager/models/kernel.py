@@ -216,7 +216,13 @@ class SessionCommons:
     @classmethod
     def parse_row(cls, context, row):
         assert row is not None
+        from .user import UserRole
         mega = 2 ** 20
+        is_superadmin = (context['user']['role'] == UserRole.SUPERADMIN)
+        if is_superadmin:
+            hide_agents = False
+        else:
+            hide_agents = context['config']['manager']['hide-agents']
         return {
             'sess_id': row['sess_id'],
             'id': row['id'],
@@ -238,6 +244,9 @@ class SessionCommons:
             'occupied_shares': row['occupied_shares'],
             'mounts': row['mounts'],
             'num_queries': row['num_queries'],
+            # optinally hidden
+            'agent': row['agent'] if not hide_agents else None,
+            'container_id': row['container_id'] if not hide_agents else None,
             # live_stat is resolved by Graphene
             'last_stat': row['last_stat'],
             # Legacy fields
