@@ -427,11 +427,16 @@ async def get_time_binned_monthly_stats(request, user_uuid=None):
                 io_write_bytes += int(row.last_stat['io_write']['current'])
                 disk_used += int(row.last_stat['io_scratch_size']['stats.max'])
             idx += 1
-        stat = [
-            ts, num_sessions,
-            cpu_allocated, mem_allocated, gpu_allocated,
-            io_read_bytes, io_write_bytes, disk_used,
-        ]
+        stat = {
+            "date": ts,
+            "num_sessions": num_sessions,
+            "cpu_allocated": cpu_allocated,
+            "mem_allocated": mem_allocated,
+            "gpu_allocated": gpu_allocated,
+            "io_read_bytes": io_read_bytes,
+            "io_write_bytes": io_write_bytes,
+            "disk_used": disk_used
+        }
         # print(stat)
         tseries.append(stat)
         ts += time_window
