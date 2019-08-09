@@ -244,6 +244,7 @@ async def gw_init(app, default_cors_options):
 
     app['registry'] = AgentRegistry(
         app['config_server'],
+        app['config'],
         app['dbpool'],
         app['redis_stat'],
         app['redis_live'],
