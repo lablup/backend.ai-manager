@@ -477,7 +477,9 @@ def main(ctx, config_path, debug):
                 log_config = logging.getLogger('ai.backend.gateway.config')
                 log_config.debug('debug mode enabled.')
 
-                uvloop.install()
+                if cfg['manager']['event-loop'] == 'uvloop':
+                    uvloop.install()
+                    log.info('Using uvloop as the event loop backend')
                 try:
                     aiotools.start_server(server_main,
                                           num_workers=cfg['manager']['num-proc'],
