@@ -266,6 +266,7 @@ async def gw_init(app, default_cors_options):
     # Install other hook plugins inside app['plugins'].
     plugins = [
         'hanati_hook',
+        'cloud_beta_hook',
     ]
     app['plugins'] = {}
     install_plugins(plugins, app['plugins'], 'dict', app['config'])

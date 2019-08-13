@@ -1,3 +1,4 @@
+import copy
 from datetime import datetime, timedelta
 import functools
 import hashlib, hmac
@@ -336,8 +337,11 @@ async def signup(request: web.Request, params: Any) -> web.Response:
                 for ev_handler in ev_handlers:
                     if ev_types.CHECK_USER == ev_handler[0]:
                         check_user = ev_handler[1]
-                        checked_user = await check_user(params['email'])
+                        extra_params = copy.deepcopy(params)
+                        extra_params.pop('email')
+                        checked_user = await check_user(params['email'], **extra_params)
     if isinstance(checked_user, dict) and not checked_user['success']:
+        log.info('AUTH.SIGNUP: signup not allowed')
         return web.json_response({'error_msg': 'signup not allowed'}, status=403)
 
     async with dbpool.acquire() as conn:
@@ -364,6 +368,8 @@ async def signup(request: web.Request, params: Any) -> web.Response:
             'integration_id': None,
         }
         if checked_user:
+            if 'success' in checked_user:
+                checked_user.pop('success')
             data.update(checked_user)
         query = (users.insert().values(data))
         result = await conn.execute(query)
