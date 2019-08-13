@@ -368,9 +368,10 @@ async def signup(request: web.Request, params: Any) -> web.Response:
             'integration_id': None,
         }
         if checked_user:
-            if 'success' in checked_user:
-                checked_user.pop('success')
-            data.update(checked_user)
+            # Prevent sql compile exception from unconsumed colume names.
+            for key, val in checked_user.items():
+                if key in data:
+                    data['key'] = val
         query = (users.insert().values(data))
         result = await conn.execute(query)
         if result.rowcount > 0:
