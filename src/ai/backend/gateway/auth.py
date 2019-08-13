@@ -319,17 +319,26 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         t.Key('domain'): t.String,
         t.Key('email'): t.String,
         t.Key('password'): t.String,
-    }))
+    }).allow_extra('*'))
 async def signup(request: web.Request, params: Any) -> web.Response:
     log.info('AUTH.SIGNUP(d:{0.domain}, e:{0.email}, p:****)', params)
     dbpool = request.app['dbpool']
-    # TODO: assume only one hook (hanati) and bound method (very dirty, but no time now)
-    # Check if email exists in hanati
-    assert 'hanati_hook' in request.app
-    check_user = request.app['hanati_hook'].get_handlers()[0][0][1]
-    hana_user = await check_user(params['email'])  # exception will be raised if not found
-    if isinstance(hana_user, dict) and not hana_user['success']:
-        return web.json_response({'error_msg': 'no such cloudia user'}, status=404)
+    # Ensure user exists if CHECK_USER handler is in plugin hook.
+    # TODO: Eaiser way to use plugin hooks in general? Why is it so difficult to use...
+    checked_user = None
+    for plugin in request.app['plugins'].values():
+        hook_event_types = plugin.get_hook_event_types()
+        hook_event_handlers = plugin.get_handlers()
+        for ev_types in hook_event_types:
+            if 'CHECK_USER' not in ev_types._member_names_:
+                continue
+            for ev_handlers in hook_event_handlers:
+                for ev_handler in ev_handlers:
+                    if ev_types.CHECK_USER == ev_handler[0]:
+                        check_user = ev_handler[1]
+                        checked_user = await check_user(params['email'])
+    if isinstance(checked_user, dict) and not checked_user['success']:
+        return web.json_response({'error_msg': 'signup not allowed'}, status=403)
 
     async with dbpool.acquire() as conn:
         # Check if email already exists.
@@ -348,12 +357,14 @@ async def signup(request: web.Request, params: Any) -> web.Response:
             'email': params['email'],
             'password': params['password'],
             'need_password_change': False,
-            'full_name': hana_user.name,
-            'description': f'Cloudia user in {hana_user.company.name}',
+            'full_name': params['full_name'] if 'full_name' in params else '',
+            'description': params['description'] if 'description' in params else '',
             'is_active': True,
             'role': UserRole.USER,
-            'integration_id': hana_user.idx,
+            'integration_id': None,
         }
+        if checked_user:
+            data.update(checked_user)
         query = (users.insert().values(data))
         result = await conn.execute(query)
         if result.rowcount > 0:
