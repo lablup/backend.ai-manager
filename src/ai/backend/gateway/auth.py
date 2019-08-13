@@ -379,13 +379,15 @@ async def signup(request: web.Request, params: Any) -> web.Response:
             user = await result.first()
             # Create user's first access_key and secret_key.
             ak, sk = _gen_keypair()
+            resource_policy = checked_user.get('resource_policy', 'default') \
+                                  if checked_user is not None else 'default'
             kp_data = {
                 'user_id': params['email'],
                 'access_key': ak,
                 'secret_key': sk,
                 'is_active': True,
                 'is_admin': False,
-                'resource_policy': 'default',
+                'resource_policy': resource_policy,
                 'concurrency_used': 0,
                 'rate_limit': 1000,
                 'num_queries': 0,
@@ -395,10 +397,12 @@ async def signup(request: web.Request, params: Any) -> web.Response:
             await conn.execute(query)
 
             # Add user to the default group.
+            group_name = checked_user.get('group', 'default') \
+                             if checked_user is not None else 'default'
             query = (sa.select([groups.c.id])
                        .select_from(groups)
                        .where(groups.c.domain_name == params['domain'])
-                       .where(groups.c.name == 'default'))
+                       .where(groups.c.name == group_name))
             result = await conn.execute(query)
             grp = await result.fetchone()
             values = [{'user_id': user.uuid, 'group_id': grp.id}]
