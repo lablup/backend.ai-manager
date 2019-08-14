@@ -1,6 +1,16 @@
 Changes
 =======
 
+19.09.0b6 (2019-08-14)
+----------------------
+
+* NEW: Add option to change underlying event loop implementation.
+
+* Updated signup/login hook support.
+
+* CHANGE: In the response of kernel creation API, service port information only expose
+  the name and protocol pairs, since port numbers are useless in the client-side.
+
 19.09.0b5 (2019-08-05)
 ----------------------
 
@@ -39,6 +49,20 @@ Changes
 ----------------------
 
 * Add the user signup endpoint and related plugins support
+
+19.03.4 (2019-08-14)
+--------------------
+
+- Fix refresh_session() callback not invoked properly due to type mismatch of the function returned
+  by functools.partial against a coroutine function.
+
+- Fix admin_required() permission check decorator.
+
+19.03.3 (2019-07-17)
+--------------------
+
+- CHANGE/BACKPORT: Accept typeless resource slots for resource policy configurations
+  (lablup/backend.ai-common#7)
 
 19.06.0b1 (2019-07-14)
 ----------------------
