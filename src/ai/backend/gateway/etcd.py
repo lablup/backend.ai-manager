@@ -332,9 +332,6 @@ class ConfigServer:
         if password is not None:
             credentials['password'] = password
 
-        async def _scan_image_harbor(sess, image):
-            pass
-
         async def _scan_image(sess, image):
             rqst_args = await registry_login(sess, registry_url, credentials,
                                              f'repository:{image}:pull')
