@@ -1,6 +1,14 @@
 Changes
 =======
 
+19.03.4 (2019-08-14)
+--------------------
+
+- Fix refresh_session() callback not invoked properly due to type mismatch of the function returned
+  by functools.partial against a coroutine function.
+
+- Fix admin_required() permission check decorator.
+
 19.03.3 (2019-07-17)
 --------------------
 
