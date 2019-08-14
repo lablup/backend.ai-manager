@@ -20,7 +20,8 @@ Alias keys are also URL-quoted in the same way.
        + {registry-name}: {registry-URL}  # {registry-name} is url-quoted
          - username: {username}
          - password: {password}
-         - auth: {auth-json-cached-from-config.json}
+         - type: "docker" | "harbor"
+         - project: "project-name"  # harbor only
        ...
    + resource_slots
      + {"cuda.device"}: {"count"}
@@ -113,7 +114,6 @@ from ai.backend.common.etcd import (
 )
 from ai.backend.common.docker import (
     login as registry_login,
-    get_registry_info
 )
 from .exceptions import ServerMisconfiguredError
 from .manager import ManagerStatus
@@ -294,20 +294,27 @@ class ConfigServer:
         await self.etcd.put(f'{ref.tag_path}/resource/{slot_type}/{realm}',
                             value)
 
-    async def _rescan_images(self, registry_name: str,
-                             registry_url: yarl.URL,
-                             credentials: dict):
+    async def _rescan_images(self, registry_name, registry_info):
         all_updates = {}
         base_hdrs = {
             'Accept': 'application/vnd.docker.distribution.manifest.v2+json',
         }
+        registry_url = yarl.URL(registry_info[''])
+        registry_type = registry_info.get('type', 'docker')
+        registry_project = registry_info.get('project')
+        credentials = {}
+        username = registry_info.get('username')
+        if username is not None:
+            credentials['username'] = username
+        password = registry_info.get('password')
+        if password is not None:
+            credentials['password'] = password
 
         async def _scan_image(sess, image):
-            rqst_args = await registry_login(
-                sess, registry_url,
-                credentials, f'repository:{image}:pull')
-            tags = []
+            rqst_args = await registry_login(sess, registry_url, credentials,
+                                             f'repository:{image}:pull')
             rqst_args['headers'].update(**base_hdrs)
+            tags = []
             async with sess.get(registry_url / f'v2/{image}/tags/list',
                                 **rqst_args) as resp:
                 data = json.loads(await resp.read())
@@ -394,11 +401,10 @@ class ConfigServer:
                         log.error('Failed to fetch repository list from {0} '
                                   '(status={1})',
                                   hub_url, resp.status)
-            else:
+            elif registry_type == 'docker':
                 # In other cases, try the catalog search.
-                rqst_args = await registry_login(
-                    sess, registry_url,
-                    credentials, 'registry:catalog:*')
+                rqst_args = await registry_login(sess, registry_url, credentials,
+                                                 'registry:catalog:*')
                 async with sess.get(registry_url / 'v2/_catalog',
                                     **rqst_args) as resp:
                     if resp.status == 200:
@@ -409,6 +415,34 @@ class ConfigServer:
                         log.warning('Docker registry {0} does not allow/support '
                                     'catalog search. (status={1})',
                                     registry_url, resp.status)
+            elif registry_type == 'harbor':
+                if credentials:
+                    rqst_args = {
+                        'auth': aiohttp.BasicAuth(credentials['username'], credentials['password'])
+                    }
+                else:
+                    rqst_args = {}
+                async with sess.get(registry_url / 'api/projects',
+                                    params={'page_size': '100'},
+                                    **rqst_args) as resp:
+                    projects = await resp.json()
+                    project_id = None
+                    for item in projects:
+                        if item['name'] == registry_project:
+                            project_id = item['project_id']
+                            break
+                    else:
+                        log.warning('There is no given project.')
+                        return
+                async with sess.get(registry_url / 'api/repositories',
+                                    params={'project_id': project_id, 'page_size': '100'},
+                                    **rqst_args) as resp:
+                    items = await resp.json()
+                    repos = [item['name'] for item in items]
+                    images.extend(repos)
+            else:
+                log.error('Unsupported registry type')
+                return
 
             scheduler = await aiojobs.create_scheduler(limit=8)
             try:
@@ -437,12 +471,11 @@ class ConfigServer:
         coros = []
         for registry in registries:
             log.info('Scanning kernel images from the registry "{0}"', registry)
-            try:
-                registry_url, creds = await get_registry_info(self.etcd, registry)
-            except ValueError:
+            registry_info = await self.etcd.get_prefix(f'config/docker/registry/{etcd_quote(registry)}')
+            if not registry_info:
                 log.error('Unknown registry: "{0}"', registry)
                 continue
-            coros.append(self._rescan_images(registry, registry_url, creds))
+            coros.append(self._rescan_images(registry, registry_info))
         await asyncio.gather(*coros)
         # TODO: delete images removed from registry?
 
