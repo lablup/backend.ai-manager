@@ -15,6 +15,7 @@ from .base import (
     Item, PaginatedList,
 )
 from .group import groups
+from .user import users
 
 __all__ = (
     'kernels', 'KernelStatus',
@@ -128,6 +129,8 @@ class SessionCommons:
     num_queries = BigInt()
     live_stat = graphene.JSONString()
     last_stat = graphene.JSONString()
+
+    user_email = graphene.String()
 
     # Legacy fields
     lang = graphene.String()
@@ -249,6 +252,7 @@ class SessionCommons:
             'container_id': row['container_id'] if not hide_agents else None,
             # live_stat is resolved by Graphene
             'last_stat': row['last_stat'],
+            'user_email': row['email'],
             # Legacy fields
             # NOTE: currently graphene always uses resolve methods!
             'cpu_used': 0,
@@ -340,9 +344,10 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 _order_func = sa.asc if order_asc else sa.desc
                 _ordering = _order_func(getattr(kernels.c, order_key))
             # TODO: optimization for pagination using subquery, join
-            j = kernels.join(groups, groups.c.id == kernels.c.group_id)
+            j = (kernels.join(groups, groups.c.id == kernels.c.group_id)
+                        .join(users, users.c.uuid == kernels.c.user_uuid))
             query = (
-                sa.select([kernels, groups.c.name])
+                sa.select([kernels, groups.c.name, users.c.email])
                 .select_from(j)
                 .where(kernels.c.role == 'master')
                 .order_by(_ordering)
@@ -373,8 +378,9 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             order_col = (kernels.c.terminated_at
                          if status is not None and status == KernelStatus.TERMINATED
                          else kernels.c.created_at)
-            j = kernels.join(groups, groups.c.id == kernels.c.group_id)
-            query = (sa.select([kernels, groups.c.name])
+            j = (kernels.join(groups, groups.c.id == kernels.c.group_id)
+                        .join(users, users.c.uuid == kernels.c.user_uuid))
+            query = (sa.select([kernels, groups.c.name, users.c.email])
                        .select_from(j)
                        .where(kernels.c.role == 'master')
                        .order_by(sa.desc(order_col))
@@ -397,8 +403,9 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             order_col = (kernels.c.terminated_at
                          if status is not None and status == KernelStatus.TERMINATED
                          else kernels.c.created_at)
-            j = kernels.join(groups, groups.c.id == kernels.c.group_id)
-            query = (sa.select([kernels, groups.c.name])
+            j = (kernels.join(groups, groups.c.id == kernels.c.group_id)
+                        .join(users, users.c.uuid == kernels.c.user_uuid))
+            query = (sa.select([kernels, groups.c.name, users.c.email])
                        .select_from(j)
                        .where((kernels.c.access_key.in_(access_keys)) &
                               (kernels.c.role == 'master'))
@@ -425,8 +432,9 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
         async with context['dbpool'].acquire() as conn:
             # TODO: Extend to return terminated sessions (we need unique identifier).
             status = KernelStatus[status] if status else KernelStatus['RUNNING']
-            j = kernels.join(groups, groups.c.id == kernels.c.group_id)
-            query = (sa.select([kernels, groups.c.name])
+            j = (kernels.join(groups, groups.c.id == kernels.c.group_id)
+                        .join(users, users.c.uuid == kernels.c.user_uuid))
+            query = (sa.select([kernels, groups.c.name, users.c.email])
                        .select_from(j)
                        .where((kernels.c.role == 'master') &
                               (kernels.c.sess_id.in_(sess_ids))))
