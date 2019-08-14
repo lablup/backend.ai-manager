@@ -1,6 +1,11 @@
 Changes
 =======
 
+19.09.0b7 (2019-08-14)
+----------------------
+
+* Update resource stat API to provide extra unit hints. (#176)
+
 19.09.0b6 (2019-08-14)
 ----------------------
 
