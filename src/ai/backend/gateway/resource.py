@@ -237,7 +237,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
         if row.mounts is not None:
             nfs = list(set([mount[1] for mount in row.mounts]))
         device_type = []
-        if row.attached_devices and 'cuda' in row.attached_devices:
+        if row.attached_devices and row.attached_devices.get('cuda'):
             for dev_info in row.attached_devices['cuda']:
                 if dev_info.get('model_name'):
                     device_type.append(dev_info['model_name'])
