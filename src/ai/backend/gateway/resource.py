@@ -12,12 +12,15 @@ import logging
 import re
 from typing import Any
 
+import aiohttp
 from aiohttp import web
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
+from async_timeout import timeout as _timeout
 from dateutil.tz import tzutc
 import sqlalchemy as sa
 import trafaret as t
+import yarl
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
@@ -493,6 +496,148 @@ async def admin_month_stats(request: web.Request) -> web.Response:
     return web.json_response(stats, status=200)
 
 
+async def get_watcher_info(request: web.Request, agent_id: str) -> dict:
+    '''
+    Get watcher information.
+
+    :return addr: address of agent watcher (eg: http://127.0.0.1:6009)
+    :return token: agent watcher token ("insecure" if not set in config server)
+    '''
+    token = request.app['config']['watcher']['token']
+    if token is None:
+        token = 'insecure'
+    agent_ip = await request.app['registry'].config_server.get(f'nodes/agents/{agent_id}/ip')
+    # TODO: watcher scheme is assumed to be http
+    # TODO: watcher port is fixed for now
+    addr = yarl.URL(f'http://{agent_ip}:6009')
+    return {
+        'addr': addr,
+        'token': token,
+    }
+
+
+@server_status_required(READ_ALLOWED)
+@superadmin_required
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['agent_id', 'agent']): t.String,
+    }))
+async def get_watcher_status(request: web.Request, params: Any) -> web.Response:
+    access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
+    log.info('GET_WATCHER_STATUS (u:[{0}], ak:[{1}])', user_uuid, access_key)
+    watcher_info = await get_watcher_info(request, params['agent_id'])
+    connector = aiohttp.TCPConnector()
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        with _timeout(5.0):
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            async with sess.get(watcher_info['addr'], headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return web.json_response(data, status=resp.status)
+                else:
+                    data = await resp.text()
+                    return web.Response(text=data, status=resp.status)
+
+
+@server_status_required(READ_ALLOWED)
+@superadmin_required
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['agent_id', 'agent']): t.String,
+    }))
+async def watcher_soft_reset(request: web.Request, params: Any) -> web.Response:
+    access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
+    log.info('WATCHER_SOFT_RESET (u:[{0}], ak:[{1}])', user_uuid, access_key)
+    watcher_info = await get_watcher_info(request, params['agent_id'])
+    connector = aiohttp.TCPConnector()
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        with _timeout(20.0):
+            watcher_url = watcher_info['addr'] / 'soft-reset'
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            async with sess.post(watcher_url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return web.json_response(data, status=resp.status)
+                else:
+                    data = await resp.text()
+                    return web.Response(text=data, status=resp.status)
+
+
+@server_status_required(READ_ALLOWED)
+@superadmin_required
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['agent_id', 'agent']): t.String,
+    }))
+async def watcher_hard_reset(request: web.Request, params: Any) -> web.Response:
+    access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
+    log.info('WATCHER_HARD_RESET (u:[{0}], ak:[{1}])', user_uuid, access_key)
+    watcher_info = await get_watcher_info(request, params['agent_id'])
+    connector = aiohttp.TCPConnector()
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        with _timeout(20.0):
+            watcher_url = watcher_info['addr'] / 'hard-reset'
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            async with sess.post(watcher_url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return web.json_response(data, status=resp.status)
+                else:
+                    data = await resp.text()
+                    return web.Response(text=data, status=resp.status)
+
+@server_status_required(READ_ALLOWED)
+@superadmin_required
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['agent_id', 'agent']): t.String,
+    }))
+async def watcher_shutdown(request: web.Request, params: Any) -> web.Response:
+    access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
+    log.info('WATCHER_SHUTDOWN (u:[{0}], ak:[{1}])', user_uuid, access_key)
+    watcher_info = await get_watcher_info(request, params['agent_id'])
+    connector = aiohttp.TCPConnector()
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        with _timeout(20.0):
+            watcher_url = watcher_info['addr'] / 'shutdown'
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            async with sess.post(watcher_url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return web.json_response(data, status=resp.status)
+                else:
+                    data = await resp.text()
+                    return web.Response(text=data, status=resp.status)
+
+@server_status_required(READ_ALLOWED)
+@superadmin_required
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['agent_id', 'agent']): t.String,
+    }))
+async def watcher_start(request: web.Request, params: Any) -> web.Response:
+    access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
+    log.info('WATCHER_START (u:[{0}], ak:[{1}])', user_uuid, access_key)
+    watcher_info = await get_watcher_info(request, params['agent_id'])
+    connector = aiohttp.TCPConnector()
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        with _timeout(20.0):
+            watcher_url = watcher_info['addr'] / 'start'
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            async with sess.post(watcher_url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return web.json_response(data, status=resp.status)
+                else:
+                    data = await resp.text()
+                    return web.Response(text=data, status=resp.status)
+
+
 def create_app(default_cors_options):
     app = web.Application()
     app['api_versions'] = (4,)
@@ -505,4 +650,9 @@ def create_app(default_cors_options):
     cors.add(add_route('GET',  '/usage/period', usage_per_period))
     cors.add(add_route('GET',  '/stats/user/month', user_month_stats))
     cors.add(add_route('GET',  '/stats/admin/month', admin_month_stats))
+    cors.add(add_route('GET',  '/watcher', get_watcher_status))
+    cors.add(add_route('POST', '/watcher/soft-reset', watcher_soft_reset))
+    cors.add(add_route('POST', '/watcher/hard-reset', watcher_hard_reset))
+    cors.add(add_route('POST', '/watcher/shutdown', watcher_shutdown))
+    cors.add(add_route('POST', '/watcher/start', watcher_start))
     return app, []
