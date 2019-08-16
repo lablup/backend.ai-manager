@@ -471,7 +471,7 @@ class ConfigServer:
         coros = []
         for registry in registries:
             log.info('Scanning kernel images from the registry "{0}"', registry)
-            registry_info = await self.etcd.get_prefix(f'config/docker/registry/{etcd_quote(registry)}')
+            registry_info = await self.etcd.get_prefix_dict(f'config/docker/registry/{etcd_quote(registry)}')
             if not registry_info:
                 log.error('Unknown registry: "{0}"', registry)
                 continue
