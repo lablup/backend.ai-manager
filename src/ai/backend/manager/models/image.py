@@ -59,13 +59,15 @@ class Image(graphene.ObjectType):
         return cls._convert_from_dict(r)
 
     @classmethod
-    async def load_all(cls, context):
+    async def load_all(cls, context, is_installed=None):
         raw_items = await context['config_server'].list_images()
         items = []
         # Convert to GQL objects
         for r in raw_items:
             item = cls._convert_from_dict(r)
             items.append(item)
+        if is_installed is not None:
+            items = [*filter(lambda item: item.installed == is_installed, items)]
         return items
 
 

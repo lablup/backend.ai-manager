@@ -141,6 +141,7 @@ class QueryForAdmin(graphene.ObjectType):
 
     images = graphene.List(
         Image,
+        is_installed=graphene.Boolean(),
     )
 
     keypair = graphene.Field(
@@ -213,8 +214,8 @@ class QueryForAdmin(graphene.ObjectType):
         return await Image.load_item(config_server, reference)
 
     @staticmethod
-    async def resolve_images(executor, info):
-        return await Image.load_all(info.context)
+    async def resolve_images(executor, info, is_installed=None):
+        return await Image.load_all(info.context, is_installed=is_installed)
 
     @staticmethod
     async def resolve_keypair(executor, info, access_key=None):
