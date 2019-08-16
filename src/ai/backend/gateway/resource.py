@@ -507,9 +507,12 @@ async def get_watcher_info(request: web.Request, agent_id: str) -> dict:
     if token is None:
         token = 'insecure'
     agent_ip = await request.app['registry'].config_server.get(f'nodes/agents/{agent_id}/ip')
+    watcher_port = await request.app['registry'].config_server.get(
+        f'nodes/agents/{agent_id}/watcher_port')
+    if watcher_port is None:
+        watcher_port = 6009
     # TODO: watcher scheme is assumed to be http
-    # TODO: watcher port is fixed for now
-    addr = yarl.URL(f'http://{agent_ip}:6009')
+    addr = yarl.URL(f'http://{agent_ip}:{watcher_port}')
     return {
         'addr': addr,
         'token': token,

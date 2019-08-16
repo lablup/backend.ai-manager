@@ -113,6 +113,7 @@ Alias keys are also URL-quoted in the same way.
    + agents
      + {instance-id}: {"starting","running"}  # ConfigScopes.NODE
        - ip: {"127.0.0.1"}
+       - watcher_port: {"6009"}
  + sgroup
    + {name}  # ConfigScopes.SGROUP
      - swarm-manager/token
