@@ -111,7 +111,9 @@ Alias keys are also URL-quoted in the same way.
    + redis: {"tcp://redis:6379"}
      - password: {redis-auth-password}
    + agents
-     - {instance-id}: {"starting","running"}  # ConfigScopes.NODE
+     + {instance-id}: {"starting","running"}  # ConfigScopes.NODE
+       - ip: {"127.0.0.1"}
+       - watcher_port: {"6009"}
  + sgroup
    + {name}  # ConfigScopes.SGROUP
      - swarm-manager/token
