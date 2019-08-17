@@ -292,7 +292,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
     if params['type'] != 'keypair':
         # other types are not implemented yet.
         raise InvalidAPIParameters('Unsupported authorization type')
-    log.info('AUTH.AUTHORIZE(d:{0.domain}, u:{0.username}, p:****, t:{0.type})', params)
+    log.info('AUTH.AUTHORIZE(d:{0[domain]}, u:{0[username]}, p:****, t:{0[type]})', params)
     dbpool = request.app['dbpool']
     user = await check_credential(
         dbpool,
