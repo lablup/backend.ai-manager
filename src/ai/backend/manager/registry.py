@@ -113,7 +113,7 @@ class AgentRegistry:
         self.redis_image = redis_image
 
     async def init(self):
-        pass
+        self.sched_lock = asyncio.Lock()
 
     async def shutdown(self):
         global agent_peers
@@ -488,24 +488,27 @@ class AgentRegistry:
                     image_max_slots.to_humanized(known_slot_types).items()
                 )))
 
-        # Check the keypair resource policy.
-        # - Keypair resource occupation includes both running and enqueued sessions,
-        #   while agent resource occupation includes only running sessions.
-        # - TODO: merge multicontainer-session branch and check
-        #         max_containers_per_session.
-        # - TODO: check scaling-group resource policy as well.
-        total_allowed = ResourceSlot.from_policy(resource_policy, known_slot_types)
-        async with self.dbpool.acquire() as conn, conn.begin():
+        # ==== END: ENQUEUING PART ====
+
+        # ==== BEGIN: DEQUEUING+SCHEDULING PART ====
+
+        async with self.sched_lock, self.dbpool.acquire() as conn, conn.begin():
+
+            # Check keypair resource limit.
+            # - Keypair resource occupation includes all non-terminated sessions.
+            # - TODO: exclude the pending sessions in the queue.
+            total_keypair_allowed = ResourceSlot.from_policy(resource_policy, known_slot_types)
             key_occupied = await self.get_keypair_occupancy(access_key, conn=conn)
-            log.debug('{} current_occupancy: {}', access_key, key_occupied)
-            log.debug('{} total_allowed: {}', access_key, total_allowed)
-            if not (key_occupied + requested_slots <= total_allowed):
+            log.debug('keypair:{} current-occupancy: {}', access_key, key_occupied)
+            log.debug('keypair:{} total-allowed: {}', access_key, total_keypair_allowed)
+            if not (key_occupied + requested_slots <= total_keypair_allowed):
                 raise InvalidAPIParameters(
                     'Your resource quota is exceeded. ({})'
                     .format(' '.join(
                         f'{k}={v}' for k, v in
-                        total_allowed.to_humanized(known_slot_types).items()
+                        total_keypair_allowed.to_humanized(known_slot_types).items()
                     )))
+
             # Check group resource limit.
             query = (sa.select([groups.c.total_resource_slots])
                        .where(groups.c.id == group_id))
@@ -514,6 +517,8 @@ class AgentRegistry:
                                      'default_for_unspecified': DefaultForUnspecified.UNLIMITED}
             total_group_allowed = ResourceSlot.from_policy(group_resource_policy, known_slot_types)
             group_occupied = await self.get_group_occupancy(group_id, conn=conn)
+            log.debug('group:{} current-occupancy: {}', group_id, group_occupied)
+            log.debug('group:{} total-allowed: {}', group_id, total_group_allowed)
             if not (group_occupied + requested_slots <= total_group_allowed):
                 raise InvalidAPIParameters(
                     'Your group resource quota is exceeded. ({})'
@@ -521,6 +526,7 @@ class AgentRegistry:
                         f'{k}={v}' for k, v in
                         total_group_allowed.to_humanized(known_slot_types).items()
                     )))
+
             # Check domain resource limit.
             query = (sa.select([domains.c.total_resource_slots])
                        .where(domains.c.name == domain_name))
@@ -531,6 +537,8 @@ class AgentRegistry:
             }
             total_domain_allowed = ResourceSlot.from_policy(domain_resource_policy, known_slot_types)
             domain_occupied = await self.get_domain_occupancy(domain_name, conn=conn)
+            log.debug('domain:{} current-occupancy: {}', domain_name, domain_occupied)
+            log.debug('domain:{} total-allowed: {}', domain_name, total_domain_allowed)
             if not (domain_occupied + requested_slots <= total_domain_allowed):
                 raise InvalidAPIParameters(
                     'Your domain resource quota is exceeded. ({})'
@@ -538,10 +546,6 @@ class AgentRegistry:
                         f'{k}={v}' for k, v in
                         total_domain_allowed.to_humanized(known_slot_types).items()
                     )))
-
-        # ==== END: ENQUEUING PART ====
-
-        async with self.dbpool.acquire() as conn, conn.begin():
 
             # Check the scaling groups.
             sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
@@ -606,7 +610,7 @@ class AgentRegistry:
             else:
                 raise InstanceNotAvailable
 
-            # Reserve slots
+            # Reserve agent slots
             query = (sa.update(agents)
                        .values({
                            'occupied_slots': current_occupied_slots + requested_slots
@@ -614,7 +618,7 @@ class AgentRegistry:
                        .where(agents.c.id == agent_id))
             await conn.execute(query)
 
-            # Create kernel by invoking the agent on the instance.
+            # Get the agent address for later RPC calls
             query = (sa.select([agents.c.addr])
                        .where(agents.c.id == agent_id))
             agent_addr = await conn.scalar(query)
@@ -624,7 +628,7 @@ class AgentRegistry:
                 await get_registry_info(self.config_server.etcd,
                                         image_ref.registry)
 
-            # Prepare kernel.
+            # Create kernel object in PREPARING state.
             kernel_id = uuid.uuid4()
             query = kernels.insert().values({
                 'id': kernel_id,
@@ -652,8 +656,11 @@ class AgentRegistry:
             })
             await conn.execute(query)
 
+        # ==== END: DEQUEUING+SCHEDULING PART ====
+
         try:
 
+            # Create the kernel by invoking the agent
             async with self.handle_kernel_exception(
                     'create_session', sess_id, access_key):
                 # the agent may be pulling an image!
@@ -705,7 +712,7 @@ class AgentRegistry:
                     .where(kernels.c.id == kernel_id))
                 await conn.execute(query)
 
-                # Un-reserve slots
+                # Un-reserve agent slots
                 query = (
                     sa.select([agents.c.occupied_slots], for_update=True)
                     .select_from(agents)
@@ -767,9 +774,13 @@ class AgentRegistry:
         known_slot_types = \
             await self.config_server.get_resource_slots()
         async with reenter_txn(self.dbpool, conn) as conn:
-            query = (sa.select([kernels.c.occupied_slots])
-                       .where((kernels.c.access_key == access_key) &
-                              (kernels.c.status != KernelStatus.TERMINATED)))
+            query = (
+                sa.select([kernels.c.occupied_slots])
+                .where(
+                    (kernels.c.access_key == access_key) &
+                    (kernels.c.status != KernelStatus.TERMINATED)
+                )
+            )
             zero = ResourceSlot()
             key_occupied = sum([
                 row['occupied_slots']
@@ -784,9 +795,13 @@ class AgentRegistry:
         # TODO: store domain occupied_slots in Redis?
         known_slot_types = await self.config_server.get_resource_slots()
         async with reenter_txn(self.dbpool, conn) as conn:
-            query = (sa.select([kernels.c.occupied_slots])
-                       .where((kernels.c.domain_name == domain_name) &
-                              (kernels.c.status != KernelStatus.TERMINATED)))
+            query = (
+                sa.select([kernels.c.occupied_slots])
+                .where(
+                    (kernels.c.domain_name == domain_name) &
+                    (kernels.c.status != KernelStatus.TERMINATED)
+                )
+            )
             zero = ResourceSlot()
             key_occupied = sum([row['occupied_slots'] async for row in conn.execute(query)], zero)
             # drop no-longer used slot types
@@ -799,9 +814,13 @@ class AgentRegistry:
         # TODO: store domain occupied_slots in Redis?
         known_slot_types = await self.config_server.get_resource_slots()
         async with reenter_txn(self.dbpool, conn) as conn:
-            query = (sa.select([kernels.c.occupied_slots])
-                       .where((kernels.c.group_id == group_id) &
-                              (kernels.c.status != KernelStatus.TERMINATED)))
+            query = (
+                sa.select([kernels.c.occupied_slots])
+                .where(
+                    (kernels.c.group_id == group_id) &
+                    (kernels.c.status != KernelStatus.TERMINATED)
+                )
+            )
             zero = ResourceSlot()
             key_occupied = sum([row['occupied_slots'] async for row in conn.execute(query)], zero)
             # drop no-longer used slot types
