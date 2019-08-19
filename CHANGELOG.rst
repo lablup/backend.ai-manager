@@ -1,6 +1,21 @@
 Changes
 =======
 
+19.03.5 (2019-08-19)
+--------------------
+
+* FIX/BACKPORT: Mitigate race condition when checking keypair/group/domain resource limits (#180)
+
+  - KNOWN ISSUE: The current fix only covers a single-process deployment of the manager.
+
+* NEW/BACKPORT: Introduce "is_installed" filtering condition to the "images" GraphQL query.
+
+* NEW/BACKPORT: Support for Harbor registry (#177)
+
+* Pin the pyzmq version 18.1.0 (lablup/backend.ai#47)
+
+* gateway.etcd: Fix an API renaming error at previously backported codes
+
 19.03.4 (2019-08-14)
 --------------------
 
