@@ -1,6 +1,21 @@
 Changes
 =======
 
+19.09.0b8 (2019-08-19)
+----------------------
+
+* FIX: Mitigate race condition when checking keypair/group/domain resource limits (#180)
+
+  - KNOWN ISSUE: The current fix only covers a single-process deployment of the manager.
+
+* NEW: Introduce "is_installed" filtering condition to the "images" GraphQL query.
+
+* NEW: Watcher APIs to control agents remotely (#179)
+
+* Pin the pyzmq version 18.1.0 (lablup/backend.ai#47)
+
+* NEW: Support for Harbor registry (#177)
+
 19.09.0b7 (2019-08-14)
 ----------------------
 
