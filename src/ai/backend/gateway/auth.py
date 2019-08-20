@@ -322,7 +322,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         t.Key('password'): t.String,
     }).allow_extra('*'))
 async def signup(request: web.Request, params: Any) -> web.Response:
-    log.info('AUTH.SIGNUP(d:{0.domain}, e:{0.email}, p:****)', params)
+    log.info('AUTH.SIGNUP(d:{}, e:{}, p:****)', params['domain'], params['email'])
     dbpool = request.app['dbpool']
     # Ensure user exists if CHECK_USER handler is in plugin hook.
     # TODO: Eaiser way to use plugin hooks in general? Why is it so difficult to use...
@@ -357,7 +357,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
         # Create a user.
         data = {
             'domain_name': params['domain'],
-            'username': params['email'],
+            'username': params['username'] if 'username' in params else params['email'],
             'email': params['email'],
             'password': params['password'],
             'need_password_change': False,
@@ -427,7 +427,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
         t.Key('password'): t.String,
     }))
 async def signout(request: web.Request, params: Any) -> web.Response:
-    log.info('AUTH.SIGNOUT(d:{0.domain}, e:{0.email})', params)
+    log.info('AUTH.SIGNOUT(d:{}, e:{})', params['domain'], params['email'])
     dbpool = request.app['dbpool']
     await check_credential(
         dbpool,
