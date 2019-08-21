@@ -270,18 +270,21 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
                 'domain_name': row['domain_name'],
                 'g_id': group_id,
                 'g_name': row['name'],  # this is group's name
+                'g_smp': c_info['smp'],
                 'g_cpu_used': c_info['cpu_used'],
+                'g_mem_allocated': c_info['mem_allocated'],
                 'g_mem_used': c_info['mem_used'],
                 'g_shared_memory': c_info['shared_memory'],
                 'g_disk_used': c_info['disk_used'],
                 'g_io_read': c_info['io_read'],
                 'g_io_write': c_info['io_write'],
                 'g_device_type': c_info['device_type'],
-                'g_smp': c_info['smp'],
                 'c_infos': [c_info],
             }
         else:
+            objs_per_group[group_id]['g_smp'] += c_info['smp']
             objs_per_group[group_id]['g_cpu_used'] += c_info['cpu_used']
+            objs_per_group[group_id]['g_mem_allocated'] += c_info['mem_allocated']
             objs_per_group[group_id]['g_mem_used'] += c_info['mem_used']
             objs_per_group[group_id]['g_shared_memory'] += c_info['shared_memory']
             objs_per_group[group_id]['g_disk_used'] += c_info['disk_used']
@@ -290,7 +293,6 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             for device in c_info['device_type']:
                 if device not in objs_per_group[group_id]['g_device_type']:
                     objs_per_group[group_id]['g_device_type'].append(device)
-            objs_per_group[group_id]['g_smp'] += c_info['smp']
             objs_per_group[group_id]['c_infos'].append(c_info)
     return list(objs_per_group.values())
 
