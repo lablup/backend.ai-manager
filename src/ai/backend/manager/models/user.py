@@ -324,7 +324,7 @@ class ModifyUser(graphene.Mutation):
             set_if_set(props, data, 'full_name')
             set_if_set(props, data, 'description')
             set_if_set(props, data, 'is_active')
-            # set_if_set('domain_name')  # prevent changing domain_name
+            # set_if_set(props, data, 'domain_name')
             set_if_set(props, data, 'role')
             if 'role' in data:
                 data['role'] = UserRole(data['role'])
@@ -344,8 +344,6 @@ class ModifyUser(graphene.Mutation):
                 # Update user's group if group_ids parameter is provided.
                 if props.group_ids and o is not None:
                     from .group import association_groups_users, groups
-                    # TODO: isn't it dangerous if second execution breaks,
-                    #       which results in user lost all of groups?
                     # Clear previous groups associated with the user.
                     query = (association_groups_users
                              .delete()

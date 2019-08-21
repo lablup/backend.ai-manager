@@ -71,7 +71,7 @@ class Domain(graphene.ObjectType):
             allowed_docker_registries=row['allowed_docker_registries'],
             integration_id=row['integration_id'],
             # Dynamic fields.
-            scaling_groups=[row.scaling_group] if row.scaling_group else [],
+            scaling_groups=[row.scaling_group] if 'scaling_group' in row else [],
         )
 
     @staticmethod
