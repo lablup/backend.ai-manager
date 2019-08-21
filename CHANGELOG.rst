@@ -1,6 +1,11 @@
 Changes
 =======
 
+19.09.0b9 (2019-08-21)
+----------------------
+
+* Minor fix in logging of singup/singout request handlers
+
 19.09.0b8 (2019-08-19)
 ----------------------
 
