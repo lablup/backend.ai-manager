@@ -371,7 +371,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
             # Prevent sql compile exception from unconsumed colume names.
             for key, val in checked_user.items():
                 if key in data:
-                    data['key'] = val
+                    data[key] = val
         query = (users.insert().values(data))
         result = await conn.execute(query)
         if result.rowcount > 0:
