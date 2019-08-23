@@ -6,8 +6,6 @@ import uuid
 import json
 import secrets
 
-import aiozmq, aiozmq.rpc
-from aiozmq.rpc.base import GenericError, NotFoundError, ParametersError
 import aiotools
 from async_timeout import timeout as _timeout
 from dateutil.tz import tzutc
@@ -21,14 +19,17 @@ from ai.backend.common.docker import get_registry_info, get_known_registries, Im
 from ai.backend.common.exception import AliasResolutionFailed
 from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.callosum import (
+from ai.backend.common.callosum.callosum import (
     Peer,
     RedisStreamAddress,
     RedisStreamTransport,
+    CallosumError,
+    ClientError,
+    HandlerError,
 )
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
-    ImageNotFound,
+    ImageNotFound, InternalServerError,
     InstanceNotAvailable, InstanceNotFound,
     KernelNotFound, KernelAlreadyExists,
     KernelCreationFailed, KernelDestructionFailed,
@@ -43,80 +44,6 @@ from .models import (
 __all__ = ['AgentRegistry', 'InstanceNotFound']
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.registry'))
-
-agent_peers = {} #Mapping[NewType('agent_id'), RedisStreamAddress]
-
-@aiotools.actxmgr
-async def RPCContext(agent_id: str, timeout=None):
-    # TODO: modify "get_session" method's variable "cols" to return agent_id
-    # do as to later provide it as argument for this method
-    preserved_exceptions = (
-        NotFoundError,
-        ParametersError,
-        asyncio.TimeoutError,
-        asyncio.CancelledError,
-        asyncio.InvalidStateError,
-    )
-    global agent_peers
-    peer = agent_peers.get(agent_id, None)
-    if peer is None:
-        # TODO: add correct server address and password
-        server_addr = "get_redis_server_addr"
-        server_pw = "get_redis_server_password"
-        initial_stream_key = agent_id
-        consumer_group = secrets.token_hex(16)
-        # unique key for each manager-agent communication
-        stream_key = secrets.token_hex(16)
-
-        initial_peer = Peer(connect=RedisStreamAddress(
-                            server_addr, initial_stream_key,
-                            consumer_group, 'consumer1'),
-                            serializer=json.dumps,
-                            deserializer=json.loads,
-                            transport=RedisStreamTransport,
-                            redis_opts={'password': server_pw},
-                            invoke_timeout=30.0)
-        await initial_peer.open()
-        # invocation is resolved only when corresponding stream_key arrives
-        response = await initial_peer.invoke('gen_stream_key', {
-            'stream_key': stream_key,
-        })
-        assert response['stream_key'] = stream_key
-        await initial_peer.close()
-
-        peer = Peer(connect=RedisStreamAddress(
-                            server_addr, stream_key,
-                            'client-group', 'consumer1'),
-                            serializer=json.dumps,
-                            deserializer=json.loads,
-                            transport=RedisStreamTransport,
-                            redis_opts={'password': server_pw},
-                            invoke_timeout=30.0)
-        await initial_peer.open()
-        agent_peers[agent_id] = peer
-    try:
-        with _timeout(timeout):
-            yield peer
-    except preserved_exceptions:
-        raise
-    except Exception:
-        exc_type, exc, tb = sys.exc_info()
-        if issubclass(exc_type, GenericError):
-            e = AgentError(exc.args[0], exc.args[1], exc_repr=exc.args[2])
-            raise e.with_traceback(tb)
-        elif issubclass(exc_type, TypeError):
-            if exc.args[0] == "'NoneType' object is not iterable":
-                log.warning('The agent has cancelled the operation '
-                            'or the kernel has terminated too quickly.')
-                # In this case, you may need to use "--debug-skip-container-deletion"
-                # CLI option in the agent and check out the container logs via
-                # "docker logs" command to see what actually happened.
-            else:
-                e = AgentError(exc_type, exc.args)
-                raise e.with_traceback(tb)
-        else:
-            e = AgentError(exc_type, exc.args)
-            raise e.with_traceback(tb)
 
 @aiotools.actxmgr
 async def reenter_txn(pool, conn):
@@ -137,11 +64,13 @@ class AgentRegistry:
     policy, such as the limitation of maximum number of kernels per instance.
     '''
 
-    def __init__(self, config_server, dbpool,
+    def __init__(self, config_server, config, dbpool,
                  redis_stat, redis_live, redis_image,
                  loop=None):
         self.loop = loop if loop is not None else asyncio.get_event_loop()
         self.config_server = config_server
+        self.config = config
+        self.agent_peers = {} #Mapping[NewType('agent_id'), Peer]
         self.dbpool = dbpool
         self.redis_stat = redis_stat
         self.redis_live = redis_live
@@ -237,6 +166,83 @@ class AgentRegistry:
             if error_callback:
                 await error_callback()
             raise
+
+    @aiotools.actxmgr
+    async def RPCContext(agent_id: str, timeout=None):
+        # TODO: modify "get_session" method's variable "cols" to return agent_id
+        # do as to later provide it as argument for this method
+        preserved_exceptions = (
+            asyncio.TimeoutError,
+            asyncio.CancelledError,
+            asyncio.InvalidStateError,
+            CallosumError,
+        )
+        peer = self.agent_peers.get(agent_id, None)
+        if peer is None:
+            server_addr = self.config['redis']['addr'].as_sockaddr()
+            server_pw = self.config['redis']['password']\
+                if app['config']['redis']['password'] else None
+            initial_stream_key = agent_id
+            consumer_group = secrets.token_hex(16)
+            # unique key for each manager-agent communication
+            stream_key = secrets.token_hex(16)
+
+            initial_peer = Peer(connect=RedisStreamAddress(
+                                server_addr, initial_stream_key,
+                                consumer_group, 'consumer1'),
+                                serializer=json.dumps,
+                                deserializer=json.loads,
+                                transport=RedisStreamTransport,
+                                redis_opts={'password': server_pw},
+                                invoke_timeout=30.0)
+            await initial_peer.open()
+            try:
+                # invocation is resolved only when matching stream_key arrives
+                response = await initial_peer.invoke('gen_stream_key', {
+                    'stream_key': stream_key,
+                })
+            except HandlerError, ServerError:
+                raise AgentError
+            except ClientError:
+                raise InternalServerError
+            except CallosumError:
+                raise
+            assert response['stream_key'] = stream_key
+            await initial_peer.close()
+
+            peer = Peer(connect=RedisStreamAddress(
+                                server_addr, stream_key,
+                                'client-group', 'consumer1'),
+                                serializer=json.dumps,
+                                deserializer=json.loads,
+                                transport=RedisStreamTransport,
+                                redis_opts={'password': server_pw},
+                                invoke_timeout=30.0)
+            await initial_peer.open()
+            self.agent_peers[agent_id] = peer
+        try:
+            with _timeout(timeout):
+                yield peer
+        except preserved_exceptions:
+            raise
+        except Exception:
+            exc_type, exc, tb = sys.exc_info()
+            if issubclass(exc_type, (HandlerError, ServerError)):
+                e = AgentError(exc_type, exc.args)
+                raise e.with_traceback(tb)
+            elif issubclass(exc_type, ClientError):
+                e = InternalServerError(exc_type, exc.args)
+                raise e.with_traceback(tb)
+            elif issubclass(exc_type, TypeError):
+                if exc.args[0] == "'NoneType' object is not iterable":
+                    log.warning('The agent has cancelled the operation '
+                                'or the kernel has terminated too quickly.')
+                    # In this case, you may need to use "--debug-skip-container-deletion"
+                    # CLI option in the agent and check out the container logs via
+                    # "docker logs" command to see what actually happened.
+                else:
+                    e = AgentError(exc_type, exc.args)
+                    raise e.with_traceback(tb)
 
     async def get_kernel(self, kern_id: uuid.UUID, field=None, allow_stale=False,
                          db_connection=None):
