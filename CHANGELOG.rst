@@ -1,6 +1,56 @@
 Changes
 =======
 
+19.09.0b9 (2019-08-21)
+----------------------
+
+* Minor fix in logging of singup/singout request handlers
+
+19.09.0b8 (2019-08-19)
+----------------------
+
+* FIX: Mitigate race condition when checking keypair/group/domain resource limits (#180)
+
+  - KNOWN ISSUE: The current fix only covers a single-process deployment of the manager.
+
+* NEW: Introduce "is_installed" filtering condition to the "images" GraphQL query.
+
+* NEW: Watcher APIs to control agents remotely (#179)
+
+* Pin the pyzmq version 18.1.0 (lablup/backend.ai#47)
+
+* NEW: Support for Harbor registry (#177)
+
+19.09.0b7 (2019-08-14)
+----------------------
+
+* Update resource stat API to provide extra unit hints. (#176)
+
+19.09.0b6 (2019-08-14)
+----------------------
+
+* NEW: Add option to change underlying event loop implementation.
+
+* Updated signup/login hook support.
+
+* CHANGE: In the response of kernel creation API, service port information only expose
+  the name and protocol pairs, since port numbers are useless in the client-side.
+
+19.09.0b5 (2019-08-05)
+----------------------
+
+* NEW: Scaling groups to partition agents into differently scheduled groups (#73, #167)
+
+* NEW: Image lists are now filtered by docker registries allowed for each domain. (#170)
+
+* NEW: "/auth/role" API to get the current user's role/privilege information
+
+* CHANGE: GraphQL queries are now unified for all levels of users!
+
+  - The allow/deny decision is made per each query and mutation.
+
+* FIX: ``refresh_session()`` was not called to keep service port connections.
+
 19.06.0b4 (2019-07-24)
 ----------------------
 
@@ -24,6 +74,20 @@ Changes
 ----------------------
 
 * Add the user signup endpoint and related plugins support
+
+19.03.4 (2019-08-14)
+--------------------
+
+- Fix refresh_session() callback not invoked properly due to type mismatch of the function returned
+  by functools.partial against a coroutine function.
+
+- Fix admin_required() permission check decorator.
+
+19.03.3 (2019-07-17)
+--------------------
+
+- CHANGE/BACKPORT: Accept typeless resource slots for resource policy configurations
+  (lablup/backend.ai-common#7)
 
 19.06.0b1 (2019-07-14)
 ----------------------

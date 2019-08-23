@@ -161,7 +161,7 @@ class User(graphene.ObjectType):
             async for row in conn.execute(query):
                 key = row.email
                 if objs_per_key[key] is not None:
-                    objs_per_key[key].groups.append({'id': str(row.id), 'name': row.name})
+                    objs_per_key[key].groups.append(UserGroup(id=row.id, name=row.name))
                     continue
                 o = User.from_row(row)
                 objs_per_key[key] = o
@@ -183,14 +183,14 @@ class User(graphene.ObjectType):
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
             objs_per_key = OrderedDict()
-            # For each email, there is only one user.
+            # For each uuid, there is only one user.
             # So we don't build lists in objs_per_key variable.
             for k in user_ids:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
-                key = row.email
+                key = str(row.uuid)
                 if objs_per_key[key] is not None:
-                    objs_per_key[key].groups.append({'id': str(row.id), 'name': row.name})
+                    objs_per_key[key].groups.append(UserGroup(id=row.id, name=row.name))
                     continue
                 o = User.from_row(row)
                 objs_per_key[key] = o
@@ -324,7 +324,7 @@ class ModifyUser(graphene.Mutation):
             set_if_set(props, data, 'full_name')
             set_if_set(props, data, 'description')
             set_if_set(props, data, 'is_active')
-            # set_if_set('domain_name')  # prevent changing domain_name
+            # set_if_set(props, data, 'domain_name')
             set_if_set(props, data, 'role')
             if 'role' in data:
                 data['role'] = UserRole(data['role'])
@@ -344,8 +344,6 @@ class ModifyUser(graphene.Mutation):
                 # Update user's group if group_ids parameter is provided.
                 if props.group_ids and o is not None:
                     from .group import association_groups_users, groups
-                    # TODO: isn't it dangerous if second execution breaks,
-                    #       which results in user lost all of groups?
                     # Clear previous groups associated with the user.
                     query = (association_groups_users
                              .delete()

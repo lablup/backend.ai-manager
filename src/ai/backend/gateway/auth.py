@@ -1,3 +1,4 @@
+import copy
 from datetime import datetime, timedelta
 import functools
 import hashlib, hmac
@@ -291,7 +292,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
     if params['type'] != 'keypair':
         # other types are not implemented yet.
         raise InvalidAPIParameters('Unsupported authorization type')
-    log.info('AUTH.AUTHORIZE(d:{0.domain}, u:{0.username}, p:****, t:{0.type})', params)
+    log.info('AUTH.AUTHORIZE(d:{0[domain]}, u:{0[username]}, p:****, t:{0[type]})', params)
     dbpool = request.app['dbpool']
     user = await check_credential(
         dbpool,
@@ -319,17 +320,29 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         t.Key('domain'): t.String,
         t.Key('email'): t.String,
         t.Key('password'): t.String,
-    }))
+    }).allow_extra('*'))
 async def signup(request: web.Request, params: Any) -> web.Response:
-    log.info('AUTH.SIGNUP(d:{0.domain}, e:{0.email}, p:****)', params)
+    log.info('AUTH.SIGNUP(d:{}, e:{}, p:****)', params['domain'], params['email'])
     dbpool = request.app['dbpool']
-    # TODO: assume only one hook (hanati) and bound method (very dirty, but no time now)
-    # Check if email exists in hanati
-    assert 'hanati_hook' in request.app
-    check_user = request.app['hanati_hook'].get_handlers()[0][0][1]
-    hana_user = await check_user(params['email'])  # exception will be raised if not found
-    if isinstance(hana_user, dict) and not hana_user['success']:
-        return web.json_response({'error_msg': 'no such cloudia user'}, status=404)
+    # Ensure user exists if CHECK_USER handler is in plugin hook.
+    # TODO: Eaiser way to use plugin hooks in general? Why is it so difficult to use...
+    checked_user = None
+    for plugin in request.app['plugins'].values():
+        hook_event_types = plugin.get_hook_event_types()
+        hook_event_handlers = plugin.get_handlers()
+        for ev_types in hook_event_types:
+            if 'CHECK_USER' not in ev_types._member_names_:
+                continue
+            for ev_handlers in hook_event_handlers:
+                for ev_handler in ev_handlers:
+                    if ev_types.CHECK_USER == ev_handler[0]:
+                        check_user = ev_handler[1]
+                        extra_params = copy.deepcopy(params)
+                        extra_params.pop('email')
+                        checked_user = await check_user(params['email'], **extra_params)
+    if isinstance(checked_user, dict) and not checked_user['success']:
+        log.info('AUTH.SIGNUP: signup not allowed')
+        return web.json_response({'error_msg': 'signup not allowed'}, status=403)
 
     async with dbpool.acquire() as conn:
         # Check if email already exists.
@@ -344,16 +357,21 @@ async def signup(request: web.Request, params: Any) -> web.Response:
         # Create a user.
         data = {
             'domain_name': params['domain'],
-            'username': params['email'],
+            'username': params['username'] if 'username' in params else params['email'],
             'email': params['email'],
             'password': params['password'],
             'need_password_change': False,
-            'full_name': hana_user.name,
-            'description': f'Cloudia user in {hana_user.company.name}',
+            'full_name': params['full_name'] if 'full_name' in params else '',
+            'description': params['description'] if 'description' in params else '',
             'is_active': True,
             'role': UserRole.USER,
-            'integration_id': hana_user.idx,
+            'integration_id': None,
         }
+        if checked_user:
+            # Prevent sql compile exception from unconsumed colume names.
+            for key, val in checked_user.items():
+                if key in data:
+                    data[key] = val
         query = (users.insert().values(data))
         result = await conn.execute(query)
         if result.rowcount > 0:
@@ -362,13 +380,15 @@ async def signup(request: web.Request, params: Any) -> web.Response:
             user = await result.first()
             # Create user's first access_key and secret_key.
             ak, sk = _gen_keypair()
+            resource_policy = checked_user.get('resource_policy', 'default') \
+                                  if checked_user is not None else 'default'
             kp_data = {
                 'user_id': params['email'],
                 'access_key': ak,
                 'secret_key': sk,
                 'is_active': True,
                 'is_admin': False,
-                'resource_policy': 'default',
+                'resource_policy': resource_policy,
                 'concurrency_used': 0,
                 'rate_limit': 1000,
                 'num_queries': 0,
@@ -378,10 +398,12 @@ async def signup(request: web.Request, params: Any) -> web.Response:
             await conn.execute(query)
 
             # Add user to the default group.
+            group_name = checked_user.get('group', 'default') \
+                             if checked_user is not None else 'default'
             query = (sa.select([groups.c.id])
                        .select_from(groups)
                        .where(groups.c.domain_name == params['domain'])
-                       .where(groups.c.name == 'default'))
+                       .where(groups.c.name == group_name))
             result = await conn.execute(query)
             grp = await result.fetchone()
             values = [{'user_id': user.uuid, 'group_id': grp.id}]
@@ -405,7 +427,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
         t.Key('password'): t.String,
     }))
 async def signout(request: web.Request, params: Any) -> web.Response:
-    log.info('AUTH.SIGNOUT(d:{0.domain}, e:{0.email})', params)
+    log.info('AUTH.SIGNOUT(d:{}, e:{})', params['domain'], params['email'])
     dbpool = request.app['dbpool']
     await check_credential(
         dbpool,

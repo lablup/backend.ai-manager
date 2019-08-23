@@ -5,7 +5,8 @@
             "description": "The default domain",
             "is_active": true,
             "total_resource_slots": {},
-            "allowed_vfolder_hosts": {}
+            "allowed_vfolder_hosts": {},
+            "allowed_docker_registries": ["index.docker.io"]
         }
     ],
     "groups": [
@@ -30,7 +31,7 @@
             "scheduler_opts": {}
         }
     ],
-    "allowed_scaling_groups_for_domains": [
+    "sgroups_for_domains": [
         {
             "scaling_group": "default",
             "domain": "default"

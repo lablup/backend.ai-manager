@@ -36,6 +36,7 @@ from .scaling_group import (
     ScalingGroup,
     CreateScalingGroup, ModifyScalingGroup, DeleteScalingGroup,
     AssociateScalingGroupWithDomain,    DisassociateScalingGroupWithDomain,
+    DisassociateAllScalingGroupsWithDomain,
     AssociateScalingGroupWithUserGroup, DisassociateScalingGroupWithUserGroup,
     AssociateScalingGroupWithKeyPair,   DisassociateScalingGroupWithKeyPair,
 )
@@ -104,6 +105,7 @@ class Mutations(graphene.ObjectType):
     disassociate_scaling_group_with_domain     = DisassociateScalingGroupWithDomain.Field()
     disassociate_scaling_group_with_user_group = DisassociateScalingGroupWithUserGroup.Field()
     disassociate_scaling_group_with_keypair    = DisassociateScalingGroupWithKeyPair.Field()
+    disassociate_all_scaling_groups_with_domain = DisassociateAllScalingGroupsWithDomain.Field()
 
 
 class Queries(graphene.ObjectType):
@@ -159,6 +161,7 @@ class Queries(graphene.ObjectType):
 
     images = graphene.List(
         Image,
+        is_installed=graphene.Boolean(),
     )
 
     user = graphene.Field(
@@ -180,7 +183,7 @@ class Queries(graphene.ObjectType):
     keypair = graphene.Field(
         KeyPair,
         domain_name=graphene.String(),
-        email=graphene.String())
+        access_key=graphene.String())
 
     keypairs = graphene.List(
         KeyPair,
@@ -397,14 +400,16 @@ class Queries(graphene.ObjectType):
         return item
 
     @staticmethod
-    async def resolve_images(executor, info):
+    async def resolve_images(executor, info, is_installed=None):
         client_role = info.context['user']['role']
         client_domain = info.context['user']['domain_name']
-        items = await Image.load_all(info.context)
+        items = await Image.load_all(info.context, is_installed=is_installed)
         if client_role == UserRole.SUPERADMIN:
             pass
         elif client_role in (UserRole.ADMIN, UserRole.USER):
-            items = await Image.filter_allowed(info.context, items, client_domain)
+            items = await Image.filter_allowed(
+                info.context, items, client_domain,
+                is_installed=is_installed)
         else:
             raise InvalidAPIParameters('Unknown client role')
         return items

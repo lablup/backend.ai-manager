@@ -3,7 +3,7 @@ Resource preset APIs.
 '''
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from decimal import Decimal
 import functools
@@ -12,11 +12,15 @@ import logging
 import re
 from typing import Any
 
+import aiohttp
 from aiohttp import web
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
+from async_timeout import timeout as _timeout
+from dateutil.tz import tzutc
 import sqlalchemy as sa
 import trafaret as t
+import yarl
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
@@ -30,6 +34,8 @@ from ..manager.models import (
     agents, resource_presets,
     groups, kernels, keypairs,
     AgentStatus, KernelStatus,
+    association_groups_users,
+    query_allowed_sgroups,
 )
 from .utils import check_api_params
 
@@ -63,10 +69,15 @@ async def list_presets(request) -> web.Response:
         return web.json_response(resp, status=200)
 
 
+@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
-async def check_presets(request) -> web.Response:
+@check_api_params(
+    t.Dict({
+        t.Key('scaling_group', default=None): t.Null | t.String,
+        t.Key('group', default='default'): t.String,
+    }))
+async def check_presets(request: web.Request, params: Any) -> web.Response:
     '''
     Returns the list of all resource presets in the current scaling group,
     with additional information including allocatability of each preset,
@@ -98,15 +109,40 @@ async def check_presets(request) -> web.Response:
         resp['keypair_remaining'] = keypair_remaining.to_json()
         # query all agent's capacity and occupancy
         agent_slots = []
+
+        j = sa.join(groups, association_groups_users,
+                    association_groups_users.c.group_id == groups.c.id)
         query = (
-            sa.select([agents.c.available_slots, agents.c.occupied_slots])
-            .select_from(agents)
-            .where(agents.c.status == AgentStatus.ALIVE))
-        # TODO: add scaling_group as filter condition
-        # query = query.where(resource_presets.c.scaling_group == scaling_group)
+            sa.select([association_groups_users.c.group_id])
+            .select_from(j)
+            .where(
+                (association_groups_users.c.user_id == request['user']['uuid']) &
+                (groups.c.name == params['group'])
+            )
+        )
+        group_id = await conn.scalar(query)
+        if group_id is None:
+            raise InvalidAPIParameters('Unknown user group')
+
+        sgroups = await query_allowed_sgroups(conn, request['user']['domain_name'],
+                                              group_id, access_key)
+        sgroups = [sg.name for sg in sgroups]
+        if params['scaling_group'] is not None:
+            if params['scaling_group'] not in sgroups:
+                raise InvalidAPIParameters('Unknown scaling group')
+            sgroups = [params['scaling_group']]
+
         sgroup_remaining = ResourceSlot({
             k: Decimal(0) for k in known_slot_types.keys()
         })
+        query = (
+            sa.select([agents.c.available_slots, agents.c.occupied_slots])
+            .select_from(agents)
+            .where(
+                (agents.c.status == AgentStatus.ALIVE) &
+                (agents.c.scaling_group.in_(sgroups))
+            )
+        )
         async for row in conn.execute(query):
             remaining = row['available_slots'] - row['occupied_slots']
             sgroup_remaining += remaining
@@ -200,11 +236,19 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
     for row in rows:
         group_id = str(row.group_id)
         last_stat = row.last_stat
+        nfs = None
+        if row.mounts is not None:
+            nfs = list(set([mount[1] for mount in row.mounts]))
+        device_type = []
+        if row.attached_devices and row.attached_devices.get('cuda'):
+            for dev_info in row.attached_devices['cuda']:
+                if dev_info.get('model_name'):
+                    device_type.append(dev_info['model_name'])
         c_info = {
-            # TODO: fill in these values when fields spec is fixed.
             'id': str(row['id']),
             'name': row['sess_id'],
             'access_key': row['access_key'],
+            'smp': float(row.occupied_slots['cpu']),  # CPU allocated
             'cpu_used': float(last_stat['cpu_used']['current']) if last_stat else 0,
             'mem_allocated': int(row.occupied_slots['mem']),
             'mem_used': int(last_stat['mem']['capacity']) if last_stat else 0,
@@ -215,9 +259,8 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'used_time': str(row['terminated_at'] - row['created_at']),
             'used_days': (row['terminated_at'].astimezone(local_tz).toordinal() -
                           row['created_at'].astimezone(local_tz).toordinal() + 1),
-            'device_type': None,  # TODO: gpu device type
-            'smp': 0,  # TODO: gpu smp?
-            'nfs': None,  # TODO: what value to write here?
+            'device_type': device_type,
+            'nfs': nfs,
             'image_name': row['image'],
             'created_at': str(row['created_at']),
             'terminated_at': str(row['terminated_at']),
@@ -227,26 +270,29 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
                 'domain_name': row['domain_name'],
                 'g_id': group_id,
                 'g_name': row['name'],  # this is group's name
-                'g_cpu_used': 0,
-                'g_mem_used': 0,
-                'g_shared_memory': 0,
-                'g_disk_used': 0,
-                'g_io_read': 0,
-                'g_io_write': 0,
-                'g_device_type': list(),
-                'g_smp': 0,
+                'g_smp': c_info['smp'],
+                'g_cpu_used': c_info['cpu_used'],
+                'g_mem_allocated': c_info['mem_allocated'],
+                'g_mem_used': c_info['mem_used'],
+                'g_shared_memory': c_info['shared_memory'],
+                'g_disk_used': c_info['disk_used'],
+                'g_io_read': c_info['io_read'],
+                'g_io_write': c_info['io_write'],
+                'g_device_type': c_info['device_type'],
                 'c_infos': [c_info],
             }
         else:
+            objs_per_group[group_id]['g_smp'] += c_info['smp']
             objs_per_group[group_id]['g_cpu_used'] += c_info['cpu_used']
+            objs_per_group[group_id]['g_mem_allocated'] += c_info['mem_allocated']
             objs_per_group[group_id]['g_mem_used'] += c_info['mem_used']
             objs_per_group[group_id]['g_shared_memory'] += c_info['shared_memory']
             objs_per_group[group_id]['g_disk_used'] += c_info['disk_used']
             objs_per_group[group_id]['g_io_read'] += c_info['io_read']
             objs_per_group[group_id]['g_io_write'] += c_info['io_write']
-            if c_info['device_type'] not in objs_per_group[group_id]['g_device_type']:
-                objs_per_group[group_id]['g_device_type'].append(c_info['device_type'])
-            objs_per_group[group_id]['g_smp'] += c_info['smp']
+            for device in c_info['device_type']:
+                if device not in objs_per_group[group_id]['g_device_type']:
+                    objs_per_group[group_id]['g_device_type'].append(device)
             objs_per_group[group_id]['c_infos'].append(c_info)
     return list(objs_per_group.values())
 
@@ -320,6 +366,260 @@ async def usage_per_period(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+async def get_time_binned_monthly_stats(request, user_uuid=None):
+    '''
+    Generate time-binned (15 min) stats for the last one month (2880 points).
+    The structure of the result would be:
+
+        [
+          # [
+          #     timestamp, num_sessions,
+          #     cpu_allocated, mem_allocated, gpu_allocated,
+          #     io_read, io_write, scratch_used,
+          # ]
+            [1562083808.657106, 1, 1.2, 1073741824, ...],
+            [1562084708.657106, 2, 4.0, 1073741824, ...],
+        ]
+
+    Note that the timestamp is in UNIX-timestamp.
+    '''
+    # Get all or user kernels for the last month from DB.
+    time_window = 900  # 15 min
+    now = datetime.now(tzutc())
+    start_date = now - timedelta(days=30)
+    async with request.app['dbpool'].acquire() as conn, conn.begin():
+        query = (sa.select([kernels])
+                   .select_from(kernels)
+                   .where(kernels.c.terminated_at >= start_date)
+                   .order_by(sa.asc(kernels.c.created_at)))
+        if user_uuid is not None:
+            query = query.where(kernels.c.user_uuid == user_uuid)
+        result = await conn.execute(query)
+        rows = await result.fetchall()
+
+    # Build time-series of time-binned stats.
+    rowcount = result.rowcount
+    now = now.timestamp()
+    start_date = start_date.timestamp()
+    ts = start_date
+    idx = 0
+    tseries = []
+    # Iterate over each time window.
+    while ts < now:
+        # Initialize the time-binned stats.
+        num_sessions = 0
+        cpu_allocated = 0
+        mem_allocated = 0
+        gpu_allocated = 0
+        io_read_bytes = 0
+        io_write_bytes = 0
+        disk_used = 0
+        # Accumulate stats for containers overlapping with this time window.
+        while idx < rowcount and \
+              ts + time_window > rows[idx].created_at.timestamp() and \
+              ts < rows[idx].terminated_at.timestamp():
+            # Accumulate stats for overlapping containers in this time window.
+            row = rows[idx]
+            num_sessions += 1
+            cpu_allocated += float(row.occupied_slots['cpu'])
+            mem_allocated += float(row.occupied_slots['mem'])
+            if 'cuda.devices' in row.occupied_slots:
+                gpu_allocated += float(row.occupied_slots['cuda.devices'])
+            if 'cuda.shares' in row.occupied_slots:
+                gpu_allocated += float(row.occupied_slots['cuda.shares'])
+            if row.last_stat:
+                io_read_bytes += int(row.last_stat['io_read']['current'])
+                io_write_bytes += int(row.last_stat['io_write']['current'])
+                disk_used += int(row.last_stat['io_scratch_size']['stats.max'])
+            idx += 1
+        stat = {
+            "date": ts,
+            "num_sessions": {
+                "value": num_sessions,
+                "unit_hint": "count"
+            },
+            "cpu_allocated": {
+                "value": cpu_allocated,
+                "unit_hint": "count"
+            },
+            "mem_allocated": {
+                "value": mem_allocated,
+                "unit_hint": "bytes"
+            },
+            "gpu_allocated": {
+                "value": gpu_allocated,
+                "unit_hint": "count"
+            },
+            "io_read_bytes": {
+                "value": io_read_bytes,
+                "unit_hint": "bytes"
+            },
+            "io_write_bytes": {
+                "value": io_write_bytes,
+                "unit_hint": "bytes"
+            },
+            "disk_used": {
+                "value ": disk_used,
+                "unit_hint": "bytes"
+            }
+        }
+        # print(stat)
+        tseries.append(stat)
+        ts += time_window
+    # print(rowcount)
+    return tseries
+
+
+@server_status_required(READ_ALLOWED)
+@auth_required
+async def user_month_stats(request: web.Request) -> web.Response:
+    '''
+    Return time-binned (15 min) stats for terminated user sessions
+    over last 30 days.
+    '''
+    access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
+    log.info('USER_LAST_MONTH_STATS (u:[{0}], ak:[{1}])', user_uuid, access_key)
+    stats = await get_time_binned_monthly_stats(request, user_uuid=user_uuid)
+    return web.json_response(stats, status=200)
+
+
+@server_status_required(READ_ALLOWED)
+@superadmin_required
+async def admin_month_stats(request: web.Request) -> web.Response:
+    '''
+    Return time-binned (15 min) stats for all terminated sessions
+    over last 30 days.
+    '''
+    access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
+    log.info('ADMIN_LAST_MONTH_STATS (u:[{0}], ak:[{1}])', user_uuid, access_key)
+    stats = await get_time_binned_monthly_stats(request, user_uuid=None)
+    return web.json_response(stats, status=200)
+
+
+async def get_watcher_info(request: web.Request, agent_id: str) -> dict:
+    '''
+    Get watcher information.
+
+    :return addr: address of agent watcher (eg: http://127.0.0.1:6009)
+    :return token: agent watcher token ("insecure" if not set in config server)
+    '''
+    token = request.app['config']['watcher']['token']
+    if token is None:
+        token = 'insecure'
+    agent_ip = await request.app['registry'].config_server.get(f'nodes/agents/{agent_id}/ip')
+    watcher_port = await request.app['registry'].config_server.get(
+        f'nodes/agents/{agent_id}/watcher_port')
+    if watcher_port is None:
+        watcher_port = 6009
+    # TODO: watcher scheme is assumed to be http
+    addr = yarl.URL(f'http://{agent_ip}:{watcher_port}')
+    return {
+        'addr': addr,
+        'token': token,
+    }
+
+
+@server_status_required(READ_ALLOWED)
+@superadmin_required
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['agent_id', 'agent']): t.String,
+    }))
+async def get_watcher_status(request: web.Request, params: Any) -> web.Response:
+    access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
+    log.info('GET_WATCHER_STATUS (u:[{0}], ak:[{1}])', user_uuid, access_key)
+    watcher_info = await get_watcher_info(request, params['agent_id'])
+    connector = aiohttp.TCPConnector()
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        with _timeout(5.0):
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            async with sess.get(watcher_info['addr'], headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return web.json_response(data, status=resp.status)
+                else:
+                    data = await resp.text()
+                    return web.Response(text=data, status=resp.status)
+
+
+@server_status_required(READ_ALLOWED)
+@superadmin_required
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['agent_id', 'agent']): t.String,
+    }))
+async def watcher_agent_start(request: web.Request, params: Any) -> web.Response:
+    access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
+    log.info('WATCHER_AGENT_START (u:[{0}], ak:[{1}])', user_uuid, access_key)
+    watcher_info = await get_watcher_info(request, params['agent_id'])
+    connector = aiohttp.TCPConnector()
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        with _timeout(20.0):
+            watcher_url = watcher_info['addr'] / 'agent/start'
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            async with sess.post(watcher_url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return web.json_response(data, status=resp.status)
+                else:
+                    data = await resp.text()
+                    return web.Response(text=data, status=resp.status)
+
+
+@server_status_required(READ_ALLOWED)
+@superadmin_required
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['agent_id', 'agent']): t.String,
+    }))
+async def watcher_agent_stop(request: web.Request, params: Any) -> web.Response:
+    access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
+    log.info('WATCHER_AGENT_STOP (u:[{0}], ak:[{1}])', user_uuid, access_key)
+    watcher_info = await get_watcher_info(request, params['agent_id'])
+    connector = aiohttp.TCPConnector()
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        with _timeout(20.0):
+            watcher_url = watcher_info['addr'] / 'agent/stop'
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            async with sess.post(watcher_url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return web.json_response(data, status=resp.status)
+                else:
+                    data = await resp.text()
+                    return web.Response(text=data, status=resp.status)
+
+
+@server_status_required(READ_ALLOWED)
+@superadmin_required
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['agent_id', 'agent']): t.String,
+    }))
+async def watcher_agent_restart(request: web.Request, params: Any) -> web.Response:
+    access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
+    log.info('WATCHER_AGENT_RESTART (u:[{0}], ak:[{1}])', user_uuid, access_key)
+    watcher_info = await get_watcher_info(request, params['agent_id'])
+    connector = aiohttp.TCPConnector()
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        with _timeout(20.0):
+            watcher_url = watcher_info['addr'] / 'agent/restart'
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            async with sess.post(watcher_url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return web.json_response(data, status=resp.status)
+                else:
+                    data = await resp.text()
+                    return web.Response(text=data, status=resp.status)
+
+
 def create_app(default_cors_options):
     app = web.Application()
     app['api_versions'] = (4,)
@@ -330,4 +630,10 @@ def create_app(default_cors_options):
     cors.add(add_route('POST', '/recalculate-usage', recalculate_usage))
     cors.add(add_route('GET',  '/usage/month', usage_per_month))
     cors.add(add_route('GET',  '/usage/period', usage_per_period))
+    cors.add(add_route('GET',  '/stats/user/month', user_month_stats))
+    cors.add(add_route('GET',  '/stats/admin/month', admin_month_stats))
+    cors.add(add_route('GET',  '/watcher', get_watcher_status))
+    cors.add(add_route('POST', '/watcher/agent/start', watcher_agent_start))
+    cors.add(add_route('POST', '/watcher/agent/stop', watcher_agent_stop))
+    cors.add(add_route('POST', '/watcher/agent/restart', watcher_agent_restart))
     return app, []

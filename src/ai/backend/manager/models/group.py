@@ -123,7 +123,7 @@ class Group(graphene.ObjectType):
                 objs_per_key[k] = None
             async for row in conn.execute(query):
                 o = Group.from_row(row)
-                objs_per_key[row.id] = o
+                objs_per_key[str(row.id)] = o
         return [*objs_per_key.values()]
 
     @staticmethod

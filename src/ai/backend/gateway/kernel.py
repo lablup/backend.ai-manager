@@ -193,7 +193,13 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 domain_name=params['domain'], group_id=group_id, user_uuid=owner_uuid,
                 tag=params.get('tag', None))
             resp['kernelId'] = str(kernel['sess_id'])
-            resp['servicePorts'] = kernel['service_ports']
+            resp['servicePorts'] = [
+                {
+                    'name': item['name'],
+                    'protocol': item['protocol'],
+                }
+                for item in kernel['service_ports']
+            ]
             resp['created'] = bool(created)
         except Exception:
             # Restore concurrency_used if exception occurs before kernel creation

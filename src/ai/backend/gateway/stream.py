@@ -8,7 +8,6 @@ NOTE: For nginx-based setups, we need to gather all websocket-based API handlers
 import asyncio
 import base64
 from collections import defaultdict
-from functools import partial
 import json
 import logging
 import secrets
@@ -18,6 +17,7 @@ import weakref
 import aiohttp
 import aiohttp_cors
 from aiohttp import web
+from aiotools import apartial
 import aiozmq
 from aiozmq import create_zmq_stream as aiozmq_sock
 import zmq
@@ -342,12 +342,12 @@ async def stream_proxy(request) -> web.StreamResponse:
     async def refresh_cb(kernel_id: str, data: bytes):
         await asyncio.shield(call_non_bursty(
             kernel_id,
-            partial(registry.refresh_session, sess_id, access_key),
+            apartial(registry.refresh_session, sess_id, access_key),
             max_bursts=64, max_idle=2000))
 
-    down_cb = partial(refresh_cb, kernel.id)
-    up_cb = partial(refresh_cb, kernel.id)
-    ping_cb = partial(refresh_cb, kernel.id)
+    down_cb = apartial(refresh_cb, kernel.id)
+    up_cb = apartial(refresh_cb, kernel.id)
+    ping_cb = apartial(refresh_cb, kernel.id)
 
     try:
         opts = {}

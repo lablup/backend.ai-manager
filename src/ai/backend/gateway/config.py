@@ -31,6 +31,7 @@ manager_config_iv = t.Dict({
         t.Key('ssl-enabled', default=False): t.Bool | t.StrBool,
         t.Key('ssl-cert', default=None): t.Null | tx.Path(type='file'),
         t.Key('ssl-privkey', default=None): t.Null | tx.Path(type='file'),
+        t.Key('event-loop', default='asyncio'): t.Enum('asyncio', 'uvloop'),
         t.Key('pid-file', default=os.devnull): tx.Path(type='file',
                                                        allow_nonexisting=True,
                                                        allow_devnull=True),

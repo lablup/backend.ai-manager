@@ -60,17 +60,19 @@ class Image(graphene.ObjectType):
         return cls._convert_from_dict(r)
 
     @classmethod
-    async def load_all(cls, context):
+    async def load_all(cls, context, is_installed=None):
         raw_items = await context['config_server'].list_images()
         items = []
         # Convert to GQL objects
         for r in raw_items:
             item = cls._convert_from_dict(r)
             items.append(item)
+        if is_installed is not None:
+            items = [*filter(lambda item: item.installed == is_installed, items)]
         return items
 
     @staticmethod
-    async def filter_allowed(context, items, domain_name):
+    async def filter_allowed(context, items, domain_name, is_installed=None):
         from .domain import domains
         async with context['dbpool'].acquire() as conn:
             query = (
@@ -82,10 +84,13 @@ class Image(graphene.ObjectType):
             result = await conn.execute(query)
             row = await result.fetchone()
             allowed_docker_registries = row[0]
-        return [
+        items = [
             item for item in items
             if item.registry in allowed_docker_registries
         ]
+        if is_installed is not None:
+            items = [*filter(lambda item: item.installed == is_installed, items)]
+        return items
 
 
 class PreloadImage(graphene.Mutation):
