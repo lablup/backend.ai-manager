@@ -391,6 +391,8 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 query = query.where(kernels.c.domain_name == domain_name)
             if group_id is not None:
                 query = query.where(kernels.c.group_id == group_id)
+            if access_key is not None:
+                query = query.where(kernels.c.access_key == access_key)
             result = await conn.execute(query)
             rows = await result.fetchall()
             return [ComputeSession.from_row(context, r) for r in rows]
