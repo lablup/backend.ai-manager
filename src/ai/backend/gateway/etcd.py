@@ -648,7 +648,8 @@ async def get_vfolder_types(request) -> web.Response:
 async def get_config(request: web.Request, params: Any) -> web.Response:
     etcd = request.app['config_server'].etcd
     if params['prefix']:
-        value = await etcd.get_prefix_dict(params['key'])
+        # Flatten the returned ChainMap object for JSON serialization
+        value = dict(await etcd.get_prefix_dict(params['key']))
     else:
         value = await etcd.get(params['key'])
     return web.json_response({'result': value})
