@@ -1,6 +1,20 @@
 Changes
 =======
 
+19.09.0b10 (2019-08-27)
+-----------------------
+
+* FIX: plain users could see other users' sessions due to a missing
+  access-key filtering condition in the GQL loader implementation
+  for ``compute_sessions`` query.
+
+* FIX: an unexpected error at creating a new user when there is no default group.
+  Changed to add the user to the default group only when it exists.
+
+* Add ``mem_allocated`` field to group usage statistics
+
+* Various bug fixes for config/get and config/set APIs
+
 19.09.0b9 (2019-08-21)
 ----------------------
 
