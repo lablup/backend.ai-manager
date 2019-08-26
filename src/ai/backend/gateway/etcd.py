@@ -661,7 +661,7 @@ async def get_config(request: web.Request, params: Any) -> web.Response:
     t.Dict({
         t.Key('key'): t.String,
         t.Key('value'): t.Or(t.String(allow_blank=True),
-                             t.Mapping(t.String, t.Any)),
+                             t.Mapping(t.String(allow_blank=True), t.Any)),
     }))
 async def set_config(request: web.Request, params: Any) -> web.Response:
     etcd = request.app['config_server'].etcd
