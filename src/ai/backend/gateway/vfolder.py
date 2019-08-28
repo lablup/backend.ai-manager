@@ -1093,6 +1093,7 @@ async def list_mounts(request: web.Request) -> web.Response:
                    .where(agents.c.status == AgentStatus.ALIVE))
         result = await conn.execute(query)
         rows = await result.fetchall()
+
     connector = aiohttp.TCPConnector()
     async with aiohttp.ClientSession(connector=connector) as sess:
         scheduler = await aiojobs.create_scheduler(limit=8)
@@ -1103,6 +1104,180 @@ async def list_mounts(request: web.Request) -> web.Response:
             mounts = await asyncio.gather(*[job.wait() for job in jobs])
             for mount in mounts:
                 resp['agents'][mount[0]] = mount[1]
+        finally:
+            await scheduler.close()
+
+    return web.json_response(resp, status=200)
+
+
+@superadmin_required
+@server_status_required(READ_ALLOWED)
+@check_api_params(
+    t.Dict({
+        t.Key('fs_location'): t.String,
+        t.Key('name'): t.String,
+        t.Key('fs_type', default='nfs'): t.String,
+        t.Key('scaling_group', default=None): t.Or(t.String, t.Null),
+    }),
+)
+async def mount_host(request: web.Request, params: Any) -> web.Response:
+    '''
+    Mount device into vfolder host.
+
+    Mount a device (eg: nfs) located at `fs_location` into `<vfroot>/name` in the
+    host machines (manager and all agents). `fs_type` can be specified by requester,
+    which fallbaks to 'nfs'.
+
+    If `scaling_group` is specified, try to mount for agents in the scaling group.
+    '''
+    dbpool = request.app['dbpool']
+    access_key = request['keypair']['access_key']
+    log.info('VFOLDER.MOUNT_HOST(u:{0})', access_key)
+    config = request.app['config_server']
+    mount_prefix = await config.get('volumes/_mount')
+    if mount_prefix is None:
+        mount_prefix = '/mnt'
+
+    # Mount on manager.
+    proc = await asyncio.create_subprocess_exec(*[
+        'mount', '-t', params['fs_type'],
+        params['fs_location'], str(Path(mount_prefix) / params['name'])
+    ], stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    out, err = await proc.communicate()
+    out = out.decode('utf8')
+    err = err.decode('utf8')
+    await proc.wait()
+    resp = {
+        'manager': {
+            'success': True if not err else False,
+            'message': out if not err else err,
+        },
+        'agents': {},
+    }
+
+    # Mount on running agents.
+    async with dbpool.acquire() as conn:
+        query = (sa.select([agents.c.id])
+                   .select_from(agents)
+                   .where(agents.c.status == AgentStatus.ALIVE))
+        if params['scaling_group'] is not None:
+            query = query.where(agents.c.scaling == params['scaling_group'])
+        result = await conn.execute(query)
+        rows = await result.fetchall()
+
+    async def _mount(sess, aid):
+        watcher_info = await get_watcher_info(request, aid)
+        with _timeout(10.0):
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            url = watcher_info['addr'] / 'mounts'
+            async with sess.post(url, data=params, headers=headers) as resp:
+                if resp.status == 200:
+                    data = {
+                        'success': True,
+                        'message': await resp.text(),
+                    }
+                else:
+                    data = {
+                        'success': False,
+                        'message': await resp.text(),
+                    }
+                return (aid, data,)
+
+    connector = aiohttp.TCPConnector()
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        scheduler = await aiojobs.create_scheduler(limit=8)
+        try:
+            jobs = await asyncio.gather(*[
+                scheduler.spawn(_mount(sess, row.id)) for row in rows
+            ])
+            results = await asyncio.gather(*[job.wait() for job in jobs])
+            for result in results:
+                resp['agents'][result[0]] = result[1]
+        finally:
+            await scheduler.close()
+
+    return web.json_response(resp, status=200)
+
+
+@superadmin_required
+@server_status_required(READ_ALLOWED)
+@check_api_params(
+    t.Dict({
+        t.Key('name'): t.String,
+        t.Key('scaling_group', default=None): t.Or(t.String, t.Null),
+    }),
+)
+async def umount_host(request: web.Request, params: Any) -> web.Response:
+    '''
+    Unmount device from vfolder host.
+
+    Unmount a device (eg: nfs) located at `<vfroot>/name` from the host machines
+    (manager and all agents).
+
+    If `scaling_group` is specified, try to unmount for agents in the scaling group.
+    '''
+    dbpool = request.app['dbpool']
+    access_key = request['keypair']['access_key']
+    log.info('VFOLDER.UMOUNT_HOST(u:{0})', access_key)
+    config = request.app['config_server']
+    mount_prefix = await config.get('volumes/_mount')
+    if mount_prefix is None:
+        mount_prefix = '/mnt'
+
+    # Mount on manager.
+    proc = await asyncio.create_subprocess_exec(*[
+        'umount', str(Path(mount_prefix) / params['name'])
+    ], stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    out, err = await proc.communicate()
+    out = out.decode('utf8')
+    err = err.decode('utf8')
+    await proc.wait()
+    resp = {
+        'manager': {
+            'success': True if not err else False,
+            'message': out if not err else err,
+        },
+        'agents': {},
+    }
+
+    # Unmount from running agents.
+    async with dbpool.acquire() as conn:
+        query = (sa.select([agents.c.id])
+                   .select_from(agents)
+                   .where(agents.c.status == AgentStatus.ALIVE))
+        if params['scaling_group'] is not None:
+            query = query.where(agents.c.scaling == params['scaling_group'])
+        result = await conn.execute(query)
+        rows = await result.fetchall()
+
+    async def _umount(sess, aid):
+        watcher_info = await get_watcher_info(request, aid)
+        with _timeout(10.0):
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            url = watcher_info['addr'] / 'mounts'
+            async with sess.delete(url, data=params, headers=headers) as resp:
+                if resp.status == 200:
+                    data = {
+                        'success': True,
+                        'message': await resp.text(),
+                    }
+                else:
+                    data = {
+                        'success': False,
+                        'message': await resp.text(),
+                    }
+                return (aid, data,)
+
+    connector = aiohttp.TCPConnector()
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        scheduler = await aiojobs.create_scheduler(limit=8)
+        try:
+            jobs = await asyncio.gather(*[
+                scheduler.spawn(_umount(sess, row.id)) for row in rows
+            ])
+            results = await asyncio.gather(*[job.wait() for job in jobs])
+            for result in results:
+                resp['agents'][result[0]] = result[1]
         finally:
             await scheduler.close()
 
@@ -1153,4 +1328,6 @@ def create_app(default_cors_options):
     cors.add(add_route('GET',    r'/_/shared', list_shared_vfolders))
     cors.add(add_route('POST',   r'/_/shared', update_shared_vfolder))
     cors.add(add_route('GET',    r'/_/mounts', list_mounts))
+    cors.add(add_route('POST',   r'/_/mounts', mount_host))
+    cors.add(add_route('DELETE', r'/_/mounts', umount_host))
     return app, []
