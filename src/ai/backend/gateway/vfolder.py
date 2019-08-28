@@ -37,7 +37,7 @@ from .manager import (
 from .resource import get_watcher_info
 from .utils import check_api_params
 from ..manager.models import (
-    agents, AgentStatus,
+    agents, AgentStatus, kernels, KernelStatus,
     users, groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
     VFolderPermission, VFolderPermissionValidator, query_accessible_vfolders,
     get_allowed_vfolder_hosts_by_group, get_allowed_vfolder_hosts_by_user,
@@ -1278,6 +1278,32 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
         mount_prefix = '/mnt'
     mountpoint = str(Path(mount_prefix) / params['name'])
 
+    async with dbpool.acquire() as conn, conn.begin():
+        # Prevent unmount if target host is mounted to running kernels.
+        query = (sa.select([kernels.c.mounts])
+                   .select_from(kernels)
+                   .where(kernels.c.status != KernelStatus.TERMINATED))
+        result = await conn.execute(query)
+        _kernels = await result.fetchall()
+        _mounted = set()
+        for kern in _kernels:
+            if kern.mounts:
+                _mounted.update([m[1] for m in kern.mounts])
+        if params['name'] in _mounted:
+            resp = {
+                'title': 'Target host is used in sessions',
+                'message': 'Target host is used in sessions',
+            }
+            return web.json_response(resp, status=409)
+
+        query = (sa.select([agents.c.id])
+                   .select_from(agents)
+                   .where(agents.c.status == AgentStatus.ALIVE))
+        if params['scaling_group'] is not None:
+            query = query.where(agents.c.scaling == params['scaling_group'])
+        result = await conn.execute(query)
+        _agents = await result.fetchall()
+
     # Unmount from manager.
     proc = await asyncio.create_subprocess_exec(*[
         'umount', mountpoint
@@ -1300,15 +1326,6 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
             await fstab.remove_by_mountpoint(mountpoint)
 
     # Unmount from running agents.
-    async with dbpool.acquire() as conn:
-        query = (sa.select([agents.c.id])
-                   .select_from(agents)
-                   .where(agents.c.status == AgentStatus.ALIVE))
-        if params['scaling_group'] is not None:
-            query = query.where(agents.c.scaling == params['scaling_group'])
-        result = await conn.execute(query)
-        rows = await result.fetchall()
-
     async def _umount(sess, aid):
         watcher_info = await get_watcher_info(request, aid)
         with _timeout(10.0):
@@ -1332,7 +1349,7 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
         scheduler = await aiojobs.create_scheduler(limit=8)
         try:
             jobs = await asyncio.gather(*[
-                scheduler.spawn(_umount(sess, row.id)) for row in rows
+                scheduler.spawn(_umount(sess, _agent.id)) for _agent in _agents
             ])
             results = await asyncio.gather(*[job.wait() for job in jobs])
             for result in results:
