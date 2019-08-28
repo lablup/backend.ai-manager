@@ -11,6 +11,7 @@ import uuid
 import jwt
 from datetime import datetime, timedelta
 
+import aiofiles
 import aiohttp
 from aiohttp import web
 import aiohttp_cors
@@ -24,6 +25,7 @@ import trafaret as t
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.utils import Fstab
 
 from .auth import auth_required, superadmin_required
 from .exceptions import (
@@ -1035,6 +1037,45 @@ async def update_shared_vfolder(request: web.Request, params: Any) -> web.Respon
 
 @superadmin_required
 @server_status_required(READ_ALLOWED)
+@check_api_params(
+    t.Dict({
+        t.Key('fstab_path', default=None): t.Or(t.String, t.Null),
+        t.Key('agent_id', default=None): t.Or(t.String, t.Null),
+    }),
+)
+async def get_fstab_contents(request: web.Request, params: Any) -> web.Response:
+    '''
+    Return the contents of `/etc/fstab` file.
+    '''
+    access_key = request['keypair']['access_key']
+    log.info('VFOLDER.GET_FSTAB_CONTENTS(u:{0})', access_key)
+    if params['fstab_path'] is not None:
+        fstab_path = params['fstab_path']
+    if params['agent_id'] is not None:
+        # Return specific agent's fstab.
+        connector = aiohttp.TCPConnector()
+        watcher_info = await get_watcher_info(request, params['agent_id'])
+        async with aiohttp.ClientSession(connector=connector) as sess:
+            with _timeout(10.0):
+                headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+                url = watcher_info['addr'] / 'fstab'
+                async with sess.get(url, headers=headers) as resp:
+                    if resp.status == 200:
+                        entries = await resp.json()
+                        return web.json_response(entries)
+                    else:
+                        message = await resp.text()
+                        return web.json_response(message, status=resp.status)
+    else:
+        # Return manager's fstab.
+        async with aiofiles.open(fstab_path, mode='r') as fp:
+            fstab = Fstab(fp)
+            entries = list(await fstab.get_entries())
+            return web.json_response(entries)
+
+
+@superadmin_required
+@server_status_required(READ_ALLOWED)
 async def list_mounts(request: web.Request) -> web.Response:
     '''
     List all mounted vfolder hosts in vfroot.
@@ -1117,7 +1158,10 @@ async def list_mounts(request: web.Request) -> web.Response:
         t.Key('fs_location'): t.String,
         t.Key('name'): t.String,
         t.Key('fs_type', default='nfs'): t.String,
+        t.Key('options', default=None): t.Or(t.String, t.Null),
         t.Key('scaling_group', default=None): t.Or(t.String, t.Null),
+        t.Key('fstab_path', default=None): t.Or(t.String, t.Null),
+        t.Key('edit_fstab', default=False): t.Or(t.Bool, t.Null),
     }),
 )
 async def mount_host(request: web.Request, params: Any) -> web.Response:
@@ -1139,9 +1183,10 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
         mount_prefix = '/mnt'
 
     # Mount on manager.
+    mountpoint = str(Path(mount_prefix) / params['name'])
     proc = await asyncio.create_subprocess_exec(*[
         'mount', '-t', params['fs_type'],
-        params['fs_location'], str(Path(mount_prefix) / params['name'])
+        params['fs_location'], mountpoint,
     ], stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     out, err = await proc.communicate()
     out = out.decode('utf8')
@@ -1154,6 +1199,12 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
         },
         'agents': {},
     }
+    if params['edit_fstab']:
+        fstab_path = params['fstab_path'] if params['fstab_path'] else '/etc/fstab'
+        async with aiofiles.open(fstab_path, mode='r+') as fp:
+            fstab = Fstab(fp)
+            await fstab.add(params['fs_location'], mountpoint,
+                            params['fs_type'], params['options'])
 
     # Mount on running agents.
     async with dbpool.acquire() as conn:
@@ -1205,6 +1256,8 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
     t.Dict({
         t.Key('name'): t.String,
         t.Key('scaling_group', default=None): t.Or(t.String, t.Null),
+        t.Key('fstab_path', default=None): t.Or(t.String, t.Null),
+        t.Key('edit_fstab', default=False): t.Or(t.Bool, t.Null),
     }),
 )
 async def umount_host(request: web.Request, params: Any) -> web.Response:
@@ -1223,10 +1276,11 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
     mount_prefix = await config.get('volumes/_mount')
     if mount_prefix is None:
         mount_prefix = '/mnt'
+    mountpoint = str(Path(mount_prefix) / params['name'])
 
-    # Mount on manager.
+    # Unmount from manager.
     proc = await asyncio.create_subprocess_exec(*[
-        'umount', str(Path(mount_prefix) / params['name'])
+        'umount', mountpoint
     ], stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     out, err = await proc.communicate()
     out = out.decode('utf8')
@@ -1239,6 +1293,11 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
         },
         'agents': {},
     }
+    if params['edit_fstab']:
+        fstab_path = params['fstab_path'] if params['fstab_path'] else '/etc/fstab'
+        async with aiofiles.open(fstab_path, mode='r+') as fp:
+            fstab = Fstab(fp)
+            await fstab.remove_by_mountpoint(mountpoint)
 
     # Unmount from running agents.
     async with dbpool.acquire() as conn:
@@ -1327,6 +1386,7 @@ def create_app(default_cors_options):
     cors.add(add_route('DELETE', r'/invitations/delete', delete_invitation))
     cors.add(add_route('GET',    r'/_/shared', list_shared_vfolders))
     cors.add(add_route('POST',   r'/_/shared', update_shared_vfolder))
+    cors.add(add_route('GET',    r'/_/fstab', get_fstab_contents))
     cors.add(add_route('GET',    r'/_/mounts', list_mounts))
     cors.add(add_route('POST',   r'/_/mounts', mount_host))
     cors.add(add_route('DELETE', r'/_/mounts', umount_host))
