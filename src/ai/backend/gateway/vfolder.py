@@ -1,3 +1,4 @@
+import asyncio
 import functools
 import json
 import logging
@@ -13,8 +14,10 @@ from datetime import datetime, timedelta
 import aiohttp
 from aiohttp import web
 import aiohttp_cors
+import aiojobs
 from aiojobs.aiohttp import atomic
 import aiotools
+from async_timeout import timeout as _timeout
 import sqlalchemy as sa
 import psycopg2
 import trafaret as t
@@ -22,15 +25,17 @@ import trafaret as t
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
 
-from .auth import auth_required
+from .auth import auth_required, superadmin_required
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
     GenericForbidden, InvalidAPIParameters, ServerMisconfiguredError)
 from .manager import (
     READ_ALLOWED, ALL_ALLOWED,
     server_status_required)
+from .resource import get_watcher_info
 from .utils import check_api_params
 from ..manager.models import (
+    agents, AgentStatus,
     users, groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
     VFolderPermission, VFolderPermissionValidator, query_accessible_vfolders,
     get_allowed_vfolder_hosts_by_group, get_allowed_vfolder_hosts_by_user,
@@ -1028,6 +1033,82 @@ async def update_shared_vfolder(request: web.Request, params: Any) -> web.Respon
     return web.json_response(resp, status=200)
 
 
+@superadmin_required
+@server_status_required(READ_ALLOWED)
+async def list_mounts(request: web.Request) -> web.Response:
+    '''
+    List all mounted vfolder hosts in vfroot.
+
+    All mounted hosts from connected (ALIVE) agents are also gathered.
+    Generally, agents should be configured to have same hosts structure,
+    but newly introduced one may not.
+    '''
+    dbpool = request.app['dbpool']
+    access_key = request['keypair']['access_key']
+    log.info('VFOLDER.LIST_MOUNTS(u:{0})', access_key)
+    config = request.app['config_server']
+    mount_prefix = await config.get('volumes/_mount')
+    if mount_prefix is None:
+        mount_prefix = '/mnt'
+
+    # Scan mounted vfolder hosts in manager machine.
+    mounts = set()
+    for p in Path(mount_prefix).iterdir():
+        # TODO: Change os.path.ismount to p.is_mount if Python 3.7 is supported.
+        if p.is_dir() and os.path.ismount(str(p)):
+            mounts.add(str(p))
+    resp = {
+        'manager': {
+            'success': True,
+            'mounts': sorted(mounts),
+            'message': '',
+        },
+        'agents': {},
+    }
+
+    # Scan mounted vfolder hosts for connected agents.
+    async def _fetch_mounts(sess, aid):
+        watcher_info = await get_watcher_info(request, aid)
+        with _timeout(10.0):
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            url = watcher_info['addr'] / 'mounts'
+            async with sess.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = {
+                        'success': True,
+                        'mounts': await resp.json(),
+                        'message': '',
+                    }
+                else:
+                    data = {
+                        'success': False,
+                        'mounts': [],
+                        'message': await resp.text(),
+                    }
+                return (aid, data,)
+
+    async with dbpool.acquire() as conn:
+        query = (sa.select([agents.c.id])
+                   .select_from(agents)
+                   .where(agents.c.status == AgentStatus.ALIVE))
+        result = await conn.execute(query)
+        rows = await result.fetchall()
+    connector = aiohttp.TCPConnector()
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        scheduler = await aiojobs.create_scheduler(limit=8)
+        try:
+            jobs = await asyncio.gather(*[
+                scheduler.spawn(_fetch_mounts(sess, row.id)) for row in rows
+            ])
+            mounts = await asyncio.gather(*[job.wait() for job in jobs])
+            for mount in mounts:
+                resp['agents'][mount[0]] = mount[1]
+        finally:
+            await scheduler.close()
+
+    return web.json_response(resp, status=200)
+
+
 async def init(app):
     mount_prefix = await app['config_server'].get('volumes/_mount')
     fs_prefix = await app['config_server'].get('volumes/_fsprefix')
@@ -1071,4 +1152,5 @@ def create_app(default_cors_options):
     cors.add(add_route('DELETE', r'/invitations/delete', delete_invitation))
     cors.add(add_route('GET',    r'/_/shared', list_shared_vfolders))
     cors.add(add_route('POST',   r'/_/shared', update_shared_vfolder))
+    cors.add(add_route('GET',    r'/_/mounts', list_mounts))
     return app, []
