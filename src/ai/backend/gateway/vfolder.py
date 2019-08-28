@@ -1183,10 +1183,11 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
         mount_prefix = '/mnt'
 
     # Mount on manager.
-    mountpoint = str(Path(mount_prefix) / params['name'])
+    mountpoint = Path(mount_prefix) / params['name']
+    mountpoint.mkdir(exist_ok=True)
     proc = await asyncio.create_subprocess_exec(*[
         'mount', '-t', params['fs_type'],
-        params['fs_location'], mountpoint,
+        params['fs_location'], str(mountpoint),
     ], stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     out, err = await proc.communicate()
     out = out.decode('utf8')
@@ -1203,7 +1204,7 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
         fstab_path = params['fstab_path'] if params['fstab_path'] else '/etc/fstab'
         async with aiofiles.open(fstab_path, mode='r+') as fp:
             fstab = Fstab(fp)
-            await fstab.add(params['fs_location'], mountpoint,
+            await fstab.add(params['fs_location'], str(mountpoint),
                             params['fs_type'], params['options'])
 
     # Mount on running agents.
@@ -1221,7 +1222,7 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
         with _timeout(10.0):
             headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
             url = watcher_info['addr'] / 'mounts'
-            async with sess.post(url, data=params, headers=headers) as resp:
+            async with sess.post(url, json=params, headers=headers) as resp:
                 if resp.status == 200:
                     data = {
                         'success': True,
@@ -1276,7 +1277,7 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
     mount_prefix = await config.get('volumes/_mount')
     if mount_prefix is None:
         mount_prefix = '/mnt'
-    mountpoint = str(Path(mount_prefix) / params['name'])
+    mountpoint = Path(mount_prefix) / params['name']
 
     async with dbpool.acquire() as conn, conn.begin():
         # Prevent unmount if target host is mounted to running kernels.
@@ -1306,7 +1307,7 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
 
     # Unmount from manager.
     proc = await asyncio.create_subprocess_exec(*[
-        'umount', mountpoint
+        'umount', str(mountpoint)
     ], stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     out, err = await proc.communicate()
     out = out.decode('utf8')
@@ -1323,7 +1324,7 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
         fstab_path = params['fstab_path'] if params['fstab_path'] else '/etc/fstab'
         async with aiofiles.open(fstab_path, mode='r+') as fp:
             fstab = Fstab(fp)
-            await fstab.remove_by_mountpoint(mountpoint)
+            await fstab.remove_by_mountpoint(str(mountpoint))
 
     # Unmount from running agents.
     async def _umount(sess, aid):
@@ -1331,7 +1332,7 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
         with _timeout(10.0):
             headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
             url = watcher_info['addr'] / 'mounts'
-            async with sess.delete(url, data=params, headers=headers) as resp:
+            async with sess.delete(url, json=params, headers=headers) as resp:
                 if resp.status == 200:
                     data = {
                         'success': True,
