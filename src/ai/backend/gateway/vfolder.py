@@ -1049,10 +1049,8 @@ async def get_fstab_contents(request: web.Request, params: Any) -> web.Response:
     '''
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.GET_FSTAB_CONTENTS(u:{0})', access_key)
-    if params['fstab_path'] is not None:
-        fstab_path = params['fstab_path']
-    else:
-        fstab_path = '/etc/fstab'
+    if params['fstab_path'] is None:
+        params['fstab_path'] = '/etc/fstab'
     if params['agent_id'] is not None:
         # Return specific agent's fstab.
         connector = aiohttp.TCPConnector()
@@ -1061,19 +1059,28 @@ async def get_fstab_contents(request: web.Request, params: Any) -> web.Response:
             with _timeout(10.0):
                 headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
                 url = watcher_info['addr'] / 'fstab'
-                async with sess.get(url, headers=headers) as resp:
+                async with sess.get(url, headers=headers, params=params) as resp:
                     if resp.status == 200:
-                        entries = await resp.json()
-                        return web.json_response(entries)
+                        content = await resp.text()
+                        resp = {
+                            'content': content,
+                            'node': 'agent',
+                            'node_id': params['agent_id'],
+                        }
+                        return web.json_response(resp)
                     else:
                         message = await resp.text()
                         return web.json_response(message, status=resp.status)
     else:
         # Return manager's fstab.
         async with aiofiles.open(fstab_path, mode='r') as fp:
-            fstab = Fstab(fp)
-            entries = list(await fstab.get_entries())
-            return web.json_response(entries)
+            content = await fp.read()
+            resp = {
+                'content': content,
+                'node': 'manager',
+                'node_id': 'manager',
+            }
+            return web.json_response(resp)
 
 
 @superadmin_required
