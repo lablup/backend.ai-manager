@@ -65,6 +65,8 @@ async def detect_status_update(app):
 async def fetch_manager_status(request):
     try:
         status = await request.app['config_server'].get_manager_status()
+        etcd_info = await request.app['config_server'].get_manager_nodes_info()
+        configs = request.app['config']['manager']
 
         async with request.app['dbpool'].acquire() as conn, conn.begin():
             query = (sa.select([sa.func.count(kernels.c.id)])
@@ -73,9 +75,22 @@ async def fetch_manager_status(request):
                               (kernels.c.status != KernelStatus.TERMINATED)))
             active_sessions_num = await conn.scalar(query)
 
+            nodes = [
+                {
+                    'id': etcd_info[''],
+                    'num_proc': configs['num-proc'],
+                    'service_addr': str(configs['service-addr']),
+                    'event_listen_addr': str(configs['event-listen-addr']),
+                    'heartbeat_timeout': configs['heartbeat-timeout'],
+                    'ssl_enabled': configs['ssl-enabled'],
+                    'active_sessions': active_sessions_num,
+                    'status': status.value,
+                }
+            ]
             return web.json_response({
-                'status': status.value,
-                'active_sessions': active_sessions_num,
+                'nodes': nodes,
+                'status': status.value,                  # legacy?
+                'active_sessions': active_sessions_num,  # legacy?
             })
     except:
         log.exception('GET_MANAGER_STATUS: exception')

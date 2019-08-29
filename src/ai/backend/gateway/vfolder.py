@@ -1,3 +1,4 @@
+import asyncio
 import functools
 import json
 import logging
@@ -10,27 +11,33 @@ import uuid
 import jwt
 from datetime import datetime, timedelta
 
+import aiofiles
 import aiohttp
 from aiohttp import web
 import aiohttp_cors
+import aiojobs
 from aiojobs.aiohttp import atomic
 import aiotools
+from async_timeout import timeout as _timeout
 import sqlalchemy as sa
 import psycopg2
 import trafaret as t
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.utils import Fstab
 
-from .auth import auth_required
+from .auth import auth_required, superadmin_required
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
     GenericForbidden, InvalidAPIParameters, ServerMisconfiguredError)
 from .manager import (
     READ_ALLOWED, ALL_ALLOWED,
     server_status_required)
+from .resource import get_watcher_info
 from .utils import check_api_params
 from ..manager.models import (
+    agents, AgentStatus, kernels, KernelStatus,
     users, groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
     VFolderPermission, VFolderPermissionValidator, query_accessible_vfolders,
     get_allowed_vfolder_hosts_by_group, get_allowed_vfolder_hosts_by_user,
@@ -1028,6 +1035,341 @@ async def update_shared_vfolder(request: web.Request, params: Any) -> web.Respon
     return web.json_response(resp, status=200)
 
 
+@superadmin_required
+@server_status_required(READ_ALLOWED)
+@check_api_params(
+    t.Dict({
+        t.Key('fstab_path', default=None): t.Or(t.String, t.Null),
+        t.Key('agent_id', default=None): t.Or(t.String, t.Null),
+    }),
+)
+async def get_fstab_contents(request: web.Request, params: Any) -> web.Response:
+    '''
+    Return the contents of `/etc/fstab` file.
+    '''
+    access_key = request['keypair']['access_key']
+    log.info('VFOLDER.GET_FSTAB_CONTENTS(u:{0})', access_key)
+    if params['fstab_path'] is None:
+        params['fstab_path'] = '/etc/fstab'
+    if params['agent_id'] is not None:
+        # Return specific agent's fstab.
+        connector = aiohttp.TCPConnector()
+        watcher_info = await get_watcher_info(request, params['agent_id'])
+        async with aiohttp.ClientSession(connector=connector) as sess:
+            with _timeout(10.0):
+                headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+                url = watcher_info['addr'] / 'fstab'
+                async with sess.get(url, headers=headers, params=params) as resp:
+                    if resp.status == 200:
+                        content = await resp.text()
+                        resp = {
+                            'content': content,
+                            'node': 'agent',
+                            'node_id': params['agent_id'],
+                        }
+                        return web.json_response(resp)
+                    else:
+                        message = await resp.text()
+                        return web.json_response(message, status=resp.status)
+    else:
+        # Return manager's fstab.
+        async with aiofiles.open(params['fstab_path'], mode='r') as fp:
+            content = await fp.read()
+            resp = {
+                'content': content,
+                'node': 'manager',
+                'node_id': 'manager',
+            }
+            return web.json_response(resp)
+
+
+@superadmin_required
+@server_status_required(READ_ALLOWED)
+async def list_mounts(request: web.Request) -> web.Response:
+    '''
+    List all mounted vfolder hosts in vfroot.
+
+    All mounted hosts from connected (ALIVE) agents are also gathered.
+    Generally, agents should be configured to have same hosts structure,
+    but newly introduced one may not.
+    '''
+    dbpool = request.app['dbpool']
+    access_key = request['keypair']['access_key']
+    log.info('VFOLDER.LIST_MOUNTS(u:{0})', access_key)
+    config = request.app['config_server']
+    mount_prefix = await config.get('volumes/_mount')
+    if mount_prefix is None:
+        mount_prefix = '/mnt'
+
+    # Scan mounted vfolder hosts in manager machine.
+    mounts = set()
+    for p in Path(mount_prefix).iterdir():
+        # TODO: Change os.path.ismount to p.is_mount if Python 3.7 is supported.
+        if p.is_dir() and os.path.ismount(str(p)):
+            mounts.add(str(p))
+    resp = {
+        'manager': {
+            'success': True,
+            'mounts': sorted(mounts),
+            'message': '',
+        },
+        'agents': {},
+    }
+
+    # Scan mounted vfolder hosts for connected agents.
+    async def _fetch_mounts(sess, aid):
+        watcher_info = await get_watcher_info(request, aid)
+        with _timeout(10.0):
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            url = watcher_info['addr'] / 'mounts'
+            async with sess.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = {
+                        'success': True,
+                        'mounts': await resp.json(),
+                        'message': '',
+                    }
+                else:
+                    data = {
+                        'success': False,
+                        'mounts': [],
+                        'message': await resp.text(),
+                    }
+                return (aid, data,)
+
+    async with dbpool.acquire() as conn:
+        query = (sa.select([agents.c.id])
+                   .select_from(agents)
+                   .where(agents.c.status == AgentStatus.ALIVE))
+        result = await conn.execute(query)
+        rows = await result.fetchall()
+
+    connector = aiohttp.TCPConnector()
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        scheduler = await aiojobs.create_scheduler(limit=8)
+        try:
+            jobs = await asyncio.gather(*[
+                scheduler.spawn(_fetch_mounts(sess, row.id)) for row in rows
+            ])
+            mounts = await asyncio.gather(*[job.wait() for job in jobs])
+            for mount in mounts:
+                resp['agents'][mount[0]] = mount[1]
+        finally:
+            await scheduler.close()
+
+    return web.json_response(resp, status=200)
+
+
+@superadmin_required
+@server_status_required(READ_ALLOWED)
+@check_api_params(
+    t.Dict({
+        t.Key('fs_location'): t.String,
+        t.Key('name'): t.String,
+        t.Key('fs_type', default='nfs'): t.String,
+        t.Key('options', default=None): t.Or(t.String, t.Null),
+        t.Key('scaling_group', default=None): t.Or(t.String, t.Null),
+        t.Key('fstab_path', default=None): t.Or(t.String, t.Null),
+        t.Key('edit_fstab', default=False): t.Or(t.Bool, t.Null),
+    }),
+)
+async def mount_host(request: web.Request, params: Any) -> web.Response:
+    '''
+    Mount device into vfolder host.
+
+    Mount a device (eg: nfs) located at `fs_location` into `<vfroot>/name` in the
+    host machines (manager and all agents). `fs_type` can be specified by requester,
+    which fallbaks to 'nfs'.
+
+    If `scaling_group` is specified, try to mount for agents in the scaling group.
+    '''
+    dbpool = request.app['dbpool']
+    access_key = request['keypair']['access_key']
+    log.info('VFOLDER.MOUNT_HOST(u:{0})', access_key)
+    config = request.app['config_server']
+    mount_prefix = await config.get('volumes/_mount')
+    if mount_prefix is None:
+        mount_prefix = '/mnt'
+
+    # Mount on manager.
+    mountpoint = Path(mount_prefix) / params['name']
+    mountpoint.mkdir(exist_ok=True)
+    proc = await asyncio.create_subprocess_exec(*[
+        'mount', '-t', params['fs_type'],
+        params['fs_location'], str(mountpoint),
+    ], stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    out, err = await proc.communicate()
+    out = out.decode('utf8')
+    err = err.decode('utf8')
+    await proc.wait()
+    resp = {
+        'manager': {
+            'success': True if not err else False,
+            'message': out if not err else err,
+        },
+        'agents': {},
+    }
+    if params['edit_fstab']:
+        fstab_path = params['fstab_path'] if params['fstab_path'] else '/etc/fstab'
+        async with aiofiles.open(fstab_path, mode='r+') as fp:
+            fstab = Fstab(fp)
+            await fstab.add(params['fs_location'], str(mountpoint),
+                            params['fs_type'], params['options'])
+
+    # Mount on running agents.
+    async with dbpool.acquire() as conn:
+        query = (sa.select([agents.c.id])
+                   .select_from(agents)
+                   .where(agents.c.status == AgentStatus.ALIVE))
+        if params['scaling_group'] is not None:
+            query = query.where(agents.c.scaling == params['scaling_group'])
+        result = await conn.execute(query)
+        rows = await result.fetchall()
+
+    async def _mount(sess, aid):
+        watcher_info = await get_watcher_info(request, aid)
+        with _timeout(10.0):
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            url = watcher_info['addr'] / 'mounts'
+            async with sess.post(url, json=params, headers=headers) as resp:
+                if resp.status == 200:
+                    data = {
+                        'success': True,
+                        'message': await resp.text(),
+                    }
+                else:
+                    data = {
+                        'success': False,
+                        'message': await resp.text(),
+                    }
+                return (aid, data,)
+
+    connector = aiohttp.TCPConnector()
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        scheduler = await aiojobs.create_scheduler(limit=8)
+        try:
+            jobs = await asyncio.gather(*[
+                scheduler.spawn(_mount(sess, row.id)) for row in rows
+            ])
+            results = await asyncio.gather(*[job.wait() for job in jobs])
+            for result in results:
+                resp['agents'][result[0]] = result[1]
+        finally:
+            await scheduler.close()
+
+    return web.json_response(resp, status=200)
+
+
+@superadmin_required
+@server_status_required(READ_ALLOWED)
+@check_api_params(
+    t.Dict({
+        t.Key('name'): t.String,
+        t.Key('scaling_group', default=None): t.Or(t.String, t.Null),
+        t.Key('fstab_path', default=None): t.Or(t.String, t.Null),
+        t.Key('edit_fstab', default=False): t.Or(t.Bool, t.Null),
+    }),
+)
+async def umount_host(request: web.Request, params: Any) -> web.Response:
+    '''
+    Unmount device from vfolder host.
+
+    Unmount a device (eg: nfs) located at `<vfroot>/name` from the host machines
+    (manager and all agents).
+
+    If `scaling_group` is specified, try to unmount for agents in the scaling group.
+    '''
+    dbpool = request.app['dbpool']
+    access_key = request['keypair']['access_key']
+    log.info('VFOLDER.UMOUNT_HOST(u:{0})', access_key)
+    config = request.app['config_server']
+    mount_prefix = await config.get('volumes/_mount')
+    if mount_prefix is None:
+        mount_prefix = '/mnt'
+    mountpoint = Path(mount_prefix) / params['name']
+
+    async with dbpool.acquire() as conn, conn.begin():
+        # Prevent unmount if target host is mounted to running kernels.
+        query = (sa.select([kernels.c.mounts])
+                   .select_from(kernels)
+                   .where(kernels.c.status != KernelStatus.TERMINATED))
+        result = await conn.execute(query)
+        _kernels = await result.fetchall()
+        _mounted = set()
+        for kern in _kernels:
+            if kern.mounts:
+                _mounted.update([m[1] for m in kern.mounts])
+        if params['name'] in _mounted:
+            resp = {
+                'title': 'Target host is used in sessions',
+                'message': 'Target host is used in sessions',
+            }
+            return web.json_response(resp, status=409)
+
+        query = (sa.select([agents.c.id])
+                   .select_from(agents)
+                   .where(agents.c.status == AgentStatus.ALIVE))
+        if params['scaling_group'] is not None:
+            query = query.where(agents.c.scaling == params['scaling_group'])
+        result = await conn.execute(query)
+        _agents = await result.fetchall()
+
+    # Unmount from manager.
+    proc = await asyncio.create_subprocess_exec(*[
+        'umount', str(mountpoint)
+    ], stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    out, err = await proc.communicate()
+    out = out.decode('utf8')
+    err = err.decode('utf8')
+    await proc.wait()
+    resp = {
+        'manager': {
+            'success': True if not err else False,
+            'message': out if not err else err,
+        },
+        'agents': {},
+    }
+    if params['edit_fstab']:
+        fstab_path = params['fstab_path'] if params['fstab_path'] else '/etc/fstab'
+        async with aiofiles.open(fstab_path, mode='r+') as fp:
+            fstab = Fstab(fp)
+            await fstab.remove_by_mountpoint(str(mountpoint))
+
+    # Unmount from running agents.
+    async def _umount(sess, aid):
+        watcher_info = await get_watcher_info(request, aid)
+        with _timeout(10.0):
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            url = watcher_info['addr'] / 'mounts'
+            async with sess.delete(url, json=params, headers=headers) as resp:
+                if resp.status == 200:
+                    data = {
+                        'success': True,
+                        'message': await resp.text(),
+                    }
+                else:
+                    data = {
+                        'success': False,
+                        'message': await resp.text(),
+                    }
+                return (aid, data,)
+
+    connector = aiohttp.TCPConnector()
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        scheduler = await aiojobs.create_scheduler(limit=8)
+        try:
+            jobs = await asyncio.gather(*[
+                scheduler.spawn(_umount(sess, _agent.id)) for _agent in _agents
+            ])
+            results = await asyncio.gather(*[job.wait() for job in jobs])
+            for result in results:
+                resp['agents'][result[0]] = result[1]
+        finally:
+            await scheduler.close()
+
+    return web.json_response(resp, status=200)
+
+
 async def init(app):
     mount_prefix = await app['config_server'].get('volumes/_mount')
     fs_prefix = await app['config_server'].get('volumes/_fsprefix')
@@ -1071,4 +1413,8 @@ def create_app(default_cors_options):
     cors.add(add_route('DELETE', r'/invitations/delete', delete_invitation))
     cors.add(add_route('GET',    r'/_/shared', list_shared_vfolders))
     cors.add(add_route('POST',   r'/_/shared', update_shared_vfolder))
+    cors.add(add_route('GET',    r'/_/fstab', get_fstab_contents))
+    cors.add(add_route('GET',    r'/_/mounts', list_mounts))
+    cors.add(add_route('POST',   r'/_/mounts', mount_host))
+    cors.add(add_route('DELETE', r'/_/mounts', umount_host))
     return app, []
