@@ -1051,6 +1051,8 @@ async def get_fstab_contents(request: web.Request, params: Any) -> web.Response:
     log.info('VFOLDER.GET_FSTAB_CONTENTS(u:{0})', access_key)
     if params['fstab_path'] is not None:
         fstab_path = params['fstab_path']
+    else:
+        fstab_path = '/etc/fstab'
     if params['agent_id'] is not None:
         # Return specific agent's fstab.
         connector = aiohttp.TCPConnector()
