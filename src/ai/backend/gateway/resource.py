@@ -302,7 +302,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
 @superadmin_required
 @check_api_params(
     t.Dict({
-        tx.AliasedKey(['group_ids', 'project_ids', 'group', 'project']): t.List(t.String),
+        tx.MultiKey('group_ids'): t.List(t.String),
         t.Key('month'): t.Regexp(r'^\d{6}', re.ASCII),
     }),
     loads=_json_loads)
@@ -333,7 +333,7 @@ async def usage_per_month(request: web.Request, params: Any) -> web.Response:
 @superadmin_required
 @check_api_params(
     t.Dict({
-        tx.AliasedKey(['group_id', 'project_id', 'group', 'project']): t.String,
+        t.Key('group_id'): t.String,
         t.Key('start_date'): t.Regexp(r'^\d{8}$', re.ASCII),
         t.Key('end_date'): t.Regexp(r'^\d{8}$', re.ASCII),
     }),
