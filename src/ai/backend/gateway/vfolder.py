@@ -1073,7 +1073,7 @@ async def get_fstab_contents(request: web.Request, params: Any) -> web.Response:
                         return web.json_response(message, status=resp.status)
     else:
         # Return manager's fstab.
-        async with aiofiles.open(fstab_path, mode='r') as fp:
+        async with aiofiles.open(params['fstab_path'], mode='r') as fp:
             content = await fp.read()
             resp = {
                 'content': content,
