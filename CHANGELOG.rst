@@ -1,6 +1,13 @@
 Changes
 =======
 
+19.09.0b11 (2019-08-30)
+-----------------------
+
+* NEW: superadmin APIs for mount/unmount vfolder hosts (#183)
+
+* FIX: resource usage API validation error when it is used with URL query strings
+
 19.09.0b10 (2019-08-27)
 -----------------------
 
