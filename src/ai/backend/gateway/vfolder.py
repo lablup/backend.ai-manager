@@ -1194,10 +1194,15 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
     # Mount on manager.
     mountpoint = Path(mount_prefix) / params['name']
     mountpoint.mkdir(exist_ok=True)
-    proc = await asyncio.create_subprocess_exec(*[
-        'mount', '-t', params['fs_type'],
-        params['fs_location'], str(mountpoint),
-    ], stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    if params.get('options', None):
+        cmd = ['mount', '-t', params['fs_type'], '-o', params['options'],
+               params['fs_location'], str(mountpoint)]
+    else:
+        cmd = ['mount', '-t', params['fs_type'],
+               params['fs_location'], str(mountpoint)]
+    proc = await asyncio.create_subprocess_exec(*cmd,
+                                                stdout=asyncio.subprocess.PIPE,
+                                                stderr=asyncio.subprocess.PIPE)
     out, err = await proc.communicate()
     out = out.decode('utf8')
     err = err.decode('utf8')
