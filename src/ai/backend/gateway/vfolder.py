@@ -1209,7 +1209,7 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
         },
         'agents': {},
     }
-    if params['edit_fstab']:
+    if params['edit_fstab'] and resp['manager']['success']:
         fstab_path = params['fstab_path'] if params['fstab_path'] else '/etc/fstab'
         async with aiofiles.open(fstab_path, mode='r+') as fp:
             fstab = Fstab(fp)
@@ -1287,6 +1287,7 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
     if mount_prefix is None:
         mount_prefix = '/mnt'
     mountpoint = Path(mount_prefix) / params['name']
+    assert Path(mount_prefix) != mountpoint
 
     async with dbpool.acquire() as conn, conn.begin():
         # Prevent unmount if target host is mounted to running kernels.
@@ -1329,7 +1330,12 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
         },
         'agents': {},
     }
-    if params['edit_fstab']:
+    if resp['manager']['success']:
+        try:
+            mountpoint.rmdir()  # delete directory if empty
+        except OSError:
+            pass
+    if params['edit_fstab'] and resp['manager']['success']:
         fstab_path = params['fstab_path'] if params['fstab_path'] else '/etc/fstab'
         async with aiofiles.open(fstab_path, mode='r+') as fp:
             fstab = Fstab(fp)
