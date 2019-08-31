@@ -330,6 +330,16 @@ async def list_hosts(request: web.Request) -> web.Response:
 @atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
+async def list_allowed_types(request: web.Request) -> web.Response:
+    access_key = request['keypair']['access_key']
+    log.info('VFOLDER.LIST_ALLOWED_TYPES (u:{0})', access_key)
+    allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
+    return web.json_response(allowed_vfolder_types, status=200)
+
+
+@atomic
+@auth_required
+@server_status_required(READ_ALLOWED)
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
 async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
     resp = {}
@@ -1407,6 +1417,7 @@ def create_app(default_cors_options):
     cors.add(vfolder_resource.add_route('GET',    get_info))
     cors.add(vfolder_resource.add_route('DELETE', delete))
     cors.add(add_route('GET',    r'/_/hosts', list_hosts))
+    cors.add(add_route('GET',    r'/_/allowed_types', list_allowed_types))
     cors.add(add_route('GET',    r'/_/download_with_token', download_with_token))
     cors.add(add_route('POST',   r'/{name}/rename', rename))
     cors.add(add_route('POST',   r'/{name}/mkdir', mkdir))
