@@ -144,7 +144,7 @@ def vfolder_check_exists(handler: Callable[[web.Request, VFolderRow], web.Respon
     t.Dict({
         t.Key('name'): tx.Slug(allow_dot=True),
         t.Key('host', default=None) >> 'folder_host': t.Or(t.String, t.Null),
-        tx.AliasedKey(['group', 'groupId', 'group_id'], default=None): t.Or(tx.UUID, t.Null),
+        tx.AliasedKey(['group', 'groupId', 'group_id'], default=None): t.Or(tx.UUID, t.String, t.Null),
     }),
 )
 async def create(request: web.Request, params: Any) -> web.Response:
@@ -154,7 +154,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
     user_uuid = request['user']['uuid']
     resource_policy = request['keypair']['resource_policy']
     domain_name = request['user']['domain_name']
-    group_id = params['group']
+    group = params['group']
     log.info('VFOLDER.CREATE (u:{0})', access_key)
     # Resolve host for the new virtual folder.
     folder_host = params['folder_host']
@@ -173,6 +173,15 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 ' Only "user" or "group" is allowed.')
 
     async with dbpool.acquire() as conn:
+        # Convert group name to uuid if group name is given.
+        if isinstance(group, str):
+            query = (sa.select([groups.c.id])
+                     .select_from(groups)
+                     .where(groups.c.domain_name == domain_name)
+                     .where(groups.c.name == group))
+            group_id = await conn.scalar(query)
+        else:
+            group_id = group
         # Check resource policy's allowed_vfolder_hosts
         allowed_hosts = await get_allowed_vfolder_hosts_by_group(conn, resource_policy,
                                                                  domain_name, group_id)
