@@ -1214,10 +1214,10 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
     mountpoint = Path(mount_prefix) / params['name']
     mountpoint.mkdir(exist_ok=True)
     if params.get('options', None):
-        cmd = ['mount', '-t', params['fs_type'], '-o', params['options'],
+        cmd = ['sudo', 'mount', '-t', params['fs_type'], '-o', params['options'],
                params['fs_location'], str(mountpoint)]
     else:
-        cmd = ['mount', '-t', params['fs_type'],
+        cmd = ['sudo', 'mount', '-t', params['fs_type'],
                params['fs_location'], str(mountpoint)]
     proc = await asyncio.create_subprocess_exec(*cmd,
                                                 stdout=asyncio.subprocess.PIPE,
@@ -1341,7 +1341,7 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
 
     # Unmount from manager.
     proc = await asyncio.create_subprocess_exec(*[
-        'umount', str(mountpoint)
+        'sudo', 'umount', str(mountpoint)
     ], stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     out, err = await proc.communicate()
     out = out.decode('utf8')

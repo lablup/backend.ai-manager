@@ -362,7 +362,7 @@ async def usage_per_period(request: web.Request, params: Any) -> web.Response:
     log.info('USAGE_PER_MONTH (g:{0}, start_date:{1}, end_date:{2})',
              group_id, start_date, end_date)
     resp = await get_container_stats_for_period(request, start_date, end_date, group_ids=[group_id])
-    resp = resp[0]  # only one group (project)
+    resp = resp[0] if len(resp) > 0 else {}  # only one group (project)
     resp['start_date'] = params['start_date']
     resp['end_date'] = params['end_date']
     log.debug('container list are retrieved from {0} to {1}', start_date, end_date)
