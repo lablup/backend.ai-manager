@@ -239,11 +239,11 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
         nfs = None
         if row.mounts is not None:
             nfs = list(set([mount[1] for mount in row.mounts]))
-        device_type = []
+        device_type = set()
         if row.attached_devices and row.attached_devices.get('cuda'):
             for dev_info in row.attached_devices['cuda']:
                 if dev_info.get('model_name'):
-                    device_type.append(dev_info['model_name'])
+                    device_type.add(dev_info['model_name'])
         c_info = {
             'id': str(row['id']),
             'name': row['sess_id'],
@@ -252,14 +252,15 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'cpu_used': float(last_stat['cpu_used']['current']) if last_stat else 0,
             'mem_allocated': int(row.occupied_slots['mem']),
             'mem_used': int(last_stat['mem']['capacity']) if last_stat else 0,
-            'shared_memory': 0,  # TODO: how to get?
+            'shared_memory': int(last_stat['shared_mem']['capacity']) \
+                    if last_stat and 'shared_mem' in last_stat else 0,
             'disk_used': int(last_stat['io_scratch_size']['stats.max']) if last_stat else 0,
             'io_read': int(last_stat['io_read']['current']) if last_stat else 0,
             'io_write': int(last_stat['io_write']['current']) if last_stat else 0,
             'used_time': str(row['terminated_at'] - row['created_at']),
             'used_days': (row['terminated_at'].astimezone(local_tz).toordinal() -
                           row['created_at'].astimezone(local_tz).toordinal() + 1),
-            'device_type': device_type,
+            'device_type': list(device_type),
             'nfs': nfs,
             'image_name': row['image'],
             'created_at': str(row['created_at']),
@@ -292,7 +293,9 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             objs_per_group[group_id]['g_io_write'] += c_info['io_write']
             for device in c_info['device_type']:
                 if device not in objs_per_group[group_id]['g_device_type']:
-                    objs_per_group[group_id]['g_device_type'].append(device)
+                    g_dev_type = objs_per_group[group_id]['g_device_type']
+                    g_dev_type.append(device)
+                    objs_per_group[group_id]['g_device_type'] = list(set(g_dev_type))
             objs_per_group[group_id]['c_infos'].append(c_info)
     return list(objs_per_group.values())
 
