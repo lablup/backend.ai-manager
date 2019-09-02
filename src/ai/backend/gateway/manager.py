@@ -2,7 +2,7 @@ import asyncio
 import functools
 import json
 import logging
-from typing import Set
+from typing import FrozenSet
 import sqlalchemy as sa
 
 from aiohttp import web
@@ -20,7 +20,7 @@ from ..manager.models import kernels, KernelStatus
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.manager'))
 
 
-def server_status_required(allowed_status: Set[ManagerStatus]):
+def server_status_required(allowed_status: FrozenSet[ManagerStatus]):
 
     def decorator(handler):
 

@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import stat
-from typing import Any, Callable, Mapping
+from typing import Any, Awaitable, Callable, Dict, Mapping
 import uuid
 import jwt
 from datetime import datetime, timedelta
@@ -58,7 +58,8 @@ def vfolder_permission_required(perm: VFolderPermission):
     which contains a dict object describing the matched VirtualFolder table row.
     '''
 
-    def _wrapper(handler: Callable[[web.Request, VFolderRow], web.Response]):
+    # FIXME: replace ... with [web.Request, VFolderRow, Any...] in the future mypy
+    def _wrapper(handler: Callable[..., Awaitable[web.Response]]):
 
         @functools.wraps(handler)
         async def _wrapped(request: web.Request, *args, **kwargs) -> web.Response:
@@ -103,7 +104,8 @@ def vfolder_permission_required(perm: VFolderPermission):
     return _wrapper
 
 
-def vfolder_check_exists(handler: Callable[[web.Request, VFolderRow], web.Response]):
+# FIXME: replace ... with [web.Request, VFolderRow, Any...] in the future mypy
+def vfolder_check_exists(handler: Callable[..., Awaitable[web.Response]]):
     '''
     Checks if the target vfolder exists and is owned by the current user.
 
@@ -148,7 +150,7 @@ def vfolder_check_exists(handler: Callable[[web.Request, VFolderRow], web.Respon
     }),
 )
 async def create(request: web.Request, params: Any) -> web.Response:
-    resp = {}
+    resp: Dict[str, Any] = {}
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
     user_uuid = request['user']['uuid']
@@ -351,7 +353,7 @@ async def list_allowed_types(request: web.Request) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
 async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
-    resp = {}
+    resp: Dict[str, Any] = {}
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.GETINFO (u:{0}, f:{1})', access_key, folder_name)
@@ -518,7 +520,7 @@ async def delete_files(request: web.Request, params: Any, row: VFolderRow) -> we
             ops.append(functools.partial(os.unlink, file_path))
     for op in ops:
         op()
-    resp = {}
+    resp: Dict[str, Any] = {}
     return web.json_response(resp, status=200)
 
 

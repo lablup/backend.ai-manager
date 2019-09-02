@@ -5,7 +5,11 @@ WebSocket-based streaming kernel interaction APIs.
 from abc import ABCMeta, abstractmethod
 import asyncio
 import logging
-from typing import Awaitable
+from typing import (
+    Optional, Union,
+    Awaitable,
+    Tuple,
+)
 
 import aiohttp
 from aiohttp import web
@@ -115,6 +119,14 @@ class WebSocketProxy:
         'downstream_cb', 'upstream_cb', 'ping_cb',
     )
 
+    up_conn: aiohttp.ClientWebSocketResponse
+    down_conn: web.WebSocketResponse
+    upstream_buffer: asyncio.Queue[Tuple[Union[bytes, str], web.WSMsgType]]
+    upstream_buffer_task: Optional[asyncio.Task]
+    downstream_cb: Optional[Awaitable]
+    upstream_cb: Optional[Awaitable]
+    ping_cb: Optional[Awaitable]
+
     def __init__(self, up_conn: aiohttp.ClientWebSocketResponse,
                  down_conn: web.WebSocketResponse, *,
                  downstream_callback: Awaitable = None,
@@ -191,7 +203,7 @@ class WebSocketProxy:
             else:
                 await self.close()
 
-    async def write(self, msg: str, tp):
+    async def write(self, msg: Union[bytes, str], tp: web.WSMsgType):
         await self.upstream_buffer.put((msg, tp))
 
     async def close_downstream(self):

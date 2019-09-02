@@ -10,7 +10,7 @@ import numbers
 import re
 import time
 import traceback
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable, Tuple
 
 from aiohttp import web
 import trafaret as t
@@ -30,7 +30,7 @@ def method_placeholder(orig_method):
     return _handler
 
 
-def get_access_key_scopes(request):
+def get_access_key_scopes(request: web.Request) -> Tuple[str, str]:
     assert request['is_authorized'], \
            'Only authorized requests may have access key scopes'
     requester_access_key = request['keypair']['access_key']
@@ -43,9 +43,10 @@ def get_access_key_scopes(request):
     return requester_access_key, requester_access_key
 
 
-def check_api_params(checker: t.Trafaret, loads: Callable = None) -> Any:
+def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None) -> Any:
 
-    def wrap(handler: Callable[[web.Request, Any], web.Response]):
+    # FIXME: replace ... with [web.Request, Any...] in the future mypy
+    def wrap(handler: Callable[..., Awaitable[web.Response]]):
 
         @functools.wraps(handler)
         async def wrapped(request: web.Request, *args, **kwargs) -> web.Response:
@@ -87,6 +88,9 @@ class _Infinity(numbers.Number):
     def __int__(self):
         return 0xffff_ffff_ffff_ffff  # a practical 64-bit maximum
 
+    def __hash__(self):
+        return hash(self)
+
 
 numbers.Number.register(_Infinity)
 Infinity = _Infinity()
@@ -107,7 +111,7 @@ def prettify_traceback(exc):
         return f'Traceback:\n{buf.getvalue()}'
 
 
-def catch_unexpected(log, raven=None):
+def catch_unexpected(log, reraise_cancellation: bool = True, raven=None):
 
     def _wrap(func):
 
@@ -115,7 +119,10 @@ def catch_unexpected(log, raven=None):
         async def _wrapped(*args, **kwargs):
             try:
                 return await func(*args, **kwargs)
-            except:
+            except asyncio.CancelledError:
+                if reraise_cancellation:
+                    raise
+            except Exception:
                 if raven:
                     raven.captureException()
                 log.exception('unexpected error!')
