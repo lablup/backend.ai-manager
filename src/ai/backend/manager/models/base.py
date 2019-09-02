@@ -415,7 +415,7 @@ def privileged_mutation(required_role, target_func=None):
                         # result = await conn.execute(query)
                         # if result.rowcount > 0:
                         #     permit_chains.append(True)
-                permitted = all(permit_chains)
+                permitted = all(permit_chains) if permit_chains else False
             elif required_role == UserRole.USER:
                 permitted = True
             # assuming that mutation result objects has 3 fields:
