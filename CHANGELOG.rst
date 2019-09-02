@@ -1,6 +1,13 @@
 Changes
 =======
 
+19.09.0b12 (2019-09-03)
+-----------------------
+
+* Various bug fixes for GQL scoped permission handling
+
+* NEW: bugx fixes and mount option support for vfolder mount API (#183)
+
 19.09.0b11 (2019-08-30)
 -----------------------
 
