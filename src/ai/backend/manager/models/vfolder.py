@@ -194,7 +194,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
 
     if 'group' in allowed_vfolder_types:
         # Scan group vfolders.
-        if user_role == UserRole.ADMIN:
+        if user_role == UserRole.ADMIN or user_role == 'admin':
             from ai.backend.manager.models import groups
             query = (sa.select([groups.c.id])
                        .select_from(groups)
@@ -227,7 +227,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
         if extra_vf_conds is not None:
             query = query.where(extra_vf_conds)
         result = await conn.execute(query)
-        is_owner = (user_role == UserRole.ADMIN)
+        is_owner = (user_role == UserRole.ADMIN or user_role == 'admin')
         perm = VFolderPermission.OWNER_PERM if is_owner else VFolderPermission.READ_WRITE
         async for row in result:
             entries.append({

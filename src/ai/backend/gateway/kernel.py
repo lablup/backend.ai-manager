@@ -133,6 +133,18 @@ async def create(request: web.Request, params: Any) -> web.Response:
                     raise BackendError(f"{params['group']}: no such group in domain {params['domain']}")
                 params['domain'] = row.domain_name  # replace domain_name
                 group_id = row.id
+            elif request['is_admin']:  # domain-admin can spawn container in any group in domain
+                query = (sa.select([groups.c.id])
+                           .select_from(groups)
+                           .where(domains.c.name == params['domain'])
+                           .where(domains.c.is_active)
+                           .where(groups.c.name == params['group'])
+                           .where(groups.c.is_active))
+                rows = await conn.execute(query)
+                row = await rows.fetchone()
+                if row is None:
+                    raise BackendError(f"{params['group']}: no such group in domain {params['domain']}")
+                group_id = row.id
             else:  # check if the group_name is associated with one of user's group.
                 j = agus.join(groups, agus.c.group_id == groups.c.id)
                 query = (sa.select([agus])
@@ -168,6 +180,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 matched_mounts = set()
                 matched_vfolders = await query_accessible_vfolders(
                     conn, owner_uuid,
+                    user_role=request['user']['role'], domain_name=params['domain'],
                     allowed_vfolder_types=allowed_vfolder_types,
                     extra_vf_conds=(vfolders.c.name.in_(creation_config['mounts'])))
                 for item in matched_vfolders:
