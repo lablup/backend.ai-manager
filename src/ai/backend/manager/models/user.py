@@ -57,7 +57,6 @@ users = sa.Table(
     #: Field for synchronization with external services.
     sa.Column('integration_id', sa.String(length=512)),
 
-    # Note: admins without domain_name is global admin.
     sa.Column('domain_name', sa.String(length=64),
               sa.ForeignKey('domains.name'), index=True),
     sa.Column('role', EnumValueType(UserRole), default=UserRole.USER),

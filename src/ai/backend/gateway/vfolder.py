@@ -265,7 +265,10 @@ async def list_folders(request: web.Request) -> web.Response:
     resp = []
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
+    domain_name = request['user']['domain_name']
+    user_role = request['user']['role']
     user_uuid = request['user']['uuid']
+
     log.info('VFOLDER.LIST (u:{0})', access_key)
     async with dbpool.acquire() as conn:
         params = await request.json() if request.can_read_body else request.query
@@ -292,7 +295,9 @@ async def list_folders(request: web.Request) -> web.Response:
                 })
         else:
             entries = await query_accessible_vfolders(
-                conn, user_uuid, allowed_vfolder_types=allowed_vfolder_types)
+                conn, user_uuid,
+                user_role=user_role, domain_name=domain_name,
+                allowed_vfolder_types=allowed_vfolder_types)
         for entry in entries:
             resp.append({
                 'name': entry['name'],
