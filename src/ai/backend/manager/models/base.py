@@ -418,11 +418,15 @@ def privileged_mutation(required_role, target_func=None):
                 permitted = all(permit_chains) if permit_chains else False
             elif required_role == UserRole.USER:
                 permitted = True
-            # assuming that mutation result objects has 3 fields:
+            # assuming that mutation result objects has 2 or 3 fields:
+            # success(bool), message(str) - usually for delete mutations
             # success(bool), message(str), item(object)
             if permitted:
                 return await func(cls, root, info, *args, **kwargs)
-            return cls(False, 'no permission to execute the given mutation', None)
+            if info.field_name.startswith('delete_'):
+                return cls(False, 'no permission to execute the given mutation')
+            else:
+                return cls(False, 'no permission to execute the given mutation', None)
 
         return wrapped
 
