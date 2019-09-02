@@ -227,7 +227,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
         if extra_vf_conds is not None:
             query = query.where(extra_vf_conds)
         result = await conn.execute(query)
-        is_owner = (user_role == 'admin')
+        is_owner = (user_role == UserRole.ADMIN)
         perm = VFolderPermission.OWNER_PERM if is_owner else VFolderPermission.READ_WRITE
         async for row in result:
             entries.append({

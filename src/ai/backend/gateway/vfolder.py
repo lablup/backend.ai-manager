@@ -958,12 +958,16 @@ async def delete(request: web.Request) -> web.Response:
     dbpool = request.app['dbpool']
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
+    domain_name = request['user']['domain_name']
+    user_role = request['user']['role']
     user_uuid = request['user']['uuid']
     allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
     log.info('VFOLDER.DELETE (u:{0}, f:{1})', access_key, folder_name)
     async with dbpool.acquire() as conn, conn.begin():
         entries = await query_accessible_vfolders(
-            conn, user_uuid,  allowed_vfolder_types=allowed_vfolder_types)
+            conn, user_uuid,
+            user_role=user_role, domain_name=domain_name,
+            allowed_vfolder_types=allowed_vfolder_types)
         for entry in entries:
             if entry['name'] == folder_name:
                 if not entry['is_owner']:
@@ -972,7 +976,7 @@ async def delete(request: web.Request) -> web.Response:
                         'that is not owned by me.')
                 break
         else:
-            raise InvalidAPIParameters('No such group.')
+            raise InvalidAPIParameters('No such vfolder.')
         folder_path = (request.app['VFOLDER_MOUNT'] / entry['host'] /
                        request.app['VFOLDER_FSPREFIX'] / entry['id'].hex)
         try:
