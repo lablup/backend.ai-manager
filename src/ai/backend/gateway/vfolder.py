@@ -63,6 +63,8 @@ def vfolder_permission_required(perm: VFolderPermission):
         @functools.wraps(handler)
         async def _wrapped(request: web.Request, *args, **kwargs) -> web.Response:
             dbpool = request.app['dbpool']
+            domain_name = request['user']['domain_name']
+            user_role = request['user']['role']
             user_uuid = request['user']['uuid']
             folder_name = request.match_info['name']
             allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
@@ -90,6 +92,7 @@ def vfolder_permission_required(perm: VFolderPermission):
             async with dbpool.acquire() as conn:
                 entries = await query_accessible_vfolders(
                     conn, user_uuid,
+                    user_role=user_role, domain_name=domain_name,
                     allowed_vfolder_types=allowed_vfolder_types,
                     extra_vf_conds=(vfolders.c.name == folder_name),
                     extra_vfperm_conds=perm_cond)
@@ -151,6 +154,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
     resp = {}
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
+    user_role = request['user']['role']
     user_uuid = request['user']['uuid']
     resource_policy = request['keypair']['resource_policy']
     domain_name = request['user']['domain_name']
@@ -203,6 +207,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
         # Prevent creation of vfolder with duplicated name.
         entries = await query_accessible_vfolders(
             conn, user_uuid,
+            user_role=user_role, domain_name=domain_name,
             allowed_vfolder_types=allowed_vfolder_types,
             extra_vf_conds=(sa.and_(vfolders.c.name == params['name'],
                                     vfolders.c.host == folder_host))
@@ -402,6 +407,8 @@ async def rename(request: web.Request, params: Any, row: VFolderRow) -> web.Resp
     dbpool = request.app['dbpool']
     old_name = request.match_info['name']
     access_key = request['keypair']['access_key']
+    domain_name = request['user']['domain_name']
+    user_role = request['user']['role']
     user_uuid = request['user']['uuid']
     new_name = params['new_name']
     allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
@@ -409,7 +416,9 @@ async def rename(request: web.Request, params: Any, row: VFolderRow) -> web.Resp
              access_key, old_name, new_name)
     async with dbpool.acquire() as conn:
         entries = await query_accessible_vfolders(
-            conn, user_uuid, allowed_vfolder_types=allowed_vfolder_types)
+            conn, user_uuid,
+            user_role=user_role, domain_name=domain_name,
+            allowed_vfolder_types=allowed_vfolder_types)
         for entry in entries:
             if entry['name'] == new_name:
                 raise InvalidAPIParameters(
