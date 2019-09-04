@@ -356,7 +356,8 @@ async def destroy(request: web.Request) -> web.Response:
     sess_id = request.match_info['sess_id']
     requester_access_key, owner_access_key = get_access_key_scopes(request)
     domain_name = None
-    if requester_access_key != owner_access_key and request['is_admin']:
+    if requester_access_key != owner_access_key and \
+            not request['is_superadmin'] and request['is_admin']:
         domain_name = request['user']['domain_name']
     log.info('DESTROY (u:{0}/{1}, k:{2})',
              requester_access_key, owner_access_key, sess_id)
