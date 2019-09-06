@@ -1,6 +1,15 @@
 Changes
 =======
 
+19.09.0b13 (2019-09-xx)
+-----------------------
+
+* UPDATE: Enhance vfolder download APIs to support ranged HTTP requests for partial downloads and
+  fix the browser-side fetch() API content decoding error due to the default behavior of
+  aiohttp.web.FileResponse implementation.
+
+* Various bug fixes for GQL APIs and statistics.
+
 19.09.0b12 (2019-09-03)
 -----------------------
 
