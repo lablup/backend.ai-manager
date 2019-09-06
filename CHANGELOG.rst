@@ -1,6 +1,22 @@
 Changes
 =======
 
+19.09.0b13 (2019-09-xx)
+-----------------------
+
+* UPDATE: Enhance vfolder download APIs to support ranged HTTP requests for partial downloads and
+  fix the browser-side fetch() API content decoding error due to the default behavior of
+  aiohttp.web.FileResponse implementation.
+
+* Various bug fixes for GQL APIs and statistics.
+
+19.09.0b12 (2019-09-03)
+-----------------------
+
+* Various bug fixes for GQL scoped permission handling
+
+* NEW: bugx fixes and mount option support for vfolder mount API (#183)
+
 19.09.0b11 (2019-08-30)
 -----------------------
 

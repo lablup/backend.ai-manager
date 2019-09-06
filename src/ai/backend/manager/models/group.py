@@ -130,11 +130,11 @@ class Group(graphene.ObjectType):
     async def get_groups_for_user(context, user_id):
         async with context['dbpool'].acquire() as conn:
             j = sa.join(groups, association_groups_users,
-                        groups.c.id == association_groups_users.c.id)
+                        groups.c.id == association_groups_users.c.group_id)
             query = (
                 sa.select([groups])
                 .select_from(j)
-                .where(association_groups_users.c.id == user_id)
+                .where(association_groups_users.c.user_id == user_id)
             )
             objs = []
             async for row in conn.execute(query):

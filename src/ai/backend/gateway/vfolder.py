@@ -7,13 +7,14 @@ from pathlib import Path
 import shutil
 import stat
 from typing import Any, Awaitable, Callable, Dict, Mapping
+import urllib.parse
 import uuid
 import jwt
 from datetime import datetime, timedelta
 
 import aiofiles
 import aiohttp
-from aiohttp import web
+from aiohttp import web, hdrs
 import aiohttp_cors
 import aiojobs
 from aiojobs.aiohttp import atomic
@@ -64,6 +65,8 @@ def vfolder_permission_required(perm: VFolderPermission):
         @functools.wraps(handler)
         async def _wrapped(request: web.Request, *args, **kwargs) -> web.Response:
             dbpool = request.app['dbpool']
+            domain_name = request['user']['domain_name']
+            user_role = request['user']['role']
             user_uuid = request['user']['uuid']
             folder_name = request.match_info['name']
             allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
@@ -91,6 +94,7 @@ def vfolder_permission_required(perm: VFolderPermission):
             async with dbpool.acquire() as conn:
                 entries = await query_accessible_vfolders(
                     conn, user_uuid,
+                    user_role=user_role, domain_name=domain_name,
                     allowed_vfolder_types=allowed_vfolder_types,
                     extra_vf_conds=(vfolders.c.name == folder_name),
                     extra_vfperm_conds=perm_cond)
@@ -153,6 +157,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
     resp: Dict[str, Any] = {}
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
+    user_role = request['user']['role']
     user_uuid = request['user']['uuid']
     resource_policy = request['keypair']['resource_policy']
     domain_name = request['user']['domain_name']
@@ -205,6 +210,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
         # Prevent creation of vfolder with duplicated name.
         entries = await query_accessible_vfolders(
             conn, user_uuid,
+            user_role=user_role, domain_name=domain_name,
             allowed_vfolder_types=allowed_vfolder_types,
             extra_vf_conds=(sa.and_(vfolders.c.name == params['name'],
                                     vfolders.c.host == folder_host))
@@ -213,6 +219,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
             raise VFolderAlreadyExists
 
         # Check if group exists.
+        if group and group_id is None:
+            raise InvalidAPIParameters('no such group')
         if group_id is not None:
             if 'group' not in allowed_vfolder_types:
                 raise InvalidAPIParameters('group vfolder cannot be created in this host')
@@ -267,7 +275,10 @@ async def list_folders(request: web.Request) -> web.Response:
     resp = []
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
+    domain_name = request['user']['domain_name']
+    user_role = request['user']['role']
     user_uuid = request['user']['uuid']
+
     log.info('VFOLDER.LIST (u:{0})', access_key)
     async with dbpool.acquire() as conn:
         params = await request.json() if request.can_read_body else request.query
@@ -294,7 +305,9 @@ async def list_folders(request: web.Request) -> web.Response:
                 })
         else:
             entries = await query_accessible_vfolders(
-                conn, user_uuid, allowed_vfolder_types=allowed_vfolder_types)
+                conn, user_uuid,
+                user_role=user_role, domain_name=domain_name,
+                allowed_vfolder_types=allowed_vfolder_types)
         for entry in entries:
             resp.append({
                 'name': entry['name'],
@@ -397,6 +410,8 @@ async def rename(request: web.Request, params: Any, row: VFolderRow) -> web.Resp
     dbpool = request.app['dbpool']
     old_name = request.match_info['name']
     access_key = request['keypair']['access_key']
+    domain_name = request['user']['domain_name']
+    user_role = request['user']['role']
     user_uuid = request['user']['uuid']
     new_name = params['new_name']
     allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
@@ -404,7 +419,9 @@ async def rename(request: web.Request, params: Any, row: VFolderRow) -> web.Resp
              access_key, old_name, new_name)
     async with dbpool.acquire() as conn:
         entries = await query_accessible_vfolders(
-            conn, user_uuid, allowed_vfolder_types=allowed_vfolder_types)
+            conn, user_uuid,
+            user_role=user_role, domain_name=domain_name,
+            allowed_vfolder_types=allowed_vfolder_types)
         for entry in entries:
             if entry['name'] == new_name:
                 raise InvalidAPIParameters(
@@ -584,8 +601,21 @@ async def download_single(request: web.Request, params: Any, row: VFolderRow) ->
         raise InvalidAPIParameters('The file is not found.')
     if not file_path.is_file():
         raise InvalidAPIParameters('The file is not a regular file.')
-
-    return web.FileResponse(file_path)
+    if request.method == 'HEAD':
+        return web.Response(status=200, headers={
+            hdrs.ACCEPT_RANGES: 'bytes',
+            hdrs.CONTENT_LENGTH: str(file_path.stat().st_size),
+        })
+    ascii_filename = file_path.name.encode('ascii', errors='ignore').decode('ascii').replace('"', r'\"')
+    encoded_filename = urllib.parse.quote(file_path.name, encoding='utf-8')
+    return web.FileResponse(file_path, headers={
+        hdrs.CONTENT_TYPE: "application/octet-stream",
+        hdrs.CONTENT_DISPOSITION: " ".join([
+            "attachment;"
+            f"filename=\"{ascii_filename}\";",       # RFC-2616 sec2.2
+            f"filename*=UTF-8''{encoded_filename}",  # RFC-5987
+        ])
+    })
 
 
 @atomic
@@ -632,8 +662,21 @@ async def download_with_token(request):
         raise InvalidAPIParameters('The file is not found.')
     if not file_path.is_file():
         raise InvalidAPIParameters('The file is not a regular file.')
-
-    return web.FileResponse(file_path)
+    if request.method == 'HEAD':
+        return web.Response(status=200, headers={
+            hdrs.ACCEPT_RANGES: 'bytes',
+            hdrs.CONTENT_LENGTH: str(file_path.stat().st_size),
+        })
+    ascii_filename = file_path.name.encode('ascii', errors='ignore').decode('ascii').replace('"', r'\"')
+    encoded_filename = urllib.parse.quote(file_path.name, encoding='utf-8')
+    return web.FileResponse(file_path, headers={
+        hdrs.CONTENT_TYPE: "application/octet-stream",
+        hdrs.CONTENT_DISPOSITION: " ".join([
+            "attachment;"
+            f"filename=\"{ascii_filename}\";",       # RFC-2616 sec2.2
+            f"filename*=UTF-8''{encoded_filename}",  # RFC-5987
+        ])
+    })
 
 
 @auth_required
@@ -955,12 +998,16 @@ async def delete(request: web.Request) -> web.Response:
     dbpool = request.app['dbpool']
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
+    domain_name = request['user']['domain_name']
+    user_role = request['user']['role']
     user_uuid = request['user']['uuid']
     allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
     log.info('VFOLDER.DELETE (u:{0}, f:{1})', access_key, folder_name)
     async with dbpool.acquire() as conn, conn.begin():
         entries = await query_accessible_vfolders(
-            conn, user_uuid,  allowed_vfolder_types=allowed_vfolder_types)
+            conn, user_uuid,
+            user_role=user_role, domain_name=domain_name,
+            allowed_vfolder_types=allowed_vfolder_types)
         for entry in entries:
             if entry['name'] == folder_name:
                 if not entry['is_owner']:
@@ -969,7 +1016,7 @@ async def delete(request: web.Request) -> web.Response:
                         'that is not owned by me.')
                 break
         else:
-            raise InvalidAPIParameters('No such group.')
+            raise InvalidAPIParameters('No such vfolder.')
         folder_path = (request.app['VFOLDER_MOUNT'] / entry['host'] /
                        request.app['VFOLDER_FSPREFIX'] / entry['id'].hex)
         try:
@@ -1430,12 +1477,14 @@ def create_app(default_cors_options):
     cors.add(add_route('GET',    r'/_/hosts', list_hosts))
     cors.add(add_route('GET',    r'/_/allowed_types', list_allowed_types))
     cors.add(add_route('GET',    r'/_/download_with_token', download_with_token))
+    cors.add(add_route('HEAD',   r'/_/download_with_token', download_with_token))
     cors.add(add_route('POST',   r'/{name}/rename', rename))
     cors.add(add_route('POST',   r'/{name}/mkdir', mkdir))
     cors.add(add_route('POST',   r'/{name}/upload', upload))
     cors.add(add_route('DELETE', r'/{name}/delete_files', delete_files))
     cors.add(add_route('GET',    r'/{name}/download', download))
     cors.add(add_route('GET',    r'/{name}/download_single', download_single))
+    cors.add(add_route('HEAD',   r'/{name}/download_single', download_single))
     cors.add(add_route('POST',   r'/{name}/request_download', request_download))
     cors.add(add_route('GET',    r'/{name}/files', list_files))
     cors.add(add_route('POST',   r'/{name}/invite', invite))

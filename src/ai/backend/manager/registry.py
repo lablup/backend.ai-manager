@@ -829,14 +829,18 @@ class AgentRegistry:
                 del key_occupied[k]
             return key_occupied
 
-    async def destroy_session(self, sess_id, access_key):
+    async def destroy_session(self, sess_id, access_key, *,
+                              domain_name=None):
         async with self.handle_kernel_exception(
                 'destroy_session', sess_id, access_key, set_error=True):
             try:
                 async with self.dbpool.acquire() as conn, conn.begin():
                     kernel = await self.get_session(sess_id, access_key,
+                                                    field=[kernels.c.domain_name],
                                                     for_update=True,
                                                     db_connection=conn)
+                    if domain_name is not None and kernel.domain_name != domain_name:
+                        raise KernelNotFound
                     await self.set_session_status(sess_id, access_key,
                                                   KernelStatus.TERMINATING,
                                                   db_connection=conn)

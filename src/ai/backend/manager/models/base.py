@@ -387,45 +387,54 @@ def privileged_mutation(required_role, target_func=None):
                 if user['role'] == required_role:
                     permitted = True
             elif required_role == UserRole.ADMIN:
-                if target_func is None:
-                    return cls(False, 'misconfigured privileged mutation: no target_func', None)
-                target_domain, target_group = target_func(*args, **kwargs)
-                if target_domain is None and target_group is None:
-                    return cls(False, 'misconfigured privileged mutation: '
-                                      'both target_domain and target_group missing', None)
-                permit_chains = []
-                if target_domain is not None:
-                    if user['domain_name'] == target_domain:
-                        permit_chains.append(True)
-                if target_group is not None:
-                    async with info.context['dbpool'].acquire() as conn, conn.begin():
-                        # check if the group is part of the requester's domain.
-                        query = (
-                            groups.select()
-                            .where(
-                                (groups.c.id == target_group) &
-                                (groups.c.domain_name == user['domain_name'])
-                            )
-                        )
-                        result = await conn.execute(query)
-                        if result.rowcount > 0:
+                if user['role'] == UserRole.SUPERADMIN:
+                    permitted = True
+                elif user['role'] == UserRole.USER:
+                    permitted = False
+                else:
+                    if target_func is None:
+                        return cls(False, 'misconfigured privileged mutation: no target_func', None)
+                    target_domain, target_group = target_func(*args, **kwargs)
+                    if target_domain is None and target_group is None:
+                        return cls(False, 'misconfigured privileged mutation: '
+                                          'both target_domain and target_group missing', None)
+                    permit_chains = []
+                    if target_domain is not None:
+                        if user['domain_name'] == target_domain:
                             permit_chains.append(True)
-                        # TODO: check the group permission if implemented
-                        # query = (
-                        #     association_groups_users.select()
-                        #     .where(association_groups_users.c.group_id == target_group)
-                        # )
-                        # result = await conn.execute(query)
-                        # if result.rowcount > 0:
-                        #     permit_chains.append(True)
-                permitted = all(permit_chains) if permit_chains else False
+                    if target_group is not None:
+                        async with info.context['dbpool'].acquire() as conn, conn.begin():
+                            # check if the group is part of the requester's domain.
+                            query = (
+                                groups.select()
+                                .where(
+                                    (groups.c.id == target_group) &
+                                    (groups.c.domain_name == user['domain_name'])
+                                )
+                            )
+                            result = await conn.execute(query)
+                            if result.rowcount > 0:
+                                permit_chains.append(True)
+                            # TODO: check the group permission if implemented
+                            # query = (
+                            #     association_groups_users.select()
+                            #     .where(association_groups_users.c.group_id == target_group)
+                            # )
+                            # result = await conn.execute(query)
+                            # if result.rowcount > 0:
+                            #     permit_chains.append(True)
+                    permitted = all(permit_chains) if permit_chains else False
             elif required_role == UserRole.USER:
                 permitted = True
-            # assuming that mutation result objects has 3 fields:
+            # assuming that mutation result objects has 2 or 3 fields:
+            # success(bool), message(str) - usually for delete mutations
             # success(bool), message(str), item(object)
             if permitted:
                 return await func(cls, root, info, *args, **kwargs)
-            return cls(False, 'no permission to execute the given mutation', None)
+            if info.field_name.startswith('delete_'):
+                return cls(False, 'no permission to execute the given mutation')
+            else:
+                return cls(False, 'no permission to execute the given mutation', None)
 
         return wrapped
 

@@ -240,20 +240,23 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
         if row.mounts is not None:
             nfs = list(set([mount[1] for mount in row.mounts]))
         device_type = set()
+        smp = 0
         if row.attached_devices and row.attached_devices.get('cuda'):
             for dev_info in row.attached_devices['cuda']:
                 if dev_info.get('model_name'):
                     device_type.add(dev_info['model_name'])
+                smp += dev_info.get('smp', 0)
         c_info = {
             'id': str(row['id']),
             'name': row['sess_id'],
             'access_key': row['access_key'],
-            'smp': float(row.occupied_slots['cpu']),  # CPU allocated
+            'cpu_allocated': float(row.occupied_slots['cpu']),
             'cpu_used': float(last_stat['cpu_used']['current']) if last_stat else 0,
             'mem_allocated': int(row.occupied_slots['mem']),
             'mem_used': int(last_stat['mem']['capacity']) if last_stat else 0,
             'shared_memory': int(last_stat['shared_mem']['capacity']) \
                     if last_stat and 'shared_mem' in last_stat else 0,
+            'disk_allocated': 0,  # TODO: disk quota limit
             'disk_used': int(last_stat['io_scratch_size']['stats.max']) if last_stat else 0,
             'io_read': int(last_stat['io_read']['current']) if last_stat else 0,
             'io_write': int(last_stat['io_write']['current']) if last_stat else 0,
@@ -261,7 +264,9 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'used_days': (row['terminated_at'].astimezone(local_tz).toordinal() -
                           row['created_at'].astimezone(local_tz).toordinal() + 1),
             'device_type': list(device_type),
+            'smp': float(smp),  # TODO: GPU smp
             'nfs': nfs,
+            'image_id': row['image'],  # TODO: image id
             'image_name': row['image'],
             'created_at': str(row['created_at']),
             'terminated_at': str(row['terminated_at']),
@@ -271,23 +276,26 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
                 'domain_name': row['domain_name'],
                 'g_id': group_id,
                 'g_name': row['name'],  # this is group's name
-                'g_smp': c_info['smp'],
+                'g_cpu_allocated': c_info['cpu_allocated'],
                 'g_cpu_used': c_info['cpu_used'],
                 'g_mem_allocated': c_info['mem_allocated'],
                 'g_mem_used': c_info['mem_used'],
                 'g_shared_memory': c_info['shared_memory'],
+                'g_disk_allocated': c_info['disk_allocated'],
                 'g_disk_used': c_info['disk_used'],
                 'g_io_read': c_info['io_read'],
                 'g_io_write': c_info['io_write'],
                 'g_device_type': c_info['device_type'],
+                'g_smp': c_info['smp'],
                 'c_infos': [c_info],
             }
         else:
-            objs_per_group[group_id]['g_smp'] += c_info['smp']
+            objs_per_group[group_id]['g_cpu_allocated'] += c_info['cpu_allocated']
             objs_per_group[group_id]['g_cpu_used'] += c_info['cpu_used']
             objs_per_group[group_id]['g_mem_allocated'] += c_info['mem_allocated']
             objs_per_group[group_id]['g_mem_used'] += c_info['mem_used']
             objs_per_group[group_id]['g_shared_memory'] += c_info['shared_memory']
+            objs_per_group[group_id]['g_disk_allocated'] += c_info['disk_allocated']
             objs_per_group[group_id]['g_disk_used'] += c_info['disk_used']
             objs_per_group[group_id]['g_io_read'] += c_info['io_read']
             objs_per_group[group_id]['g_io_write'] += c_info['io_write']
@@ -296,6 +304,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
                     g_dev_type = objs_per_group[group_id]['g_device_type']
                     g_dev_type.append(device)
                     objs_per_group[group_id]['g_device_type'] = list(set(g_dev_type))
+            objs_per_group[group_id]['g_smp'] += c_info['smp']
             objs_per_group[group_id]['c_infos'].append(c_info)
     return list(objs_per_group.values())
 
