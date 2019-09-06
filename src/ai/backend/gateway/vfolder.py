@@ -599,7 +599,11 @@ async def download_single(request: web.Request, params: Any, row: VFolderRow) ->
         raise InvalidAPIParameters('The file is not found.')
     if not file_path.is_file():
         raise InvalidAPIParameters('The file is not a regular file.')
-
+    if request.method == 'HEAD':
+        return web.Response(status=200, headers={
+            hdrs.ACCEPT_RANGES: 'bytes',
+            hdrs.CONTENT_LENGTH: str(file_path.stat().st_size),
+        })
     ascii_filename = file_path.name.encode('ascii', errors='ignore').decode('ascii').replace('"', r'\"')
     encoded_filename = urllib.parse.quote(file_path.name, encoding='utf-8')
     return web.FileResponse(file_path, headers={
@@ -656,7 +660,11 @@ async def download_with_token(request):
         raise InvalidAPIParameters('The file is not found.')
     if not file_path.is_file():
         raise InvalidAPIParameters('The file is not a regular file.')
-
+    if request.method == 'HEAD':
+        return web.Response(status=200, headers={
+            hdrs.ACCEPT_RANGES: 'bytes',
+            hdrs.CONTENT_LENGTH: str(file_path.stat().st_size),
+        })
     ascii_filename = file_path.name.encode('ascii', errors='ignore').decode('ascii').replace('"', r'\"')
     encoded_filename = urllib.parse.quote(file_path.name, encoding='utf-8')
     return web.FileResponse(file_path, headers={
@@ -1467,12 +1475,14 @@ def create_app(default_cors_options):
     cors.add(add_route('GET',    r'/_/hosts', list_hosts))
     cors.add(add_route('GET',    r'/_/allowed_types', list_allowed_types))
     cors.add(add_route('GET',    r'/_/download_with_token', download_with_token))
+    cors.add(add_route('HEAD',   r'/_/download_with_token', download_with_token))
     cors.add(add_route('POST',   r'/{name}/rename', rename))
     cors.add(add_route('POST',   r'/{name}/mkdir', mkdir))
     cors.add(add_route('POST',   r'/{name}/upload', upload))
     cors.add(add_route('DELETE', r'/{name}/delete_files', delete_files))
     cors.add(add_route('GET',    r'/{name}/download', download))
     cors.add(add_route('GET',    r'/{name}/download_single', download_single))
+    cors.add(add_route('HEAD',   r'/{name}/download_single', download_single))
     cors.add(add_route('POST',   r'/{name}/request_download', request_download))
     cors.add(add_route('GET',    r'/{name}/files', list_files))
     cors.add(add_route('POST',   r'/{name}/invite', invite))
