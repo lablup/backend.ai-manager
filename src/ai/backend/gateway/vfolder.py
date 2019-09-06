@@ -7,13 +7,14 @@ from pathlib import Path
 import shutil
 import stat
 from typing import Any, Callable, Mapping
+import urllib.parse
 import uuid
 import jwt
 from datetime import datetime, timedelta
 
 import aiofiles
 import aiohttp
-from aiohttp import web
+from aiohttp import web, hdrs
 import aiohttp_cors
 import aiojobs
 from aiojobs.aiohttp import atomic
@@ -599,7 +600,16 @@ async def download_single(request: web.Request, params: Any, row: VFolderRow) ->
     if not file_path.is_file():
         raise InvalidAPIParameters('The file is not a regular file.')
 
-    return web.FileResponse(file_path)
+    ascii_filename = file_path.name.encode('ascii', errors='ignore').decode('ascii').replace('"', r'\"')
+    encoded_filename = urllib.parse.quote(file_path.name, encoding='utf-8')
+    return web.FileResponse(file_path, headers={
+        hdrs.CONTENT_TYPE: "application/octet-stream",
+        hdrs.CONTENT_DISPOSITION: " ".join([
+            "attachment;"
+            f"filename=\"{ascii_filename}\";",       # RFC-2616 sec2.2
+            f"filename*=UTF-8''{encoded_filename}",  # RFC-5987
+        ])
+    })
 
 
 @atomic
@@ -647,7 +657,16 @@ async def download_with_token(request):
     if not file_path.is_file():
         raise InvalidAPIParameters('The file is not a regular file.')
 
-    return web.FileResponse(file_path)
+    ascii_filename = file_path.name.encode('ascii', errors='ignore').decode('ascii').replace('"', r'\"')
+    encoded_filename = urllib.parse.quote(file_path.name, encoding='utf-8')
+    return web.FileResponse(file_path, headers={
+        hdrs.CONTENT_TYPE: "application/octet-stream",
+        hdrs.CONTENT_DISPOSITION: " ".join([
+            "attachment;"
+            f"filename=\"{ascii_filename}\";",       # RFC-2616 sec2.2
+            f"filename*=UTF-8''{encoded_filename}",  # RFC-5987
+        ])
+    })
 
 
 @auth_required
