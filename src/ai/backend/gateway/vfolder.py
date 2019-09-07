@@ -36,7 +36,7 @@ from .auth import auth_required, superadmin_required
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
     GenericForbidden, InvalidAPIParameters, ServerMisconfiguredError,
-    InternalServerError,
+    BackendAgentError,
 )
 from .manager import (
     READ_ALLOWED, ALL_ALLOWED,
@@ -1146,11 +1146,12 @@ async def get_fstab_contents(request: web.Request, params: Any) -> web.Response:
                         return web.json_response(resp)
                     else:
                         message = await watcher_resp.text()
-                        return web.json_response(message, status=watcher_resp.status)
+                        raise BackendAgentError(
+                            'FAILURE', f'({watcher_resp.status}: {watcher_resp.reason}) {message}')
         except asyncio.TimeoutError:
             log.error('VFOLDER.GET_FSTAB_CONTENTS(u:{}): timeout from watcher (agent:{})',
                       access_key, params['agent_id'])
-            raise InternalServerError('Could not fetch fstab data from agent')
+            raise BackendAgentError('TIMEOUT', 'Could not fetch fstab data from agent')
     else:
         # Return manager's fstab.
         async with aiofiles.open(params['fstab_path'], mode='r') as fp:
