@@ -10,7 +10,10 @@ import functools
 import json
 import logging
 import re
-from typing import Any
+from typing import (
+    Any,
+    MutableMapping,
+)
 
 import aiohttp
 from aiohttp import web
@@ -59,7 +62,7 @@ async def list_presets(request) -> web.Response:
         # scaling_group = request.query.get('scaling_group')
         # if scaling_group is not None:
         #     query = query.where(resource_presets.c.scaling_group == scaling_group)
-        resp = {'presets': []}
+        resp: MutableMapping[str, Any] = {'presets': []}
         async for row in conn.execute(query):
             preset_slots = row['resource_slots'].filter_slots(known_slot_types)
             resp['presets'].append({
@@ -94,7 +97,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
     registry = request.app['registry']
     known_slot_types = await registry.config_server.get_resource_slots()
     keypair_limits = ResourceSlot.from_policy(resource_policy, known_slot_types)
-    resp = {
+    resp: MutableMapping[str, Any] = {
         'keypair_limits': None,
         'keypair_using': None,
         'keypair_remaining': None,
@@ -184,8 +187,9 @@ async def recalculate_usage(request) -> web.Response:
         query = (sa.select([kernels.c.access_key, kernels.c.agent, kernels.c.occupied_slots])
                    .where(kernels.c.status != KernelStatus.TERMINATED)
                    .order_by(sa.asc(kernels.c.access_key)))
-        concurrency_used_per_key = defaultdict(lambda: 0)
-        occupied_slots_per_agent = defaultdict(lambda: ResourceSlot({'cpu': 0, 'mem': 0}))
+        concurrency_used_per_key: MutableMapping[str, int] = defaultdict(lambda: 0)
+        occupied_slots_per_agent: MutableMapping[str, ResourceSlot] = \
+            defaultdict(lambda: ResourceSlot({'cpu': 0, 'mem': 0}))
         async for row in conn.execute(query):
             concurrency_used_per_key[row.access_key] += 1
             occupied_slots_per_agent[row.agent] += ResourceSlot(row.occupied_slots)
@@ -254,10 +258,11 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'cpu_used': float(last_stat['cpu_used']['current']) if last_stat else 0,
             'mem_allocated': int(row.occupied_slots['mem']),
             'mem_used': int(last_stat['mem']['capacity']) if last_stat else 0,
-            'shared_memory': int(last_stat['shared_mem']['capacity']) \
-                    if last_stat and 'shared_mem' in last_stat else 0,
+            'shared_memory': (int(last_stat['shared_mem']['capacity'])
+                              if last_stat and 'shared_mem' in last_stat else 0),
             'disk_allocated': 0,  # TODO: disk quota limit
-            'disk_used': int(last_stat['io_scratch_size']['stats.max']) if last_stat else 0,
+            'disk_used': (int(last_stat['io_scratch_size']['stats.max'])
+                          if last_stat else 0),
             'io_read': int(last_stat['io_read']['current']) if last_stat else 0,
             'io_write': int(last_stat['io_write']['current']) if last_stat else 0,
             'used_time': str(row['terminated_at'] - row['created_at']),

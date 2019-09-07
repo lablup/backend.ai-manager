@@ -1,6 +1,7 @@
 import asyncio
 from collections import OrderedDict
 import re
+from typing import Sequence
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -17,7 +18,7 @@ from .base import (
 from .user import UserRole
 
 
-__all__ = (
+__all__: Sequence[str] = (
     'groups', 'association_groups_users',
     'Group', 'GroupInput', 'ModifyGroupInput',
     'CreateGroup', 'ModifyGroup', 'DeleteGroup',

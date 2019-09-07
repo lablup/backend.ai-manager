@@ -1,6 +1,6 @@
 from collections import OrderedDict
 import enum
-from typing import Any
+from typing import Any, Sequence
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -13,7 +13,7 @@ from .base import (
 )
 from .user import UserRole
 
-__all__ = (
+__all__: Sequence[str] = (
     'vfolders',
     'vfolder_invitations',
     'vfolder_permissions',
@@ -49,7 +49,7 @@ This is the default permission when the vfolder is owned by the requesting user.
 It is added after creation of the VFolderPermission class to avoid becoming
 one of the regular enumeration entries.
 '''
-VFolderPermission.OWNER_PERM = VFolderPermission.RW_DELETE
+setattr(VFolderPermission, 'OWNER_PERM', VFolderPermission.RW_DELETE)
 
 
 vfolders = sa.Table(

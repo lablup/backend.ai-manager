@@ -10,7 +10,12 @@ import numbers
 import re
 import time
 import traceback
-from typing import Any, Awaitable, Callable, Tuple
+from typing import (
+    Any, Union,
+    Awaitable, Callable, Hashable,
+    MutableMapping,
+    Tuple,
+)
 
 from aiohttp import web
 import trafaret as t
@@ -165,12 +170,14 @@ def chunked(iterable, n):
         yield chunk
 
 
-_burst_last_call = 0
-_burst_times = dict()
-_burst_counts = defaultdict(int)
+_burst_last_call: float = 0.0
+_burst_times: MutableMapping[Hashable, float] = dict()
+_burst_counts: MutableMapping[Hashable, int] = defaultdict(int)
 
 
-async def call_non_bursty(key, coro, *, max_bursts=64, max_idle=100):
+async def call_non_bursty(key: Hashable, coro: Callable[[], Any], *,
+                          max_bursts: int = 64,
+                          max_idle: Union[int, float] = 100.0):
     '''
     Execute a coroutine once upon max_bursts bursty invocations or max_idle
     milliseconds after bursts smaller than max_bursts.

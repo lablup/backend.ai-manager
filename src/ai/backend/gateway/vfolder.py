@@ -6,7 +6,10 @@ import os
 from pathlib import Path
 import shutil
 import stat
-from typing import Any, Awaitable, Callable, Dict, Mapping
+from typing import (
+    Any, Awaitable, Callable,
+    Dict, Mapping, MutableMapping,
+)
 import urllib.parse
 import uuid
 import jwt
@@ -20,6 +23,7 @@ import aiojobs
 from aiojobs.aiohttp import atomic
 import aiotools
 from async_timeout import timeout as _timeout
+import multidict
 import sqlalchemy as sa
 import psycopg2
 import trafaret as t
@@ -31,10 +35,13 @@ from ai.backend.common.utils import Fstab
 from .auth import auth_required, superadmin_required
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
-    GenericForbidden, InvalidAPIParameters, ServerMisconfiguredError)
+    GenericForbidden, InvalidAPIParameters, ServerMisconfiguredError,
+    InternalServerError,
+)
 from .manager import (
     READ_ALLOWED, ALL_ALLOWED,
-    server_status_required)
+    server_status_required,
+)
 from .resource import get_watcher_info
 from .utils import check_api_params
 from ..manager.models import (
@@ -566,12 +573,13 @@ async def download(request: web.Request, params: Any, row: VFolderRow) -> web.Re
                 f'You cannot download "{file}" because it is not a regular file.')
     with aiohttp.MultipartWriter('mixed') as mpwriter:
         total_payloads_length = 0
-        headers = {'Content-Encoding': 'gzip'}
+        headers = multidict.MultiDict({'Content-Encoding': 'gzip'})
         try:
             for file in files:
                 data = open(folder_path / file, 'rb')
                 payload = mpwriter.append(data, headers)
-                total_payloads_length += payload.size
+                if payload.size is not None:
+                    total_payloads_length += payload.size
         except FileNotFoundError:
             return web.Response(status=404, reason='File not found')
         mpwriter._headers['X-TOTAL-PAYLOADS-LENGTH'] = str(total_payloads_length)
@@ -585,7 +593,7 @@ async def download(request: web.Request, params: Any, row: VFolderRow) -> web.Re
     t.Dict({
         t.Key('file'): t.String,
     }))
-async def download_single(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
+async def download_single(request: web.Request, params: Any, row: VFolderRow) -> web.StreamResponse:
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     fn = params['file']
@@ -639,7 +647,7 @@ async def request_download(request: web.Request, params: Any, row: VFolderRow) -
     return web.json_response(resp, status=200)
 
 
-async def download_with_token(request):
+async def download_with_token(request) -> web.StreamResponse:
     try:
         secret = request.app['config']['manager']['secret']
         token = request.query.get('token', '')
@@ -1121,15 +1129,15 @@ async def get_fstab_contents(request: web.Request, params: Any) -> web.Response:
         params['fstab_path'] = '/etc/fstab'
     if params['agent_id'] is not None:
         # Return specific agent's fstab.
-        connector = aiohttp.TCPConnector()
         watcher_info = await get_watcher_info(request, params['agent_id'])
-        async with aiohttp.ClientSession(connector=connector) as sess:
-            with _timeout(10.0):
+        try:
+            client_timeout = aiohttp.ClientTimeout(total=10.0)
+            async with aiohttp.ClientSession(timeout=client_timeout) as sess:
                 headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
                 url = watcher_info['addr'] / 'fstab'
-                async with sess.get(url, headers=headers, params=params) as resp:
-                    if resp.status == 200:
-                        content = await resp.text()
+                async with sess.get(url, headers=headers, params=params) as watcher_resp:
+                    if watcher_resp.status == 200:
+                        content = await watcher_resp.text()
                         resp = {
                             'content': content,
                             'node': 'agent',
@@ -1137,8 +1145,10 @@ async def get_fstab_contents(request: web.Request, params: Any) -> web.Response:
                         }
                         return web.json_response(resp)
                     else:
-                        message = await resp.text()
-                        return web.json_response(message, status=resp.status)
+                        message = await watcher_resp.text()
+                        return web.json_response(message, status=watcher_resp.status)
+        except asyncio.TimeoutError:
+            raise InternalServerError(f"could not fetch watcher API response from {params['agent_id']}")
     else:
         # Return manager's fstab.
         async with aiofiles.open(params['fstab_path'], mode='r') as fp:
@@ -1175,7 +1185,7 @@ async def list_mounts(request: web.Request) -> web.Response:
         # TODO: Change os.path.ismount to p.is_mount if Python 3.7 is supported.
         if p.is_dir() and os.path.ismount(str(p)):
             mounts.add(str(p))
-    resp = {
+    resp: MutableMapping[str, Any] = {
         'manager': {
             'success': True,
             'mounts': sorted(mounts),
@@ -1190,18 +1200,18 @@ async def list_mounts(request: web.Request) -> web.Response:
         with _timeout(10.0):
             headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
             url = watcher_info['addr'] / 'mounts'
-            async with sess.get(url, headers=headers) as resp:
-                if resp.status == 200:
+            async with sess.get(url, headers=headers) as watcher_resp:
+                if watcher_resp.status == 200:
                     data = {
                         'success': True,
-                        'mounts': await resp.json(),
+                        'mounts': await watcher_resp.json(),
                         'message': '',
                     }
                 else:
                     data = {
                         'success': False,
                         'mounts': [],
-                        'message': await resp.text(),
+                        'message': await watcher_resp.text(),
                     }
                 return (aid, data,)
 
@@ -1212,8 +1222,7 @@ async def list_mounts(request: web.Request) -> web.Response:
         result = await conn.execute(query)
         rows = await result.fetchall()
 
-    connector = aiohttp.TCPConnector()
-    async with aiohttp.ClientSession(connector=connector) as sess:
+    async with aiohttp.ClientSession() as sess:
         scheduler = await aiojobs.create_scheduler(limit=8)
         try:
             jobs = await asyncio.gather(*[
@@ -1271,11 +1280,11 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
     proc = await asyncio.create_subprocess_exec(*cmd,
                                                 stdout=asyncio.subprocess.PIPE,
                                                 stderr=asyncio.subprocess.PIPE)
-    out, err = await proc.communicate()
-    out = out.decode('utf8')
-    err = err.decode('utf8')
+    raw_out, raw_err = await proc.communicate()
+    out = raw_out.decode('utf8')
+    err = raw_err.decode('utf8')
     await proc.wait()
-    resp = {
+    resp: MutableMapping[str, Any] = {
         'manager': {
             'success': True if not err else False,
             'message': out if not err else err,
@@ -1374,11 +1383,10 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
             if kern.mounts:
                 _mounted.update([m[1] for m in kern.mounts])
         if params['name'] in _mounted:
-            resp = {
+            return web.json_response({
                 'title': 'Target host is used in sessions',
                 'message': 'Target host is used in sessions',
-            }
-            return web.json_response(resp, status=409)
+            }, status=409)
 
         query = (sa.select([agents.c.id])
                    .select_from(agents)
@@ -1392,11 +1400,11 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
     proc = await asyncio.create_subprocess_exec(*[
         'sudo', 'umount', str(mountpoint)
     ], stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    out, err = await proc.communicate()
-    out = out.decode('utf8')
-    err = err.decode('utf8')
+    raw_out, raw_err = await proc.communicate()
+    out = raw_out.decode('utf8')
+    err = raw_err.decode('utf8')
     await proc.wait()
-    resp = {
+    resp: MutableMapping[str, Any] = {
         'manager': {
             'success': True if not err else False,
             'message': out if not err else err,

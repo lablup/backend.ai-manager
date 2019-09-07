@@ -1,5 +1,6 @@
 from collections import OrderedDict
 import logging
+from typing import Sequence
 
 import graphene
 import sqlalchemy as sa
@@ -17,7 +18,7 @@ from .user import UserRole
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.models'))
 
-__all__ = (
+__all__: Sequence[str] = (
     'resource_presets',
     'ResourcePreset',
     'CreateResourcePreset',

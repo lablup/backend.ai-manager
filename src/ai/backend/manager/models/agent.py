@@ -1,5 +1,6 @@
 from collections import OrderedDict
 import enum
+from typing import Sequence
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -8,9 +9,13 @@ from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common import msgpack
 from ai.backend.common.types import BinarySize
-from .base import metadata, EnumType, Item, PaginatedList, ResourceSlotColumn
+from .base import (
+    metadata,
+    EnumType, Item, PaginatedList,
+    ResourceSlotColumn,
+)
 
-__all__ = (
+__all__: Sequence[str] = (
     'agents', 'AgentStatus',
     'AgentList', 'Agent',
 )

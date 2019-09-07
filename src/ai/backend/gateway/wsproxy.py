@@ -8,7 +8,6 @@ import logging
 from typing import (
     Optional, Union,
     Awaitable,
-    Tuple,
 )
 
 import aiohttp
@@ -121,7 +120,8 @@ class WebSocketProxy:
 
     up_conn: aiohttp.ClientWebSocketResponse
     down_conn: web.WebSocketResponse
-    upstream_buffer: asyncio.Queue[Tuple[Union[bytes, str], web.WSMsgType]]
+    # FIXME: use __future__.annotations in Python 3.7+
+    upstream_buffer: asyncio.Queue  # contains: Tuple[Union[bytes, str], web.WSMsgType]
     upstream_buffer_task: Optional[asyncio.Task]
     downstream_cb: Optional[Awaitable]
     upstream_cb: Optional[Awaitable]
