@@ -1,5 +1,6 @@
 from collections import OrderedDict
 import re
+from typing import Sequence
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -18,7 +19,7 @@ from .scaling_group import sgroups_for_domains
 from .user import UserRole
 
 
-__all__ = (
+__all__: Sequence[str] = (
     'domains',
     'Domain', 'DomainInput', 'ModifyDomainInput',
     'CreateDomain', 'ModifyDomain', 'DeleteDomain',

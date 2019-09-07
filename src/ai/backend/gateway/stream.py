@@ -11,6 +11,10 @@ from collections import defaultdict
 import json
 import logging
 import secrets
+from typing import (
+    Any,
+    Mapping,
+)
 from urllib.parse import urlparse
 import weakref
 
@@ -39,7 +43,7 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.stream'))
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def stream_pty(request) -> web.Response:
+async def stream_pty(request) -> web.StreamResponse:
     app = request.app
     registry = app['registry']
     sess_id = request.match_info['sess_id']
@@ -226,7 +230,7 @@ async def stream_execute(request) -> web.StreamResponse:
     try:
         if ws.closed:
             log.debug('STREAM_EXECUTE: client disconnected (cancelled)')
-            return
+            return ws
         params = await ws.receive_json()
         assert params.get('mode'), 'mode is missing or empty!'
         mode = params['mode']
@@ -350,7 +354,7 @@ async def stream_proxy(request) -> web.StreamResponse:
     ping_cb = apartial(refresh_cb, kernel.id)
 
     try:
-        opts = {}
+        opts: Mapping[str, Any] = {}
         result = await asyncio.shield(
             registry.start_service(sess_id, access_key, service, opts))
         if result['status'] == 'failed':

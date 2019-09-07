@@ -3,6 +3,10 @@ import secrets
 import sys
 from pathlib import Path
 from pprint import pformat
+from typing import (
+    Any,
+    Mapping,
+)
 
 import click
 import trafaret as t
@@ -26,7 +30,7 @@ manager_config_iv = t.Dict({
         t.Key('group', default=None): tx.GroupID(default_gid=_file_perm.st_gid),
         t.Key('service-addr', default=('0.0.0.0', 8080)): tx.HostPortPair,
         t.Key('event-listen-addr', default=('127.0.0.1', 5002)): tx.HostPortPair,
-        t.Key('heartbeat-timeout', default=5.0): t.Float[1.0:],
+        t.Key('heartbeat-timeout', default=5.0): t.Float[1.0:],  # type: ignore
         t.Key('secret', default=None): t.Null | t.String,
         t.Key('ssl-enabled', default=False): t.Bool | t.StrBool,
         t.Key('ssl-cert', default=None): t.Null | tx.Path(type='file'),
@@ -51,7 +55,7 @@ redis_config_iv = t.Dict({
     t.Key('password', default=None): t.Null | t.String,
 }).allow_extra('*')
 
-_shdefs = {
+_shdefs: Mapping[str, Any] = {
     'system': {
         'timezone': 'UTC',
     },

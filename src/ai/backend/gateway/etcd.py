@@ -215,7 +215,7 @@ class ConfigServer:
     async def update_aliases_from_file(self, file: Path):
         log.info('Updating image aliases from "{0}"', file)
         try:
-            data = yaml.load(open(file, 'rb'))
+            data = yaml.load(open(file, 'r', encoding='utf-8'))
         except IOError:
             log.error('Cannot open "{0}".', file)
             return
@@ -511,7 +511,7 @@ class ConfigServer:
     async def update_volumes_from_file(self, file: Path):
         log.info('Updating network volumes from "{0}"', file)
         try:
-            data = yaml.load(open(file, 'rb'))
+            data = yaml.load(open(file, 'r', encoding='utf-8'))
         except IOError:
             log.error('Cannot open "{0}".', file)
             return

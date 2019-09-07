@@ -6,7 +6,11 @@ import os
 from pathlib import Path
 import shutil
 import stat
-from typing import Any, Callable, Mapping
+from typing import (
+    Any, Awaitable, Callable,
+    Dict, Mapping, MutableMapping,
+    Tuple,
+)
 import urllib.parse
 import uuid
 import jwt
@@ -19,7 +23,7 @@ import aiohttp_cors
 import aiojobs
 from aiojobs.aiohttp import atomic
 import aiotools
-from async_timeout import timeout as _timeout
+import multidict
 import sqlalchemy as sa
 import psycopg2
 import trafaret as t
@@ -31,10 +35,13 @@ from ai.backend.common.utils import Fstab
 from .auth import auth_required, superadmin_required
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
-    GenericForbidden, InvalidAPIParameters, ServerMisconfiguredError)
+    GenericForbidden, InvalidAPIParameters, ServerMisconfiguredError,
+    BackendAgentError, InternalServerError,
+)
 from .manager import (
     READ_ALLOWED, ALL_ALLOWED,
-    server_status_required)
+    server_status_required,
+)
 from .resource import get_watcher_info
 from .utils import check_api_params
 from ..manager.models import (
@@ -59,7 +66,8 @@ def vfolder_permission_required(perm: VFolderPermission):
     which contains a dict object describing the matched VirtualFolder table row.
     '''
 
-    def _wrapper(handler: Callable[[web.Request, VFolderRow], web.Response]):
+    # FIXME: replace ... with [web.Request, VFolderRow, Any...] in the future mypy
+    def _wrapper(handler: Callable[..., Awaitable[web.Response]]):
 
         @functools.wraps(handler)
         async def _wrapped(request: web.Request, *args, **kwargs) -> web.Response:
@@ -107,7 +115,8 @@ def vfolder_permission_required(perm: VFolderPermission):
     return _wrapper
 
 
-def vfolder_check_exists(handler: Callable[[web.Request, VFolderRow], web.Response]):
+# FIXME: replace ... with [web.Request, VFolderRow, Any...] in the future mypy
+def vfolder_check_exists(handler: Callable[..., Awaitable[web.Response]]):
     '''
     Checks if the target vfolder exists and is owned by the current user.
 
@@ -152,7 +161,7 @@ def vfolder_check_exists(handler: Callable[[web.Request, VFolderRow], web.Respon
     }),
 )
 async def create(request: web.Request, params: Any) -> web.Response:
-    resp = {}
+    resp: Dict[str, Any] = {}
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
     user_role = request['user']['role']
@@ -364,7 +373,7 @@ async def list_allowed_types(request: web.Request) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
 async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
-    resp = {}
+    resp: Dict[str, Any] = {}
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.GETINFO (u:{0}, f:{1})', access_key, folder_name)
@@ -535,7 +544,7 @@ async def delete_files(request: web.Request, params: Any, row: VFolderRow) -> we
             ops.append(functools.partial(os.unlink, file_path))
     for op in ops:
         op()
-    resp = {}
+    resp: Dict[str, Any] = {}
     return web.json_response(resp, status=200)
 
 
@@ -564,12 +573,13 @@ async def download(request: web.Request, params: Any, row: VFolderRow) -> web.Re
                 f'You cannot download "{file}" because it is not a regular file.')
     with aiohttp.MultipartWriter('mixed') as mpwriter:
         total_payloads_length = 0
-        headers = {'Content-Encoding': 'gzip'}
+        headers = multidict.MultiDict({'Content-Encoding': 'gzip'})
         try:
             for file in files:
                 data = open(folder_path / file, 'rb')
                 payload = mpwriter.append(data, headers)
-                total_payloads_length += payload.size
+                if payload.size is not None:
+                    total_payloads_length += payload.size
         except FileNotFoundError:
             return web.Response(status=404, reason='File not found')
         mpwriter._headers['X-TOTAL-PAYLOADS-LENGTH'] = str(total_payloads_length)
@@ -583,7 +593,7 @@ async def download(request: web.Request, params: Any, row: VFolderRow) -> web.Re
     t.Dict({
         t.Key('file'): t.String,
     }))
-async def download_single(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
+async def download_single(request: web.Request, params: Any, row: VFolderRow) -> web.StreamResponse:
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     fn = params['file']
@@ -637,7 +647,7 @@ async def request_download(request: web.Request, params: Any, row: VFolderRow) -
     return web.json_response(resp, status=200)
 
 
-async def download_with_token(request):
+async def download_with_token(request) -> web.StreamResponse:
     try:
         secret = request.app['config']['manager']['secret']
         token = request.query.get('token', '')
@@ -1119,15 +1129,15 @@ async def get_fstab_contents(request: web.Request, params: Any) -> web.Response:
         params['fstab_path'] = '/etc/fstab'
     if params['agent_id'] is not None:
         # Return specific agent's fstab.
-        connector = aiohttp.TCPConnector()
         watcher_info = await get_watcher_info(request, params['agent_id'])
-        async with aiohttp.ClientSession(connector=connector) as sess:
-            with _timeout(10.0):
+        try:
+            client_timeout = aiohttp.ClientTimeout(total=10.0)
+            async with aiohttp.ClientSession(timeout=client_timeout) as sess:
                 headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
                 url = watcher_info['addr'] / 'fstab'
-                async with sess.get(url, headers=headers, params=params) as resp:
-                    if resp.status == 200:
-                        content = await resp.text()
+                async with sess.get(url, headers=headers, params=params) as watcher_resp:
+                    if watcher_resp.status == 200:
+                        content = await watcher_resp.text()
                         resp = {
                             'content': content,
                             'node': 'agent',
@@ -1135,8 +1145,20 @@ async def get_fstab_contents(request: web.Request, params: Any) -> web.Response:
                         }
                         return web.json_response(resp)
                     else:
-                        message = await resp.text()
-                        return web.json_response(message, status=resp.status)
+                        message = await watcher_resp.text()
+                        raise BackendAgentError(
+                            'FAILURE', f'({watcher_resp.status}: {watcher_resp.reason}) {message}')
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            log.error('VFOLDER.GET_FSTAB_CONTENTS(u:{}): timeout from watcher (agent:{})',
+                      access_key, params['agent_id'])
+            raise BackendAgentError('TIMEOUT', 'Could not fetch fstab data from agent')
+        except Exception:
+            log.exception('VFOLDER.GET_FSTAB_CONTENTS(u:{}): '
+                          'unexpected error while reading from watcher (agent:{})',
+                          access_key, params['agent_id'])
+            raise InternalServerError
     else:
         # Return manager's fstab.
         async with aiofiles.open(params['fstab_path'], mode='r') as fp:
@@ -1173,7 +1195,7 @@ async def list_mounts(request: web.Request) -> web.Response:
         # TODO: Change os.path.ismount to p.is_mount if Python 3.7 is supported.
         if p.is_dir() and os.path.ismount(str(p)):
             mounts.add(str(p))
-    resp = {
+    resp: MutableMapping[str, Any] = {
         'manager': {
             'success': True,
             'mounts': sorted(mounts),
@@ -1183,25 +1205,36 @@ async def list_mounts(request: web.Request) -> web.Response:
     }
 
     # Scan mounted vfolder hosts for connected agents.
-    async def _fetch_mounts(sess, aid):
-        watcher_info = await get_watcher_info(request, aid)
-        with _timeout(10.0):
-            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
-            url = watcher_info['addr'] / 'mounts'
-            async with sess.get(url, headers=headers) as resp:
-                if resp.status == 200:
+    async def _fetch_mounts(sess: aiohttp.ClientSession, agent_id: str) -> Tuple[str, Mapping]:
+        watcher_info = await get_watcher_info(request, agent_id)
+        headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+        url = watcher_info['addr'] / 'mounts'
+        try:
+            async with sess.get(url, headers=headers) as watcher_resp:
+                if watcher_resp.status == 200:
                     data = {
                         'success': True,
-                        'mounts': await resp.json(),
+                        'mounts': await watcher_resp.json(),
                         'message': '',
                     }
                 else:
                     data = {
                         'success': False,
                         'mounts': [],
-                        'message': await resp.text(),
+                        'message': await watcher_resp.text(),
                     }
-                return (aid, data,)
+                return (agent_id, data,)
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            log.error('VFOLDER.LIST_MOUNTS(u:{}): timeout from watcher (agent:{})',
+                      access_key, agent_id)
+            raise
+        except Exception:
+            log.exception('VFOLDER.LIST_MOUNTS(u:{}): '
+                          'unexpected error while reading from watcher (agent:{})',
+                          access_key, agent_id)
+            raise
 
     async with dbpool.acquire() as conn:
         query = (sa.select([agents.c.id])
@@ -1210,15 +1243,19 @@ async def list_mounts(request: web.Request) -> web.Response:
         result = await conn.execute(query)
         rows = await result.fetchall()
 
-    connector = aiohttp.TCPConnector()
-    async with aiohttp.ClientSession(connector=connector) as sess:
+    client_timeout = aiohttp.ClientTimeout(total=10.0)
+    async with aiohttp.ClientSession(timeout=client_timeout) as sess:
         scheduler = await aiojobs.create_scheduler(limit=8)
         try:
             jobs = await asyncio.gather(*[
                 scheduler.spawn(_fetch_mounts(sess, row.id)) for row in rows
             ])
-            mounts = await asyncio.gather(*[job.wait() for job in jobs])
+            mounts = await asyncio.gather(*[job.wait() for job in jobs],
+                                          return_exceptions=True)
             for mount in mounts:
+                if isinstance(mount, Exception):
+                    # exceptions are already logged.
+                    continue
                 resp['agents'][mount[0]] = mount[1]
         finally:
             await scheduler.close()
@@ -1227,7 +1264,7 @@ async def list_mounts(request: web.Request) -> web.Response:
 
 
 @superadmin_required
-@server_status_required(READ_ALLOWED)
+@server_status_required(ALL_ALLOWED)
 @check_api_params(
     t.Dict({
         t.Key('fs_location'): t.String,
@@ -1269,11 +1306,11 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
     proc = await asyncio.create_subprocess_exec(*cmd,
                                                 stdout=asyncio.subprocess.PIPE,
                                                 stderr=asyncio.subprocess.PIPE)
-    out, err = await proc.communicate()
-    out = out.decode('utf8')
-    err = err.decode('utf8')
+    raw_out, raw_err = await proc.communicate()
+    out = raw_out.decode('utf8')
+    err = raw_err.decode('utf8')
     await proc.wait()
-    resp = {
+    resp: MutableMapping[str, Any] = {
         'manager': {
             'success': True if not err else False,
             'message': out if not err else err,
@@ -1297,9 +1334,9 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
         result = await conn.execute(query)
         rows = await result.fetchall()
 
-    async def _mount(sess, aid):
-        watcher_info = await get_watcher_info(request, aid)
-        with _timeout(10.0):
+    async def _mount(sess: aiohttp.ClientSession, agent_id: str) -> Tuple[str, Mapping]:
+        watcher_info = await get_watcher_info(request, agent_id)
+        try:
             headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
             url = watcher_info['addr'] / 'mounts'
             async with sess.post(url, json=params, headers=headers) as resp:
@@ -1313,17 +1350,32 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
                         'success': False,
                         'message': await resp.text(),
                     }
-                return (aid, data,)
+                return (agent_id, data,)
+        except asyncio.CacnelledError:
+            raise
+        except asyncio.TimeoutError:
+            log.error('VFOLDER.MOUNT_HOST(u:{}): timeout from watcher (agent:{})',
+                      access_key, agent_id)
+            raise
+        except Exception:
+            log.exception('VFOLDER.MOUNT_HOST(u:{}): '
+                          'unexpected error while reading from watcher (agent:{})',
+                          access_key, agent_id)
+            raise
 
-    connector = aiohttp.TCPConnector()
-    async with aiohttp.ClientSession(connector=connector) as sess:
+    client_timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession(timeout=client_timeout) as sess:
         scheduler = await aiojobs.create_scheduler(limit=8)
         try:
             jobs = await asyncio.gather(*[
                 scheduler.spawn(_mount(sess, row.id)) for row in rows
             ])
-            results = await asyncio.gather(*[job.wait() for job in jobs])
+            results = await asyncio.gather(*[job.wait() for job in jobs],
+                                           return_exceptions=True)
             for result in results:
+                if isinstance(result, Exception):
+                    # exceptions are already logged.
+                    continue
                 resp['agents'][result[0]] = result[1]
         finally:
             await scheduler.close()
@@ -1332,7 +1384,7 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
 
 
 @superadmin_required
-@server_status_required(READ_ALLOWED)
+@server_status_required(ALL_ALLOWED)
 @check_api_params(
     t.Dict({
         t.Key('name'): t.String,
@@ -1372,11 +1424,10 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
             if kern.mounts:
                 _mounted.update([m[1] for m in kern.mounts])
         if params['name'] in _mounted:
-            resp = {
+            return web.json_response({
                 'title': 'Target host is used in sessions',
                 'message': 'Target host is used in sessions',
-            }
-            return web.json_response(resp, status=409)
+            }, status=409)
 
         query = (sa.select([agents.c.id])
                    .select_from(agents)
@@ -1390,11 +1441,11 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
     proc = await asyncio.create_subprocess_exec(*[
         'sudo', 'umount', str(mountpoint)
     ], stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    out, err = await proc.communicate()
-    out = out.decode('utf8')
-    err = err.decode('utf8')
+    raw_out, raw_err = await proc.communicate()
+    out = raw_out.decode('utf8')
+    err = raw_err.decode('utf8')
     await proc.wait()
-    resp = {
+    resp: MutableMapping[str, Any] = {
         'manager': {
             'success': True if not err else False,
             'message': out if not err else err,
@@ -1413,9 +1464,9 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
             await fstab.remove_by_mountpoint(str(mountpoint))
 
     # Unmount from running agents.
-    async def _umount(sess, aid):
-        watcher_info = await get_watcher_info(request, aid)
-        with _timeout(10.0):
+    async def _umount(sess: aiohttp.ClientSession, agent_id: str) -> Tuple[str, Mapping]:
+        watcher_info = await get_watcher_info(request, agent_id)
+        try:
             headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
             url = watcher_info['addr'] / 'mounts'
             async with sess.delete(url, json=params, headers=headers) as resp:
@@ -1429,17 +1480,32 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
                         'success': False,
                         'message': await resp.text(),
                     }
-                return (aid, data,)
+                return (agent_id, data,)
+        except asyncio.CacnelledError:
+            raise
+        except asyncio.TimeoutError:
+            log.error('VFOLDER.UMOUNT_HOST(u:{}): timeout from watcher (agent:{})',
+                      access_key, agent_id)
+            raise
+        except Exception:
+            log.exception('VFOLDER.UMOUNT_HOST(u:{}): '
+                          'unexpected error while reading from watcher (agent:{})',
+                          access_key, agent_id)
+            raise
 
-    connector = aiohttp.TCPConnector()
-    async with aiohttp.ClientSession(connector=connector) as sess:
+    client_timeout = aiohttp.ClientTimeout(total=10.0)
+    async with aiohttp.ClientSession(timeout=client_timeout) as sess:
         scheduler = await aiojobs.create_scheduler(limit=8)
         try:
             jobs = await asyncio.gather(*[
                 scheduler.spawn(_umount(sess, _agent.id)) for _agent in _agents
             ])
-            results = await asyncio.gather(*[job.wait() for job in jobs])
+            results = await asyncio.gather(*[job.wait() for job in jobs],
+                                           return_exceptions=True)
             for result in results:
+                if isinstance(result, Exception):
+                    # exceptions are already logged.
+                    continue
                 resp['agents'][result[0]] = result[1]
         finally:
             await scheduler.close()

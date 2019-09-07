@@ -2,7 +2,10 @@ import asyncio
 import enum
 import functools
 import logging
-from typing import Mapping
+from typing import (
+    Union,
+    Dict, Mapping
+)
 import sys
 import uuid
 
@@ -126,12 +129,12 @@ class ResourceSlotColumn(TypeDecorator):
 
     impl = JSONB
 
-    def process_bind_param(self, value, dialect):
+    def process_bind_param(self, value: Union[Mapping, ResourceSlot], dialect):
         if isinstance(value, Mapping) and not isinstance(value, ResourceSlot):
             return value
         return value.to_json() if value is not None else None
 
-    def process_result_value(self, value: str, dialect):
+    def process_result_value(self, value: Dict[str, str], dialect):
         # legacy handling
         mem = value.get('mem')
         if isinstance(mem, str) and not mem.isdigit():

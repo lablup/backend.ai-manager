@@ -1,7 +1,8 @@
 from collections import OrderedDict
-from typing import Union
+from typing import Union, Sequence
 import uuid
 
+from aiopg.sa.connection import SAConnection
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 import graphene
@@ -16,7 +17,7 @@ from .base import (
 from .group import groups
 from .user import UserRole
 
-__all__ = (
+__all__: Sequence[str] = (
     # table defs
     'scaling_groups',
     'sgroups_for_domains',
@@ -103,7 +104,7 @@ sgroups_for_keypairs = sa.Table(
 )
 
 
-async def query_allowed_sgroups(db_conn: object,
+async def query_allowed_sgroups(db_conn: SAConnection,
                                 domain: str,
                                 group: Union[uuid.UUID, str],
                                 access_key: str):
