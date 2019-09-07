@@ -1148,7 +1148,9 @@ async def get_fstab_contents(request: web.Request, params: Any) -> web.Response:
                         message = await watcher_resp.text()
                         return web.json_response(message, status=watcher_resp.status)
         except asyncio.TimeoutError:
-            raise InternalServerError(f"could not fetch watcher API response from {params['agent_id']}")
+            log.error('VFOLDER.GET_FSTAB_CONTENTS(u:{}): timeout from watcher (agent:{})',
+                      access_key, params['agent_id'])
+            raise InternalServerError('Could not fetch fstab data from agent')
     else:
         # Return manager's fstab.
         async with aiofiles.open(params['fstab_path'], mode='r') as fp:
