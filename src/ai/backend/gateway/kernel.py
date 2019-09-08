@@ -10,7 +10,10 @@ import json
 import logging
 import re
 import secrets
-from typing import Any
+from typing import (
+    Any,
+    MutableMapping,
+)
 
 import aiohttp
 from aiohttp import web
@@ -44,8 +47,6 @@ from ..manager.models import (
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.kernel'))
-
-grace_events = []
 
 _json_loads = functools.partial(json.loads, parse_float=Decimal)
 
@@ -95,7 +96,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
     log.info('GET_OR_CREATE (u:{0}/{1}, image:{2}, tag:{3}, token:{4})',
              requester_access_key, owner_access_key,
              params['image'], params['tag'], params['sess_id'])
-    resp = {}
+    resp: MutableMapping[str, Any] = {}
     try:
         resource_policy = request['keypair']['resource_policy']
         async with request.app['dbpool'].acquire() as conn, conn.begin():
@@ -677,7 +678,7 @@ async def list_files(request: web.Request) -> web.Response:
             json.decoder.JSONDecodeError) as e:
         log.warning('LIST_FILES: invalid/missing parameters, {0!r}', e)
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
-    resp = {}
+    resp: MutableMapping[str, Any] = {}
     try:
         registry = request.app['registry']
         await registry.increment_session_usage(sess_id, owner_access_key)

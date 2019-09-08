@@ -1,13 +1,14 @@
 from collections import OrderedDict
 import enum
+from typing import Sequence
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
-from ai.backend.common.types import BinarySize
 from ai.backend.common import msgpack
+from ai.backend.common.types import BinarySize
 from .base import (
     metadata,
     BigInt, GUID, IDColumn, EnumType,
@@ -17,7 +18,7 @@ from .base import (
 from .group import groups
 from .user import users
 
-__all__ = (
+__all__: Sequence[str] = (
     'kernels', 'KernelStatus',
     'ComputeSessionList', 'ComputeSession', 'ComputeWorker', 'Computation',
 )

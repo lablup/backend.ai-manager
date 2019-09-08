@@ -3,17 +3,23 @@ import copy
 from datetime import datetime
 import logging
 import sys
+from typing import (
+    List,
+    MutableMapping,
+)
 import uuid
 
 import aiozmq, aiozmq.rpc
 from aiozmq.rpc.base import GenericError, NotFoundError, ParametersError
+from aiopg.sa.connection import SAConnection
+from aiopg.sa.engine import Engine as SAEngine
 import aiotools
 from async_timeout import timeout as _timeout
 from dateutil.tz import tzutc
 import snappy
 import sqlalchemy as sa
 from yarl import URL
-import zmq
+import zmq, zmq.asyncio
 
 from ai.backend.common import msgpack
 from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
@@ -38,7 +44,7 @@ __all__ = ['AgentRegistry', 'InstanceNotFound']
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.registry'))
 
-agent_peers = {}
+agent_peers: MutableMapping[str, zmq.asyncio.Socket] = {}  # agent-addr to socket
 
 
 @aiotools.actxmgr
@@ -85,7 +91,7 @@ async def RPCContext(addr, timeout=None):
 
 
 @aiotools.actxmgr
-async def reenter_txn(pool, conn):
+async def reenter_txn(pool: SAEngine, conn: SAConnection):
     if conn is None:
         async with pool.acquire() as conn, conn.begin():
             yield conn
@@ -219,7 +225,7 @@ class AgentRegistry:
         cols = [kernels.c.id, kernels.c.sess_id,
                 kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.access_key]
         if field == '*':
-            cols = '*'
+            cols = [sa.text('*')]
         elif isinstance(field, (tuple, list)):
             cols.extend(field)
         elif isinstance(field, (sa.Column, sa.sql.elements.ColumnClause)):
@@ -267,7 +273,7 @@ class AgentRegistry:
                 kernels.c.image, kernels.c.registry,
                 kernels.c.service_ports]
         if field == '*':
-            cols = '*'
+            cols = [sa.text('*')]
         elif isinstance(field, (tuple, list)):
             cols.extend(field)
         elif isinstance(field, (sa.Column, sa.sql.elements.ColumnClause)):
@@ -562,7 +568,7 @@ class AgentRegistry:
 
             # Check the scaling groups.
             sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
-            target_sgroup_names = []
+            target_sgroup_names: List[str] = []
             preferred_sgroup_name = creation_config.get('scalingGroup')
             if preferred_sgroup_name is not None:
                 for sgroup in sgroups:

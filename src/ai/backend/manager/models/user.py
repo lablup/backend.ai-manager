@@ -1,7 +1,7 @@
 import asyncio
 from collections import OrderedDict
 import enum
-from typing import Any
+from typing import Any, Sequence
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -17,7 +17,7 @@ from .base import (
 )
 
 
-__all__ = (
+__all__: Sequence[str] = (
     'users',
     'User', 'UserInput', 'ModifyUserInput', 'UserRole',
     'CreateUser', 'ModifyUser', 'DeleteUser',
