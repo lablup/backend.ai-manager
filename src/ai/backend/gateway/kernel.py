@@ -71,7 +71,7 @@ creation_config_v3 = t.Dict({
     tx.AliasedKey(['scalingGroup', 'scaling_group'], default=None):
         t.Null | t.String,
     t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
-    t.Key('extra_resources', default=None): t.Null | t.Mapping(t.String, t.Any),
+    t.Key('resource_opts', default=None): t.Null | t.Mapping(t.String, t.Any),
 })
 
 
