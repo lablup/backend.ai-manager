@@ -246,6 +246,10 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
                 if dev_info.get('model_name'):
                     device_type.add(dev_info['model_name'])
                 smp += dev_info.get('smp', 0)
+        if row.extra_resources:
+            shared_memory = int(row.extra_resources.get('shm-size', 0))
+        else:
+            shared_memory = 0
         c_info = {
             'id': str(row['id']),
             'name': row['sess_id'],
@@ -254,8 +258,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'cpu_used': float(last_stat['cpu_used']['current']) if last_stat else 0,
             'mem_allocated': int(row.occupied_slots['mem']),
             'mem_used': int(last_stat['mem']['capacity']) if last_stat else 0,
-            'shared_memory': int(last_stat['shared_mem']['capacity']) \
-                    if last_stat and 'shared_mem' in last_stat else 0,
+            'shared_memory': shared_memory,
             'disk_allocated': 0,  # TODO: disk quota limit
             'disk_used': int(last_stat['io_scratch_size']['stats.max']) if last_stat else 0,
             'io_read': int(last_stat['io_read']['current']) if last_stat else 0,
