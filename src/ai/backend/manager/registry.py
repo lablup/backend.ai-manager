@@ -17,7 +17,7 @@ import zmq
 from ai.backend.common import msgpack
 from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
 from ai.backend.common.exception import AliasResolutionFailed
-from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
+from ai.backend.common.types import BinarySize, DefaultForUnspecified, ResourceSlot
 from ai.backend.common.logging import BraceStyleAdapter
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
@@ -402,6 +402,11 @@ class AgentRegistry:
         created_info = None
         mounts = creation_config.get('mounts') or []
         environ = creation_config.get('environ') or {}
+        extra_resources = creation_config.get('extra_resources') or {}
+        if extra_resources.get('shm-size'):
+            shm_size = extra_resources.get('shm-size')
+            shm_size = BinarySize.from_str(shm_size)
+            extra_resources['shm-size'] = shm_size
 
         # TODO: merge into a single call
         image_info = await self.config_server.inspect_image(image_ref)
@@ -646,6 +651,7 @@ class AgentRegistry:
                 'tag': session_tag,
                 'occupied_slots': requested_slots,
                 'occupied_shares': {},
+                'extra_resources': extra_resources,
                 'environ': [f'{k}={v}' for k, v in environ.items()],
                 'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
                 'kernel_host': None,
@@ -682,6 +688,7 @@ class AgentRegistry:
                         'idle_timeout': resource_policy['idle_timeout'],
                         'mounts': mounts,
                         'environ': environ,
+                        'extra_resources': extra_resources,
                     }
                     created_info = await rpc.call.create_kernel(str(kernel_id),
                                                                 config)

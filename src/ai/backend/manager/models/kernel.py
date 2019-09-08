@@ -66,6 +66,7 @@ kernels = sa.Table(
     sa.Column('environ', sa.ARRAY(sa.String), nullable=True),
     sa.Column('mounts', sa.ARRAY(sa.String), nullable=True),  # list of list
     sa.Column('attached_devices', pgsql.JSONB(), nullable=True, default={}),
+    sa.Column('extra_resources', pgsql.JSONB(), nullable=True, default={}),
 
     # Port mappings
     # If kernel_host is NULL, it is assumed to be same to the agent host or IP.
