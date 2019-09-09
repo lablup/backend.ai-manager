@@ -422,11 +422,11 @@ class AgentRegistry:
         # We need to subtract the amount of shared memory from the memory limit of
         # a container, since tmpfs including /dev/shm uses host-side kernel memory
         # and cgroup's memory limit does not apply.
-        shm_size = resource_opts.get('shm-size', 0)
-        shm_size = BinarySize.from_str(shm_size)
-        resource_opts['shm-size'] = shm_size
+        shmem = resource_opts.get('shmem', 0)
+        shmem = BinarySize.from_str(shm_size)
+        resource_opts['shmem'] = shmem
         image_min_slots = copy.deepcopy(image_min_slots)
-        image_min_slots['mem'] += shm_size
+        image_min_slots['mem'] += shmem
 
         # ==== BEGIN: ENQUEUING PART ====
         # This part will be moved to the job-enqueue handler.

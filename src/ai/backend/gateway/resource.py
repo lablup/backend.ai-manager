@@ -251,7 +251,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
                     device_type.add(dev_info['model_name'])
                 smp += dev_info.get('smp', 0)
         if row.resource_opts:
-            shared_memory = int(row.resource_opts.get('shm-size', 0))
+            shared_memory = int(row.resource_opts.get('shmem', 0))
         else:
             shared_memory = 0
         c_info = {
