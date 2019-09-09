@@ -422,7 +422,9 @@ class AgentRegistry:
         # We need to subtract the amount of shared memory from the memory limit of
         # a container, since tmpfs including /dev/shm uses host-side kernel memory
         # and cgroup's memory limit does not apply.
-        shmem = resource_opts.get('shmem', '64m')
+        shmem = resource_opts.get('shmem', None)
+        if shmem is None:
+            shmem = image_info['labels'].get('ai.backend.resource.preferred.shmem', '64m')
         shmem = BinarySize.from_str(shmem)
         resource_opts['shmem'] = shmem
         image_min_slots = copy.deepcopy(image_min_slots)
