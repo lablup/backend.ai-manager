@@ -1,4 +1,5 @@
 import asyncio
+import copy
 from datetime import datetime
 import logging
 import sys
@@ -23,7 +24,7 @@ import zmq, zmq.asyncio
 from ai.backend.common import msgpack
 from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
 from ai.backend.common.exception import AliasResolutionFailed
-from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
+from ai.backend.common.types import BinarySize, DefaultForUnspecified, ResourceSlot
 from ai.backend.common.logging import BraceStyleAdapter
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
@@ -408,6 +409,7 @@ class AgentRegistry:
         created_info = None
         mounts = creation_config.get('mounts') or []
         environ = creation_config.get('environ') or {}
+        resource_opts = creation_config.get('resource_opts') or {}
 
         # TODO: merge into a single call
         image_info = await self.config_server.inspect_image(image_ref)
@@ -415,6 +417,16 @@ class AgentRegistry:
             await self.config_server.get_image_slot_ranges(image_ref)
         known_slot_types = \
             await self.config_server.get_resource_slots()
+
+        # Shared memory.
+        # We need to subtract the amount of shared memory from the memory limit of
+        # a container, since tmpfs including /dev/shm uses host-side kernel memory
+        # and cgroup's memory limit does not apply.
+        shm_size = resource_opts.get('shm-size', 0)
+        shm_size = BinarySize.from_str(shm_size)
+        resource_opts['shm-size'] = shm_size
+        image_min_slots = copy.deepcopy(image_min_slots)
+        image_min_slots['mem'] += shm_size
 
         # ==== BEGIN: ENQUEUING PART ====
         # This part will be moved to the job-enqueue handler.
@@ -472,6 +484,7 @@ class AgentRegistry:
 
         # Check the image resource slots.
         log.debug('requested_slots: {}', requested_slots)
+        log.debug('resource_opts: {}', resource_opts)
         log.debug('image_min_slots: {}', image_min_slots)
         log.debug('image_max_slots: {}', image_max_slots)
 
@@ -652,6 +665,7 @@ class AgentRegistry:
                 'tag': session_tag,
                 'occupied_slots': requested_slots,
                 'occupied_shares': {},
+                'resource_opts': resource_opts,
                 'environ': [f'{k}={v}' for k, v in environ.items()],
                 'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
                 'kernel_host': None,
@@ -688,6 +702,7 @@ class AgentRegistry:
                         'idle_timeout': resource_policy['idle_timeout'],
                         'mounts': mounts,
                         'environ': environ,
+                        'resource_opts': resource_opts,
                     }
                     created_info = await rpc.call.create_kernel(str(kernel_id),
                                                                 config)
