@@ -1,14 +1,22 @@
 Changes
 =======
 
-19.09.0b13 (2019-09-xx)
+19.09.0b13 (2019-09-09)
 -----------------------
+
+* NEW: Add option to specify the amount of shared memory via ``resource_opts`` parameter
+  in the kernelc reation config API (lablup/backend.ai#52)
 
 * UPDATE: Enhance vfolder download APIs to support ranged HTTP requests for partial downloads and
   fix the browser-side fetch() API content decoding error due to the default behavior of
   aiohttp.web.FileResponse implementation.
 
+* Alembic migrations are now distributed as a part of the source and wheel package.
+  Set ``script_location = ai.backend.manager.models:alembic`` in your alembic.ini configuration file.
+
 * Various bug fixes for GQL APIs and statistics.
+
+* Update dependencies including aiohttp 3.6, wheel, twine, setuptools, and typing-extensions.
 
 19.09.0b12 (2019-09-03)
 -----------------------
