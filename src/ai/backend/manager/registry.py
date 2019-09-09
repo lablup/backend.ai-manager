@@ -423,7 +423,7 @@ class AgentRegistry:
         # a container, since tmpfs including /dev/shm uses host-side kernel memory
         # and cgroup's memory limit does not apply.
         shmem = resource_opts.get('shmem', 0)
-        shmem = BinarySize.from_str(shm_size)
+        shmem = BinarySize.from_str(shmem)
         resource_opts['shmem'] = shmem
         image_min_slots = copy.deepcopy(image_min_slots)
         image_min_slots['mem'] += shmem
