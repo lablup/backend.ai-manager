@@ -2,6 +2,7 @@ import asyncio
 import base64
 from collections import OrderedDict
 import secrets
+from typing import Sequence
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -15,7 +16,7 @@ from .base import (
     set_if_set,
 )
 
-__all__ = (
+__all__: Sequence[str] = (
     'keypairs',
     'KeyPair', 'KeyPairInput',
     'CreateKeyPair', 'ModifyKeyPair', 'DeleteKeyPair',

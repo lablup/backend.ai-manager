@@ -1,13 +1,14 @@
 from collections import OrderedDict
 import enum
+from typing import Sequence
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
-from ai.backend.common.types import BinarySize
 from ai.backend.common import msgpack
+from ai.backend.common.types import BinarySize
 from .base import (
     metadata,
     BigInt, GUID, IDColumn, EnumType,
@@ -17,7 +18,7 @@ from .base import (
 from .group import groups
 from .user import users
 
-__all__ = (
+__all__: Sequence[str] = (
     'kernels', 'KernelStatus',
     'ComputeSessionList', 'ComputeSession', 'ComputeWorker', 'Computation',
 )
@@ -66,6 +67,7 @@ kernels = sa.Table(
     sa.Column('environ', sa.ARRAY(sa.String), nullable=True),
     sa.Column('mounts', sa.ARRAY(sa.String), nullable=True),  # list of list
     sa.Column('attached_devices', pgsql.JSONB(), nullable=True, default={}),
+    sa.Column('resource_opts', pgsql.JSONB(), nullable=True, default={}),
 
     # Port mappings
     # If kernel_host is NULL, it is assumed to be same to the agent host or IP.
@@ -391,6 +393,8 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 query = query.where(kernels.c.domain_name == domain_name)
             if group_id is not None:
                 query = query.where(kernels.c.group_id == group_id)
+            if access_key is not None:
+                query = query.where(kernels.c.access_key == access_key)
             result = await conn.execute(query)
             rows = await result.fetchall()
             return [ComputeSession.from_row(context, r) for r in rows]

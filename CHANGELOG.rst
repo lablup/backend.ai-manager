@@ -1,6 +1,51 @@
 Changes
 =======
 
+19.09.0b13 (2019-09-09)
+-----------------------
+
+* NEW: Add option to specify the amount of shared memory via ``resource_opts`` parameter
+  in the kernelc reation config API (lablup/backend.ai#52)
+
+* UPDATE: Enhance vfolder download APIs to support ranged HTTP requests for partial downloads and
+  fix the browser-side fetch() API content decoding error due to the default behavior of
+  aiohttp.web.FileResponse implementation.
+
+* Alembic migrations are now distributed as a part of the source and wheel package.
+  Set ``script_location = ai.backend.manager.models:alembic`` in your alembic.ini configuration file.
+
+* Various bug fixes for GQL APIs and statistics.
+
+* Update dependencies including aiohttp 3.6, wheel, twine, setuptools, and typing-extensions.
+
+19.09.0b12 (2019-09-03)
+-----------------------
+
+* Various bug fixes for GQL scoped permission handling
+
+* NEW: bugx fixes and mount option support for vfolder mount API (#183)
+
+19.09.0b11 (2019-08-30)
+-----------------------
+
+* NEW: superadmin APIs for mount/unmount vfolder hosts (#183)
+
+* FIX: resource usage API validation error when it is used with URL query strings
+
+19.09.0b10 (2019-08-27)
+-----------------------
+
+* FIX: plain users could see other users' sessions due to a missing
+  access-key filtering condition in the GQL loader implementation
+  for ``compute_sessions`` query.
+
+* FIX: an unexpected error at creating a new user when there is no default group.
+  Changed to add the user to the default group only when it exists.
+
+* Add ``mem_allocated`` field to group usage statistics
+
+* Various bug fixes for config/get and config/set APIs
+
 19.09.0b9 (2019-08-21)
 ----------------------
 

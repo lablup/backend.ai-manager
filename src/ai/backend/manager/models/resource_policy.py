@@ -1,5 +1,6 @@
 from collections import OrderedDict
 import logging
+from typing import Sequence
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -8,7 +9,6 @@ from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
-from . import keypairs
 from .base import (
     metadata, BigInt, EnumType, ResourceSlotColumn,
     privileged_mutation,
@@ -16,11 +16,12 @@ from .base import (
     simple_db_mutate_returning_item,
     set_if_set,
 )
+from .keypair import keypairs
 from .user import UserRole
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.models'))
 
-__all__ = (
+__all__: Sequence[str] = (
     'keypair_resource_policies',
     'KeyPairResourcePolicy',
     'DefaultForUnspecified',

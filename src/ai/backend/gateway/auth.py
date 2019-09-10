@@ -406,9 +406,10 @@ async def signup(request: web.Request, params: Any) -> web.Response:
                        .where(groups.c.name == group_name))
             result = await conn.execute(query)
             grp = await result.fetchone()
-            values = [{'user_id': user.uuid, 'group_id': grp.id}]
-            query = association_groups_users.insert().values(values)
-            await conn.execute(query)
+            if grp is not None:
+                values = [{'user_id': user.uuid, 'group_id': grp.id}]
+                query = association_groups_users.insert().values(values)
+                await conn.execute(query)
         else:
             raise InternalServerError('Error creating user account')
     return web.json_response({

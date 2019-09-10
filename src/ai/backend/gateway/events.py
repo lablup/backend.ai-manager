@@ -44,7 +44,8 @@ def event_router(_, pidx, args):
         in_sock.close()
         out_sock.close()
         ctx.term()
-        ipc_events_sockpath.unlink()
+        if ipc_events_sockpath.exists():
+            ipc_events_sockpath.unlink()
 
 
 @dataclass

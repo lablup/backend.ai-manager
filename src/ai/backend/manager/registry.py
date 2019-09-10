@@ -1,23 +1,30 @@
 import asyncio
+import copy
 from datetime import datetime
 import logging
 import sys
+from typing import (
+    List,
+    MutableMapping,
+)
 import uuid
 
 import aiozmq, aiozmq.rpc
 from aiozmq.rpc.base import GenericError, NotFoundError, ParametersError
+from aiopg.sa.connection import SAConnection
+from aiopg.sa.engine import Engine as SAEngine
 import aiotools
 from async_timeout import timeout as _timeout
 from dateutil.tz import tzutc
 import snappy
 import sqlalchemy as sa
 from yarl import URL
-import zmq
+import zmq, zmq.asyncio
 
 from ai.backend.common import msgpack
 from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
 from ai.backend.common.exception import AliasResolutionFailed
-from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
+from ai.backend.common.types import BinarySize, DefaultForUnspecified, ResourceSlot
 from ai.backend.common.logging import BraceStyleAdapter
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
@@ -37,7 +44,7 @@ __all__ = ['AgentRegistry', 'InstanceNotFound']
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.registry'))
 
-agent_peers = {}
+agent_peers: MutableMapping[str, zmq.asyncio.Socket] = {}  # agent-addr to socket
 
 
 @aiotools.actxmgr
@@ -84,7 +91,7 @@ async def RPCContext(addr, timeout=None):
 
 
 @aiotools.actxmgr
-async def reenter_txn(pool, conn):
+async def reenter_txn(pool: SAEngine, conn: SAConnection):
     if conn is None:
         async with pool.acquire() as conn, conn.begin():
             yield conn
@@ -218,7 +225,7 @@ class AgentRegistry:
         cols = [kernels.c.id, kernels.c.sess_id,
                 kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.access_key]
         if field == '*':
-            cols = '*'
+            cols = [sa.text('*')]
         elif isinstance(field, (tuple, list)):
             cols.extend(field)
         elif isinstance(field, (sa.Column, sa.sql.elements.ColumnClause)):
@@ -266,7 +273,7 @@ class AgentRegistry:
                 kernels.c.image, kernels.c.registry,
                 kernels.c.service_ports]
         if field == '*':
-            cols = '*'
+            cols = [sa.text('*')]
         elif isinstance(field, (tuple, list)):
             cols.extend(field)
         elif isinstance(field, (sa.Column, sa.sql.elements.ColumnClause)):
@@ -402,6 +409,7 @@ class AgentRegistry:
         created_info = None
         mounts = creation_config.get('mounts') or []
         environ = creation_config.get('environ') or {}
+        resource_opts = creation_config.get('resource_opts') or {}
 
         # TODO: merge into a single call
         image_info = await self.config_server.inspect_image(image_ref)
@@ -409,6 +417,18 @@ class AgentRegistry:
             await self.config_server.get_image_slot_ranges(image_ref)
         known_slot_types = \
             await self.config_server.get_resource_slots()
+
+        # Shared memory.
+        # We need to subtract the amount of shared memory from the memory limit of
+        # a container, since tmpfs including /dev/shm uses host-side kernel memory
+        # and cgroup's memory limit does not apply.
+        shmem = resource_opts.get('shmem', None)
+        if shmem is None:
+            shmem = image_info['labels'].get('ai.backend.resource.preferred.shmem', '64m')
+        shmem = BinarySize.from_str(shmem)
+        resource_opts['shmem'] = shmem
+        image_min_slots = copy.deepcopy(image_min_slots)
+        image_min_slots['mem'] += shmem
 
         # ==== BEGIN: ENQUEUING PART ====
         # This part will be moved to the job-enqueue handler.
@@ -466,6 +486,7 @@ class AgentRegistry:
 
         # Check the image resource slots.
         log.debug('requested_slots: {}', requested_slots)
+        log.debug('resource_opts: {}', resource_opts)
         log.debug('image_min_slots: {}', image_min_slots)
         log.debug('image_max_slots: {}', image_max_slots)
 
@@ -549,7 +570,7 @@ class AgentRegistry:
 
             # Check the scaling groups.
             sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
-            target_sgroup_names = []
+            target_sgroup_names: List[str] = []
             preferred_sgroup_name = creation_config.get('scalingGroup')
             if preferred_sgroup_name is not None:
                 for sgroup in sgroups:
@@ -646,6 +667,7 @@ class AgentRegistry:
                 'tag': session_tag,
                 'occupied_slots': requested_slots,
                 'occupied_shares': {},
+                'resource_opts': resource_opts,
                 'environ': [f'{k}={v}' for k, v in environ.items()],
                 'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
                 'kernel_host': None,
@@ -682,6 +704,7 @@ class AgentRegistry:
                         'idle_timeout': resource_policy['idle_timeout'],
                         'mounts': mounts,
                         'environ': environ,
+                        'resource_opts': resource_opts,
                     }
                     created_info = await rpc.call.create_kernel(str(kernel_id),
                                                                 config)
@@ -829,14 +852,18 @@ class AgentRegistry:
                 del key_occupied[k]
             return key_occupied
 
-    async def destroy_session(self, sess_id, access_key):
+    async def destroy_session(self, sess_id, access_key, *,
+                              domain_name=None):
         async with self.handle_kernel_exception(
                 'destroy_session', sess_id, access_key, set_error=True):
             try:
                 async with self.dbpool.acquire() as conn, conn.begin():
                     kernel = await self.get_session(sess_id, access_key,
+                                                    field=[kernels.c.domain_name],
                                                     for_update=True,
                                                     db_connection=conn)
+                    if domain_name is not None and kernel.domain_name != domain_name:
+                        raise KernelNotFound
                     await self.set_session_status(sess_id, access_key,
                                                   KernelStatus.TERMINATING,
                                                   db_connection=conn)

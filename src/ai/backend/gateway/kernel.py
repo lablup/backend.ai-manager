@@ -10,7 +10,10 @@ import json
 import logging
 import re
 import secrets
-from typing import Any
+from typing import (
+    Any,
+    MutableMapping,
+)
 
 import aiohttp
 from aiohttp import web
@@ -45,8 +48,6 @@ from ..manager.models import (
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.kernel'))
 
-grace_events = []
-
 _json_loads = functools.partial(json.loads, parse_float=Decimal)
 
 creation_config_v1 = t.Dict({
@@ -71,6 +72,7 @@ creation_config_v3 = t.Dict({
     tx.AliasedKey(['scalingGroup', 'scaling_group'], default=None):
         t.Null | t.String,
     t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
+    t.Key('resource_opts', default=None): t.Null | t.Mapping(t.String, t.Any),
 })
 
 
@@ -94,7 +96,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
     log.info('GET_OR_CREATE (u:{0}/{1}, image:{2}, tag:{3}, token:{4})',
              requester_access_key, owner_access_key,
              params['image'], params['tag'], params['sess_id'])
-    resp = {}
+    resp: MutableMapping[str, Any] = {}
     try:
         resource_policy = request['keypair']['resource_policy']
         async with request.app['dbpool'].acquire() as conn, conn.begin():
@@ -133,6 +135,18 @@ async def create(request: web.Request, params: Any) -> web.Response:
                     raise BackendError(f"{params['group']}: no such group in domain {params['domain']}")
                 params['domain'] = row.domain_name  # replace domain_name
                 group_id = row.id
+            elif request['is_admin']:  # domain-admin can spawn container in any group in domain
+                query = (sa.select([groups.c.id])
+                           .select_from(groups)
+                           .where(domains.c.name == params['domain'])
+                           .where(domains.c.is_active)
+                           .where(groups.c.name == params['group'])
+                           .where(groups.c.is_active))
+                rows = await conn.execute(query)
+                row = await rows.fetchone()
+                if row is None:
+                    raise BackendError(f"{params['group']}: no such group in domain {params['domain']}")
+                group_id = row.id
             else:  # check if the group_name is associated with one of user's group.
                 j = agus.join(groups, agus.c.group_id == groups.c.id)
                 query = (sa.select([agus])
@@ -168,6 +182,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 matched_mounts = set()
                 matched_vfolders = await query_accessible_vfolders(
                     conn, owner_uuid,
+                    user_role=request['user']['role'], domain_name=params['domain'],
                     allowed_vfolder_types=allowed_vfolder_types,
                     extra_vf_conds=(vfolders.c.name.in_(creation_config['mounts'])))
                 for item in matched_vfolders:
@@ -342,10 +357,15 @@ async def destroy(request: web.Request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     requester_access_key, owner_access_key = get_access_key_scopes(request)
+    domain_name = None
+    if requester_access_key != owner_access_key and \
+            not request['is_superadmin'] and request['is_admin']:
+        domain_name = request['user']['domain_name']
     log.info('DESTROY (u:{0}/{1}, k:{2})',
              requester_access_key, owner_access_key, sess_id)
     try:
-        last_stat = await registry.destroy_session(sess_id, owner_access_key)
+        last_stat = await registry.destroy_session(sess_id, owner_access_key,
+                                                   domain_name=domain_name)
     except BackendError:
         log.exception('DESTROY: exception')
         raise
@@ -658,7 +678,7 @@ async def list_files(request: web.Request) -> web.Response:
             json.decoder.JSONDecodeError) as e:
         log.warning('LIST_FILES: invalid/missing parameters, {0!r}', e)
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
-    resp = {}
+    resp: MutableMapping[str, Any] = {}
     try:
         registry = request.app['registry']
         await registry.increment_session_usage(sess_id, owner_access_key)

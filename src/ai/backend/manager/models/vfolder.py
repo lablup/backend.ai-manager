@@ -1,6 +1,6 @@
 from collections import OrderedDict
 import enum
-from typing import Any
+from typing import Any, Sequence
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -11,8 +11,9 @@ from .base import (
     metadata, EnumValueType, GUID, IDColumn,
     Item, PaginatedList,
 )
+from .user import UserRole
 
-__all__ = (
+__all__: Sequence[str] = (
     'vfolders',
     'vfolder_invitations',
     'vfolder_permissions',
@@ -48,7 +49,7 @@ This is the default permission when the vfolder is owned by the requesting user.
 It is added after creation of the VFolderPermission class to avoid becoming
 one of the regular enumeration entries.
 '''
-VFolderPermission.OWNER_PERM = VFolderPermission.RW_DELETE
+setattr(VFolderPermission, 'OWNER_PERM', VFolderPermission.RW_DELETE)
 
 
 vfolders = sa.Table(
@@ -114,14 +115,16 @@ vfolder_permissions = sa.Table(
 
 
 async def query_accessible_vfolders(conn, user_uuid, *,
+                                    user_role=None, domain_name=None,
                                     allowed_vfolder_types=None,
                                     extra_vf_conds=None,
                                     extra_vfperm_conds=None):
     if allowed_vfolder_types is None:
         allowed_vfolder_types = ['user']  # legacy default
     entries = []
-    # Scan my owned vfolders.
+    # User vfolders.
     if 'user' in allowed_vfolder_types:
+        # Scan my owned vfolders.
         query = (sa.select([
                        vfolders.c.name,
                        vfolders.c.id,
@@ -191,15 +194,23 @@ async def query_accessible_vfolders(conn, user_uuid, *,
 
     if 'group' in allowed_vfolder_types:
         # Scan group vfolders.
-        from ai.backend.manager.models import users, association_groups_users as agus
-        j = sa.join(agus, users, agus.c.user_id == users.c.uuid)
-        query = (sa.select([agus.c.group_id, users.c.role])
-                   .select_from(j)
-                   .where(agus.c.user_id == user_uuid))
-        result = await conn.execute(query)
-        groups = await result.fetchall()
-        group_ids = [g.group_id for g in groups]
-        user_role = groups[0].role
+        if user_role == UserRole.ADMIN or user_role == 'admin':
+            from ai.backend.manager.models import groups
+            query = (sa.select([groups.c.id])
+                       .select_from(groups)
+                       .where(groups.c.domain_name == domain_name))
+            result = await conn.execute(query)
+            groups = await result.fetchall()
+            group_ids = [g.id for g in groups]
+        else:
+            from ai.backend.manager.models import users, association_groups_users as agus
+            j = sa.join(agus, users, agus.c.user_id == users.c.uuid)
+            query = (sa.select([agus.c.group_id])
+                       .select_from(j)
+                       .where(agus.c.user_id == user_uuid))
+            result = await conn.execute(query)
+            groups = await result.fetchall()
+            group_ids = [g.group_id for g in groups]
         query = (sa.select([
                        vfolders.c.name,
                        vfolders.c.id,
@@ -216,7 +227,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
         if extra_vf_conds is not None:
             query = query.where(extra_vf_conds)
         result = await conn.execute(query)
-        is_owner = (user_role == 'admin')
+        is_owner = (user_role == UserRole.ADMIN or user_role == 'admin')
         perm = VFolderPermission.OWNER_PERM if is_owner else VFolderPermission.READ_WRITE
         async for row in result:
             entries.append({

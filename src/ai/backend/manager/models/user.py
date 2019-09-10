@@ -1,7 +1,7 @@
 import asyncio
 from collections import OrderedDict
 import enum
-from typing import Any
+from typing import Any, Sequence
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -17,7 +17,7 @@ from .base import (
 )
 
 
-__all__ = (
+__all__: Sequence[str] = (
     'users',
     'User', 'UserInput', 'ModifyUserInput', 'UserRole',
     'CreateUser', 'ModifyUser', 'DeleteUser',
@@ -57,7 +57,6 @@ users = sa.Table(
     #: Field for synchronization with external services.
     sa.Column('integration_id', sa.String(length=512)),
 
-    # Note: admins without domain_name is global admin.
     sa.Column('domain_name', sa.String(length=64),
               sa.ForeignKey('domains.name'), index=True),
     sa.Column('role', EnumValueType(UserRole), default=UserRole.USER),
@@ -283,7 +282,7 @@ class CreateUser(graphene.Mutation):
                     if props.group_ids:
                         query = (sa.select([groups.c.id])
                                    .select_from(groups)
-                                   .where(groups.c.domain_name == info.context['user']['domain_name'])
+                                   .where(groups.c.domain_name == props.domain_name)
                                    .where(groups.c.id.in_(props.group_ids)))
                         result = await conn.execute(query)
                         grps = await result.fetchall()

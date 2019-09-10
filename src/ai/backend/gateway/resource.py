@@ -10,7 +10,10 @@ import functools
 import json
 import logging
 import re
-from typing import Any
+from typing import (
+    Any,
+    MutableMapping,
+)
 
 import aiohttp
 from aiohttp import web
@@ -59,7 +62,7 @@ async def list_presets(request) -> web.Response:
         # scaling_group = request.query.get('scaling_group')
         # if scaling_group is not None:
         #     query = query.where(resource_presets.c.scaling_group == scaling_group)
-        resp = {'presets': []}
+        resp: MutableMapping[str, Any] = {'presets': []}
         async for row in conn.execute(query):
             preset_slots = row['resource_slots'].filter_slots(known_slot_types)
             resp['presets'].append({
@@ -94,7 +97,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
     registry = request.app['registry']
     known_slot_types = await registry.config_server.get_resource_slots()
     keypair_limits = ResourceSlot.from_policy(resource_policy, known_slot_types)
-    resp = {
+    resp: MutableMapping[str, Any] = {
         'keypair_limits': None,
         'keypair_using': None,
         'keypair_remaining': None,
@@ -184,8 +187,9 @@ async def recalculate_usage(request) -> web.Response:
         query = (sa.select([kernels.c.access_key, kernels.c.agent, kernels.c.occupied_slots])
                    .where(kernels.c.status != KernelStatus.TERMINATED)
                    .order_by(sa.asc(kernels.c.access_key)))
-        concurrency_used_per_key = defaultdict(lambda: 0)
-        occupied_slots_per_agent = defaultdict(lambda: ResourceSlot({'cpu': 0, 'mem': 0}))
+        concurrency_used_per_key: MutableMapping[str, int] = defaultdict(lambda: 0)
+        occupied_slots_per_agent: MutableMapping[str, ResourceSlot] = \
+            defaultdict(lambda: ResourceSlot({'cpu': 0, 'mem': 0}))
         async for row in conn.execute(query):
             concurrency_used_per_key[row.access_key] += 1
             occupied_slots_per_agent[row.agent] += ResourceSlot(row.occupied_slots)
@@ -239,28 +243,38 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
         nfs = None
         if row.mounts is not None:
             nfs = list(set([mount[1] for mount in row.mounts]))
-        device_type = []
+        device_type = set()
+        smp = 0
         if row.attached_devices and row.attached_devices.get('cuda'):
             for dev_info in row.attached_devices['cuda']:
                 if dev_info.get('model_name'):
-                    device_type.append(dev_info['model_name'])
+                    device_type.add(dev_info['model_name'])
+                smp += dev_info.get('smp', 0)
+        if row.resource_opts:
+            shared_memory = int(row.resource_opts.get('shmem', 0))
+        else:
+            shared_memory = 0
         c_info = {
             'id': str(row['id']),
             'name': row['sess_id'],
             'access_key': row['access_key'],
-            'smp': float(row.occupied_slots['cpu']),  # CPU allocated
+            'cpu_allocated': float(row.occupied_slots['cpu']),
             'cpu_used': float(last_stat['cpu_used']['current']) if last_stat else 0,
             'mem_allocated': int(row.occupied_slots['mem']),
             'mem_used': int(last_stat['mem']['capacity']) if last_stat else 0,
-            'shared_memory': 0,  # TODO: how to get?
-            'disk_used': int(last_stat['io_scratch_size']['stats.max']) if last_stat else 0,
+            'shared_memory': shared_memory,
+            'disk_allocated': 0,  # TODO: disk quota limit
+            'disk_used': (int(last_stat['io_scratch_size']['stats.max'])
+                          if last_stat else 0),
             'io_read': int(last_stat['io_read']['current']) if last_stat else 0,
             'io_write': int(last_stat['io_write']['current']) if last_stat else 0,
             'used_time': str(row['terminated_at'] - row['created_at']),
             'used_days': (row['terminated_at'].astimezone(local_tz).toordinal() -
                           row['created_at'].astimezone(local_tz).toordinal() + 1),
-            'device_type': device_type,
+            'device_type': list(device_type),
+            'smp': float(smp),  # TODO: GPU smp
             'nfs': nfs,
+            'image_id': row['image'],  # TODO: image id
             'image_name': row['image'],
             'created_at': str(row['created_at']),
             'terminated_at': str(row['terminated_at']),
@@ -270,29 +284,35 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
                 'domain_name': row['domain_name'],
                 'g_id': group_id,
                 'g_name': row['name'],  # this is group's name
-                'g_smp': c_info['smp'],
+                'g_cpu_allocated': c_info['cpu_allocated'],
                 'g_cpu_used': c_info['cpu_used'],
                 'g_mem_allocated': c_info['mem_allocated'],
                 'g_mem_used': c_info['mem_used'],
                 'g_shared_memory': c_info['shared_memory'],
+                'g_disk_allocated': c_info['disk_allocated'],
                 'g_disk_used': c_info['disk_used'],
                 'g_io_read': c_info['io_read'],
                 'g_io_write': c_info['io_write'],
                 'g_device_type': c_info['device_type'],
+                'g_smp': c_info['smp'],
                 'c_infos': [c_info],
             }
         else:
-            objs_per_group[group_id]['g_smp'] += c_info['smp']
+            objs_per_group[group_id]['g_cpu_allocated'] += c_info['cpu_allocated']
             objs_per_group[group_id]['g_cpu_used'] += c_info['cpu_used']
             objs_per_group[group_id]['g_mem_allocated'] += c_info['mem_allocated']
             objs_per_group[group_id]['g_mem_used'] += c_info['mem_used']
             objs_per_group[group_id]['g_shared_memory'] += c_info['shared_memory']
+            objs_per_group[group_id]['g_disk_allocated'] += c_info['disk_allocated']
             objs_per_group[group_id]['g_disk_used'] += c_info['disk_used']
             objs_per_group[group_id]['g_io_read'] += c_info['io_read']
             objs_per_group[group_id]['g_io_write'] += c_info['io_write']
             for device in c_info['device_type']:
                 if device not in objs_per_group[group_id]['g_device_type']:
-                    objs_per_group[group_id]['g_device_type'].append(device)
+                    g_dev_type = objs_per_group[group_id]['g_device_type']
+                    g_dev_type.append(device)
+                    objs_per_group[group_id]['g_device_type'] = list(set(g_dev_type))
+            objs_per_group[group_id]['g_smp'] += c_info['smp']
             objs_per_group[group_id]['c_infos'].append(c_info)
     return list(objs_per_group.values())
 
@@ -302,7 +322,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
 @superadmin_required
 @check_api_params(
     t.Dict({
-        tx.AliasedKey(['group_ids', 'project_ids', 'group', 'project']): t.List(t.String),
+        tx.MultiKey('group_ids'): t.List(t.String),
         t.Key('month'): t.Regexp(r'^\d{6}', re.ASCII),
     }),
     loads=_json_loads)
@@ -333,7 +353,7 @@ async def usage_per_month(request: web.Request, params: Any) -> web.Response:
 @superadmin_required
 @check_api_params(
     t.Dict({
-        tx.AliasedKey(['group_id', 'project_id', 'group', 'project']): t.String,
+        t.Key('group_id'): t.String,
         t.Key('start_date'): t.Regexp(r'^\d{8}$', re.ASCII),
         t.Key('end_date'): t.Regexp(r'^\d{8}$', re.ASCII),
     }),
@@ -359,7 +379,7 @@ async def usage_per_period(request: web.Request, params: Any) -> web.Response:
     log.info('USAGE_PER_MONTH (g:{0}, start_date:{1}, end_date:{2})',
              group_id, start_date, end_date)
     resp = await get_container_stats_for_period(request, start_date, end_date, group_ids=[group_id])
-    resp = resp[0]  # only one group (project)
+    resp = resp[0] if len(resp) > 0 else {}  # only one group (project)
     resp['start_date'] = params['start_date']
     resp['end_date'] = params['end_date']
     log.debug('container list are retrieved from {0} to {1}', start_date, end_date)

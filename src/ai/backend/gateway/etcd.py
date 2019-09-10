@@ -215,7 +215,7 @@ class ConfigServer:
     async def update_aliases_from_file(self, file: Path):
         log.info('Updating image aliases from "{0}"', file)
         try:
-            data = yaml.load(open(file, 'rb'))
+            data = yaml.load(open(file, 'r', encoding='utf-8'))
         except IOError:
             log.error('Cannot open "{0}".', file)
             return
@@ -511,7 +511,7 @@ class ConfigServer:
     async def update_volumes_from_file(self, file: Path):
         log.info('Updating network volumes from "{0}"', file)
         try:
-            data = yaml.load(open(file, 'rb'))
+            data = yaml.load(open(file, 'r', encoding='utf-8'))
         except IOError:
             log.error('Cannot open "{0}".', file)
             return
@@ -563,6 +563,10 @@ class ConfigServer:
         if not vf_types:
             vf_types = {'user': ''}
         return list(vf_types.keys())
+
+    @aiotools.lru_cache(maxsize=1, expire_after=5.0)
+    async def get_manager_nodes_info(self):
+        return await self.etcd.get_prefix_dict('nodes/manager')
 
     @aiotools.lru_cache(maxsize=1, expire_after=2.0)
     async def get_manager_status(self):
@@ -648,7 +652,8 @@ async def get_vfolder_types(request) -> web.Response:
 async def get_config(request: web.Request, params: Any) -> web.Response:
     etcd = request.app['config_server'].etcd
     if params['prefix']:
-        value = await etcd.get_prefix_dict(params['key'])
+        # Flatten the returned ChainMap object for JSON serialization
+        value = dict(await etcd.get_prefix_dict(params['key']))
     else:
         value = await etcd.get(params['key'])
     return web.json_response({'result': value})
@@ -660,7 +665,7 @@ async def get_config(request: web.Request, params: Any) -> web.Response:
     t.Dict({
         t.Key('key'): t.String,
         t.Key('value'): t.Or(t.String(allow_blank=True),
-                             t.Mapping(t.String, t.Any)),
+                             t.Mapping(t.String(allow_blank=True), t.Any)),
     }))
 async def set_config(request: web.Request, params: Any) -> web.Response:
     etcd = request.app['config_server'].etcd

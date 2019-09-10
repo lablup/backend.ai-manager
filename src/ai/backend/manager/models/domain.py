@@ -1,5 +1,6 @@
 from collections import OrderedDict
 import re
+from typing import Sequence
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -18,7 +19,7 @@ from .scaling_group import sgroups_for_domains
 from .user import UserRole
 
 
-__all__ = (
+__all__: Sequence[str] = (
     'domains',
     'Domain', 'DomainInput', 'ModifyDomainInput',
     'CreateDomain', 'ModifyDomain', 'DeleteDomain',
@@ -203,7 +204,9 @@ class ModifyDomain(graphene.Mutation):
             .where(domains.c.name == name)
         )
         # The name may have changed if set.
-        item_query = domains.select().where(domains.c.name == data['name'])
+        if 'name' in data:
+            name = data['name']
+        item_query = domains.select().where(domains.c.name == name)
         return await simple_db_mutate_returning_item(
             cls, info.context, update_query,
             item_query=item_query, item_cls=Domain)
