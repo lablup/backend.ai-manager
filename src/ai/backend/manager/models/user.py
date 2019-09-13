@@ -332,6 +332,12 @@ class ModifyUser(graphene.Mutation):
                 return cls(ok=False, msg='nothing to update', user=None)
 
             try:
+                # Get previous domain name of the user.
+                query = (sa.select([users.c.domain_name])
+                           .select_from(users)
+                           .where(users.c.email == email))
+                prev_domain_name = await conn.scalar(query)
+
                 # Update user.
                 query = (users.update().values(data).where(users.c.email == email))
                 result = await conn.execute(query)
@@ -343,8 +349,7 @@ class ModifyUser(graphene.Mutation):
                     return cls(ok=False, msg='no such user', user=None)
 
                 # If domain is changed and no group is associated, clear previous domain's group.
-                if 'domain_name' in props and props['domain_name'] != o.domain_name and \
-                        not props.group_ids:
+                if prev_domain_name != o.domain_name and not props.group_ids:
                     from .group import association_groups_users, groups
                     query = (association_groups_users
                              .delete()
