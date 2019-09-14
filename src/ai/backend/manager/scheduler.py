@@ -248,7 +248,9 @@ class SessionScheduler(aobject):
         log.debug('schedule(): tick')
         known_slot_types = await self.config_server.get_resource_slots()
 
-        # First, fetch all pending sessions.
+        # We allow a long database transaction here
+        # because this scheduling handler will be executed by only one process.
+        # (It's a globally unique singleton.)
         async with self.dbpool.acquire() as db_conn, db_conn.begin():
             sched_ctx = SchedulingContext(
                 registry=self.registry,
@@ -256,6 +258,7 @@ class SessionScheduler(aobject):
                 known_slot_types=known_slot_types,
             )
 
+            # First, fetch all pending sessions.
             # For each pending session, check the followings:
             # - all dependent jobs has finished (status=TERMINATED, result=SUCCESS).
             # - target scaling group's resource capacity is sufficient to run the session.
@@ -291,6 +294,8 @@ class SessionScheduler(aobject):
                     log.debug(log_fmt + 'one or more predicates failed', *log_args)
                     # If any one of predicates fails, rollback all changes.
                     await asyncio.gather(*failure_callbacks, return_exceptions=True)
+                    # Predicate failures are *NOT* permanent errors.
+                    # We need to retry the scheduling afterwards.
                     continue
                 log.debug(log_fmt + 'try-starting', *log_args)
 
