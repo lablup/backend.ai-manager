@@ -32,6 +32,7 @@ from ai.backend.common.plugin import (
     discover_entrypoints, install_plugins, add_plugin_args)
 from ..manager import __version__
 from ..manager.registry import AgentRegistry
+from ..manager.scheduler import SessionScheduler
 from .config import load as load_config, load_shared as load_shared_config, redis_config_iv
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
 from .etcd import ConfigServer
@@ -434,6 +435,10 @@ async def server_main(loop, pidx, _args):
         ssl_context=ssl_ctx,
     )
     await site.start()
+    # TODO: use distribute leader election
+    if pidx == 0:
+        session_scheduler = await SessionScheduler.new(
+            app['config_server'], app['registry'])
 
     if os.geteuid() == 0:
         uid = app['config']['manager']['user']
@@ -451,6 +456,8 @@ async def server_main(loop, pidx, _args):
         yield
     finally:
         log.info('shutting down...')
+        if pidx == 0:
+            await session_scheduler.close()
         await runner.cleanup()
 
 

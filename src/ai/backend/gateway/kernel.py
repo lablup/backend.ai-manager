@@ -86,6 +86,8 @@ creation_config_v3 = t.Dict({
         tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
         t.Key('config', default=dict): t.Mapping(t.String, t.Any),
         t.Key('tag', default=None): t.Null | t.String,
+        t.Key('enqueueOnly', default=False): t.Bool,
+        t.Key('maxWaitSeconds', default=0): t.Int[0:],
     }),
     loads=_json_loads)
 async def create(request: web.Request, params: Any) -> web.Response:
@@ -97,6 +99,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
              requester_access_key, owner_access_key,
              params['image'], params['tag'], params['sess_id'])
     resp: MutableMapping[str, Any] = {}
+
+    # TODO: Check existing (owner_access_key, session) instance
+
     try:
         resource_policy = request['keypair']['resource_policy']
         async with request.app['dbpool'].acquire() as conn, conn.begin():
@@ -107,20 +112,6 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 owner_uuid = await conn.scalar(query)
             else:
                 owner_uuid = requester_uuid
-
-            query = (sa.select([keypairs.c.concurrency_used], for_update=True)
-                       .select_from(keypairs)
-                       .where(keypairs.c.access_key == owner_access_key))
-            concurrency_used = await conn.scalar(query)
-            log.debug('access_key: {0} ({1} / {2})',
-                      owner_access_key, concurrency_used,
-                      resource_policy['max_concurrent_sessions'])
-            if concurrency_used >= resource_policy['max_concurrent_sessions']:
-                raise QuotaExceeded
-            query = (sa.update(keypairs)
-                       .values(concurrency_used=keypairs.c.concurrency_used + 1)
-                       .where(keypairs.c.access_key == owner_access_key))
-            await conn.execute(query)
 
             if request['is_superadmin']:  # superadmin can spawn container in any domain and group
                 query = (sa.select([groups.c.domain_name, groups.c.id])
@@ -172,61 +163,49 @@ async def create(request: web.Request, params: Any) -> web.Response:
         else:
             raise InvalidAPIParameters('API version not supported')
 
-        # sanity check for vfolders
-        try:
-            kernel = None
-            allowed_vfolder_types = ['user', 'group']
-            # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
-            if creation_config['mounts']:
-                mount_details = []
-                matched_mounts = set()
-                matched_vfolders = await query_accessible_vfolders(
-                    conn, owner_uuid,
-                    user_role=request['user']['role'], domain_name=params['domain'],
-                    allowed_vfolder_types=allowed_vfolder_types,
-                    extra_vf_conds=(vfolders.c.name.in_(creation_config['mounts'])))
-                for item in matched_vfolders:
-                    if item['group'] is not None and item['group'] != str(group_id):
-                        # User's accessible group vfolders should not be mounted
-                        # if not belong to the execution kernel.
-                        continue
-                    matched_mounts.add(item['name'])
-                    mount_details.append((
-                        item['name'],
-                        item['host'],
-                        item['id'].hex,
-                        item['permission'].value,
-                    ))
-                if set(creation_config['mounts']) > matched_mounts:
-                    raise VFolderNotFound
-                creation_config['mounts'] = mount_details
+        result = await asyncio.shield(request.app['registry'].enqueue_session(
+            params['sess_id'], owner_access_key,
+            params['image'], creation_config,
+            resource_policy,
+            domain_name=params['domain'],
+            group_id=group_id,
+            user_uuid=owner_uuid,
+            user_role=request['user']['role'],
+            tag=params.get('tag', None)))
+        resp['kernelId'] = str(result['kernel_id'])
+        resp['servicePorts'] = [
+            {
+                'name': item['name'],
+                'protocol': item['protocol'],
+            }
+            for item in result['service_ports']
+        ]
+        resp['status'] = 'PENDING'
 
-            kernel, created = await request.app['registry'].get_or_create_session(
-                params['sess_id'], owner_access_key,
-                params['image'], creation_config,
-                resource_policy,
-                domain_name=params['domain'], group_id=group_id, user_uuid=owner_uuid,
-                tag=params.get('tag', None))
-            resp['kernelId'] = str(kernel['sess_id'])
-            resp['servicePorts'] = [
-                {
-                    'name': item['name'],
-                    'protocol': item['protocol'],
-                }
-                for item in kernel['service_ports']
-            ]
-            resp['created'] = bool(created)
-        except Exception:
-            # Restore concurrency_used if exception occurs before kernel creation
-            if kernel is None:
+        if not params['enqueueOnly']:
+            wait_sec = 0
+            max_wait = params['maxWaitSeconds']
+            # TODO: change to event-driven notification
+            while True:
+                if max_wait > 0 and max_wait >= wait_sec:
+                    resp['status'] = 'TIMEOUT'
+                    break
                 async with request.app['dbpool'].acquire() as conn, conn.begin():
                     query = (
-                        sa.update(keypairs)
-                        .values(concurrency_used=keypairs.c.concurrency_used - 1)
-                        .where(keypairs.c.access_key == owner_access_key))
-                    await conn.execute(query)
-            # Bubble up
-            raise
+                        sa.select([kernels.c.status])
+                        .select_from(kernels)
+                        .where(kernels.c.id == resp['kernelId'])
+                    )
+                    status = await conn.scalar(query)
+                    if status == KernelStatus.RUNNING:
+                        resp['status'] = 'RUNNING'
+                        break
+                    elif status == KernelStatus.ERROR:
+                        resp['status'] = 'ERROR'
+                        break
+                await asyncio.sleep(1)
+                wait_sec += 1
+
     except BackendError:
         log.exception('GET_OR_CREATE: exception')
         raise
