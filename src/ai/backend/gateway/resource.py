@@ -258,9 +258,9 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'id': str(row['id']),
             'name': row['sess_id'],
             'access_key': row['access_key'],
-            'cpu_allocated': float(row.occupied_slots['cpu']),
+            'cpu_allocated': float(row.occupied_slots['cpu']) if 'cpu' in row.occupied_slots else 0,
             'cpu_used': float(last_stat['cpu_used']['current']) if last_stat else 0,
-            'mem_allocated': int(row.occupied_slots['mem']),
+            'mem_allocated': int(row.occupied_slots['mem']) if 'mem' in row.occupied_slots else 0,
             'mem_used': int(last_stat['mem']['capacity']) if last_stat else 0,
             'shared_memory': shared_memory,
             'disk_allocated': 0,  # TODO: disk quota limit

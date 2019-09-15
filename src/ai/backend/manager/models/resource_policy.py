@@ -65,7 +65,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
     allowed_vfolder_hosts = graphene.List(lambda: graphene.String)
 
     @classmethod
-    def from_row(cls, context, row):
+    def from_row(cls, row):
         if row is None:
             return None
         return cls(

@@ -127,6 +127,7 @@ class SessionCommons:
     occupied_slots = graphene.JSONString()
     occupied_shares = graphene.JSONString()
     mounts = graphene.List(lambda: graphene.List(lambda: graphene.String))
+    resource_opts = graphene.JSONString()
 
     num_queries = BigInt()
     live_stat = graphene.JSONString()
@@ -248,6 +249,7 @@ class SessionCommons:
             'occupied_slots': row['occupied_slots'].to_json(),
             'occupied_shares': row['occupied_shares'],
             'mounts': row['mounts'],
+            'resource_opts': row['resource_opts'],
             'num_queries': row['num_queries'],
             # optinally hidden
             'agent': row['agent'] if not hide_agents else None,

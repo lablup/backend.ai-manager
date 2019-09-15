@@ -323,7 +323,7 @@ class ModifyUser(graphene.Mutation):
             set_if_set(props, data, 'full_name')
             set_if_set(props, data, 'description')
             set_if_set(props, data, 'is_active')
-            # set_if_set(props, data, 'domain_name')
+            set_if_set(props, data, 'domain_name')
             set_if_set(props, data, 'role')
             if 'role' in data:
                 data['role'] = UserRole(data['role'])
@@ -332,6 +332,13 @@ class ModifyUser(graphene.Mutation):
                 return cls(ok=False, msg='nothing to update', user=None)
 
             try:
+                # Get previous domain name of the user.
+                query = (sa.select([users.c.domain_name])
+                           .select_from(users)
+                           .where(users.c.email == email))
+                prev_domain_name = await conn.scalar(query)
+
+                # Update user.
                 query = (users.update().values(data).where(users.c.email == email))
                 result = await conn.execute(query)
                 if result.rowcount > 0:
@@ -340,6 +347,15 @@ class ModifyUser(graphene.Mutation):
                     o = User.from_row(await result.first())
                 else:
                     return cls(ok=False, msg='no such user', user=None)
+
+                # If domain is changed and no group is associated, clear previous domain's group.
+                if prev_domain_name != o.domain_name and not props.group_ids:
+                    from .group import association_groups_users, groups
+                    query = (association_groups_users
+                             .delete()
+                             .where(association_groups_users.c.user_id == o.uuid))
+                    await conn.execute(query)
+
                 # Update user's group if group_ids parameter is provided.
                 if props.group_ids and o is not None:
                     from .group import association_groups_users, groups

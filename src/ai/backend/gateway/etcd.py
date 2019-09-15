@@ -156,7 +156,7 @@ from ai.backend.common.etcd import (
 from ai.backend.common.docker import (
     login as registry_login,
 )
-from .auth import admin_required
+from .auth import admin_required, superadmin_required
 from .exceptions import InvalidAPIParameters, ServerMisconfiguredError
 from .manager import ManagerStatus
 from .utils import chunked, check_api_params
@@ -643,6 +643,17 @@ async def get_vfolder_types(request) -> web.Response:
 
 
 @atomic
+@superadmin_required
+async def get_docker_registries(request) -> web.Response:
+    '''
+    Returns the list of all registered docker registries.
+    '''
+    etcd = request.app['registry'].config_server.etcd
+    known_registries = await get_known_registries(etcd)
+    return web.json_response(known_registries, status=200)
+
+
+@atomic
 @admin_required
 @check_api_params(
     t.Dict({
@@ -725,6 +736,7 @@ def create_app(default_cors_options):
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     cors.add(app.router.add_route('GET',  r'/resource-slots', get_resource_slots))
     cors.add(app.router.add_route('GET',  r'/vfolder-types', get_vfolder_types))
+    cors.add(app.router.add_route('GET',  r'/docker-registries', get_docker_registries))
     cors.add(app.router.add_route('POST', r'/get', get_config))
     cors.add(app.router.add_route('POST', r'/set', set_config))
     cors.add(app.router.add_route('POST', r'/delete', delete_config))

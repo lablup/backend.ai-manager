@@ -359,6 +359,27 @@ async def list_hosts(request: web.Request) -> web.Response:
 
 
 @atomic
+@superadmin_required
+@server_status_required(READ_ALLOWED)
+async def list_all_hosts(request: web.Request) -> web.Response:
+    access_key = request['keypair']['access_key']
+    log.info('VFOLDER.LIST_ALL_HOSTS (u:{0})', access_key)
+    config = request.app['config_server']
+    mount_prefix = await config.get('volumes/_mount')
+    if mount_prefix is None:
+        mount_prefix = '/mnt'
+    mounted_hosts = set(p.name for p in Path(mount_prefix).iterdir() if p.is_dir())
+    default_host = await config.get('volumes/_default_host')
+    if default_host not in mounted_hosts:
+        default_host = None
+    resp = {
+        'default': default_host,
+        'allowed': sorted(mounted_hosts),
+    }
+    return web.json_response(resp, status=200)
+
+
+@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 async def list_allowed_types(request: web.Request) -> web.Response:
@@ -1539,6 +1560,7 @@ def create_app(default_cors_options):
     cors.add(vfolder_resource.add_route('GET',    get_info))
     cors.add(vfolder_resource.add_route('DELETE', delete))
     cors.add(add_route('GET',    r'/_/hosts', list_hosts))
+    cors.add(add_route('GET',    r'/_/all_hosts', list_all_hosts))
     cors.add(add_route('GET',    r'/_/allowed_types', list_allowed_types))
     cors.add(add_route('GET',    r'/_/download_with_token', download_with_token))
     cors.add(add_route('HEAD',   r'/_/download_with_token', download_with_token))
