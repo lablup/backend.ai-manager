@@ -5,7 +5,12 @@ import functools
 import logging
 from pathlib import Path
 import secrets
-from typing import Callable
+from typing import (
+    Any,
+    Protocol,
+    List, Tuple,
+    MutableMapping,
+)
 
 from aiohttp import web
 from aiojobs.aiohttp import get_scheduler_from_app
@@ -13,6 +18,10 @@ import zmq, zmq.asyncio
 
 from ai.backend.common import msgpack
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.types import (
+    AgentId,
+)
+from .utils import current_loop
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.events'))
 
@@ -22,7 +31,8 @@ ipc_events_sockpath = ipc_base_path / f'events-{ipc_key}.sock'
 EVENT_IPC_ADDR = f'ipc://{ipc_events_sockpath}'
 
 
-def event_router(_, pidx, args):
+# TODO: Use Redis for multiple manager instances in HA setup
+def event_router(_, pidx, args) -> None:
     # run as extra_procs by aiotools
     ctx = zmq.Context()
     ctx.linger = 50
@@ -48,36 +58,55 @@ def event_router(_, pidx, args):
             ipc_events_sockpath.unlink()
 
 
+class EventCallback(Protocol):
+    async def __call__(self,
+                       app: web.Application,
+                       agent_id: AgentId,
+                       event_name: str,
+                       *args):
+        ...
+
+
 @dataclass
 class EventHandler:
     app: web.Application
-    callback: Callable
+    callback: EventCallback
 
 
 class EventDispatcher:
 
-    def __init__(self, app, loop=None):
-        self.loop = loop if loop else asyncio.get_event_loop()
+    loop: asyncio.AbstractEventLoop
+    root_app: web.Application
+    handlers: MutableMapping[str, List[EventHandler]]
+
+    def __init__(self, app: web.Application) -> None:
+        self.loop = current_loop()
         self.root_app = app
         self.handlers = defaultdict(list)
 
-    def add_handler(self, event_name, app, callback):
-        assert callable(callback)
+    def add_handler(self, event_name: str, app: web.Application, callback: EventCallback) -> None:
         self.handlers[event_name].append(EventHandler(app, callback))
 
-    async def dispatch(self, event_name, agent_id, args=tuple()):
+    async def dispatch(self, event_name: str, agent_id: AgentId,
+                       args: Tuple[Any, ...] = tuple()) -> None:
         log.debug('DISPATCH({0}/{1})', event_name, agent_id)
         scheduler = get_scheduler_from_app(self.root_app)
         for handler in self.handlers[event_name]:
             cb = handler.callback
-            if asyncio.iscoroutine(cb) or asyncio.iscoroutinefunction(cb):
-                await scheduler.spawn(cb(handler.app, agent_id, *args))
-            else:
-                cb = functools.partial(cb, handler.app, agent_id, *args)
-                self.loop.call_soon(cb)
+            try:
+                if asyncio.iscoroutine(cb) or asyncio.iscoroutinefunction(cb):
+                    await scheduler.spawn(cb(handler.app, agent_id, event_name, *args))
+                else:
+                    cb = functools.partial(cb, handler.app, agent_id, event_name, *args)
+                    self.loop.call_soon(cb)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception('EventDispatcher.dispatch(ev:{}, ag:{}): unexpected error',
+                              event_name, agent_id)
 
 
-async def event_subscriber(dispatcher):
+async def event_subscriber(dispatcher: EventDispatcher) -> None:
     ctx = zmq.asyncio.Context()
     event_sock = ctx.socket(zmq.PULL)
     event_sock.connect(EVENT_IPC_ADDR)
@@ -100,11 +129,11 @@ async def event_subscriber(dispatcher):
         ctx.term()
 
 
-async def init(app: web.Application):
+async def init(app: web.Application) -> None:
     pass
 
 
-async def shutdown(app: web.Application):
+async def shutdown(app: web.Application) -> None:
     pass
 
 

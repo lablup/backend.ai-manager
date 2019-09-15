@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime
 import logging
 from typing import (
+    Any,
     Awaitable, Optional,
     Sequence, MutableSequence, List,
     Mapping,
@@ -17,9 +18,10 @@ import sqlalchemy as sa
 from aiopg.sa.connection import SAConnection
 
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.docker import ImageRef
 from ai.backend.common.types import (
     aobject,
-    KernelId,
+    AgentId, KernelId,
     AccessKey,
     ResourceSlot, DefaultForUnspecified,
 )
@@ -54,14 +56,24 @@ class SessionContext:
     Context for individual session-related information used during scheduling.
     '''
     kernel_id: KernelId
+    image_ref: ImageRef
     access_key: AccessKey
     sess_id: str
     domain_name: str
     group_id: uuid.UUID
     scaling_group: str
     resource_policy: dict
+    resource_opts: Mapping[str, Any]
     requested_slots: ResourceSlot
     target_sgroup_names: MutableSequence[str]
+    environ: Mapping[str, str]
+    mounts: Sequence[str]
+
+
+@attr.s(auto_attribs=True, slots=True)
+class AgentAllocationContext:
+    agent_id: AgentId
+    agent_addr: str
 
 
 class PredicateCallback(Protocol):
@@ -305,16 +317,16 @@ class SessionScheduler(aobject):
                 #       using custom algorithms (e.g., DRF)
                 try:
 
-                    agent_id, agent_addr = await self._find_and_reserve_agent(sched_ctx, sess_ctx)
+                    agent_ctx = await self._find_and_reserve_agent(sched_ctx, sess_ctx)
                     query = kernels.update().values({
-                        'agent': agent_id,
-                        'agent_addr': agent_addr,
+                        'agent': agent_ctx.agent_id,
+                        'agent_addr': agent_ctx.agent_addr,
                         'status': KernelStatus.PREPARING,
                         'status_info': 'scheduled',
                         'status_changed': datetime.now(tzutc()),
                     }).where(kernels.c.id == sess_ctx.kernel_id)
                     await db_conn.execute(query)
-                    await self.registry.start_session(sess_ctx.kernel_id)
+                    await self.registry.start_session(sched_ctx, sess_ctx, agent_ctx)
                     log.info(log_fmt + 'started', *log_args)
                     success_callbacks: List[Awaitable[None]] = [
                         check.success_cb(sched_ctx, sess_ctx)
@@ -339,7 +351,7 @@ class SessionScheduler(aobject):
                     await asyncio.gather(*rollback_callbacks, return_exceptions=True)
 
                     # Rollback agent resource reservation.
-                    await self._unreserve_agent_slots(sched_ctx, sess_ctx, agent_id)
+                    await self._unreserve_agent_slots(sched_ctx, sess_ctx, agent_ctx)
 
                     # Mark as error'ed.
                     query = kernels.update().values({
@@ -366,18 +378,24 @@ class SessionScheduler(aobject):
         async for row in db_conn.execute(query):
             sess_ctxs.append(SessionContext(
                 kernel_id=row['id'],
+                image_ref=ImageRef(row['image'], [row['registry']]),
                 access_key=row['access_key'],
                 sess_id=row['sess_id'],
                 domain_name=row['domain_name'],
                 group_id=row['group_id'],
                 scaling_group=row['scaling_group'],
                 resource_policy={},  # TODO: implement
+                resource_opts=row['resource_opts'],
                 requested_slots=row['occupied_slots'],
                 target_sgroup_names=[],
+                environ=row['environ'],
+                mounts=row['mounts'],
             ))
         return sess_ctxs
 
-    async def _find_and_reserve_agent(self, sched_ctx: SchedulingContext, sess_ctx: SessionContext):
+    async def _find_and_reserve_agent(self, sched_ctx: SchedulingContext,
+                                      sess_ctx: SessionContext) \
+                                      -> AgentAllocationContext:
         # Fetch all agent available slots and normalize them to "remaining" slots
         possible_agent_slots = []
         query = (
@@ -435,21 +453,21 @@ class SessionScheduler(aobject):
         agent_addr = await sched_ctx.db_conn.scalar(query)
         assert agent_addr is not None
 
-        return agent_id, agent_addr
+        return AgentAllocationContext(agent_id, agent_addr)
 
     async def _unreserve_agent_slots(self, sched_ctx: SchedulingContext,
                                      sess_ctx: SessionContext,
-                                     agent_id: str):
+                                     agent_ctx: AgentAllocationContext):
         # Un-reserve agent slots
         query = (
             sa.select([agents.c.occupied_slots], for_update=True)
             .select_from(agents)
-            .where(agents.c.id == agent_id))
+            .where(agents.c.id == agent_ctx.agent_id))
         current_occupied_slots = await sched_ctx.db_conn.scalar(query)
         query = (
             sa.update(agents)
             .values({
                 'occupied_slots': current_occupied_slots - sess_ctx.requested_slots
             })
-            .where(agents.c.id == agent_id))
+            .where(agents.c.id == agent_ctx.agent_id))
         await sched_ctx.db_conn.execute(query)

@@ -5,6 +5,7 @@ import logging
 import sys
 from typing import (
     MutableMapping,
+    TYPE_CHECKING,
 )
 import uuid
 
@@ -22,27 +23,28 @@ import zmq, zmq.asyncio
 
 from ai.backend.common import msgpack
 from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
-from ai.backend.common.exception import AliasResolutionFailed
 from ai.backend.common.types import (
     BinarySize,
     KernelId,
     ResourceSlot,
+    SessionTypes,
 )
 from ai.backend.common.logging import BraceStyleAdapter
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
-    ImageNotFound,
     InstanceNotFound,
-    KernelNotFound, KernelAlreadyExists,
+    KernelNotFound,
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
     VFolderNotFound,
     AgentError)
 from .models import (
-    agents, domains, kernels, keypairs, vfolders,
+    agents, kernels, keypairs, vfolders,
     AgentStatus, KernelStatus,
     query_accessible_vfolders,
 )
+if TYPE_CHECKING:
+    from .scheduler import SchedulingContext, SessionContext, AgentAllocationContext
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
 
@@ -300,15 +302,18 @@ class AgentRegistry:
                             agents.c.occupied_slots.label('agent_occupied_slots'),
                             agents.c.addr, agents.c.first_contact, agents.c.lost_at,
                             agents.c.version, agents.c.compute_plugins]
-                query = (sa.select(cols, for_update=for_update)
-                           .select_from(kernels.join(agents))
-                           .where((kernels.c.sess_id == sess_id) &
-                                  (kernels.c.access_key == access_key) &
-                                  (kernels.c.role == 'master') &
-                                  (kernels.c.status != KernelStatus.TERMINATED) &
-                                  (agents.c.status == AgentStatus.ALIVE) &
-                                  (agents.c.id == kernels.c.agent))
-                           .limit(1).offset(0))
+                query = (
+                    sa.select(cols, for_update=for_update)
+                    .select_from(kernels.join(agents))
+                    .where(
+                        (kernels.c.sess_id == sess_id) &
+                        (kernels.c.access_key == access_key) &
+                        (kernels.c.role == 'master') &
+                        (kernels.c.status == KernelStatus.TERMINATED) &
+                        (agents.c.status == AgentStatus.ALIVE) &
+                        (agents.c.id == kernels.c.agent)
+                    ).limit(1).offset(0)
+                )
             result = await conn.execute(query)
             row = await result.first()
             if row is None:
@@ -350,59 +355,9 @@ class AgentRegistry:
             rows = await result.fetchall()
             return rows
 
-    async def set_session_status(self, sess_id, access_key, status,
-                                 db_connection=None, **extra_fields):
-        data = {
-            'status': status,
-        }
-        data.update(extra_fields)
-        async with reenter_txn(self.dbpool, db_connection) as conn:
-            query = (sa.update(kernels)
-                       .values(data)
-                       .where((kernels.c.sess_id == sess_id) &
-                              # TODO: include slave workers?
-                              (kernels.c.status != KernelStatus.TERMINATED) &
-                              (kernels.c.access_key == access_key)))
-            await conn.execute(query)
-
-    async def get_or_create_session(self, sess_id, access_key,
-                                    image, creation_config, resource_policy,
-                                    domain_name=None, group_id=None, user_uuid=None,
-                                    tag=None):
-        # Check if image's docker registry is white-listed in domain-level.
-        try:
-            requested_image_ref = \
-                await ImageRef.resolve_alias(image, self.config_server.etcd)
-            async with self.dbpool.acquire() as conn, conn.begin():
-                query = (sa.select([domains.c.allowed_docker_registries])
-                           .select_from(domains)
-                           .where(domains.c.name == domain_name))
-                allowed_registries = await conn.scalar(query)
-                if requested_image_ref.registry not in allowed_registries:
-                    raise AliasResolutionFailed
-        except AliasResolutionFailed:
-            raise ImageNotFound
-
-        try:
-            kern = await self.get_session(sess_id, access_key)
-            running_image_ref = ImageRef(kern['image'], [kern['registry']])
-            if running_image_ref != requested_image_ref:
-                raise KernelAlreadyExists
-            create = False
-        except KernelNotFound:
-            create = True
-        if create:
-            kern = await self.create_session(
-                sess_id, access_key,
-                requested_image_ref, creation_config,
-                resource_policy,
-                domain_name, group_id, user_uuid,
-                session_tag=tag)
-        assert kern is not None
-        return kern, create
-
     async def enqueue_session(self, sess_id: str, access_key: str,
                               image_ref: ImageRef,
+                              session_type: SessionTypes,
                               creation_config: dict,
                               resource_policy: dict, *,
                               domain_name: str,
@@ -544,6 +499,7 @@ class AgentRegistry:
                 'id': kernel_id,
                 'status': KernelStatus.PENDING,
                 'sess_id': sess_id,
+                'type': session_type,
                 'role': 'master',
                 'domain_name': domain_name,
                 'group_id': group_id,
@@ -564,57 +520,53 @@ class AgentRegistry:
             })
             await conn.execute(query)
 
-    async def start_session(self, kernel_id: KernelId):
+    async def start_session(self, sched_ctx: 'SchedulingContext',
+                            sess_ctx: 'SessionContext',
+                            agent_ctx: 'AgentAllocationContext') -> None:
 
+        image_info = await self.config_server.inspect_image(sess_ctx.image_ref)
         registry_url, registry_creds = \
             await get_registry_info(self.config_server.etcd,
-                                    image_ref.registry)
+                                    sess_ctx.image_ref.registry)
 
         # Create the kernel by invoking the agent
         async with self.handle_kernel_exception(
-                'create_session', sess_id, access_key):
+                'create_session', sess_ctx.sess_id, sess_ctx.access_key):
             # the agent may be pulling an image!
             # (TODO: return early and update the kernel status
             #        via asynchronous events)
-            async with RPCContext(agent_addr, None) as rpc:
+            async with RPCContext(agent_ctx.agent_addr, None) as rpc:
                 config = {
                     'image': {
                         'registry': {
-                            'name': image_ref.registry,
+                            'name': sess_ctx.image_ref.registry,
                             'url': str(registry_url),
                             **registry_creds,
                         },
                         'digest': image_info['digest'],
-                        'canonical': image_ref.canonical,
+                        'canonical': sess_ctx.image_ref.canonical,
                         'labels': image_info['labels'],
                     },
-                    'resource_slots': requested_slots.to_json(),
-                    'idle_timeout': resource_policy['idle_timeout'],
-                    'mounts': mounts,
-                    'environ': environ,
-                    'resource_opts': resource_opts,
+                    'resource_slots': sess_ctx.requested_slots.to_json(),
+                    'idle_timeout': sess_ctx.resource_policy['idle_timeout'],
+                    'mounts': sess_ctx.mounts,
+                    'environ': sess_ctx.environ,
+                    'resource_opts': sess_ctx.resource_opts,
                 }
-                created_info = await rpc.call.create_kernel(str(kernel_id),
+                created_info = await rpc.call.create_kernel(str(sess_ctx.kernel_id),
                                                             config)
             if created_info is None:
                 raise KernelCreationFailed('ooops')
 
-        log.debug('create_session("{0}", "{1}") -> created on {2}\n{3!r}',
-                  sess_id, access_key, agent_id, created_info)
-        assert str(kernel_id) == created_info['id']
+        log.debug('start_session(s:{}, ak:{}, k:{}) -> created on ag:{}\n{!r}',
+                  sess_ctx.sess_id, sess_ctx.access_key, sess_ctx.kernel_id,
+                  agent_ctx.agent_id, created_info)
+        assert str(sess_ctx.kernel_id) == created_info['id']
 
         # Return and record kernel access information
-        agent_host = URL(agent_addr).host
+        agent_host = URL(agent_ctx.agent_addr).host
         kernel_host = created_info.get('kernel_host', agent_host)
         service_ports = created_info.get('service_ports', [])
-        kernel_access_info = {
-            'id': kernel_id,
-            'sess_id': sess_id,
-            'agent': agent_id,
-            'agent_addr': agent_addr,
-            'kernel_host': kernel_host,
-            'service_ports': service_ports,
-        }
         # NOTE: created_info contains resource_spec
         async with self.dbpool.acquire() as conn, conn.begin():
             query = (
@@ -634,9 +586,8 @@ class AgentRegistry:
                     'stdout_port': created_info['stdout_port'],
                     'service_ports': service_ports,
                 })
-                .where(kernels.c.id == kernel_id))
+                .where(kernels.c.id == sess_ctx.kernel_id))
             await conn.execute(query)
-        return kernel_access_info
 
     async def get_keypair_occupancy(self, access_key, *, conn=None):
         known_slot_types = \
@@ -1056,15 +1007,65 @@ class AgentRegistry:
                 log.warning('agent {0} heartbeat timeout detected.', agent_id)
             elif status == AgentStatus.TERMINATED:
                 log.info('agent {0} has terminated.', agent_id)
-            query = (sa.update(agents)
-                       .values({
-                           'status': status,
-                           'lost_at': datetime.now(tzutc()),
-                       })
-                       .where(agents.c.id == agent_id))
+            now = datetime.now(tzutc())
+            query = (
+                sa.update(agents)
+                .values({
+                    'status': status,
+                    'status_changed': now,
+                    'lost_at': now,
+                })
+                .where(agents.c.id == agent_id)
+            )
             await conn.execute(query)
 
-    async def mark_kernel_terminated(self, kernel_id, reason):
+    async def set_session_status(self, sess_id, access_key,
+                                 status: KernelStatus,
+                                 reason: str = '', *,
+                                 db_conn: SAConnection = None,
+                                 **extra_fields):
+        data = {
+            'status': status,
+            'status_info': reason,
+            'status_changed': datetime.now(tzutc()),
+        }
+        data.update(extra_fields)
+        async with reenter_txn(self.dbpool, db_conn) as conn:
+            query = (
+                sa.update(kernels)
+                .values(data)
+                .where(
+                    (kernels.c.sess_id == sess_id) &
+                    (kernels.c.access_key == access_key) &
+                    # TODO: include slave workers?
+                    (kernels.c.status != KernelStatus.TERMINATED)
+                )
+            )
+            await conn.execute(query)
+
+    async def set_kernel_status(self, kernel_id: KernelId,
+                                status: KernelStatus,
+                                reason: str = '', *,
+                                db_conn: SAConnection = None):
+        assert status != KernelStatus.TERMINATED, \
+               'TERMINATED status update must be handled in ' \
+               'mark_kernel_terminated()'
+        data = {
+            'status': status,
+            'status_info': reason,
+            'status_changed': datetime.now(tzutc()),
+        }
+        async with reenter_txn(self.dbpool, db_conn) as conn:
+            query = (
+                sa.update(kernels)
+                .values(data)
+                .where(keypairs.c.id == kernel_id)
+            )
+            await conn.execute(query)
+
+    async def mark_kernel_terminated(self, kernel_id: KernelId,
+                                     reason: str,
+                                     exit_code: int = None) -> None:
         '''
         Mark the kernel (individual worker) terminated and release
         the resource slots occupied by it.
@@ -1076,8 +1077,9 @@ class AgentRegistry:
                        .where(kernels.c.id == kernel_id))
             result = await conn.execute(query)
             row = await result.first()
-            if row is None or row['status'] == KernelStatus.TERMINATED:
-                # Skip if non-existent or already terminated.
+            if (row is None or
+                row['status'] in (KernelStatus.TERMINATED, KernelStatus.RESTARTING)):
+                # Skip if non-existent, already terminated, or restarting.
                 return
             if row['role'] == 'master':
                 # The master session is terminated; decrement the user's concurrency counter
@@ -1088,10 +1090,12 @@ class AgentRegistry:
 
             # Change the status to TERMINATED.
             # (we don't delete the row for later logging and billing)
+            now = datetime.now(tzutc())
             updates = {
                 'status': KernelStatus.TERMINATED,
                 'status_info': reason,
-                'terminated_at': datetime.now(tzutc()),
+                'status_changed': now,
+                'terminated_at': now,
             }
             stat_type = await self.redis_stat.type(kernel_id)
             if stat_type == 'string':

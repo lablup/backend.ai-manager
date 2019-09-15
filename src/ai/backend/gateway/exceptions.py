@@ -121,6 +121,11 @@ class ImageNotFound(web.HTTPNotFound, BackendError):
     error_title = 'No such environment image.'
 
 
+class GroupNotFound(web.HTTPNotFound, BackendError):
+    error_type  = 'https://api.backend.ai/probs/group-not-found'
+    error_title = 'No such user group.'
+
+
 class KernelNotFound(web.HTTPNotFound, BackendError):
     error_type  = 'https://api.backend.ai/probs/kernel-not-found'
     error_title = 'No such kernel.'
