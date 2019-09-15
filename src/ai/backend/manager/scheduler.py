@@ -240,6 +240,7 @@ class SessionScheduler(aobject):
 
     async def scheduling_loop(self) -> None:
         # TODO: change to event-driven invocation
+        # TODO: adopt Redlock for distributed coordination?
         while True:
             await self.schedule()
             await asyncio.sleep(1)
@@ -278,7 +279,8 @@ class SessionScheduler(aobject):
                     check_domain_resource_limit(sched_ctx, sess_ctx),
                     check_scaling_group(sched_ctx, sess_ctx),
                 ]
-                checks = await asyncio.gather(*predicates, return_exceptions=True)
+                checks: Sequence[PredicateResult] = \
+                    await asyncio.gather(*predicates, return_exceptions=True)
                 has_failure = False
                 failure_callbacks: List[Awaitable[None]] = []
                 for check in checks:
@@ -286,10 +288,10 @@ class SessionScheduler(aobject):
                         has_failure = True
                         failure_callbacks.append(exception_cb(check))
                         continue
-                    if not check.success:
+                    if not check.passed:
                         has_failure = True
-                        if check.failure_cb:
-                            failure_callbacks.append(check.failure_cb)
+                        if check.failure_cb is not None:
+                            failure_callbacks.append(check.failure_cb(sched_ctx, sess_ctx))
                 if has_failure:
                     log.debug(log_fmt + 'one or more predicates failed', *log_args)
                     # If any one of predicates fails, rollback all changes.
@@ -314,9 +316,10 @@ class SessionScheduler(aobject):
                     await db_conn.execute(query)
                     await self.registry.start_session(sess_ctx.kernel_id)
                     log.info(log_fmt + 'started', *log_args)
-                    success_callbacks = [
-                        check.success_cb for check in checks
-                        if check.succes_cb is not None
+                    success_callbacks: List[Awaitable[None]] = [
+                        check.success_cb(sched_ctx, sess_ctx)
+                        for check in checks
+                        if check.success_cb is not None
                     ]
                     await asyncio.gather(*success_callbacks, return_exceptions=True)
 
@@ -332,7 +335,7 @@ class SessionScheduler(aobject):
                         if isinstance(check, Exception):
                             continue
                         if check.failure_cb:
-                            rollback_callbacks.append(check.failure_cb)
+                            rollback_callbacks.append(check.failure_cb(sched_ctx, sess_ctx))
                     await asyncio.gather(*rollback_callbacks, return_exceptions=True)
 
                     # Rollback agent resource reservation.
