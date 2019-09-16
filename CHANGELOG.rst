@@ -1,6 +1,18 @@
 Changes
 =======
 
+19.09.0b14 (2019-09-17)
+-----------------------
+
+* NEW: A superadmin API to list all vfolder hosts and docker registires.
+
+* UPDATE: resource/check-presets API is updated to return per-scaling-group remainings and
+  group/domain resource limits. (#184)
+
+* UPDATE: Compute session GQL queries now include the ``resource_opts`` field.
+
+* Minor bug fixes.
+
 19.09.0b13 (2019-09-09)
 -----------------------
 
