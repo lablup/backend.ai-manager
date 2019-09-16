@@ -102,6 +102,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
         'keypair_using': None,
         'keypair_remaining': None,
         'scaling_group_remaining': None,
+        'scaling_groups': None,
         'presets': [],
     }
     async with request.app['dbpool'].acquire() as conn, conn.begin():
@@ -135,11 +136,20 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
                 raise InvalidAPIParameters('Unknown scaling group')
             sgroups = [params['scaling_group']]
 
+        # Per scaling group resource remaining.
+        per_sgroup = {
+            sgname: {
+                'remaining': ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()}),
+                'occupied': ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()}),
+                'available': ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()}),
+            } for sgname in sgroups
+        }
+
         sgroup_remaining = ResourceSlot({
             k: Decimal(0) for k in known_slot_types.keys()
         })
         query = (
-            sa.select([agents.c.available_slots, agents.c.occupied_slots])
+            sa.select([agents.c.available_slots, agents.c.occupied_slots, agents.c.scaling_group])
             .select_from(agents)
             .where(
                 (agents.c.status == AgentStatus.ALIVE) &
@@ -149,8 +159,15 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
         async for row in conn.execute(query):
             remaining = row['available_slots'] - row['occupied_slots']
             sgroup_remaining += remaining
+            per_sgroup[row.scaling_group]['remaining'] += remaining
+            per_sgroup[row.scaling_group]['occupied'] += row['occupied_slots']
+            per_sgroup[row.scaling_group]['available'] += row['available_slots']
             agent_slots.append(remaining)
         resp['scaling_group_remaining'] = sgroup_remaining.to_json()
+        for sgname, slots in per_sgroup.items():
+            for key, slot in slots.items():
+                per_sgroup[sgname][key] = slot.to_json()
+        resp['scaling_groups'] = per_sgroup
         # fetch all resource presets in the current scaling group.
         query = (
             sa.select([resource_presets])
