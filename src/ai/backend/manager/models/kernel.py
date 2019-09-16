@@ -8,7 +8,10 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common import msgpack
-from ai.backend.common.types import BinarySize
+from ai.backend.common.types import (
+    BinarySize,
+    SessionTypes, SessionResult,
+)
 from .base import (
     metadata,
     BigInt, GUID, IDColumn, EnumType,
@@ -26,9 +29,12 @@ __all__: Sequence[str] = (
 
 class KernelStatus(enum.Enum):
     # values are only meaningful inside the gateway
+    PENDING = 0
+    # ---
     PREPARING = 10
     # ---
     BUILDING = 20
+    PULLING = 21
     # ---
     RUNNING = 30
     RESTARTING = 31
@@ -46,12 +52,16 @@ LIVE_STATUS = frozenset(['BUILDING', 'RUNNING'])
 kernels = sa.Table(
     'kernels', metadata,
     IDColumn(),
+    sa.Column('type', EnumType(SessionTypes),
+              default=SessionTypes.INTERACTIVE,
+              server_default=SessionTypes.INTERACTIVE.name,
+              nullable=False, index=True),
     sa.Column('sess_id', sa.String(length=64), unique=False, index=True),
     sa.Column('role', sa.String(length=16), nullable=False, default='master'),
     sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True,
               nullable=False, server_default='default', default='default'),
-    sa.Column('agent', sa.String(length=64), sa.ForeignKey('agents.id')),
-    sa.Column('agent_addr', sa.String(length=128), nullable=False),
+    sa.Column('agent', sa.String(length=64), sa.ForeignKey('agents.id'), nullable=True),
+    sa.Column('agent_addr', sa.String(length=128), nullable=True),
     sa.Column('domain_name', sa.String(length=64), sa.ForeignKey('domains.name'), nullable=False),
     sa.Column('group_id', GUID, sa.ForeignKey('groups.id'), nullable=False),
     sa.Column('user_uuid', GUID, sa.ForeignKey('users.uuid'), nullable=False),
@@ -84,8 +94,15 @@ kernels = sa.Table(
     sa.Column('terminated_at', sa.DateTime(timezone=True),
               nullable=True, default=sa.null(), index=True),
     sa.Column('status', EnumType(KernelStatus),
-              default=KernelStatus.PREPARING, index=True),
+              default=KernelStatus.PENDING,
+              server_default=KernelStatus.PENDING.name,
+              nullable=False, index=True),
+    sa.Column('status_changed', sa.DateTime(timezone=True), nullable=True),
     sa.Column('status_info', sa.Unicode(), nullable=True, default=sa.null()),
+    sa.Column('result', EnumType(SessionResult),
+              default=SessionResult.UNDEFINED,
+              server_default=SessionResult.UNDEFINED.name,
+              nullable=False, index=True),
 
     # Resource metrics measured upon termination
     sa.Column('num_queries', sa.BigInteger(), default=0),
@@ -97,6 +114,13 @@ kernels = sa.Table(
              postgresql_where=sa.text(
                  "status != 'TERMINATED' and "
                  "role = 'master'")),
+)
+
+kernel_dependencies = sa.Table(
+    'kernel_dependencies', metadata,
+    sa.Column('kernel_id', GUID, sa.ForeignKey('kernels.id'), index=True, nullable=False),
+    sa.Column('depends_on', GUID, sa.ForeignKey('kernels.id'), index=True, nullable=False),
+    sa.PrimaryKeyConstraint('kernel_id', 'depends_on'),
 )
 
 
@@ -114,6 +138,7 @@ class SessionCommons:
     access_key = graphene.String()
 
     status = graphene.String()
+    status_changed = GQLDateTime()
     status_info = graphene.String()
     created_at = GQLDateTime()
     terminated_at = GQLDateTime()
@@ -242,6 +267,7 @@ class SessionCommons:
             'user_uuid': row['user_uuid'],
             'access_key': row['access_key'],
             'status': row['status'].name,
+            'status_changed': row['status_changed'],
             'status_info': row['status_info'],
             'created_at': row['created_at'],
             'terminated_at': row['terminated_at'],

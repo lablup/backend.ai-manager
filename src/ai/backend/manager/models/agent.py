@@ -33,6 +33,7 @@ agents = sa.Table(
     sa.Column('id', sa.String(length=64), primary_key=True),
     sa.Column('status', EnumType(AgentStatus), nullable=False, index=True,
               default=AgentStatus.ALIVE),
+    sa.Column('status_changed', sa.DateTime(timezone=True), nullable=True),
     sa.Column('region', sa.String(length=64), index=True, nullable=False),
     sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True,
               nullable=False, server_default='default', default='default'),
@@ -57,6 +58,7 @@ class Agent(graphene.ObjectType):
 
     id = graphene.ID()
     status = graphene.String()
+    status_changed = GQLDateTime()
     region = graphene.String()
     scaling_group = graphene.String()
     available_slots = graphene.JSONString()
@@ -92,6 +94,7 @@ class Agent(graphene.ObjectType):
         return cls(
             id=row['id'],
             status=row['status'].name,
+            status_changed=row['status_changed'],
             region=row['region'],
             scaling_group=row['scaling_group'],
             available_slots=row['available_slots'].to_json(),
