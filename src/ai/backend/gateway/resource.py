@@ -27,7 +27,7 @@ import yarl
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import ResourceSlot
+from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
 from .auth import auth_required, superadmin_required
 from .exceptions import (
     InvalidAPIParameters,
@@ -35,7 +35,7 @@ from .exceptions import (
 from .manager import READ_ALLOWED, server_status_required
 from ..manager.models import (
     agents, resource_presets,
-    groups, kernels, keypairs,
+    domains, groups, kernels, keypairs,
     AgentStatus, KernelStatus,
     association_groups_users,
     query_allowed_sgroups,
@@ -89,6 +89,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
     try:
         access_key = request['keypair']['access_key']
         resource_policy = request['keypair']['resource_policy']
+        domain_name = request['user']['domain_name']
         # TODO: uncomment when we implement scaling group.
         # scaling_group = request.query.get('scaling_group')
         # assert scaling_group is not None, 'scaling_group parameter is missing.'
@@ -96,7 +97,6 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
     registry = request.app['registry']
     known_slot_types = await registry.config_server.get_resource_slots()
-    keypair_limits = ResourceSlot.from_policy(resource_policy, known_slot_types)
     resp: MutableMapping[str, Any] = {
         'keypair_limits': None,
         'keypair_using': None,
@@ -106,8 +106,46 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
         'presets': [],
     }
     async with request.app['dbpool'].acquire() as conn, conn.begin():
+        # Check keypair resource limit.
+        keypair_limits = ResourceSlot.from_policy(resource_policy, known_slot_types)
         keypair_occupied = await registry.get_keypair_occupancy(access_key, conn=conn)
         keypair_remaining = keypair_limits - keypair_occupied
+
+        # Check group resource limit.
+        query = (sa.select([groups.c.id, groups.c.total_resource_slots])
+                   .where(domains.c.name == domain_name)
+                   .where(groups.c.name == params['group']))
+        result = await conn.execute(query)
+        row = await result.fetchone()
+        group_resource_slots = row.total_resource_slots
+        group_resource_policy = {
+            'total_resource_slots': group_resource_slots,
+            'default_for_unspecified': DefaultForUnspecified.UNLIMITED
+        }
+        group_limits = ResourceSlot.from_policy(group_resource_policy, known_slot_types)
+        group_occupied = await registry.get_group_occupancy(row.id, conn=conn)
+        group_remaining = group_limits - group_occupied
+
+        # Check domain resource limit.
+        query = (sa.select([domains.c.total_resource_slots])
+                   .where(domains.c.name == domain_name))
+        domain_resource_slots = await conn.scalar(query)
+        domain_resource_policy = {
+            'total_resource_slots': domain_resource_slots,
+            'default_for_unspecified': DefaultForUnspecified.UNLIMITED
+        }
+        domain_limits = ResourceSlot.from_policy(domain_resource_policy, known_slot_types)
+        domain_occupied = await registry.get_domain_occupancy(domain_name, conn=conn)
+        domain_remaining = domain_limits - domain_occupied
+
+        # Take minimum remaining resources. There's no need to merge limits and occupied.
+        # To keep legacy, we just merge all remaining slots into `keypair_remainig`.
+        for slot in known_slot_types:
+            keypair_remaining[slot] = min(
+                keypair_remaining[slot],
+                group_remaining[slot],
+                domain_remaining[slot],
+            )
         resp['keypair_limits'] = keypair_limits.to_json()
         resp['keypair_using'] = keypair_occupied.to_json()
         resp['keypair_remaining'] = keypair_remaining.to_json()
@@ -128,7 +166,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
         if group_id is None:
             raise InvalidAPIParameters('Unknown user group')
 
-        sgroups = await query_allowed_sgroups(conn, request['user']['domain_name'],
+        sgroups = await query_allowed_sgroups(conn, domain_name,
                                               group_id, access_key)
         sgroups = [sg.name for sg in sgroups]
         if params['scaling_group'] is not None:
