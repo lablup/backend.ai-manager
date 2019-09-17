@@ -36,10 +36,9 @@ from ..manager.scheduler import SessionScheduler
 from .config import load as load_config, load_shared as load_shared_config, redis_config_iv
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
 from .etcd import ConfigServer
-from .events import EventDispatcher, event_subscriber
+from .events import EventDispatcher
 from .exceptions import (BackendError, MethodNotAllowed, GenericNotFound,
                          GenericBadRequest, InternalServerError)
-from .events import event_router
 from . import ManagerStatus
 
 VALID_VERSIONS = frozenset([
@@ -238,10 +237,7 @@ async def gw_init(app, default_cors_options):
         encoding='utf8',
         db=REDIS_IMAGE_DB)
 
-    loop = asyncio.get_event_loop()
-    dispatcher = EventDispatcher(app)
-    app['event_dispatcher'] = dispatcher
-    app['event_subscriber'] = loop.create_task(event_subscriber(dispatcher))
+    app['event_dispatcher'] = await EventDispatcher.new(app)
 
     app['registry'] = AgentRegistry(
         app['config_server'],
@@ -278,8 +274,7 @@ async def gw_init(app, default_cors_options):
 
 
 async def gw_shutdown(app):
-    app['event_subscriber'].cancel()
-    await app['event_subscriber']
+    await app['event_dispatcher'].close()
 
 
 async def gw_cleanup(app):
@@ -495,7 +490,6 @@ def main(ctx, config_path, debug):
                 try:
                     aiotools.start_server(server_main,
                                           num_workers=cfg['manager']['num-proc'],
-                                          extra_procs=[event_router],
                                           args=(cfg,))
                 finally:
                     log.info('terminated.')

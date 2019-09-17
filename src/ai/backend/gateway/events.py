@@ -13,49 +13,20 @@ from typing import (
 from typing_extensions import Protocol
 
 from aiohttp import web
+import aioredis
 from aiojobs.aiohttp import get_scheduler_from_app
 import zmq, zmq.asyncio
 
 from ai.backend.common import msgpack
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
+    aobject,
     AgentId,
 )
+from .defs import REDIS_STREAM_DB
 from .utils import current_loop
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.events'))
-
-ipc_base_path = Path('/tmp/backend.ai/ipc')
-ipc_key = secrets.token_hex(8)
-ipc_events_sockpath = ipc_base_path / f'events-{ipc_key}.sock'
-EVENT_IPC_ADDR = f'ipc://{ipc_events_sockpath}'
-
-
-# TODO: Use Redis for multiple manager instances in HA setup
-def event_router(_, pidx, args) -> None:
-    # run as extra_procs by aiotools
-    ctx = zmq.Context()
-    ctx.linger = 50
-    in_sock = ctx.socket(zmq.PULL)
-    in_sock.bind("tcp://{0.host}:{0.port}".format(args[0]['manager']['event-listen-addr']))
-    out_sock = ctx.socket(zmq.PUSH)
-    ipc_base_path.mkdir(parents=True, exist_ok=True)
-    try:
-        out_sock.bind(EVENT_IPC_ADDR)
-        zmq.proxy(in_sock, out_sock)
-    except zmq.error.ZMQError:
-        log.error('Cannot bind the event router socket to {}', EVENT_IPC_ADDR)
-    except (KeyboardInterrupt, SystemExit):
-        pass
-    except:
-        log.exception('unexpected error')
-        # raven.captureException()
-    finally:
-        in_sock.close()
-        out_sock.close()
-        ctx.term()
-        if ipc_events_sockpath.exists():
-            ipc_events_sockpath.unlink()
 
 
 class EventCallback(Protocol):
@@ -73,10 +44,11 @@ class EventHandler:
     callback: EventCallback
 
 
-class EventDispatcher:
+class EventDispatcher(aobject):
 
     loop: asyncio.AbstractEventLoop
     root_app: web.Application
+    subscriber_task: asyncio.Task
     handlers: MutableMapping[str, List[EventHandler]]
 
     def __init__(self, app: web.Application) -> None:
@@ -84,8 +56,20 @@ class EventDispatcher:
         self.root_app = app
         self.handlers = defaultdict(list)
 
+    async def __ainit__(self) -> None:
+        self.subscriber_task = self.loop.create_task(
+            event_subscriber(self.root_app['config'], self))
+
+    async def close(self) -> None:
+        self.subscriber_task.cancel()
+        await self.subscriber_task
+
     def add_handler(self, event_name: str, app: web.Application, callback: EventCallback) -> None:
         self.handlers[event_name].append(EventHandler(app, callback))
+
+    async def send_event(self, event_name: str, args: Tuple[Any, ...] = tuple()) -> None:
+        # TODO: implement
+        pass
 
     async def dispatch(self, event_name: str, agent_id: AgentId,
                        args: Tuple[Any, ...] = tuple()) -> None:
@@ -106,27 +90,22 @@ class EventDispatcher:
                               event_name, agent_id)
 
 
-async def event_subscriber(dispatcher: EventDispatcher) -> None:
-    ctx = zmq.asyncio.Context()
-    event_sock = ctx.socket(zmq.PULL)
-    event_sock.connect(EVENT_IPC_ADDR)
+async def event_subscriber(config, dispatcher: EventDispatcher) -> None:
+    redis = await aioredis.create_redis(
+        config['redis']['addr'].as_sockaddr(),
+        db=REDIS_STREAM_DB,
+        password=config['redis']['password'] if config['redis']['password'] else None,
+        encoding=None)
     try:
         while True:
-            try:
-                data = await event_sock.recv_multipart()
-                if not data:
-                    break
-                event_name = data[0].decode('ascii')
-                agent_id = data[1].decode('utf8')
-                args = msgpack.unpackb(data[2])
-                await dispatcher.dispatch(event_name, agent_id, args)
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                log.exception('unexpected error -- resuming operation')
+            key, raw_msg = await redis.blpop('agent.events')
+            msg = msgpack.unpackb(raw_msg)
+            await dispatcher.dispatch(msg['event_name'], msg['agent_id'], msg['args'])
+    except asyncio.CancelledError:
+        pass
     finally:
-        event_sock.close()
-        ctx.term()
+        redis.close()
+        await redis.wait_closed()
 
 
 async def init(app: web.Application) -> None:
