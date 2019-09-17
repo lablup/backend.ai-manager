@@ -88,7 +88,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
                        .select_from(keypair_resource_policies))
             result = await conn.execute(query)
             rows = await result.fetchall()
-            return [cls.from_row(context, r) for r in rows]
+            return [cls.from_row(r) for r in rows]
 
     @classmethod
     async def load_all_user(cls, context, access_key):
@@ -108,7 +108,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
                        .where((keypairs.c.user_id == user_id)))
             result = await conn.execute(query)
             rows = await result.fetchall()
-            return [cls.from_row(context, r) for r in rows]
+            return [cls.from_row(r) for r in rows]
 
     @classmethod
     async def batch_load_by_name(cls, context, names):
@@ -121,7 +121,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
             for k in names:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
-                o = cls.from_row(context, row)
+                o = cls.from_row(row)
                 objs_per_key[row.name] = o
         return tuple(objs_per_key.values())
 
@@ -142,7 +142,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
             for k in names:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
-                o = cls.from_row(context, row)
+                o = cls.from_row(row)
                 objs_per_key[row.name] = o
         return tuple(objs_per_key.values())
 
@@ -159,7 +159,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
                        .order_by(keypair_resource_policies.c.name))
             objs_per_key = OrderedDict()
             async for row in conn.execute(query):
-                o = cls.from_row(context, row)
+                o = cls.from_row(row)
                 objs_per_key[row.name] = o
         return tuple(objs_per_key.values())
 
