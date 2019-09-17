@@ -21,7 +21,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.docker import ImageRef
 from ai.backend.common.types import (
     aobject,
-    AgentId, KernelId,
+    AgentId, KernelId, SessionTypes,
     AccessKey,
     ResourceSlot, DefaultForUnspecified,
 )
@@ -60,6 +60,7 @@ class SessionContext:
     kernel_id: KernelId
     image_ref: ImageRef
     access_key: AccessKey
+    sess_type: SessionTypes
     sess_id: str
     domain_name: str
     group_id: uuid.UUID
@@ -81,7 +82,8 @@ class AgentAllocationContext:
 class PredicateCallback(Protocol):
     async def __call__(self,
                        sched_ctx: SchedulingContext,
-                       sess_ctx: SessionContext) -> None:
+                       sess_ctx: SessionContext,
+                       db_conn: SAConnection = None) -> None:
         ...
 
 
@@ -126,11 +128,15 @@ async def check_concurrency(sched_ctx: SchedulingContext,
     await sched_ctx.db_conn.execute(query)
 
     async def rollback(sched_ctx: SchedulingContext,
-                       sess_ctx: SessionContext) -> None:
+                       sess_ctx: SessionContext,
+                       db_conn: SAConnection = None) -> None:
         query = (sa.update(keypairs)
                    .values(concurrency_used=keypairs.c.concurrency_used - 1)
                    .where(keypairs.c.access_key == sess_ctx.access_key))
-        await sched_ctx.db_conn.execute(query)
+        if db_conn is not None:
+            await db_conn.execute(query)
+        else:
+            await sched_ctx.db_conn.execute(query)
 
     return PredicateResult(True, failure_cb=rollback)
 
@@ -289,30 +295,53 @@ class SessionScheduler(aobject):
         log.debug('schedule(): tick')
         known_slot_types = await self.config_server.get_resource_slots()
 
-        async def _invoke_success_callbacks(results: List[Union[Exception, PredicateResult]]) -> None:
-            callbacks: List[Awaitable[None]] = []
-            for result in check_results:
-                if isinstance(result, Exception):
-                    # This won't happen but this code is required to pass static check.
-                    continue
-                if result.success_cb is not None:
-                    result.success_cb(sched_ctx, sess_ctx)
-            for cb in reversed(callbacks):
-                await cb
+        async def _invoke_success_callbacks(results: List[Union[Exception, PredicateResult]], *,
+                                            use_new_txn: bool = False) -> None:
+            conn = None
 
-        async def _invoke_failure_callbacks(results: List[Union[Exception, PredicateResult]]) -> None:
+            async def _inner() -> None:
+                nonlocal results, conn
+                callbacks: List[Awaitable[None]] = []
+                for result in results:
+                    if isinstance(result, Exception):
+                        # This won't happen but this code is required to pass static check.
+                        continue
+                    if result.success_cb is not None:
+                        callbacks.append(result.success_cb(sched_ctx, sess_ctx, conn))
+                for cb in reversed(callbacks):
+                    await cb
+
+            if use_new_txn:
+                async with self.dbpool.acquire() as conn, conn.begin():
+                    await _inner()
+            else:
+                conn = None
+                await _inner()
+
+        async def _invoke_failure_callbacks(results: List[Union[Exception, PredicateResult]], *,
+                                            use_new_txn: bool = False) -> None:
+            conn = None
+
+            async def _inner() -> None:
+                nonlocal results, conn
+                callbacks: List[Awaitable[None]] = []
+                for result in results:
+                    if isinstance(result, Exception):
+                        # This won't happen but this code is required to pass static check.
+                        continue
+                    if result.failure_cb:
+                        callbacks.append(result.failure_cb(sched_ctx, sess_ctx, conn))
+                for cb in reversed(callbacks):
+                    await cb
+
             # Rollback any changes performed by predicates
             # (NOTE: We don't use the DB-level transaction rollback because we need to
             #  store the "ERROR" status to corresponding rows in the kernels table.)
-            callbacks: List[Awaitable[None]] = []
-            for result in results:
-                if isinstance(result, Exception):
-                    # This won't happen but this code is required to pass static check.
-                    continue
-                if result.failure_cb:
-                    callbacks.append(result.failure_cb(sched_ctx, sess_ctx))
-            for cb in reversed(callbacks):
-                await cb
+            if use_new_txn:
+                async with self.dbpool.acquire() as conn, conn.begin():
+                    await _inner()
+            else:
+                await _inner()
 
         # We allow a long database transaction here
         # because this scheduling handler will be executed by only one process.
@@ -391,22 +420,26 @@ class SessionScheduler(aobject):
                 }).where(kernels.c.id == sess_ctx.kernel_id)
                 await db_conn.execute(query)
 
-                try:
-                    log.debug(log_fmt + 'try-starting', *log_args)
-                    await self.registry.start_session(sched_ctx, sess_ctx, agent_ctx)
-                except Exception:
-                    log.exception(log_fmt + 'failed-starting', *log_args)
-                    await _invoke_failure_callbacks(check_results)
-                    await self._unreserve_agent_slots(sched_ctx, sess_ctx, agent_ctx)
-                    query = kernels.update().values({
-                        'status': KernelStatus.ERROR,
-                        'status_info': 'failed to start',
-                        'status_changed': datetime.now(tzutc()),
-                    }).where(kernels.c.id == sess_ctx.kernel_id)
-                    await db_conn.execute(query)
-                else:
-                    log.info(log_fmt + 'started', *log_args)
-                    await _invoke_success_callbacks(check_results)
+                log.debug(log_fmt + 'try-starting', *log_args)
+                loop = current_loop()
+                task = loop.create_task(self.registry.start_session(sched_ctx, sess_ctx, agent_ctx))
+
+                async def _cb(fut):
+                    if fut.exception():
+                        log.exception(log_fmt + 'failed-starting-preparation', *log_args)
+                        await self._unreserve_agent_slots(sess_ctx, agent_ctx)
+                        await _invoke_failure_callbacks(check_results, use_new_txn=True)
+                        query = kernels.update().values({
+                            'status': KernelStatus.ERROR,
+                            'status_info': 'failed to start',
+                            'status_changed': datetime.now(tzutc()),
+                        }).where(kernels.c.id == sess_ctx.kernel_id)
+                        await db_conn.execute(query)
+                    else:
+                        log.info(log_fmt + 'preparation-started', *log_args)
+                        await _invoke_success_callbacks(check_results, use_new_txn=True)
+
+                task.add_done_callback(lambda fut: loop.create_task(_cb(fut)))
 
     async def _list_pending_sessions(self, db_conn) -> Sequence[SessionContext]:
         query = (
@@ -415,6 +448,7 @@ class SessionScheduler(aobject):
                 kernels.c.status,
                 kernels.c.image,
                 kernels.c.registry,
+                kernels.c.type,
                 kernels.c.sess_id,
                 kernels.c.access_key,
                 kernels.c.domain_name,
@@ -438,6 +472,7 @@ class SessionScheduler(aobject):
                 kernel_id=row['id'],
                 image_ref=ImageRef(row['image'], [row['registry']]),
                 access_key=row['access_key'],
+                sess_type=row['type'],
                 sess_id=row['sess_id'],
                 domain_name=row['domain_name'],
                 group_id=row['group_id'],
@@ -446,7 +481,10 @@ class SessionScheduler(aobject):
                 resource_opts=row['resource_opts'],
                 requested_slots=row['occupied_slots'],
                 target_sgroup_names=[],
-                environ=row['environ'],
+                environ={
+                    k: v for k, v
+                    in map(lambda s: s.split('=', maxsplit=1), row['environ'])
+                },
                 mounts=row['mounts'],
             ))
         return sess_ctxs
@@ -513,19 +551,20 @@ class SessionScheduler(aobject):
 
         return AgentAllocationContext(agent_id, agent_addr)
 
-    async def _unreserve_agent_slots(self, sched_ctx: SchedulingContext,
+    async def _unreserve_agent_slots(self,
                                      sess_ctx: SessionContext,
                                      agent_ctx: AgentAllocationContext):
-        # Un-reserve agent slots
-        query = (
-            sa.select([agents.c.occupied_slots], for_update=True)
-            .select_from(agents)
-            .where(agents.c.id == agent_ctx.agent_id))
-        current_occupied_slots = await sched_ctx.db_conn.scalar(query)
-        query = (
-            sa.update(agents)
-            .values({
-                'occupied_slots': current_occupied_slots - sess_ctx.requested_slots
-            })
-            .where(agents.c.id == agent_ctx.agent_id))
-        await sched_ctx.db_conn.execute(query)
+        # Un-reserve agent slots, using a separate db txn.
+        async with self.dbpool.acquire() as conn, conn.begin():
+            query = (
+                sa.select([agents.c.occupied_slots], for_update=True)
+                .select_from(agents)
+                .where(agents.c.id == agent_ctx.agent_id))
+            current_occupied_slots = await conn.scalar(query)
+            query = (
+                sa.update(agents)
+                .values({
+                    'occupied_slots': current_occupied_slots - sess_ctx.requested_slots
+                })
+                .where(agents.c.id == agent_ctx.agent_id))
+            await conn.execute(query)

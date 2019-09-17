@@ -28,6 +28,7 @@ from ai.backend.common.types import (
     KernelId,
     ResourceSlot,
     SessionTypes,
+    KernelCreationConfig,
 )
 from ai.backend.common.logging import BraceStyleAdapter
 from ..gateway.exceptions import (
@@ -40,6 +41,7 @@ from ..gateway.exceptions import (
     AgentError)
 from .models import (
     agents, kernels, keypairs, vfolders,
+    keypair_resource_policies,
     AgentStatus, KernelStatus,
     query_accessible_vfolders,
 )
@@ -274,7 +276,8 @@ class AgentRegistry:
         true, it skips checking validity of the kernel owner instance.
         '''
 
-        cols = [kernels.c.id, kernels.c.sess_id, kernels.c.access_key,
+        cols = [kernels.c.id, kernels.c.status,
+                kernels.c.sess_id, kernels.c.access_key,
                 kernels.c.agent_addr, kernels.c.kernel_host,
                 kernels.c.image, kernels.c.registry,
                 kernels.c.service_ports]
@@ -304,14 +307,16 @@ class AgentRegistry:
                             agents.c.version, agents.c.compute_plugins]
                 query = (
                     sa.select(cols, for_update=for_update)
-                    .select_from(kernels.join(agents))
+                    .select_from(sa.join(
+                        kernels, agents,
+                        kernels.c.agent == agents.c.id
+                    ))
                     .where(
                         (kernels.c.sess_id == sess_id) &
                         (kernels.c.access_key == access_key) &
                         (kernels.c.role == 'master') &
-                        (kernels.c.status == KernelStatus.TERMINATED) &
-                        (agents.c.status == AgentStatus.ALIVE) &
-                        (agents.c.id == kernels.c.agent)
+                        (kernels.c.status != KernelStatus.TERMINATED) &
+                        (agents.c.status == AgentStatus.ALIVE)
                     ).limit(1).offset(0)
                 )
             result = await conn.execute(query)
@@ -529,6 +534,14 @@ class AgentRegistry:
         registry_url, registry_creds = \
             await get_registry_info(self.config_server.etcd,
                                     sess_ctx.image_ref.registry)
+        async with self.dbpool.acquire() as conn, conn.begin():
+            query = (
+                sa.select([keypair_resource_policies])
+                .select_from(keypair_resource_policies)
+                .where(keypair_resource_policies.c.name == sess_ctx.resource_policy)
+            )
+            result = await conn.execute(query)
+            resource_policy = await result.first()
 
         # Create the kernel by invoking the agent
         async with self.handle_kernel_exception(
@@ -537,7 +550,7 @@ class AgentRegistry:
             # (TODO: return early and update the kernel status
             #        via asynchronous events)
             async with RPCContext(agent_ctx.agent_addr, None) as rpc:
-                config = {
+                config: KernelCreationConfig = {
                     'image': {
                         'registry': {
                             'name': sess_ctx.image_ref.registry,
@@ -545,31 +558,33 @@ class AgentRegistry:
                             **registry_creds,
                         },
                         'digest': image_info['digest'],
+                        'repo_digest': None,
                         'canonical': sess_ctx.image_ref.canonical,
                         'labels': image_info['labels'],
                     },
+                    'session_type': sess_ctx.sess_type.value,
                     'resource_slots': sess_ctx.requested_slots.to_json(),
-                    'idle_timeout': sess_ctx.resource_policy['idle_timeout'],
+                    'idle_timeout': resource_policy['idle_timeout'],
                     'mounts': sess_ctx.mounts,
                     'environ': sess_ctx.environ,
                     'resource_opts': sess_ctx.resource_opts,
                 }
                 created_info = await rpc.call.create_kernel(str(sess_ctx.kernel_id),
                                                             config)
-            if created_info is None:
-                raise KernelCreationFailed('ooops')
+                if created_info is None:
+                    raise KernelCreationFailed('ooops')
 
         log.debug('start_session(s:{}, ak:{}, k:{}) -> created on ag:{}\n{!r}',
                   sess_ctx.sess_id, sess_ctx.access_key, sess_ctx.kernel_id,
                   agent_ctx.agent_id, created_info)
         assert str(sess_ctx.kernel_id) == created_info['id']
 
-        # Return and record kernel access information
-        agent_host = URL(agent_ctx.agent_addr).host
-        kernel_host = created_info.get('kernel_host', agent_host)
-        service_ports = created_info.get('service_ports', [])
-        # NOTE: created_info contains resource_spec
         async with self.dbpool.acquire() as conn, conn.begin():
+            # Return and record kernel access information
+            agent_host = URL(agent_ctx.agent_addr).host
+            kernel_host = created_info.get('kernel_host', agent_host)
+            service_ports = created_info.get('service_ports', [])
+            # NOTE: created_info contains resource_spec
             query = (
                 kernels.update()
                 .values({
@@ -663,7 +678,7 @@ class AgentRegistry:
                         raise KernelNotFound
                     await self.set_session_status(sess_id, access_key,
                                                   KernelStatus.TERMINATING,
-                                                  db_connection=conn)
+                                                  db_conn=conn)
             except KernelNotFound:
                 raise
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
@@ -686,7 +701,7 @@ class AgentRegistry:
                                                 db_connection=conn)
                 await self.set_session_status(sess_id, access_key,
                                               KernelStatus.RESTARTING,
-                                              db_connection=conn)
+                                              db_conn=conn)
 
             registry_url, registry_creds = \
                 await get_registry_info(self.config_server.etcd,
@@ -717,7 +732,8 @@ class AgentRegistry:
                 }
                 kernel_info = await rpc.call.restart_kernel(str(kernel['id']),
                                                             new_config)
-                # TODO: what if prev status was "building" or others?
+                # TODO: publish "kernel_started" event
+                # TODO: remove publishing "kernel_started" event from the agent
                 await self.set_session_status(
                     sess_id, access_key,
                     KernelStatus.RUNNING,
@@ -1060,7 +1076,7 @@ class AgentRegistry:
             query = (
                 sa.update(kernels)
                 .values(data)
-                .where(keypairs.c.id == kernel_id)
+                .where(kernels.c.id == kernel_id)
             )
             await conn.execute(query)
 
@@ -1098,13 +1114,14 @@ class AgentRegistry:
                 'status_changed': now,
                 'terminated_at': now,
             }
-            stat_type = await self.redis_stat.type(kernel_id)
+            raw_kernel_id = str(kernel_id)
+            stat_type = await self.redis_stat.type(raw_kernel_id)
             if stat_type == 'string':
-                kern_stat = await self.redis_stat.get(kernel_id, encoding=None)
+                kern_stat = await self.redis_stat.get(raw_kernel_id, encoding=None)
                 if kern_stat is not None:
                     updates['last_stat'] = msgpack.unpackb(kern_stat)
             else:
-                kern_stat = await self.redis_stat.hgetall(kernel_id)
+                kern_stat = await self.redis_stat.hgetall(raw_kernel_id)
                 if kern_stat is not None and 'cpu_used' in kern_stat:
                     updates.update({
                         'cpu_used': int(float(kern_stat['cpu_used'])),

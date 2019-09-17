@@ -17,6 +17,7 @@ from typing import (
     List, Tuple,
     Set,
 )
+import uuid
 from urllib.parse import urlparse
 import weakref
 
@@ -476,8 +477,11 @@ async def kernel_terminated(app: web.Application, agent_id: AgentId, event_name:
 
 
 async def enqueue_status_update(app: web.Application, agent_id: AgentId, event_name: str,
-                                kernel_id: KernelId, reason: str,
+                                raw_kernel_id: str,
+                                reason: str = None,
                                 exit_code: int = None) -> None:
+    kernel_id = uuid.UUID(raw_kernel_id)
+    # TODO: when event_name == 'kernel_started', read the service port data.
     async with app['dbpool'].acquire() as conn, conn.begin():
         query = (
             sa.select([
@@ -493,7 +497,8 @@ async def enqueue_status_update(app: web.Application, agent_id: AgentId, event_n
                 (kernels.c.id == kernel_id)
             )
         )
-        row = await conn.first(query)
+        result = await conn.execute(query)
+        row = await result.first()
         if row is None:
             return
         if row['role'] != 'master':

@@ -15,6 +15,7 @@ from typing import (
     Any,
     Mapping, MutableMapping,
 )
+import uuid
 
 import aiohttp
 from aiohttp import web
@@ -147,8 +148,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
         if not params['reuse']:
             raise KernelAlreadyExists
         return web.json_response({
-            'kernelId': kern.id,
-            'status': kern.status,
+            'kernelId': str(kern.sess_id),  # legacy naming
+            'status': kern.status.name,
             'service_ports': kern.service_ports,
             'created': False,
         }, status=200)
@@ -225,7 +226,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             user_uuid=owner_uuid,
             user_role=request['user']['role'],
             session_tag=params.get('tag', None)))
-        resp['kernelId'] = kernel_id
+        resp['kernelId'] = str(params['sess_id'])  # legacy naming
         resp['status'] = 'PENDING'
         resp['servicePorts'] = []
         resp['created'] = True
@@ -276,8 +277,10 @@ async def create(request: web.Request, params: Any) -> web.Response:
 
 
 async def kernel_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
-                           kernel_id: KernelId, reason: str,
+                           raw_kernel_id: str,
+                           reason: str = None,
                            exit_code: int = None) -> None:
+    kernel_id = uuid.UUID(raw_kernel_id)
     registry = app['registry']
     if event_name == 'kernel_preparing':
         await registry.set_kernel_status(kernel_id, KernelStatus.PREPARING, reason)
@@ -286,7 +289,8 @@ async def kernel_lifecycle(app: web.Application, agent_id: AgentId, event_name: 
     elif event_name == 'kernel_creating':
         await registry.set_kernel_status(kernel_id, KernelStatus.PREPARING, reason)
     elif event_name == 'kernel_started':
-        await registry.set_kernel_status(kernel_id, KernelStatus.RUNNING, reason)
+        # The create_kernel() RPC caller will set the "RUNNING" status.
+        pass
     elif event_name == 'kernel_terminating':
         await registry.set_kernel_status(kernel_id, KernelStatus.TERMINATING, reason)
     elif event_name == 'kernel_terminated':
