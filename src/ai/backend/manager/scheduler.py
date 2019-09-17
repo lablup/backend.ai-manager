@@ -284,6 +284,8 @@ class SessionScheduler(aobject):
             await asyncio.sleep(1)
 
     async def schedule(self) -> None:
+        # NOTE: This schedule() function is never cancelled.
+
         log.debug('schedule(): tick')
         known_slot_types = await self.config_server.get_resource_slots()
 
@@ -299,6 +301,9 @@ class SessionScheduler(aobject):
                 await cb
 
         async def _invoke_failure_callbacks(results: List[Union[Exception, PredicateResult]]) -> None:
+            # Rollback any changes performed by predicates
+            # (NOTE: We don't use the DB-level transaction rollback because we need to
+            #  store the "ERROR" status to corresponding rows in the kernels table.)
             callbacks: List[Awaitable[None]] = []
             for result in results:
                 if isinstance(result, Exception):
@@ -354,7 +359,7 @@ class SessionScheduler(aobject):
                         if result.failure_cb is not None:
                             failure_callbacks.append(result.failure_cb(sched_ctx, sess_ctx))
                 if has_failure:
-                    log.debug(log_fmt + 'one or more predicates failed', *log_args)
+                    log.debug(log_fmt + 'predicate-checks-failed', *log_args)
                     # If any one of predicates fails, rollback all changes.
                     for cb in reversed(failure_callbacks):
                         await cb
@@ -368,6 +373,12 @@ class SessionScheduler(aobject):
                 try:
                     agent_ctx = await self._find_and_reserve_agent(sched_ctx, sess_ctx)
                 except InstanceNotAvailable:
+                    log.debug(log_fmt + 'no-available-instances', *log_args)
+                    await _invoke_failure_callbacks(check_results)
+                    continue
+                except Exception:
+                    log.exception(log_fmt + 'unexpected-error, during agent allocation',
+                                  *log_args)
                     await _invoke_failure_callbacks(check_results)
                     continue
 
@@ -383,33 +394,25 @@ class SessionScheduler(aobject):
                 try:
                     log.debug(log_fmt + 'try-starting', *log_args)
                     await self.registry.start_session(sched_ctx, sess_ctx, agent_ctx)
-                    log.info(log_fmt + 'started', *log_args)
-                    await _invoke_success_callbacks(check_results)
-
-                except Exception:  # including timeout and cancellation
-
+                except Exception:
                     log.exception(log_fmt + 'failed-starting', *log_args)
-
-                    # Rollback any changes performed by predicates
-                    # (NOTE: We don't use the DB-level transaction rollback because we need to
-                    #  store the "ERROR" status to corresponding rows in the kernels table.)
                     await _invoke_failure_callbacks(check_results)
-
-                    # Rollback agent resource reservation.
                     await self._unreserve_agent_slots(sched_ctx, sess_ctx, agent_ctx)
-
-                    # Mark as error'ed.
                     query = kernels.update().values({
                         'status': KernelStatus.ERROR,
                         'status_info': 'failed to start',
                         'status_changed': datetime.now(tzutc()),
                     }).where(kernels.c.id == sess_ctx.kernel_id)
                     await db_conn.execute(query)
+                else:
+                    log.info(log_fmt + 'started', *log_args)
+                    await _invoke_success_callbacks(check_results)
 
     async def _list_pending_sessions(self, db_conn) -> Sequence[SessionContext]:
         query = (
             sa.select([
                 kernels.c.id,
+                kernels.c.status,
                 kernels.c.image,
                 kernels.c.registry,
                 kernels.c.sess_id,
@@ -422,7 +425,7 @@ class SessionScheduler(aobject):
                 kernels.c.environ,
                 kernels.c.mounts,
                 keypairs.c.resource_policy,
-            ])
+            ], for_update=True)
             .select_from(sa.join(
                 kernels, keypairs,
                 keypairs.c.access_key == kernels.c.access_key
