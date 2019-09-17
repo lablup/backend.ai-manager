@@ -15,6 +15,7 @@ import uuid
 import attr
 from dateutil.tz import tzutc
 import sqlalchemy as sa
+import aioredlock
 from aiopg.sa.connection import SAConnection
 
 from ai.backend.common.logging import BraceStyleAdapter
@@ -33,6 +34,7 @@ from .models import (
     query_allowed_sgroups,
     AgentStatus, KernelStatus,
 )
+from ..gateway.defs import REDIS_LIVE_DB
 from ..gateway.etcd import ConfigServer
 from ..gateway.exceptions import (
     InstanceNotAvailable,
@@ -259,10 +261,17 @@ class SessionScheduler(aobject):
     config_server: ConfigServer
     registry: AgentRegistry
 
-    def __init__(self, config_server: ConfigServer, registry: AgentRegistry) -> None:
+    def __init__(self, config: dict, config_server: ConfigServer, registry: AgentRegistry) -> None:
+        self.config = config
         self.config_server = config_server
         self.registry = registry
         self.dbpool = registry.dbpool
+        self.lock_manager = aioredlock.Aioredlock([
+            {'host': str(config['redis']['addr'][0]),
+             'port': config['redis']['addr'][1],
+             'password': config['redis']['password'] if config['redis']['password'] else None,
+             'db': REDIS_LIVE_DB},
+        ])
 
     async def __ainit__(self) -> None:
         log.info('Session scheduler started')
@@ -273,6 +282,7 @@ class SessionScheduler(aobject):
         log.info('Session scheduler stopped')
         self.task.cancel()
         await self.task
+        await self.lock_manager.destroy()
 
     async def scheduling_loop(self) -> None:
         # TODO: change to event-driven invocation
@@ -280,8 +290,13 @@ class SessionScheduler(aobject):
         try:
             while True:
                 try:
-                    await asyncio.shield(self.schedule())
+                    lock = await self.lock_manager.lock('manager.scheduler')
+                    async with lock:
+                        await asyncio.shield(self.schedule())
+                        await asyncio.sleep(1)
+                except aioredlock.LockError:
                     await asyncio.sleep(1)
+                    continue
                 except asyncio.CancelledError:
                     raise
                 except Exception:

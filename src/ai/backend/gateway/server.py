@@ -435,10 +435,8 @@ async def server_main(loop, pidx, _args):
         ssl_context=ssl_ctx,
     )
     await site.start()
-    # TODO: use distribute leader election
-    if pidx == 0:
-        session_scheduler = await SessionScheduler.new(
-            app['config_server'], app['registry'])
+    session_scheduler = await SessionScheduler.new(
+        app['config'], app['config_server'], app['registry'])
 
     if os.geteuid() == 0:
         uid = app['config']['manager']['user']
@@ -456,8 +454,7 @@ async def server_main(loop, pidx, _args):
         yield
     finally:
         log.info('shutting down...')
-        if pidx == 0:
-            await session_scheduler.close()
+        await session_scheduler.close()
         await runner.cleanup()
 
 
