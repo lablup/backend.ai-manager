@@ -43,13 +43,13 @@ from .auth import auth_required
 from .exceptions import (
     AppNotFound, GroupNotFound, KernelNotFound,
     BackendError,
-    InvalidAPIParameters,
+    InvalidAPIParameters, GenericForbidden,
     InternalServerError,
 )
 from .manager import READ_ALLOWED, server_status_required
 from .utils import check_api_params, call_non_bursty
 from .wsproxy import TCPProxy
-from ..manager.models import kernels, groups
+from ..manager.models import kernels, groups, UserRole
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.stream'))
 
@@ -399,12 +399,21 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
 @auth_required
 @check_api_params(
     t.Dict({
-        t.Key('kernelId', default='*') >> 'kernel_id': t.String,
+        t.Key('sessionId', default='*') >> 'session_id': t.String,
+        t.Key('ownerAccessKey', default=None) >> 'owner_access_key': t.Null | t.String,
         tx.AliasedKey(['group', 'groupName'], default='*') >> 'group_name': t.String,
     }))
 async def stream_events(request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
     app = request.app
-    kernel_id = params['kernel_id']
+    session_id = params['session_id']
+    user_role = request['user']['role']
+    user_uuid = request['user']['uuid']
+    access_key = params['ownerAccessKey']
+    if access_key is None:
+        access_key = request['keypair']['access_key']
+    if user_role == UserRole.USER:
+        if access_key != request['keypair']['access_key']:
+            raise GenericForbidden
     group_name = params['group_name']
     event_queues = app['event_queues']  # type: Set[asyncio.Queue]
     my_queue = asyncio.Queue()          # type: asyncio.Queue[Tuple[str, dict, str]]
@@ -428,18 +437,19 @@ async def stream_events(request: web.Request, params: Mapping[str, Any]) -> web.
                 if evdata is sentinel:
                     break
                 event_name, row, reason = evdata
-                user_role = request['user']['role']
-                user_uuid = request['user']['uuid']
-                if user_role != 'superadmin' and row['domain_name'] != request['user']['domain_name']:
-                    continue
-                if user_role not in ('superadmin', 'admin') and row['user_uuid'] != user_uuid:
-                    continue
+                if user_role in (UserRole.USER, UserRole.ADMIN):
+                    if row['domain_name'] != request['user']['domain_name']:
+                        continue
+                if user_role == UserRole.USER:
+                    if row['user_uuid'] != user_uuid:
+                        continue
                 if group_id != '*' and row['group_id'] != group_id:
                     continue
-                if kernel_id != '*' and row['id'] != kernel_id:
+                if session_id != '*' and not (
+                        (row['sess_id'] == session_id) and
+                        (row['access_key'] == access_key)):
                     continue
                 await resp.send(json.dumps({
-                    'kernelId': str(row['id']),
                     'sessionId': str(row['sess_id']),
                     'ownerAccessKey': row['access_key'],
                     'reason': reason,
