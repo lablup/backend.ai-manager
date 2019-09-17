@@ -319,7 +319,7 @@ async def stream_execute(request: web.Request) -> web.StreamResponse:
 @auth_required
 @check_api_params(
     t.Dict({
-        t.Key('app'): t.String,
+        tx.AliasedKey(['app', 'service']): t.String,
     }))
 async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
     registry = request.app['registry']
