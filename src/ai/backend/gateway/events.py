@@ -7,10 +7,10 @@ from pathlib import Path
 import secrets
 from typing import (
     Any,
-    Protocol,
     List, Tuple,
     MutableMapping,
 )
+from typing_extensions import Protocol
 
 from aiohttp import web
 from aiojobs.aiohttp import get_scheduler_from_app

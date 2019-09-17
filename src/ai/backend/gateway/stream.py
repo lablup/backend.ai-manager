@@ -31,6 +31,7 @@ import sqlalchemy as sa
 import trafaret as t
 import zmq
 
+from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     AgentId,
@@ -398,7 +399,7 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
 @check_api_params(
     t.Dict({
         t.Key('kernelId', default='*') >> 'kernel_id': t.String,
-        t.Key('group', 'groupName', default='*') >> 'group_name': t.String,
+        tx.AliasedKey(['group', 'groupName'], default='*') >> 'group_name': t.String,
     }))
 async def stream_events(request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
     app = request.app

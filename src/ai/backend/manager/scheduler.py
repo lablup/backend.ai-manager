@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime
 import logging
 from typing import (
-    Any,
+    Any, Union,
     Awaitable, Optional,
     Sequence, MutableSequence, List,
     Mapping,
@@ -29,6 +29,7 @@ from ai.backend.common.types import (
 from .registry import AgentRegistry
 from .models import (
     agents, domains, groups, kernels, keypairs,
+    keypair_resource_policies,
     query_allowed_sgroups,
     AgentStatus, KernelStatus,
 )
@@ -36,6 +37,7 @@ from ..gateway.etcd import ConfigServer
 from ..gateway.exceptions import (
     InstanceNotAvailable,
 )
+from ..gateway.utils import current_loop
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.scheduler'))
 
@@ -101,14 +103,21 @@ class SchedulingPredicate(Protocol):
 
 async def check_concurrency(sched_ctx: SchedulingContext,
                             sess_ctx: SessionContext) -> PredicateResult:
+    query = (
+        sa.select([keypair_resource_policies])
+        .select_from(keypair_resource_policies)
+        .where(keypair_resource_policies.c.name == sess_ctx.resource_policy)
+    )
+    result = await sched_ctx.db_conn.execute(query)
+    resource_policy = await result.first()
     query = (sa.select([keypairs.c.concurrency_used], for_update=True)
                .select_from(keypairs)
                .where(keypairs.c.access_key == sess_ctx.access_key))
     concurrency_used = await sched_ctx.db_conn.scalar(query)
     log.debug('access_key: {0} ({1} / {2})',
               sess_ctx.access_key, concurrency_used,
-              sess_ctx.resource_policy['max_concurrent_sessions'])
-    if concurrency_used >= sess_ctx.resource_policy['max_concurrent_sessions']:
+              resource_policy['max_concurrent_sessions'])
+    if concurrency_used >= resource_policy['max_concurrent_sessions']:
         return PredicateResult(False, '')
     # Increment concurrency usage of keypair.
     query = (sa.update(keypairs)
@@ -134,9 +143,14 @@ async def check_dependencies(sched_ctx: SchedulingContext,
 
 async def check_keypair_resource_limit(sched_ctx: SchedulingContext,
                                        sess_ctx: SessionContext) -> PredicateResult:
-    # - Keypair resource occupation includes all non-terminated sessions.
-    # - TODO: exclude the pending sessions in the queue.
-    total_keypair_allowed = ResourceSlot.from_policy(sess_ctx.resource_policy,
+    query = (
+        sa.select([keypair_resource_policies])
+        .select_from(keypair_resource_policies)
+        .where(keypair_resource_policies.c.name == sess_ctx.resource_policy)
+    )
+    result = await sched_ctx.db_conn.execute(query)
+    resource_policy = await result.first()
+    total_keypair_allowed = ResourceSlot.from_policy(resource_policy,
                                                      sched_ctx.known_slot_types)
     key_occupied = await sched_ctx.registry.get_keypair_occupancy(
         sess_ctx.access_key, conn=sched_ctx.db_conn)
@@ -246,20 +260,54 @@ class SessionScheduler(aobject):
 
     async def __ainit__(self) -> None:
         log.info('Session scheduler started')
+        loop = current_loop()
+        self.task = loop.create_task(self.scheduling_loop())
 
     async def close(self) -> None:
         log.info('Session scheduler stopped')
+        self.task.cancel()
+        await self.task
 
     async def scheduling_loop(self) -> None:
         # TODO: change to event-driven invocation
         # TODO: adopt Redlock for distributed coordination?
-        while True:
-            await self.schedule()
+        try:
+            while True:
+                try:
+                    await asyncio.shield(self.schedule())
+                    await asyncio.sleep(1)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    log.exception('unexpected error in scheduler loop')
+        except asyncio.CancelledError:
             await asyncio.sleep(1)
 
     async def schedule(self) -> None:
         log.debug('schedule(): tick')
         known_slot_types = await self.config_server.get_resource_slots()
+
+        async def _invoke_success_callbacks(results: List[Union[Exception, PredicateResult]]) -> None:
+            callbacks: List[Awaitable[None]] = []
+            for result in check_results:
+                if isinstance(result, Exception):
+                    # This won't happen but this code is required to pass static check.
+                    continue
+                if result.success_cb is not None:
+                    result.success_cb(sched_ctx, sess_ctx)
+            for cb in reversed(callbacks):
+                await cb
+
+        async def _invoke_failure_callbacks(results: List[Union[Exception, PredicateResult]]) -> None:
+            callbacks: List[Awaitable[None]] = []
+            for result in results:
+                if isinstance(result, Exception):
+                    # This won't happen but this code is required to pass static check.
+                    continue
+                if result.failure_cb:
+                    callbacks.append(result.failure_cb(sched_ctx, sess_ctx))
+            for cb in reversed(callbacks):
+                await cb
 
         # We allow a long database transaction here
         # because this scheduling handler will be executed by only one process.
@@ -280,9 +328,6 @@ class SessionScheduler(aobject):
                 log_args = (sess_ctx.kernel_id, sess_ctx.sess_id, sess_ctx.access_key)
                 log.debug(log_fmt + 'try-scheduling', *log_args)
 
-                async def exception_cb(ex):
-                    log.error(log_fmt + 'predicate-error (ex:{})', *log_args, repr(ex))
-
                 predicates: Sequence[Awaitable[PredicateResult]] = [
                     check_concurrency(sched_ctx, sess_ctx),
                     check_dependencies(sched_ctx, sess_ctx),
@@ -291,64 +336,64 @@ class SessionScheduler(aobject):
                     check_domain_resource_limit(sched_ctx, sess_ctx),
                     check_scaling_group(sched_ctx, sess_ctx),
                 ]
-                checks: Sequence[PredicateResult] = \
-                    await asyncio.gather(*predicates, return_exceptions=True)
+                check_results: List[Union[Exception, PredicateResult]] = []
+                for check in predicates:
+                    try:
+                        check_results.append(await check)
+                    except Exception as e:
+                        log.exception(log_fmt + 'predicate-error', *log_args)
+                        check_results.append(e)
                 has_failure = False
                 failure_callbacks: List[Awaitable[None]] = []
-                for check in checks:
-                    if isinstance(check, Exception):
+                for result in check_results:
+                    if isinstance(result, Exception):
                         has_failure = True
-                        failure_callbacks.append(exception_cb(check))
                         continue
-                    if not check.passed:
+                    if not result.passed:
                         has_failure = True
-                        if check.failure_cb is not None:
-                            failure_callbacks.append(check.failure_cb(sched_ctx, sess_ctx))
+                        if result.failure_cb is not None:
+                            failure_callbacks.append(result.failure_cb(sched_ctx, sess_ctx))
                 if has_failure:
                     log.debug(log_fmt + 'one or more predicates failed', *log_args)
                     # If any one of predicates fails, rollback all changes.
-                    await asyncio.gather(*failure_callbacks, return_exceptions=True)
+                    for cb in reversed(failure_callbacks):
+                        await cb
                     # Predicate failures are *NOT* permanent errors.
                     # We need to retry the scheduling afterwards.
                     continue
-                log.debug(log_fmt + 'try-starting', *log_args)
 
                 # TODO: allow prioritization of ready-to-start sessions
                 #       using custom algorithms (e.g., DRF)
-                try:
 
+                try:
                     agent_ctx = await self._find_and_reserve_agent(sched_ctx, sess_ctx)
-                    query = kernels.update().values({
-                        'agent': agent_ctx.agent_id,
-                        'agent_addr': agent_ctx.agent_addr,
-                        'status': KernelStatus.PREPARING,
-                        'status_info': 'scheduled',
-                        'status_changed': datetime.now(tzutc()),
-                    }).where(kernels.c.id == sess_ctx.kernel_id)
-                    await db_conn.execute(query)
+                except InstanceNotAvailable:
+                    await _invoke_failure_callbacks(check_results)
+                    continue
+
+                query = kernels.update().values({
+                    'agent': agent_ctx.agent_id,
+                    'agent_addr': agent_ctx.agent_addr,
+                    'status': KernelStatus.PREPARING,
+                    'status_info': 'scheduled',
+                    'status_changed': datetime.now(tzutc()),
+                }).where(kernels.c.id == sess_ctx.kernel_id)
+                await db_conn.execute(query)
+
+                try:
+                    log.debug(log_fmt + 'try-starting', *log_args)
                     await self.registry.start_session(sched_ctx, sess_ctx, agent_ctx)
                     log.info(log_fmt + 'started', *log_args)
-                    success_callbacks: List[Awaitable[None]] = [
-                        check.success_cb(sched_ctx, sess_ctx)
-                        for check in checks
-                        if check.success_cb is not None
-                    ]
-                    await asyncio.gather(*success_callbacks, return_exceptions=True)
+                    await _invoke_success_callbacks(check_results)
 
-                except Exception as e:  # including timeout and cancellation
+                except Exception:  # including timeout and cancellation
 
-                    log.info(log_fmt + 'failed-starting (ex:{})', *log_args, repr(e))
+                    log.exception(log_fmt + 'failed-starting', *log_args)
 
                     # Rollback any changes performed by predicates
                     # (NOTE: We don't use the DB-level transaction rollback because we need to
                     #  store the "ERROR" status to corresponding rows in the kernels table.)
-                    rollback_callbacks: List[Awaitable[None]] = []
-                    for check in checks:
-                        if isinstance(check, Exception):
-                            continue
-                        if check.failure_cb:
-                            rollback_callbacks.append(check.failure_cb(sched_ctx, sess_ctx))
-                    await asyncio.gather(*rollback_callbacks, return_exceptions=True)
+                    await _invoke_failure_callbacks(check_results)
 
                     # Rollback agent resource reservation.
                     await self._unreserve_agent_slots(sched_ctx, sess_ctx, agent_ctx)
@@ -365,13 +410,23 @@ class SessionScheduler(aobject):
         query = (
             sa.select([
                 kernels.c.id,
-                kernels.c.access_key,
+                kernels.c.image,
+                kernels.c.registry,
                 kernels.c.sess_id,
+                kernels.c.access_key,
                 kernels.c.domain_name,
-                kernels.c.scaling_group,
                 kernels.c.group_id,
-            ], for_update=True)
-            .select_from(kernels)
+                kernels.c.scaling_group,
+                kernels.c.occupied_slots,
+                kernels.c.resource_opts,
+                kernels.c.environ,
+                kernels.c.mounts,
+                keypairs.c.resource_policy,
+            ])
+            .select_from(sa.join(
+                kernels, keypairs,
+                keypairs.c.access_key == kernels.c.access_key
+            ))
             .where(kernels.c.status == KernelStatus.PENDING)
         )
         sess_ctxs = []
@@ -384,7 +439,7 @@ class SessionScheduler(aobject):
                 domain_name=row['domain_name'],
                 group_id=row['group_id'],
                 scaling_group=row['scaling_group'],
-                resource_policy={},  # TODO: implement
+                resource_policy=row['resource_policy'],
                 resource_opts=row['resource_opts'],
                 requested_slots=row['occupied_slots'],
                 target_sgroup_names=[],

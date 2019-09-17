@@ -95,8 +95,7 @@ creation_config_v3 = t.Dict({
     t.Dict({
         t.Key('clientSessionToken') >> 'sess_id': t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
         tx.AliasedKey(['image', 'lang']): t.String,
-        tx.AliasedKey(['sessionType'], default=SessionTypes.INTERACTIVE.value) >> 'sess_type':
-            t.Enum(*[e.value for e in SessionTypes]),
+        tx.AliasedKey(['sessionType'], default='interactive') >> 'sess_type': tx.Enum(SessionTypes),
         tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
         tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
         t.Key('config', default=dict): t.Mapping(t.String, t.Any),
@@ -215,7 +214,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
         else:
             raise InvalidAPIParameters('API version not supported')
 
-        result = await asyncio.shield(request.app['registry'].enqueue_session(
+        kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
             params['sess_id'], owner_access_key,
             requested_image_ref,
             params['sess_type'],
@@ -225,8 +224,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
             group_id=group_id,
             user_uuid=owner_uuid,
             user_role=request['user']['role'],
-            tag=params.get('tag', None)))
-        resp['kernelId'] = str(result['kernel_id'])
+            session_tag=params.get('tag', None)))
+        resp['kernelId'] = kernel_id
         resp['status'] = 'PENDING'
         resp['servicePorts'] = []
         resp['created'] = True
@@ -243,9 +242,10 @@ async def create(request: web.Request, params: Any) -> web.Response:
                     query = (
                         sa.select([kernels.c.status, kernels.c.service_ports])
                         .select_from(kernels)
-                        .where(kernels.c.id == resp['kernelId'])
+                        .where(kernels.c.id == kernel_id)
                     )
-                    row = await conn.first(query)
+                    result = await conn.execute(query)
+                    row = await result.first()
                     if row['status'] == KernelStatus.RUNNING:
                         resp['status'] = 'RUNNING'
                         resp['servicePorts'] = [
@@ -261,6 +261,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
                         break
                 await asyncio.sleep(1)
 
+    except asyncio.CancelledError:
+        raise
     except BackendError:
         log.exception('GET_OR_CREATE: exception')
         raise

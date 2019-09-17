@@ -364,7 +364,7 @@ class AgentRegistry:
                               group_id: uuid.UUID,
                               user_uuid: str,
                               user_role: str,
-                              session_tag=None):
+                              session_tag: str = None) -> KernelId:
 
         mounts = creation_config.get('mounts') or []
         environ = creation_config.get('environ') or {}
@@ -519,6 +519,7 @@ class AgentRegistry:
                 'stdout_port': 0,
             })
             await conn.execute(query)
+        return KernelId(kernel_id)
 
     async def start_session(self, sched_ctx: 'SchedulingContext',
                             sess_ctx: 'SessionContext',
@@ -597,7 +598,7 @@ class AgentRegistry:
                 sa.select([kernels.c.occupied_slots])
                 .where(
                     (kernels.c.access_key == access_key) &
-                    (kernels.c.status != KernelStatus.TERMINATED)
+                    ~(kernels.c.status.in_([KernelStatus.TERMINATED, KernelStatus.PENDING]))
                 )
             )
             zero = ResourceSlot()
@@ -618,7 +619,7 @@ class AgentRegistry:
                 sa.select([kernels.c.occupied_slots])
                 .where(
                     (kernels.c.domain_name == domain_name) &
-                    (kernels.c.status != KernelStatus.TERMINATED)
+                    ~(kernels.c.status.in_([KernelStatus.TERMINATED, KernelStatus.PENDING]))
                 )
             )
             zero = ResourceSlot()
@@ -637,7 +638,7 @@ class AgentRegistry:
                 sa.select([kernels.c.occupied_slots])
                 .where(
                     (kernels.c.group_id == group_id) &
-                    (kernels.c.status != KernelStatus.TERMINATED)
+                    ~(kernels.c.status.in_([KernelStatus.TERMINATED, KernelStatus.PENDING]))
                 )
             )
             zero = ResourceSlot()
