@@ -180,7 +180,6 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             } for sgname in sgroups
         }
         sgroup_remaining = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
-        sgroup_using = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
         query = (
             sa.select([agents.c.available_slots, agents.c.occupied_slots, agents.c.scaling_group])
             .select_from(agents)
@@ -199,11 +198,11 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             .select_from(kernels)
             .where(
                 (kernels.c.user_uuid == request['user']['uuid']) &
-                (kernels.c.status != KernelStatus.TERMINATED)
+                (kernels.c.status != KernelStatus.TERMINATED) &
+                (kernels.c.scaling_group.in_(sgroups))
             )
         )
         async for row in conn.execute(query):
-            sgroup_using += row.occupied_slots
             per_sgroup[row.scaling_group]['using'] += row.occupied_slots
         for sgname, sgfields in per_sgroup.items():
             for rtype, slots in sgfields.items():
