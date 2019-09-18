@@ -190,6 +190,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
         )
         async for row in conn.execute(query):
             remaining = row['available_slots'] - row['occupied_slots']
+            remaining += ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
             sgroup_remaining += remaining
             agent_slots.append(remaining)
             per_sgroup[row.scaling_group]['remaining'] += remaining
