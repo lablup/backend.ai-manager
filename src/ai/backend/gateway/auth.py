@@ -331,7 +331,8 @@ async def signup(request: web.Request, params: Any) -> web.Response:
         hook_event_types = plugin.get_hook_event_types()
         hook_event_handlers = plugin.get_handlers()
         for ev_types in hook_event_types:
-            if 'CHECK_USER' not in ev_types._member_names_:
+            if 'CHECK_USER' not in ev_types._member_names_ and \
+                    'CHECK_PASSWORD' not in ev_types._member_names_:
                 continue
             for ev_handlers in hook_event_handlers:
                 for ev_handler in ev_handlers:
@@ -340,6 +341,13 @@ async def signup(request: web.Request, params: Any) -> web.Response:
                         extra_params = copy.deepcopy(params)
                         extra_params.pop('email')
                         checked_user = await check_user(params['email'], **extra_params)
+                    if ev_types.CHECK_PASSWORD == ev_handler[0]:
+                        check_password = ev_handler[1]
+                        result = await check_password(params['password'])
+                        if not result['success']:
+                            reason = result.get('reason', 'too simple password')
+                            return web.json_response({'title': reason}, status=403)
+
     if isinstance(checked_user, dict) and not checked_user['success']:
         log.info('AUTH.SIGNUP: signup not allowed')
         return web.json_response({'error_msg': 'signup not allowed'}, status=403)
