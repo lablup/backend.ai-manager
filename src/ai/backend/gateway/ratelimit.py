@@ -44,10 +44,17 @@ async def rlim_middleware(app, request, handler):
     if request['is_authorized']:
         rate_limit = request['keypair']['rate_limit']
         access_key = request['keypair']['access_key']
-        ret = await rr.evalsha(
-            app['redis_rlim_script'],
-            keys=[access_key],
-            args=[str(now), str(_rlim_window)])
+        while True:
+            try:
+                ret = await rr.evalsha(
+                    app['redis_rlim_script'],
+                    keys=[access_key],
+                    args=[str(now), str(_rlim_window)])
+                break
+            except aioredis.errors.ReplyError:
+                # Redis may have been restarted.
+                app['redis_rlim_script'] = await rr.script_load(_rlim_script)
+                continue
         rolling_count = int(ret)
         if rolling_count > rate_limit:
             raise RateLimitExceeded

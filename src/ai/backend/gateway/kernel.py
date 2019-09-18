@@ -10,29 +10,44 @@ import json
 import logging
 import re
 import secrets
+import time
 from typing import (
     Any,
-    MutableMapping,
+    Mapping, MutableMapping,
 )
+import uuid
 
 import aiohttp
 from aiohttp import web
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
+import aioredis
 import aiotools
 from dateutil.tz import tzutc
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import true, null
 import trafaret as t
 
-from ai.backend.common.exception import UnknownImageReference
-from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common import validators as tx
+from ai.backend.common.docker import ImageRef
+from ai.backend.common.exception import (
+    UnknownImageReference,
+    AliasResolutionFailed,
+)
+from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.types import (
+    AgentId,
+    SessionTypes,
+)
 
 from .exceptions import (
-    InvalidAPIParameters, QuotaExceeded,
-    KernelNotFound, VFolderNotFound,
-    BackendError, InternalServerError)
+    InvalidAPIParameters,
+    ImageNotFound,
+    KernelNotFound,
+    KernelAlreadyExists,
+    BackendError,
+    InternalServerError,
+)
 from .auth import auth_required
 from .utils import (
     catch_unexpected, check_api_params, get_access_key_scopes,
@@ -41,9 +56,8 @@ from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (
     domains,
     association_groups_users as agus, groups,
-    keypairs, kernels, vfolders,
+    keypairs, kernels,
     AgentStatus, KernelStatus,
-    query_accessible_vfolders,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.kernel'))
@@ -80,12 +94,18 @@ creation_config_v3 = t.Dict({
 @auth_required
 @check_api_params(
     t.Dict({
-        t.Key('clientSessionToken') >> 'sess_id': t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
+        t.Key('clientSessionToken') >> 'sess_id':
+            t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
         tx.AliasedKey(['image', 'lang']): t.String,
+        tx.AliasedKey(['type', 'sessionType'], default='interactive') >> 'sess_type':
+            tx.Enum(SessionTypes),
         tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
         tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
         t.Key('config', default=dict): t.Mapping(t.String, t.Any),
         t.Key('tag', default=None): t.Null | t.String,
+        t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.Bool | t.StrBool,
+        t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
+        t.Key('reuseIfExists', default=True) >> 'reuse': t.Bool | t.StrBool,
     }),
     loads=_json_loads)
 async def create(request: web.Request, params: Any) -> web.Response:
@@ -96,10 +116,49 @@ async def create(request: web.Request, params: Any) -> web.Response:
     log.info('GET_OR_CREATE (u:{0}/{1}, image:{2}, tag:{3}, token:{4})',
              requester_access_key, owner_access_key,
              params['image'], params['tag'], params['sess_id'])
+
+    dbpool = request.app['dbpool']
+    registry = request.app['registry']
     resp: MutableMapping[str, Any] = {}
+
+    # Resolve the image reference.
+    try:
+        requested_image_ref = \
+            await ImageRef.resolve_alias(params['image'], request.app['config_server'].etcd)
+        async with dbpool.acquire() as conn, conn.begin():
+            query = (sa.select([domains.c.allowed_docker_registries])
+                       .select_from(domains)
+                       .where(domains.c.name == params['domain']))
+            allowed_registries = await conn.scalar(query)
+            if requested_image_ref.registry not in allowed_registries:
+                raise AliasResolutionFailed
+    except AliasResolutionFailed:
+        raise ImageNotFound
+
+    # Check existing (owner_access_key, session) kernel instance
+    try:
+        # NOTE: We can reuse the session IDs of TERMINATED sessions only.
+        # NOTE: Reusing a session in the PENDING status returns an empty value in service_ports.
+        kern = await registry.get_session(params['sess_id'], owner_access_key)
+        running_image_ref = ImageRef(kern['image'], [kern['registry']])
+        if running_image_ref != requested_image_ref:
+            raise KernelAlreadyExists
+        create = False
+    except KernelNotFound:
+        create = True
+    if not create:
+        if not params['reuse']:
+            raise KernelAlreadyExists
+        return web.json_response({
+            'kernelId': str(kern.sess_id),  # legacy naming
+            'status': kern.status.name,
+            'service_ports': kern.service_ports,
+            'created': False,
+        }, status=200)
+
     try:
         resource_policy = request['keypair']['resource_policy']
-        async with request.app['dbpool'].acquire() as conn, conn.begin():
+        async with dbpool.acquire() as conn, conn.begin():
             if requester_access_key != owner_access_key:
                 query = (sa.select([keypairs.c.user])
                            .select_from(keypairs)
@@ -107,20 +166,6 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 owner_uuid = await conn.scalar(query)
             else:
                 owner_uuid = requester_uuid
-
-            query = (sa.select([keypairs.c.concurrency_used], for_update=True)
-                       .select_from(keypairs)
-                       .where(keypairs.c.access_key == owner_access_key))
-            concurrency_used = await conn.scalar(query)
-            log.debug('access_key: {0} ({1} / {2})',
-                      owner_access_key, concurrency_used,
-                      resource_policy['max_concurrent_sessions'])
-            if concurrency_used >= resource_policy['max_concurrent_sessions']:
-                raise QuotaExceeded
-            query = (sa.update(keypairs)
-                       .values(concurrency_used=keypairs.c.concurrency_used + 1)
-                       .where(keypairs.c.access_key == owner_access_key))
-            await conn.execute(query)
 
             if request['is_superadmin']:  # superadmin can spawn container in any domain and group
                 query = (sa.select([groups.c.domain_name, groups.c.id])
@@ -172,61 +217,55 @@ async def create(request: web.Request, params: Any) -> web.Response:
         else:
             raise InvalidAPIParameters('API version not supported')
 
-        # sanity check for vfolders
-        try:
-            kernel = None
-            allowed_vfolder_types = ['user', 'group']
-            # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
-            if creation_config['mounts']:
-                mount_details = []
-                matched_mounts = set()
-                matched_vfolders = await query_accessible_vfolders(
-                    conn, owner_uuid,
-                    user_role=request['user']['role'], domain_name=params['domain'],
-                    allowed_vfolder_types=allowed_vfolder_types,
-                    extra_vf_conds=(vfolders.c.name.in_(creation_config['mounts'])))
-                for item in matched_vfolders:
-                    if item['group'] is not None and item['group'] != str(group_id):
-                        # User's accessible group vfolders should not be mounted
-                        # if not belong to the execution kernel.
-                        continue
-                    matched_mounts.add(item['name'])
-                    mount_details.append((
-                        item['name'],
-                        item['host'],
-                        item['id'].hex,
-                        item['permission'].value,
-                    ))
-                if set(creation_config['mounts']) > matched_mounts:
-                    raise VFolderNotFound
-                creation_config['mounts'] = mount_details
+        kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
+            params['sess_id'], owner_access_key,
+            requested_image_ref,
+            params['sess_type'],
+            creation_config,
+            resource_policy,
+            domain_name=params['domain'],
+            group_id=group_id,
+            user_uuid=owner_uuid,
+            user_role=request['user']['role'],
+            session_tag=params.get('tag', None)))
+        resp['kernelId'] = str(params['sess_id'])  # legacy naming
+        resp['status'] = 'PENDING'
+        resp['servicePorts'] = []
+        resp['created'] = True
 
-            kernel, created = await request.app['registry'].get_or_create_session(
-                params['sess_id'], owner_access_key,
-                params['image'], creation_config,
-                resource_policy,
-                domain_name=params['domain'], group_id=group_id, user_uuid=owner_uuid,
-                tag=params.get('tag', None))
-            resp['kernelId'] = str(kernel['sess_id'])
-            resp['servicePorts'] = [
-                {
-                    'name': item['name'],
-                    'protocol': item['protocol'],
-                }
-                for item in kernel['service_ports']
-            ]
-            resp['created'] = bool(created)
-        except Exception:
-            # Restore concurrency_used if exception occurs before kernel creation
-            if kernel is None:
+        if not params['enqueue_only']:
+            max_wait = params['max_wait_seconds']
+            wait_begin = time.monotonic()
+            # TODO: change to event-driven notification
+            while True:
+                if max_wait > 0 and max_wait <= (time.monotonic() - wait_begin):
+                    resp['status'] = 'TIMEOUT'
+                    break
                 async with request.app['dbpool'].acquire() as conn, conn.begin():
                     query = (
-                        sa.update(keypairs)
-                        .values(concurrency_used=keypairs.c.concurrency_used - 1)
-                        .where(keypairs.c.access_key == owner_access_key))
-                    await conn.execute(query)
-            # Bubble up
-            raise
+                        sa.select([kernels.c.status, kernels.c.service_ports])
+                        .select_from(kernels)
+                        .where(kernels.c.id == kernel_id)
+                    )
+                    result = await conn.execute(query)
+                    row = await result.first()
+                    if row['status'] == KernelStatus.RUNNING:
+                        resp['status'] = 'RUNNING'
+                        resp['servicePorts'] = [
+                            {
+                                'name': item['name'],
+                                'protocol': item['protocol'],
+                            }
+                            for item in row['service_ports']
+                        ]
+                        break
+                    elif row['status'] == KernelStatus.ERROR:
+                        resp['status'] = 'ERROR'
+                        break
+                await asyncio.sleep(1)
+
+    except asyncio.CancelledError:
+        raise
     except BackendError:
         log.exception('GET_OR_CREATE: exception')
         raise
@@ -239,38 +278,50 @@ async def create(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp, status=201)
 
 
-async def kernel_terminated(app, agent_id, kernel_id, reason, _reserved_arg):
-    try:
-        kernel = await app['registry'].get_kernel(
-            kernel_id, (kernels.c.role, kernels.c.status), allow_stale=True)
-    except KernelNotFound:
-        return
-    if kernel.status != KernelStatus.RESTARTING:
-        await app['registry'].mark_kernel_terminated(kernel_id, reason)
+async def kernel_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
+                           raw_kernel_id: str,
+                           reason: str = None,
+                           exit_code: int = None) -> None:
+    kernel_id = uuid.UUID(raw_kernel_id)
+    registry = app['registry']
+    if event_name == 'kernel_preparing':
+        await registry.set_kernel_status(kernel_id, KernelStatus.PREPARING, reason)
+    elif event_name == 'kernel_pulling':
+        await registry.set_kernel_status(kernel_id, KernelStatus.PULLING, reason)
+    elif event_name == 'kernel_creating':
+        await registry.set_kernel_status(kernel_id, KernelStatus.PREPARING, reason)
+    elif event_name == 'kernel_started':
+        # The create_kernel() RPC caller will set the "RUNNING" status.
+        pass
+    elif event_name == 'kernel_terminating':
+        await registry.set_kernel_status(kernel_id, KernelStatus.TERMINATING, reason)
+    elif event_name == 'kernel_terminated':
+        await registry.mark_kernel_terminated(kernel_id, reason, exit_code)
 
 
-async def instance_started(app, agent_id):
+async def instance_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
+                             reason: str = None) -> None:
     # TODO: make feedback to our auto-scaler
-    await app['registry'].update_instance(agent_id, {
-        'status': AgentStatus.ALIVE,
-    })
-
-
-async def instance_terminated(app, agent_id, reason):
-    if reason == 'agent-lost':
-        await app['registry'].mark_agent_terminated(agent_id, AgentStatus.LOST)
-    elif reason == 'agent-restart':
-        log.info('agent@{0} restarting for maintenance.', agent_id)
+    if event_name == 'instance_started':
         await app['registry'].update_instance(agent_id, {
-            'status': AgentStatus.RESTARTING,
+            'status': AgentStatus.ALIVE,
         })
-    else:
-        # On normal instance termination, kernel_terminated events were already
-        # triggered by the agent.
-        await app['registry'].mark_agent_terminated(agent_id, AgentStatus.TERMINATED)
+    elif event_name == 'instance_terminated':
+        if reason == 'agent-lost':
+            await app['registry'].mark_agent_terminated(agent_id, AgentStatus.LOST)
+        elif reason == 'agent-restart':
+            log.info('agent@{0} restarting for maintenance.', agent_id)
+            await app['registry'].update_instance(agent_id, {
+                'status': AgentStatus.RESTARTING,
+            })
+        else:
+            # On normal instance termination, kernel_terminated events were already
+            # triggered by the agent.
+            await app['registry'].mark_agent_terminated(agent_id, AgentStatus.TERMINATED)
 
 
-async def instance_heartbeat(app, agent_id, agent_info):
+async def instance_heartbeat(app: web.Application, agent_id: AgentId, event_name: str,
+                             agent_info: Mapping[str, Any]) -> None:
     await app['registry'].handle_heartbeat(agent_id, agent_info)
 
 
@@ -279,17 +330,24 @@ async def check_agent_lost(app, interval):
     try:
         now = datetime.now(tzutc())
         timeout = timedelta(seconds=app['config']['manager']['heartbeat-timeout'])
-        async for agent_id, prev in app['redis_live'].ihscan('last_seen'):
-            prev = datetime.fromtimestamp(float(prev), tzutc())
-            if now - prev > timeout:
-                await app['event_dispatcher'].dispatch('instance_terminated',
-                                                       agent_id, ('agent-lost', ))
+        while True:
+            try:
+                async for agent_id, prev in app['redis_live'].ihscan('last_seen'):
+                    prev = datetime.fromtimestamp(float(prev), tzutc())
+                    if now - prev > timeout:
+                        await app['event_dispatcher'].produce_event(
+                            'instance_terminated', ('agent-lost', ),
+                            agent_id=agent_id)
+            except (ConnectionRefusedError, ConnectionResetError, aioredis.errors.ConnectionClosedError):
+                await asyncio.sleep(5.0)
+                continue
     except asyncio.CancelledError:
         pass
 
 
 # NOTE: This event is ignored during the grace period.
-async def instance_stats(app, agent_id, kern_stats):
+async def instance_stats(app: web.Application, agent_id: AgentId, event_name: str,
+                         kern_stats) -> None:
     await app['registry'].handle_stats(agent_id, kern_stats)
 
 
@@ -719,11 +777,16 @@ async def get_logs(request: web.Request) -> web.Response:
 
 async def init(app: web.Application):
     event_dispatcher = app['event_dispatcher']
-    event_dispatcher.add_handler('kernel_terminated', app, kernel_terminated)
-    event_dispatcher.add_handler('instance_started', app, instance_started)
-    event_dispatcher.add_handler('instance_terminated', app, instance_terminated)
-    event_dispatcher.add_handler('instance_heartbeat', app, instance_heartbeat)
-    event_dispatcher.add_handler('instance_stats', app, instance_stats)
+    event_dispatcher.consume('kernel_preparing', app, kernel_lifecycle)
+    event_dispatcher.consume('kernel_pulling', app, kernel_lifecycle)
+    event_dispatcher.consume('kernel_creating', app, kernel_lifecycle)
+    event_dispatcher.consume('kernel_started', app, kernel_lifecycle)
+    event_dispatcher.consume('kernel_terminating', app, kernel_lifecycle)
+    event_dispatcher.consume('kernel_terminated', app, kernel_lifecycle)
+    event_dispatcher.consume('instance_started', app, instance_lifecycle)
+    event_dispatcher.consume('instance_terminated', app, instance_lifecycle)
+    event_dispatcher.consume('instance_heartbeat', app, instance_heartbeat)
+    event_dispatcher.consume('instance_stats', app, instance_stats)
 
     # Scan ALIVE agents
     if app['pidx'] == 0:

@@ -4,8 +4,8 @@ from datetime import datetime
 import logging
 import sys
 from typing import (
-    List,
     MutableMapping,
+    TYPE_CHECKING,
 )
 import uuid
 
@@ -23,22 +23,30 @@ import zmq, zmq.asyncio
 
 from ai.backend.common import msgpack
 from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
-from ai.backend.common.exception import AliasResolutionFailed
-from ai.backend.common.types import BinarySize, DefaultForUnspecified, ResourceSlot
+from ai.backend.common.types import (
+    BinarySize,
+    KernelId,
+    ResourceSlot,
+    SessionTypes,
+    KernelCreationConfig,
+)
 from ai.backend.common.logging import BraceStyleAdapter
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
-    ImageNotFound,
-    InstanceNotAvailable, InstanceNotFound,
-    KernelNotFound, KernelAlreadyExists,
+    InstanceNotFound,
+    KernelNotFound,
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
+    VFolderNotFound,
     AgentError)
 from .models import (
-    agents, domains, groups, kernels, keypairs,
+    agents, kernels, keypairs, vfolders,
+    keypair_resource_policies,
     AgentStatus, KernelStatus,
-    query_allowed_sgroups,
+    query_accessible_vfolders,
 )
+if TYPE_CHECKING:
+    from .scheduler import SchedulingContext, SessionContext, AgentAllocationContext
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
 
@@ -111,7 +119,7 @@ class AgentRegistry:
 
     def __init__(self, config_server, dbpool,
                  redis_stat, redis_live, redis_image,
-                 loop=None):
+                 loop=None) -> None:
         self.loop = loop if loop is not None else asyncio.get_event_loop()
         self.config_server = config_server
         self.dbpool = dbpool
@@ -119,10 +127,10 @@ class AgentRegistry:
         self.redis_live = redis_live
         self.redis_image = redis_image
 
-    async def init(self):
+    async def init(self) -> None:
         self.sched_lock = asyncio.Lock()
 
-    async def shutdown(self):
+    async def shutdown(self) -> None:
         global agent_peers
         closing_tasks = []
         for addr, peer in agent_peers.items():
@@ -268,7 +276,8 @@ class AgentRegistry:
         true, it skips checking validity of the kernel owner instance.
         '''
 
-        cols = [kernels.c.id, kernels.c.sess_id, kernels.c.access_key,
+        cols = [kernels.c.id, kernels.c.status,
+                kernels.c.sess_id, kernels.c.access_key,
                 kernels.c.agent_addr, kernels.c.kernel_host,
                 kernels.c.image, kernels.c.registry,
                 kernels.c.service_ports]
@@ -296,15 +305,20 @@ class AgentRegistry:
                             agents.c.occupied_slots.label('agent_occupied_slots'),
                             agents.c.addr, agents.c.first_contact, agents.c.lost_at,
                             agents.c.version, agents.c.compute_plugins]
-                query = (sa.select(cols, for_update=for_update)
-                           .select_from(kernels.join(agents))
-                           .where((kernels.c.sess_id == sess_id) &
-                                  (kernels.c.access_key == access_key) &
-                                  (kernels.c.role == 'master') &
-                                  (kernels.c.status != KernelStatus.TERMINATED) &
-                                  (agents.c.status == AgentStatus.ALIVE) &
-                                  (agents.c.id == kernels.c.agent))
-                           .limit(1).offset(0))
+                query = (
+                    sa.select(cols, for_update=for_update)
+                    .select_from(sa.join(
+                        kernels, agents,
+                        kernels.c.agent == agents.c.id
+                    ))
+                    .where(
+                        (kernels.c.sess_id == sess_id) &
+                        (kernels.c.access_key == access_key) &
+                        (kernels.c.role == 'master') &
+                        (kernels.c.status != KernelStatus.TERMINATED) &
+                        (agents.c.status == AgentStatus.ALIVE)
+                    ).limit(1).offset(0)
+                )
             result = await conn.execute(query)
             row = await result.first()
             if row is None:
@@ -346,77 +360,54 @@ class AgentRegistry:
             rows = await result.fetchall()
             return rows
 
-    async def set_session_status(self, sess_id, access_key, status,
-                                 db_connection=None, **extra_fields):
-        data = {
-            'status': status,
-        }
-        data.update(extra_fields)
-        async with reenter_txn(self.dbpool, db_connection) as conn:
-            query = (sa.update(kernels)
-                       .values(data)
-                       .where((kernels.c.sess_id == sess_id) &
-                              # TODO: include slave workers?
-                              (kernels.c.status != KernelStatus.TERMINATED) &
-                              (kernels.c.access_key == access_key)))
-            await conn.execute(query)
+    async def enqueue_session(self, sess_id: str, access_key: str,
+                              image_ref: ImageRef,
+                              session_type: SessionTypes,
+                              creation_config: dict,
+                              resource_policy: dict, *,
+                              domain_name: str,
+                              group_id: uuid.UUID,
+                              user_uuid: str,
+                              user_role: str,
+                              session_tag: str = None) -> KernelId:
 
-    async def get_or_create_session(self, sess_id, access_key,
-                                    image, creation_config, resource_policy,
-                                    domain_name=None, group_id=None, user_uuid=None,
-                                    tag=None):
-        # Check if image's docker registry is white-listed in domain-level.
-        try:
-            requested_image_ref = \
-                await ImageRef.resolve_alias(image, self.config_server.etcd)
-            async with self.dbpool.acquire() as conn, conn.begin():
-                query = (sa.select([domains.c.allowed_docker_registries])
-                           .select_from(domains)
-                           .where(domains.c.name == domain_name))
-                allowed_registries = await conn.scalar(query)
-                if requested_image_ref.registry not in allowed_registries:
-                    raise AliasResolutionFailed
-        except AliasResolutionFailed:
-            raise ImageNotFound
-
-        try:
-            kern = await self.get_session(sess_id, access_key)
-            running_image_ref = ImageRef(kern['image'], [kern['registry']])
-            if running_image_ref != requested_image_ref:
-                raise KernelAlreadyExists
-            create = False
-        except KernelNotFound:
-            create = True
-        if create:
-            kern = await self.create_session(
-                sess_id, access_key,
-                requested_image_ref, creation_config,
-                resource_policy,
-                domain_name, group_id, user_uuid,
-                session_tag=tag)
-        assert kern is not None
-        return kern, create
-
-    async def create_session(self, sess_id: str, access_key: str,
-                             image_ref: ImageRef,
-                             creation_config: dict,
-                             resource_policy: dict,
-                             domain_name: str,
-                             group_id: uuid.UUID,
-                             user_uuid: str,
-                             session_tag=None):
-        agent_id = None
-        created_info = None
         mounts = creation_config.get('mounts') or []
         environ = creation_config.get('environ') or {}
         resource_opts = creation_config.get('resource_opts') or {}
+
+        # sanity check for vfolders
+        allowed_vfolder_types = ['user', 'group']
+        # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
+        if creation_config['mounts']:
+            mount_details = []
+            matched_mounts = set()
+            async with self.dbpool.acquire() as conn, conn.begin():
+                matched_vfolders = await query_accessible_vfolders(
+                    conn, user_uuid,
+                    user_role=user_role, domain_name=domain_name,
+                    allowed_vfolder_types=allowed_vfolder_types,
+                    extra_vf_conds=(vfolders.c.name.in_(creation_config['mounts'])))
+                for item in matched_vfolders:
+                    if item['group'] is not None and item['group'] != str(group_id):
+                        # User's accessible group vfolders should not be mounted
+                        # if not belong to the execution kernel.
+                        continue
+                    matched_mounts.add(item['name'])
+                    mount_details.append((
+                        item['name'],
+                        item['host'],
+                        item['id'].hex,
+                        item['permission'].value,
+                    ))
+                if set(creation_config['mounts']) > matched_mounts:
+                    raise VFolderNotFound
+                creation_config['mounts'] = mount_details
 
         # TODO: merge into a single call
         image_info = await self.config_server.inspect_image(image_ref)
         image_min_slots, image_max_slots = \
             await self.config_server.get_image_slot_ranges(image_ref)
-        known_slot_types = \
-            await self.config_server.get_resource_slots()
+        known_slot_types = await self.config_server.get_resource_slots()
 
         # Shared memory.
         # We need to subtract the amount of shared memory from the memory limit of
@@ -429,9 +420,6 @@ class AgentRegistry:
         resource_opts['shmem'] = shmem
         image_min_slots = copy.deepcopy(image_min_slots)
         image_min_slots['mem'] += shmem
-
-        # ==== BEGIN: ENQUEUING PART ====
-        # This part will be moved to the job-enqueue handler.
 
         # Sanitize user input: does it have resource config?
         if 'resources' in creation_config:
@@ -509,155 +497,15 @@ class AgentRegistry:
                     image_max_slots.to_humanized(known_slot_types).items()
                 )))
 
-        # ==== END: ENQUEUING PART ====
-
-        # ==== BEGIN: DEQUEUING+SCHEDULING PART ====
-
-        async with self.sched_lock, self.dbpool.acquire() as conn, conn.begin():
-
-            # Check keypair resource limit.
-            # - Keypair resource occupation includes all non-terminated sessions.
-            # - TODO: exclude the pending sessions in the queue.
-            total_keypair_allowed = ResourceSlot.from_policy(resource_policy, known_slot_types)
-            key_occupied = await self.get_keypair_occupancy(access_key, conn=conn)
-            log.debug('keypair:{} current-occupancy: {}', access_key, key_occupied)
-            log.debug('keypair:{} total-allowed: {}', access_key, total_keypair_allowed)
-            if not (key_occupied + requested_slots <= total_keypair_allowed):
-                raise InvalidAPIParameters(
-                    'Your resource quota is exceeded. ({})'
-                    .format(' '.join(
-                        f'{k}={v}' for k, v in
-                        total_keypair_allowed.to_humanized(known_slot_types).items()
-                    )))
-
-            # Check group resource limit.
-            query = (sa.select([groups.c.total_resource_slots])
-                       .where(groups.c.id == group_id))
-            group_resource_slots = await conn.scalar(query)
-            group_resource_policy = {'total_resource_slots': group_resource_slots,
-                                     'default_for_unspecified': DefaultForUnspecified.UNLIMITED}
-            total_group_allowed = ResourceSlot.from_policy(group_resource_policy, known_slot_types)
-            group_occupied = await self.get_group_occupancy(group_id, conn=conn)
-            log.debug('group:{} current-occupancy: {}', group_id, group_occupied)
-            log.debug('group:{} total-allowed: {}', group_id, total_group_allowed)
-            if not (group_occupied + requested_slots <= total_group_allowed):
-                raise InvalidAPIParameters(
-                    'Your group resource quota is exceeded. ({})'
-                    .format(' '.join(
-                        f'{k}={v}' for k, v in
-                        total_group_allowed.to_humanized(known_slot_types).items()
-                    )))
-
-            # Check domain resource limit.
-            query = (sa.select([domains.c.total_resource_slots])
-                       .where(domains.c.name == domain_name))
-            domain_resource_slots = await conn.scalar(query)
-            domain_resource_policy = {
-                'total_resource_slots': domain_resource_slots,
-                'default_for_unspecified': DefaultForUnspecified.UNLIMITED
-            }
-            total_domain_allowed = ResourceSlot.from_policy(domain_resource_policy, known_slot_types)
-            domain_occupied = await self.get_domain_occupancy(domain_name, conn=conn)
-            log.debug('domain:{} current-occupancy: {}', domain_name, domain_occupied)
-            log.debug('domain:{} total-allowed: {}', domain_name, total_domain_allowed)
-            if not (domain_occupied + requested_slots <= total_domain_allowed):
-                raise InvalidAPIParameters(
-                    'Your domain resource quota is exceeded. ({})'
-                    .format(' '.join(
-                        f'{k}={v}' for k, v in
-                        total_domain_allowed.to_humanized(known_slot_types).items()
-                    )))
-
-            # Check the scaling groups.
-            sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
-            target_sgroup_names: List[str] = []
-            preferred_sgroup_name = creation_config.get('scalingGroup')
-            if preferred_sgroup_name is not None:
-                for sgroup in sgroups:
-                    if preferred_sgroup_name == sgroup['name']:
-                        break
-                else:
-                    raise InvalidAPIParameters(
-                        'The given preferred scaling group is not available. ({})'
-                        .format(preferred_sgroup_name)
-                    )
-                # Consider agents only in the preferred scaling group.
-                target_sgroup_names = [preferred_sgroup_name]
-            else:
-                # Consider all agents in all allowed scaling groups.
-                target_sgroup_names = [sgroup['name'] for sgroup in sgroups]
-            log.debug('considered scaling groups: {}', target_sgroup_names)
-
-            # Fetch all agent available slots and normalize them to "remaining" slots
-            possible_agent_slots = []
-            query = (
-                sa.select([
-                    agents.c.id,
-                    agents.c.available_slots,
-                    agents.c.occupied_slots,
-                ], for_update=True)
-                .where(
-                    (agents.c.status == AgentStatus.ALIVE) &
-                    (agents.c.scaling_group.in_(target_sgroup_names))
-                )
-            )
-            async for row in conn.execute(query):
-                capacity_slots = row['available_slots']
-                occupied_slots = row['occupied_slots']
-                log.debug('{} capacity: {!r}', row['id'], capacity_slots)
-                log.debug('{} occupied: {!r}', row['id'], occupied_slots)
-                try:
-                    remaining_slots = capacity_slots - occupied_slots
-
-                    # Check if: any(remaining >= requested)
-                    if remaining_slots >= requested_slots:
-                        possible_agent_slots.append((
-                            row['id'],
-                            remaining_slots,
-                            occupied_slots))
-                except ValueError:
-                    # happens when requested_slots have more keys
-                    # than the agent_slots
-                    # (e.g., agent does not have accelerators
-                    #  requested by the client)
-                    continue
-
-            # Load-balance! (choose the agent with most remaining slots)
-            # Here, all items in possible_agent_slots have the same keys,
-            # allowing the total ordering property.
-            if possible_agent_slots:
-                agent_id, _, current_occupied_slots = \
-                    max(possible_agent_slots, key=lambda s: s[1])
-            else:
-                raise InstanceNotAvailable
-
-            # Reserve agent slots
-            query = (sa.update(agents)
-                       .values({
-                           'occupied_slots': current_occupied_slots + requested_slots
-                       })
-                       .where(agents.c.id == agent_id))
-            await conn.execute(query)
-
-            # Get the agent address for later RPC calls
-            query = (sa.select([agents.c.addr])
-                       .where(agents.c.id == agent_id))
-            agent_addr = await conn.scalar(query)
-            assert agent_addr is not None
-
-            registry_url, registry_creds = \
-                await get_registry_info(self.config_server.etcd,
-                                        image_ref.registry)
-
-            # Create kernel object in PREPARING state.
+        # Create kernel object in PENDING state.
+        async with self.dbpool.acquire() as conn, conn.begin():
             kernel_id = uuid.uuid4()
             query = kernels.insert().values({
                 'id': kernel_id,
-                'status': KernelStatus.PREPARING,
+                'status': KernelStatus.PENDING,
                 'sess_id': sess_id,
+                'type': session_type,
                 'role': 'master',
-                'agent': agent_id,
-                'agent_addr': agent_addr,
                 'domain_name': domain_name,
                 'group_id': group_id,
                 'user_uuid': user_uuid,
@@ -670,128 +518,92 @@ class AgentRegistry:
                 'resource_opts': resource_opts,
                 'environ': [f'{k}={v}' for k, v in environ.items()],
                 'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
-                'kernel_host': None,
                 'repl_in_port': 0,
                 'repl_out_port': 0,
                 'stdin_port': 0,
                 'stdout_port': 0,
             })
             await conn.execute(query)
+        return KernelId(kernel_id)
 
-        # ==== END: DEQUEUING+SCHEDULING PART ====
+    async def start_session(self, sched_ctx: 'SchedulingContext',
+                            sess_ctx: 'SessionContext',
+                            agent_ctx: 'AgentAllocationContext') -> None:
 
-        try:
+        image_info = await self.config_server.inspect_image(sess_ctx.image_ref)
+        registry_url, registry_creds = \
+            await get_registry_info(self.config_server.etcd,
+                                    sess_ctx.image_ref.registry)
+        async with self.dbpool.acquire() as conn, conn.begin():
+            query = (
+                sa.select([keypair_resource_policies])
+                .select_from(keypair_resource_policies)
+                .where(keypair_resource_policies.c.name == sess_ctx.resource_policy)
+            )
+            result = await conn.execute(query)
+            resource_policy = await result.first()
 
-            # Create the kernel by invoking the agent
-            async with self.handle_kernel_exception(
-                    'create_session', sess_id, access_key):
-                # the agent may be pulling an image!
-                # (TODO: return early and update the kernel status
-                #        via asynchronous events)
-                async with RPCContext(agent_addr, None) as rpc:
-                    config = {
-                        'image': {
-                            'registry': {
-                                'name': image_ref.registry,
-                                'url': str(registry_url),
-                                **registry_creds,
-                            },
-                            'digest': image_info['digest'],
-                            'canonical': image_ref.canonical,
-                            'labels': image_info['labels'],
+        # Create the kernel by invoking the agent
+        async with self.handle_kernel_exception(
+                'create_session', sess_ctx.sess_id, sess_ctx.access_key):
+            # the agent may be pulling an image!
+            # (TODO: return early and update the kernel status
+            #        via asynchronous events)
+            async with RPCContext(agent_ctx.agent_addr, None) as rpc:
+                config: KernelCreationConfig = {
+                    'image': {
+                        'registry': {
+                            'name': sess_ctx.image_ref.registry,
+                            'url': str(registry_url),
+                            **registry_creds,
                         },
-                        'resource_slots': requested_slots.to_json(),
-                        'idle_timeout': resource_policy['idle_timeout'],
-                        'mounts': mounts,
-                        'environ': environ,
-                        'resource_opts': resource_opts,
-                    }
-                    created_info = await rpc.call.create_kernel(str(kernel_id),
-                                                                config)
+                        'digest': image_info['digest'],
+                        'repo_digest': None,
+                        'canonical': sess_ctx.image_ref.canonical,
+                        'labels': image_info['labels'],
+                    },
+                    'session_type': sess_ctx.sess_type.value,
+                    'resource_slots': sess_ctx.requested_slots.to_json(),
+                    'idle_timeout': resource_policy['idle_timeout'],
+                    'mounts': sess_ctx.mounts,
+                    'environ': sess_ctx.environ,
+                    'resource_opts': sess_ctx.resource_opts,
+                }
+                created_info = await rpc.call.create_kernel(str(sess_ctx.kernel_id),
+                                                            config)
                 if created_info is None:
                     raise KernelCreationFailed('ooops')
 
-        except Exception as e:  # including timeout and cancellation
+        log.debug('start_session(s:{}, ak:{}, k:{}) -> created on ag:{}\n{!r}',
+                  sess_ctx.sess_id, sess_ctx.access_key, sess_ctx.kernel_id,
+                  agent_ctx.agent_id, created_info)
+        assert str(sess_ctx.kernel_id) == created_info['id']
 
-            # This catches errors during kernel creation via agent RPC.
-            log.debug('create_session("{0}", "{1}") -> failed ({2})',
-                      sess_id, access_key, repr(e))
-
-            async with self.dbpool.acquire() as conn, conn.begin():
-
-                # The following ops are same to the "kernel_terminated" handler.
-                # Since events are only generated by the agents and the "kernel_created"
-                # event is generated only when kernel creation was successful,
-                # we do this by ourselves.
-
-                # Mark as terminated with error
-                query = (
-                    kernels.update()
-                    .values({
-                        'status': KernelStatus.TERMINATED,
-                        'status_info': 'creation-failed',
-                        'terminated_at': datetime.now(tzutc()),
-                    })
-                    .where(kernels.c.id == kernel_id))
-                await conn.execute(query)
-
-                # Un-reserve agent slots
-                query = (
-                    sa.select([agents.c.occupied_slots], for_update=True)
-                    .select_from(agents)
-                    .where(agents.c.id == agent_id))
-                current_occupied_slots = await conn.scalar(query)
-                query = (
-                    sa.update(agents)
-                    .values({
-                        'occupied_slots': current_occupied_slots - requested_slots
-                    })
-                    .where(agents.c.id == agent_id))
-                await conn.execute(query)
-
-            # Bubble-up exceptions
-            raise
-
-        else:
-
-            log.debug('create_session("{0}", "{1}") -> created on {2}\n{3!r}',
-                      sess_id, access_key, agent_id, created_info)
-            assert str(kernel_id) == created_info['id']
-
+        async with self.dbpool.acquire() as conn, conn.begin():
             # Return and record kernel access information
-            agent_host = URL(agent_addr).host
+            agent_host = URL(agent_ctx.agent_addr).host
             kernel_host = created_info.get('kernel_host', agent_host)
             service_ports = created_info.get('service_ports', [])
-            kernel_access_info = {
-                'id': kernel_id,
-                'sess_id': sess_id,
-                'agent': agent_id,
-                'agent_addr': agent_addr,
-                'kernel_host': kernel_host,
-                'service_ports': service_ports,
-            }
             # NOTE: created_info contains resource_spec
-            async with self.dbpool.acquire() as conn, conn.begin():
-                query = (
-                    kernels.update()
-                    .values({
-                        # TODO: add more kernel status about image pulling
-                        # TODO: move this status transition to event handler for
-                        #       "kernel_started"
-                        'status': KernelStatus.RUNNING,
-                        'container_id': created_info['container_id'],
-                        'occupied_shares': {},
-                        'attached_devices': created_info.get('attached_devices', {}),
-                        'kernel_host': kernel_host,
-                        'repl_in_port': created_info['repl_in_port'],
-                        'repl_out_port': created_info['repl_out_port'],
-                        'stdin_port': created_info['stdin_port'],
-                        'stdout_port': created_info['stdout_port'],
-                        'service_ports': service_ports,
-                    })
-                    .where(kernels.c.id == kernel_id))
-                await conn.execute(query)
-            return kernel_access_info
+            query = (
+                kernels.update()
+                .values({
+                    # TODO: add more kernel status about image pulling
+                    # TODO: move this status transition to event handler for
+                    #       "kernel_started"
+                    'status': KernelStatus.RUNNING,
+                    'container_id': created_info['container_id'],
+                    'occupied_shares': {},
+                    'attached_devices': created_info.get('attached_devices', {}),
+                    'kernel_host': kernel_host,
+                    'repl_in_port': created_info['repl_in_port'],
+                    'repl_out_port': created_info['repl_out_port'],
+                    'stdin_port': created_info['stdin_port'],
+                    'stdout_port': created_info['stdout_port'],
+                    'service_ports': service_ports,
+                })
+                .where(kernels.c.id == sess_ctx.kernel_id))
+            await conn.execute(query)
 
     async def get_keypair_occupancy(self, access_key, *, conn=None):
         known_slot_types = \
@@ -801,7 +613,7 @@ class AgentRegistry:
                 sa.select([kernels.c.occupied_slots])
                 .where(
                     (kernels.c.access_key == access_key) &
-                    (kernels.c.status != KernelStatus.TERMINATED)
+                    ~(kernels.c.status.in_([KernelStatus.TERMINATED, KernelStatus.PENDING]))
                 )
             )
             zero = ResourceSlot()
@@ -822,7 +634,7 @@ class AgentRegistry:
                 sa.select([kernels.c.occupied_slots])
                 .where(
                     (kernels.c.domain_name == domain_name) &
-                    (kernels.c.status != KernelStatus.TERMINATED)
+                    ~(kernels.c.status.in_([KernelStatus.TERMINATED, KernelStatus.PENDING]))
                 )
             )
             zero = ResourceSlot()
@@ -841,7 +653,7 @@ class AgentRegistry:
                 sa.select([kernels.c.occupied_slots])
                 .where(
                     (kernels.c.group_id == group_id) &
-                    (kernels.c.status != KernelStatus.TERMINATED)
+                    ~(kernels.c.status.in_([KernelStatus.TERMINATED, KernelStatus.PENDING]))
                 )
             )
             zero = ResourceSlot()
@@ -866,7 +678,7 @@ class AgentRegistry:
                         raise KernelNotFound
                     await self.set_session_status(sess_id, access_key,
                                                   KernelStatus.TERMINATING,
-                                                  db_connection=conn)
+                                                  db_conn=conn)
             except KernelNotFound:
                 raise
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
@@ -889,7 +701,7 @@ class AgentRegistry:
                                                 db_connection=conn)
                 await self.set_session_status(sess_id, access_key,
                                               KernelStatus.RESTARTING,
-                                              db_connection=conn)
+                                              db_conn=conn)
 
             registry_url, registry_creds = \
                 await get_registry_info(self.config_server.etcd,
@@ -920,7 +732,8 @@ class AgentRegistry:
                 }
                 kernel_info = await rpc.call.restart_kernel(str(kernel['id']),
                                                             new_config)
-                # TODO: what if prev status was "building" or others?
+                # TODO: publish "kernel_started" event
+                # TODO: remove publishing "kernel_started" event from the agent
                 await self.set_session_status(
                     sess_id, access_key,
                     KernelStatus.RUNNING,
@@ -1211,15 +1024,65 @@ class AgentRegistry:
                 log.warning('agent {0} heartbeat timeout detected.', agent_id)
             elif status == AgentStatus.TERMINATED:
                 log.info('agent {0} has terminated.', agent_id)
-            query = (sa.update(agents)
-                       .values({
-                           'status': status,
-                           'lost_at': datetime.now(tzutc()),
-                       })
-                       .where(agents.c.id == agent_id))
+            now = datetime.now(tzutc())
+            query = (
+                sa.update(agents)
+                .values({
+                    'status': status,
+                    'status_changed': now,
+                    'lost_at': now,
+                })
+                .where(agents.c.id == agent_id)
+            )
             await conn.execute(query)
 
-    async def mark_kernel_terminated(self, kernel_id, reason):
+    async def set_session_status(self, sess_id, access_key,
+                                 status: KernelStatus,
+                                 reason: str = '', *,
+                                 db_conn: SAConnection = None,
+                                 **extra_fields):
+        data = {
+            'status': status,
+            'status_info': reason,
+            'status_changed': datetime.now(tzutc()),
+        }
+        data.update(extra_fields)
+        async with reenter_txn(self.dbpool, db_conn) as conn:
+            query = (
+                sa.update(kernels)
+                .values(data)
+                .where(
+                    (kernels.c.sess_id == sess_id) &
+                    (kernels.c.access_key == access_key) &
+                    # TODO: include slave workers?
+                    (kernels.c.status != KernelStatus.TERMINATED)
+                )
+            )
+            await conn.execute(query)
+
+    async def set_kernel_status(self, kernel_id: KernelId,
+                                status: KernelStatus,
+                                reason: str = '', *,
+                                db_conn: SAConnection = None):
+        assert status != KernelStatus.TERMINATED, \
+               'TERMINATED status update must be handled in ' \
+               'mark_kernel_terminated()'
+        data = {
+            'status': status,
+            'status_info': reason,
+            'status_changed': datetime.now(tzutc()),
+        }
+        async with reenter_txn(self.dbpool, db_conn) as conn:
+            query = (
+                sa.update(kernels)
+                .values(data)
+                .where(kernels.c.id == kernel_id)
+            )
+            await conn.execute(query)
+
+    async def mark_kernel_terminated(self, kernel_id: KernelId,
+                                     reason: str,
+                                     exit_code: int = None) -> None:
         '''
         Mark the kernel (individual worker) terminated and release
         the resource slots occupied by it.
@@ -1231,8 +1094,9 @@ class AgentRegistry:
                        .where(kernels.c.id == kernel_id))
             result = await conn.execute(query)
             row = await result.first()
-            if row is None or row['status'] == KernelStatus.TERMINATED:
-                # Skip if non-existent or already terminated.
+            if (row is None or
+                row['status'] in (KernelStatus.TERMINATED, KernelStatus.RESTARTING)):
+                # Skip if non-existent, already terminated, or restarting.
                 return
             if row['role'] == 'master':
                 # The master session is terminated; decrement the user's concurrency counter
@@ -1243,18 +1107,21 @@ class AgentRegistry:
 
             # Change the status to TERMINATED.
             # (we don't delete the row for later logging and billing)
+            now = datetime.now(tzutc())
             updates = {
                 'status': KernelStatus.TERMINATED,
                 'status_info': reason,
-                'terminated_at': datetime.now(tzutc()),
+                'status_changed': now,
+                'terminated_at': now,
             }
-            stat_type = await self.redis_stat.type(kernel_id)
+            raw_kernel_id = str(kernel_id)
+            stat_type = await self.redis_stat.type(raw_kernel_id)
             if stat_type == 'string':
-                kern_stat = await self.redis_stat.get(kernel_id, encoding=None)
+                kern_stat = await self.redis_stat.get(raw_kernel_id, encoding=None)
                 if kern_stat is not None:
                     updates['last_stat'] = msgpack.unpackb(kern_stat)
             else:
-                kern_stat = await self.redis_stat.hgetall(kernel_id)
+                kern_stat = await self.redis_stat.hgetall(raw_kernel_id)
                 if kern_stat is not None and 'cpu_used' in kern_stat:
                     updates.update({
                         'cpu_used': int(float(kern_stat['cpu_used'])),

@@ -199,7 +199,7 @@ def auth_required(handler):
     async def wrapped(request, *args, **kwargs):
         if request.get('is_authorized', False):
             return (await handler(request, *args, **kwargs))
-        raise AuthorizationFailed
+        raise AuthorizationFailed('Unauthorized access')
 
     set_handler_attr(wrapped, 'auth_required', True)
     return wrapped
@@ -211,7 +211,7 @@ def admin_required(handler):
     async def wrapped(request, *args, **kwargs):
         if request.get('is_authorized', False) and request.get('is_admin', False):
             return (await handler(request, *args, **kwargs))
-        raise AuthorizationFailed
+        raise AuthorizationFailed('Unauthorized access')
 
     set_handler_attr(wrapped, 'auth_required', True)
     return wrapped
@@ -223,7 +223,7 @@ def superadmin_required(handler):
     async def wrapped(request, *args, **kwargs):
         if request.get('is_authorized', False) and request.get('is_superadmin', False):
             return (await handler(request, *args, **kwargs))
-        raise AuthorizationFailed
+        raise AuthorizationFailed('Unauthorized access')
 
     set_handler_attr(wrapped, 'auth_required', True)
     return wrapped
