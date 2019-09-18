@@ -437,7 +437,6 @@ async def stream_events(request: web.Request, params: Mapping[str, Any]) -> web.
                 if evdata is sentinel:
                     break
                 event_name, row, reason = evdata
-                print('stream_events:fetch', event_name, row, reason)
                 if user_role in (UserRole.USER, UserRole.ADMIN):
                     if row['domain_name'] != request['user']['domain_name']:
                         continue
@@ -450,7 +449,6 @@ async def stream_events(request: web.Request, params: Mapping[str, Any]) -> web.
                         (row['sess_id'] == session_id) and
                         (row['access_key'] == access_key)):
                     continue
-                print('stream_events:send', event_name, row, reason)
                 await resp.send(json.dumps({
                     'sessionId': str(row['sess_id']),
                     'ownerAccessKey': row['access_key'],
