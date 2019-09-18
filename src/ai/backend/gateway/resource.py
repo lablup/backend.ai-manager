@@ -105,6 +105,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
         'scaling_groups': None,
         'presets': [],
     }
+
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         # Check keypair resource limit.
         keypair_limits = ResourceSlot.from_policy(resource_policy, known_slot_types)
@@ -146,9 +147,6 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
                 group_remaining[slot],
                 domain_remaining[slot],
             )
-        resp['keypair_limits'] = keypair_limits.to_json()
-        resp['keypair_using'] = keypair_occupied.to_json()
-        resp['keypair_remaining'] = keypair_remaining.to_json()
         # query all agent's capacity and occupancy
         agent_slots = []
 
@@ -177,15 +175,12 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
         # Per scaling group resource remaining.
         per_sgroup = {
             sgname: {
+                'using': ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()}),
                 'remaining': ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()}),
-                'occupied': ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()}),
-                'available': ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()}),
             } for sgname in sgroups
         }
-
-        sgroup_remaining = ResourceSlot({
-            k: Decimal(0) for k in known_slot_types.keys()
-        })
+        sgroup_remaining = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
+        sgroup_using = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
         query = (
             sa.select([agents.c.available_slots, agents.c.occupied_slots, agents.c.scaling_group])
             .select_from(agents)
@@ -197,15 +192,32 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
         async for row in conn.execute(query):
             remaining = row['available_slots'] - row['occupied_slots']
             sgroup_remaining += remaining
-            per_sgroup[row.scaling_group]['remaining'] += remaining
-            per_sgroup[row.scaling_group]['occupied'] += row['occupied_slots']
-            per_sgroup[row.scaling_group]['available'] += row['available_slots']
             agent_slots.append(remaining)
+            per_sgroup[row.scaling_group]['remaining'] += remaining
+        query = (
+            sa.select([kernels.c.occupied_slots, kernels.c.scaling_group])
+            .select_from(kernels)
+            .where(
+                (kernels.c.user_uuid == request['user']['uuid']) &
+                (kernels.c.status != KernelStatus.TERMINATED)
+            )
+        )
+        async for row in conn.execute(query):
+            sgroup_using += row.occupied_slots
+            per_sgroup[row.scaling_group]['using'] += row.occupied_slots
+        for sgname, sgfields in per_sgroup.items():
+            for rtype, slots in sgfields.items():
+                for slot in known_slot_types.keys():
+                    if slot in slots:
+                        slots[slot] = min(keypair_remaining[slot], slots[slot])
+                per_sgroup[sgname][rtype] = slots.to_json()
+
+        resp['keypair_limits'] = keypair_limits.to_json()
+        resp['keypair_using'] = keypair_occupied.to_json()
+        resp['keypair_remaining'] = keypair_remaining.to_json()
         resp['scaling_group_remaining'] = sgroup_remaining.to_json()
-        for sgname, slots in per_sgroup.items():
-            for key, slot in slots.items():
-                per_sgroup[sgname][key] = slot.to_json()
         resp['scaling_groups'] = per_sgroup
+
         # fetch all resource presets in the current scaling group.
         query = (
             sa.select([resource_presets])
