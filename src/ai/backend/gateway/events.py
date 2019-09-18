@@ -72,20 +72,24 @@ class EventDispatcher(aobject):
         self.subscribers = defaultdict(list)
 
     async def __ainit__(self) -> None:
-
-        async def _create_redis():
-            config = self.root_app['config']
-            return await aioredis.create_redis(
-                config['redis']['addr'].as_sockaddr(),
-                db=REDIS_STREAM_DB,
-                password=config['redis']['password'] if config['redis']['password'] else None,
-                encoding=None)
-
-        self.redis_producer = await _create_redis()
-        self.redis_consumer = await _create_redis()
-        self.redis_subscriber = await _create_redis()
+        self.redis_producer = await self._create_redis()
+        self.redis_consumer = await self._create_redis()
+        self.redis_subscriber = await self._create_redis()
         self.consumer_task = self.loop.create_task(self._consume())
         self.subscriber_task = self.loop.create_task(self._subscribe())
+
+    async def _create_redis(self):
+        config = self.root_app['config']
+        while True:
+            try:
+                return await aioredis.create_redis(
+                    config['redis']['addr'].as_sockaddr(),
+                    db=REDIS_STREAM_DB,
+                    password=config['redis']['password'] if config['redis']['password'] else None,
+                    encoding=None)
+            except ConnectionRefusedError:
+                await asyncio.sleep(0.5)
+                continue
 
     async def close(self) -> None:
         self.consumer_task.cancel()
@@ -161,7 +165,11 @@ class EventDispatcher(aobject):
     async def _consume(self) -> None:
         try:
             while True:
-                key, raw_msg = await self.redis_consumer.blpop('events.prodcons')
+                try:
+                    key, raw_msg = await self.redis_consumer.blpop('events.prodcons')
+                except (ConnectionRefusedError, aioredis.errors.ConnectionClosedError):
+                    await asyncio.sleep(0.5)
+                    self.redis_consumer = await self._create_redis()
                 msg = msgpack.unpackb(raw_msg)
                 await self.dispatch_consumers(msg['event_name'], msg['agent_id'], msg['args'])
         except asyncio.CancelledError:
@@ -169,10 +177,15 @@ class EventDispatcher(aobject):
 
     async def _subscribe(self) -> None:
         try:
-            channels = await self.redis_subscriber.subscribe('events.pubsub')
-            async for raw_msg in channels[0].iter():
-                msg = msgpack.unpackb(raw_msg)
-                await self.dispatch_subscribers(msg['event_name'], msg['agent_id'], msg['args'])
+            while True:
+                try:
+                    channels = await self.redis_subscriber.subscribe('events.pubsub')
+                    async for raw_msg in channels[0].iter():
+                        msg = msgpack.unpackb(raw_msg)
+                        await self.dispatch_subscribers(msg['event_name'], msg['agent_id'], msg['args'])
+                except (ConnectionRefusedError, aioredis.errors.ConnectionClosedError):
+                    await asyncio.sleep(0.5)
+                    self.redis_subscriber = await self._create_redis()
         except asyncio.CancelledError:
             pass
 

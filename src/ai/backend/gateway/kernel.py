@@ -21,6 +21,7 @@ import aiohttp
 from aiohttp import web
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
+import aioredis
 import aiotools
 from dateutil.tz import tzutc
 import sqlalchemy as sa
@@ -329,12 +330,17 @@ async def check_agent_lost(app, interval):
     try:
         now = datetime.now(tzutc())
         timeout = timedelta(seconds=app['config']['manager']['heartbeat-timeout'])
-        async for agent_id, prev in app['redis_live'].ihscan('last_seen'):
-            prev = datetime.fromtimestamp(float(prev), tzutc())
-            if now - prev > timeout:
-                await app['event_dispatcher'].produce_event(
-                    'instance_terminated', ('agent-lost', ),
-                    agent_id=agent_id)
+        while True:
+            try:
+                async for agent_id, prev in app['redis_live'].ihscan('last_seen'):
+                    prev = datetime.fromtimestamp(float(prev), tzutc())
+                    if now - prev > timeout:
+                        await app['event_dispatcher'].produce_event(
+                            'instance_terminated', ('agent-lost', ),
+                            agent_id=agent_id)
+            except (ConnectionRefusedError, aioredis.errors.ConnectionClosedError):
+                await asyncio.sleep(5.0)
+                continue
     except asyncio.CancelledError:
         pass
 

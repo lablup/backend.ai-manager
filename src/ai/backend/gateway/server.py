@@ -215,21 +215,21 @@ async def gw_init(app, default_cors_options):
     redis_config = await app['config_server'].etcd.get_prefix('config/redis')
     app['config']['redis'] = redis_config_iv.check(redis_config)
 
-    app['redis_live'] = await aioredis.create_redis(
+    app['redis_live'] = await aioredis.create_redis_pool(
         app['config']['redis']['addr'].as_sockaddr(),
         password=(app['config']['redis']['password']
                   if app['config']['redis']['password'] else None),
         timeout=3.0,
         encoding='utf8',
         db=REDIS_LIVE_DB)
-    app['redis_stat'] = await aioredis.create_redis(
+    app['redis_stat'] = await aioredis.create_redis_pool(
         app['config']['redis']['addr'].as_sockaddr(),
         password=(app['config']['redis']['password']
                   if app['config']['redis']['password'] else None),
         timeout=3.0,
         encoding='utf8',
         db=REDIS_STAT_DB)
-    app['redis_image'] = await aioredis.create_redis(
+    app['redis_image'] = await aioredis.create_redis_pool(
         app['config']['redis']['addr'].as_sockaddr(),
         password=(app['config']['redis']['password']
                   if app['config']['redis']['password'] else None),
