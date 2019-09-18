@@ -106,7 +106,7 @@ class EventDispatcher(aobject):
         self.subscribers[event_name].append(EventHandler(app, callback))
 
     async def produce_event(self, event_name: str,
-                            args: Tuple[Any, ...] = tuple(),
+                            args: Tuple[Any, ...] = tuple(), *,
                             agent_id: str = 'manager') -> None:
         raw_msg = msgpack.packb({
             'event_name': event_name,
