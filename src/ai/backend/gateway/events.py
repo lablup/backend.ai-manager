@@ -114,8 +114,8 @@ class EventDispatcher(aobject):
             'args': args,
         })
         commands = self.redis_producer.pipeline()
-        commands.rpush('agent.events.prodcons', raw_msg)
-        commands.publish('agent.events.pubsub', raw_msg)
+        commands.rpush('events.prodcons', raw_msg)
+        commands.publish('events.pubsub', raw_msg)
         await commands.execute()
 
     async def dispatch_consumers(self, event_name: str, agent_id: AgentId,
@@ -159,7 +159,7 @@ class EventDispatcher(aobject):
     async def _consume(self) -> None:
         try:
             while True:
-                key, raw_msg = await self.redis_consumer.blpop('agent.events.prodcons')
+                key, raw_msg = await self.redis_consumer.blpop('events.prodcons')
                 msg = msgpack.unpackb(raw_msg)
                 await self.dispatch_consumers(msg['event_name'], msg['agent_id'], msg['args'])
         except asyncio.CancelledError:
@@ -167,7 +167,7 @@ class EventDispatcher(aobject):
 
     async def _subscribe(self) -> None:
         try:
-            channels = await self.redis_subscriber.subscribe('agent.events.pubsub')
+            channels = await self.redis_subscriber.subscribe('events.pubsub')
             async for raw_msg in channels[0].iter():
                 msg = msgpack.unpackb(raw_msg)
                 await self.dispatch_subscribers(msg['event_name'], msg['agent_id'], msg['args'])
