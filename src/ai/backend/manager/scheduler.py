@@ -307,7 +307,8 @@ class SessionScheduler(aobject):
     async def schedule(self) -> None:
         # NOTE: This schedule() function is never cancelled.
 
-        log.debug('schedule(): tick')
+        if self.config['debug']['log-scheduler-ticks']:
+            log.debug('schedule(): tick')
         known_slot_types = await self.config_server.get_resource_slots()
 
         async def _invoke_success_callbacks(results: List[Union[Exception, PredicateResult]], *,

@@ -47,6 +47,8 @@ manager_config_iv = t.Dict({
     t.Key('logging'): t.Any,  # checked in ai.backend.common.logging
     t.Key('debug'): t.Dict({
         t.Key('enabled', default=False): t.Bool | t.StrBool,
+        t.Key('log-events', default=False): t.Bool | t.StrBool,
+        t.Key('log-scheduler-ticks', default=False): t.Bool | t.StrBool,
     }).allow_extra('*'),
 }).merge(config.etcd_config_iv).allow_extra('*')
 

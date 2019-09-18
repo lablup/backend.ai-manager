@@ -122,7 +122,8 @@ class EventDispatcher(aobject):
                                  args: Tuple[Any, ...] = tuple()) -> None:
         log_fmt = 'DISPATCH_CONSUMERS(ev:{}, ag:{})'
         log_args = (event_name, agent_id)
-        log.debug(log_fmt, *log_args)
+        if self.root_app['config']['debug']['log-events']:
+            log.debug(log_fmt, *log_args)
         scheduler = get_scheduler_from_app(self.root_app)
         for consumer in self.consumers[event_name]:
             cb = consumer.callback
@@ -141,7 +142,8 @@ class EventDispatcher(aobject):
                                    args: Tuple[Any, ...] = tuple()) -> None:
         log_fmt = 'DISPATCH_SUBSCRIBERS(ev:{}, ag:{})'
         log_args = (event_name, agent_id)
-        log.debug(log_fmt, *log_args)
+        if self.root_app['config']['debug']['log-events']:
+            log.debug(log_fmt, *log_args)
         scheduler = get_scheduler_from_app(self.root_app)
         for subscriber in self.subscribers[event_name]:
             cb = subscriber.callback
