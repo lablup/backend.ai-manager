@@ -42,68 +42,135 @@ class EventHandler:
 
 
 class EventDispatcher(aobject):
+    '''
+    We have two types of event handlers: consumer and subscriber.
+
+    Consumers use the distribution pattern. Only one consumer among many manager worker processes
+    receives the event.
+
+    Consumer example: database updates upon specific events.
+
+    Subscribers use the broadcast pattern. All subscribers in many manager worker processes
+    receive the same event.
+
+    Subscriber example: enqueuing events to the queues for event streaming API handlers
+    '''
 
     loop: asyncio.AbstractEventLoop
     root_app: web.Application
     subscriber_task: asyncio.Task
-    handlers: MutableMapping[str, List[EventHandler]]
-    redis: aioredis.Redis
+    consumers: MutableMapping[str, List[EventHandler]]
+    subscribers: MutableMapping[str, List[EventHandler]]
+    redis_producer: aioredis.Redis
+    redis_consumer: aioredis.Redis
+    redis_subscriber: aioredis.Redis
 
     def __init__(self, app: web.Application) -> None:
         self.loop = current_loop()
         self.root_app = app
-        self.handlers = defaultdict(list)
+        self.consumers = defaultdict(list)
+        self.subscribers = defaultdict(list)
 
     async def __ainit__(self) -> None:
-        config = self.root_app['config']
-        self.redis = await aioredis.create_redis(
-            config['redis']['addr'].as_sockaddr(),
-            db=REDIS_STREAM_DB,
-            password=config['redis']['password'] if config['redis']['password'] else None,
-            encoding=None)
-        self.subscriber_task = self.loop.create_task(self.subscribe())
+
+        async def _create_redis():
+            config = self.root_app['config']
+            return await aioredis.create_redis(
+                config['redis']['addr'].as_sockaddr(),
+                db=REDIS_STREAM_DB,
+                password=config['redis']['password'] if config['redis']['password'] else None,
+                encoding=None)
+
+        self.redis_producer = await _create_redis()
+        self.redis_consumer = await _create_redis()
+        self.redis_subscriber = await _create_redis()
+        self.consumer_task = self.loop.create_task(self._consume())
+        self.subscriber_task = self.loop.create_task(self._subscribe())
 
     async def close(self) -> None:
+        self.consumer_task.cancel()
+        await self.consumer_task
         self.subscriber_task.cancel()
         await self.subscriber_task
-        self.redis.close()
-        await self.redis.wait_closed()
+        self.redis_producer.close()
+        self.redis_consumer.close()
+        self.redis_subscriber.close()
+        await self.redis_producer.wait_closed()
+        await self.redis_consumer.wait_closed()
+        await self.redis_subscriber.wait_closed()
 
-    def add_handler(self, event_name: str, app: web.Application, callback: EventCallback) -> None:
-        self.handlers[event_name].append(EventHandler(app, callback))
+    def consume(self, event_name: str, app: web.Application, callback: EventCallback) -> None:
+        self.consumers[event_name].append(EventHandler(app, callback))
 
-    async def publish_event(self, event_name: str, args: Tuple[Any, ...] = tuple()) -> None:
+    def subscribe(self, event_name: str, app: web.Application, callback: EventCallback) -> None:
+        self.subscribers[event_name].append(EventHandler(app, callback))
+
+    async def produce_event(self, event_name: str,
+                            args: Tuple[Any, ...] = tuple(),
+                            agent_id: str = 'manager') -> None:
         raw_msg = msgpack.packb({
             'event_name': event_name,
-            'agent_id': 'manager',
+            'agent_id': agent_id,
             'args': args,
         })
-        await self.redis.rpush('agent.events', raw_msg)
+        commands = self.redis_producer.pipeline()
+        commands.rpush('agent.events.prodcons', raw_msg)
+        commands.publish('agent.events.pubsub', raw_msg)
+        await commands.execute()
 
-    async def dispatch(self, event_name: str, agent_id: AgentId,
-                       args: Tuple[Any, ...] = tuple()) -> None:
-        log.debug('DISPATCH({0}/{1})', event_name, agent_id)
+    async def dispatch_consumers(self, event_name: str, agent_id: AgentId,
+                                 args: Tuple[Any, ...] = tuple()) -> None:
+        log_fmt = 'DISPATCH_CONSUMERS(ev:{}, ag:{})'
+        log_args = (event_name, agent_id)
+        log.debug(log_fmt, *log_args)
         scheduler = get_scheduler_from_app(self.root_app)
-        for handler in self.handlers[event_name]:
-            cb = handler.callback
+        for consumer in self.consumers[event_name]:
+            cb = consumer.callback
             try:
                 if asyncio.iscoroutine(cb) or asyncio.iscoroutinefunction(cb):
-                    await scheduler.spawn(cb(handler.app, agent_id, event_name, *args))
+                    await scheduler.spawn(cb(consumer.app, agent_id, event_name, *args))
                 else:
-                    cb = functools.partial(cb, handler.app, agent_id, event_name, *args)
+                    cb = functools.partial(cb, consumer.app, agent_id, event_name, *args)
                     self.loop.call_soon(cb)
             except asyncio.CancelledError:
                 raise
             except Exception:
-                log.exception('EventDispatcher.dispatch(ev:{}, ag:{}): unexpected error',
-                              event_name, agent_id)
+                log.exception(log_fmt + ': unexpected-error', *log_args)
 
-    async def subscribe(self) -> None:
+    async def dispatch_subscribers(self, event_name: str, agent_id: AgentId,
+                                   args: Tuple[Any, ...] = tuple()) -> None:
+        log_fmt = 'DISPATCH_SUBSCRIBERS(ev:{}, ag:{})'
+        log_args = (event_name, agent_id)
+        log.debug(log_fmt, *log_args)
+        scheduler = get_scheduler_from_app(self.root_app)
+        for subscriber in self.subscribers[event_name]:
+            cb = subscriber.callback
+            try:
+                if asyncio.iscoroutine(cb) or asyncio.iscoroutinefunction(cb):
+                    await scheduler.spawn(cb(subscriber.app, agent_id, event_name, *args))
+                else:
+                    cb = functools.partial(cb, subscriber.app, agent_id, event_name, *args)
+                    self.loop.call_soon(cb)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception(log_fmt + ': unexpected-error', *log_args)
+
+    async def _consume(self) -> None:
         try:
             while True:
-                key, raw_msg = await self.redis.blpop('agent.events')
+                key, raw_msg = await self.redis_consumer.blpop('agent.events.prodcons')
                 msg = msgpack.unpackb(raw_msg)
-                await self.dispatch(msg['event_name'], msg['agent_id'], msg['args'])
+                await self.dispatch_consumers(msg['event_name'], msg['agent_id'], msg['args'])
+        except asyncio.CancelledError:
+            pass
+
+    async def _subscribe(self) -> None:
+        try:
+            channels = await self.redis_subscriber.subscribe('agent.events.pubsub')
+            async for raw_msg in channels[0].iter():
+                msg = msgpack.unpackb(raw_msg)
+                await self.dispatch_subscribers(msg['event_name'], msg['agent_id'], msg['args'])
         except asyncio.CancelledError:
             pass
 

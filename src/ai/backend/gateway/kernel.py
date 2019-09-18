@@ -36,7 +36,6 @@ from ai.backend.common.exception import (
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     AgentId,
-    KernelId,
     SessionTypes,
 )
 
@@ -94,9 +93,11 @@ creation_config_v3 = t.Dict({
 @auth_required
 @check_api_params(
     t.Dict({
-        t.Key('clientSessionToken') >> 'sess_id': t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
+        t.Key('clientSessionToken') >> 'sess_id':
+            t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
         tx.AliasedKey(['image', 'lang']): t.String,
-        tx.AliasedKey(['sessionType'], default='interactive') >> 'sess_type': tx.Enum(SessionTypes),
+        tx.AliasedKey(['type', 'sessionType'], default='interactive') >> 'sess_type':
+            tx.Enum(SessionTypes),
         tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
         tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
         t.Key('config', default=dict): t.Mapping(t.String, t.Any),
@@ -331,8 +332,9 @@ async def check_agent_lost(app, interval):
         async for agent_id, prev in app['redis_live'].ihscan('last_seen'):
             prev = datetime.fromtimestamp(float(prev), tzutc())
             if now - prev > timeout:
-                await app['event_dispatcher'].dispatch('instance_terminated',
-                                                       agent_id, ('agent-lost', ))
+                await app['event_dispatcher'].produce_event(
+                    'instance_terminated', ('agent-lost', ),
+                    agent_id=agent_id)
     except asyncio.CancelledError:
         pass
 
@@ -769,16 +771,16 @@ async def get_logs(request: web.Request) -> web.Response:
 
 async def init(app: web.Application):
     event_dispatcher = app['event_dispatcher']
-    event_dispatcher.add_handler('kernel_preparing', app, kernel_lifecycle)
-    event_dispatcher.add_handler('kernel_pulling', app, kernel_lifecycle)
-    event_dispatcher.add_handler('kernel_creating', app, kernel_lifecycle)
-    event_dispatcher.add_handler('kernel_started', app, kernel_lifecycle)
-    event_dispatcher.add_handler('kernel_terminating', app, kernel_lifecycle)
-    event_dispatcher.add_handler('kernel_terminated', app, kernel_lifecycle)
-    event_dispatcher.add_handler('instance_started', app, instance_lifecycle)
-    event_dispatcher.add_handler('instance_terminated', app, instance_lifecycle)
-    event_dispatcher.add_handler('instance_heartbeat', app, instance_heartbeat)
-    event_dispatcher.add_handler('instance_stats', app, instance_stats)
+    event_dispatcher.consume('kernel_preparing', app, kernel_lifecycle)
+    event_dispatcher.consume('kernel_pulling', app, kernel_lifecycle)
+    event_dispatcher.consume('kernel_creating', app, kernel_lifecycle)
+    event_dispatcher.consume('kernel_started', app, kernel_lifecycle)
+    event_dispatcher.consume('kernel_terminating', app, kernel_lifecycle)
+    event_dispatcher.consume('kernel_terminated', app, kernel_lifecycle)
+    event_dispatcher.consume('instance_started', app, instance_lifecycle)
+    event_dispatcher.consume('instance_terminated', app, instance_lifecycle)
+    event_dispatcher.consume('instance_heartbeat', app, instance_heartbeat)
+    event_dispatcher.consume('instance_stats', app, instance_stats)
 
     # Scan ALIVE agents
     if app['pidx'] == 0:
