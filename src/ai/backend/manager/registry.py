@@ -21,7 +21,7 @@ import sqlalchemy as sa
 from yarl import URL
 import zmq, zmq.asyncio
 
-from ai.backend.common import msgpack
+from ai.backend.common import msgpack, redis
 from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
 from ai.backend.common.types import (
     BinarySize,
@@ -992,20 +992,25 @@ class AgentRegistry:
             # Update the mapping of kernel images to agents.
             known_registries = await get_known_registries(self.config_server.etcd)
             images = msgpack.unpackb(snappy.decompress(agent_info['images']))
-            pipe = self.redis_image.pipeline()
-            for image in images:
-                image_ref = ImageRef(image[0], known_registries)
-                pipe.sadd(image_ref.canonical, agent_id)
-            await pipe.execute()
+
+            def _pipe_builder():
+                pipe = self.redis_image.pipeline()
+                for image in images:
+                    image_ref = ImageRef(image[0], known_registries)
+                    pipe.sadd(image_ref.canonical, agent_id)
+                return pipe
+            await redis.execute_with_retries(_pipe_builder)
 
     async def mark_agent_terminated(self, agent_id, status, conn=None):
         global agent_peers
         await self.redis_live.hdel('last_seen', agent_id)
 
-        pipe = self.redis_image.pipeline()
-        async for imgname in self.redis_image.iscan():
-            pipe.srem(imgname, agent_id)
-        await pipe.execute()
+        async def _pipe_builder():
+            pipe = self.redis_image.pipeline()
+            async for imgname in self.redis_image.iscan():
+                pipe.srem(imgname, agent_id)
+            return pipe
+        await redis.execute_with_retries(_pipe_builder)
 
         async with reenter_txn(self.dbpool, conn) as conn:
 

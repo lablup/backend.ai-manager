@@ -15,7 +15,7 @@ import aioredis
 from aiojobs.aiohttp import get_scheduler_from_app
 import attr
 
-from ai.backend.common import msgpack
+from ai.backend.common import msgpack, redis
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     aobject,
@@ -84,16 +84,13 @@ class EventDispatcher(aobject):
 
     async def _create_redis(self):
         config = self.root_app['config']
-        while True:
-            try:
-                return await aioredis.create_redis_pool(
-                    config['redis']['addr'].as_sockaddr(),
-                    db=REDIS_STREAM_DB,
-                    password=config['redis']['password'] if config['redis']['password'] else None,
-                    encoding=None)
-            except ConnectionRefusedError:
-                await asyncio.sleep(0.5)
-                continue
+        return await redis.connect_with_retries(
+            config['redis']['addr'].as_sockaddr(),
+            db=REDIS_STREAM_DB,
+            password=(config['redis']['password']
+                      if config['redis']['password'] else None),
+            encoding=None,
+        )
 
     async def close(self) -> None:
         self.consumer_task.cancel()
@@ -132,19 +129,12 @@ class EventDispatcher(aobject):
             'args': args,
         })
         async with self.producer_lock:
-            while True:
-                try:
-                    commands = self.redis_producer.pipeline()
-                    commands.rpush('events.prodcons', raw_msg)
-                    commands.publish('events.pubsub', raw_msg)
-                    await commands.execute()
-                except (ConnectionResetError, ConnectionRefusedError,
-                        aioredis.errors.ConnectionClosedError,
-                        aioredis.errors.PipelineError):
-                    await asyncio.sleep(0.2)
-                    continue
-                else:
-                    break
+            def _pipe_builder():
+                pipe = self.redis_producer.pipeline()
+                pipe.rpush('events.prodcons', raw_msg)
+                pipe.publish('events.pubsub', raw_msg)
+                return pipe
+            await redis.execute_with_retries(_pipe_builder)
 
     async def dispatch_consumers(self, event_name: str, agent_id: AgentId,
                                  args: Tuple[Any, ...] = tuple()) -> None:
@@ -187,33 +177,36 @@ class EventDispatcher(aobject):
                 log.exception(log_fmt + ': unexpected-error', *log_args)
 
     async def _consume(self) -> None:
-        try:
-            while True:
-                try:
-                    key, raw_msg = await self.redis_consumer.blpop('events.prodcons')
-                except (ConnectionResetError, ConnectionRefusedError,
-                        aioredis.errors.ConnectionClosedError):
-                    await asyncio.sleep(0.5)
-                    continue
+        while True:
+            try:
+                key, raw_msg = await redis.execute_with_retries(
+                    lambda: self.redis_consumer.blpop('events.prodcons'))
                 msg = msgpack.unpackb(raw_msg)
-                await self.dispatch_consumers(msg['event_name'], msg['agent_id'], msg['args'])
-        except asyncio.CancelledError:
-            pass
+                await self.dispatch_consumers(msg['event_name'],
+                                              msg['agent_id'],
+                                              msg['args'])
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                log.exception('EventDispatcher.consume(): unexpected-error')
 
     async def _subscribe(self) -> None:
-        try:
-            while True:
-                try:
-                    channels = await self.redis_subscriber.subscribe('events.pubsub')
-                    async for raw_msg in channels[0].iter():
-                        msg = msgpack.unpackb(raw_msg)
-                        await self.dispatch_subscribers(msg['event_name'], msg['agent_id'], msg['args'])
-                except (ConnectionResetError, ConnectionRefusedError,
-                        aioredis.errors.ConnectionClosedError):
-                    await asyncio.sleep(0.5)
-                    continue
-        except asyncio.CancelledError:
-            pass
+
+        async def _subscribe_impl():
+            channels = await self.redis_subscriber.subscribe('events.pubsub')
+            async for raw_msg in channels[0].iter():
+                msg = msgpack.unpackb(raw_msg)
+                await self.dispatch_subscribers(msg['event_name'],
+                                                msg['agent_id'],
+                                                msg['args'])
+
+        while True:
+            try:
+                await redis.execute_with_retries(lambda: _subscribe_impl())
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                log.exception('EventDispatcher.subscribe(): unexpected-error')
 
 
 async def init(app: web.Application) -> None:

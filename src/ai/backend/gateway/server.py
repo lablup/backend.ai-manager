@@ -16,7 +16,6 @@ import traceback
 from aiohttp import web
 import aiohttp_cors
 import aiojobs.aiohttp
-import aioredis
 import aiotools
 from aiopg.sa import create_engine
 import click
@@ -24,6 +23,7 @@ from pathlib import Path
 from setproctitle import setproctitle
 import uvloop
 
+from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.utils import env_info
 from ai.backend.common.monitor import DummyStatsMonitor, DummyErrorMonitor
@@ -215,21 +215,21 @@ async def gw_init(app, default_cors_options):
     redis_config = await app['config_server'].etcd.get_prefix('config/redis')
     app['config']['redis'] = redis_config_iv.check(redis_config)
 
-    app['redis_live'] = await aioredis.create_redis_pool(
+    app['redis_live'] = await redis.connect_with_retries(
         app['config']['redis']['addr'].as_sockaddr(),
         password=(app['config']['redis']['password']
                   if app['config']['redis']['password'] else None),
         timeout=3.0,
         encoding='utf8',
         db=REDIS_LIVE_DB)
-    app['redis_stat'] = await aioredis.create_redis_pool(
+    app['redis_stat'] = await redis.connect_with_retries(
         app['config']['redis']['addr'].as_sockaddr(),
         password=(app['config']['redis']['password']
                   if app['config']['redis']['password'] else None),
         timeout=3.0,
         encoding='utf8',
         db=REDIS_STAT_DB)
-    app['redis_image'] = await aioredis.create_redis_pool(
+    app['redis_image'] = await redis.connect_with_retries(
         app['config']['redis']['addr'].as_sockaddr(),
         password=(app['config']['redis']['password']
                   if app['config']['redis']['password'] else None),

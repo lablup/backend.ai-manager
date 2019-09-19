@@ -357,6 +357,8 @@ async def check_agent_lost(app, interval):
                         await app['event_dispatcher'].produce_event(
                             'instance_terminated', ('agent-lost', ),
                             agent_id=agent_id)
+            except aioredis.errors.ConnectionForcedCloseError:
+                break
             except (ConnectionRefusedError, ConnectionResetError,
                     aioredis.errors.ConnectionClosedError):
                 await asyncio.sleep(5.0)

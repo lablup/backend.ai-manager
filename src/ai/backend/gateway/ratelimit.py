@@ -6,6 +6,7 @@ import time
 from aiohttp import web
 import aioredis
 
+from ai.backend.common import redis
 from ai.backend.common.logging import BraceStyleAdapter
 
 from .defs import REDIS_RLIM_DB
@@ -46,10 +47,10 @@ async def rlim_middleware(app, request, handler):
         access_key = request['keypair']['access_key']
         while True:
             try:
-                ret = await rr.evalsha(
+                ret = await redis.execute_with_retries(lambda: rr.evalsha(
                     app['redis_rlim_script'],
                     keys=[access_key],
-                    args=[str(now), str(_rlim_window)])
+                    args=[str(now), str(_rlim_window)]))
                 break
             except aioredis.errors.ReplyError:
                 # Redis may have been restarted.
@@ -74,7 +75,7 @@ async def rlim_middleware(app, request, handler):
 
 
 async def init(app: web.Application) -> None:
-    rr = await aioredis.create_redis_pool(
+    rr = await redis.connect_with_retries(
         app['config']['redis']['addr'].as_sockaddr(),
         password=(app['config']['redis']['password']
                   if app['config']['redis']['password'] else None),
