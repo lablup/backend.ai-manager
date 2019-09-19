@@ -905,6 +905,7 @@ class AgentRegistry:
     async def handle_heartbeat(self, agent_id, agent_info):
 
         now = datetime.now(tzutc())
+        instance_rejoin = False
 
         # Update "last seen" timestamp for liveness tracking
         await self.redis_live.hset('last_seen', agent_id, now.timestamp())
@@ -963,7 +964,7 @@ class AgentRegistry:
                                .where(agents.c.id == agent_id))
                     await conn.execute(query)
             elif row.status in (AgentStatus.LOST, AgentStatus.TERMINATED):
-                log.warning('agent {0} revived!', agent_id)
+                instance_rejoin = True
                 query = (sa.update(agents)
                            .values({
                                'status': AgentStatus.ALIVE,
@@ -981,6 +982,11 @@ class AgentRegistry:
                 await self.config_server.update_resource_slots(slot_key_and_units)
             else:
                 log.error('should not reach here! {0}', type(row.status))
+
+        if instance_rejoin:
+            await self.event_dispatcher.produce_event(
+                'instance_started', ('revived', ),
+                agent_id=agent_id)
 
         # Update the mapping of kernel images to agents.
         known_registries = await get_known_registries(self.config_server.etcd)

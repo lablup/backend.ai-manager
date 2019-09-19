@@ -77,12 +77,13 @@ class EventDispatcher(aobject):
         self.redis_subscriber = await self._create_redis()
         self.consumer_task = self.loop.create_task(self._consume())
         self.subscriber_task = self.loop.create_task(self._subscribe())
+        self.producer_lock = asyncio.Lock()
 
     async def _create_redis(self):
         config = self.root_app['config']
         while True:
             try:
-                return await aioredis.create_redis(
+                return await aioredis.create_redis_pool(
                     config['redis']['addr'].as_sockaddr(),
                     db=REDIS_STREAM_DB,
                     password=config['redis']['password'] if config['redis']['password'] else None,
@@ -117,19 +118,20 @@ class EventDispatcher(aobject):
             'agent_id': agent_id,
             'args': args,
         })
-        while True:
-            try:
-                commands = self.redis_producer.pipeline()
-                commands.rpush('events.prodcons', raw_msg)
-                commands.publish('events.pubsub', raw_msg)
-                await commands.execute()
-            except (ConnectionRefusedError, aioredis.errors.ConnectionClosedError,
-                    aioredis.errors.PipelineError):
-                await asyncio.sleep(0.2)
-                self.redis_producer = await self._create_redis()
-                continue
-            else:
-                break
+        async with self.producer_lock:
+            while True:
+                try:
+                    commands = self.redis_producer.pipeline()
+                    commands.rpush('events.prodcons', raw_msg)
+                    commands.publish('events.pubsub', raw_msg)
+                    await commands.execute()
+                except (ConnectionResetError, ConnectionRefusedError,
+                        aioredis.errors.ConnectionClosedError,
+                        aioredis.errors.PipelineError):
+                    await asyncio.sleep(0.2)
+                    continue
+                else:
+                    break
 
     async def dispatch_consumers(self, event_name: str, agent_id: AgentId,
                                  args: Tuple[Any, ...] = tuple()) -> None:
@@ -176,9 +178,10 @@ class EventDispatcher(aobject):
             while True:
                 try:
                     key, raw_msg = await self.redis_consumer.blpop('events.prodcons')
-                except (ConnectionRefusedError, aioredis.errors.ConnectionClosedError):
+                except (ConnectionResetError, ConnectionRefusedError,
+                        aioredis.errors.ConnectionClosedError):
                     await asyncio.sleep(0.5)
-                    self.redis_consumer = await self._create_redis()
+                    continue
                 msg = msgpack.unpackb(raw_msg)
                 await self.dispatch_consumers(msg['event_name'], msg['agent_id'], msg['args'])
         except asyncio.CancelledError:
@@ -192,9 +195,10 @@ class EventDispatcher(aobject):
                     async for raw_msg in channels[0].iter():
                         msg = msgpack.unpackb(raw_msg)
                         await self.dispatch_subscribers(msg['event_name'], msg['agent_id'], msg['args'])
-                except (ConnectionRefusedError, aioredis.errors.ConnectionClosedError):
+                except (ConnectionResetError, ConnectionRefusedError,
+                        aioredis.errors.ConnectionClosedError):
                     await asyncio.sleep(0.5)
-                    self.redis_subscriber = await self._create_redis()
+                    continue
         except asyncio.CancelledError:
             pass
 

@@ -303,6 +303,7 @@ async def instance_lifecycle(app: web.Application, agent_id: AgentId, event_name
                              reason: str = None) -> None:
     # TODO: make feedback to our auto-scaler
     if event_name == 'instance_started':
+        log.info('instance_lifecycle: ag:{0} joined ({1})', agent_id, reason)
         await app['registry'].update_instance(agent_id, {
             'status': AgentStatus.ALIVE,
         })
