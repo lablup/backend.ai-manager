@@ -256,9 +256,13 @@ async def create(request: web.Request, params: Any) -> web.Response:
             except asyncio.TimeoutError:
                 resp['status'] = 'TIMEOUT'
             else:
+                await asyncio.sleep(0.2)
                 async with request.app['dbpool'].acquire() as conn, conn.begin():
                     query = (
-                        sa.select([kernels.c.status, kernels.c.service_ports])
+                        sa.select([
+                            kernels.c.status,
+                            kernels.c.service_ports,
+                        ])
                         .select_from(kernels)
                         .where(kernels.c.id == kernel_id)
                     )

@@ -73,7 +73,7 @@ async def rlim_middleware(app, request, handler):
         return response
 
 
-async def init(app):
+async def init(app: web.Application) -> None:
     rr = await aioredis.create_redis_pool(
         app['config']['redis']['addr'].as_sockaddr(),
         password=(app['config']['redis']['password']
@@ -85,10 +85,10 @@ async def init(app):
     app['redis_rlim_script'] = await rr.script_load(_rlim_script)
 
 
-async def shutdown(app):
+async def shutdown(app: web.Application) -> None:
     try:
         await app['redis_rlim'].flushdb()
-    except ConnectionRefusedError:
+    except (ConnectionResetError, ConnectionRefusedError):
         pass
     app['redis_rlim'].close()
     await app['redis_rlim'].wait_closed()
