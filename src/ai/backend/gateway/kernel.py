@@ -301,7 +301,6 @@ async def kernel_lifecycle(app: web.Application, agent_id: AgentId, event_name: 
 
 async def instance_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
                              reason: str = None) -> None:
-    # TODO: make feedback to our auto-scaler
     if event_name == 'instance_started':
         log.info('instance_lifecycle: ag:{0} joined ({1})', agent_id, reason)
         await app['registry'].update_instance(agent_id, {
@@ -339,7 +338,8 @@ async def check_agent_lost(app, interval):
                         await app['event_dispatcher'].produce_event(
                             'instance_terminated', ('agent-lost', ),
                             agent_id=agent_id)
-            except (ConnectionRefusedError, ConnectionResetError, aioredis.errors.ConnectionClosedError):
+            except (ConnectionRefusedError, ConnectionResetError,
+                    aioredis.errors.ConnectionClosedError):
                 await asyncio.sleep(5.0)
                 continue
     except asyncio.CancelledError:

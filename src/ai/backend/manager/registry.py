@@ -998,16 +998,7 @@ class AgentRegistry:
         await pipe.execute()
 
     async def mark_agent_terminated(self, agent_id, status, conn=None):
-        # TODO: interpret kern_id to sess_id
-        # for kern_id in (await app['registry'].get_kernels_in_instance(agent_id)):
-        #     for handler in app['stream_pty_handlers'][kern_id].copy():
-        #         handler.cancel()
-        #         await handler
-        #  TODO: define behavior when agent reuse running instances upon revive
-        # await app['registry'].forget_all_kernels_in_instance(agent_id)
-
         global agent_peers
-
         await self.redis_live.hdel('last_seen', agent_id)
 
         pipe = self.redis_image.pipeline()
