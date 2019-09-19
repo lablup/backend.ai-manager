@@ -157,6 +157,18 @@ async def create(request: web.Request, params: Any) -> web.Response:
         }, status=200)
 
     try:
+        start_event = asyncio.Event()
+        kernel_id: Optional[KernelId] = None
+
+        def set_started(ctx: Any, event_name: str, agent_id: AgentId,
+                        started_kernel_id: str, *args, **kwargs) -> None:
+            nonlocal start_event, kernel_id
+            if kernel_id is not None and started_kernel_id == str(kernel_id):
+                start_event.set()
+
+        start_handler = request.app['event_dispatcher'].subscribe('kernel_started', None, set_started)
+        term_handler = request.app['event_dispatcher'].subscribe('kernel_terminated', None, set_started)
+
         resource_policy = request['keypair']['resource_policy']
         async with dbpool.acquire() as conn, conn.begin():
             if requester_access_key != owner_access_key:
@@ -217,17 +229,6 @@ async def create(request: web.Request, params: Any) -> web.Response:
         else:
             raise InvalidAPIParameters('API version not supported')
 
-        start_event = asyncio.Event()
-        kernel_id: Optional[KernelId] = None
-
-        def set_started(ctx: Any, event_name: str, agent_id: AgentId,
-                        started_kernel_id: str, *args, **kwargs) -> None:
-            nonlocal start_event, kernel_id
-            if kernel_id is not None and started_kernel_id == str(kernel_id):
-                start_event.set()
-
-        start_handler = request.app['event_dispatcher'].subscribe('kernel_started', None, set_started)
-        term_handler = request.app['event_dispatcher'].subscribe('kernel_terminated', None, set_started)
         kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
             params['sess_id'], owner_access_key,
             requested_image_ref,
