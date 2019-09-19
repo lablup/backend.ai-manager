@@ -227,7 +227,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 start_event.set()
 
         start_handler = request.app['event_dispatcher'].subscribe('kernel_started', None, set_started)
-        start_handler = request.app['event_dispatcher'].subscribe('kernel_terminated', None, set_started)
+        term_handler = request.app['event_dispatcher'].subscribe('kernel_terminated', None, set_started)
         kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
             params['sess_id'], owner_access_key,
             requested_image_ref,
@@ -287,6 +287,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
         log.exception('GET_OR_CREATE: unexpected error!')
         raise InternalServerError
     finally:
+        request.app['event_dispatcher'].unsubscribe('kernel_terminated', term_handler)
         request.app['event_dispatcher'].unsubscribe('kernel_started', start_handler)
     return web.json_response(resp, status=201)
 
