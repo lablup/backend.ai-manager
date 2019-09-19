@@ -805,16 +805,13 @@ async def init(app: web.Application):
     event_dispatcher.consume('instance_stats', app, instance_stats)
 
     # Scan ALIVE agents
-    if app['pidx'] == 0:
-        log.debug('initializing agent status checker at proc:{0}', app['pidx'])
-        app['agent_lost_checker'] = aiotools.create_timer(
-            functools.partial(check_agent_lost, app), 1.0)
+    app['agent_lost_checker'] = aiotools.create_timer(
+        functools.partial(check_agent_lost, app), 1.0)
 
 
 async def shutdown(app: web.Application):
-    if app['pidx'] == 0:
-        app['agent_lost_checker'].cancel()
-        await app['agent_lost_checker']
+    app['agent_lost_checker'].cancel()
+    await app['agent_lost_checker']
 
     checked_tasks = ('kernel_agent_event_collector', 'kernel_ddtimer')
     for tname in checked_tasks:

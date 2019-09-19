@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime
 import logging
+import random
 from typing import (
     Any, Union,
     Awaitable, Optional,
@@ -289,8 +290,9 @@ class SessionScheduler(aobject):
     async def generate_scheduling_tick(self) -> None:
         # A fallback for when missing enqueue events
         try:
+            await asyncio.sleep(30 * random.uniform(1, 4))
             while True:
-                await asyncio.sleep(30)
+                await asyncio.sleep(30 * 2.5)
                 await self.registry.event_dispatcher.produce_event(
                     'kernel_enqueued', [None])
         except asyncio.CancelledError:
@@ -309,8 +311,9 @@ class SessionScheduler(aobject):
         log.debug('schedule(): triggered')
         known_slot_types = await self.config_server.get_resource_slots()
 
-        async def _invoke_success_callbacks(results: List[Union[Exception, PredicateResult]], *,
-                                            use_new_txn: bool = False) -> None:
+        async def _invoke_success_callbacks(
+                results: List[Union[Exception, PredicateResult]], *,
+                use_new_txn: bool = False) -> None:
             conn = None
 
             async def _inner() -> None:
@@ -332,8 +335,9 @@ class SessionScheduler(aobject):
                 conn = None
                 await _inner()
 
-        async def _invoke_failure_callbacks(results: List[Union[Exception, PredicateResult]], *,
-                                            use_new_txn: bool = False) -> None:
+        async def _invoke_failure_callbacks(
+                results: List[Union[Exception, PredicateResult]], *,
+                use_new_txn: bool = False) -> None:
             conn = None
 
             async def _inner() -> None:
