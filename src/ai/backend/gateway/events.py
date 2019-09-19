@@ -1,18 +1,19 @@
 import asyncio
 from collections import defaultdict
-from dataclasses import dataclass
 import functools
 import logging
 from typing import (
     Any,
-    Sequence, List, Tuple,
+    Sequence, Tuple,
     MutableMapping,
+    Set,
 )
 from typing_extensions import Protocol
 
 from aiohttp import web
 import aioredis
 from aiojobs.aiohttp import get_scheduler_from_app
+import attr
 
 from ai.backend.common import msgpack
 from ai.backend.common.logging import BraceStyleAdapter
@@ -28,14 +29,14 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.events'))
 
 class EventCallback(Protocol):
     async def __call__(self,
-                       app: web.Application,
+                       context: Any,
                        agent_id: AgentId,
                        event_name: str,
                        *args):
         ...
 
 
-@dataclass
+@attr.s(auto_attribs=True, slots=True, frozen=True, cmp=False)
 class EventHandler:
     context: Any
     callback: EventCallback
@@ -58,18 +59,20 @@ class EventDispatcher(aobject):
 
     loop: asyncio.AbstractEventLoop
     root_app: web.Application
-    subscriber_task: asyncio.Task
-    consumers: MutableMapping[str, List[EventHandler]]
-    subscribers: MutableMapping[str, List[EventHandler]]
+    consumers: MutableMapping[str, Set[EventHandler]]
+    subscribers: MutableMapping[str, Set[EventHandler]]
     redis_producer: aioredis.Redis
     redis_consumer: aioredis.Redis
     redis_subscriber: aioredis.Redis
+    consumer_task: asyncio.Task
+    subscriber_task: asyncio.Task
+    producer_lock: asyncio.Lock
 
     def __init__(self, app: web.Application) -> None:
         self.loop = current_loop()
         self.root_app = app
-        self.consumers = defaultdict(list)
-        self.subscribers = defaultdict(list)
+        self.consumers = defaultdict(set)
+        self.subscribers = defaultdict(set)
 
     async def __ainit__(self) -> None:
         self.redis_producer = await self._create_redis()
@@ -104,11 +107,21 @@ class EventDispatcher(aobject):
         await self.redis_consumer.wait_closed()
         await self.redis_subscriber.wait_closed()
 
-    def consume(self, event_name: str, context: Any, callback: EventCallback) -> None:
-        self.consumers[event_name].append(EventHandler(context, callback))
+    def consume(self, event_name: str, context: Any, callback: EventCallback) -> EventHandler:
+        handler = EventHandler(context, callback)
+        self.consumers[event_name].add(handler)
+        return handler
 
-    def subscribe(self, event_name: str, context: Any, callback: EventCallback) -> None:
-        self.subscribers[event_name].append(EventHandler(context, callback))
+    def unconsume(self, event_name: str, handler: EventHandler) -> None:
+        self.consumers[event_name].discard(handler)
+
+    def subscribe(self, event_name: str, context: Any, callback: EventCallback) -> EventHandler:
+        handler = EventHandler(context, callback)
+        self.subscribers[event_name].add(handler)
+        return handler
+
+    def unsubscribe(self, event_name: str, handler: EventHandler) -> None:
+        self.subscribers[event_name].discard(handler)
 
     async def produce_event(self, event_name: str,
                             args: Sequence[Any] = tuple(), *,

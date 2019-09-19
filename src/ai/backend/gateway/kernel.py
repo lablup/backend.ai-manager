@@ -10,9 +10,8 @@ import json
 import logging
 import re
 import secrets
-import time
 from typing import (
-    Any,
+    Any, Optional,
     Mapping, MutableMapping,
 )
 import uuid
@@ -23,6 +22,7 @@ import aiohttp_cors
 from aiojobs.aiohttp import atomic
 import aioredis
 import aiotools
+from async_timeout import timeout
 from dateutil.tz import tzutc
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import true, null
@@ -36,7 +36,7 @@ from ai.backend.common.exception import (
 )
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
-    AgentId,
+    AgentId, KernelId,
     SessionTypes,
 )
 
@@ -217,6 +217,17 @@ async def create(request: web.Request, params: Any) -> web.Response:
         else:
             raise InvalidAPIParameters('API version not supported')
 
+        start_event = asyncio.Event()
+        kernel_id: Optional[KernelId] = None
+
+        def set_started(ctx: Any, event_name: str, agent_id: AgentId,
+                        started_kernel_id: str, *args, **kwargs) -> None:
+            nonlocal start_event, kernel_id
+            if kernel_id is not None and started_kernel_id == str(kernel_id):
+                start_event.set()
+
+        start_handler = request.app['event_dispatcher'].subscribe('kernel_started', None, set_started)
+        start_handler = request.app['event_dispatcher'].subscribe('kernel_terminated', None, set_started)
         kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
             params['sess_id'], owner_access_key,
             requested_image_ref,
@@ -235,12 +246,15 @@ async def create(request: web.Request, params: Any) -> web.Response:
 
         if not params['enqueue_only']:
             max_wait = params['max_wait_seconds']
-            wait_begin = time.monotonic()
-            # TODO: change to event-driven notification
-            while True:
-                if max_wait > 0 and max_wait <= (time.monotonic() - wait_begin):
-                    resp['status'] = 'TIMEOUT'
-                    break
+            try:
+                if max_wait > 0:
+                    with timeout(max_wait):
+                        await start_event.wait()
+                else:
+                    await start_event.wait()
+            except asyncio.TimeoutError:
+                resp['status'] = 'TIMEOUT'
+            else:
                 async with request.app['dbpool'].acquire() as conn, conn.begin():
                     query = (
                         sa.select([kernels.c.status, kernels.c.service_ports])
@@ -258,11 +272,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
                             }
                             for item in row['service_ports']
                         ]
-                        break
-                    elif row['status'] == KernelStatus.ERROR:
-                        resp['status'] = 'ERROR'
-                        break
-                await asyncio.sleep(1)
+                    elif row['status'] == KernelStatus.TERMINATED:
+                        resp['status'] = 'TERMINATED'
 
     except asyncio.CancelledError:
         raise
@@ -275,6 +286,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
         request.app['error_monitor'].capture_exception()
         log.exception('GET_OR_CREATE: unexpected error!')
         raise InternalServerError
+    finally:
+        request.app['event_dispatcher'].unsubscribe('kernel_started', start_handler)
     return web.json_response(resp, status=201)
 
 
