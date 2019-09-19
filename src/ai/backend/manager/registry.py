@@ -119,6 +119,7 @@ class AgentRegistry:
 
     def __init__(self, config_server, dbpool,
                  redis_stat, redis_live, redis_image,
+                 event_dispatcher,
                  loop=None) -> None:
         self.loop = loop if loop is not None else asyncio.get_event_loop()
         self.config_server = config_server
@@ -126,6 +127,7 @@ class AgentRegistry:
         self.redis_stat = redis_stat
         self.redis_live = redis_live
         self.redis_image = redis_image
+        self.event_dispatcher = event_dispatcher
 
     async def init(self) -> None:
         self.sched_lock = asyncio.Lock()
@@ -524,6 +526,8 @@ class AgentRegistry:
                 'stdout_port': 0,
             })
             await conn.execute(query)
+
+        await self.event_dispatcher.produce_event('kernel_enqueued', [str(kernel_id)])
         return KernelId(kernel_id)
 
     async def start_session(self, sched_ctx: 'SchedulingContext',

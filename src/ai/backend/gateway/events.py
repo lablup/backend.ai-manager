@@ -5,7 +5,7 @@ import functools
 import logging
 from typing import (
     Any,
-    List, Tuple,
+    Sequence, List, Tuple,
     MutableMapping,
 )
 from typing_extensions import Protocol
@@ -37,7 +37,7 @@ class EventCallback(Protocol):
 
 @dataclass
 class EventHandler:
-    app: web.Application
+    context: Any
     callback: EventCallback
 
 
@@ -103,24 +103,33 @@ class EventDispatcher(aobject):
         await self.redis_consumer.wait_closed()
         await self.redis_subscriber.wait_closed()
 
-    def consume(self, event_name: str, app: web.Application, callback: EventCallback) -> None:
-        self.consumers[event_name].append(EventHandler(app, callback))
+    def consume(self, event_name: str, context: Any, callback: EventCallback) -> None:
+        self.consumers[event_name].append(EventHandler(context, callback))
 
-    def subscribe(self, event_name: str, app: web.Application, callback: EventCallback) -> None:
-        self.subscribers[event_name].append(EventHandler(app, callback))
+    def subscribe(self, event_name: str, context: Any, callback: EventCallback) -> None:
+        self.subscribers[event_name].append(EventHandler(context, callback))
 
     async def produce_event(self, event_name: str,
-                            args: Tuple[Any, ...] = tuple(), *,
+                            args: Sequence[Any] = tuple(), *,
                             agent_id: str = 'manager') -> None:
         raw_msg = msgpack.packb({
             'event_name': event_name,
             'agent_id': agent_id,
             'args': args,
         })
-        commands = self.redis_producer.pipeline()
-        commands.rpush('events.prodcons', raw_msg)
-        commands.publish('events.pubsub', raw_msg)
-        await commands.execute()
+        while True:
+            try:
+                commands = self.redis_producer.pipeline()
+                commands.rpush('events.prodcons', raw_msg)
+                commands.publish('events.pubsub', raw_msg)
+                await commands.execute()
+            except (ConnectionRefusedError, aioredis.errors.ConnectionClosedError,
+                    aioredis.errors.PipelineError):
+                await asyncio.sleep(0.2)
+                self.redis_producer = await self._create_redis()
+                continue
+            else:
+                break
 
     async def dispatch_consumers(self, event_name: str, agent_id: AgentId,
                                  args: Tuple[Any, ...] = tuple()) -> None:
@@ -133,9 +142,9 @@ class EventDispatcher(aobject):
             cb = consumer.callback
             try:
                 if asyncio.iscoroutine(cb) or asyncio.iscoroutinefunction(cb):
-                    await scheduler.spawn(cb(consumer.app, agent_id, event_name, *args))
+                    await scheduler.spawn(cb(consumer.context, agent_id, event_name, *args))
                 else:
-                    cb = functools.partial(cb, consumer.app, agent_id, event_name, *args)
+                    cb = functools.partial(cb, consumer.context, agent_id, event_name, *args)
                     self.loop.call_soon(cb)
             except asyncio.CancelledError:
                 raise
@@ -153,9 +162,9 @@ class EventDispatcher(aobject):
             cb = subscriber.callback
             try:
                 if asyncio.iscoroutine(cb) or asyncio.iscoroutinefunction(cb):
-                    await scheduler.spawn(cb(subscriber.app, agent_id, event_name, *args))
+                    await scheduler.spawn(cb(subscriber.context, agent_id, event_name, *args))
                 else:
-                    cb = functools.partial(cb, subscriber.app, agent_id, event_name, *args)
+                    cb = functools.partial(cb, subscriber.context, agent_id, event_name, *args)
                     self.loop.call_soon(cb)
             except asyncio.CancelledError:
                 raise

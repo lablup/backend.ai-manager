@@ -490,6 +490,8 @@ async def enqueue_status_update(app: web.Application, agent_id: AgentId, event_n
                                 raw_kernel_id: str,
                                 reason: str = None,
                                 exit_code: int = None) -> None:
+    if raw_kernel_id is None:
+        return
     kernel_id = uuid.UUID(raw_kernel_id)
     # TODO: when event_name == 'kernel_started', read the service port data.
     async with app['dbpool'].acquire() as conn, conn.begin():
@@ -525,6 +527,7 @@ async def init(app: web.Application) -> None:
     app['event_queues'] = set()
     event_dispatcher = app['event_dispatcher']
     event_dispatcher.subscribe('kernel_terminated', app, kernel_terminated)
+    event_dispatcher.subscribe('kernel_enqueued', app, enqueue_status_update)
     event_dispatcher.subscribe('kernel_preparing', app, enqueue_status_update)
     event_dispatcher.subscribe('kernel_pulling', app, enqueue_status_update)
     event_dispatcher.subscribe('kernel_creating', app, enqueue_status_update)

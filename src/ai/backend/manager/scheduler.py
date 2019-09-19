@@ -266,49 +266,33 @@ class SessionScheduler(aobject):
         self.config_server = config_server
         self.registry = registry
         self.dbpool = registry.dbpool
-        self.lock_manager = aioredlock.Aioredlock([
-            {'host': str(config['redis']['addr'][0]),
-             'port': config['redis']['addr'][1],
-             'password': config['redis']['password'] if config['redis']['password'] else None,
-             'db': REDIS_LIVE_DB},
-        ])
 
     async def __ainit__(self) -> None:
         log.info('Session scheduler started')
         loop = current_loop()
-        self.task = loop.create_task(self.scheduling_loop())
+        self.tick_task = loop.create_task(self.generate_scheduling_tick())
+        self.registry.event_dispatcher.consume('kernel_enqueued', None, self.schedule)
+        self.registry.event_dispatcher.consume('kernel_terminated', None, self.schedule)
+        self.registry.event_dispatcher.consume('instance_started', None, self.schedule)
 
     async def close(self) -> None:
         log.info('Session scheduler stopped')
-        self.task.cancel()
-        await self.task
-        await self.lock_manager.destroy()
+        self.tick_task.cancel()
+        await self.tick_task
 
-    async def scheduling_loop(self) -> None:
-        # TODO: change to event-driven invocation
-        # TODO: adopt Redlock for distributed coordination?
+    async def generate_scheduling_tick(self) -> None:
+        # A fallback for when missing enqueue events
         try:
             while True:
-                try:
-                    lock = await self.lock_manager.lock('manager.scheduler')
-                    async with lock:
-                        await asyncio.shield(self.schedule())
-                        await asyncio.sleep(1)
-                except aioredlock.LockError:
-                    await asyncio.sleep(1)
-                    continue
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    log.exception('unexpected error in scheduler loop')
+                await asyncio.sleep(30)
+                await self.registry.event_dispatcher.produce_event(
+                    'kernel_enqueued', [None])
         except asyncio.CancelledError:
-            await asyncio.sleep(1)
+            pass
 
-    async def schedule(self) -> None:
-        # NOTE: This schedule() function is never cancelled.
-
-        if self.config['debug']['log-scheduler-ticks']:
-            log.debug('schedule(): tick')
+    async def schedule(self, ctx: object, agent_id: AgentId, event_name: str,
+                       *args, **kwargs) -> None:
+        log.debug('schedule(): triggered')
         known_slot_types = await self.config_server.get_resource_slots()
 
         async def _invoke_success_callbacks(results: List[Union[Exception, PredicateResult]], *,

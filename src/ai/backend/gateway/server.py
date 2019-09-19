@@ -244,7 +244,8 @@ async def gw_init(app, default_cors_options):
         app['dbpool'],
         app['redis_stat'],
         app['redis_live'],
-        app['redis_image'])
+        app['redis_image'],
+        app['event_dispatcher'])
     await app['registry'].init()
 
     # Detect and install monitoring plugins.
