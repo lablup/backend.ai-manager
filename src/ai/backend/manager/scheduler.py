@@ -274,6 +274,12 @@ class SessionScheduler(aobject):
         self.registry.event_dispatcher.consume('kernel_enqueued', None, self.schedule)
         self.registry.event_dispatcher.consume('kernel_terminated', None, self.schedule)
         self.registry.event_dispatcher.consume('instance_started', None, self.schedule)
+        self.lock_manager = aioredlock.Aioredlock([
+            {'host': str(self.config['redis']['addr'][0]),
+             'port': self.config['redis']['addr'][1],
+             'password': self.config['redis']['password'] if self.config['redis']['password'] else None,
+             'db': REDIS_LIVE_DB},
+        ])
 
     async def close(self) -> None:
         log.info('Session scheduler stopped')
@@ -292,6 +298,14 @@ class SessionScheduler(aobject):
 
     async def schedule(self, ctx: object, agent_id: AgentId, event_name: str,
                        *args, **kwargs) -> None:
+        lock = await self.lock_manager.lock('manager.scheduler')
+        try:
+            async with lock:
+                await self.schedule_impl()
+        except aioredlock.LockError:
+            log.exception('schedule(): aioredlock error')
+
+    async def schedule_impl(self) -> None:
         log.debug('schedule(): triggered')
         known_slot_types = await self.config_server.get_resource_slots()
 
