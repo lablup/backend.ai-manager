@@ -162,6 +162,7 @@ class Queries(graphene.ObjectType):
     images = graphene.List(
         Image,
         is_installed=graphene.Boolean(),
+        is_operation=graphene.Boolean(),
     )
 
     user = graphene.Field(
@@ -400,16 +401,19 @@ class Queries(graphene.ObjectType):
         return item
 
     @staticmethod
-    async def resolve_images(executor, info, is_installed=None):
+    async def resolve_images(executor, info, is_installed=None, is_operation=False):
+        print(is_operation)
         client_role = info.context['user']['role']
         client_domain = info.context['user']['domain_name']
-        items = await Image.load_all(info.context, is_installed=is_installed)
+        items = await Image.load_all(info.context,
+                                     is_installed=is_installed,
+                                     is_operation=is_operation)
         if client_role == UserRole.SUPERADMIN:
             pass
         elif client_role in (UserRole.ADMIN, UserRole.USER):
             items = await Image.filter_allowed(
                 info.context, items, client_domain,
-                is_installed=is_installed)
+                is_installed=is_installed, is_operation=is_operation)
         else:
             raise InvalidAPIParameters('Unknown client role')
         return items
