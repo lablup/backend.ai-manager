@@ -236,7 +236,7 @@ async def check_scaling_group(sched_ctx: SchedulingContext,
         sess_ctx.access_key)
     target_sgroup_names: List[str] = []
     preferred_sgroup_name = sess_ctx.scaling_group
-    if preferred_sgroup_name not in [None, '']:
+    if preferred_sgroup_name is not None:
         for sgroup in sgroups:
             if preferred_sgroup_name == sgroup['name']:
                 break
