@@ -126,6 +126,11 @@ class GroupNotFound(web.HTTPNotFound, BackendError):
     error_title = 'No such user group.'
 
 
+class ScalingGroupNotFound(web.HTTPNotFound, BackendError):
+    error_type  = 'https://api.backend.ai/probs/scaling-group-not-found'
+    error_title = 'No such scaling group.'
+
+
 class KernelNotFound(web.HTTPNotFound, BackendError):
     error_type  = 'https://api.backend.ai/probs/kernel-not-found'
     error_title = 'No such kernel.'

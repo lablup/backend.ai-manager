@@ -2,6 +2,7 @@ import asyncio
 import copy
 from datetime import datetime
 import logging
+import random
 import sys
 from typing import (
     MutableMapping,
@@ -37,13 +38,14 @@ from ..gateway.exceptions import (
     KernelNotFound,
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
+    ScalingGroupNotFound,
     VFolderNotFound,
     AgentError)
 from .models import (
     agents, kernels, keypairs, vfolders,
     keypair_resource_policies,
     AgentStatus, KernelStatus,
-    query_accessible_vfolders,
+    query_accessible_vfolders, query_allowed_sgroups,
 )
 if TYPE_CHECKING:
     from .scheduler import SchedulingContext, SessionContext, AgentAllocationContext
@@ -376,7 +378,21 @@ class AgentRegistry:
         mounts = creation_config.get('mounts') or []
         environ = creation_config.get('environ') or {}
         resource_opts = creation_config.get('resource_opts') or {}
-        scaling_group = creation_config.get('scaling_group', '')
+        scaling_group = creation_config.get('scaling_group')
+
+        # Check scaling group availability.
+        # If scaling_group is not provided, choose one randomly from allowed sgroup.
+        async with self.dbpool.acquire() as conn, conn.begin():
+            sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
+            if scaling_group is None:
+                available_sgroups = [sgroup['name'] for sgroup in sgroups]
+                scaling_group = random.choice(available_sgroups)
+            else:
+                for sgroup in sgroups:
+                    if scaling_group == sgroup['name']:
+                        break
+                else:
+                    raise ScalingGroupNotFound
 
         # sanity check for vfolders
         allowed_vfolder_types = ['user', 'group']
