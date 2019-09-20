@@ -160,14 +160,18 @@ async def create(request: web.Request, params: Any) -> web.Response:
         start_event = asyncio.Event()
         kernel_id: Optional[KernelId] = None
 
-        def set_started(ctx: Any, event_name: str, agent_id: AgentId,
-                        started_kernel_id: str, *args, **kwargs) -> None:
+        def interrupt_wait(ctx: Any, event_name: str, agent_id: AgentId,
+                           started_kernel_id: str, *args, **kwargs) -> None:
             nonlocal start_event, kernel_id
             if kernel_id is not None and started_kernel_id == str(kernel_id):
                 start_event.set()
 
-        start_handler = request.app['event_dispatcher'].subscribe('kernel_started', None, set_started)
-        term_handler = request.app['event_dispatcher'].subscribe('kernel_terminated', None, set_started)
+        start_handler = request.app['event_dispatcher'].subscribe('kernel_started', None,
+                                                                  interrupt_wait)
+        term_handler = request.app['event_dispatcher'].subscribe('kernel_terminated', None,
+                                                                 interrupt_wait)
+        term_handler = request.app['event_dispatcher'].subscribe('kernel_cancelled', None,
+                                                                 interrupt_wait)
 
         resource_policy = request['keypair']['resource_policy']
         async with dbpool.acquire() as conn, conn.begin():

@@ -36,9 +36,11 @@ from .manager import READ_ALLOWED, server_status_required
 from ..manager.models import (
     agents, resource_presets,
     domains, groups, kernels, keypairs,
-    AgentStatus, KernelStatus,
+    AgentStatus,
     association_groups_users,
     query_allowed_sgroups,
+    RESOURCE_OCCUPYING_KERNEL_STATUSES,
+    RESOURCE_USAGE_KERNEL_STATUSES,
 )
 from .utils import check_api_params
 
@@ -199,7 +201,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             .select_from(kernels)
             .where(
                 (kernels.c.user_uuid == request['user']['uuid']) &
-                ~(kernels.c.status.in_([KernelStatus.TERMINATED, KernelStatus.PENDING])) &
+                (kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
                 (kernels.c.scaling_group.in_(sgroups))
             )
         )
@@ -252,9 +254,7 @@ async def recalculate_usage(request) -> web.Response:
         # Query running containers and calculate concurrency_used per AK and
         # occupied_slots per agent.
         query = (sa.select([kernels.c.access_key, kernels.c.agent, kernels.c.occupied_slots])
-                   .where(~(kernels.c.status.in_([KernelStatus.TERMINATED,
-                                                  KernelStatus.PENDING,
-                                                  KernelStatus.CANCELLED])))
+                   .where(kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES))
                    .order_by(sa.asc(kernels.c.access_key)))
         concurrency_used_per_key: MutableMapping[str, int] = defaultdict(lambda: 0)
         occupied_slots_per_agent: MutableMapping[str, ResourceSlot] = \
@@ -294,11 +294,16 @@ async def recalculate_usage(request) -> web.Response:
 async def get_container_stats_for_period(request, start_date, end_date, group_ids=None):
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         j = (sa.join(kernels, groups, kernels.c.group_id == groups.c.id))
-        query = (sa.select([kernels, groups.c.name])
-                   .select_from(j)
-                   .where(kernels.c.terminated_at >= start_date)
-                   .where(kernels.c.terminated_at < end_date)
-                   .order_by(sa.asc(kernels.c.terminated_at)))
+        query = (
+            sa.select([kernels, groups.c.name])
+            .select_from(j)
+            .where(
+                (kernels.c.terminated_at >= start_date) &
+                (kernels.c.terminated_at < end_date) &
+                (kernels.c.status.in_(RESOURCE_USAGE_KERNEL_STATUSES))
+            )
+            .order_by(sa.asc(kernels.c.terminated_at))
+        )
         if group_ids:
             query = query.where(kernels.c.group_id.in_(group_ids))
         result = await conn.execute(query)
@@ -477,10 +482,15 @@ async def get_time_binned_monthly_stats(request, user_uuid=None):
     now = datetime.now(tzutc())
     start_date = now - timedelta(days=30)
     async with request.app['dbpool'].acquire() as conn, conn.begin():
-        query = (sa.select([kernels])
-                   .select_from(kernels)
-                   .where(kernels.c.terminated_at >= start_date)
-                   .order_by(sa.asc(kernels.c.created_at)))
+        query = (
+            sa.select([kernels])
+            .select_from(kernels)
+            .where(
+                (kernels.c.terminated_at >= start_date) &
+                (kernels.c.status.in_(RESOURCE_USAGE_KERNEL_STATUSES))
+            )
+            .order_by(sa.asc(kernels.c.created_at))
+        )
         if user_uuid is not None:
             query = query.where(kernels.c.user_uuid == user_uuid)
         result = await conn.execute(query)

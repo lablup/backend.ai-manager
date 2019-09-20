@@ -45,6 +45,7 @@ from .models import (
     keypair_resource_policies,
     AgentStatus, KernelStatus,
     query_accessible_vfolders, query_allowed_sgroups,
+    RESOURCE_OCCUPYING_KERNEL_STATUSES,
 )
 if TYPE_CHECKING:
     from .scheduler import SchedulingContext, SessionContext, AgentAllocationContext
@@ -632,7 +633,7 @@ class AgentRegistry:
                 sa.select([kernels.c.occupied_slots])
                 .where(
                     (kernels.c.access_key == access_key) &
-                    ~(kernels.c.status.in_([KernelStatus.TERMINATED, KernelStatus.PENDING]))
+                    (kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES))
                 )
             )
             zero = ResourceSlot()
@@ -653,7 +654,7 @@ class AgentRegistry:
                 sa.select([kernels.c.occupied_slots])
                 .where(
                     (kernels.c.domain_name == domain_name) &
-                    ~(kernels.c.status.in_([KernelStatus.TERMINATED, KernelStatus.PENDING]))
+                    (kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES))
                 )
             )
             zero = ResourceSlot()
@@ -672,7 +673,7 @@ class AgentRegistry:
                 sa.select([kernels.c.occupied_slots])
                 .where(
                     (kernels.c.group_id == group_id) &
-                    ~(kernels.c.status.in_([KernelStatus.TERMINATED, KernelStatus.PENDING]))
+                    (kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES))
                 )
             )
             zero = ResourceSlot()
@@ -871,7 +872,6 @@ class AgentRegistry:
                        .values(updated_fields)
                        .where((kernels.c.sess_id == sess_id) &
                               (kernels.c.access_key == access_key) &
-                              (kernels.c.status != KernelStatus.TERMINATED) &
                               (kernels.c.role == 'master')))
             await conn.execute(query)
 
@@ -881,22 +881,8 @@ class AgentRegistry:
                        .values(num_queries=kernels.c.num_queries + 1)
                        .where((kernels.c.sess_id == sess_id) &
                               (kernels.c.access_key == access_key) &
-                              (kernels.c.status != KernelStatus.TERMINATED) &
                               (kernels.c.role == 'master')))
             await conn.execute(query)
-
-    async def get_sessions_in_instance(self, inst_id, conn=None):
-        async with reenter_txn(self.dbpool, conn) as conn:
-            query = (sa.select([kernels.c.sess_id])
-                       .select_from(kernels)
-                       .where((kernels.c.agent == inst_id) &
-                              (kernels.c.role == 'master') &
-                              (kernels.c.status != KernelStatus.TERMINATED)))
-            result = await conn.execute(query)
-            rows = await result.fetchall()
-            if not rows:
-                return tuple()
-            return rows
 
     async def kill_all_sessions_in_agent(self, agent_addr):
         async with RPCContext(agent_addr, 30) as rpc:
@@ -1188,12 +1174,4 @@ class AgentRegistry:
                            'occupied_slots': updated_occupied_slots,
                        })
                        .where(agents.c.id == kernel['agent']))
-            await conn.execute(query)
-
-    async def forget_instance(self, inst_id):
-        async with self.dbpool.acquire() as conn, conn.begin():
-            query = (sa.update(agents)
-                       .values(status=AgentStatus.TERMINATED,
-                               lost_at=datetime.now(tzutc()))
-                       .where(agents.c.id == inst_id))
             await conn.execute(query)
