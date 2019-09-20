@@ -252,7 +252,9 @@ async def recalculate_usage(request) -> web.Response:
         # Query running containers and calculate concurrency_used per AK and
         # occupied_slots per agent.
         query = (sa.select([kernels.c.access_key, kernels.c.agent, kernels.c.occupied_slots])
-                   .where(~(kernels.c.status.in_([KernelStatus.TERMINATED, KernelStatus.PENDING])))
+                   .where(~(kernels.c.status.in_([KernelStatus.TERMINATED,
+                                                  KernelStatus.PENDING,
+                                                  KernelStatus.CANCELLED])))
                    .order_by(sa.asc(kernels.c.access_key)))
         concurrency_used_per_key: MutableMapping[str, int] = defaultdict(lambda: 0)
         occupied_slots_per_agent: MutableMapping[str, ResourceSlot] = \
