@@ -37,13 +37,14 @@ from ..gateway.exceptions import (
     KernelNotFound,
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
+    ScalingGroupNotFound,
     VFolderNotFound,
     AgentError)
 from .models import (
     agents, kernels, keypairs, vfolders,
     keypair_resource_policies,
     AgentStatus, KernelStatus,
-    query_accessible_vfolders,
+    query_accessible_vfolders, query_allowed_sgroups,
     RESOURCE_OCCUPYING_KERNEL_STATUSES,
 )
 if TYPE_CHECKING:
@@ -377,6 +378,18 @@ class AgentRegistry:
         mounts = creation_config.get('mounts') or []
         environ = creation_config.get('environ') or {}
         resource_opts = creation_config.get('resource_opts') or {}
+        scaling_group = creation_config.get('scaling_group')
+
+        # Check scaling group availability if scaling_group parameter is given.
+        # If scaling_group is not provided, it will be selected in scheduling step.
+        if scaling_group is not None:
+            async with self.dbpool.acquire() as conn, conn.begin():
+                sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
+                for sgroup in sgroups:
+                    if scaling_group == sgroup['name']:
+                        break
+                else:
+                    raise ScalingGroupNotFound
 
         # sanity check for vfolders
         allowed_vfolder_types = ['user', 'group']
@@ -509,6 +522,7 @@ class AgentRegistry:
                 'sess_id': sess_id,
                 'type': session_type,
                 'role': 'master',
+                'scaling_group': scaling_group,
                 'domain_name': domain_name,
                 'group_id': group_id,
                 'user_uuid': user_uuid,
@@ -596,6 +610,7 @@ class AgentRegistry:
                     # TODO: add more kernel status about image pulling
                     # TODO: move this status transition to event handler for
                     #       "kernel_started"
+                    'scaling_group': agent_ctx.scaling_group,
                     'status': KernelStatus.RUNNING,
                     'container_id': created_info['container_id'],
                     'occupied_shares': {},

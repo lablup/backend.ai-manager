@@ -80,6 +80,7 @@ class SessionContext:
 class AgentAllocationContext:
     agent_id: AgentId
     agent_addr: str
+    scaling_group: str
 
 
 class PredicateCallback(Protocol):
@@ -433,6 +434,7 @@ class SessionScheduler(aobject):
                 query = kernels.update().values({
                     'agent': agent_ctx.agent_id,
                     'agent_addr': agent_ctx.agent_addr,
+                    'scaling_group': agent_ctx.scaling_group,
                     'status': KernelStatus.PREPARING,
                     'status_info': 'scheduled',
                     'status_changed': datetime.now(tzutc()),
@@ -523,6 +525,7 @@ class SessionScheduler(aobject):
         query = (
             sa.select([
                 agents.c.id,
+                agents.c.scaling_group,
                 agents.c.available_slots,
                 agents.c.occupied_slots,
             ], for_update=True)
@@ -575,7 +578,7 @@ class SessionScheduler(aobject):
         agent_addr = await sched_ctx.db_conn.scalar(query)
         assert agent_addr is not None
 
-        return AgentAllocationContext(agent_id, agent_addr)
+        return AgentAllocationContext(agent_id, agent_addr, row['scaling_group'])
 
     async def _unreserve_agent_slots(self,
                                      sess_ctx: SessionContext,

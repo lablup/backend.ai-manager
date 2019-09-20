@@ -24,6 +24,7 @@ from .user import users
 __all__: Sequence[str] = (
     'kernels', 'KernelStatus',
     'ComputeSessionList', 'ComputeSession', 'ComputeWorker', 'Computation',
+    'RESOURCE_OCCUPYING_KERNEL_STATUSES', 'RESOURCE_USAGE_KERNEL_STATUSES', 'LIVE_STATUS',
 )
 
 
@@ -76,8 +77,7 @@ kernels = sa.Table(
               nullable=False, index=True),
     sa.Column('sess_id', sa.String(length=64), unique=False, index=True),
     sa.Column('role', sa.String(length=16), nullable=False, default='master'),
-    sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True,
-              nullable=False, server_default='default', default='default'),
+    sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True, nullable=True),
     sa.Column('agent', sa.String(length=64), sa.ForeignKey('agents.id'), nullable=True),
     sa.Column('agent_addr', sa.String(length=128), nullable=True),
     sa.Column('domain_name', sa.String(length=64), sa.ForeignKey('domains.name'), nullable=False),
