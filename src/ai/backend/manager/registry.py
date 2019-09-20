@@ -379,8 +379,8 @@ class AgentRegistry:
         resource_opts = creation_config.get('resource_opts') or {}
         scaling_group = creation_config.get('scaling_group')
 
-        # Check scaling group availability.
-        # If scaling_group is not provided, choose one randomly from allowed sgroup.
+        # Check scaling group availability if scaling_group parameter is given.
+        # If scaling_group is not provided, it will be selected in scheduling step.
         if scaling_group is not None:
             async with self.dbpool.acquire() as conn, conn.begin():
                 sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
