@@ -194,7 +194,7 @@ class AgentRegistry:
             if set_error:
                 await self.set_session_status(
                     sess_id, access_key, KernelStatus.ERROR,
-                    status_info=f'Operation timeout ({op})')
+                    status_info=f'operation-timeout ({op})')
             if error_callback:
                 await error_callback()
             raise exc_class('TIMEOUT') from None
@@ -207,18 +207,18 @@ class AgentRegistry:
             if set_error:
                 await self.set_session_status(sess_id, access_key,
                                               KernelStatus.ERROR,
-                                              status_info='Agent error')
+                                              status_info=f'agent-error ({e!r})')
             if error_callback:
                 await error_callback()
             raise exc_class('FAILURE', e) from None
         except BackendError:
             # silently re-raise to make them handled by gateway http handlers
             raise
-        except:
+        except Exception as e:
             if set_error:
                 await self.set_session_status(sess_id, access_key,
                                               KernelStatus.ERROR,
-                                              status_info='Other error')
+                                              status_info=f'other-error ({e!r})')
             if error_callback:
                 await error_callback()
             raise
