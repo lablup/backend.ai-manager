@@ -1070,7 +1070,8 @@ class AgentRegistry:
                 .values(data)
                 .where(
                     (kernels.c.sess_id == sess_id) &
-                    (kernels.c.access_key == access_key)
+                    (kernels.c.access_key == access_key) &
+                    ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES))
                 )
             )
             await conn.execute(query)
