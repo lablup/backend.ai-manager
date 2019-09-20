@@ -24,7 +24,10 @@ from .user import users
 __all__: Sequence[str] = (
     'kernels', 'KernelStatus',
     'ComputeSessionList', 'ComputeSession', 'ComputeWorker', 'Computation',
-    'RESOURCE_OCCUPYING_KERNEL_STATUSES', 'RESOURCE_USAGE_KERNEL_STATUSES', 'LIVE_STATUS',
+    'RESOURCE_OCCUPYING_KERNEL_STATUSES',
+    'RESOURCE_USAGE_KERNEL_STATUSES',
+    'DEAD_KERNEL_STATUSES',
+    'LIVE_STATUS',
 )
 
 
@@ -60,6 +63,11 @@ RESOURCE_OCCUPYING_KERNEL_STATUSES = (
 
 # statuses to consider when calculating historical resource usage
 RESOURCE_USAGE_KERNEL_STATUSES = (
+    KernelStatus.TERMINATED,
+)
+
+DEAD_KERNEL_STATUSES = (
+    KernelStatus.CANCELLED,
     KernelStatus.TERMINATED,
 )
 

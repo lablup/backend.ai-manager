@@ -281,7 +281,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                             for item in row['service_ports']
                         ]
                     else:
-                        resp['status'] = row['status'].value
+                        resp['status'] = row['status'].name
 
     except asyncio.CancelledError:
         raise

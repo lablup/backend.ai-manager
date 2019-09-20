@@ -46,6 +46,7 @@ from .models import (
     AgentStatus, KernelStatus,
     query_accessible_vfolders, query_allowed_sgroups,
     RESOURCE_OCCUPYING_KERNEL_STATUSES,
+    DEAD_KERNEL_STATUSES,
 )
 if TYPE_CHECKING:
     from .scheduler import SchedulingContext, SessionContext, AgentAllocationContext
@@ -319,7 +320,7 @@ class AgentRegistry:
                         (kernels.c.sess_id == sess_id) &
                         (kernels.c.access_key == access_key) &
                         (kernels.c.role == 'master') &
-                        (kernels.c.status != KernelStatus.TERMINATED) &
+                        ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES)) &
                         (agents.c.status == AgentStatus.ALIVE)
                     ).limit(1).offset(0)
                 )
@@ -1069,9 +1070,7 @@ class AgentRegistry:
                 .values(data)
                 .where(
                     (kernels.c.sess_id == sess_id) &
-                    (kernels.c.access_key == access_key) &
-                    # TODO: include slave workers?
-                    (kernels.c.status != KernelStatus.TERMINATED)
+                    (kernels.c.access_key == access_key)
                 )
             )
             await conn.execute(query)
@@ -1111,7 +1110,9 @@ class AgentRegistry:
             result = await conn.execute(query)
             row = await result.first()
             if (row is None or
-                row['status'] in (KernelStatus.TERMINATED, KernelStatus.RESTARTING)):
+                row['status'] in (KernelStatus.CANCELLED,
+                                  KernelStatus.TERMINATED,
+                                  KernelStatus.RESTARTING)):
                 # Skip if non-existent, already terminated, or restarting.
                 return
             if row['role'] == 'master':
