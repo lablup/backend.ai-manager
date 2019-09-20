@@ -28,7 +28,7 @@ import sqlalchemy as sa
 from sqlalchemy.sql.expression import true, null
 import trafaret as t
 
-from ai.backend.common import validators as tx
+from ai.backend.common import redis, validators as tx
 from ai.backend.common.docker import ImageRef
 from ai.backend.common.exception import (
     UnknownImageReference,
@@ -349,20 +349,16 @@ async def check_agent_lost(app, interval):
     try:
         now = datetime.now(tzutc())
         timeout = timedelta(seconds=app['config']['manager']['heartbeat-timeout'])
-        while True:
-            try:
-                async for agent_id, prev in app['redis_live'].ihscan('last_seen'):
-                    prev = datetime.fromtimestamp(float(prev), tzutc())
-                    if now - prev > timeout:
-                        await app['event_dispatcher'].produce_event(
-                            'instance_terminated', ('agent-lost', ),
-                            agent_id=agent_id)
-            except aioredis.errors.ConnectionForcedCloseError:
-                break
-            except (ConnectionRefusedError, ConnectionResetError,
-                    aioredis.errors.ConnectionClosedError):
-                await asyncio.sleep(5.0)
-                continue
+
+        async def _check_impl():
+            async for agent_id, prev in app['redis_live'].ihscan('last_seen'):
+                prev = datetime.fromtimestamp(float(prev), tzutc())
+                if now - prev > timeout:
+                    await app['event_dispatcher'].produce_event(
+                        'instance_terminated', ('agent-lost', ),
+                        agent_id=agent_id)
+
+        await redis.execute_with_retries(lambda: _check_impl())
     except asyncio.CancelledError:
         pass
 

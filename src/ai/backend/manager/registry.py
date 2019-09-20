@@ -1014,9 +1014,14 @@ class AgentRegistry:
 
         async with reenter_txn(self.dbpool, conn) as conn:
 
-            query = (sa.select([agents.c.status, agents.c.addr], for_update=True)
-                       .select_from(agents)
-                       .where(agents.c.id == agent_id))
+            query = (
+                sa.select([
+                    agents.c.status,
+                    agents.c.addr,
+                ], for_update=True)
+                .select_from(agents)
+                .where(agents.c.id == agent_id)
+            )
             result = await conn.execute(query)
             row = await result.first()
             peer = agent_peers.pop(row['addr'], None)
