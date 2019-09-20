@@ -44,6 +44,7 @@ class KernelStatus(enum.Enum):
     TERMINATING = 40
     TERMINATED = 41
     ERROR = 42
+    CANCELLED = 43
 
 
 LIVE_STATUS = frozenset(['BUILDING', 'RUNNING'])
@@ -112,7 +113,7 @@ kernels = sa.Table(
     sa.Index('ix_kernels_unique_sess_token', 'access_key', 'sess_id',
              unique=True,
              postgresql_where=sa.text(
-                 "status != 'TERMINATED' and "
+                 "status NOT IN ('TERMINATED', 'CANCELLED') and "
                  "role = 'master'")),
 )
 

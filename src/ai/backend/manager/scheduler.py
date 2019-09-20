@@ -276,6 +276,7 @@ class SessionScheduler(aobject):
         self.registry.event_dispatcher.consume('kernel_enqueued', None, self.schedule)
         self.registry.event_dispatcher.consume('kernel_terminated', None, self.schedule)
         self.registry.event_dispatcher.consume('instance_started', None, self.schedule)
+        # TODO: add events for resource configuration changes and subscribe them here.
         self.lock_manager = aioredlock.Aioredlock([
             {'host': str(self.config['redis']['addr'][0]),
              'port': self.config['redis']['addr'][1],
