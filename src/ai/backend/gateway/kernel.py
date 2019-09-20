@@ -20,7 +20,6 @@ import aiohttp
 from aiohttp import web
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
-import aioredis
 import aiotools
 from async_timeout import timeout
 from dateutil.tz import tzutc
@@ -170,8 +169,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
                                                                   interrupt_wait)
         term_handler = request.app['event_dispatcher'].subscribe('kernel_terminated', None,
                                                                  interrupt_wait)
-        term_handler = request.app['event_dispatcher'].subscribe('kernel_cancelled', None,
-                                                                 interrupt_wait)
+        cancel_handler = request.app['event_dispatcher'].subscribe('kernel_cancelled', None,
+                                                                   interrupt_wait)
 
         resource_policy = request['keypair']['resource_policy']
         async with dbpool.acquire() as conn, conn.begin():
@@ -281,8 +280,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
                             }
                             for item in row['service_ports']
                         ]
-                    elif row['status'] == KernelStatus.TERMINATED:
-                        resp['status'] = 'TERMINATED'
+                    else:
+                        resp['status'] = row['status'].value
 
     except asyncio.CancelledError:
         raise
@@ -296,6 +295,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
         log.exception('GET_OR_CREATE: unexpected error!')
         raise InternalServerError
     finally:
+        request.app['event_dispatcher'].unsubscribe('kernel_cancelled', cancel_handler)
         request.app['event_dispatcher'].unsubscribe('kernel_terminated', term_handler)
         request.app['event_dispatcher'].unsubscribe('kernel_started', start_handler)
     return web.json_response(resp, status=201)
