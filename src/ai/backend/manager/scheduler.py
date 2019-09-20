@@ -445,17 +445,24 @@ class SessionScheduler(aobject):
 
                 async def _cb(fut):
                     if fut.exception():
-                        log.exception(log_fmt + 'failed-starting-preparation', *log_args)
+                        log.error(log_fmt + 'failed-starting',
+                                  *log_args, exc_info=fut.exception())
                         await self._unreserve_agent_slots(sess_ctx, agent_ctx)
                         await _invoke_failure_callbacks(check_results, use_new_txn=True)
-                        query = kernels.update().values({
-                            'status': KernelStatus.ERROR,
-                            'status_info': 'failed to start',
-                            'status_changed': datetime.now(tzutc()),
-                        }).where(kernels.c.id == sess_ctx.kernel_id)
-                        await db_conn.execute(query)
+                        async with self.dbpool.acquire() as conn, conn.begin():
+                            query = kernels.update().values({
+                                'status': KernelStatus.CANCELLED,
+                                'status_info': 'failed-to-start',
+                                'status_changed': datetime.now(tzutc()),
+                            }).where(kernels.c.id == sess_ctx.kernel_id)
+                            await conn.execute(query)
+                        await self.registry.event_dispatcher.produce_event(
+                            'kernel_cancelled',
+                            (str(sess_ctx.kernel_id), 'failed-to-start'),
+                        )
+
                     else:
-                        log.info(log_fmt + 'preparation-started', *log_args)
+                        log.info(log_fmt + 'started', *log_args)
                         await _invoke_success_callbacks(check_results, use_new_txn=True)
 
                 task.add_done_callback(lambda fut: loop.create_task(_cb(fut)))

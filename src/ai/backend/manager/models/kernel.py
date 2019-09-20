@@ -47,7 +47,24 @@ class KernelStatus(enum.Enum):
     CANCELLED = 43
 
 
-LIVE_STATUS = frozenset(['BUILDING', 'RUNNING'])
+# statuses to consider when calculating current resource usage
+RESOURCE_OCCUPYING_KERNEL_STATUSES = (
+    e for e in KernelStatus
+    if e not in (
+        KernelStatus.TERMINATED,
+        KernelStatus.PENDING,
+        KernelStatus.CANCELLED,
+    )
+)
+
+# statuses to consider when calculating historical resource usage
+RESOURCE_USAGE_KERNEL_STATUSES = (
+    KernelStatus.TERMINATED,
+)
+
+LIVE_STATUS = (
+    KernelStatus.RUNNING,
+)
 
 
 kernels = sa.Table(
