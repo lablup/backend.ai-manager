@@ -52,7 +52,7 @@ class KernelStatus(enum.Enum):
 
 
 # statuses to consider when calculating current resource usage
-RESOURCE_OCCUPYING_KERNEL_STATUSES = (
+RESOURCE_OCCUPYING_KERNEL_STATUSES = tuple(
     e for e in KernelStatus
     if e not in (
         KernelStatus.TERMINATED,
