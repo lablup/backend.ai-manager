@@ -376,6 +376,7 @@ class AgentRegistry:
         mounts = creation_config.get('mounts') or []
         environ = creation_config.get('environ') or {}
         resource_opts = creation_config.get('resource_opts') or {}
+        scaling_group = creation_config.get('scaling_group', '')
 
         # sanity check for vfolders
         allowed_vfolder_types = ['user', 'group']
@@ -508,6 +509,7 @@ class AgentRegistry:
                 'sess_id': sess_id,
                 'type': session_type,
                 'role': 'master',
+                'scaling_group': scaling_group,
                 'domain_name': domain_name,
                 'group_id': group_id,
                 'user_uuid': user_uuid,
@@ -595,6 +597,7 @@ class AgentRegistry:
                     # TODO: add more kernel status about image pulling
                     # TODO: move this status transition to event handler for
                     #       "kernel_started"
+                    'scaling_group': agent_ctx.scaling_group,
                     'status': KernelStatus.RUNNING,
                     'container_id': created_info['container_id'],
                     'occupied_shares': {},
