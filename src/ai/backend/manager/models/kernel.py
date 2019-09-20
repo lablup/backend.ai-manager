@@ -24,6 +24,7 @@ from .user import users
 __all__: Sequence[str] = (
     'kernels', 'KernelStatus',
     'ComputeSessionList', 'ComputeSession', 'ComputeWorker', 'Computation',
+    'RESOURCE_OCCUPYING_KERNEL_STATUSES', 'RESOURCE_USAGE_KERNEL_STATUSES', 'LIVE_STATUS',
 )
 
 
