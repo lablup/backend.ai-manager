@@ -418,6 +418,9 @@ class AgentRegistry:
                 if set(creation_config['mounts']) > matched_mounts:
                     raise VFolderNotFound
                 creation_config['mounts'] = mount_details
+            mounts = mount_details
+        else:
+            mounts = []
 
         # TODO: merge into a single call
         image_info = await self.config_server.inspect_image(image_ref)
