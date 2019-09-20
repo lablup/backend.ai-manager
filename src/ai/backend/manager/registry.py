@@ -2,7 +2,6 @@ import asyncio
 import copy
 from datetime import datetime
 import logging
-import random
 import sys
 from typing import (
     MutableMapping,
@@ -382,12 +381,9 @@ class AgentRegistry:
 
         # Check scaling group availability.
         # If scaling_group is not provided, choose one randomly from allowed sgroup.
-        async with self.dbpool.acquire() as conn, conn.begin():
-            sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
-            if scaling_group is None:
-                available_sgroups = [sgroup['name'] for sgroup in sgroups]
-                scaling_group = random.choice(available_sgroups)
-            else:
+        if scaling_group is not None:
+            async with self.dbpool.acquire() as conn, conn.begin():
+                sgroups = await query_allowed_sgroups(conn, domain_name, group_id, access_key)
                 for sgroup in sgroups:
                     if scaling_group == sgroup['name']:
                         break
