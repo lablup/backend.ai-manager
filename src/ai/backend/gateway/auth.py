@@ -302,7 +302,11 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
     async with dbpool.acquire() as conn:
         query = (sa.select([keypairs.c.access_key, keypairs.c.secret_key])
                    .select_from(keypairs)
-                   .where((keypairs.c.user == user['uuid'])))
+                   .where(
+                       (keypairs.c.user == user['uuid']) &
+                       (keypairs.c.is_active)
+                   )
+                   .order_by(sa.desc(keypairs.c.is_admin)))
         result = await conn.execute(query)
         keypair = await result.first()
     return web.json_response({
