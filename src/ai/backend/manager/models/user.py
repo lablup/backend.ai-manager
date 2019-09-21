@@ -349,47 +349,46 @@ class ModifyUser(graphene.Mutation):
                     return cls(ok=False, msg='no such user', user=None)
 
                 # Update keypair if user's role is updated.
+                # TODO: This assumes that user have only one keypair.
                 if 'role' in data:
                     from ai.backend.manager.models import keypairs
-                    query = (sa.select([keypairs.c.uuid, keypairs.c.is_active])
+                    query = (sa.select([keypairs.c.uuid,
+                                        keypairs.c.is_active,
+                                        keypairs.c.is_admin])
                                .select_from(keypairs)
-                               .where(
-                                   (keypairs.c.user_id == email) &
-                                   (keypairs.c.is_admin)
-                               ))
+                               .where(keypairs.c.user == o.uuid)
+                               .order_by((sa.desc(keypairs.c.is_admin) &
+                                          sa.desc(keypairs.c.is_active))))
                     if data['role'] in [UserRole.SUPERADMIN, UserRole.ADMIN]:
+                        # User's becomes admin. Set the keypair as active admin.
                         result = await conn.execute(query)
-                        row = await result.fetchone()
-                        if row is None:  # no admin keypair. create one
-                            from .keypair import generate_keypair, keypairs
-                            ak, sk = generate_keypair()
-                            kp_data = {
-                                'user_id': email,
-                                'access_key': ak,
-                                'secret_key': sk,
-                                'is_active': True,
-                                'is_admin': True,
-                                'resource_policy': 'default',
-                                'concurrency_used': 0,
-                                'rate_limit': 10000,
-                                'num_queries': 0,
-                                'user': o.uuid,
-                            }
-                            query = (keypairs.insert().values(kp_data))
+                        kp = await result.fetchone()
+                        kp_data = dict()
+                        if not kp.is_admin:
+                            kp_data['is_admin'] = True
+                        if not kp.is_active:
+                            kp_data['is_active'] = True
+                        if len(kp_data.keys()) > 0:
+                            query = (keypairs.update()
+                                             .values(kp_data)
+                                             .where(keypairs.c.user == o.uuid))
                             await conn.execute(query)
-                        elif not row.is_active:  # admin keypair found. activate it if not
-                            query = (keypairs.update()
-                                             .values({'is_active': True})
-                                             .where(keypairs.c.uuid == row.uuid))
-                            result = await conn.execute(query)
-                        else:  # active admin keypair found. do nothing.
-                            pass
-                    else:  # user's role is changed to non-admin.
+                    else:
+                        # User becomes non-admin. Make the keypair non-admin as well.
+                        # If there are multiple admin keypairs, inactivate them.
+                        cnt = 0
                         async for row in conn.execute(query):
-                            query = (keypairs.update()
-                                             .values({'is_active': False})
-                                             .where(keypairs.c.uuid == row.uuid))
-                            result = await conn.execute(query)
+                            if cnt == 0:
+                                query = (keypairs.update()
+                                                 .values({'is_admin': False})
+                                                 .where(keypairs.c.uuid == row.uuid))
+                                await conn.execute(query)
+                            elif row.is_admin and row.is_active:
+                                query = (keypairs.update()
+                                                 .values({'is_active': False})
+                                                 .where(keypairs.c.uuid == row.uuid))
+                                await conn.execute(query)
+                            cnt += 1
 
                 # If domain is changed and no group is associated, clear previous domain's group.
                 if prev_domain_name != o.domain_name and not props.group_ids:
