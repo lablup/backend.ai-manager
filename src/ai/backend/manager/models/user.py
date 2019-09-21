@@ -270,7 +270,7 @@ class CreateUser(graphene.Mutation):
                         'is_admin': is_admin,
                         'resource_policy': 'default',
                         'concurrency_used': 0,
-                        'rate_limit': 1000,
+                        'rate_limit': 10000,
                         'num_queries': 0,
                         'user': o.uuid,
                     }
@@ -333,10 +333,13 @@ class ModifyUser(graphene.Mutation):
 
             try:
                 # Get previous domain name of the user.
-                query = (sa.select([users.c.domain_name])
+                query = (sa.select([users.c.domain_name, users.c.role])
                            .select_from(users)
                            .where(users.c.email == email))
-                prev_domain_name = await conn.scalar(query)
+                result = await conn.execute(query)
+                row = await result.fetchone()
+                prev_domain_name = row.domain_name
+                prev_role = row.role
 
                 # Update user.
                 query = (users.update().values(data).where(users.c.email == email))
@@ -347,6 +350,49 @@ class ModifyUser(graphene.Mutation):
                     o = User.from_row(await result.first())
                 else:
                     return cls(ok=False, msg='no such user', user=None)
+
+                # Update keypair if user's role is updated.
+                # NOTE: This assumes that user have only one keypair.
+                if 'role' in data and data['role'] != prev_role:
+                    from ai.backend.manager.models import keypairs
+                    query = (sa.select([keypairs.c.user,
+                                        keypairs.c.is_active,
+                                        keypairs.c.is_admin])
+                               .select_from(keypairs)
+                               .where(keypairs.c.user == o.uuid)
+                               .order_by(sa.desc(keypairs.c.is_admin))
+                               .order_by(sa.desc(keypairs.c.is_active)))
+                    result = await conn.execute(query)
+                    if data['role'] in [UserRole.SUPERADMIN, UserRole.ADMIN]:
+                        # User's becomes admin. Set the keypair as active admin.
+                        kp = await result.fetchone()
+                        kp_data = dict()
+                        if not kp.is_admin:
+                            kp_data['is_admin'] = True
+                        if not kp.is_active:
+                            kp_data['is_active'] = True
+                        if len(kp_data.keys()) > 0:
+                            query = (keypairs.update()
+                                             .values(kp_data)
+                                             .where(keypairs.c.user == o.uuid))
+                            await conn.execute(query)
+                    else:
+                        # User becomes non-admin. Make the keypair non-admin as well.
+                        # If there are multiple admin keypairs, inactivate them.
+                        rows = await result.fetchall()
+                        cnt = 0
+                        for row in rows:
+                            kp_data = dict()
+                            if cnt == 0:
+                                kp_data['is_admin'] = False
+                            elif row.is_admin and row.is_active:
+                                kp_data['is_active'] = False
+                            if len(kp_data.keys()) > 0:
+                                query = (keypairs.update()
+                                                 .values(kp_data)
+                                                 .where(keypairs.c.user == row.user))
+                                await conn.execute(query)
+                            cnt += 1
 
                 # If domain is changed and no group is associated, clear previous domain's group.
                 if prev_domain_name != o.domain_name and not props.group_ids:
