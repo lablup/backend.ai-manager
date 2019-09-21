@@ -381,12 +381,12 @@ class ModifyUser(graphene.Mutation):
                             if cnt == 0:
                                 query = (keypairs.update()
                                                  .values({'is_admin': False})
-                                                 .where(keypairs.c.uuid == row.uuid))
+                                                 .where(keypairs.c.user == row.uuid))
                                 await conn.execute(query)
                             elif row.is_admin and row.is_active:
                                 query = (keypairs.update()
                                                  .values({'is_active': False})
-                                                 .where(keypairs.c.uuid == row.uuid))
+                                                 .where(keypairs.c.user == row.uuid))
                                 await conn.execute(query)
                             cnt += 1
 
