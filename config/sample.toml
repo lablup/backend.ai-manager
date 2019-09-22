@@ -48,10 +48,6 @@ ssl-enabled = false
 #ssl-cert = "/etc/backend.ai/ssl/apiserver-fullchain.pem"   # env: BACKNED_SSL_CERT
 #ssl-privkey = "/etc/backend.ai/ssl/apiserver-privkey.pem"  # env: BACKNED_SSL_KEY
 
-# Set the event-listener hostname/port to accept heartbeats and event messages from agents.
-event-listen-addr = { host = "127.0.0.1", port = 5002 }
-# env: BACKEND_ADVERTISED_MANAGER_HOST, BACKEND_EVENTS_PORT
-
 # Set the timeout for agent heartbeats in seconds.
 heartbeat-timeout = 30.0
 

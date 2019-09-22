@@ -106,7 +106,6 @@ Alias keys are also URL-quoted in the same way.
    ...
  + nodes
    + manager: {instance-id}
-     - event_addr: {"tcp://manager:5001"}
      - status: {one-of-ManagerStatus-value}
    + redis: {"tcp://redis:6379"}
      - password: {redis-auth-password}
@@ -200,12 +199,8 @@ class ConfigServer:
 
     async def register_myself(self, app_config):
         instance_id = await get_instance_id()
-        event_addr = app_config['manager']['event-listen-addr']
-        log.info('manager is listening agent events at {}', event_addr)
-        event_addr = '{0.host}:{0.port}'.format(event_addr)
         manager_info = {
             'nodes/manager': instance_id,
-            'nodes/manager/event_addr': event_addr,
         }
         await self.etcd.put_dict(manager_info)
 

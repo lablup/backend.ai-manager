@@ -80,7 +80,6 @@ async def fetch_manager_status(request):
                     'id': etcd_info[''],
                     'num_proc': configs['num-proc'],
                     'service_addr': str(configs['service-addr']),
-                    'event_listen_addr': str(configs['event-listen-addr']),
                     'heartbeat_timeout': configs['heartbeat-timeout'],
                     'ssl_enabled': configs['ssl-enabled'],
                     'active_sessions': active_sessions_num,
