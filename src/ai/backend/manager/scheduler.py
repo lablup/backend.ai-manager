@@ -493,6 +493,7 @@ class SessionScheduler(aobject):
                 keypairs.c.access_key == kernels.c.access_key
             ))
             .where(kernels.c.status == KernelStatus.PENDING)
+            .order_by(kernels.c.created_at)
         )
         sess_ctxs = []
         async for row in db_conn.execute(query):
