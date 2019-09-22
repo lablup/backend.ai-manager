@@ -1,6 +1,36 @@
 Changes
 =======
 
+19.09.0rc1 (2019-09-23)
+-----------------------
+
+* NEW: Support for high availability (#125, #192) with zero reconfiguration when fail-over
+  of the manager.
+
+  - The manager may have multiple nodes now. Adding/removing nodes just work, as long as
+    the client configurations for "multi-endpoints" get updated accordingly.
+
+  - There is no central master of the manager fleet. All manager instances are equivalent.
+
+  - Intermittent disruptions over Redis connections (e.g., due to fail-over of Redis master)
+    no longer make both manager/agent to hang up or go into undefined states.
+
+* NEW: Job queueing (#192, #180, #189), so that excessive job execution no longer raises
+  errors but those requests are "queued".
+  The current scheduling is FIFO but more scheduling options will be added in the future.
+
+  - Now the kernels have PENDING and CANCELLED status.  Any permanent errors before RUNNING status
+    makes the kernel to transition into the CANCELLED status.
+
+  - Each status change is recorded with explicit timestamp and a human-readable "status_info" which
+    can be retrieved by clints via GQL.
+
+* NEW: event monitoring API for session lifecycles so that now clients can get to know
+  whether the session is pulling a new docker image or just hanging up (#84, #110)
+
+* Various bug fixes related to role/active checks and updates in user maangement (#193, #194 and many
+  one-off commits)
+
 19.09.0b14 (2019-09-17)
 -----------------------
 
