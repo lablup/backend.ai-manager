@@ -402,7 +402,6 @@ class Queries(graphene.ObjectType):
 
     @staticmethod
     async def resolve_images(executor, info, is_installed=None, is_operation=False):
-        print(is_operation)
         client_role = info.context['user']['role']
         client_domain = info.context['user']['domain_name']
         items = await Image.load_all(info.context,

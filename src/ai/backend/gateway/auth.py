@@ -18,7 +18,7 @@ import trafaret as t
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from ai.backend.common import validators as tx
 from .exceptions import (
-    GenericBadRequest, GenericNotFound,
+    GenericBadRequest, GenericForbidden, GenericNotFound,
     InvalidAuthParameters, AuthorizationFailed,
     InvalidAPIParameters,
     InternalServerError,
@@ -433,18 +433,23 @@ async def signup(request: web.Request, params: Any) -> web.Response:
 
 
 @atomic
+@auth_required
 @check_api_params(
     t.Dict({
         t.Key('domain'): t.String,
-        t.Key('email'): t.String,
+        tx.AliasedKey(['email', 'username']): t.String,
         t.Key('password'): t.String,
     }))
 async def signout(request: web.Request, params: Any) -> web.Response:
     log.info('AUTH.SIGNOUT(d:{}, e:{})', params['domain'], params['email'])
     dbpool = request.app['dbpool']
-    await check_credential(
+    if request['user']['email'] != params['email']:
+        raise GenericForbidden('Not the account owner')
+    result = await check_credential(
         dbpool,
         params['domain'], params['email'], params['password'])
+    if result is None:
+        raise GenericBadRequest('Invalid email and/or password')
     # Inactivate the user.
     async with dbpool.acquire() as conn, conn.begin():
         query = (users.update()
