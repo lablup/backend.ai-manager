@@ -436,27 +436,32 @@ async def signup(request: web.Request, params: Any) -> web.Response:
 @auth_required
 @check_api_params(
     t.Dict({
-        t.Key('domain'): t.String,
         tx.AliasedKey(['email', 'username']): t.String,
         t.Key('password'): t.String,
     }))
 async def signout(request: web.Request, params: Any) -> web.Response:
-    log.info('AUTH.SIGNOUT(d:{}, e:{})', params['domain'], params['email'])
+    domain_name = request['user']['domain_name']
+    log.info('AUTH.SIGNOUT(d:{}, e:{})', domain_name, params['email'])
     dbpool = request.app['dbpool']
     if request['user']['email'] != params['email']:
         raise GenericForbidden('Not the account owner')
     result = await check_credential(
         dbpool,
-        params['domain'], params['email'], params['password'])
+        domain_name, params['email'], params['password'])
     if result is None:
         raise GenericBadRequest('Invalid email and/or password')
-    # Inactivate the user.
     async with dbpool.acquire() as conn, conn.begin():
+        # Inactivate the user.
         query = (users.update()
                       .values(is_active=False)
                       .where(users.c.email == params['email']))
         await conn.execute(query)
-        return web.json_response({'message': 'success'})
+        # Inactivate every keypairs of the user.
+        query = (keypairs.update()
+                         .values(is_active=False)
+                         .where(keypairs.c.user_id == params['email']))
+        await conn.execute(query)
+    return web.json_response({'message': 'success'})
 
 
 def create_app(default_cors_options):
