@@ -303,25 +303,14 @@ class AgentRegistry:
                                   (kernels.c.role == 'master'))
                            .limit(1).offset(0))
             else:
-                if cols == '*':
-                    cols = [kernels,
-                            agents.c.id.label('agent_id'), agents.c.status.label('agent_status'),
-                            agents.c.region, agents.c.available_slots.label('agent_available_slots'),
-                            agents.c.occupied_slots.label('agent_occupied_slots'),
-                            agents.c.addr, agents.c.first_contact, agents.c.lost_at,
-                            agents.c.version, agents.c.compute_plugins]
                 query = (
                     sa.select(cols, for_update=for_update)
-                    .select_from(sa.join(
-                        kernels, agents,
-                        kernels.c.agent == agents.c.id
-                    ))
+                    .select_from(kernels)
                     .where(
                         (kernels.c.sess_id == sess_id) &
                         (kernels.c.access_key == access_key) &
                         (kernels.c.role == 'master') &
-                        ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES)) &
-                        (agents.c.status == AgentStatus.ALIVE)
+                        ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES))
                     ).limit(1).offset(0)
                 )
             result = await conn.execute(query)
@@ -700,14 +689,22 @@ class AgentRegistry:
                                                     db_connection=conn)
                     if domain_name is not None and kernel.domain_name != domain_name:
                         raise KernelNotFound
-                    await self.set_session_status(sess_id, access_key,
-                                                  KernelStatus.TERMINATING,
-                                                  db_conn=conn)
+                    if kernel['status'] == KernelStatus.PENDING:
+                        await self.set_session_status(sess_id, access_key,
+                                                      KernelStatus.CANCELLED,
+                                                      reason='user-requested',
+                                                      db_conn=conn)
+                        return {'status': 'cancelled'}
+                    else:
+                        await self.set_session_status(sess_id, access_key,
+                                                      KernelStatus.TERMINATING,
+                                                      reason='user-requested',
+                                                      db_conn=conn)
             except KernelNotFound:
                 raise
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 last_stat = await rpc.call.destroy_kernel(str(kernel['id']))
-                return last_stat
+                return {**last_stat, 'status': 'terminated'}
 
     async def restart_session(self, sess_id, access_key):
         async with self.handle_kernel_exception(
