@@ -689,17 +689,25 @@ class AgentRegistry:
                                                     db_connection=conn)
                     if domain_name is not None and kernel.domain_name != domain_name:
                         raise KernelNotFound
-                    if kernel['status'] == KernelStatus.PENDING:
+                    if kernel.status == KernelStatus.PENDING:
                         await self.set_session_status(sess_id, access_key,
                                                       KernelStatus.CANCELLED,
                                                       reason='user-requested',
                                                       db_conn=conn)
+                        await self.event_dispatcher.produce_event(
+                            'kernel_cancelled',
+                            (str(kernel.id), 'user-requested'),
+                        )
                         return {'status': 'cancelled'}
                     else:
                         await self.set_session_status(sess_id, access_key,
                                                       KernelStatus.TERMINATING,
                                                       reason='user-requested',
                                                       db_conn=conn)
+                        await self.event_dispatcher.produce_event(
+                            'kernel_terminating',
+                            (str(kernel.id), 'user-requested'),
+                        )
             except KernelNotFound:
                 raise
             async with RPCContext(kernel['agent_addr'], 30) as rpc:

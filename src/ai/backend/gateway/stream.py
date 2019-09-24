@@ -534,6 +534,7 @@ async def init(app: web.Application) -> None:
     event_dispatcher.subscribe('kernel_started', app, enqueue_status_update)
     event_dispatcher.subscribe('kernel_terminating', app, enqueue_status_update)
     event_dispatcher.subscribe('kernel_terminated', app, enqueue_status_update)
+    event_dispatcher.subscribe('kernel_cancelled', app, enqueue_status_update)
 
 
 async def shutdown(app: web.Application) -> None:

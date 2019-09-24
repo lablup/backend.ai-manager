@@ -319,7 +319,8 @@ async def kernel_lifecycle(app: web.Application, agent_id: AgentId, event_name: 
         # The create_kernel() RPC caller will set the "RUNNING" status.
         pass
     elif event_name == 'kernel_terminating':
-        await registry.set_kernel_status(kernel_id, KernelStatus.TERMINATING, reason)
+        # The destroy_kernel() API handler will set the "TERMINATING" status.
+        pass
     elif event_name == 'kernel_terminated':
         await registry.mark_kernel_terminated(kernel_id, reason, exit_code)
 
