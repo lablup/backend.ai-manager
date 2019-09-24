@@ -605,10 +605,6 @@ class Queries(graphene.ObjectType):
     async def resolve_compute_sessions(executor, info, *,
                                        domain_name=None, group_id=None, access_key=None,
                                        status=None):
-        # TODO: make status a proper graphene.Enum type
-        #       (https://github.com/graphql-python/graphene/issues/544)
-        if status is not None:
-            status = KernelStatus[status]
         return await ComputeSession.load_all(
             info.context,
             domain_name=domain_name,
@@ -626,8 +622,6 @@ class Queries(graphene.ObjectType):
         # by other users and in other groups.
         # Let's just protect the domain/user boundary here.
         manager = info.context['dlmgr']
-        if status is not None:
-            status = KernelStatus[status]
         loader = manager.get_loader(
             'ComputeSession.detail',
             domain_name=domain_name,
@@ -641,8 +635,6 @@ class Queries(graphene.ObjectType):
                                       domain_name=None, access_key=None,
                                       status=None):
         manager = info.context['dlmgr']
-        if status is not None:
-            status = KernelStatus[status]
         loader = manager.get_loader(
             'ComputeWorker',
             domain_name=domain_name,
