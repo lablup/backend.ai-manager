@@ -340,12 +340,14 @@ async def signup(request: web.Request, params: Any) -> web.Response:
                 continue
             for ev_handlers in hook_event_handlers:
                 for ev_handler in ev_handlers:
-                    if ev_types.CHECK_USER == ev_handler[0]:
+                    if 'CHECK_USER' in ev_types._member_names_ and \
+                            ev_types.CHECK_USER == ev_handler[0]:
                         check_user = ev_handler[1]
                         extra_params = copy.deepcopy(params)
                         extra_params.pop('email')
                         checked_user = await check_user(params['email'], **extra_params)
-                    if ev_types.CHECK_PASSWORD == ev_handler[0]:
+                    if 'CHECK_PASSWORD' in ev_types._member_names_ and \
+                            ev_types.CHECK_PASSWORD == ev_handler[0]:
                         check_password = ev_handler[1]
                         result = await check_password(params['password'])
                         if not result['success']:
