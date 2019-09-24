@@ -213,6 +213,8 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
                     if slot in slots:
                         slots[slot] = min(keypair_remaining[slot], slots[slot])
                 per_sgroup[sgname][rtype] = slots.to_json()
+        for slot in known_slot_types.keys():
+            sgroup_remaining[slot] = min(keypair_remaining[slot], sgroup_remaining[slot])
 
         resp['keypair_limits'] = keypair_limits.to_json()
         resp['keypair_using'] = keypair_occupied.to_json()
