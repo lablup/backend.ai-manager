@@ -364,6 +364,10 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
     async def load_count(context, *,
                          domain_name=None, group_id=None, access_key=None,
                          status=None):
+        if isinstance(status, str):
+            status_list = [KernelStatus[s] for s in status.split(',')]
+        elif isinstance(status, KernelStatus):
+            status_list = [status]
         async with context['dbpool'].acquire() as conn:
             query = (
                 sa.select([sa.func.count(kernels.c.sess_id)])
@@ -378,8 +382,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             if access_key is not None:
                 query = query.where(kernels.c.access_key == access_key)
             if status is not None:
-                status = KernelStatus[status]
-                query = query.where(kernels.c.status == status)
+                query = query.where(kernels.c.status.in_(status_list))
             result = await conn.execute(query)
             count = await result.fetchone()
             return count[0]
@@ -389,16 +392,22 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                          domain_name=None, group_id=None, access_key=None,
                          status=None,
                          order_key=None, order_asc=None):
+        if isinstance(status, str):
+            status_list = [KernelStatus[s] for s in status.split(',')]
+        elif isinstance(status, KernelStatus):
+            status_list = [status]
         async with context['dbpool'].acquire() as conn:
             if order_key is None:
-                _ordering = sa.desc(
-                    kernels.c.terminated_at
-                    if status is not None and status == KernelStatus.TERMINATED
-                    else kernels.c.created_at
-                )
+                _ordering = [
+                    sa.desc(sa.func.greatest(
+                        kernels.c.status_changed,
+                        kernels.c.terminated_at,
+                        kernels.c.created_at,
+                    ))
+                ]
             else:
                 _order_func = sa.asc if order_asc else sa.desc
-                _ordering = _order_func(getattr(kernels.c, order_key))
+                _ordering = [_order_func(getattr(kernels.c, order_key))]
             # TODO: optimization for pagination using subquery, join
             j = (kernels.join(groups, groups.c.id == kernels.c.group_id)
                         .join(users, users.c.uuid == kernels.c.user_uuid))
@@ -406,7 +415,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 sa.select([kernels, groups.c.name, users.c.email])
                 .select_from(j)
                 .where(kernels.c.role == 'master')
-                .order_by(_ordering)
+                .order_by(*_ordering)
                 .limit(limit)
                 .offset(offset)
             )
@@ -417,8 +426,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             if access_key is not None:
                 query = query.where(kernels.c.access_key == access_key)
             if status is not None:
-                status = KernelStatus[status]
-                query = query.where(kernels.c.status == status)
+                query = query.where(kernels.c.status.in_(status_list))
             result = await conn.execute(query)
             rows = await result.fetchall()
             return [ComputeSession.from_row(context, r) for r in rows]
@@ -427,22 +435,27 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
     async def load_all(context, *,
                        domain_name=None, group_id=None, access_key=None,
                        status=None):
+        if isinstance(status, str):
+            status_list = [KernelStatus[s] for s in status.split(',')]
+        elif isinstance(status, KernelStatus):
+            status_list = [status]
         async with context['dbpool'].acquire() as conn:
-            # status = status if status else KernelStatus['RUNNING']
-            if isinstance(status, str):
-                status = KernelStatus[status]  # for legacy
-            order_col = (kernels.c.terminated_at
-                         if status is not None and status == KernelStatus.TERMINATED
-                         else kernels.c.created_at)
             j = (kernels.join(groups, groups.c.id == kernels.c.group_id)
                         .join(users, users.c.uuid == kernels.c.user_uuid))
-            query = (sa.select([kernels, groups.c.name, users.c.email])
-                       .select_from(j)
-                       .where(kernels.c.role == 'master')
-                       .order_by(sa.desc(order_col))
-                       .limit(100))
+            query = (
+                sa.select([kernels, groups.c.name, users.c.email])
+                .select_from(j)
+                .where(kernels.c.role == 'master')
+                .order_by(
+                    sa.desc(sa.func.greatest(
+                        kernels.c.status_changed,
+                        kernels.c.terminated_at,
+                        kernels.c.created_at,
+                    ))
+                )
+                .limit(100))
             if status is not None:
-                query = query.where(kernels.c.status == status)
+                query = query.where(kernels.c.status.in_(status_list))
             if domain_name is not None:
                 query = query.where(kernels.c.domain_name == domain_name)
             if group_id is not None:
@@ -458,17 +471,23 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                          domain_name=None, group_id=None,
                          status=None):
         async with context['dbpool'].acquire() as conn:
-            order_col = (kernels.c.terminated_at
-                         if status is not None and status == KernelStatus.TERMINATED
-                         else kernels.c.created_at)
             j = (kernels.join(groups, groups.c.id == kernels.c.group_id)
                         .join(users, users.c.uuid == kernels.c.user_uuid))
-            query = (sa.select([kernels, groups.c.name, users.c.email])
-                       .select_from(j)
-                       .where((kernels.c.access_key.in_(access_keys)) &
-                              (kernels.c.role == 'master'))
-                       .order_by(sa.desc(order_col))
-                       .limit(100))
+            query = (
+                sa.select([kernels, groups.c.name, users.c.email])
+                .select_from(j)
+                .where(
+                    (kernels.c.access_key.in_(access_keys)) &
+                    (kernels.c.role == 'master')
+                )
+                .order_by(
+                    sa.desc(sa.func.greatest(
+                        kernels.c.status_changed,
+                        kernels.c.terminated_at,
+                        kernels.c.created_at,
+                    ))
+                )
+                .limit(100))
             if domain_name is not None:
                 query = query.where(kernels.c.domain_name == domain_name)
             if group_id is not None:
