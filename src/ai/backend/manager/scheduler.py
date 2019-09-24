@@ -402,20 +402,15 @@ class SessionScheduler(aobject):
                         log.exception(log_fmt + 'predicate-error', *log_args)
                         check_results.append(e)
                 has_failure = False
-                failure_callbacks: List[Awaitable[None]] = []
                 for result in check_results:
                     if isinstance(result, Exception):
                         has_failure = True
                         continue
                     if not result.passed:
                         has_failure = True
-                    if result.failure_cb is not None:
-                        failure_callbacks.append(result.failure_cb(sched_ctx, sess_ctx))
                 if has_failure:
                     log.debug(log_fmt + 'predicate-checks-failed', *log_args)
-                    # If any one of predicates fails, rollback all changes.
-                    for cb in reversed(failure_callbacks):
-                        await cb
+                    await _invoke_failure_callbacks(check_results)
                     # Predicate failures are *NOT* permanent errors.
                     # We need to retry the scheduling afterwards.
                     continue

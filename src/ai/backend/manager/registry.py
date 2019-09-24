@@ -704,7 +704,10 @@ class AgentRegistry:
                 raise
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 last_stat = await rpc.call.destroy_kernel(str(kernel['id']))
-                return {**last_stat, 'status': 'terminated'}
+                return {
+                    **(last_stat if last_stat is not None else {}),
+                    'status': 'terminated',
+                }
 
     async def restart_session(self, sess_id, access_key):
         async with self.handle_kernel_exception(
