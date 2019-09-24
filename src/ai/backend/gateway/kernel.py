@@ -249,6 +249,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
         resp['created'] = True
 
         if not params['enqueue_only']:
+            request.app['pending_waits'].add(asyncio.Task.current_task())
             max_wait = params['max_wait_seconds']
             try:
                 if max_wait > 0:
@@ -259,7 +260,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             except asyncio.TimeoutError:
                 resp['status'] = 'TIMEOUT'
             else:
-                await asyncio.sleep(0.2)
+                await asyncio.sleep(0.5)
                 async with request.app['dbpool'].acquire() as conn, conn.begin():
                     query = (
                         sa.select([
@@ -295,6 +296,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
         log.exception('GET_OR_CREATE: unexpected error!')
         raise InternalServerError
     finally:
+        request.app['pending_waits'].discard(asyncio.Task.current_task())
         request.app['event_dispatcher'].unsubscribe('kernel_cancelled', cancel_handler)
         request.app['event_dispatcher'].unsubscribe('kernel_terminated', term_handler)
         request.app['event_dispatcher'].unsubscribe('kernel_started', start_handler)
@@ -810,6 +812,8 @@ async def init(app: web.Application):
     event_dispatcher.consume('instance_heartbeat', app, instance_heartbeat)
     event_dispatcher.consume('instance_stats', app, instance_stats)
 
+    app['pending_waits'] = set()
+
     # Scan ALIVE agents
     app['agent_lost_checker'] = aiotools.create_timer(
         functools.partial(check_agent_lost, app), 1.0)
@@ -825,6 +829,9 @@ async def shutdown(app: web.Application):
         if t and not t.done():
             t.cancel()
             await t
+
+    for task in app['pending_waits']:
+        task.cancel()
 
 
 def create_app(default_cors_options):
