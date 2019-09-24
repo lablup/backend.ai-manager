@@ -123,7 +123,7 @@ kernels = sa.Table(
               default=KernelStatus.PENDING,
               server_default=KernelStatus.PENDING.name,
               nullable=False, index=True),
-    sa.Column('status_changed', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('status_changed', sa.DateTime(timezone=True), nullable=True, index=True),
     sa.Column('status_info', sa.Unicode(), nullable=True, default=sa.null()),
     sa.Column('result', EnumType(SessionResult),
               default=SessionResult.UNDEFINED,
@@ -135,6 +135,7 @@ kernels = sa.Table(
     sa.Column('last_stat', pgsql.JSONB(), nullable=True, default=sa.null()),
 
     sa.Index('ix_kernels_sess_id_role', 'sess_id', 'role', unique=False),
+    sa.Index('ix_kernels_updated_order', 'created_at', 'terminated_at', 'status_changed', unique=False),
     sa.Index('ix_kernels_unique_sess_token', 'access_key', 'sess_id',
              unique=True,
              postgresql_where=sa.text(
