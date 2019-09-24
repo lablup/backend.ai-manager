@@ -1,6 +1,15 @@
 Changes
 =======
 
+19.09.0rc3 (2019-09-25)
+-----------------------
+
+* FIX: status field parsing in legacy GraphQL queries (non-paginated compute_sessions)
+
+* FIX: scaling group's remaining resource must be capped by the user's keypair resource limits.
+
+* FIX: Sign-up plugin hook check
+
 19.09.0rc2 (2019-09-24)
 -----------------------
 
