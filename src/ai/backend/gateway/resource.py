@@ -209,9 +209,10 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             per_sgroup[row.scaling_group]['using'] += row.occupied_slots
         for sgname, sgfields in per_sgroup.items():
             for rtype, slots in sgfields.items():
-                for slot in known_slot_types.keys():
-                    if slot in slots:
-                        slots[slot] = min(keypair_remaining[slot], slots[slot])
+                if not rtype == 'using':
+                    for slot in known_slot_types.keys():
+                        if slot in slots:
+                            slots[slot] = min(keypair_remaining[slot], slots[slot])
                 per_sgroup[sgname][rtype] = slots.to_json()
         for slot in known_slot_types.keys():
             sgroup_remaining[slot] = min(keypair_remaining[slot], sgroup_remaining[slot])
