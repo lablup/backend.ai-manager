@@ -247,11 +247,12 @@ async def query_accessible_vfolders(conn, user_uuid, *,
 
 
 async def get_allowed_vfolder_hosts_by_group(conn, resource_policy,
-                                             domain_name, group_id=None):
+                                             domain_name, group_id=None, domain_admin=False):
     '''
     Union `allowed_vfolder_hosts` from domain, group, and keypair_resource_policy.
 
     If `group_id` is not None, `allowed_vfolder_hosts` from the group is also merged.
+    If the requester is a domain admin, gather all `allowed_vfolder_hosts` of the domain groups.
     '''
     from . import domains, groups
     # Domain's allowed_vfolder_hosts.
@@ -262,9 +263,14 @@ async def get_allowed_vfolder_hosts_by_group(conn, resource_policy,
     # Group's allowed_vfolder_hosts.
     if group_id is not None:
         query = (sa.select([groups.c.allowed_vfolder_hosts])
-                   .where(domains.c.name == domain_name)
+                   .where(groups.c.domain_name == domain_name)
                    .where(groups.c.id == group_id))
         allowed_hosts.update(await conn.scalar(query))
+    elif domain_admin:
+        query = (sa.select([groups.c.allowed_vfolder_hosts])
+                   .where(groups.c.domain_name == domain_name))
+        async for row in conn.execute(query):
+            allowed_hosts.update(row.allowed_vfolder_hosts)
     # Keypair Resource Policy's allowed_vfolder_hosts
     allowed_hosts.update(resource_policy['allowed_vfolder_hosts'])
     return allowed_hosts

@@ -49,6 +49,7 @@ from ..manager.models import (
     users, groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
     VFolderPermission, VFolderPermissionValidator, query_accessible_vfolders,
     get_allowed_vfolder_hosts_by_group, get_allowed_vfolder_hosts_by_user,
+    UserRole,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
@@ -339,10 +340,19 @@ async def list_hosts(request: web.Request) -> web.Response:
     config = request.app['config_server']
     dbpool = request.app['dbpool']
     domain_name = request['user']['domain_name']
+    domain_admin = request['user']['role'] == UserRole.ADMIN
     resource_policy = request['keypair']['resource_policy']
+    allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
     async with dbpool.acquire() as conn:
-        allowed_hosts = await get_allowed_vfolder_hosts_by_user(conn, resource_policy,
-                                                                domain_name, request['user']['uuid'])
+        allowed_hosts = set()
+        if 'user' in allowed_vfolder_types:
+            allowed_hosts_by_user = await get_allowed_vfolder_hosts_by_user(
+                conn, resource_policy, domain_name, request['user']['uuid'])
+            allowed_hosts = allowed_hosts | allowed_hosts_by_user
+        if 'group' in allowed_vfolder_types:
+            allowed_hosts_by_group = await get_allowed_vfolder_hosts_by_group(
+                conn, resource_policy, domain_name, group_id=None, domain_admin=domain_admin)
+            allowed_hosts = allowed_hosts | allowed_hosts_by_group
     mount_prefix = await config.get('volumes/_mount')
     if mount_prefix is None:
         mount_prefix = '/mnt'
