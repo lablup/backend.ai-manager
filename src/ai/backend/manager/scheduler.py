@@ -309,6 +309,7 @@ class SessionScheduler(aobject):
         lock = await self.lock_manager.lock('manager.scheduler')
         try:
             async with lock:
+                await asyncio.sleep(0.5)
                 await self.schedule_impl()
         except aioredlock.LockError:
             log.exception('schedule(): aioredlock error')
