@@ -82,7 +82,7 @@ creation_config_v3 = t.Dict({
     t.Key('environ', default=None): t.Null | t.Mapping(t.String, t.String),
     tx.AliasedKey(['clusterSize', 'cluster_size'], default=None):
         t.Null | t.Int[1:],
-    tx.AliasedKey(['scalingGroup', 'scaling_group'], default=None):
+    tx.AliasedKey(['scaling_group', 'scalingGroup'], default=None):
         t.Null | t.String,
     t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
     t.Key('resource_opts', default=None): t.Null | t.Mapping(t.String, t.Any),
