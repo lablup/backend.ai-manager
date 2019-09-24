@@ -703,7 +703,7 @@ class AgentRegistry:
             except KernelNotFound:
                 raise
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
-                last_stat = await rpc.call.destroy_kernel(str(kernel['id']))
+                last_stat = await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
                 return {
                     **(last_stat if last_stat is not None else {}),
                     'status': 'terminated',
