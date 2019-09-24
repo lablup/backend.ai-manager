@@ -135,7 +135,9 @@ kernels = sa.Table(
     sa.Column('last_stat', pgsql.JSONB(), nullable=True, default=sa.null()),
 
     sa.Index('ix_kernels_sess_id_role', 'sess_id', 'role', unique=False),
-    sa.Index('ix_kernels_updated_order', 'created_at', 'terminated_at', 'status_changed', unique=False),
+    sa.Index('ix_kernels_updated_order',
+             sa.func.greatest('created_at', 'terminated_at', 'status_changed'),
+             unique=False),
     sa.Index('ix_kernels_unique_sess_token', 'access_key', 'sess_id',
              unique=True,
              postgresql_where=sa.text(
@@ -401,9 +403,9 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             if order_key is None:
                 _ordering = [
                     sa.desc(sa.func.greatest(
-                        kernels.c.status_changed,
-                        kernels.c.terminated_at,
                         kernels.c.created_at,
+                        kernels.c.terminated_at,
+                        kernels.c.status_changed,
                     ))
                 ]
             else:
@@ -449,9 +451,9 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 .where(kernels.c.role == 'master')
                 .order_by(
                     sa.desc(sa.func.greatest(
-                        kernels.c.status_changed,
-                        kernels.c.terminated_at,
                         kernels.c.created_at,
+                        kernels.c.terminated_at,
+                        kernels.c.status_changed,
                     ))
                 )
                 .limit(100))
@@ -483,9 +485,9 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 )
                 .order_by(
                     sa.desc(sa.func.greatest(
-                        kernels.c.status_changed,
-                        kernels.c.terminated_at,
                         kernels.c.created_at,
+                        kernels.c.terminated_at,
+                        kernels.c.status_changed,
                     ))
                 )
                 .limit(100))
