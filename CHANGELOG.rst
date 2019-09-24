@@ -1,6 +1,29 @@
 Changes
 =======
 
+19.09.0rc2 (2019-09-24)
+-----------------------
+
+* FIX: Corruption of kernels.concurrency_used in specific scheduling conditions
+
+* IMPROVE: Terminating PENDING sessions and permanent scheduling failures makes the sessions
+  to be CANCELLED.
+
+* NEW: Support specifying multiple status values to compute_sessions and compute_session_list
+  GraphQL queries so that clients can display sessions of multiple statuses in a single view.
+
+  - Since GraphQL does not allow union of scalar types, use comma-separated string in the
+    status field of those queries. This keeps the backward compatibility.
+
+  - Now the default ordering is "greatest(created_at, terminated_at, status_changed)" in the
+    descending order.  "alembic upgrade" is required to create appropriate database indexes.
+
+* FIX: Missing generation of "kernel_cancelled" and "kernel_terminating" events
+
+* FIX: Server hang-up when shutting down with clients to wait for PENDING sessions to start up
+
+* FIX: Missing "reason" field when users terminate sessions
+
 19.09.0rc1 (2019-09-23)
 -----------------------
 
