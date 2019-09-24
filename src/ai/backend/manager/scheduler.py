@@ -124,7 +124,11 @@ async def check_concurrency(sched_ctx: SchedulingContext,
               sess_ctx.access_key, concurrency_used,
               resource_policy['max_concurrent_sessions'])
     if concurrency_used >= resource_policy['max_concurrent_sessions']:
-        return PredicateResult(False, '')
+        return PredicateResult(
+            False,
+            "You cannot run more than "
+            f"{resource_policy['max_concurrent_sessions']} concurrent sessions"
+        )
     # Increment concurrency usage of keypair.
     query = (sa.update(keypairs)
                .values(concurrency_used=keypairs.c.concurrency_used + 1)
@@ -405,8 +409,8 @@ class SessionScheduler(aobject):
                         continue
                     if not result.passed:
                         has_failure = True
-                        if result.failure_cb is not None:
-                            failure_callbacks.append(result.failure_cb(sched_ctx, sess_ctx))
+                    if result.failure_cb is not None:
+                        failure_callbacks.append(result.failure_cb(sched_ctx, sess_ctx))
                 if has_failure:
                     log.debug(log_fmt + 'predicate-checks-failed', *log_args)
                     # If any one of predicates fails, rollback all changes.
