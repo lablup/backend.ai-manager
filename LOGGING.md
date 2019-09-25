@@ -54,3 +54,5 @@ Main sources of `INFO` logs:
 
      - `[string-value,string-value,...]`: Array of string values, separated by comma and wrapped by
        square brackets.
+     - Quoted string: a string value formatted using Python's `repr()` function, which may contain
+       escaped (with backslashes) quotation symbols and whitespace characters.
