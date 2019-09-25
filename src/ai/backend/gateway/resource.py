@@ -55,6 +55,7 @@ async def list_presets(request) -> web.Response:
     '''
     Returns the list of all resource presets.
     '''
+    log.info('LIST_PRESETS (ak:{})', request['keypair']['access_key'])
     known_slot_types = await request.app['registry'].config_server.get_resource_slots()
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         query = (
@@ -107,6 +108,8 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
         'scaling_groups': None,
         'presets': [],
     }
+    log.info('CHECK_PRESETS (ak:{}, g:{}, sg:{})',
+             request['keypair']['access_key'], params['group'], params['scaling_group'])
 
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         # Check keypair resource limit.
@@ -253,6 +256,7 @@ async def recalculate_usage(request) -> web.Response:
     Those two values are sometimes out of sync. In that case, calling this API
     re-calculates the values for running containers and updates them in DB.
     '''
+    log.info('RECALCULATE_USAGE ()')
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         # Query running containers and calculate concurrency_used per AK and
         # occupied_slots per agent.
@@ -412,7 +416,7 @@ async def usage_per_month(request: web.Request, params: Any) -> web.Response:
     :param year int: The year.
     :param month int: The month.
     '''
-    log.info('USAGE_PER_MONTH (g:[{0}], month:{1})',
+    log.info('USAGE_PER_MONTH (g:[{}], month:{})',
              ','.join(params['group_ids']), params['month'])
     local_tz = request.app['config']['system']['timezone']
     try:
@@ -453,7 +457,7 @@ async def usage_per_period(request: web.Request, params: Any) -> web.Response:
         raise InvalidAPIParameters(extra_msg='Invalid date values')
     if end_date <= start_date:
         raise InvalidAPIParameters(extra_msg='end_date must be later than start_date.')
-    log.info('USAGE_PER_MONTH (g:{0}, start_date:{1}, end_date:{2})',
+    log.info('USAGE_PER_MONTH (g:{}, start_date:{}, end_date:{})',
              group_id, start_date, end_date)
     resp = await get_container_stats_for_period(request, start_date, end_date, group_ids=[group_id])
     resp = resp[0] if len(resp) > 0 else {}  # only one group (project)
@@ -581,7 +585,7 @@ async def user_month_stats(request: web.Request) -> web.Response:
     '''
     access_key = request['keypair']['access_key']
     user_uuid = request['user']['uuid']
-    log.info('USER_LAST_MONTH_STATS (u:[{0}], ak:[{1}])', user_uuid, access_key)
+    log.info('USER_LAST_MONTH_STATS (ak:{}, u:{})', access_key, user_uuid)
     stats = await get_time_binned_monthly_stats(request, user_uuid=user_uuid)
     return web.json_response(stats, status=200)
 
@@ -593,9 +597,7 @@ async def admin_month_stats(request: web.Request) -> web.Response:
     Return time-binned (15 min) stats for all terminated sessions
     over last 30 days.
     '''
-    access_key = request['keypair']['access_key']
-    user_uuid = request['user']['uuid']
-    log.info('ADMIN_LAST_MONTH_STATS (u:[{0}], ak:[{1}])', user_uuid, access_key)
+    log.info('ADMIN_LAST_MONTH_STATS ()')
     stats = await get_time_binned_monthly_stats(request, user_uuid=None)
     return web.json_response(stats, status=200)
 
@@ -630,9 +632,7 @@ async def get_watcher_info(request: web.Request, agent_id: str) -> dict:
         tx.AliasedKey(['agent_id', 'agent']): t.String,
     }))
 async def get_watcher_status(request: web.Request, params: Any) -> web.Response:
-    access_key = request['keypair']['access_key']
-    user_uuid = request['user']['uuid']
-    log.info('GET_WATCHER_STATUS (u:[{0}], ak:[{1}])', user_uuid, access_key)
+    log.info('GET_WATCHER_STATUS ()')
     watcher_info = await get_watcher_info(request, params['agent_id'])
     connector = aiohttp.TCPConnector()
     async with aiohttp.ClientSession(connector=connector) as sess:
@@ -654,9 +654,7 @@ async def get_watcher_status(request: web.Request, params: Any) -> web.Response:
         tx.AliasedKey(['agent_id', 'agent']): t.String,
     }))
 async def watcher_agent_start(request: web.Request, params: Any) -> web.Response:
-    access_key = request['keypair']['access_key']
-    user_uuid = request['user']['uuid']
-    log.info('WATCHER_AGENT_START (u:[{0}], ak:[{1}])', user_uuid, access_key)
+    log.info('WATCHER_AGENT_START ()')
     watcher_info = await get_watcher_info(request, params['agent_id'])
     connector = aiohttp.TCPConnector()
     async with aiohttp.ClientSession(connector=connector) as sess:
@@ -679,9 +677,7 @@ async def watcher_agent_start(request: web.Request, params: Any) -> web.Response
         tx.AliasedKey(['agent_id', 'agent']): t.String,
     }))
 async def watcher_agent_stop(request: web.Request, params: Any) -> web.Response:
-    access_key = request['keypair']['access_key']
-    user_uuid = request['user']['uuid']
-    log.info('WATCHER_AGENT_STOP (u:[{0}], ak:[{1}])', user_uuid, access_key)
+    log.info('WATCHER_AGENT_STOP ()')
     watcher_info = await get_watcher_info(request, params['agent_id'])
     connector = aiohttp.TCPConnector()
     async with aiohttp.ClientSession(connector=connector) as sess:
@@ -704,9 +700,7 @@ async def watcher_agent_stop(request: web.Request, params: Any) -> web.Response:
         tx.AliasedKey(['agent_id', 'agent']): t.String,
     }))
 async def watcher_agent_restart(request: web.Request, params: Any) -> web.Response:
-    access_key = request['keypair']['access_key']
-    user_uuid = request['user']['uuid']
-    log.info('WATCHER_AGENT_RESTART (u:[{0}], ak:[{1}])', user_uuid, access_key)
+    log.info('WATCHER_AGENT_RESTART ()')
     watcher_info = await get_watcher_info(request, params['agent_id'])
     connector = aiohttp.TCPConnector()
     async with aiohttp.ClientSession(connector=connector) as sess:

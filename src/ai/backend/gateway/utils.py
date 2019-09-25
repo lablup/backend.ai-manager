@@ -73,6 +73,13 @@ def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None) ->
     return wrap
 
 
+def trim_text(value: str, maxlen: int) -> str:
+    if len(value) <= maxlen:
+        return value
+    value = value[:maxlen - 3] + '...'
+    return value
+
+
 class _Infinity(numbers.Number):
 
     def __lt__(self, o):

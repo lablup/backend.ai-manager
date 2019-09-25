@@ -2,6 +2,7 @@ import asyncio
 import inspect
 import logging
 from typing import Any
+import re
 
 from aiohttp import web
 import aiohttp_cors
@@ -17,11 +18,13 @@ from ai.backend.common import validators as tx
 from .manager import GQLMutationUnfrozenRequiredMiddleware
 from .exceptions import GraphQLError as BackendGQLError
 from .auth import auth_required
-from .utils import check_api_params
+from .utils import check_api_params, trim_text
 from ..manager.models.base import DataLoaderManager
 from ..manager.models.gql import Mutations, Queries
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
+
+_rx_qname = re.compile(r'{\s*(\w+)\b')
 
 
 @atomic
@@ -37,6 +40,14 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
     schema = request.app['admin.gql_schema']
     manager_status = await request.app['config_server'].get_manager_status()
     known_slot_types = await request.app['config_server'].get_resource_slots()
+    match = _rx_qname.search(params['query'].replace('\n', ''))
+    if match:
+        qsummary = match.group(1)
+    else:
+        qsummary = trim_text(params['query'], 80)
+    log.info('ADMIN.GQL (ak:{}, query:{!r}, op:{})',
+             request['keypair']['access_key'],
+             qsummary, params['operation_name'])
     context = {
         'config': request.app['config'],
         'config_server': request.app['config_server'],

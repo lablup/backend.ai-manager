@@ -112,9 +112,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
         params['domain'] = request['user']['domain_name']
     requester_access_key, owner_access_key = get_access_key_scopes(request)
     requester_uuid = request['user']['uuid']
-    log.info('GET_OR_CREATE (u:{0}/{1}, image:{2}, tag:{3}, token:{4})',
-             requester_access_key, owner_access_key,
-             params['image'], params['tag'], params['sess_id'])
+    log.info('GET_OR_CREATE (ak:{0}/{1}, img:{2}, s:{3})',
+             requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*',
+             params['image'], params['sess_id'])
 
     dbpool = request.app['dbpool']
     registry = request.app['registry']
@@ -444,19 +444,14 @@ async def destroy(request: web.Request) -> web.Response:
     if requester_access_key != owner_access_key and \
             not request['is_superadmin'] and request['is_admin']:
         domain_name = request['user']['domain_name']
-    log.info('DESTROY (u:{0}/{1}, k:{2})',
+    log.info('DESTROY (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, sess_id)
-    try:
-        last_stat = await registry.destroy_session(sess_id, owner_access_key,
-                                                   domain_name=domain_name)
-    except BackendError:
-        log.exception('DESTROY: exception')
-        raise
-    else:
-        resp = {
-            'stats': last_stat,
-        }
-        return web.json_response(resp, status=200)
+    last_stat = await registry.destroy_session(sess_id, owner_access_key,
+                                               domain_name=domain_name)
+    resp = {
+        'stats': last_stat,
+    }
+    return web.json_response(resp, status=200)
 
 
 @atomic
@@ -468,7 +463,7 @@ async def get_info(request: web.Request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     requester_access_key, owner_access_key = get_access_key_scopes(request)
-    log.info('GETINFO (u:{0}/{1}, k:{2})',
+    log.info('GETINFO (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, sess_id)
     try:
         await registry.increment_session_usage(sess_id, owner_access_key)
@@ -515,7 +510,7 @@ async def restart(request: web.Request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     requester_access_key, owner_access_key = get_access_key_scopes(request)
-    log.info('RESTART (u:{0}/{1}, k:{2})',
+    log.info('RESTART (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, sess_id)
     try:
         await registry.increment_session_usage(sess_id, owner_access_key)
@@ -539,7 +534,7 @@ async def execute(request: web.Request) -> web.Response:
     requester_access_key, owner_access_key = get_access_key_scopes(request)
     try:
         params = await request.json(loads=json.loads)
-        log.info('EXECUTE(u:{0}/{1}, k:{2})',
+        log.info('EXECUTE(ak:{0}/{1}, s:{2})',
                  requester_access_key, owner_access_key, sess_id)
     except json.decoder.JSONDecodeError:
         log.warning('EXECUTE: invalid/missing parameters')
@@ -619,7 +614,7 @@ async def interrupt(request: web.Request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     requester_access_key, owner_access_key = get_access_key_scopes(request)
-    log.info('INTERRUPT(u:{0}/{1}, k:{2})',
+    log.info('INTERRUPT(ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, sess_id)
     try:
         await registry.increment_session_usage(sess_id, owner_access_key)
@@ -645,7 +640,7 @@ async def complete(request: web.Request) -> web.Response:
     requester_access_key, owner_access_key = get_access_key_scopes(request)
     try:
         params = await request.json(loads=json.loads)
-        log.info('COMPLETE(u:{0}/{1}, k:{2})',
+        log.info('COMPLETE(ak:{0}/{1}, s:{2})',
                  requester_access_key, owner_access_key, sess_id)
     except json.decoder.JSONDecodeError:
         raise InvalidAPIParameters
@@ -671,7 +666,7 @@ async def upload_files(request: web.Request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     requester_access_key, owner_access_key = get_access_key_scopes(request)
-    log.info('UPLOAD_FILE (u:{0}/{1}, token:{2})',
+    log.info('UPLOAD_FILE (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, sess_id)
     try:
         await registry.increment_session_usage(sess_id, owner_access_key)
@@ -716,8 +711,9 @@ async def download_files(request: web.Request) -> web.Response:
         params = await request.json(loads=_json_loads)
         assert params.get('files'), 'no file(s) specified!'
         files = params.get('files')
-        log.info('DOWNLOAD_FILE (u:{0}/{1}, token:{2})',
-                 requester_access_key, owner_access_key, sess_id)
+        log.info('DOWNLOAD_FILE (ak:{0}/{1}, s:{2}, path:{3!r})',
+                 requester_access_key, owner_access_key, sess_id,
+                 files[0])
     except (AssertionError, json.decoder.JSONDecodeError) as e:
         log.warning('DOWNLOAD_FILE: invalid/missing parameters, {0!r}', e)
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
@@ -755,8 +751,8 @@ async def list_files(request: web.Request) -> web.Response:
         requester_access_key, owner_access_key = get_access_key_scopes(request)
         params = await request.json(loads=json.loads)
         path = params.get('path', '.')
-        log.info('LIST_FILES (u:{0}/{1}, token:{2})',
-                 requester_access_key, owner_access_key, sess_id)
+        log.info('LIST_FILES (ak:{0}/{1}, s:{2}, path:{3})',
+                 requester_access_key, owner_access_key, sess_id, path)
     except (asyncio.TimeoutError, AssertionError,
             json.decoder.JSONDecodeError) as e:
         log.warning('LIST_FILES: invalid/missing parameters, {0!r}', e)
@@ -788,7 +784,7 @@ async def get_logs(request: web.Request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     requester_access_key, owner_access_key = get_access_key_scopes(request)
-    log.info('GETLOG (u:{0}/{1}, k:{2})',
+    log.info('GETLOG (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, sess_id)
     try:
         await registry.increment_session_usage(sess_id, owner_access_key)
