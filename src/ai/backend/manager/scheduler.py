@@ -311,8 +311,8 @@ class SessionScheduler(aobject):
             async with lock:
                 await asyncio.sleep(0.5)
                 await self.schedule_impl()
-        except aioredlock.LockError:
-            log.exception('schedule(): aioredlock error')
+        except aioredlock.LockError as e:
+            log.debug('schedule(): temporary locking failure', exc_info=e)
 
     async def schedule_impl(self) -> None:
         log.debug('schedule(): triggered')
