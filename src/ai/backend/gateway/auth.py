@@ -292,7 +292,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
     if params['type'] != 'keypair':
         # other types are not implemented yet.
         raise InvalidAPIParameters('Unsupported authorization type')
-    log.info('AUTH.AUTHORIZE(d:{0[domain]}, u:{0[username]}, p:****, t:{0[type]})', params)
+    log.info('AUTH.AUTHORIZE(d:{0[domain]}, u:{0[username]}, passwd:****, type:{0[type]})', params)
     dbpool = request.app['dbpool']
     user = await check_credential(
         dbpool,
@@ -326,7 +326,9 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         t.Key('password'): t.String,
     }).allow_extra('*'))
 async def signup(request: web.Request, params: Any) -> web.Response:
-    log.info('AUTH.SIGNUP(d:{}, e:{}, p:****)', params['domain'], params['email'])
+    log_fmt = 'AUTH.SIGNUP(d:{}, email:{}, passwd:****)'
+    log_args = (params['domain'], params['email'])
+    log.info(log_fmt, *log_args)
     dbpool = request.app['dbpool']
     # Ensure user exists if CHECK_USER handler is in plugin hook.
     # TODO: Eaiser way to use plugin hooks in general? Why is it so difficult to use...
@@ -355,7 +357,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
                             return web.json_response({'title': reason}, status=403)
 
     if isinstance(checked_user, dict) and not checked_user['success']:
-        log.info('AUTH.SIGNUP: signup not allowed')
+        log.info(log_fmt + ': signup not allowed', *log_args)
         return web.json_response({'error_msg': 'signup not allowed'}, status=403)
 
     async with dbpool.acquire() as conn:
@@ -443,7 +445,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
     }))
 async def signout(request: web.Request, params: Any) -> web.Response:
     domain_name = request['user']['domain_name']
-    log.info('AUTH.SIGNOUT(d:{}, e:{})', domain_name, params['email'])
+    log.info('AUTH.SIGNOUT(d:{}, email:{})', domain_name, params['email'])
     dbpool = request.app['dbpool']
     if request['user']['email'] != params['email']:
         raise GenericForbidden('Not the account owner')

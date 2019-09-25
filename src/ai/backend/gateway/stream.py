@@ -71,6 +71,7 @@ async def stream_pty(request: web.Request) -> web.StreamResponse:
             registry.get_session(sess_id, access_key, field=extra_fields))
     except KernelNotFound:
         raise
+    log.info('STREAM_PTY(ak:{0}, s:{1})', access_key, sess_id)
 
     await asyncio.shield(registry.increment_session_usage(sess_id, access_key))
     ws = web.WebSocketResponse()
@@ -226,7 +227,7 @@ async def stream_execute(request: web.Request) -> web.StreamResponse:
     access_key = request['keypair']['access_key']
     stream_key = (sess_id, access_key)
     api_version = request['api_version']
-    log.info('STREAM_EXECUTE(u:{0}, k:{1})', access_key, sess_id)
+    log.info('STREAM_EXECUTE(ak:{0}, s:{1})', access_key, sess_id)
     try:
         _ = await asyncio.shield(registry.get_session(sess_id, access_key))  # noqa
     except KernelNotFound:
@@ -346,8 +347,8 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
     else:
         raise AppNotFound(f'{sess_id}:{service}')
 
-    log.info('STREAM_WSPROXY: {0} ==[{1}:{2}]==> {3}',
-             sess_id, service, sport['protocol'], dest)
+    log.info('STREAM_WSPROXY (ak:{}, s:{}): tunneling {}:{} to {}',
+             access_key, sess_id, service, sport['protocol'], dest)
     if sport['protocol'] == 'tcp':
         proxy_cls = TCPProxy
     elif sport['protocol'] == 'pty':
@@ -417,6 +418,7 @@ async def stream_events(request: web.Request, params: Mapping[str, Any]) -> web.
     group_name = params['group_name']
     event_queues = app['event_queues']  # type: Set[asyncio.Queue]
     my_queue = asyncio.Queue()          # type: asyncio.Queue[Tuple[str, dict, str]]
+    log.info('STREAM_EVENTS (ak:{}, s:{}, g:{})', access_key, session_id, group_name)
     if group_name == '*':
         group_id = '*'
     else:
