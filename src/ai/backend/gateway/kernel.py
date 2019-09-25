@@ -196,6 +196,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 params['domain'] = row.domain_name  # replace domain_name
                 group_id = row.id
             elif request['is_admin']:  # domain-admin can spawn container in any group in domain
+                if request['user']['domain_name'] != params['domain']:
+                    raise BackendError(f"{params['domain']}: not your domain")
                 query = (sa.select([groups.c.id])
                            .select_from(groups)
                            .where(domains.c.name == params['domain'])
