@@ -446,17 +446,12 @@ async def destroy(request: web.Request) -> web.Response:
         domain_name = request['user']['domain_name']
     log.info('DESTROY (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, sess_id)
-    try:
-        last_stat = await registry.destroy_session(sess_id, owner_access_key,
-                                                   domain_name=domain_name)
-    except BackendError:
-        log.exception('DESTROY: exception')
-        raise
-    else:
-        resp = {
-            'stats': last_stat,
-        }
-        return web.json_response(resp, status=200)
+    last_stat = await registry.destroy_session(sess_id, owner_access_key,
+                                               domain_name=domain_name)
+    resp = {
+        'stats': last_stat,
+    }
+    return web.json_response(resp, status=200)
 
 
 @atomic

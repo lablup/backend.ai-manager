@@ -348,7 +348,7 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
         raise AppNotFound(f'{sess_id}:{service}')
 
     log.info('STREAM_WSPROXY (ak:{}, s:{}): tunneling {}:{} to {}',
-             access_key, sess_id, service, sport['protocol'], dest)
+             access_key, sess_id, service, sport['protocol'], '{}:{}'.format(*dest))
     if sport['protocol'] == 'tcp':
         proxy_cls = TCPProxy
     elif sport['protocol'] == 'pty':
