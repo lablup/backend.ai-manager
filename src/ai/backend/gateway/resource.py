@@ -216,7 +216,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
                     for slot in known_slot_types.keys():
                         if slot in slots:
                             slots[slot] = min(keypair_remaining[slot], slots[slot])
-                per_sgroup[sgname][rtype] = slots.to_json()
+                per_sgroup[sgname][rtype] = slots.to_json()  # type: ignore  # it's serialization
         for slot in known_slot_types.keys():
             sgroup_remaining[slot] = min(keypair_remaining[slot], sgroup_remaining[slot])
 

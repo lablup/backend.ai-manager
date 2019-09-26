@@ -567,7 +567,7 @@ class AgentRegistry:
                         'registry': {
                             'name': sess_ctx.image_ref.registry,
                             'url': str(registry_url),
-                            **registry_creds,
+                            **registry_creds,   # type: ignore
                         },
                         'digest': image_info['digest'],
                         'repo_digest': None,

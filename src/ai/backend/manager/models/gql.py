@@ -18,7 +18,7 @@ from .image import (
 )
 from .kernel import (
     ComputeSession, ComputeSessionList,
-    ComputeWorker, KernelStatus,
+    ComputeWorker,
 )
 from .keypair import (
     KeyPair,

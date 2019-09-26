@@ -404,7 +404,7 @@ class ModifyUser(graphene.Mutation):
 
                 # Update user's group if group_ids parameter is provided.
                 if props.group_ids and o is not None:
-                    from .group import association_groups_users, groups
+                    from .group import association_groups_users, groups  # noqa
                     # Clear previous groups associated with the user.
                     query = (association_groups_users
                              .delete()
