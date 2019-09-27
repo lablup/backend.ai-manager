@@ -172,7 +172,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
     domain_name = request['user']['domain_name']
     group = params['group']
     log.info('VFOLDER.CREATE (ak:{}, vf:{}, vfh:{})',
-             access_key, params['name'], params['host'])
+             access_key, params['name'], params['folder_host'])
     # Resolve host for the new virtual folder.
     folder_host = params['folder_host']
     if not folder_host:
