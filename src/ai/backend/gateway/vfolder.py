@@ -170,7 +170,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
     user_uuid = request['user']['uuid']
     resource_policy = request['keypair']['resource_policy']
     domain_name = request['user']['domain_name']
-    group = params['group']
+    group_id_or_name = params['group']
     log.info('VFOLDER.CREATE (ak:{}, vf:{}, vfh:{})',
              access_key, params['name'], params['folder_host'])
     # Resolve host for the new virtual folder.
@@ -191,14 +191,14 @@ async def create(request: web.Request, params: Any) -> web.Response:
 
     async with dbpool.acquire() as conn:
         # Convert group name to uuid if group name is given.
-        if isinstance(group, str):
+        if isinstance(group_id_or_name, str):
             query = (sa.select([groups.c.id])
                      .select_from(groups)
                      .where(groups.c.domain_name == domain_name)
-                     .where(groups.c.name == group))
+                     .where(groups.c.name == group_id_or_name))
             group_id = await conn.scalar(query)
         else:
-            group_id = group
+            group_id = group_id_or_name
         # Check resource policy's allowed_vfolder_hosts
         allowed_hosts = await get_allowed_vfolder_hosts_by_group(conn, resource_policy,
                                                                  domain_name, group_id)
@@ -229,7 +229,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             raise VFolderAlreadyExists
 
         # Check if group exists.
-        if group and group_id is None:
+        if group_id_or_name and group_id is None:
             raise InvalidAPIParameters('no such group')
         if group_id is not None:
             if 'group' not in allowed_vfolder_types:
