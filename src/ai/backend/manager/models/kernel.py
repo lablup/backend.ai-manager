@@ -79,10 +79,6 @@ LIVE_STATUS = (
 kernels = sa.Table(
     'kernels', metadata,
     IDColumn(),
-    sa.Column('type', EnumType(SessionTypes),
-              default=SessionTypes.INTERACTIVE,
-              server_default=SessionTypes.INTERACTIVE.name,
-              nullable=False, index=True),
     sa.Column('sess_id', sa.String(length=64), unique=False, index=True),
     sa.Column('sess_type', EnumType(SessionTypes), index=True, nullable=False,
               default=SessionTypes.INTERACTIVE, server_default=SessionTypes.INTERACTIVE.name),
@@ -290,7 +286,7 @@ class SessionCommons:
             hide_agents = context['config']['manager']['hide-agents']
         return {
             'sess_id': row['sess_id'],
-            'sess_type': row['sess_id'].name,
+            'sess_type': row['sess_type'].name,
             'id': row['id'],
             'role': row['role'],
             'image': row['image'],

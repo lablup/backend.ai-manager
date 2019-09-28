@@ -514,7 +514,7 @@ class AgentRegistry:
                 'id': kernel_id,
                 'status': KernelStatus.PENDING,
                 'sess_id': sess_id,
-                'type': session_type,
+                'sess_type': session_type,
                 'role': 'master',
                 'scaling_group': scaling_group,
                 'domain_name': domain_name,
