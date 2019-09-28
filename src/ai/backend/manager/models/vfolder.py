@@ -18,6 +18,7 @@ __all__: Sequence[str] = (
     'vfolder_invitations',
     'vfolder_permissions',
     'VirtualFolder',
+    'VFolderInvitationState',
     'VFolderPermission',
     'VFolderPermissionValidator',
     'query_accessible_vfolders',
@@ -41,6 +42,16 @@ class VFolderPermissionValidator(t.Trafaret):
         if value not in ['ro', 'rw', 'wd']:
             self._failure(f'one of "ro", "rw", or "wd" required', value=value)
         return value
+
+
+class VFolderInvitationState(str, enum.Enum):
+    '''
+    Virtual Folder invitation state.
+    '''
+    PENDING = 'pending'
+    CANCELED = 'canceled'  # canceled by inviter
+    ACCEPTED = 'accepted'
+    REJECTED = 'rejected'  # rejected by invitee
 
 
 '''
@@ -89,8 +100,8 @@ vfolder_invitations = sa.Table(
               default=VFolderPermission.READ_WRITE),
     sa.Column('inviter', sa.String(length=256)),  # email
     sa.Column('invitee', sa.String(length=256), nullable=False),  # email
-    # State of the invitation: pending, canceled, accepted, rejected
-    sa.Column('state', sa.String(length=10), default='pending'),
+    sa.Column('state', EnumValueType(VFolderInvitationState),
+              default=VFolderInvitationState.PENDING),
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
     sa.Column('vfolder', GUID,
