@@ -1,5 +1,6 @@
 from collections import OrderedDict
 import enum
+from typing import Sequence
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -8,9 +9,13 @@ from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common import msgpack
 from ai.backend.common.types import BinarySize
-from .base import metadata, EnumType, Item, PaginatedList, ResourceSlotColumn
+from .base import (
+    metadata,
+    EnumType, Item, PaginatedList,
+    ResourceSlotColumn,
+)
 
-__all__ = (
+__all__: Sequence[str] = (
     'agents', 'AgentStatus',
     'AgentList', 'Agent',
 )
@@ -28,6 +33,7 @@ agents = sa.Table(
     sa.Column('id', sa.String(length=64), primary_key=True),
     sa.Column('status', EnumType(AgentStatus), nullable=False, index=True,
               default=AgentStatus.ALIVE),
+    sa.Column('status_changed', sa.DateTime(timezone=True), nullable=True),
     sa.Column('region', sa.String(length=64), index=True, nullable=False),
     sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True,
               nullable=False, server_default='default', default='default'),
@@ -52,6 +58,7 @@ class Agent(graphene.ObjectType):
 
     id = graphene.ID()
     status = graphene.String()
+    status_changed = GQLDateTime()
     region = graphene.String()
     scaling_group = graphene.String()
     available_slots = graphene.JSONString()
@@ -87,6 +94,7 @@ class Agent(graphene.ObjectType):
         return cls(
             id=row['id'],
             status=row['status'].name,
+            status_changed=row['status_changed'],
             region=row['region'],
             scaling_group=row['scaling_group'],
             available_slots=row['available_slots'].to_json(),
@@ -120,14 +128,16 @@ class Agent(graphene.ObjectType):
         live_stat = await rs.get(str(self.id), encoding=None)
         if live_stat is not None:
             live_stat = msgpack.unpackb(live_stat)
-        return float(live_stat['node']['cpu_util']['pct'])
+            return float(live_stat['node']['cpu_util']['pct'])
+        return 0
 
     async def resolve_mem_cur_bytes(self, info):
         rs = info.context['redis_stat']
         live_stat = await rs.get(str(self.id), encoding=None)
         if live_stat is not None:
             live_stat = msgpack.unpackb(live_stat)
-        return float(live_stat['node']['mem']['current'])
+            return float(live_stat['node']['mem']['current']) if live_stat else 0
+        return 0
 
     async def resolve_computations(self, info, status=None):
         '''

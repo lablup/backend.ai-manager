@@ -1,7 +1,7 @@
 import asyncio
 from collections import OrderedDict
 import enum
-from typing import Any
+from typing import Any, Sequence
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -17,7 +17,7 @@ from .base import (
 )
 
 
-__all__ = (
+__all__: Sequence[str] = (
     'users',
     'User', 'UserInput', 'ModifyUserInput', 'UserRole',
     'CreateUser', 'ModifyUser', 'DeleteUser',
@@ -57,7 +57,6 @@ users = sa.Table(
     #: Field for synchronization with external services.
     sa.Column('integration_id', sa.String(length=512)),
 
-    # Note: admins without domain_name is global admin.
     sa.Column('domain_name', sa.String(length=64),
               sa.ForeignKey('domains.name'), index=True),
     sa.Column('role', EnumValueType(UserRole), default=UserRole.USER),
@@ -161,7 +160,7 @@ class User(graphene.ObjectType):
             async for row in conn.execute(query):
                 key = row.email
                 if objs_per_key[key] is not None:
-                    objs_per_key[key].groups.append({'id': str(row.id), 'name': row.name})
+                    objs_per_key[key].groups.append(UserGroup(id=row.id, name=row.name))
                     continue
                 o = User.from_row(row)
                 objs_per_key[key] = o
@@ -183,14 +182,14 @@ class User(graphene.ObjectType):
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
             objs_per_key = OrderedDict()
-            # For each email, there is only one user.
+            # For each uuid, there is only one user.
             # So we don't build lists in objs_per_key variable.
             for k in user_ids:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
-                key = row.email
+                key = str(row.uuid)
                 if objs_per_key[key] is not None:
-                    objs_per_key[key].groups.append({'id': str(row.id), 'name': row.name})
+                    objs_per_key[key].groups.append(UserGroup(id=row.id, name=row.name))
                     continue
                 o = User.from_row(row)
                 objs_per_key[key] = o
@@ -271,7 +270,7 @@ class CreateUser(graphene.Mutation):
                         'is_admin': is_admin,
                         'resource_policy': 'default',
                         'concurrency_used': 0,
-                        'rate_limit': 1000,
+                        'rate_limit': 10000,
                         'num_queries': 0,
                         'user': o.uuid,
                     }
@@ -283,7 +282,7 @@ class CreateUser(graphene.Mutation):
                     if props.group_ids:
                         query = (sa.select([groups.c.id])
                                    .select_from(groups)
-                                   .where(groups.c.domain_name == info.context['user']['domain_name'])
+                                   .where(groups.c.domain_name == props.domain_name)
                                    .where(groups.c.id.in_(props.group_ids)))
                         result = await conn.execute(query)
                         grps = await result.fetchall()
@@ -324,7 +323,7 @@ class ModifyUser(graphene.Mutation):
             set_if_set(props, data, 'full_name')
             set_if_set(props, data, 'description')
             set_if_set(props, data, 'is_active')
-            # set_if_set('domain_name')  # prevent changing domain_name
+            set_if_set(props, data, 'domain_name')
             set_if_set(props, data, 'role')
             if 'role' in data:
                 data['role'] = UserRole(data['role'])
@@ -333,6 +332,16 @@ class ModifyUser(graphene.Mutation):
                 return cls(ok=False, msg='nothing to update', user=None)
 
             try:
+                # Get previous domain name of the user.
+                query = (sa.select([users.c.domain_name, users.c.role])
+                           .select_from(users)
+                           .where(users.c.email == email))
+                result = await conn.execute(query)
+                row = await result.fetchone()
+                prev_domain_name = row.domain_name
+                prev_role = row.role
+
+                # Update user.
                 query = (users.update().values(data).where(users.c.email == email))
                 result = await conn.execute(query)
                 if result.rowcount > 0:
@@ -341,11 +350,61 @@ class ModifyUser(graphene.Mutation):
                     o = User.from_row(await result.first())
                 else:
                     return cls(ok=False, msg='no such user', user=None)
+
+                # Update keypair if user's role is updated.
+                # NOTE: This assumes that user have only one keypair.
+                if 'role' in data and data['role'] != prev_role:
+                    from ai.backend.manager.models import keypairs
+                    query = (sa.select([keypairs.c.user,
+                                        keypairs.c.is_active,
+                                        keypairs.c.is_admin])
+                               .select_from(keypairs)
+                               .where(keypairs.c.user == o.uuid)
+                               .order_by(sa.desc(keypairs.c.is_admin))
+                               .order_by(sa.desc(keypairs.c.is_active)))
+                    result = await conn.execute(query)
+                    if data['role'] in [UserRole.SUPERADMIN, UserRole.ADMIN]:
+                        # User's becomes admin. Set the keypair as active admin.
+                        kp = await result.fetchone()
+                        kp_data = dict()
+                        if not kp.is_admin:
+                            kp_data['is_admin'] = True
+                        if not kp.is_active:
+                            kp_data['is_active'] = True
+                        if len(kp_data.keys()) > 0:
+                            query = (keypairs.update()
+                                             .values(kp_data)
+                                             .where(keypairs.c.user == o.uuid))
+                            await conn.execute(query)
+                    else:
+                        # User becomes non-admin. Make the keypair non-admin as well.
+                        # If there are multiple admin keypairs, inactivate them.
+                        rows = await result.fetchall()
+                        cnt = 0
+                        for row in rows:
+                            kp_data = dict()
+                            if cnt == 0:
+                                kp_data['is_admin'] = False
+                            elif row.is_admin and row.is_active:
+                                kp_data['is_active'] = False
+                            if len(kp_data.keys()) > 0:
+                                query = (keypairs.update()
+                                                 .values(kp_data)
+                                                 .where(keypairs.c.user == row.user))
+                                await conn.execute(query)
+                            cnt += 1
+
+                # If domain is changed and no group is associated, clear previous domain's group.
+                if prev_domain_name != o.domain_name and not props.group_ids:
+                    from .group import association_groups_users, groups
+                    query = (association_groups_users
+                             .delete()
+                             .where(association_groups_users.c.user_id == o.uuid))
+                    await conn.execute(query)
+
                 # Update user's group if group_ids parameter is provided.
                 if props.group_ids and o is not None:
-                    from .group import association_groups_users, groups
-                    # TODO: isn't it dangerous if second execution breaks,
-                    #       which results in user lost all of groups?
+                    from .group import association_groups_users, groups  # noqa
                     # Clear previous groups associated with the user.
                     query = (association_groups_users
                              .delete()

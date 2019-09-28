@@ -10,26 +10,43 @@ import json
 import logging
 import re
 import secrets
-from typing import Any
+from typing import (
+    Any, Optional,
+    Mapping, MutableMapping,
+)
+import uuid
 
 import aiohttp
 from aiohttp import web
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
 import aiotools
+from async_timeout import timeout
 from dateutil.tz import tzutc
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import true, null
 import trafaret as t
 
-from ai.backend.common.exception import UnknownImageReference
+from ai.backend.common import redis, validators as tx
+from ai.backend.common.docker import ImageRef
+from ai.backend.common.exception import (
+    UnknownImageReference,
+    AliasResolutionFailed,
+)
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common import validators as tx
+from ai.backend.common.types import (
+    AgentId, KernelId,
+    SessionTypes,
+)
 
 from .exceptions import (
-    InvalidAPIParameters, QuotaExceeded,
-    KernelNotFound, VFolderNotFound,
-    BackendError, InternalServerError)
+    InvalidAPIParameters,
+    ImageNotFound,
+    KernelNotFound,
+    KernelAlreadyExists,
+    BackendError,
+    InternalServerError,
+)
 from .auth import auth_required
 from .utils import (
     catch_unexpected, check_api_params, get_access_key_scopes,
@@ -38,14 +55,12 @@ from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (
     domains,
     association_groups_users as agus, groups,
-    keypairs, kernels, vfolders,
+    keypairs, kernels,
+    keypair_resource_policies,
     AgentStatus, KernelStatus,
-    query_accessible_vfolders,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.kernel'))
-
-grace_events = []
 
 _json_loads = functools.partial(json.loads, parse_float=Decimal)
 
@@ -68,9 +83,10 @@ creation_config_v3 = t.Dict({
     t.Key('environ', default=None): t.Null | t.Mapping(t.String, t.String),
     tx.AliasedKey(['clusterSize', 'cluster_size'], default=None):
         t.Null | t.Int[1:],
-    tx.AliasedKey(['scalingGroup', 'scaling_group'], default=None):
+    tx.AliasedKey(['scaling_group', 'scalingGroup'], default=None):
         t.Null | t.String,
     t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
+    t.Key('resource_opts', default=None): t.Null | t.Mapping(t.String, t.Any),
 })
 
 
@@ -78,47 +94,107 @@ creation_config_v3 = t.Dict({
 @auth_required
 @check_api_params(
     t.Dict({
-        t.Key('clientSessionToken') >> 'sess_id': t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
+        t.Key('clientSessionToken') >> 'sess_id':
+            t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
         tx.AliasedKey(['image', 'lang']): t.String,
+        tx.AliasedKey(['type', 'sessionType'], default='interactive') >> 'sess_type':
+            tx.Enum(SessionTypes),
         tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
         tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
         t.Key('config', default=dict): t.Mapping(t.String, t.Any),
         t.Key('tag', default=None): t.Null | t.String,
+        t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.Bool | t.StrBool,
+        t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
+        t.Key('reuseIfExists', default=True) >> 'reuse': t.Bool | t.StrBool,
     }),
     loads=_json_loads)
 async def create(request: web.Request, params: Any) -> web.Response:
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
-    requester_access_key, owner_access_key = get_access_key_scopes(request)
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
     requester_uuid = request['user']['uuid']
-    log.info('GET_OR_CREATE (u:{0}/{1}, image:{2}, tag:{3}, token:{4})',
-             requester_access_key, owner_access_key,
-             params['image'], params['tag'], params['sess_id'])
-    resp = {}
-    try:
-        resource_policy = request['keypair']['resource_policy']
-        async with request.app['dbpool'].acquire() as conn, conn.begin():
-            if requester_access_key != owner_access_key:
-                query = (sa.select([keypairs.c.user])
-                           .select_from(keypairs)
-                           .where(keypairs.c.access_key == owner_access_key))
-                owner_uuid = await conn.scalar(query)
-            else:
-                owner_uuid = requester_uuid
+    log.info('GET_OR_CREATE (ak:{0}/{1}, img:{2}, s:{3})',
+             requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*',
+             params['image'], params['sess_id'])
 
-            query = (sa.select([keypairs.c.concurrency_used], for_update=True)
-                       .select_from(keypairs)
-                       .where(keypairs.c.access_key == owner_access_key))
-            concurrency_used = await conn.scalar(query)
-            log.debug('access_key: {0} ({1} / {2})',
-                      owner_access_key, concurrency_used,
-                      resource_policy['max_concurrent_sessions'])
-            if concurrency_used >= resource_policy['max_concurrent_sessions']:
-                raise QuotaExceeded
-            query = (sa.update(keypairs)
-                       .values(concurrency_used=keypairs.c.concurrency_used + 1)
-                       .where(keypairs.c.access_key == owner_access_key))
-            await conn.execute(query)
+    dbpool = request.app['dbpool']
+    registry = request.app['registry']
+    resp: MutableMapping[str, Any] = {}
+
+    # Resolve the image reference.
+    try:
+        requested_image_ref = \
+            await ImageRef.resolve_alias(params['image'], request.app['config_server'].etcd)
+        async with dbpool.acquire() as conn, conn.begin():
+            query = (sa.select([domains.c.allowed_docker_registries])
+                       .select_from(domains)
+                       .where(domains.c.name == params['domain']))
+            allowed_registries = await conn.scalar(query)
+            if requested_image_ref.registry not in allowed_registries:
+                raise AliasResolutionFailed
+    except AliasResolutionFailed:
+        raise ImageNotFound
+
+    # Check existing (owner_access_key, session) kernel instance
+    try:
+        # NOTE: We can reuse the session IDs of TERMINATED sessions only.
+        # NOTE: Reusing a session in the PENDING status returns an empty value in service_ports.
+        kern = await registry.get_session(params['sess_id'], owner_access_key)
+        running_image_ref = ImageRef(kern['image'], [kern['registry']])
+        if running_image_ref != requested_image_ref:
+            raise KernelAlreadyExists
+        create = False
+    except KernelNotFound:
+        create = True
+    if not create:
+        if not params['reuse']:
+            raise KernelAlreadyExists
+        return web.json_response({
+            'kernelId': str(kern.sess_id),  # legacy naming
+            'status': kern.status.name,
+            'service_ports': kern.service_ports,
+            'created': False,
+        }, status=200)
+
+    try:
+        start_event = asyncio.Event()
+        kernel_id: Optional[KernelId] = None
+
+        def interrupt_wait(ctx: Any, event_name: str, agent_id: AgentId,
+                           started_kernel_id: str, *args, **kwargs) -> None:
+            nonlocal start_event, kernel_id
+            if kernel_id is not None and started_kernel_id == str(kernel_id):
+                start_event.set()
+
+        start_handler = request.app['event_dispatcher'].subscribe('kernel_started', None,
+                                                                  interrupt_wait)
+        term_handler = request.app['event_dispatcher'].subscribe('kernel_terminated', None,
+                                                                 interrupt_wait)
+        cancel_handler = request.app['event_dispatcher'].subscribe('kernel_cancelled', None,
+                                                                   interrupt_wait)
+
+        async with dbpool.acquire() as conn, conn.begin():
+            if requester_access_key != owner_access_key:
+                # Admin is creating sessions for another user.
+                query = (
+                    sa.select([keypairs.c.user, keypairs.c.resource_policy])
+                    .select_from(keypairs)
+                    .where(keypairs.c.access_key == owner_access_key)
+                )
+                result = await conn.execute(query)
+                row = await result.fetchone()
+                owner_uuid = row['user']
+                query = (
+                    sa.select([keypair_resource_policies])
+                    .select_from(keypair_resource_policies)
+                    .where(keypair_resource_policies.c.name == row['resource_policy'])
+                )
+                result = await conn.execute(query)
+                resource_policy = await result.fetchone()
+            else:
+                # Normal case when the user is creating her/his own session.
+                owner_uuid = requester_uuid
+                resource_policy = request['keypair']['resource_policy']
 
             if request['is_superadmin']:  # superadmin can spawn container in any domain and group
                 query = (sa.select([groups.c.domain_name, groups.c.id])
@@ -132,6 +208,20 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 if row is None:
                     raise BackendError(f"{params['group']}: no such group in domain {params['domain']}")
                 params['domain'] = row.domain_name  # replace domain_name
+                group_id = row.id
+            elif request['is_admin']:  # domain-admin can spawn container in any group in domain
+                if request['user']['domain_name'] != params['domain']:
+                    raise BackendError(f"{params['domain']}: not your domain")
+                query = (sa.select([groups.c.id])
+                           .select_from(groups)
+                           .where(domains.c.name == params['domain'])
+                           .where(domains.c.is_active)
+                           .where(groups.c.name == params['group'])
+                           .where(groups.c.is_active))
+                rows = await conn.execute(query)
+                row = await rows.fetchone()
+                if row is None:
+                    raise BackendError(f"{params['group']}: no such group in domain {params['domain']}")
                 group_id = row.id
             else:  # check if the group_name is associated with one of user's group.
                 j = agus.join(groups, agus.c.group_id == groups.c.id)
@@ -158,54 +248,60 @@ async def create(request: web.Request, params: Any) -> web.Response:
         else:
             raise InvalidAPIParameters('API version not supported')
 
-        # sanity check for vfolders
-        try:
-            kernel = None
-            allowed_vfolder_types = ['user', 'group']
-            # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
-            if creation_config['mounts']:
-                mount_details = []
-                matched_mounts = set()
-                matched_vfolders = await query_accessible_vfolders(
-                    conn, owner_uuid,
-                    allowed_vfolder_types=allowed_vfolder_types,
-                    extra_vf_conds=(vfolders.c.name.in_(creation_config['mounts'])))
-                for item in matched_vfolders:
-                    if item['group'] is not None and item['group'] != str(group_id):
-                        # User's accessible group vfolders should not be mounted
-                        # if not belong to the execution kernel.
-                        continue
-                    matched_mounts.add(item['name'])
-                    mount_details.append((
-                        item['name'],
-                        item['host'],
-                        item['id'].hex,
-                        item['permission'].value,
-                    ))
-                if set(creation_config['mounts']) > matched_mounts:
-                    raise VFolderNotFound
-                creation_config['mounts'] = mount_details
+        kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
+            params['sess_id'], owner_access_key,
+            requested_image_ref,
+            params['sess_type'],
+            creation_config,
+            resource_policy,
+            domain_name=params['domain'],
+            group_id=group_id,
+            user_uuid=owner_uuid,
+            user_role=request['user']['role'],
+            session_tag=params.get('tag', None)))
+        resp['kernelId'] = str(params['sess_id'])  # legacy naming
+        resp['status'] = 'PENDING'
+        resp['servicePorts'] = []
+        resp['created'] = True
 
-            kernel, created = await request.app['registry'].get_or_create_session(
-                params['sess_id'], owner_access_key,
-                params['image'], creation_config,
-                resource_policy,
-                domain_name=params['domain'], group_id=group_id, user_uuid=owner_uuid,
-                tag=params.get('tag', None))
-            resp['kernelId'] = str(kernel['sess_id'])
-            resp['servicePorts'] = kernel['service_ports']
-            resp['created'] = bool(created)
-        except Exception:
-            # Restore concurrency_used if exception occurs before kernel creation
-            if kernel is None:
+        if not params['enqueue_only']:
+            request.app['pending_waits'].add(asyncio.Task.current_task())
+            max_wait = params['max_wait_seconds']
+            try:
+                if max_wait > 0:
+                    with timeout(max_wait):
+                        await start_event.wait()
+                else:
+                    await start_event.wait()
+            except asyncio.TimeoutError:
+                resp['status'] = 'TIMEOUT'
+            else:
+                await asyncio.sleep(0.5)
                 async with request.app['dbpool'].acquire() as conn, conn.begin():
                     query = (
-                        sa.update(keypairs)
-                        .values(concurrency_used=keypairs.c.concurrency_used - 1)
-                        .where(keypairs.c.access_key == owner_access_key))
-                    await conn.execute(query)
-            # Bubble up
-            raise
+                        sa.select([
+                            kernels.c.status,
+                            kernels.c.service_ports,
+                        ])
+                        .select_from(kernels)
+                        .where(kernels.c.id == kernel_id)
+                    )
+                    result = await conn.execute(query)
+                    row = await result.first()
+                    if row['status'] == KernelStatus.RUNNING:
+                        resp['status'] = 'RUNNING'
+                        resp['servicePorts'] = [
+                            {
+                                'name': item['name'],
+                                'protocol': item['protocol'],
+                            }
+                            for item in row['service_ports']
+                        ]
+                    else:
+                        resp['status'] = row['status'].name
+
+    except asyncio.CancelledError:
+        raise
     except BackendError:
         log.exception('GET_OR_CREATE: exception')
         raise
@@ -215,41 +311,59 @@ async def create(request: web.Request, params: Any) -> web.Response:
         request.app['error_monitor'].capture_exception()
         log.exception('GET_OR_CREATE: unexpected error!')
         raise InternalServerError
+    finally:
+        request.app['pending_waits'].discard(asyncio.Task.current_task())
+        request.app['event_dispatcher'].unsubscribe('kernel_cancelled', cancel_handler)
+        request.app['event_dispatcher'].unsubscribe('kernel_terminated', term_handler)
+        request.app['event_dispatcher'].unsubscribe('kernel_started', start_handler)
     return web.json_response(resp, status=201)
 
 
-async def kernel_terminated(app, agent_id, kernel_id, reason, _reserved_arg):
-    try:
-        kernel = await app['registry'].get_kernel(
-            kernel_id, (kernels.c.role, kernels.c.status), allow_stale=True)
-    except KernelNotFound:
-        return
-    if kernel.status != KernelStatus.RESTARTING:
-        await app['registry'].mark_kernel_terminated(kernel_id, reason)
+async def kernel_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
+                           raw_kernel_id: str,
+                           reason: str = None,
+                           exit_code: int = None) -> None:
+    kernel_id = uuid.UUID(raw_kernel_id)
+    registry = app['registry']
+    if event_name == 'kernel_preparing':
+        await registry.set_kernel_status(kernel_id, KernelStatus.PREPARING, reason)
+    elif event_name == 'kernel_pulling':
+        await registry.set_kernel_status(kernel_id, KernelStatus.PULLING, reason)
+    elif event_name == 'kernel_creating':
+        await registry.set_kernel_status(kernel_id, KernelStatus.PREPARING, reason)
+    elif event_name == 'kernel_started':
+        # The create_kernel() RPC caller will set the "RUNNING" status.
+        pass
+    elif event_name == 'kernel_terminating':
+        # The destroy_kernel() API handler will set the "TERMINATING" status.
+        pass
+    elif event_name == 'kernel_terminated':
+        await registry.mark_kernel_terminated(kernel_id, reason, exit_code)
 
 
-async def instance_started(app, agent_id):
-    # TODO: make feedback to our auto-scaler
-    await app['registry'].update_instance(agent_id, {
-        'status': AgentStatus.ALIVE,
-    })
-
-
-async def instance_terminated(app, agent_id, reason):
-    if reason == 'agent-lost':
-        await app['registry'].mark_agent_terminated(agent_id, AgentStatus.LOST)
-    elif reason == 'agent-restart':
-        log.info('agent@{0} restarting for maintenance.', agent_id)
+async def instance_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
+                             reason: str = None) -> None:
+    if event_name == 'instance_started':
+        log.info('instance_lifecycle: ag:{0} joined ({1})', agent_id, reason)
         await app['registry'].update_instance(agent_id, {
-            'status': AgentStatus.RESTARTING,
+            'status': AgentStatus.ALIVE,
         })
-    else:
-        # On normal instance termination, kernel_terminated events were already
-        # triggered by the agent.
-        await app['registry'].mark_agent_terminated(agent_id, AgentStatus.TERMINATED)
+    elif event_name == 'instance_terminated':
+        if reason == 'agent-lost':
+            await app['registry'].mark_agent_terminated(agent_id, AgentStatus.LOST)
+        elif reason == 'agent-restart':
+            log.info('agent@{0} restarting for maintenance.', agent_id)
+            await app['registry'].update_instance(agent_id, {
+                'status': AgentStatus.RESTARTING,
+            })
+        else:
+            # On normal instance termination, kernel_terminated events were already
+            # triggered by the agent.
+            await app['registry'].mark_agent_terminated(agent_id, AgentStatus.TERMINATED)
 
 
-async def instance_heartbeat(app, agent_id, agent_info):
+async def instance_heartbeat(app: web.Application, agent_id: AgentId, event_name: str,
+                             agent_info: Mapping[str, Any]) -> None:
     await app['registry'].handle_heartbeat(agent_id, agent_info)
 
 
@@ -258,17 +372,23 @@ async def check_agent_lost(app, interval):
     try:
         now = datetime.now(tzutc())
         timeout = timedelta(seconds=app['config']['manager']['heartbeat-timeout'])
-        async for agent_id, prev in app['redis_live'].ihscan('last_seen'):
-            prev = datetime.fromtimestamp(float(prev), tzutc())
-            if now - prev > timeout:
-                await app['event_dispatcher'].dispatch('instance_terminated',
-                                                       agent_id, ('agent-lost', ))
+
+        async def _check_impl():
+            async for agent_id, prev in app['redis_live'].ihscan('last_seen'):
+                prev = datetime.fromtimestamp(float(prev), tzutc())
+                if now - prev > timeout:
+                    await app['event_dispatcher'].produce_event(
+                        'instance_terminated', ('agent-lost', ),
+                        agent_id=agent_id)
+
+        await redis.execute_with_retries(lambda: _check_impl())
     except asyncio.CancelledError:
         pass
 
 
 # NOTE: This event is ignored during the grace period.
-async def instance_stats(app, agent_id, kern_stats):
+async def instance_stats(app: web.Application, agent_id: AgentId, event_name: str,
+                         kern_stats) -> None:
     await app['registry'].handle_stats(agent_id, kern_stats)
 
 
@@ -335,19 +455,19 @@ async def stats_monitor_update_timer(app):
 async def destroy(request: web.Request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    requester_access_key, owner_access_key = get_access_key_scopes(request)
-    log.info('DESTROY (u:{0}/{1}, k:{2})',
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
+    domain_name = None
+    if requester_access_key != owner_access_key and \
+            not request['is_superadmin'] and request['is_admin']:
+        domain_name = request['user']['domain_name']
+    log.info('DESTROY (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, sess_id)
-    try:
-        last_stat = await registry.destroy_session(sess_id, owner_access_key)
-    except BackendError:
-        log.exception('DESTROY: exception')
-        raise
-    else:
-        resp = {
-            'stats': last_stat,
-        }
-        return web.json_response(resp, status=200)
+    last_stat = await registry.destroy_session(sess_id, owner_access_key,
+                                               domain_name=domain_name)
+    resp = {
+        'stats': last_stat,
+    }
+    return web.json_response(resp, status=200)
 
 
 @atomic
@@ -358,8 +478,8 @@ async def get_info(request: web.Request) -> web.Response:
     resp = {}
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    requester_access_key, owner_access_key = get_access_key_scopes(request)
-    log.info('GETINFO (u:{0}/{1}, k:{2})',
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
+    log.info('GETINFO (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, sess_id)
     try:
         await registry.increment_session_usage(sess_id, owner_access_key)
@@ -405,8 +525,8 @@ async def get_info(request: web.Request) -> web.Response:
 async def restart(request: web.Request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    requester_access_key, owner_access_key = get_access_key_scopes(request)
-    log.info('RESTART (u:{0}/{1}, k:{2})',
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
+    log.info('RESTART (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, sess_id)
     try:
         await registry.increment_session_usage(sess_id, owner_access_key)
@@ -427,10 +547,10 @@ async def execute(request: web.Request) -> web.Response:
     resp = {}
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    requester_access_key, owner_access_key = get_access_key_scopes(request)
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
     try:
         params = await request.json(loads=json.loads)
-        log.info('EXECUTE(u:{0}/{1}, k:{2})',
+        log.info('EXECUTE(ak:{0}/{1}, s:{2})',
                  requester_access_key, owner_access_key, sess_id)
     except json.decoder.JSONDecodeError:
         log.warning('EXECUTE: invalid/missing parameters')
@@ -509,8 +629,8 @@ async def execute(request: web.Request) -> web.Response:
 async def interrupt(request: web.Request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    requester_access_key, owner_access_key = get_access_key_scopes(request)
-    log.info('INTERRUPT(u:{0}/{1}, k:{2})',
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
+    log.info('INTERRUPT(ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, sess_id)
     try:
         await registry.increment_session_usage(sess_id, owner_access_key)
@@ -533,10 +653,10 @@ async def complete(request: web.Request) -> web.Response:
     }
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    requester_access_key, owner_access_key = get_access_key_scopes(request)
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
     try:
         params = await request.json(loads=json.loads)
-        log.info('COMPLETE(u:{0}/{1}, k:{2})',
+        log.info('COMPLETE(ak:{0}/{1}, s:{2})',
                  requester_access_key, owner_access_key, sess_id)
     except json.decoder.JSONDecodeError:
         raise InvalidAPIParameters
@@ -561,8 +681,8 @@ async def upload_files(request: web.Request) -> web.Response:
     reader = await request.multipart()
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    requester_access_key, owner_access_key = get_access_key_scopes(request)
-    log.info('UPLOAD_FILE (u:{0}/{1}, token:{2})',
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
+    log.info('UPLOAD_FILE (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, sess_id)
     try:
         await registry.increment_session_usage(sess_id, owner_access_key)
@@ -603,12 +723,13 @@ async def download_files(request: web.Request) -> web.Response:
     try:
         registry = request.app['registry']
         sess_id = request.match_info['sess_id']
-        requester_access_key, owner_access_key = get_access_key_scopes(request)
+        requester_access_key, owner_access_key = await get_access_key_scopes(request)
         params = await request.json(loads=_json_loads)
         assert params.get('files'), 'no file(s) specified!'
         files = params.get('files')
-        log.info('DOWNLOAD_FILE (u:{0}/{1}, token:{2})',
-                 requester_access_key, owner_access_key, sess_id)
+        log.info('DOWNLOAD_FILE (ak:{0}/{1}, s:{2}, path:{3!r})',
+                 requester_access_key, owner_access_key, sess_id,
+                 files[0])
     except (AssertionError, json.decoder.JSONDecodeError) as e:
         log.warning('DOWNLOAD_FILE: invalid/missing parameters, {0!r}', e)
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
@@ -643,16 +764,16 @@ async def download_files(request: web.Request) -> web.Response:
 async def list_files(request: web.Request) -> web.Response:
     try:
         sess_id = request.match_info['sess_id']
-        requester_access_key, owner_access_key = get_access_key_scopes(request)
+        requester_access_key, owner_access_key = await get_access_key_scopes(request)
         params = await request.json(loads=json.loads)
         path = params.get('path', '.')
-        log.info('LIST_FILES (u:{0}/{1}, token:{2})',
-                 requester_access_key, owner_access_key, sess_id)
+        log.info('LIST_FILES (ak:{0}/{1}, s:{2}, path:{3})',
+                 requester_access_key, owner_access_key, sess_id, path)
     except (asyncio.TimeoutError, AssertionError,
             json.decoder.JSONDecodeError) as e:
         log.warning('LIST_FILES: invalid/missing parameters, {0!r}', e)
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
-    resp = {}
+    resp: MutableMapping[str, Any] = {}
     try:
         registry = request.app['registry']
         await registry.increment_session_usage(sess_id, owner_access_key)
@@ -678,8 +799,8 @@ async def get_logs(request: web.Request) -> web.Response:
     resp = {'result': {'logs': ''}}
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    requester_access_key, owner_access_key = get_access_key_scopes(request)
-    log.info('GETLOG (u:{0}/{1}, k:{2})',
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
+    log.info('GETLOG (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, sess_id)
     try:
         await registry.increment_session_usage(sess_id, owner_access_key)
@@ -693,23 +814,27 @@ async def get_logs(request: web.Request) -> web.Response:
 
 async def init(app: web.Application):
     event_dispatcher = app['event_dispatcher']
-    event_dispatcher.add_handler('kernel_terminated', app, kernel_terminated)
-    event_dispatcher.add_handler('instance_started', app, instance_started)
-    event_dispatcher.add_handler('instance_terminated', app, instance_terminated)
-    event_dispatcher.add_handler('instance_heartbeat', app, instance_heartbeat)
-    event_dispatcher.add_handler('instance_stats', app, instance_stats)
+    event_dispatcher.consume('kernel_preparing', app, kernel_lifecycle)
+    event_dispatcher.consume('kernel_pulling', app, kernel_lifecycle)
+    event_dispatcher.consume('kernel_creating', app, kernel_lifecycle)
+    event_dispatcher.consume('kernel_started', app, kernel_lifecycle)
+    event_dispatcher.consume('kernel_terminating', app, kernel_lifecycle)
+    event_dispatcher.consume('kernel_terminated', app, kernel_lifecycle)
+    event_dispatcher.consume('instance_started', app, instance_lifecycle)
+    event_dispatcher.consume('instance_terminated', app, instance_lifecycle)
+    event_dispatcher.consume('instance_heartbeat', app, instance_heartbeat)
+    event_dispatcher.consume('instance_stats', app, instance_stats)
+
+    app['pending_waits'] = set()
 
     # Scan ALIVE agents
-    if app['pidx'] == 0:
-        log.debug('initializing agent status checker at proc:{0}', app['pidx'])
-        app['agent_lost_checker'] = aiotools.create_timer(
-            functools.partial(check_agent_lost, app), 1.0)
+    app['agent_lost_checker'] = aiotools.create_timer(
+        functools.partial(check_agent_lost, app), 1.0)
 
 
 async def shutdown(app: web.Application):
-    if app['pidx'] == 0:
-        app['agent_lost_checker'].cancel()
-        await app['agent_lost_checker']
+    app['agent_lost_checker'].cancel()
+    await app['agent_lost_checker']
 
     checked_tasks = ('kernel_agent_event_collector', 'kernel_ddtimer')
     for tname in checked_tasks:
@@ -717,6 +842,9 @@ async def shutdown(app: web.Application):
         if t and not t.done():
             t.cancel()
             await t
+
+    for task in app['pending_waits']:
+        task.cancel()
 
 
 def create_app(default_cors_options):

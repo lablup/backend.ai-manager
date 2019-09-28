@@ -1,5 +1,6 @@
 from collections import OrderedDict
 import logging
+from typing import Sequence
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -8,7 +9,6 @@ from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
-from . import keypairs
 from .base import (
     metadata, BigInt, EnumType, ResourceSlotColumn,
     privileged_mutation,
@@ -16,11 +16,12 @@ from .base import (
     simple_db_mutate_returning_item,
     set_if_set,
 )
+from .keypair import keypairs
 from .user import UserRole
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.models'))
 
-__all__ = (
+__all__: Sequence[str] = (
     'keypair_resource_policies',
     'KeyPairResourcePolicy',
     'DefaultForUnspecified',
@@ -64,7 +65,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
     allowed_vfolder_hosts = graphene.List(lambda: graphene.String)
 
     @classmethod
-    def from_row(cls, context, row):
+    def from_row(cls, row):
         if row is None:
             return None
         return cls(
@@ -87,7 +88,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
                        .select_from(keypair_resource_policies))
             result = await conn.execute(query)
             rows = await result.fetchall()
-            return [cls.from_row(context, r) for r in rows]
+            return [cls.from_row(r) for r in rows]
 
     @classmethod
     async def load_all_user(cls, context, access_key):
@@ -107,7 +108,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
                        .where((keypairs.c.user_id == user_id)))
             result = await conn.execute(query)
             rows = await result.fetchall()
-            return [cls.from_row(context, r) for r in rows]
+            return [cls.from_row(r) for r in rows]
 
     @classmethod
     async def batch_load_by_name(cls, context, names):
@@ -120,7 +121,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
             for k in names:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
-                o = cls.from_row(context, row)
+                o = cls.from_row(row)
                 objs_per_key[row.name] = o
         return tuple(objs_per_key.values())
 
@@ -141,7 +142,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
             for k in names:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
-                o = cls.from_row(context, row)
+                o = cls.from_row(row)
                 objs_per_key[row.name] = o
         return tuple(objs_per_key.values())
 
@@ -158,7 +159,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
                        .order_by(keypair_resource_policies.c.name))
             objs_per_key = OrderedDict()
             async for row in conn.execute(query):
-                o = cls.from_row(context, row)
+                o = cls.from_row(row)
                 objs_per_key[row.name] = o
         return tuple(objs_per_key.values())
 

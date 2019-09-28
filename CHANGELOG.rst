@@ -1,6 +1,175 @@
 Changes
 =======
 
+19.09.0rc3 (2019-09-25)
+-----------------------
+
+* FIX: status field parsing in legacy GraphQL queries (non-paginated compute_sessions)
+
+* FIX: scaling group's remaining resource must be capped by the user's keypair resource limits.
+
+* FIX: Sign-up plugin hook check
+
+19.09.0rc2 (2019-09-24)
+-----------------------
+
+* FIX: Corruption of kernels.concurrency_used in specific scheduling conditions
+
+* IMPROVE: Terminating PENDING sessions and permanent scheduling failures makes the sessions
+  to be CANCELLED.
+
+* NEW: Support specifying multiple status values to compute_sessions and compute_session_list
+  GraphQL queries so that clients can display sessions of multiple statuses in a single view.
+
+  - Since GraphQL does not allow union of scalar types, use comma-separated string in the
+    status field of those queries. This keeps the backward compatibility.
+
+  - Now the default ordering is "greatest(created_at, terminated_at, status_changed)" in the
+    descending order.  "alembic upgrade" is required to create appropriate database indexes.
+
+* FIX: Missing generation of "kernel_cancelled" and "kernel_terminating" events
+
+* FIX: Server hang-up when shutting down with clients to wait for PENDING sessions to start up
+
+* FIX: Missing "reason" field when users terminate sessions
+
+19.09.0rc1 (2019-09-23)
+-----------------------
+
+* NEW: Support for high availability (#125, #192) with zero reconfiguration when fail-over
+  of the manager.
+
+  - The manager may have multiple nodes now. Adding/removing nodes just work, as long as
+    the client configurations for "multi-endpoints" get updated accordingly.
+
+  - There is no central master of the manager fleet. All manager instances are equivalent.
+
+  - Intermittent disruptions over Redis connections (e.g., due to fail-over of Redis master)
+    no longer make both manager/agent to hang up or go into undefined states.
+
+* NEW: Job queueing (#192, #180, #189), so that excessive job execution no longer raises
+  errors but those requests are "queued".
+  The current scheduling is FIFO but more scheduling options will be added in the future.
+
+  - Now the kernels have PENDING and CANCELLED status.  Any permanent errors before RUNNING status
+    makes the kernel to transition into the CANCELLED status.
+
+  - Each status change is recorded with explicit timestamp and a human-readable "status_info" which
+    can be retrieved by clints via GQL.
+
+* NEW: event monitoring API for session lifecycles so that now clients can get to know
+  whether the session is pulling a new docker image or just hanging up (#84, #110)
+
+* Various bug fixes related to role/active checks and updates in user maangement (#193, #194 and many
+  one-off commits)
+
+19.09.0b14 (2019-09-17)
+-----------------------
+
+* NEW: A superadmin API to list all vfolder hosts and docker registires.
+
+* UPDATE: resource/check-presets API is updated to return per-scaling-group remainings and
+  group/domain resource limits. (#184)
+
+* UPDATE: Compute session GQL queries now include the ``resource_opts`` field.
+
+* Minor bug fixes.
+
+19.09.0b13 (2019-09-09)
+-----------------------
+
+* NEW: Add option to specify the amount of shared memory via ``resource_opts`` parameter
+  in the kernelc reation config API (lablup/backend.ai#52)
+
+* UPDATE: Enhance vfolder download APIs to support ranged HTTP requests for partial downloads and
+  fix the browser-side fetch() API content decoding error due to the default behavior of
+  aiohttp.web.FileResponse implementation.
+
+* Alembic migrations are now distributed as a part of the source and wheel package.
+  Set ``script_location = ai.backend.manager.models:alembic`` in your alembic.ini configuration file.
+
+* Various bug fixes for GQL APIs and statistics.
+
+* Update dependencies including aiohttp 3.6, wheel, twine, setuptools, and typing-extensions.
+
+19.09.0b12 (2019-09-03)
+-----------------------
+
+* Various bug fixes for GQL scoped permission handling
+
+* NEW: bugx fixes and mount option support for vfolder mount API (#183)
+
+19.09.0b11 (2019-08-30)
+-----------------------
+
+* NEW: superadmin APIs for mount/unmount vfolder hosts (#183)
+
+* FIX: resource usage API validation error when it is used with URL query strings
+
+19.09.0b10 (2019-08-27)
+-----------------------
+
+* FIX: plain users could see other users' sessions due to a missing
+  access-key filtering condition in the GQL loader implementation
+  for ``compute_sessions`` query.
+
+* FIX: an unexpected error at creating a new user when there is no default group.
+  Changed to add the user to the default group only when it exists.
+
+* Add ``mem_allocated`` field to group usage statistics
+
+* Various bug fixes for config/get and config/set APIs
+
+19.09.0b9 (2019-08-21)
+----------------------
+
+* Minor fix in logging of singup/singout request handlers
+
+19.09.0b8 (2019-08-19)
+----------------------
+
+* FIX: Mitigate race condition when checking keypair/group/domain resource limits (#180)
+
+  - KNOWN ISSUE: The current fix only covers a single-process deployment of the manager.
+
+* NEW: Introduce "is_installed" filtering condition to the "images" GraphQL query.
+
+* NEW: Watcher APIs to control agents remotely (#179)
+
+* Pin the pyzmq version 18.1.0 (lablup/backend.ai#47)
+
+* NEW: Support for Harbor registry (#177)
+
+19.09.0b7 (2019-08-14)
+----------------------
+
+* Update resource stat API to provide extra unit hints. (#176)
+
+19.09.0b6 (2019-08-14)
+----------------------
+
+* NEW: Add option to change underlying event loop implementation.
+
+* Updated signup/login hook support.
+
+* CHANGE: In the response of kernel creation API, service port information only expose
+  the name and protocol pairs, since port numbers are useless in the client-side.
+
+19.09.0b5 (2019-08-05)
+----------------------
+
+* NEW: Scaling groups to partition agents into differently scheduled groups (#73, #167)
+
+* NEW: Image lists are now filtered by docker registries allowed for each domain. (#170)
+
+* NEW: "/auth/role" API to get the current user's role/privilege information
+
+* CHANGE: GraphQL queries are now unified for all levels of users!
+
+  - The allow/deny decision is made per each query and mutation.
+
+* FIX: ``refresh_session()`` was not called to keep service port connections.
+
 19.06.0b4 (2019-07-24)
 ----------------------
 
@@ -24,6 +193,20 @@ Changes
 ----------------------
 
 * Add the user signup endpoint and related plugins support
+
+19.03.4 (2019-08-14)
+--------------------
+
+- Fix refresh_session() callback not invoked properly due to type mismatch of the function returned
+  by functools.partial against a coroutine function.
+
+- Fix admin_required() permission check decorator.
+
+19.03.3 (2019-07-17)
+--------------------
+
+- CHANGE/BACKPORT: Accept typeless resource slots for resource policy configurations
+  (lablup/backend.ai-common#7)
 
 19.06.0b1 (2019-07-14)
 ----------------------

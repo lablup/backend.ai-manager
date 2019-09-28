@@ -10,14 +10,22 @@ import numbers
 import re
 import time
 import traceback
-from typing import Any, Callable
+from typing import (
+    Any, Union,
+    Awaitable, Callable, Hashable,
+    MutableMapping,
+    Tuple,
+)
 
 from aiohttp import web
 import trafaret as t
+import sqlalchemy as sa
 
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.types import AccessKey
 
 from .exceptions import InvalidAPIParameters, GenericForbidden, QueryNotImplemented
+from ..manager.models import keypairs
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.utils'))
 
@@ -30,22 +38,35 @@ def method_placeholder(orig_method):
     return _handler
 
 
-def get_access_key_scopes(request):
-    assert request['is_authorized'], \
-           'Only authorized requests may have access key scopes'
+async def get_access_key_scopes(request: web.Request) -> Tuple[AccessKey, AccessKey]:
+    if not request['is_authorized']:
+        raise GenericForbidden('Only authorized requests may have access key scopes.')
     requester_access_key = request['keypair']['access_key']
     owner_access_key = request.query.get('owner_access_key', None)
-    if owner_access_key is not None:
-        if owner_access_key != requester_access_key and not request['is_admin']:
+    if owner_access_key is not None and owner_access_key != requester_access_key:
+        async with request.app['dbpool'].acquire() as conn:
+            query = (
+                sa.select([keypairs.c.domain])
+                .select_from(keypairs)
+                .where(keypairs.c.access_key == owner_access_key)
+            )
+            result = await conn.execute(query)
+            owner_access_key_domain = await result.scalar()
+        if request['is_superadmin']:
+            pass
+        elif request['is_admin'] and request['domain'] == owner_access_key_domain:
+            pass
+        else:
             raise GenericForbidden(
-                'Only admins can access or control sessions owned by others.')
+                'Only admins can perform operations on behalf of other users.')
         return requester_access_key, owner_access_key
     return requester_access_key, requester_access_key
 
 
-def check_api_params(checker: t.Trafaret, loads: Callable = None) -> Any:
+def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None) -> Any:
 
-    def wrap(handler: Callable[[web.Request, Any], web.Response]):
+    # FIXME: replace ... with [web.Request, Any...] in the future mypy
+    def wrap(handler: Callable[..., Awaitable[web.Response]]):
 
         @functools.wraps(handler)
         async def wrapped(request: web.Request, *args, **kwargs) -> web.Response:
@@ -65,6 +86,13 @@ def check_api_params(checker: t.Trafaret, loads: Callable = None) -> Any:
         return wrapped
 
     return wrap
+
+
+def trim_text(value: str, maxlen: int) -> str:
+    if len(value) <= maxlen:
+        return value
+    value = value[:maxlen - 3] + '...'
+    return value
 
 
 class _Infinity(numbers.Number):
@@ -87,6 +115,9 @@ class _Infinity(numbers.Number):
     def __int__(self):
         return 0xffff_ffff_ffff_ffff  # a practical 64-bit maximum
 
+    def __hash__(self):
+        return hash(self)
+
 
 numbers.Number.register(_Infinity)
 Infinity = _Infinity()
@@ -107,7 +138,7 @@ def prettify_traceback(exc):
         return f'Traceback:\n{buf.getvalue()}'
 
 
-def catch_unexpected(log, raven=None):
+def catch_unexpected(log, reraise_cancellation: bool = True, raven=None):
 
     def _wrap(func):
 
@@ -115,7 +146,10 @@ def catch_unexpected(log, raven=None):
         async def _wrapped(*args, **kwargs):
             try:
                 return await func(*args, **kwargs)
-            except:
+            except asyncio.CancelledError:
+                if reraise_cancellation:
+                    raise
+            except Exception:
                 if raven:
                     raven.captureException()
                 log.exception('unexpected error!')
@@ -158,12 +192,14 @@ def chunked(iterable, n):
         yield chunk
 
 
-_burst_last_call = 0
-_burst_times = dict()
-_burst_counts = defaultdict(int)
+_burst_last_call: float = 0.0
+_burst_times: MutableMapping[Hashable, float] = dict()
+_burst_counts: MutableMapping[Hashable, int] = defaultdict(int)
 
 
-async def call_non_bursty(key, coro, *, max_bursts=64, max_idle=100):
+async def call_non_bursty(key: Hashable, coro: Callable[[], Any], *,
+                          max_bursts: int = 64,
+                          max_idle: Union[int, float] = 100.0):
     '''
     Execute a coroutine once upon max_bursts bursty invocations or max_idle
     milliseconds after bursts smaller than max_bursts.
@@ -207,6 +243,7 @@ async def call_non_bursty(key, coro, *, max_bursts=64, max_idle=100):
             return coro()
 
 
+current_loop: Callable[[], asyncio.AbstractEventLoop]
 if hasattr(asyncio, 'get_running_loop'):  # Python 3.7+
     current_loop = asyncio.get_running_loop
 else:

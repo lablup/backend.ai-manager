@@ -11,6 +11,10 @@ future UX improvements.
 '''
 
 import json
+from typing import (
+    Optional, Union,
+    MutableMapping,
+)
 
 from aiohttp import web
 
@@ -74,7 +78,7 @@ class InternalServerError(web.HTTPInternalServerError, BackendError):
 
 class ServerMisconfiguredError(web.HTTPInternalServerError, BackendError):
     error_type  = 'https://api.backend.ai/probs/server-misconfigured'
-    error_title = 'Servier misconfigured.'
+    error_title = 'Service misconfigured.'
 
 
 class ServiceUnavailable(web.HTTPServiceUnavailable, BackendError):
@@ -115,6 +119,16 @@ class InstanceNotFound(web.HTTPNotFound, BackendError):
 class ImageNotFound(web.HTTPNotFound, BackendError):
     error_type  = 'https://api.backend.ai/probs/image-not-found'
     error_title = 'No such environment image.'
+
+
+class GroupNotFound(web.HTTPNotFound, BackendError):
+    error_type  = 'https://api.backend.ai/probs/group-not-found'
+    error_title = 'No such user group.'
+
+
+class ScalingGroupNotFound(web.HTTPNotFound, BackendError):
+    error_type  = 'https://api.backend.ai/probs/scaling-group-not-found'
+    error_title = 'No such scaling group.'
 
 
 class KernelNotFound(web.HTTPNotFound, BackendError):
@@ -193,8 +207,10 @@ class BackendAgentError(BackendError):
         'FAILURE': 'https://api.backend.ai/probs/agent-failure',
     }
 
-    def __init__(self, agent_error_type, exc_info=None):
+    def __init__(self, agent_error_type: str,
+                 exc_info: Union[str, AgentError, Exception, None] = None):
         super().__init__()
+        agent_details: MutableMapping[str, Optional[str]]
         if not agent_error_type.startswith('https://'):
             agent_error_type = self._short_type_map[agent_error_type.upper()]
         self.args = (
@@ -204,10 +220,9 @@ class BackendAgentError(BackendError):
             agent_error_type,
         )
         if isinstance(exc_info, str):
-            agent_error_title = exc_info
             agent_details = {
                 'type': agent_error_type,
-                'title': agent_error_title,
+                'title': exc_info,
             }
         elif isinstance(exc_info, AgentError):
             if exc_info.exc_repr:
@@ -222,27 +237,24 @@ class BackendAgentError(BackendError):
                     inner_name = str(exc_info.args[0])
                 inner_args = ', '.join(repr(a) for a in exc_info.args[1])
                 exc_repr = f'{inner_name}({inner_args})'
-            agent_error_title = 'Agent-side exception occurred.'
             agent_details = {
                 'type': agent_error_type,
-                'title': agent_error_title,
+                'title': 'Agent-side exception occurred.',
                 'exception': exc_repr,
             }
         elif isinstance(exc_info, Exception):
-            agent_error_title = 'Unexpected exception ocurred.'
             agent_details = {
                 'type': agent_error_type,
-                'title': agent_error_title,
+                'title': 'Unexpected exception ocurred.',
                 'exception': repr(exc_info),
             }
         else:
-            agent_error_title = None if exc_info is None else str(exc_info)
             agent_details = {
                 'type': agent_error_type,
-                'title': agent_error_title,
+                'title': None if exc_info is None else str(exc_info),
             }
         self.agent_error_type = agent_error_type
-        self.agent_error_title = agent_error_title
+        self.agent_error_title = agent_details['title']
         self.agent_exception = agent_details.get('exception', '')
         self.body = json.dumps({
             'type': self.error_type,

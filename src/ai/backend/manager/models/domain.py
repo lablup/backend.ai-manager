@@ -1,5 +1,6 @@
 from collections import OrderedDict
 import re
+from typing import Sequence
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -14,10 +15,11 @@ from .base import (
     simple_db_mutate_returning_item,
     set_if_set,
 )
+from .scaling_group import sgroups_for_domains
 from .user import UserRole
 
 
-__all__ = (
+__all__: Sequence[str] = (
     'domains',
     'Domain', 'DomainInput', 'ModifyDomainInput',
     'CreateDomain', 'ModifyDomain', 'DeleteDomain',
@@ -52,6 +54,8 @@ class Domain(graphene.ObjectType):
     allowed_vfolder_hosts = graphene.List(lambda: graphene.String)
     allowed_docker_registries = graphene.List(lambda: graphene.String)
     integration_id = graphene.String()
+    # Dynamic fields.
+    scaling_groups = graphene.List(lambda: graphene.String)
 
     @classmethod
     def from_row(cls, row):
@@ -67,25 +71,39 @@ class Domain(graphene.ObjectType):
             allowed_vfolder_hosts=row['allowed_vfolder_hosts'],
             allowed_docker_registries=row['allowed_docker_registries'],
             integration_id=row['integration_id'],
+            # Dynamic fields.
+            scaling_groups=[row.scaling_group] if 'scaling_group' in row else [],
         )
 
     @staticmethod
     async def load_all(context, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
-            query = sa.select([domains]).select_from(domains)
+            j = sa.join(domains, sgroups_for_domains,
+                        domains.c.name == sgroups_for_domains.c.domain,
+                        isouter=True)
+            query = (sa.select([domains, sgroups_for_domains.c.scaling_group])
+                       .select_from(j))
             if is_active is not None:
                 query = query.where(domains.c.is_active == is_active)
-            objs = []
+            objs_per_key = OrderedDict()
             async for row in conn.execute(query):
+                if row.name in objs_per_key:
+                    # If same domain is already saved, just append sgroup information.
+                    objs_per_key[row.name].scaling_groups.append(row.scaling_group)
+                    continue
                 o = Domain.from_row(row)
-                objs.append(o)
+                objs_per_key[row.name] = o
+            objs = list(objs_per_key.values())
         return objs
 
     @staticmethod
     async def batch_load_by_name(context, names=None, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
-            query = (sa.select([domains])
-                       .select_from(domains)
+            j = sa.join(domains, sgroups_for_domains,
+                        domains.c.name == sgroups_for_domains.c.domain,
+                        isouter=True)
+            query = (sa.select([domains, sgroups_for_domains.c.scaling_group])
+                       .select_from(j)
                        .where(domains.c.name.in_(names)))
             objs_per_key = OrderedDict()
             # For each name, there is only one domain.
@@ -93,6 +111,9 @@ class Domain(graphene.ObjectType):
             for k in names:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
+                if objs_per_key[row.name] is not None:
+                    objs_per_key[row.name].scaling_groups.append(row.scaling_group)
+                    continue
                 o = Domain.from_row(row)
                 objs_per_key[row.name] = o
         return tuple(objs_per_key.values())
@@ -183,7 +204,9 @@ class ModifyDomain(graphene.Mutation):
             .where(domains.c.name == name)
         )
         # The name may have changed if set.
-        item_query = domains.select().where(domains.c.name == data['name'])
+        if 'name' in data:
+            name = data['name']
+        item_query = domains.select().where(domains.c.name == name)
         return await simple_db_mutate_returning_item(
             cls, info.context, update_query,
             item_query=item_query, item_cls=Domain)

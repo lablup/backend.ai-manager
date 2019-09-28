@@ -11,35 +11,54 @@ from collections import defaultdict
 import json
 import logging
 import secrets
+from typing import (
+    Any,
+    Mapping,
+    List, Tuple,
+    Set,
+)
+import uuid
 from urllib.parse import urlparse
 import weakref
 
 import aiohttp
-import aiohttp_cors
 from aiohttp import web
+import aiohttp_cors
+from aiohttp_sse import sse_response
 from aiotools import apartial
 import aiozmq
 from aiozmq import create_zmq_stream as aiozmq_sock
+import sqlalchemy as sa
+import trafaret as t
 import zmq
 
+from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.types import (
+    AgentId,
+    KernelId,
+)
 
 from .auth import auth_required
 from .exceptions import (
-    BackendError, AppNotFound, KernelNotFound, InvalidAPIParameters,
+    AppNotFound, GroupNotFound, KernelNotFound,
+    BackendError,
+    InvalidAPIParameters, GenericForbidden,
     InternalServerError,
 )
 from .manager import READ_ALLOWED, server_status_required
-from .utils import not_impl_stub, call_non_bursty
+from .utils import check_api_params, call_non_bursty
 from .wsproxy import TCPProxy
-from ..manager.models import kernels
+from ..manager.models import kernels, groups, UserRole
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.stream'))
+
+sentinel = object()
 
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def stream_pty(request) -> web.Response:
+async def stream_pty(request: web.Request) -> web.StreamResponse:
     app = request.app
     registry = app['registry']
     sess_id = request.match_info['sess_id']
@@ -52,6 +71,7 @@ async def stream_pty(request) -> web.Response:
             registry.get_session(sess_id, access_key, field=extra_fields))
     except KernelNotFound:
         raise
+    log.info('STREAM_PTY(ak:{0}, s:{1})', access_key, sess_id)
 
     await asyncio.shield(registry.increment_session_usage(sess_id, access_key))
     ws = web.WebSocketResponse()
@@ -197,7 +217,7 @@ async def stream_pty(request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def stream_execute(request) -> web.StreamResponse:
+async def stream_execute(request: web.Request) -> web.StreamResponse:
     '''
     WebSocket-version of gateway.kernel.execute().
     '''
@@ -207,7 +227,7 @@ async def stream_execute(request) -> web.StreamResponse:
     access_key = request['keypair']['access_key']
     stream_key = (sess_id, access_key)
     api_version = request['api_version']
-    log.info('STREAM_EXECUTE(u:{0}, k:{1})', access_key, sess_id)
+    log.info('STREAM_EXECUTE(ak:{0}, s:{1})', access_key, sess_id)
     try:
         _ = await asyncio.shield(registry.get_session(sess_id, access_key))  # noqa
     except KernelNotFound:
@@ -226,7 +246,7 @@ async def stream_execute(request) -> web.StreamResponse:
     try:
         if ws.closed:
             log.debug('STREAM_EXECUTE: client disconnected (cancelled)')
-            return
+            return ws
         params = await ws.receive_json()
         assert params.get('mode'), 'mode is missing or empty!'
         mode = params['mode']
@@ -298,7 +318,11 @@ async def stream_execute(request) -> web.StreamResponse:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def stream_proxy(request) -> web.StreamResponse:
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['app', 'service']): t.String,
+    }))
+async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
@@ -323,8 +347,8 @@ async def stream_proxy(request) -> web.StreamResponse:
     else:
         raise AppNotFound(f'{sess_id}:{service}')
 
-    log.info('STREAM_WSPROXY: {0} ==[{1}:{2}]==> {3}',
-             sess_id, service, sport['protocol'], dest)
+    log.info('STREAM_WSPROXY (ak:{}, s:{}): tunneling {}:{} to {}',
+             access_key, sess_id, service, sport['protocol'], '{}:{}'.format(*dest))
     if sport['protocol'] == 'tcp':
         proxy_cls = TCPProxy
     elif sport['protocol'] == 'pty':
@@ -350,7 +374,7 @@ async def stream_proxy(request) -> web.StreamResponse:
     ping_cb = apartial(refresh_cb, kernel.id)
 
     try:
-        opts = {}
+        opts: Mapping[str, Any] = {}
         result = await asyncio.shield(
             registry.start_service(sess_id, access_key, service, opts))
         if result['status'] == 'failed':
@@ -372,7 +396,74 @@ async def stream_proxy(request) -> web.StreamResponse:
         request.app['stream_proxy_handlers'][stream_key].discard(myself)
 
 
-async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
+@server_status_required(READ_ALLOWED)
+@auth_required
+@check_api_params(
+    t.Dict({
+        t.Key('sessionId', default='*') >> 'session_id': t.String,
+        t.Key('ownerAccessKey', default=None) >> 'owner_access_key': t.Null | t.String,
+        tx.AliasedKey(['group', 'groupName'], default='*') >> 'group_name': t.String,
+    }))
+async def stream_events(request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
+    app = request.app
+    session_id = params['session_id']
+    user_role = request['user']['role']
+    user_uuid = request['user']['uuid']
+    access_key = params['owner_access_key']
+    if access_key is None:
+        access_key = request['keypair']['access_key']
+    if user_role == UserRole.USER:
+        if access_key != request['keypair']['access_key']:
+            raise GenericForbidden
+    group_name = params['group_name']
+    event_queues = app['event_queues']  # type: Set[asyncio.Queue]
+    my_queue = asyncio.Queue()          # type: asyncio.Queue[Tuple[str, dict, str]]
+    log.info('STREAM_EVENTS (ak:{}, s:{}, g:{})', access_key, session_id, group_name)
+    if group_name == '*':
+        group_id = '*'
+    else:
+        async with app['dbpool'].acquire() as conn, conn.begin():
+            query = (
+                sa.select([groups.c.id]).select_from(groups)
+                .where(groups.c.name == group_name)
+            )
+            row = await conn.first(query)
+            if row is None:
+                raise GroupNotFound
+            group_id = row['id']
+    event_queues.add(my_queue)
+    try:
+        async with sse_response(request) as resp:
+            while True:
+                evdata = await my_queue.get()
+                if evdata is sentinel:
+                    break
+                event_name, row, reason = evdata
+                if user_role in (UserRole.USER, UserRole.ADMIN):
+                    if row['domain_name'] != request['user']['domain_name']:
+                        continue
+                if user_role == UserRole.USER:
+                    if row['user_uuid'] != user_uuid:
+                        continue
+                if group_id != '*' and row['group_id'] != group_id:
+                    continue
+                if session_id != '*' and not (
+                        (row['sess_id'] == session_id) and
+                        (row['access_key'] == access_key)):
+                    continue
+                await resp.send(json.dumps({
+                    'sessionId': str(row['sess_id']),
+                    'ownerAccessKey': row['access_key'],
+                    'reason': reason,
+                }), event=event_name)
+    finally:
+        event_queues.remove(my_queue)
+        return resp
+
+
+async def kernel_terminated(app: web.Application, agent_id: AgentId, event_name: str,
+                            kernel_id: KernelId, reason: str,
+                            exit_code: int = None) -> None:
     try:
         kernel = await app['registry'].get_kernel(
             kernel_id, (kernels.c.role, kernels.c.status), allow_stale=True)
@@ -393,24 +484,81 @@ async def kernel_terminated(app, agent_id, kernel_id, reason, kern_stat):
         for handler in list(app['stream_proxy_handlers'].get(stream_key, [])):
             handler.cancel()
             cancelled_tasks.append(handler)
-        await asyncio.gather(*cancelled_tasks)
+        await asyncio.gather(*cancelled_tasks, return_exceptions=True)
         # TODO: reconnect if restarting?
 
 
-async def init(app):
+async def enqueue_status_update(app: web.Application, agent_id: AgentId, event_name: str,
+                                raw_kernel_id: str,
+                                reason: str = None,
+                                exit_code: int = None) -> None:
+    if raw_kernel_id is None:
+        return
+    kernel_id = uuid.UUID(raw_kernel_id)
+    # TODO: when event_name == 'kernel_started', read the service port data.
+    async with app['dbpool'].acquire() as conn, conn.begin():
+        query = (
+            sa.select([
+                kernels.c.role,
+                kernels.c.sess_id,
+                kernels.c.access_key,
+                kernels.c.domain_name,
+                kernels.c.group_id,
+                kernels.c.user_uuid,
+            ])
+            .select_from(kernels)
+            .where(
+                (kernels.c.id == kernel_id)
+            )
+        )
+        result = await conn.execute(query)
+        row = await result.first()
+        if row is None:
+            return
+        if row['role'] != 'master':
+            return
+    for q in app['event_queues']:
+        q.put_nowait((event_name, row, reason))
+
+
+async def init(app: web.Application) -> None:
     app['stream_pty_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_execute_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_proxy_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_stdin_socks'] = defaultdict(weakref.WeakSet)
-    app['event_dispatcher'].add_handler('kernel_terminated', app, kernel_terminated)
+    app['event_queues'] = set()
+    event_dispatcher = app['event_dispatcher']
+    event_dispatcher.subscribe('kernel_terminated', app, kernel_terminated)
+    event_dispatcher.subscribe('kernel_enqueued', app, enqueue_status_update)
+    event_dispatcher.subscribe('kernel_preparing', app, enqueue_status_update)
+    event_dispatcher.subscribe('kernel_pulling', app, enqueue_status_update)
+    event_dispatcher.subscribe('kernel_creating', app, enqueue_status_update)
+    event_dispatcher.subscribe('kernel_started', app, enqueue_status_update)
+    event_dispatcher.subscribe('kernel_terminating', app, enqueue_status_update)
+    event_dispatcher.subscribe('kernel_terminated', app, enqueue_status_update)
+    event_dispatcher.subscribe('kernel_cancelled', app, enqueue_status_update)
 
 
-async def shutdown(app):
+async def shutdown(app: web.Application) -> None:
+    cancelled_tasks: List[asyncio.Task] = []
     for per_kernel_handlers in app['stream_pty_handlers'].values():
         for handler in list(per_kernel_handlers):
             if not handler.done():
                 handler.cancel()
-                await handler
+                cancelled_tasks.append(handler)
+    for per_kernel_handlers in app['stream_execute_handlers'].values():
+        for handler in list(per_kernel_handlers):
+            if not handler.done():
+                handler.cancel()
+                cancelled_tasks.append(handler)
+    for per_kernel_handlers in app['stream_proxy_handlers'].values():
+        for handler in list(per_kernel_handlers):
+            if not handler.done():
+                handler.cancel()
+                cancelled_tasks.append(handler)
+    for q in app['event_queues']:
+        q.put_nowait(sentinel)
+    await asyncio.gather(*cancelled_tasks, return_exceptions=True)
 
 
 def create_app(default_cors_options):
@@ -421,11 +569,11 @@ def create_app(default_cors_options):
     app['api_versions'] = (2, 3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     add_route = app.router.add_route
+    cors.add(add_route('GET', r'/kernel/_/events', stream_events))
     cors.add(add_route('GET', r'/kernel/{sess_id}/pty', stream_pty))
     cors.add(add_route('GET', r'/kernel/{sess_id}/execute', stream_execute))
     # internally both tcp/http proxies use websockets as API/agent-level transports,
     # and thus they have the same implementation here.
     cors.add(add_route('GET', r'/kernel/{sess_id}/httpproxy', stream_proxy))
     cors.add(add_route('GET', r'/kernel/{sess_id}/tcpproxy', stream_proxy))
-    cors.add(add_route('GET', r'/kernel/{sess_id}/events', not_impl_stub))
     return app, []

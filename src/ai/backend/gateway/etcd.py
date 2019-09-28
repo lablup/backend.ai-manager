@@ -49,7 +49,8 @@ Alias keys are also URL-quoted in the same way.
          + {registry-name}: {registry-URL}  # {registry-name} is url-quoted
            - username: {username}
            - password: {password}
-           - auth: {auth-json-cached-from-config.json}
+           - type: "docker" | "harbor"
+           - project: "project-name"  # harbor only
          ...
      + redis
        - addr: "{redis-host}:{redis-port}"
@@ -105,12 +106,13 @@ Alias keys are also URL-quoted in the same way.
    ...
  + nodes
    + manager: {instance-id}
-     - event_addr: {"tcp://manager:5001"}
      - status: {one-of-ManagerStatus-value}
    + redis: {"tcp://redis:6379"}
      - password: {redis-auth-password}
    + agents
-     - {instance-id}: {"starting","running"}  # ConfigScopes.NODE
+     + {instance-id}: {"starting","running"}  # ConfigScopes.NODE
+       - ip: {"127.0.0.1"}
+       - watcher_port: {"6009"}
  + sgroup
    + {name}  # ConfigScopes.SGROUP
      - swarm-manager/token
@@ -152,9 +154,8 @@ from ai.backend.common.etcd import (
 )
 from ai.backend.common.docker import (
     login as registry_login,
-    get_registry_info
 )
-from .auth import admin_required
+from .auth import superadmin_required
 from .exceptions import InvalidAPIParameters, ServerMisconfiguredError
 from .manager import ManagerStatus
 from .utils import chunked, check_api_params
@@ -198,12 +199,8 @@ class ConfigServer:
 
     async def register_myself(self, app_config):
         instance_id = await get_instance_id()
-        event_addr = app_config['manager']['event-listen-addr']
-        log.info('manager is listening agent events at {}', event_addr)
-        event_addr = '{0.host}:{0.port}'.format(event_addr)
         manager_info = {
             'nodes/manager': instance_id,
-            'nodes/manager/event_addr': event_addr,
         }
         await self.etcd.put_dict(manager_info)
 
@@ -213,7 +210,7 @@ class ConfigServer:
     async def update_aliases_from_file(self, file: Path):
         log.info('Updating image aliases from "{0}"', file)
         try:
-            data = yaml.load(open(file, 'rb'))
+            data = yaml.load(open(file, 'r', encoding='utf-8'))
         except IOError:
             log.error('Cannot open "{0}".', file)
             return
@@ -316,20 +313,27 @@ class ConfigServer:
         if value_range[1] is not None:
             await self.etcd.put(f'{ref.tag_path}/resource/{slot_type}/max', str(value_range[1]))
 
-    async def _rescan_images(self, registry_name: str,
-                             registry_url: yarl.URL,
-                             credentials: dict):
+    async def _rescan_images(self, registry_name, registry_info):
         all_updates = {}
         base_hdrs = {
             'Accept': 'application/vnd.docker.distribution.manifest.v2+json',
         }
+        registry_url = yarl.URL(registry_info[''])
+        registry_type = registry_info.get('type', 'docker')
+        registry_project = registry_info.get('project')
+        credentials = {}
+        username = registry_info.get('username')
+        if username is not None:
+            credentials['username'] = username
+        password = registry_info.get('password')
+        if password is not None:
+            credentials['password'] = password
 
         async def _scan_image(sess, image):
-            rqst_args = await registry_login(
-                sess, registry_url,
-                credentials, f'repository:{image}:pull')
-            tags = []
+            rqst_args = await registry_login(sess, registry_url, credentials,
+                                             f'repository:{image}:pull')
             rqst_args['headers'].update(**base_hdrs)
+            tags = []
             async with sess.get(registry_url / f'v2/{image}/tags/list',
                                 **rqst_args) as resp:
                 data = json.loads(await resp.read())
@@ -416,11 +420,10 @@ class ConfigServer:
                         log.error('Failed to fetch repository list from {0} '
                                   '(status={1})',
                                   hub_url, resp.status)
-            else:
+            elif registry_type == 'docker':
                 # In other cases, try the catalog search.
-                rqst_args = await registry_login(
-                    sess, registry_url,
-                    credentials, 'registry:catalog:*')
+                rqst_args = await registry_login(sess, registry_url, credentials,
+                                                 'registry:catalog:*')
                 async with sess.get(registry_url / 'v2/_catalog',
                                     **rqst_args) as resp:
                     if resp.status == 200:
@@ -431,6 +434,34 @@ class ConfigServer:
                         log.warning('Docker registry {0} does not allow/support '
                                     'catalog search. (status={1})',
                                     registry_url, resp.status)
+            elif registry_type == 'harbor':
+                if credentials:
+                    rqst_args = {
+                        'auth': aiohttp.BasicAuth(credentials['username'], credentials['password'])
+                    }
+                else:
+                    rqst_args = {}
+                async with sess.get(registry_url / 'api/projects',
+                                    params={'page_size': '100'},
+                                    **rqst_args) as resp:
+                    projects = await resp.json()
+                    project_id = None
+                    for item in projects:
+                        if item['name'] == registry_project:
+                            project_id = item['project_id']
+                            break
+                    else:
+                        log.warning('There is no given project.')
+                        return
+                async with sess.get(registry_url / 'api/repositories',
+                                    params={'project_id': project_id, 'page_size': '100'},
+                                    **rqst_args) as resp:
+                    items = await resp.json()
+                    repos = [item['name'] for item in items]
+                    images.extend(repos)
+            else:
+                log.error('Unsupported registry type')
+                return
 
             scheduler = await aiojobs.create_scheduler(limit=8)
             try:
@@ -458,12 +489,11 @@ class ConfigServer:
         coros = []
         for registry in registries:
             log.info('Scanning kernel images from the registry "{0}"', registry)
-            try:
-                registry_url, creds = await get_registry_info(self.etcd, registry)
-            except ValueError:
+            registry_info = await self.etcd.get_prefix(f'config/docker/registry/{etcd_quote(registry)}')
+            if not registry_info:
                 log.error('Unknown registry: "{0}"', registry)
                 continue
-            coros.append(self._rescan_images(registry, registry_url, creds))
+            coros.append(self._rescan_images(registry, registry_info))
         await asyncio.gather(*coros)
         # TODO: delete images removed from registry?
 
@@ -476,7 +506,7 @@ class ConfigServer:
     async def update_volumes_from_file(self, file: Path):
         log.info('Updating network volumes from "{0}"', file)
         try:
-            data = yaml.load(open(file, 'rb'))
+            data = yaml.load(open(file, 'r', encoding='utf-8'))
         except IOError:
             log.error('Cannot open "{0}".', file)
             return
@@ -528,6 +558,10 @@ class ConfigServer:
         if not vf_types:
             vf_types = {'user': ''}
         return list(vf_types.keys())
+
+    @aiotools.lru_cache(maxsize=1, expire_after=5.0)
+    async def get_manager_nodes_info(self):
+        return await self.etcd.get_prefix_dict('nodes/manager')
 
     @aiotools.lru_cache(maxsize=1, expire_after=2.0)
     async def get_manager_status(self):
@@ -593,18 +627,32 @@ class ConfigServer:
 
 @atomic
 async def get_resource_slots(request) -> web.Response:
+    log.info('ETCD.GET_RESOURCE_SLOTS ()')
     known_slots = await request.app['config_server'].get_resource_slots()
     return web.json_response(known_slots, status=200)
 
 
 @atomic
 async def get_vfolder_types(request) -> web.Response:
+    log.info('ETCD.GET_VFOLDER_TYPES ()')
     vfolder_types = await request.app['config_server'].get_vfolder_types()
     return web.json_response(vfolder_types, status=200)
 
 
 @atomic
-@admin_required
+@superadmin_required
+async def get_docker_registries(request) -> web.Response:
+    '''
+    Returns the list of all registered docker registries.
+    '''
+    log.info('ETCD.GET_DOCKER_REGISTRIES ()')
+    etcd = request.app['registry'].config_server.etcd
+    known_registries = await get_known_registries(etcd)
+    return web.json_response(known_registries, status=200)
+
+
+@atomic
+@superadmin_required
 @check_api_params(
     t.Dict({
         t.Key('key'): t.String,
@@ -612,23 +660,28 @@ async def get_vfolder_types(request) -> web.Response:
     }))
 async def get_config(request: web.Request, params: Any) -> web.Response:
     etcd = request.app['config_server'].etcd
+    log.info('ETCD.GET_CONFIG (ak:{}, key:{}, prefix:{})',
+             request['keypair']['access_key'], params['key'], params['prefix'])
     if params['prefix']:
-        value = await etcd.get_prefix_dict(params['key'])
+        # Flatten the returned ChainMap object for JSON serialization
+        value = dict(await etcd.get_prefix_dict(params['key']))
     else:
         value = await etcd.get(params['key'])
     return web.json_response({'result': value})
 
 
 @atomic
-@admin_required
+@superadmin_required
 @check_api_params(
     t.Dict({
         t.Key('key'): t.String,
         t.Key('value'): t.Or(t.String(allow_blank=True),
-                             t.Mapping(t.String, t.Any)),
+                             t.Mapping(t.String(allow_blank=True), t.Any)),
     }))
 async def set_config(request: web.Request, params: Any) -> web.Response:
     etcd = request.app['config_server'].etcd
+    log.info('ETCD.SET_CONFIG (ak:{}, key:{}, val:{})',
+             request['keypair']['access_key'], params['key'], params['value'])
     if isinstance(params['value'], Mapping):
         updates = {}
 
@@ -651,7 +704,7 @@ async def set_config(request: web.Request, params: Any) -> web.Response:
 
 
 @atomic
-@admin_required
+@superadmin_required
 @check_api_params(
     t.Dict({
         t.Key('key'): t.String,
@@ -659,6 +712,8 @@ async def set_config(request: web.Request, params: Any) -> web.Response:
     }))
 async def delete_config(request: web.Request, params: Any) -> web.Response:
     etcd = request.app['config_server'].etcd
+    log.info('ETCD.DELETE_CONFIG (ak:{}, key:{}, prefix:{})',
+             request['keypair']['access_key'], params['key'], params['prefix'])
     if params['prefix']:
         await etcd.delete_prefix(params['key'])
     else:
@@ -685,6 +740,7 @@ def create_app(default_cors_options):
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     cors.add(app.router.add_route('GET',  r'/resource-slots', get_resource_slots))
     cors.add(app.router.add_route('GET',  r'/vfolder-types', get_vfolder_types))
+    cors.add(app.router.add_route('GET',  r'/docker-registries', get_docker_registries))
     cors.add(app.router.add_route('POST', r'/get', get_config))
     cors.add(app.router.add_route('POST', r'/set', set_config))
     cors.add(app.router.add_route('POST', r'/delete', delete_config))

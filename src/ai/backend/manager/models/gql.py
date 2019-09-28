@@ -18,7 +18,7 @@ from .image import (
 )
 from .kernel import (
     ComputeSession, ComputeSessionList,
-    ComputeWorker, KernelStatus,
+    ComputeWorker,
 )
 from .keypair import (
     KeyPair,
@@ -36,6 +36,7 @@ from .scaling_group import (
     ScalingGroup,
     CreateScalingGroup, ModifyScalingGroup, DeleteScalingGroup,
     AssociateScalingGroupWithDomain,    DisassociateScalingGroupWithDomain,
+    DisassociateAllScalingGroupsWithDomain,
     AssociateScalingGroupWithUserGroup, DisassociateScalingGroupWithUserGroup,
     AssociateScalingGroupWithKeyPair,   DisassociateScalingGroupWithKeyPair,
 )
@@ -104,6 +105,7 @@ class Mutations(graphene.ObjectType):
     disassociate_scaling_group_with_domain     = DisassociateScalingGroupWithDomain.Field()
     disassociate_scaling_group_with_user_group = DisassociateScalingGroupWithUserGroup.Field()
     disassociate_scaling_group_with_keypair    = DisassociateScalingGroupWithKeyPair.Field()
+    disassociate_all_scaling_groups_with_domain = DisassociateAllScalingGroupsWithDomain.Field()
 
 
 class Queries(graphene.ObjectType):
@@ -159,6 +161,8 @@ class Queries(graphene.ObjectType):
 
     images = graphene.List(
         Image,
+        is_installed=graphene.Boolean(),
+        is_operation=graphene.Boolean(),
     )
 
     user = graphene.Field(
@@ -397,14 +401,18 @@ class Queries(graphene.ObjectType):
         return item
 
     @staticmethod
-    async def resolve_images(executor, info):
+    async def resolve_images(executor, info, is_installed=None, is_operation=False):
         client_role = info.context['user']['role']
         client_domain = info.context['user']['domain_name']
-        items = await Image.load_all(info.context)
+        items = await Image.load_all(info.context,
+                                     is_installed=is_installed,
+                                     is_operation=is_operation)
         if client_role == UserRole.SUPERADMIN:
             pass
         elif client_role in (UserRole.ADMIN, UserRole.USER):
-            items = await Image.filter_allowed(info.context, items, client_domain)
+            items = await Image.filter_allowed(
+                info.context, items, client_domain,
+                is_installed=is_installed, is_operation=is_operation)
         else:
             raise InvalidAPIParameters('Unknown client role')
         return items
@@ -597,10 +605,6 @@ class Queries(graphene.ObjectType):
     async def resolve_compute_sessions(executor, info, *,
                                        domain_name=None, group_id=None, access_key=None,
                                        status=None):
-        # TODO: make status a proper graphene.Enum type
-        #       (https://github.com/graphql-python/graphene/issues/544)
-        if status is not None:
-            status = KernelStatus[status]
         return await ComputeSession.load_all(
             info.context,
             domain_name=domain_name,
@@ -618,8 +622,6 @@ class Queries(graphene.ObjectType):
         # by other users and in other groups.
         # Let's just protect the domain/user boundary here.
         manager = info.context['dlmgr']
-        if status is not None:
-            status = KernelStatus[status]
         loader = manager.get_loader(
             'ComputeSession.detail',
             domain_name=domain_name,
@@ -633,8 +635,6 @@ class Queries(graphene.ObjectType):
                                       domain_name=None, access_key=None,
                                       status=None):
         manager = info.context['dlmgr']
-        if status is not None:
-            status = KernelStatus[status]
         loader = manager.get_loader(
             'ComputeWorker',
             domain_name=domain_name,

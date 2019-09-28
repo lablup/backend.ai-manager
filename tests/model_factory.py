@@ -18,6 +18,7 @@ class ModelFactory(ABC):
     def __init__(self, app):
         self.app = app
 
+    @abstractmethod
     def get_creation_defaults(self):
         return {}
 

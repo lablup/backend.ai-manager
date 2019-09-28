@@ -3,24 +3,31 @@ Resource preset APIs.
 '''
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from decimal import Decimal
 import functools
 import json
 import logging
 import re
-from typing import Any
+from typing import (
+    Any,
+    MutableMapping,
+)
 
+import aiohttp
 from aiohttp import web
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
+from async_timeout import timeout as _timeout
+from dateutil.tz import tzutc
 import sqlalchemy as sa
 import trafaret as t
+import yarl
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import ResourceSlot
+from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
 from .auth import auth_required, superadmin_required
 from .exceptions import (
     InvalidAPIParameters,
@@ -28,8 +35,12 @@ from .exceptions import (
 from .manager import READ_ALLOWED, server_status_required
 from ..manager.models import (
     agents, resource_presets,
-    groups, kernels, keypairs,
-    AgentStatus, KernelStatus,
+    domains, groups, kernels, keypairs,
+    AgentStatus,
+    association_groups_users,
+    query_allowed_sgroups,
+    RESOURCE_OCCUPYING_KERNEL_STATUSES,
+    RESOURCE_USAGE_KERNEL_STATUSES,
 )
 from .utils import check_api_params
 
@@ -44,6 +55,7 @@ async def list_presets(request) -> web.Response:
     '''
     Returns the list of all resource presets.
     '''
+    log.info('LIST_PRESETS (ak:{})', request['keypair']['access_key'])
     known_slot_types = await request.app['registry'].config_server.get_resource_slots()
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         query = (
@@ -53,7 +65,7 @@ async def list_presets(request) -> web.Response:
         # scaling_group = request.query.get('scaling_group')
         # if scaling_group is not None:
         #     query = query.where(resource_presets.c.scaling_group == scaling_group)
-        resp = {'presets': []}
+        resp: MutableMapping[str, Any] = {'presets': []}
         async for row in conn.execute(query):
             preset_slots = row['resource_slots'].filter_slots(known_slot_types)
             resp['presets'].append({
@@ -63,10 +75,15 @@ async def list_presets(request) -> web.Response:
         return web.json_response(resp, status=200)
 
 
+@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-@atomic
-async def check_presets(request) -> web.Response:
+@check_api_params(
+    t.Dict({
+        t.Key('scaling_group', default=None): t.Null | t.String,
+        t.Key('group', default='default'): t.String,
+    }))
+async def check_presets(request: web.Request, params: Any) -> web.Response:
     '''
     Returns the list of all resource presets in the current scaling group,
     with additional information including allocatability of each preset,
@@ -75,6 +92,7 @@ async def check_presets(request) -> web.Response:
     try:
         access_key = request['keypair']['access_key']
         resource_policy = request['keypair']['resource_policy']
+        domain_name = request['user']['domain_name']
         # TODO: uncomment when we implement scaling group.
         # scaling_group = request.query.get('scaling_group')
         # assert scaling_group is not None, 'scaling_group parameter is missing.'
@@ -82,36 +100,132 @@ async def check_presets(request) -> web.Response:
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
     registry = request.app['registry']
     known_slot_types = await registry.config_server.get_resource_slots()
-    keypair_limits = ResourceSlot.from_policy(resource_policy, known_slot_types)
-    resp = {
+    resp: MutableMapping[str, Any] = {
         'keypair_limits': None,
         'keypair_using': None,
         'keypair_remaining': None,
         'scaling_group_remaining': None,
+        'scaling_groups': None,
         'presets': [],
     }
+    log.info('CHECK_PRESETS (ak:{}, g:{}, sg:{})',
+             request['keypair']['access_key'], params['group'], params['scaling_group'])
+
     async with request.app['dbpool'].acquire() as conn, conn.begin():
+        # Check keypair resource limit.
+        keypair_limits = ResourceSlot.from_policy(resource_policy, known_slot_types)
         keypair_occupied = await registry.get_keypair_occupancy(access_key, conn=conn)
         keypair_remaining = keypair_limits - keypair_occupied
+
+        # Check group resource limit.
+        query = (sa.select([groups.c.id, groups.c.total_resource_slots])
+                   .where(domains.c.name == domain_name)
+                   .where(groups.c.name == params['group']))
+        result = await conn.execute(query)
+        row = await result.fetchone()
+        group_resource_slots = row.total_resource_slots
+        group_resource_policy = {
+            'total_resource_slots': group_resource_slots,
+            'default_for_unspecified': DefaultForUnspecified.UNLIMITED
+        }
+        group_limits = ResourceSlot.from_policy(group_resource_policy, known_slot_types)
+        group_occupied = await registry.get_group_occupancy(row.id, conn=conn)
+        group_remaining = group_limits - group_occupied
+
+        # Check domain resource limit.
+        query = (sa.select([domains.c.total_resource_slots])
+                   .where(domains.c.name == domain_name))
+        domain_resource_slots = await conn.scalar(query)
+        domain_resource_policy = {
+            'total_resource_slots': domain_resource_slots,
+            'default_for_unspecified': DefaultForUnspecified.UNLIMITED
+        }
+        domain_limits = ResourceSlot.from_policy(domain_resource_policy, known_slot_types)
+        domain_occupied = await registry.get_domain_occupancy(domain_name, conn=conn)
+        domain_remaining = domain_limits - domain_occupied
+
+        # Take minimum remaining resources. There's no need to merge limits and occupied.
+        # To keep legacy, we just merge all remaining slots into `keypair_remainig`.
+        for slot in known_slot_types:
+            keypair_remaining[slot] = min(
+                keypair_remaining[slot],
+                group_remaining[slot],
+                domain_remaining[slot],
+            )
+        # query all agent's capacity and occupancy
+        agent_slots = []
+
+        j = sa.join(groups, association_groups_users,
+                    association_groups_users.c.group_id == groups.c.id)
+        query = (
+            sa.select([association_groups_users.c.group_id])
+            .select_from(j)
+            .where(
+                (association_groups_users.c.user_id == request['user']['uuid']) &
+                (groups.c.name == params['group'])
+            )
+        )
+        group_id = await conn.scalar(query)
+        if group_id is None:
+            raise InvalidAPIParameters('Unknown user group')
+
+        sgroups = await query_allowed_sgroups(conn, domain_name,
+                                              group_id, access_key)
+        sgroups = [sg.name for sg in sgroups]
+        if params['scaling_group'] is not None:
+            if params['scaling_group'] not in sgroups:
+                raise InvalidAPIParameters('Unknown scaling group')
+            sgroups = [params['scaling_group']]
+
+        # Per scaling group resource remaining.
+        per_sgroup = {
+            sgname: {
+                'using': ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()}),
+                'remaining': ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()}),
+            } for sgname in sgroups
+        }
+        sgroup_remaining = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
+        query = (
+            sa.select([agents.c.available_slots, agents.c.occupied_slots, agents.c.scaling_group])
+            .select_from(agents)
+            .where(
+                (agents.c.status == AgentStatus.ALIVE) &
+                (agents.c.scaling_group.in_(sgroups))
+            )
+        )
+        async for row in conn.execute(query):
+            remaining = row['available_slots'] - row['occupied_slots']
+            remaining += ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
+            sgroup_remaining += remaining
+            agent_slots.append(remaining)
+            per_sgroup[row.scaling_group]['remaining'] += remaining
+        query = (
+            sa.select([kernels.c.occupied_slots, kernels.c.scaling_group])
+            .select_from(kernels)
+            .where(
+                (kernels.c.user_uuid == request['user']['uuid']) &
+                (kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
+                (kernels.c.scaling_group.in_(sgroups))
+            )
+        )
+        async for row in conn.execute(query):
+            per_sgroup[row.scaling_group]['using'] += row.occupied_slots
+        for sgname, sgfields in per_sgroup.items():
+            for rtype, slots in sgfields.items():
+                if not rtype == 'using':
+                    for slot in known_slot_types.keys():
+                        if slot in slots:
+                            slots[slot] = min(keypair_remaining[slot], slots[slot])
+                per_sgroup[sgname][rtype] = slots.to_json()  # type: ignore  # it's serialization
+        for slot in known_slot_types.keys():
+            sgroup_remaining[slot] = min(keypair_remaining[slot], sgroup_remaining[slot])
+
         resp['keypair_limits'] = keypair_limits.to_json()
         resp['keypair_using'] = keypair_occupied.to_json()
         resp['keypair_remaining'] = keypair_remaining.to_json()
-        # query all agent's capacity and occupancy
-        agent_slots = []
-        query = (
-            sa.select([agents.c.available_slots, agents.c.occupied_slots])
-            .select_from(agents)
-            .where(agents.c.status == AgentStatus.ALIVE))
-        # TODO: add scaling_group as filter condition
-        # query = query.where(resource_presets.c.scaling_group == scaling_group)
-        sgroup_remaining = ResourceSlot({
-            k: Decimal(0) for k in known_slot_types.keys()
-        })
-        async for row in conn.execute(query):
-            remaining = row['available_slots'] - row['occupied_slots']
-            sgroup_remaining += remaining
-            agent_slots.append(remaining)
         resp['scaling_group_remaining'] = sgroup_remaining.to_json()
+        resp['scaling_groups'] = per_sgroup
+
         # fetch all resource presets in the current scaling group.
         query = (
             sa.select([resource_presets])
@@ -142,14 +256,16 @@ async def recalculate_usage(request) -> web.Response:
     Those two values are sometimes out of sync. In that case, calling this API
     re-calculates the values for running containers and updates them in DB.
     '''
+    log.info('RECALCULATE_USAGE ()')
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         # Query running containers and calculate concurrency_used per AK and
         # occupied_slots per agent.
         query = (sa.select([kernels.c.access_key, kernels.c.agent, kernels.c.occupied_slots])
-                   .where(kernels.c.status != KernelStatus.TERMINATED)
+                   .where(kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES))
                    .order_by(sa.asc(kernels.c.access_key)))
-        concurrency_used_per_key = defaultdict(lambda: 0)
-        occupied_slots_per_agent = defaultdict(lambda: ResourceSlot({'cpu': 0, 'mem': 0}))
+        concurrency_used_per_key: MutableMapping[str, int] = defaultdict(lambda: 0)
+        occupied_slots_per_agent: MutableMapping[str, ResourceSlot] = \
+            defaultdict(lambda: ResourceSlot({'cpu': 0, 'mem': 0}))
         async for row in conn.execute(query):
             concurrency_used_per_key[row.access_key] += 1
             occupied_slots_per_agent[row.agent] += ResourceSlot(row.occupied_slots)
@@ -185,11 +301,16 @@ async def recalculate_usage(request) -> web.Response:
 async def get_container_stats_for_period(request, start_date, end_date, group_ids=None):
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         j = (sa.join(kernels, groups, kernels.c.group_id == groups.c.id))
-        query = (sa.select([kernels, groups.c.name])
-                   .select_from(j)
-                   .where(kernels.c.terminated_at >= start_date)
-                   .where(kernels.c.terminated_at < end_date)
-                   .order_by(sa.asc(kernels.c.terminated_at)))
+        query = (
+            sa.select([kernels, groups.c.name])
+            .select_from(j)
+            .where(
+                (kernels.c.terminated_at >= start_date) &
+                (kernels.c.terminated_at < end_date) &
+                (kernels.c.status.in_(RESOURCE_USAGE_KERNEL_STATUSES))
+            )
+            .order_by(sa.asc(kernels.c.terminated_at))
+        )
         if group_ids:
             query = query.where(kernels.c.group_id.in_(group_ids))
         result = await conn.execute(query)
@@ -203,24 +324,38 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
         nfs = None
         if row.mounts is not None:
             nfs = list(set([mount[1] for mount in row.mounts]))
+        device_type = set()
+        smp = 0
+        if row.attached_devices and row.attached_devices.get('cuda'):
+            for dev_info in row.attached_devices['cuda']:
+                if dev_info.get('model_name'):
+                    device_type.add(dev_info['model_name'])
+                smp += dev_info.get('smp', 0)
+        if row.resource_opts:
+            shared_memory = int(row.resource_opts.get('shmem', 0))
+        else:
+            shared_memory = 0
         c_info = {
-            # TODO: fill in these values when fields spec is fixed.
             'id': str(row['id']),
             'name': row['sess_id'],
             'access_key': row['access_key'],
-            'smp': float(row.occupied_slots['cpu']),  # CPU allocated
+            'cpu_allocated': float(row.occupied_slots['cpu']) if 'cpu' in row.occupied_slots else 0,
             'cpu_used': float(last_stat['cpu_used']['current']) if last_stat else 0,
-            'mem_allocated': int(row.occupied_slots['mem']),
+            'mem_allocated': int(row.occupied_slots['mem']) if 'mem' in row.occupied_slots else 0,
             'mem_used': int(last_stat['mem']['capacity']) if last_stat else 0,
-            'shared_memory': 0,  # TODO: how to get?
-            'disk_used': int(last_stat['io_scratch_size']['stats.max']) if last_stat else 0,
+            'shared_memory': shared_memory,
+            'disk_allocated': 0,  # TODO: disk quota limit
+            'disk_used': (int(last_stat['io_scratch_size']['stats.max'])
+                          if last_stat else 0),
             'io_read': int(last_stat['io_read']['current']) if last_stat else 0,
             'io_write': int(last_stat['io_write']['current']) if last_stat else 0,
             'used_time': str(row['terminated_at'] - row['created_at']),
             'used_days': (row['terminated_at'].astimezone(local_tz).toordinal() -
                           row['created_at'].astimezone(local_tz).toordinal() + 1),
-            'device_type': None,  # TODO: gpu device type
+            'device_type': list(device_type),
+            'smp': float(smp),  # TODO: GPU smp
             'nfs': nfs,
+            'image_id': row['image'],  # TODO: image id
             'image_name': row['image'],
             'created_at': str(row['created_at']),
             'terminated_at': str(row['terminated_at']),
@@ -230,25 +365,34 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
                 'domain_name': row['domain_name'],
                 'g_id': group_id,
                 'g_name': row['name'],  # this is group's name
-                'g_cpu_used': 0,
-                'g_mem_used': 0,
-                'g_shared_memory': 0,
-                'g_disk_used': 0,
-                'g_io_read': 0,
-                'g_io_write': 0,
-                'g_device_type': list(),
-                'g_smp': 0,
+                'g_cpu_allocated': c_info['cpu_allocated'],
+                'g_cpu_used': c_info['cpu_used'],
+                'g_mem_allocated': c_info['mem_allocated'],
+                'g_mem_used': c_info['mem_used'],
+                'g_shared_memory': c_info['shared_memory'],
+                'g_disk_allocated': c_info['disk_allocated'],
+                'g_disk_used': c_info['disk_used'],
+                'g_io_read': c_info['io_read'],
+                'g_io_write': c_info['io_write'],
+                'g_device_type': c_info['device_type'],
+                'g_smp': c_info['smp'],
                 'c_infos': [c_info],
             }
         else:
+            objs_per_group[group_id]['g_cpu_allocated'] += c_info['cpu_allocated']
             objs_per_group[group_id]['g_cpu_used'] += c_info['cpu_used']
+            objs_per_group[group_id]['g_mem_allocated'] += c_info['mem_allocated']
             objs_per_group[group_id]['g_mem_used'] += c_info['mem_used']
             objs_per_group[group_id]['g_shared_memory'] += c_info['shared_memory']
+            objs_per_group[group_id]['g_disk_allocated'] += c_info['disk_allocated']
             objs_per_group[group_id]['g_disk_used'] += c_info['disk_used']
             objs_per_group[group_id]['g_io_read'] += c_info['io_read']
             objs_per_group[group_id]['g_io_write'] += c_info['io_write']
-            if c_info['device_type'] not in objs_per_group[group_id]['g_device_type']:
-                objs_per_group[group_id]['g_device_type'].append(c_info['device_type'])
+            for device in c_info['device_type']:
+                if device not in objs_per_group[group_id]['g_device_type']:
+                    g_dev_type = objs_per_group[group_id]['g_device_type']
+                    g_dev_type.append(device)
+                    objs_per_group[group_id]['g_device_type'] = list(set(g_dev_type))
             objs_per_group[group_id]['g_smp'] += c_info['smp']
             objs_per_group[group_id]['c_infos'].append(c_info)
     return list(objs_per_group.values())
@@ -259,7 +403,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
 @superadmin_required
 @check_api_params(
     t.Dict({
-        tx.AliasedKey(['group_ids', 'project_ids', 'group', 'project']): t.List(t.String),
+        tx.MultiKey('group_ids'): t.List(t.String),
         t.Key('month'): t.Regexp(r'^\d{6}', re.ASCII),
     }),
     loads=_json_loads)
@@ -272,7 +416,7 @@ async def usage_per_month(request: web.Request, params: Any) -> web.Response:
     :param year int: The year.
     :param month int: The month.
     '''
-    log.info('USAGE_PER_MONTH (g:[{0}], month:{1})',
+    log.info('USAGE_PER_MONTH (g:[{}], month:{})',
              ','.join(params['group_ids']), params['month'])
     local_tz = request.app['config']['system']['timezone']
     try:
@@ -290,7 +434,7 @@ async def usage_per_month(request: web.Request, params: Any) -> web.Response:
 @superadmin_required
 @check_api_params(
     t.Dict({
-        tx.AliasedKey(['group_id', 'project_id', 'group', 'project']): t.String,
+        t.Key('group_id'): t.String,
         t.Key('start_date'): t.Regexp(r'^\d{8}$', re.ASCII),
         t.Key('end_date'): t.Regexp(r'^\d{8}$', re.ASCII),
     }),
@@ -313,14 +457,263 @@ async def usage_per_period(request: web.Request, params: Any) -> web.Response:
         raise InvalidAPIParameters(extra_msg='Invalid date values')
     if end_date <= start_date:
         raise InvalidAPIParameters(extra_msg='end_date must be later than start_date.')
-    log.info('USAGE_PER_MONTH (g:{0}, start_date:{1}, end_date:{2})',
+    log.info('USAGE_PER_MONTH (g:{}, start_date:{}, end_date:{})',
              group_id, start_date, end_date)
     resp = await get_container_stats_for_period(request, start_date, end_date, group_ids=[group_id])
-    resp = resp[0]  # only one group (project)
+    resp = resp[0] if len(resp) > 0 else {}  # only one group (project)
     resp['start_date'] = params['start_date']
     resp['end_date'] = params['end_date']
     log.debug('container list are retrieved from {0} to {1}', start_date, end_date)
     return web.json_response(resp, status=200)
+
+
+async def get_time_binned_monthly_stats(request, user_uuid=None):
+    '''
+    Generate time-binned (15 min) stats for the last one month (2880 points).
+    The structure of the result would be:
+
+        [
+          # [
+          #     timestamp, num_sessions,
+          #     cpu_allocated, mem_allocated, gpu_allocated,
+          #     io_read, io_write, scratch_used,
+          # ]
+            [1562083808.657106, 1, 1.2, 1073741824, ...],
+            [1562084708.657106, 2, 4.0, 1073741824, ...],
+        ]
+
+    Note that the timestamp is in UNIX-timestamp.
+    '''
+    # Get all or user kernels for the last month from DB.
+    time_window = 900  # 15 min
+    now = datetime.now(tzutc())
+    start_date = now - timedelta(days=30)
+    async with request.app['dbpool'].acquire() as conn, conn.begin():
+        query = (
+            sa.select([kernels])
+            .select_from(kernels)
+            .where(
+                (kernels.c.terminated_at >= start_date) &
+                (kernels.c.status.in_(RESOURCE_USAGE_KERNEL_STATUSES))
+            )
+            .order_by(sa.asc(kernels.c.created_at))
+        )
+        if user_uuid is not None:
+            query = query.where(kernels.c.user_uuid == user_uuid)
+        result = await conn.execute(query)
+        rows = await result.fetchall()
+
+    # Build time-series of time-binned stats.
+    rowcount = result.rowcount
+    now = now.timestamp()
+    start_date = start_date.timestamp()
+    ts = start_date
+    idx = 0
+    tseries = []
+    # Iterate over each time window.
+    while ts < now:
+        # Initialize the time-binned stats.
+        num_sessions = 0
+        cpu_allocated = 0
+        mem_allocated = 0
+        gpu_allocated = 0
+        io_read_bytes = 0
+        io_write_bytes = 0
+        disk_used = 0
+        # Accumulate stats for containers overlapping with this time window.
+        while idx < rowcount and \
+              ts + time_window > rows[idx].created_at.timestamp() and \
+              ts < rows[idx].terminated_at.timestamp():
+            # Accumulate stats for overlapping containers in this time window.
+            row = rows[idx]
+            num_sessions += 1
+            cpu_allocated += float(row.occupied_slots['cpu'])
+            mem_allocated += float(row.occupied_slots['mem'])
+            if 'cuda.devices' in row.occupied_slots:
+                gpu_allocated += float(row.occupied_slots['cuda.devices'])
+            if 'cuda.shares' in row.occupied_slots:
+                gpu_allocated += float(row.occupied_slots['cuda.shares'])
+            if row.last_stat:
+                io_read_bytes += int(row.last_stat['io_read']['current'])
+                io_write_bytes += int(row.last_stat['io_write']['current'])
+                disk_used += int(row.last_stat['io_scratch_size']['stats.max'])
+            idx += 1
+        stat = {
+            "date": ts,
+            "num_sessions": {
+                "value": num_sessions,
+                "unit_hint": "count"
+            },
+            "cpu_allocated": {
+                "value": cpu_allocated,
+                "unit_hint": "count"
+            },
+            "mem_allocated": {
+                "value": mem_allocated,
+                "unit_hint": "bytes"
+            },
+            "gpu_allocated": {
+                "value": gpu_allocated,
+                "unit_hint": "count"
+            },
+            "io_read_bytes": {
+                "value": io_read_bytes,
+                "unit_hint": "bytes"
+            },
+            "io_write_bytes": {
+                "value": io_write_bytes,
+                "unit_hint": "bytes"
+            },
+            "disk_used": {
+                "value ": disk_used,
+                "unit_hint": "bytes"
+            }
+        }
+        # print(stat)
+        tseries.append(stat)
+        ts += time_window
+    # print(rowcount)
+    return tseries
+
+
+@server_status_required(READ_ALLOWED)
+@auth_required
+async def user_month_stats(request: web.Request) -> web.Response:
+    '''
+    Return time-binned (15 min) stats for terminated user sessions
+    over last 30 days.
+    '''
+    access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
+    log.info('USER_LAST_MONTH_STATS (ak:{}, u:{})', access_key, user_uuid)
+    stats = await get_time_binned_monthly_stats(request, user_uuid=user_uuid)
+    return web.json_response(stats, status=200)
+
+
+@server_status_required(READ_ALLOWED)
+@superadmin_required
+async def admin_month_stats(request: web.Request) -> web.Response:
+    '''
+    Return time-binned (15 min) stats for all terminated sessions
+    over last 30 days.
+    '''
+    log.info('ADMIN_LAST_MONTH_STATS ()')
+    stats = await get_time_binned_monthly_stats(request, user_uuid=None)
+    return web.json_response(stats, status=200)
+
+
+async def get_watcher_info(request: web.Request, agent_id: str) -> dict:
+    '''
+    Get watcher information.
+
+    :return addr: address of agent watcher (eg: http://127.0.0.1:6009)
+    :return token: agent watcher token ("insecure" if not set in config server)
+    '''
+    token = request.app['config']['watcher']['token']
+    if token is None:
+        token = 'insecure'
+    agent_ip = await request.app['registry'].config_server.get(f'nodes/agents/{agent_id}/ip')
+    watcher_port = await request.app['registry'].config_server.get(
+        f'nodes/agents/{agent_id}/watcher_port')
+    if watcher_port is None:
+        watcher_port = 6009
+    # TODO: watcher scheme is assumed to be http
+    addr = yarl.URL(f'http://{agent_ip}:{watcher_port}')
+    return {
+        'addr': addr,
+        'token': token,
+    }
+
+
+@server_status_required(READ_ALLOWED)
+@superadmin_required
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['agent_id', 'agent']): t.String,
+    }))
+async def get_watcher_status(request: web.Request, params: Any) -> web.Response:
+    log.info('GET_WATCHER_STATUS ()')
+    watcher_info = await get_watcher_info(request, params['agent_id'])
+    connector = aiohttp.TCPConnector()
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        with _timeout(5.0):
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            async with sess.get(watcher_info['addr'], headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return web.json_response(data, status=resp.status)
+                else:
+                    data = await resp.text()
+                    return web.Response(text=data, status=resp.status)
+
+
+@server_status_required(READ_ALLOWED)
+@superadmin_required
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['agent_id', 'agent']): t.String,
+    }))
+async def watcher_agent_start(request: web.Request, params: Any) -> web.Response:
+    log.info('WATCHER_AGENT_START ()')
+    watcher_info = await get_watcher_info(request, params['agent_id'])
+    connector = aiohttp.TCPConnector()
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        with _timeout(20.0):
+            watcher_url = watcher_info['addr'] / 'agent/start'
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            async with sess.post(watcher_url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return web.json_response(data, status=resp.status)
+                else:
+                    data = await resp.text()
+                    return web.Response(text=data, status=resp.status)
+
+
+@server_status_required(READ_ALLOWED)
+@superadmin_required
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['agent_id', 'agent']): t.String,
+    }))
+async def watcher_agent_stop(request: web.Request, params: Any) -> web.Response:
+    log.info('WATCHER_AGENT_STOP ()')
+    watcher_info = await get_watcher_info(request, params['agent_id'])
+    connector = aiohttp.TCPConnector()
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        with _timeout(20.0):
+            watcher_url = watcher_info['addr'] / 'agent/stop'
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            async with sess.post(watcher_url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return web.json_response(data, status=resp.status)
+                else:
+                    data = await resp.text()
+                    return web.Response(text=data, status=resp.status)
+
+
+@server_status_required(READ_ALLOWED)
+@superadmin_required
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['agent_id', 'agent']): t.String,
+    }))
+async def watcher_agent_restart(request: web.Request, params: Any) -> web.Response:
+    log.info('WATCHER_AGENT_RESTART ()')
+    watcher_info = await get_watcher_info(request, params['agent_id'])
+    connector = aiohttp.TCPConnector()
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        with _timeout(20.0):
+            watcher_url = watcher_info['addr'] / 'agent/restart'
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            async with sess.post(watcher_url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return web.json_response(data, status=resp.status)
+                else:
+                    data = await resp.text()
+                    return web.Response(text=data, status=resp.status)
 
 
 def create_app(default_cors_options):
@@ -333,4 +726,10 @@ def create_app(default_cors_options):
     cors.add(add_route('POST', '/recalculate-usage', recalculate_usage))
     cors.add(add_route('GET',  '/usage/month', usage_per_month))
     cors.add(add_route('GET',  '/usage/period', usage_per_period))
+    cors.add(add_route('GET',  '/stats/user/month', user_month_stats))
+    cors.add(add_route('GET',  '/stats/admin/month', admin_month_stats))
+    cors.add(add_route('GET',  '/watcher', get_watcher_status))
+    cors.add(add_route('POST', '/watcher/agent/start', watcher_agent_start))
+    cors.add(add_route('POST', '/watcher/agent/stop', watcher_agent_stop))
+    cors.add(add_route('POST', '/watcher/agent/restart', watcher_agent_restart))
     return app, []

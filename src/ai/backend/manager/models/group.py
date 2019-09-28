@@ -1,6 +1,7 @@
 import asyncio
 from collections import OrderedDict
 import re
+from typing import Sequence
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -17,7 +18,7 @@ from .base import (
 from .user import UserRole
 
 
-__all__ = (
+__all__: Sequence[str] = (
     'groups', 'association_groups_users',
     'Group', 'GroupInput', 'ModifyGroupInput',
     'CreateGroup', 'ModifyGroup', 'DeleteGroup',
@@ -123,18 +124,18 @@ class Group(graphene.ObjectType):
                 objs_per_key[k] = None
             async for row in conn.execute(query):
                 o = Group.from_row(row)
-                objs_per_key[row.id] = o
+                objs_per_key[str(row.id)] = o
         return [*objs_per_key.values()]
 
     @staticmethod
     async def get_groups_for_user(context, user_id):
         async with context['dbpool'].acquire() as conn:
             j = sa.join(groups, association_groups_users,
-                        groups.c.id == association_groups_users.c.id)
+                        groups.c.id == association_groups_users.c.group_id)
             query = (
                 sa.select([groups])
                 .select_from(j)
-                .where(association_groups_users.c.id == user_id)
+                .where(association_groups_users.c.user_id == user_id)
             )
             objs = []
             async for row in conn.execute(query):

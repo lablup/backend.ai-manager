@@ -1,4 +1,3 @@
-from argparse import Namespace
 import asyncio
 from datetime import datetime
 import hashlib, hmac
@@ -26,10 +25,8 @@ import psycopg2 as pg
 import pytest
 
 from ai.backend.common.argparse import host_port_pair
-from ai.backend.common.etcd import AsyncEtcd, ConfigScopes
 from ai.backend.common.types import HostPortPair
 from ai.backend.gateway.config import load as load_config
-from ai.backend.gateway.events import event_router
 from ai.backend.gateway.server import (
     gw_init, gw_shutdown,
     exception_middleware, api_middleware,
@@ -37,8 +34,6 @@ from ai.backend.gateway.server import (
     PUBLIC_INTERFACES)
 from ai.backend.manager.models.base import populate_fixture
 from ai.backend.manager.models import agents, kernels, keypairs, vfolders
-from ai.backend.manager.cli.etcd import delete, put
-from ai.backend.manager.cli.dbschema import oneshot
 
 here = Path(__file__).parent
 
@@ -350,7 +345,7 @@ async def create_app_and_client(request, test_id, test_ns,
     runner = None
     extra_proc = None
 
-    async def maker(modules=None, ev_router=False, spawn_agent=False):
+    async def maker(modules=None, spawn_agent=False):
         nonlocal client, runner, extra_proc
 
         if modules is None:
@@ -401,15 +396,6 @@ async def create_app_and_client(request, test_id, test_ns,
             **server_params,
         )
         await site.start()
-
-        if ev_router:
-            # Run event_router proc. Is it enough? No way to get return values
-            # (app, client, etc) by using aiotools.start_server.
-            args = (app['config'],)
-            extra_proc = mp.Process(target=event_router,
-                                    args=('', 0, args,),
-                                    daemon=True)
-            extra_proc.start()
 
         # Launch an agent daemon
         if spawn_agent:
@@ -524,8 +510,7 @@ async def prepare_kernel(request, create_app_and_client,
     app, client = await create_app_and_client(
         modules=['etcd', 'events', 'auth', 'vfolder',
                  'admin', 'ratelimit', 'kernel', 'stream', 'manager'],
-        spawn_agent=True,
-        ev_router=True)
+        spawn_agent=True)
 
     async def create_kernel(image='lua:5.3-alpine', tag=None):
         url = '/v3/kernel/'
