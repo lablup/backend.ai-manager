@@ -126,6 +126,9 @@ class AssociationGroupsUsersFactory(ModelFactory):
 
     model = models.association_groups_users
 
+    def get_creation_defaults(self, **kwargs):
+        return {}
+
     async def before_creation(self):
         assert 'user_id' in self.defaults and 'group_id' in self.defaults, \
             'user_id and group_id should be provided to associate a group and a user'
