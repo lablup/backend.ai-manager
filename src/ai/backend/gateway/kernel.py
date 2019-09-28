@@ -354,7 +354,7 @@ async def handle_batch_result(app: web.Application, agent_id: AgentId, event_nam
     if event_name == 'kernel_success':
         await registry.set_session_result(kernel_id, True, exit_code)
     elif event_name == 'kernel_failure':
-        await registry.set_session_result(kernel_id, True, exit_code)
+        await registry.set_session_result(kernel_id, False, exit_code)
 
 
 async def instance_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
