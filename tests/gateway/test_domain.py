@@ -150,6 +150,7 @@ class TestDomainAdminQuery:
                 'is_active': True,
                 'total_resource_slots': '{}',
                 'allowed_vfolder_hosts': '{}',
+                'allowed_docker_registries': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
@@ -206,7 +207,7 @@ class TestDomainAdminQuery:
         assert not domain['is_active']
 
     async def test_domain_user_cannot_mutate_domain(self, create_app_and_client, get_headers,
-                                                    default_domain_keypair):
+                                                    user_keypair):
         app, client = await create_app_and_client(modules=['auth', 'admin', 'manager'])
 
         # Create a domain.
@@ -223,12 +224,15 @@ class TestDomainAdminQuery:
                 'description': 'desc',
                 'is_active': True,
                 'total_resource_slots': '{}',
+                'allowed_vfolder_hosts': '{}',
+                'allowed_docker_registries': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
-        headers = get_headers('POST', self.url, payload, keypair=default_domain_keypair)
+        headers = get_headers('POST', self.url, payload, keypair=user_keypair)
         ret = await client.post(self.url, data=payload, headers=headers)
-        assert ret.status == 400
+        rsp_json = await ret.json()
+        assert not rsp_json['create_domain']['ok']
 
         # Create a domain for testing by global admin.
         query = textwrap.dedent('''\
@@ -243,12 +247,15 @@ class TestDomainAdminQuery:
                 'description': 'desc',
                 'is_active': True,
                 'total_resource_slots': '{}',
+                'allowed_vfolder_hosts': '{}',
+                'allowed_docker_registries': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
         headers = get_headers('POST', self.url, payload)
         ret = await client.post(self.url, data=payload, headers=headers)
-        assert ret.status == 200
+        rsp_json = await ret.json()
+        assert rsp_json['create_domain']['ok']
 
         # Update the domain.
         query = textwrap.dedent('''\
@@ -267,9 +274,10 @@ class TestDomainAdminQuery:
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
-        headers = get_headers('POST', self.url, payload, keypair=default_domain_keypair)
+        headers = get_headers('POST', self.url, payload, keypair=user_keypair)
         ret = await client.post(self.url, data=payload, headers=headers)
-        assert ret.status == 400
+        rsp_json = await ret.json()
+        assert not rsp_json['modify_domain']['ok']
 
         # Delete the domain.
         query = textwrap.dedent('''\
@@ -278,9 +286,10 @@ class TestDomainAdminQuery:
         }''')
         variables = {'name': domain_name}
         payload = json.dumps({'query': query, 'variables': variables}).encode()
-        headers = get_headers('POST', self.url, payload, keypair=default_domain_keypair)
+        headers = get_headers('POST', self.url, payload, keypair=user_keypair)
         ret = await client.post(self.url, data=payload, headers=headers)
-        assert ret.status == 400
+        rsp_json = await ret.json()
+        assert not rsp_json['delete_domain']['ok']
 
     async def test_name_should_be_slugged(self, create_app_and_client, get_headers):
         app, client = await create_app_and_client(modules=['auth', 'admin', 'manager'])
@@ -299,13 +308,15 @@ class TestDomainAdminQuery:
                 'description': 'desc',
                 'is_active': True,
                 'total_resource_slots': '{}',
+                'allowed_vfolder_hosts': '{}',
+                'allowed_docker_registries': '{}',
             }
         }
         payload = json.dumps({'query': query, 'variables': variables}).encode()
         headers = get_headers('POST', self.url, payload)
         ret = await client.post(self.url, data=payload, headers=headers)
-
-        assert ret.status != 200
+        rsp_json = await ret.json()
+        assert not rsp_json['create_domain']['ok']
 
 
 @pytest.mark.asyncio

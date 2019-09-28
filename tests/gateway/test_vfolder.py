@@ -11,7 +11,7 @@ import subprocess
 from ai.backend.manager.models import (
     groups, keypairs, keypair_resource_policies, users,
     vfolders, vfolder_invitations, vfolder_permissions,
-    VFolderPermission
+    VFolderInvitationState, VFolderPermission
 )
 from ai.backend.manager.models.user import UserRole
 from tests.model_factory import (
@@ -1226,7 +1226,7 @@ class TestInvitation:
 
         assert invitation.permission == VFolderPermission.READ_WRITE
         assert invitation.inviter == 'admin@lablup.com'
-        assert invitation.state == 'pending'
+        assert invitation.state == VFolderInvitationState.PENDING
         assert rsp_json['invited_ids'][0] == 'user@lablup.com'
 
     @pytest.mark.asyncio
@@ -1244,7 +1244,7 @@ class TestInvitation:
                 'vfolder': folder_info['id'],
                 'inviter': 'admin@lablup.com',
                 'invitee': 'user@lablup.com',
-                'state': 'pending',
+                'state': VFolderInvitationState.PENDING,
             }))
             await conn.execute(query)
 
@@ -1345,7 +1345,7 @@ class TestInvitation:
                 'vfolder': folder_info['id'],
                 'inviter': 'admin@lablup.com',
                 'invitee': 'user@lablup.com',
-                'state': 'rejected',
+                'state': VFolderInvitationState.REJECTED,
             }))
             await conn.execute(query)
 
@@ -1373,7 +1373,7 @@ class TestInvitation:
                 'vfolder': folder_info['id'],
                 'inviter': 'admin@lablup.com',
                 'invitee': 'user@lablup.com',
-                'state': 'pending',
+                'state': VFolderInvitationState.PENDING,
             }))
             await conn.execute(query)
 
@@ -1400,7 +1400,7 @@ class TestInvitation:
         assert ret.status == 201
         assert perm.permission == VFolderPermission.READ_ONLY
         assert len(invitations) == 1
-        assert invitations[0]['state'] == 'accepted'
+        assert invitations[0]['state'] == VFolderInvitationState.ACCEPTED
 
     @pytest.mark.asyncio
     async def test_cannot_accept_invitation_with_duplicated_vfolder_name(
@@ -1419,7 +1419,7 @@ class TestInvitation:
                 'vfolder': folder_info['id'],
                 'inviter': 'admin@lablup.com',
                 'invitee': 'user@lablup.com',
-                'state': 'pending',
+                'state': VFolderInvitationState.PENDING,
             }))
             await conn.execute(query)
 
@@ -1461,7 +1461,7 @@ class TestInvitation:
         assert ret.status == 400
         assert perm is None
         assert len(invitations) == 1
-        assert invitations[0]['state'] == 'pending'
+        assert invitations[0]['state'] == VFolderInvitationState.PENDING
 
     @pytest.mark.asyncio
     async def test_delete_invitation(self, prepare_vfolder, get_headers,
@@ -1479,7 +1479,7 @@ class TestInvitation:
                 'vfolder': folder_info['id'],
                 'inviter': 'admin@lablup.com',
                 'invitee': 'user@lablup.com',
-                'state': 'pending',
+                'state': VFolderInvitationState.PENDING,
             }))
             await conn.execute(query)
 
@@ -1506,7 +1506,7 @@ class TestInvitation:
         assert ret.status == 200
         assert len(perms) == 0
         assert len(invitations) == 1
-        assert invitations[0]['state'] == 'rejected'
+        assert invitations[0]['state'] == VFolderInvitationState.REJECTED
 
     @pytest.mark.asyncio
     async def test_list_shared_vfolders(self, prepare_vfolder, get_headers,
