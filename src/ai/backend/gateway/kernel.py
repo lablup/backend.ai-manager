@@ -81,12 +81,13 @@ creation_config_v2 = t.Dict({
 creation_config_v3 = t.Dict({
     t.Key('mounts', default=None): t.Null | t.List(t.String),
     t.Key('environ', default=None): t.Null | t.Mapping(t.String, t.String),
-    tx.AliasedKey(['clusterSize', 'cluster_size'], default=None):
+    tx.AliasedKey(['cluster_size', 'clusterSize'], default=None):
         t.Null | t.Int[1:],
     tx.AliasedKey(['scaling_group', 'scalingGroup'], default=None):
         t.Null | t.String,
     t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
-    t.Key('resource_opts', default=None): t.Null | t.Mapping(t.String, t.Any),
+    tx.AliasedKey(['resource_opts', 'resourceOpts'], default=None):
+        t.Null | t.Mapping(t.String, t.Any),
 })
 
 
