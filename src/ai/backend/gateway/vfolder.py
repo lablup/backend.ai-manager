@@ -1003,7 +1003,7 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
                                     .where(vfolder_invitations.c.id == inv_id)
                                     .values(state='accepted'))
         await conn.execute(query)
-    return web.json_response()
+    return web.json_response({})
 
 
 @atomic
@@ -1047,7 +1047,7 @@ async def delete_invitation(request: web.Request, params: Any) -> web.Response:
         raise
     except Exception as e:
         raise InternalServerError(f'unexpected error: {e}')
-    return web.json_response()
+    return web.json_response({})
 
 
 @auth_required

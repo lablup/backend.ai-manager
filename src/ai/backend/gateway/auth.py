@@ -465,7 +465,7 @@ async def signout(request: web.Request, params: Any) -> web.Response:
                          .values(is_active=False)
                          .where(keypairs.c.user_id == params['email']))
         await conn.execute(query)
-    return web.json_response({'message': 'success'})
+    return web.json_response({})
 
 
 def create_app(default_cors_options):
