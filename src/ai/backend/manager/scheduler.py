@@ -74,6 +74,7 @@ class SessionContext:
     target_sgroup_names: MutableSequence[str]
     environ: Mapping[str, str]
     mounts: Sequence[str]
+    startup_command: Optional[str]
 
 
 @attr.s(auto_attribs=True, slots=True)
@@ -486,6 +487,7 @@ class SessionScheduler(aobject):
                 kernels.c.resource_opts,
                 kernels.c.environ,
                 kernels.c.mounts,
+                kernels.c.startup_command,
                 keypairs.c.resource_policy,
             ], for_update=True)
             .select_from(sa.join(
@@ -515,6 +517,7 @@ class SessionScheduler(aobject):
                     in map(lambda s: s.split('=', maxsplit=1), row['environ'])
                 },
                 mounts=row['mounts'],
+                startup_command=row['startup_command'],
             ))
         return sess_ctxs
 

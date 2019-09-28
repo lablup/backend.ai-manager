@@ -106,6 +106,7 @@ creation_config_v3 = t.Dict({
         t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.Bool | t.StrBool,
         t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
         t.Key('reuseIfExists', default=True) >> 'reuse': t.Bool | t.StrBool,
+        t.Key('startupCommand', default=None) >> 'startup_command': t.Null | t.String,
     }),
     loads=_json_loads)
 async def create(request: web.Request, params: Any) -> web.Response:
@@ -155,6 +156,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'service_ports': kern.service_ports,
             'created': False,
         }, status=200)
+
+    if params['sess_type'] != SessionTypes.BATCH and params['startup_comamnd'] is None:
+        raise InvalidAPIParameters('Batch sessions must have a non-empty startup command.')
 
     try:
         start_event = asyncio.Event()
@@ -258,6 +262,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             group_id=group_id,
             user_uuid=owner_uuid,
             user_role=request['user']['role'],
+            startup_command=params['startup_command'],
             session_tag=params.get('tag', None)))
         resp['kernelId'] = str(params['sess_id'])  # legacy naming
         resp['status'] = 'PENDING'

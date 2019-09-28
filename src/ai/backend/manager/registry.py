@@ -363,6 +363,7 @@ class AgentRegistry:
                               group_id: uuid.UUID,
                               user_uuid: str,
                               user_role: str,
+                              startup_command: str = None,
                               session_tag: str = None) -> KernelId:
 
         mounts = creation_config.get('mounts') or []
@@ -523,6 +524,7 @@ class AgentRegistry:
                 'image': image_ref.canonical,
                 'registry': image_ref.registry,
                 'tag': session_tag,
+                'startup_command': startup_command,
                 'occupied_slots': requested_slots,
                 'occupied_shares': {},
                 'resource_opts': resource_opts,
@@ -580,6 +582,7 @@ class AgentRegistry:
                     'mounts': sess_ctx.mounts,
                     'environ': sess_ctx.environ,
                     'resource_opts': sess_ctx.resource_opts,
+                    'startup_command': sess_ctx.startup_command,
                 }
                 created_info = await rpc.call.create_kernel(str(sess_ctx.kernel_id),
                                                             config)

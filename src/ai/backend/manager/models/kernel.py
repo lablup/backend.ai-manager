@@ -31,11 +31,6 @@ __all__: Sequence[str] = (
 )
 
 
-class SessionTypes(enum.Enum):
-    INTERACTIVE = 0
-    BATCH = 1
-
-
 class KernelStatus(enum.Enum):
     # values are only meaningful inside the gateway
     PENDING = 0
@@ -132,6 +127,7 @@ kernels = sa.Table(
               nullable=False, index=True),
     sa.Column('status_changed', sa.DateTime(timezone=True), nullable=True, index=True),
     sa.Column('status_info', sa.Unicode(), nullable=True, default=sa.null()),
+    sa.Column('startup_command', sa.Text, nullable=True),
     sa.Column('result', EnumType(SessionResult),
               default=SessionResult.UNDEFINED,
               server_default=SessionResult.UNDEFINED.name,
@@ -179,6 +175,7 @@ class SessionCommons:
     status_info = graphene.String()
     created_at = GQLDateTime()
     terminated_at = GQLDateTime()
+    startup_command = graphene.String()
 
     # hidable fields by configuration
     agent = graphene.String()
@@ -309,6 +306,7 @@ class SessionCommons:
             'status_info': row['status_info'],
             'created_at': row['created_at'],
             'terminated_at': row['terminated_at'],
+            'startup_command': row['startup_command'],
             'service_ports': row['service_ports'],
             'occupied_slots': row['occupied_slots'].to_json(),
             'occupied_shares': row['occupied_shares'],
