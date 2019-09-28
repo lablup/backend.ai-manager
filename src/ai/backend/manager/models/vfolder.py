@@ -89,7 +89,7 @@ vfolder_invitations = sa.Table(
               default=VFolderPermission.READ_WRITE),
     sa.Column('inviter', sa.String(length=256)),  # email
     sa.Column('invitee', sa.String(length=256), nullable=False),  # email
-    # State of the infitation: pending, accepted, rejected
+    # State of the invitation: pending, canceled, accepted, rejected
     sa.Column('state', sa.String(length=10), default='pending'),
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
