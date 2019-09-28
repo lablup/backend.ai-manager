@@ -56,6 +56,7 @@ from ..manager.models import (
     domains,
     association_groups_users as agus, groups,
     keypairs, kernels,
+    keypair_resource_policies,
     AgentStatus, KernelStatus,
 )
 
@@ -110,7 +111,7 @@ creation_config_v3 = t.Dict({
 async def create(request: web.Request, params: Any) -> web.Response:
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
-    requester_access_key, owner_access_key = get_access_key_scopes(request)
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
     requester_uuid = request['user']['uuid']
     log.info('GET_OR_CREATE (ak:{0}/{1}, img:{2}, s:{3})',
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*',
@@ -172,15 +173,28 @@ async def create(request: web.Request, params: Any) -> web.Response:
         cancel_handler = request.app['event_dispatcher'].subscribe('kernel_cancelled', None,
                                                                    interrupt_wait)
 
-        resource_policy = request['keypair']['resource_policy']
         async with dbpool.acquire() as conn, conn.begin():
             if requester_access_key != owner_access_key:
-                query = (sa.select([keypairs.c.user])
-                           .select_from(keypairs)
-                           .where(keypairs.c.access_key == owner_access_key))
-                owner_uuid = await conn.scalar(query)
+                # Admin is creating sessions for another user.
+                query = (
+                    sa.select([keypairs.c.user, keypairs.c.resource_policy])
+                    .select_from(keypairs)
+                    .where(keypairs.c.access_key == owner_access_key)
+                )
+                result = await conn.execute(query)
+                row = await result.fetchone()
+                owner_uuid = row['user']
+                query = (
+                    sa.select([keypair_resource_policies])
+                    .select_from(keypair_resource_policies)
+                    .where(keypair_resource_policies.c.name == row['resource_policy'])
+                )
+                result = await conn.execute(query)
+                resource_policy = await result.fetchone()
             else:
+                # Normal case when the user is creating her/his own session.
                 owner_uuid = requester_uuid
+                resource_policy = request['keypair']['resource_policy']
 
             if request['is_superadmin']:  # superadmin can spawn container in any domain and group
                 query = (sa.select([groups.c.domain_name, groups.c.id])
@@ -441,7 +455,7 @@ async def stats_monitor_update_timer(app):
 async def destroy(request: web.Request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    requester_access_key, owner_access_key = get_access_key_scopes(request)
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
     domain_name = None
     if requester_access_key != owner_access_key and \
             not request['is_superadmin'] and request['is_admin']:
@@ -464,7 +478,7 @@ async def get_info(request: web.Request) -> web.Response:
     resp = {}
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    requester_access_key, owner_access_key = get_access_key_scopes(request)
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('GETINFO (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, sess_id)
     try:
@@ -511,7 +525,7 @@ async def get_info(request: web.Request) -> web.Response:
 async def restart(request: web.Request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    requester_access_key, owner_access_key = get_access_key_scopes(request)
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('RESTART (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, sess_id)
     try:
@@ -533,7 +547,7 @@ async def execute(request: web.Request) -> web.Response:
     resp = {}
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    requester_access_key, owner_access_key = get_access_key_scopes(request)
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
     try:
         params = await request.json(loads=json.loads)
         log.info('EXECUTE(ak:{0}/{1}, s:{2})',
@@ -615,7 +629,7 @@ async def execute(request: web.Request) -> web.Response:
 async def interrupt(request: web.Request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    requester_access_key, owner_access_key = get_access_key_scopes(request)
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('INTERRUPT(ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, sess_id)
     try:
@@ -639,7 +653,7 @@ async def complete(request: web.Request) -> web.Response:
     }
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    requester_access_key, owner_access_key = get_access_key_scopes(request)
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
     try:
         params = await request.json(loads=json.loads)
         log.info('COMPLETE(ak:{0}/{1}, s:{2})',
@@ -667,7 +681,7 @@ async def upload_files(request: web.Request) -> web.Response:
     reader = await request.multipart()
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    requester_access_key, owner_access_key = get_access_key_scopes(request)
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('UPLOAD_FILE (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, sess_id)
     try:
@@ -709,7 +723,7 @@ async def download_files(request: web.Request) -> web.Response:
     try:
         registry = request.app['registry']
         sess_id = request.match_info['sess_id']
-        requester_access_key, owner_access_key = get_access_key_scopes(request)
+        requester_access_key, owner_access_key = await get_access_key_scopes(request)
         params = await request.json(loads=_json_loads)
         assert params.get('files'), 'no file(s) specified!'
         files = params.get('files')
@@ -750,7 +764,7 @@ async def download_files(request: web.Request) -> web.Response:
 async def list_files(request: web.Request) -> web.Response:
     try:
         sess_id = request.match_info['sess_id']
-        requester_access_key, owner_access_key = get_access_key_scopes(request)
+        requester_access_key, owner_access_key = await get_access_key_scopes(request)
         params = await request.json(loads=json.loads)
         path = params.get('path', '.')
         log.info('LIST_FILES (ak:{0}/{1}, s:{2}, path:{3})',
@@ -785,7 +799,7 @@ async def get_logs(request: web.Request) -> web.Response:
     resp = {'result': {'logs': ''}}
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
-    requester_access_key, owner_access_key = get_access_key_scopes(request)
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('GETLOG (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, sess_id)
     try:
