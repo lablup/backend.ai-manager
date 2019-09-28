@@ -715,9 +715,7 @@ async def accept_invitation(request):
                                     .where(vfolder_invitations.c.id == inv_id)
                                     .values(state='accepted'))
         await conn.execute(query)
-    msg = (f'Access key ({inv_ak} by {invitation.invitee}) now can access '
-           f'vfolder {invitation.vfolder}.')
-    return web.json_response({'msg': msg}, status=201)
+    return web.json_response({}, status=201)
 
 
 @server_status_required(ALL_ALLOWED)
@@ -746,8 +744,7 @@ async def delete_invitation(request):
                                     .where(vfolder_invitations.c.id == inv_id)
                                     .values(state='rejected'))
         await conn.execute(query)
-    resp = {'msg': f'Vfolder invitation is rejected: {inv_id}.'}
-    return web.json_response(resp, status=200)
+    return web.json_response({}, status=200)
 
 
 @server_status_required(ALL_ALLOWED)
