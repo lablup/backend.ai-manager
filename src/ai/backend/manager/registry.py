@@ -28,6 +28,7 @@ from ai.backend.common.types import (
     KernelId,
     ResourceSlot,
     SessionTypes,
+    SessionResult,
     KernelCreationConfig,
 )
 from ai.backend.common.logging import BraceStyleAdapter
@@ -1098,6 +1099,22 @@ class AgentRegistry:
             'status': status,
             'status_info': reason,
             'status_changed': datetime.now(tzutc()),
+        }
+        async with reenter_txn(self.dbpool, db_conn) as conn:
+            query = (
+                sa.update(kernels)
+                .values(data)
+                .where(kernels.c.id == kernel_id)
+            )
+            await conn.execute(query)
+
+    async def set_session_result(self, kernel_id: KernelId,
+                                 success: bool,
+                                 exit_code: int, *,
+                                 db_conn: SAConnection = None):
+        # TODO: store exit code?
+        data = {
+            'result': SessionResult.SUCCESS if success else SessionResult.FAILURE,
         }
         async with reenter_txn(self.dbpool, db_conn) as conn:
             query = (

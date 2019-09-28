@@ -521,6 +521,40 @@ async def enqueue_status_update(app: web.Application, agent_id: AgentId, event_n
         q.put_nowait((event_name, row, reason))
 
 
+async def enqueue_result_update(app: web.Application, agent_id: AgentId, event_name: str,
+                                raw_kernel_id: str,
+                                exit_code: int = None) -> None:
+    kernel_id = uuid.UUID(raw_kernel_id)
+    # TODO: when event_name == 'kernel_started', read the service port data.
+    async with app['dbpool'].acquire() as conn, conn.begin():
+        query = (
+            sa.select([
+                kernels.c.role,
+                kernels.c.sess_id,
+                kernels.c.access_key,
+                kernels.c.domain_name,
+                kernels.c.group_id,
+                kernels.c.user_uuid,
+            ])
+            .select_from(kernels)
+            .where(
+                (kernels.c.id == kernel_id)
+            )
+        )
+        result = await conn.execute(query)
+        row = await result.first()
+        if row is None:
+            return
+        if row['role'] != 'master':
+            return
+    if event_name == 'kernel_success':
+        reason = 'task-success'
+    else:
+        reason = 'task-failure'
+    for q in app['event_queues']:
+        q.put_nowait((event_name, row, reason))
+
+
 async def init(app: web.Application) -> None:
     app['stream_pty_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_execute_handlers'] = defaultdict(weakref.WeakSet)
@@ -537,6 +571,8 @@ async def init(app: web.Application) -> None:
     event_dispatcher.subscribe('kernel_terminating', app, enqueue_status_update)
     event_dispatcher.subscribe('kernel_terminated', app, enqueue_status_update)
     event_dispatcher.subscribe('kernel_cancelled', app, enqueue_status_update)
+    event_dispatcher.subscribe('kernel_success', app, enqueue_result_update)
+    event_dispatcher.subscribe('kernel_failure', app, enqueue_result_update)
 
 
 async def shutdown(app: web.Application) -> None:

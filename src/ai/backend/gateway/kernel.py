@@ -347,6 +347,16 @@ async def kernel_lifecycle(app: web.Application, agent_id: AgentId, event_name: 
         await registry.mark_kernel_terminated(kernel_id, reason, exit_code)
 
 
+async def handle_batch_result(app: web.Application, agent_id: AgentId, event_name: str,
+                              raw_kernel_id: str, exit_code: int) -> None:
+    kernel_id = uuid.UUID(raw_kernel_id)
+    registry = app['registry']
+    if event_name == 'kernel_success':
+        await registry.set_session_result(kernel_id, True, exit_code)
+    elif event_name == 'kernel_failure':
+        await registry.set_session_result(kernel_id, True, exit_code)
+
+
 async def instance_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
                              reason: str = None) -> None:
     if event_name == 'instance_started':
@@ -826,6 +836,8 @@ async def init(app: web.Application):
     event_dispatcher.consume('kernel_started', app, kernel_lifecycle)
     event_dispatcher.consume('kernel_terminating', app, kernel_lifecycle)
     event_dispatcher.consume('kernel_terminated', app, kernel_lifecycle)
+    event_dispatcher.consume('kernel_success', app, handle_batch_result)
+    event_dispatcher.consume('kernel_failure', app, handle_batch_result)
     event_dispatcher.consume('instance_started', app, instance_lifecycle)
     event_dispatcher.consume('instance_terminated', app, instance_lifecycle)
     event_dispatcher.consume('instance_heartbeat', app, instance_heartbeat)

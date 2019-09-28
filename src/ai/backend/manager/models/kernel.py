@@ -172,6 +172,7 @@ class SessionCommons:
     created_at = GQLDateTime()
     terminated_at = GQLDateTime()
     startup_command = graphene.String()
+    result = graphene.String()
 
     # hidable fields by configuration
     agent = graphene.String()
@@ -303,6 +304,7 @@ class SessionCommons:
             'created_at': row['created_at'],
             'terminated_at': row['terminated_at'],
             'startup_command': row['startup_command'],
+            'result': row['result'].name,
             'service_ports': row['service_ports'],
             'occupied_slots': row['occupied_slots'].to_json(),
             'occupied_shares': row['occupied_shares'],
