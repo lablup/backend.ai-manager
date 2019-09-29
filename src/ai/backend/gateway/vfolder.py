@@ -36,7 +36,7 @@ from ai.backend.common.utils import Fstab
 from .auth import auth_required, superadmin_required
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
-    GenericForbidden, InvalidAPIParameters, ServerMisconfiguredError,
+    GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
     BackendAgentError, InternalServerError,
 )
 from .manager import (
@@ -48,7 +48,8 @@ from .utils import check_api_params
 from ..manager.models import (
     agents, AgentStatus, kernels, KernelStatus,
     users, groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
-    VFolderPermission, VFolderPermissionValidator, query_accessible_vfolders,
+    VFolderInvitationState, VFolderPermission, VFolderPermissionValidator,
+    query_accessible_vfolders,
     get_allowed_vfolder_hosts_by_group, get_allowed_vfolder_hosts_by_user,
     UserRole,
 )
@@ -788,7 +789,7 @@ async def list_sent_invitations(request: web.Request) -> web.Response:
         query = (sa.select([vfolder_invitations, vfolders.c.name])
                    .select_from(j)
                    .where((vfolder_invitations.c.inviter == request['user']['email']) &
-                          (vfolder_invitations.c.state == 'pending')))
+                          (vfolder_invitations.c.state == VFolderInvitationState.PENDING)))
         result = await conn.execute(query)
         invitations = await result.fetchall()
     invs_info = []
@@ -798,7 +799,7 @@ async def list_sent_invitations(request: web.Request) -> web.Response:
             'inviter': inv.inviter,
             'invitee': inv.invitee,
             'perm': inv.permission,
-            'state': inv.state,
+            'state': inv.state.value,
             'created_at': str(inv.created_at),
             'vfolder_id': str(inv.vfolder),
             'vfolder_name': inv.name,
@@ -829,7 +830,7 @@ async def update_invitation(request: web.Request, params: Any) -> web.Response:
                    .values(permission=VFolderPermission(perm))
                    .where(vfolder_invitations.c.id == inv_id)
                    .where(vfolder_invitations.c.inviter == request['user']['email'])
-                   .where(vfolder_invitations.c.state == 'pending'))
+                   .where(vfolder_invitations.c.state == VFolderInvitationState.PENDING))
         await conn.execute(query)
     resp = {'msg': f'vfolder invitation updated: {inv_id}.'}
     return web.json_response(resp, status=200)
@@ -888,7 +889,7 @@ async def invite(request: web.Request) -> web.Response:
                        .where((vfolder_invitations.c.inviter == inviter) &
                               (vfolder_invitations.c.invitee == invitee) &
                               (vfolder_invitations.c.vfolder == vf.id) &
-                              (vfolder_invitations.c.state == 'pending')))
+                              (vfolder_invitations.c.state == VFolderInvitationState.PENDING)))
             result = await conn.execute(query)
             if result.rowcount > 0:
                 continue
@@ -904,7 +905,7 @@ async def invite(request: web.Request) -> web.Response:
                 'vfolder': vf.id,
                 'inviter': inviter,
                 'invitee': invitee,
-                'state': 'pending',
+                'state': VFolderInvitationState.PENDING,
             }))
             try:
                 await conn.execute(query)
@@ -928,7 +929,7 @@ async def invitations(request: web.Request) -> web.Response:
         query = (sa.select([vfolder_invitations, vfolders.c.name])
                    .select_from(j)
                    .where((vfolder_invitations.c.invitee == request['user']['id']) &
-                          (vfolder_invitations.c.state == 'pending')))
+                          (vfolder_invitations.c.state == VFolderInvitationState.PENDING)))
         result = await conn.execute(query)
         invitations = await result.fetchall()
     invs_info = []
@@ -969,12 +970,11 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
         query = (sa.select([vfolder_invitations])
                    .select_from(vfolder_invitations)
                    .where((vfolder_invitations.c.id == inv_id) &
-                          (vfolder_invitations.c.state == 'pending')))
+                          (vfolder_invitations.c.state == VFolderInvitationState.PENDING)))
         result = await conn.execute(query)
         invitation = await result.first()
         if invitation is None:
-            resp = {'msg': 'No such invitation found.'}
-            return web.json_response(resp, status=404)
+            raise GenericNotFound('No such vfolder invitation')
 
         # Get target virtual folder.
         query = (sa.select([vfolders.c.name])
@@ -983,13 +983,12 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
         result = await conn.execute(query)
         target_vfolder = await result.first()
         if target_vfolder is None:
-            resp = {'msg': 'No such virtual folder found.'}
-            return web.json_response(resp, status=404)
+            raise VFolderNotFound
 
         # Prevent accepting vfolder with duplicated name.
         j = sa.join(vfolders, vfolder_permissions,
                     vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
-        query = (sa.select('*')
+        query = (sa.select([vfolders.c.id])
                    .select_from(j)
                    .where(((vfolders.c.user == user_uuid) |
                            (vfolder_permissions.c.user == user_uuid)) &
@@ -1009,11 +1008,9 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
         # Clear used invitation.
         query = (vfolder_invitations.update()
                                     .where(vfolder_invitations.c.id == inv_id)
-                                    .values(state='accepted'))
+                                    .values(state=VFolderInvitationState.ACCEPTED))
         await conn.execute(query)
-    msg = (f'User {invitation.invitee} now can access '
-           f'vfolder {invitation.vfolder}.')
-    return web.json_response({'msg': msg}, status=201)
+    return web.json_response({})
 
 
 @atomic
@@ -1026,27 +1023,38 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
 async def delete_invitation(request: web.Request, params: Any) -> web.Response:
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
+    request_email = request['user']['email']
     inv_id = params['inv_id']
     log.info('VFOLDER.DELETE_INVITATION (ak:{}, inv:{})', access_key, inv_id)
-    async with dbpool.acquire() as conn:
-        query = (sa.select('*')
-                   .select_from(vfolder_invitations)
-                   .where((vfolder_invitations.c.id == inv_id) &
-                          (vfolder_invitations.c.state == 'pending')))
-        try:
+    try:
+        async with dbpool.acquire() as conn:
+            query = (sa.select([vfolder_invitations.c.inviter,
+                                vfolder_invitations.c.invitee])
+                       .select_from(vfolder_invitations)
+                       .where((vfolder_invitations.c.id == inv_id) &
+                              (vfolder_invitations.c.state == VFolderInvitationState.PENDING)))
             result = await conn.execute(query)
-        except psycopg2.DataError:
-            raise InvalidAPIParameters
-        row = await result.first()
-        if row is None:
-            resp = {'msg': 'No such invitation found.'}
-            return web.json_response(resp, status=404)
-        query = (vfolder_invitations.update()
-                                    .where(vfolder_invitations.c.id == inv_id)
-                                    .values(state='rejected'))
-        await conn.execute(query)
-    resp = {'msg': f'Vfolder invitation is rejected: {inv_id}.'}
-    return web.json_response(resp, status=200)
+            row = await result.first()
+            if row is None:
+                raise GenericNotFound('No such vfolder invitation')
+            if request_email == row.inviter:
+                state = VFolderInvitationState.CANCELED
+            elif request_email == row.invitee:
+                state = VFolderInvitationState.REJECTED
+            else:
+                raise GenericForbidden('Cannot change other user\'s invitaiton')
+            query = (vfolder_invitations
+                     .update()
+                     .where(vfolder_invitations.c.id == inv_id)
+                     .values(state=state))
+            await conn.execute(query)
+    except (psycopg2.IntegrityError, sa.exc.IntegrityError) as e:
+        raise InternalServerError(f'integrity error: {e}')
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        raise
+    except Exception as e:
+        raise InternalServerError(f'unexpected error: {e}')
+    return web.json_response({})
 
 
 @auth_required
