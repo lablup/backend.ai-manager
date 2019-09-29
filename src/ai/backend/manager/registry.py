@@ -248,19 +248,28 @@ class AgentRegistry:
             cols.append(sa.column(field))
         async with reenter_txn(self.dbpool, db_connection) as conn:
             if allow_stale:
-                query = (sa.select(cols)
-                           .select_from(kernels)
-                           .where(kernels.c.id == kern_id)
-                           .limit(1).offset(0))
+                query = (
+                    sa.select(cols)
+                    .select_from(kernels)
+                    .where(kernels.c.id == kern_id)
+                    .limit(1).offset(0))
             else:
-                query = (sa.select(cols)
-                           .select_from(kernels.join(agents))
-                           .where((kernels.c.id == kern_id) &
-                                  (kernels.c.status.in_([KernelStatus.BUILDING,
-                                                         KernelStatus.RUNNING])) &
-                                  (agents.c.status == AgentStatus.ALIVE) &
-                                  (agents.c.id == kernels.c.agent))
-                           .limit(1).offset(0))
+                query = (
+                    sa.select(cols)
+                    .select_from(kernels.join(agents))
+                    .where(
+                        (kernels.c.id == kern_id) &
+                        (kernels.c.status.in_([
+                            KernelStatus.BUILDING,
+                            KernelStatus.PREPARING,
+                            KernelStatus.PULLING,
+                            KernelStatus.RUNNING,
+                            KernelStatus.TERMINATING,
+                        ])) &
+                        (agents.c.status == AgentStatus.ALIVE) &
+                        (agents.c.id == kernels.c.agent)
+                    )
+                    .limit(1).offset(0))
             result = await conn.execute(query)
             row = await result.first()
             if row is None:
@@ -386,33 +395,34 @@ class AgentRegistry:
         # sanity check for vfolders
         allowed_vfolder_types = ['user', 'group']
         # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
-        if creation_config['mounts']:
-            mount_details = []
-            matched_mounts = set()
-            async with self.dbpool.acquire() as conn, conn.begin():
-                matched_vfolders = await query_accessible_vfolders(
-                    conn, user_uuid,
-                    user_role=user_role, domain_name=domain_name,
-                    allowed_vfolder_types=allowed_vfolder_types,
-                    extra_vf_conds=(vfolders.c.name.in_(creation_config['mounts'])))
-                for item in matched_vfolders:
-                    if item['group'] is not None and item['group'] != str(group_id):
-                        # User's accessible group vfolders should not be mounted
-                        # if not belong to the execution kernel.
-                        continue
-                    matched_mounts.add(item['name'])
-                    mount_details.append((
-                        item['name'],
-                        item['host'],
-                        item['id'].hex,
-                        item['permission'].value,
-                    ))
-                if set(creation_config['mounts']) > matched_mounts:
-                    raise VFolderNotFound
-                creation_config['mounts'] = mount_details
-            mounts = mount_details
-        else:
-            mounts = []
+        determined_mounts = []
+        matched_mounts = set()
+        async with self.dbpool.acquire() as conn, conn.begin():
+            matched_vfolders = await query_accessible_vfolders(
+                conn, user_uuid,
+                user_role=user_role, domain_name=domain_name,
+                allowed_vfolder_types=allowed_vfolder_types,
+                extra_vf_conds=(
+                    # vfolders.c.name.in_(creation_config['mounts']) |
+                    vfolders.c.name.startswith('.')
+                ))
+            for item in matched_vfolders:
+                print('mounting', item['name'])
+                if item['group'] is not None and item['group'] != str(group_id):
+                    # User's accessible group vfolders should not be mounted
+                    # if not belong to the execution kernel.
+                    continue
+                matched_mounts.add(item['name'])
+                determined_mounts.append((
+                    item['name'],
+                    item['host'],
+                    item['id'].hex,
+                    item['permission'].value,
+                ))
+            if set(creation_config['mounts']) > matched_mounts:
+                raise VFolderNotFound
+            creation_config['mounts'] = determined_mounts
+        mounts = determined_mounts
 
         # TODO: merge into a single call
         image_info = await self.config_server.inspect_image(image_ref)

@@ -9,6 +9,7 @@ import functools
 import json
 import logging
 import re
+from pathlib import Path
 import secrets
 from typing import (
     Any, Optional,
@@ -17,7 +18,7 @@ from typing import (
 import uuid
 
 import aiohttp
-from aiohttp import web
+from aiohttp import web, hdrs
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
 import aiotools
@@ -41,6 +42,7 @@ from ai.backend.common.types import (
 
 from .exceptions import (
     InvalidAPIParameters,
+    GenericNotFound,
     ImageNotFound,
     KernelNotFound,
     KernelAlreadyExists,
@@ -57,7 +59,9 @@ from ..manager.models import (
     association_groups_users as agus, groups,
     keypairs, kernels,
     keypair_resource_policies,
+    vfolders,
     AgentStatus, KernelStatus,
+    query_accessible_vfolders,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.kernel'))
@@ -811,21 +815,62 @@ async def list_files(request: web.Request) -> web.Response:
 @atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def get_logs(request: web.Request) -> web.Response:
-    resp = {'result': {'logs': ''}}
+@check_api_params(
+    t.Dict({
+        t.Key('owner_access_key', default=None): t.Null | t.String,
+    }))
+async def get_logs(request: web.Request, params: Any) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
-    log.info('GETLOG (ak:{0}/{1}, s:{2})',
+    log.info('GET_LOG (ak:{}/{}, s:{})',
              requester_access_key, owner_access_key, sess_id)
+    resp = {'result': {'logs': ''}}
     try:
         await registry.increment_session_usage(sess_id, owner_access_key)
         resp['result'] = await registry.get_logs(sess_id, owner_access_key)
         log.info('container log retrieved: {0!r}', resp)
     except BackendError:
-        log.exception('GETLOG: exception')
+        log.exception('GET_LOG: exception')
         raise
     return web.json_response(resp, status=200)
+
+
+@server_status_required(READ_ALLOWED)
+@auth_required
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['kernel_id', 'kernelId', 'task_id', 'taskId']) >> 'kernel_id': tx.UUID,
+    }))
+async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse:
+    log.info('GET_TASK_LOG (ak:{}, k:{})',
+             request['keypair']['access_key'], params['kernel_id'])
+    domain_name = request['user']['domain_name']
+    user_role = request['user']['role']
+    user_uuid = request['user']['uuid']
+    raw_kernel_id = params['kernel_id'].hex
+    mount_prefix = await request.app['config_server'].get('volumes/_mount')
+    fs_prefix = await request.app['config_server'].get('volumes/_fsprefix')
+    async with request.app['dbpool'].acquire() as conn, conn.begin():
+        matched_vfolders = await query_accessible_vfolders(
+            conn, user_uuid,
+            user_role=user_role, domain_name=domain_name,
+            allowed_vfolder_types=['user'],
+            extra_vf_conds=(vfolders.c.name == '.logs'))
+        if not matched_vfolders:
+            raise GenericNotFound('You do not have ".logs" vfolder for persistent task logs.')
+        log_vfolder = matched_vfolders[0]
+        log_path = (
+            Path(mount_prefix) / log_vfolder['host'] / Path(fs_prefix.lstrip('/')) /
+            log_vfolder['id'].hex /
+            'task' / raw_kernel_id[:2] / raw_kernel_id[2:4] / f'{raw_kernel_id[4:]}.log'
+        )
+    try:
+        return web.FileResponse(log_path, headers={
+            hdrs.CONTENT_TYPE: "text/plain",
+        })
+    except FileNotFoundError:
+        raise GenericNotFound('The requested log file was not found.')
 
 
 async def init(app: web.Application):
@@ -878,6 +923,9 @@ def create_app(default_cors_options):
     cors.add(kernel_resource.add_route('PATCH',  restart))
     cors.add(kernel_resource.add_route('DELETE', destroy))
     cors.add(kernel_resource.add_route('POST',   execute))
+    task_log_resource = cors.add(app.router.add_resource(r'/_/logs'))
+    cors.add(task_log_resource.add_route('HEAD', get_task_logs))
+    cors.add(task_log_resource.add_route('GET',  get_task_logs))
     cors.add(app.router.add_route('GET',  '/{sess_id}/logs', get_logs))
     cors.add(app.router.add_route('POST', '/{sess_id}/interrupt', interrupt))
     cors.add(app.router.add_route('POST', '/{sess_id}/complete', complete))
