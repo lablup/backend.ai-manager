@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import functools
 import json
 import logging
+import os
 import re
 from pathlib import Path
 import secrets
@@ -51,7 +52,7 @@ from .exceptions import (
 )
 from .auth import auth_required
 from .utils import (
-    catch_unexpected, check_api_params, get_access_key_scopes,
+    current_loop, catch_unexpected, check_api_params, get_access_key_scopes,
 )
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (
@@ -865,12 +866,21 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
             log_vfolder['id'].hex /
             'task' / raw_kernel_id[:2] / raw_kernel_id[2:4] / f'{raw_kernel_id[4:]}.log'
         )
-    try:
-        return web.FileResponse(log_path, headers={
-            hdrs.CONTENT_TYPE: "text/plain",
-        })
-    except FileNotFoundError:
-        raise GenericNotFound('The requested log file was not found.')
+
+    def check_file():
+        if not log_path.is_file():
+            raise GenericNotFound('The requested log file or the task was not found.')
+        try:
+            with open(log_path, 'rb'):
+                pass
+        except IOError:
+            raise GenericNotFound('The requested log file is not readable.')
+
+    loop = current_loop()
+    await loop.run_in_executor(None, check_file)
+    return web.FileResponse(log_path, headers={
+        hdrs.CONTENT_TYPE: "text/plain",
+    })
 
 
 async def init(app: web.Application):
