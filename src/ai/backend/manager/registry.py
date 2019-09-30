@@ -1134,6 +1134,40 @@ class AgentRegistry:
             )
             await conn.execute(query)
 
+    async def sync_kernel_stats(self, kernel_id: KernelId, *,
+                                db_conn: SAConnection = None,
+                                additional_updates: dict) -> None:
+        updates = {}
+        async with reenter_txn(self.dbpool, db_conn) as conn:
+            raw_kernel_id = str(kernel_id)
+            log.debug('sync_kernel_stats(k:{})', kernel_id)
+
+            async def _get_kstats_from_redis():
+                stat_type = await self.redis_stat.type(raw_kernel_id)
+                if stat_type == 'string':
+                    kern_stat = await self.redis_stat.get(raw_kernel_id, encoding=None)
+                    if kern_stat is not None:
+                        updates['last_stat'] = msgpack.unpackb(kern_stat)
+                else:
+                    kern_stat = await self.redis_stat.hgetall(raw_kernel_id)
+                    if kern_stat is not None and 'cpu_used' in kern_stat:
+                        updates.update({
+                            'cpu_used': int(float(kern_stat['cpu_used'])),
+                            'mem_max_bytes': int(kern_stat['mem_max_bytes']),
+                            'net_rx_bytes': int(kern_stat['net_rx_bytes']),
+                            'net_tx_bytes': int(kern_stat['net_tx_bytes']),
+                            'io_read_bytes': int(kern_stat['io_read_bytes']),
+                            'io_write_bytes': int(kern_stat['io_write_bytes']),
+                            'io_max_scratch_size': int(kern_stat['io_max_scratch_size']),
+                        })
+
+            await redis.execute_with_retries(lambda: _get_kstats_from_redis())
+            updates.update(additional_updates)
+            query = (sa.update(kernels)
+                       .values(updates)
+                       .where(kernels.c.id == kernel_id))
+            await conn.execute(query)
+
     async def mark_kernel_terminated(self, kernel_id: KernelId,
                                      reason: str,
                                      exit_code: int = None) -> None:
@@ -1170,28 +1204,7 @@ class AgentRegistry:
                 'status_changed': now,
                 'terminated_at': now,
             }
-            raw_kernel_id = str(kernel_id)
-            stat_type = await self.redis_stat.type(raw_kernel_id)
-            if stat_type == 'string':
-                kern_stat = await self.redis_stat.get(raw_kernel_id, encoding=None)
-                if kern_stat is not None:
-                    updates['last_stat'] = msgpack.unpackb(kern_stat)
-            else:
-                kern_stat = await self.redis_stat.hgetall(raw_kernel_id)
-                if kern_stat is not None and 'cpu_used' in kern_stat:
-                    updates.update({
-                        'cpu_used': int(float(kern_stat['cpu_used'])),
-                        'mem_max_bytes': int(kern_stat['mem_max_bytes']),
-                        'net_rx_bytes': int(kern_stat['net_rx_bytes']),
-                        'net_tx_bytes': int(kern_stat['net_tx_bytes']),
-                        'io_read_bytes': int(kern_stat['io_read_bytes']),
-                        'io_write_bytes': int(kern_stat['io_write_bytes']),
-                        'io_max_scratch_size': int(kern_stat['io_max_scratch_size']),
-                    })
-            query = (sa.update(kernels)
-                       .values(updates)
-                       .where(kernels.c.id == kernel_id))
-            await conn.execute(query)
+            await self.sync_kernel_stats(kernel_id, db_conn=conn, additional_updates=updates)
 
             # Release resource slots.
             query = (sa.select([kernels.c.agent, kernels.c.occupied_slots])

@@ -330,10 +330,10 @@ async def create(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp, status=201)
 
 
-async def kernel_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
-                           raw_kernel_id: str,
-                           reason: str = None,
-                           exit_code: int = None) -> None:
+async def handle_kernel_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
+                                  raw_kernel_id: str,
+                                  reason: str = None,
+                                  exit_code: int = None) -> None:
     kernel_id = uuid.UUID(raw_kernel_id)
     registry = app['registry']
     if event_name == 'kernel_preparing':
@@ -352,6 +352,12 @@ async def kernel_lifecycle(app: web.Application, agent_id: AgentId, event_name: 
         await registry.mark_kernel_terminated(kernel_id, reason, exit_code)
 
 
+async def handle_kernel_stat_sync(app: web.Application, agent_id: AgentId, event_name: str,
+                                  raw_kernel_id: str) -> None:
+    kernel_id = uuid.UUID(raw_kernel_id)
+    await app['registry'].sync_kernel_stats(kernel_id)
+
+
 async def handle_batch_result(app: web.Application, agent_id: AgentId, event_name: str,
                               raw_kernel_id: str, exit_code: int) -> None:
     kernel_id = uuid.UUID(raw_kernel_id)
@@ -362,8 +368,8 @@ async def handle_batch_result(app: web.Application, agent_id: AgentId, event_nam
         await registry.set_session_result(kernel_id, False, exit_code)
 
 
-async def instance_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
-                             reason: str = None) -> None:
+async def handle_instance_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
+                                    reason: str = None) -> None:
     if event_name == 'instance_started':
         log.info('instance_lifecycle: ag:{0} joined ({1})', agent_id, reason)
         await app['registry'].update_instance(agent_id, {
@@ -383,8 +389,8 @@ async def instance_lifecycle(app: web.Application, agent_id: AgentId, event_name
             await app['registry'].mark_agent_terminated(agent_id, AgentStatus.TERMINATED)
 
 
-async def instance_heartbeat(app: web.Application, agent_id: AgentId, event_name: str,
-                             agent_info: Mapping[str, Any]) -> None:
+async def handle_instance_heartbeat(app: web.Application, agent_id: AgentId, event_name: str,
+                                    agent_info: Mapping[str, Any]) -> None:
     await app['registry'].handle_heartbeat(agent_id, agent_info)
 
 
@@ -408,8 +414,8 @@ async def check_agent_lost(app, interval):
 
 
 # NOTE: This event is ignored during the grace period.
-async def instance_stats(app: web.Application, agent_id: AgentId, event_name: str,
-                         kern_stats) -> None:
+async def handle_instance_stats(app: web.Application, agent_id: AgentId, event_name: str,
+                                kern_stats) -> None:
     await app['registry'].handle_stats(agent_id, kern_stats)
 
 
@@ -885,18 +891,19 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
 
 async def init(app: web.Application):
     event_dispatcher = app['event_dispatcher']
-    event_dispatcher.consume('kernel_preparing', app, kernel_lifecycle)
-    event_dispatcher.consume('kernel_pulling', app, kernel_lifecycle)
-    event_dispatcher.consume('kernel_creating', app, kernel_lifecycle)
-    event_dispatcher.consume('kernel_started', app, kernel_lifecycle)
-    event_dispatcher.consume('kernel_terminating', app, kernel_lifecycle)
-    event_dispatcher.consume('kernel_terminated', app, kernel_lifecycle)
+    event_dispatcher.consume('kernel_preparing', app, handle_kernel_lifecycle)
+    event_dispatcher.consume('kernel_pulling', app, handle_kernel_lifecycle)
+    event_dispatcher.consume('kernel_creating', app, handle_kernel_lifecycle)
+    event_dispatcher.consume('kernel_started', app, handle_kernel_lifecycle)
+    event_dispatcher.consume('kernel_terminating', app, handle_kernel_lifecycle)
+    event_dispatcher.consume('kernel_terminated', app, handle_kernel_lifecycle)
     event_dispatcher.consume('kernel_success', app, handle_batch_result)
     event_dispatcher.consume('kernel_failure', app, handle_batch_result)
-    event_dispatcher.consume('instance_started', app, instance_lifecycle)
-    event_dispatcher.consume('instance_terminated', app, instance_lifecycle)
-    event_dispatcher.consume('instance_heartbeat', app, instance_heartbeat)
-    event_dispatcher.consume('instance_stats', app, instance_stats)
+    event_dispatcher.consume('kernel_stat_sync', app, handle_kernel_stat_sync)
+    event_dispatcher.consume('instance_started', app, handle_instance_lifecycle)
+    event_dispatcher.consume('instance_terminated', app, handle_instance_lifecycle)
+    event_dispatcher.consume('instance_heartbeat', app, handle_instance_heartbeat)
+    event_dispatcher.consume('instance_stats', app, handle_instance_stats)
 
     app['pending_waits'] = set()
 
