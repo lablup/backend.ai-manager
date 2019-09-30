@@ -8,7 +8,10 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common import msgpack
-from ai.backend.common.types import BinarySize
+from ai.backend.common.types import (
+    BinarySize,
+    SessionTypes, SessionResult,
+)
 from .base import (
     metadata,
     BigInt, GUID, IDColumn, EnumType,
@@ -21,14 +24,21 @@ from .user import users
 __all__: Sequence[str] = (
     'kernels', 'KernelStatus',
     'ComputeSessionList', 'ComputeSession', 'ComputeWorker', 'Computation',
+    'RESOURCE_OCCUPYING_KERNEL_STATUSES',
+    'RESOURCE_USAGE_KERNEL_STATUSES',
+    'DEAD_KERNEL_STATUSES',
+    'LIVE_STATUS',
 )
 
 
 class KernelStatus(enum.Enum):
     # values are only meaningful inside the gateway
+    PENDING = 0
+    # ---
     PREPARING = 10
     # ---
     BUILDING = 20
+    PULLING = 21
     # ---
     RUNNING = 30
     RESTARTING = 31
@@ -38,20 +48,44 @@ class KernelStatus(enum.Enum):
     TERMINATING = 40
     TERMINATED = 41
     ERROR = 42
+    CANCELLED = 43
 
 
-LIVE_STATUS = frozenset(['BUILDING', 'RUNNING'])
+# statuses to consider when calculating current resource usage
+RESOURCE_OCCUPYING_KERNEL_STATUSES = tuple(
+    e for e in KernelStatus
+    if e not in (
+        KernelStatus.TERMINATED,
+        KernelStatus.PENDING,
+        KernelStatus.CANCELLED,
+    )
+)
+
+# statuses to consider when calculating historical resource usage
+RESOURCE_USAGE_KERNEL_STATUSES = (
+    KernelStatus.TERMINATED,
+)
+
+DEAD_KERNEL_STATUSES = (
+    KernelStatus.CANCELLED,
+    KernelStatus.TERMINATED,
+)
+
+LIVE_STATUS = (
+    KernelStatus.RUNNING,
+)
 
 
 kernels = sa.Table(
     'kernels', metadata,
     IDColumn(),
     sa.Column('sess_id', sa.String(length=64), unique=False, index=True),
+    sa.Column('sess_type', EnumType(SessionTypes), index=True, nullable=False,
+              default=SessionTypes.INTERACTIVE, server_default=SessionTypes.INTERACTIVE.name),
     sa.Column('role', sa.String(length=16), nullable=False, default='master'),
-    sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True,
-              nullable=False, server_default='default', default='default'),
-    sa.Column('agent', sa.String(length=64), sa.ForeignKey('agents.id')),
-    sa.Column('agent_addr', sa.String(length=128), nullable=False),
+    sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True, nullable=True),
+    sa.Column('agent', sa.String(length=64), sa.ForeignKey('agents.id'), nullable=True),
+    sa.Column('agent_addr', sa.String(length=128), nullable=True),
     sa.Column('domain_name', sa.String(length=64), sa.ForeignKey('domains.name'), nullable=False),
     sa.Column('group_id', GUID, sa.ForeignKey('groups.id'), nullable=False),
     sa.Column('user_uuid', GUID, sa.ForeignKey('users.uuid'), nullable=False),
@@ -84,24 +118,43 @@ kernels = sa.Table(
     sa.Column('terminated_at', sa.DateTime(timezone=True),
               nullable=True, default=sa.null(), index=True),
     sa.Column('status', EnumType(KernelStatus),
-              default=KernelStatus.PREPARING, index=True),
+              default=KernelStatus.PENDING,
+              server_default=KernelStatus.PENDING.name,
+              nullable=False, index=True),
+    sa.Column('status_changed', sa.DateTime(timezone=True), nullable=True, index=True),
     sa.Column('status_info', sa.Unicode(), nullable=True, default=sa.null()),
+    sa.Column('startup_command', sa.Text, nullable=True),
+    sa.Column('result', EnumType(SessionResult),
+              default=SessionResult.UNDEFINED,
+              server_default=SessionResult.UNDEFINED.name,
+              nullable=False, index=True),
 
     # Resource metrics measured upon termination
     sa.Column('num_queries', sa.BigInteger(), default=0),
     sa.Column('last_stat', pgsql.JSONB(), nullable=True, default=sa.null()),
 
     sa.Index('ix_kernels_sess_id_role', 'sess_id', 'role', unique=False),
+    sa.Index('ix_kernels_updated_order',
+             sa.func.greatest('created_at', 'terminated_at', 'status_changed'),
+             unique=False),
     sa.Index('ix_kernels_unique_sess_token', 'access_key', 'sess_id',
              unique=True,
              postgresql_where=sa.text(
-                 "status != 'TERMINATED' and "
+                 "status NOT IN ('TERMINATED', 'CANCELLED') and "
                  "role = 'master'")),
+)
+
+kernel_dependencies = sa.Table(
+    'kernel_dependencies', metadata,
+    sa.Column('kernel_id', GUID, sa.ForeignKey('kernels.id'), index=True, nullable=False),
+    sa.Column('depends_on', GUID, sa.ForeignKey('kernels.id'), index=True, nullable=False),
+    sa.PrimaryKeyConstraint('kernel_id', 'depends_on'),
 )
 
 
 class SessionCommons:
     sess_id = graphene.String()
+    sess_type = graphene.String()
     id = graphene.ID()
     role = graphene.String()
     image = graphene.String()
@@ -114,9 +167,12 @@ class SessionCommons:
     access_key = graphene.String()
 
     status = graphene.String()
+    status_changed = GQLDateTime()
     status_info = graphene.String()
     created_at = GQLDateTime()
     terminated_at = GQLDateTime()
+    startup_command = graphene.String()
+    result = graphene.String()
 
     # hidable fields by configuration
     agent = graphene.String()
@@ -127,6 +183,7 @@ class SessionCommons:
     occupied_slots = graphene.JSONString()
     occupied_shares = graphene.JSONString()
     mounts = graphene.List(lambda: graphene.List(lambda: graphene.String))
+    resource_opts = graphene.JSONString()
 
     num_queries = BigInt()
     live_stat = graphene.JSONString()
@@ -230,6 +287,7 @@ class SessionCommons:
             hide_agents = context['config']['manager']['hide-agents']
         return {
             'sess_id': row['sess_id'],
+            'sess_type': row['sess_type'].name,
             'id': row['id'],
             'role': row['role'],
             'image': row['image'],
@@ -241,13 +299,17 @@ class SessionCommons:
             'user_uuid': row['user_uuid'],
             'access_key': row['access_key'],
             'status': row['status'].name,
+            'status_changed': row['status_changed'],
             'status_info': row['status_info'],
             'created_at': row['created_at'],
             'terminated_at': row['terminated_at'],
+            'startup_command': row['startup_command'],
+            'result': row['result'].name,
             'service_ports': row['service_ports'],
             'occupied_slots': row['occupied_slots'].to_json(),
             'occupied_shares': row['occupied_shares'],
             'mounts': row['mounts'],
+            'resource_opts': row['resource_opts'],
             'num_queries': row['num_queries'],
             # optinally hidden
             'agent': row['agent'] if not hide_agents else None,
@@ -310,6 +372,10 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
     async def load_count(context, *,
                          domain_name=None, group_id=None, access_key=None,
                          status=None):
+        if isinstance(status, str):
+            status_list = [KernelStatus[s] for s in status.split(',')]
+        elif isinstance(status, KernelStatus):
+            status_list = [status]
         async with context['dbpool'].acquire() as conn:
             query = (
                 sa.select([sa.func.count(kernels.c.sess_id)])
@@ -324,8 +390,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             if access_key is not None:
                 query = query.where(kernels.c.access_key == access_key)
             if status is not None:
-                status = KernelStatus[status]
-                query = query.where(kernels.c.status == status)
+                query = query.where(kernels.c.status.in_(status_list))
             result = await conn.execute(query)
             count = await result.fetchone()
             return count[0]
@@ -335,16 +400,22 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                          domain_name=None, group_id=None, access_key=None,
                          status=None,
                          order_key=None, order_asc=None):
+        if isinstance(status, str):
+            status_list = [KernelStatus[s] for s in status.split(',')]
+        elif isinstance(status, KernelStatus):
+            status_list = [status]
         async with context['dbpool'].acquire() as conn:
             if order_key is None:
-                _ordering = sa.desc(
-                    kernels.c.terminated_at
-                    if status is not None and status == KernelStatus.TERMINATED
-                    else kernels.c.created_at
-                )
+                _ordering = [
+                    sa.desc(sa.func.greatest(
+                        kernels.c.created_at,
+                        kernels.c.terminated_at,
+                        kernels.c.status_changed,
+                    ))
+                ]
             else:
                 _order_func = sa.asc if order_asc else sa.desc
-                _ordering = _order_func(getattr(kernels.c, order_key))
+                _ordering = [_order_func(getattr(kernels.c, order_key))]
             # TODO: optimization for pagination using subquery, join
             j = (kernels.join(groups, groups.c.id == kernels.c.group_id)
                         .join(users, users.c.uuid == kernels.c.user_uuid))
@@ -352,7 +423,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 sa.select([kernels, groups.c.name, users.c.email])
                 .select_from(j)
                 .where(kernels.c.role == 'master')
-                .order_by(_ordering)
+                .order_by(*_ordering)
                 .limit(limit)
                 .offset(offset)
             )
@@ -363,8 +434,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             if access_key is not None:
                 query = query.where(kernels.c.access_key == access_key)
             if status is not None:
-                status = KernelStatus[status]
-                query = query.where(kernels.c.status == status)
+                query = query.where(kernels.c.status.in_(status_list))
             result = await conn.execute(query)
             rows = await result.fetchall()
             return [ComputeSession.from_row(context, r) for r in rows]
@@ -373,22 +443,27 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
     async def load_all(context, *,
                        domain_name=None, group_id=None, access_key=None,
                        status=None):
+        if isinstance(status, str):
+            status_list = [KernelStatus[s] for s in status.split(',')]
+        elif isinstance(status, KernelStatus):
+            status_list = [status]
         async with context['dbpool'].acquire() as conn:
-            # status = status if status else KernelStatus['RUNNING']
-            if isinstance(status, str):
-                status = KernelStatus[status]  # for legacy
-            order_col = (kernels.c.terminated_at
-                         if status is not None and status == KernelStatus.TERMINATED
-                         else kernels.c.created_at)
             j = (kernels.join(groups, groups.c.id == kernels.c.group_id)
                         .join(users, users.c.uuid == kernels.c.user_uuid))
-            query = (sa.select([kernels, groups.c.name, users.c.email])
-                       .select_from(j)
-                       .where(kernels.c.role == 'master')
-                       .order_by(sa.desc(order_col))
-                       .limit(100))
+            query = (
+                sa.select([kernels, groups.c.name, users.c.email])
+                .select_from(j)
+                .where(kernels.c.role == 'master')
+                .order_by(
+                    sa.desc(sa.func.greatest(
+                        kernels.c.created_at,
+                        kernels.c.terminated_at,
+                        kernels.c.status_changed,
+                    ))
+                )
+                .limit(100))
             if status is not None:
-                query = query.where(kernels.c.status == status)
+                query = query.where(kernels.c.status.in_(status_list))
             if domain_name is not None:
                 query = query.where(kernels.c.domain_name == domain_name)
             if group_id is not None:
@@ -404,17 +479,23 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                          domain_name=None, group_id=None,
                          status=None):
         async with context['dbpool'].acquire() as conn:
-            order_col = (kernels.c.terminated_at
-                         if status is not None and status == KernelStatus.TERMINATED
-                         else kernels.c.created_at)
             j = (kernels.join(groups, groups.c.id == kernels.c.group_id)
                         .join(users, users.c.uuid == kernels.c.user_uuid))
-            query = (sa.select([kernels, groups.c.name, users.c.email])
-                       .select_from(j)
-                       .where((kernels.c.access_key.in_(access_keys)) &
-                              (kernels.c.role == 'master'))
-                       .order_by(sa.desc(order_col))
-                       .limit(100))
+            query = (
+                sa.select([kernels, groups.c.name, users.c.email])
+                .select_from(j)
+                .where(
+                    (kernels.c.access_key.in_(access_keys)) &
+                    (kernels.c.role == 'master')
+                )
+                .order_by(
+                    sa.desc(sa.func.greatest(
+                        kernels.c.created_at,
+                        kernels.c.terminated_at,
+                        kernels.c.status_changed,
+                    ))
+                )
+                .limit(100))
             if domain_name is not None:
                 query = query.where(kernels.c.domain_name == domain_name)
             if group_id is not None:

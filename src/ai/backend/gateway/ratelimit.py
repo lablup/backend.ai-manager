@@ -6,6 +6,7 @@ import time
 from aiohttp import web
 import aioredis
 
+from ai.backend.common import redis
 from ai.backend.common.logging import BraceStyleAdapter
 
 from .defs import REDIS_RLIM_DB
@@ -44,10 +45,17 @@ async def rlim_middleware(app, request, handler):
     if request['is_authorized']:
         rate_limit = request['keypair']['rate_limit']
         access_key = request['keypair']['access_key']
-        ret = await rr.evalsha(
-            app['redis_rlim_script'],
-            keys=[access_key],
-            args=[str(now), str(_rlim_window)])
+        while True:
+            try:
+                ret = await redis.execute_with_retries(lambda: rr.evalsha(
+                    app['redis_rlim_script'],
+                    keys=[access_key],
+                    args=[str(now), str(_rlim_window)]))
+                break
+            except aioredis.errors.ReplyError:
+                # Redis may have been restarted.
+                app['redis_rlim_script'] = await rr.script_load(_rlim_script)
+                continue
         rolling_count = int(ret)
         if rolling_count > rate_limit:
             raise RateLimitExceeded
@@ -66,8 +74,8 @@ async def rlim_middleware(app, request, handler):
         return response
 
 
-async def init(app):
-    rr = await aioredis.create_redis_pool(
+async def init(app: web.Application) -> None:
+    rr = await redis.connect_with_retries(
         app['config']['redis']['addr'].as_sockaddr(),
         password=(app['config']['redis']['password']
                   if app['config']['redis']['password'] else None),
@@ -78,10 +86,10 @@ async def init(app):
     app['redis_rlim_script'] = await rr.script_load(_rlim_script)
 
 
-async def shutdown(app):
+async def shutdown(app: web.Application) -> None:
     try:
         await app['redis_rlim'].flushdb()
-    except ConnectionRefusedError:
+    except (ConnectionResetError, ConnectionRefusedError):
         pass
     app['redis_rlim'].close()
     await app['redis_rlim'].wait_closed()

@@ -18,6 +18,7 @@ __all__: Sequence[str] = (
     'vfolder_invitations',
     'vfolder_permissions',
     'VirtualFolder',
+    'VFolderInvitationState',
     'VFolderPermission',
     'VFolderPermissionValidator',
     'query_accessible_vfolders',
@@ -41,6 +42,16 @@ class VFolderPermissionValidator(t.Trafaret):
         if value not in ['ro', 'rw', 'wd']:
             self._failure(f'one of "ro", "rw", or "wd" required', value=value)
         return value
+
+
+class VFolderInvitationState(str, enum.Enum):
+    '''
+    Virtual Folder invitation state.
+    '''
+    PENDING = 'pending'
+    CANCELED = 'canceled'  # canceled by inviter
+    ACCEPTED = 'accepted'
+    REJECTED = 'rejected'  # rejected by invitee
 
 
 '''
@@ -89,8 +100,8 @@ vfolder_invitations = sa.Table(
               default=VFolderPermission.READ_WRITE),
     sa.Column('inviter', sa.String(length=256)),  # email
     sa.Column('invitee', sa.String(length=256), nullable=False),  # email
-    # State of the infitation: pending, accepted, rejected
-    sa.Column('state', sa.String(length=10), default='pending'),
+    sa.Column('state', EnumValueType(VFolderInvitationState),
+              default=VFolderInvitationState.PENDING),
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
     sa.Column('vfolder', GUID,
@@ -247,24 +258,33 @@ async def query_accessible_vfolders(conn, user_uuid, *,
 
 
 async def get_allowed_vfolder_hosts_by_group(conn, resource_policy,
-                                             domain_name, group_id=None):
+                                             domain_name, group_id=None, domain_admin=False):
     '''
     Union `allowed_vfolder_hosts` from domain, group, and keypair_resource_policy.
 
     If `group_id` is not None, `allowed_vfolder_hosts` from the group is also merged.
+    If the requester is a domain admin, gather all `allowed_vfolder_hosts` of the domain groups.
     '''
     from . import domains, groups
     # Domain's allowed_vfolder_hosts.
     allowed_hosts = set()
     query = (sa.select([domains.c.allowed_vfolder_hosts])
-               .where(domains.c.name == domain_name))
+               .where((domains.c.name == domain_name) &
+                       domains.c.is_active))
     allowed_hosts.update(await conn.scalar(query))
     # Group's allowed_vfolder_hosts.
     if group_id is not None:
         query = (sa.select([groups.c.allowed_vfolder_hosts])
-                   .where(domains.c.name == domain_name)
-                   .where(groups.c.id == group_id))
+                   .where(groups.c.domain_name == domain_name)
+                   .where((groups.c.id == group_id) &
+                          (groups.c.is_active)))
         allowed_hosts.update(await conn.scalar(query))
+    elif domain_admin:
+        query = (sa.select([groups.c.allowed_vfolder_hosts])
+                   .where((groups.c.domain_name == domain_name) &
+                          (groups.c.is_active)))
+        async for row in conn.execute(query):
+            allowed_hosts.update(row.allowed_vfolder_hosts)
     # Keypair Resource Policy's allowed_vfolder_hosts
     allowed_hosts.update(resource_policy['allowed_vfolder_hosts'])
     return allowed_hosts
@@ -281,14 +301,17 @@ async def get_allowed_vfolder_hosts_by_user(conn, resource_policy,
     # Domain's allowed_vfolder_hosts.
     allowed_hosts = set()
     query = (sa.select([domains.c.allowed_vfolder_hosts])
-               .where(domains.c.name == domain_name))
+               .where((domains.c.name == domain_name) &
+                      (domains.c.is_active)))
     allowed_hosts.update(await conn.scalar(query))
     # User's Groups' allowed_vfolder_hosts.
-    j = association_groups_users.join(
-        groups, association_groups_users.c.user_id == user_uuid)
+    j = groups.join(association_groups_users,
+                    ((groups.c.id == association_groups_users.c.group_id) &
+                     (association_groups_users.c.user_id == user_uuid)))
     query = (sa.select([groups.c.allowed_vfolder_hosts])
                .select_from(j)
-               .where(domains.c.name == domain_name))
+               .where((domains.c.name == domain_name) &
+                      (groups.c.is_active)))
     result = await conn.execute(query)
     rows = await result.fetchall()
     for row in rows:

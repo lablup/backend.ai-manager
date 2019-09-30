@@ -16,7 +16,6 @@ import traceback
 from aiohttp import web
 import aiohttp_cors
 import aiojobs.aiohttp
-import aioredis
 import aiotools
 from aiopg.sa import create_engine
 import click
@@ -24,6 +23,7 @@ from pathlib import Path
 from setproctitle import setproctitle
 import uvloop
 
+from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.utils import env_info
 from ai.backend.common.monitor import DummyStatsMonitor, DummyErrorMonitor
@@ -32,13 +32,13 @@ from ai.backend.common.plugin import (
     discover_entrypoints, install_plugins, add_plugin_args)
 from ..manager import __version__
 from ..manager.registry import AgentRegistry
+from ..manager.scheduler import SessionScheduler
 from .config import load as load_config, load_shared as load_shared_config, redis_config_iv
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
 from .etcd import ConfigServer
-from .events import EventDispatcher, event_subscriber
+from .events import EventDispatcher
 from .exceptions import (BackendError, MethodNotAllowed, GenericNotFound,
                          GenericBadRequest, InternalServerError)
-from .events import event_router
 from . import ManagerStatus
 
 VALID_VERSIONS = frozenset([
@@ -215,21 +215,21 @@ async def gw_init(app, default_cors_options):
     redis_config = await app['config_server'].etcd.get_prefix('config/redis')
     app['config']['redis'] = redis_config_iv.check(redis_config)
 
-    app['redis_live'] = await aioredis.create_redis(
+    app['redis_live'] = await redis.connect_with_retries(
         app['config']['redis']['addr'].as_sockaddr(),
         password=(app['config']['redis']['password']
                   if app['config']['redis']['password'] else None),
         timeout=3.0,
         encoding='utf8',
         db=REDIS_LIVE_DB)
-    app['redis_stat'] = await aioredis.create_redis(
+    app['redis_stat'] = await redis.connect_with_retries(
         app['config']['redis']['addr'].as_sockaddr(),
         password=(app['config']['redis']['password']
                   if app['config']['redis']['password'] else None),
         timeout=3.0,
         encoding='utf8',
         db=REDIS_STAT_DB)
-    app['redis_image'] = await aioredis.create_redis(
+    app['redis_image'] = await redis.connect_with_retries(
         app['config']['redis']['addr'].as_sockaddr(),
         password=(app['config']['redis']['password']
                   if app['config']['redis']['password'] else None),
@@ -237,17 +237,15 @@ async def gw_init(app, default_cors_options):
         encoding='utf8',
         db=REDIS_IMAGE_DB)
 
-    loop = asyncio.get_event_loop()
-    dispatcher = EventDispatcher(app)
-    app['event_dispatcher'] = dispatcher
-    app['event_subscriber'] = loop.create_task(event_subscriber(dispatcher))
+    app['event_dispatcher'] = await EventDispatcher.new(app)
 
     app['registry'] = AgentRegistry(
         app['config_server'],
         app['dbpool'],
         app['redis_stat'],
         app['redis_live'],
-        app['redis_image'])
+        app['redis_image'],
+        app['event_dispatcher'])
     await app['registry'].init()
 
     # Detect and install monitoring plugins.
@@ -277,8 +275,7 @@ async def gw_init(app, default_cors_options):
 
 
 async def gw_shutdown(app):
-    app['event_subscriber'].cancel()
-    await app['event_subscriber']
+    await app['event_dispatcher'].close()
 
 
 async def gw_cleanup(app):
@@ -354,7 +351,8 @@ async def server_main(loop, pidx, _args):
         '.etcd', '.events',
         '.auth', '.ratelimit',
         '.vfolder', '.admin',
-        '.kernel', '.stream',
+        '.kernel',
+        '.stream',
         '.manager',
         '.resource',
         '.scaling_group',
@@ -435,6 +433,8 @@ async def server_main(loop, pidx, _args):
         ssl_context=ssl_ctx,
     )
     await site.start()
+    session_scheduler = await SessionScheduler.new(
+        app['config'], app['config_server'], app['registry'])
 
     if os.geteuid() == 0:
         uid = app['config']['manager']['user']
@@ -452,6 +452,7 @@ async def server_main(loop, pidx, _args):
         yield
     finally:
         log.info('shutting down...')
+        await session_scheduler.close()
         await runner.cleanup()
 
 
@@ -492,7 +493,6 @@ def main(ctx, config_path, debug):
                 try:
                     aiotools.start_server(server_main,
                                           num_workers=cfg['manager']['num-proc'],
-                                          extra_procs=[event_router],
                                           args=(cfg,))
                 finally:
                     log.info('terminated.')

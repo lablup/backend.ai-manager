@@ -10,6 +10,7 @@ from typing import (
     Any, Awaitable, Callable,
     Dict, Mapping, MutableMapping,
     Tuple,
+    Set,
 )
 import urllib.parse
 import uuid
@@ -35,7 +36,7 @@ from ai.backend.common.utils import Fstab
 from .auth import auth_required, superadmin_required
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
-    GenericForbidden, InvalidAPIParameters, ServerMisconfiguredError,
+    GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
     BackendAgentError, InternalServerError,
 )
 from .manager import (
@@ -47,8 +48,10 @@ from .utils import check_api_params
 from ..manager.models import (
     agents, AgentStatus, kernels, KernelStatus,
     users, groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
-    VFolderPermission, VFolderPermissionValidator, query_accessible_vfolders,
+    VFolderInvitationState, VFolderPermission, VFolderPermissionValidator,
+    query_accessible_vfolders,
     get_allowed_vfolder_hosts_by_group, get_allowed_vfolder_hosts_by_user,
+    UserRole,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
@@ -156,8 +159,8 @@ def vfolder_check_exists(handler: Callable[..., Awaitable[web.Response]]):
 @check_api_params(
     t.Dict({
         t.Key('name'): tx.Slug(allow_dot=True),
-        t.Key('host', default=None) >> 'folder_host': t.Or(t.String, t.Null),
-        tx.AliasedKey(['group', 'groupId', 'group_id'], default=None): t.Or(tx.UUID, t.String, t.Null),
+        t.Key('host', default=None) >> 'folder_host': t.String | t.Null,
+        tx.AliasedKey(['group', 'groupId', 'group_id'], default=None): tx.UUID | t.String | t.Null,
     }),
 )
 async def create(request: web.Request, params: Any) -> web.Response:
@@ -168,8 +171,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
     user_uuid = request['user']['uuid']
     resource_policy = request['keypair']['resource_policy']
     domain_name = request['user']['domain_name']
-    group = params['group']
-    log.info('VFOLDER.CREATE (u:{0})', access_key)
+    group_id_or_name = params['group']
+    log.info('VFOLDER.CREATE (ak:{}, vf:{}, vfh:{})',
+             access_key, params['name'], params['folder_host'])
     # Resolve host for the new virtual folder.
     folder_host = params['folder_host']
     if not folder_host:
@@ -186,16 +190,20 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 f'Invalid vfolder type(s): {str(allowed_vfolder_types)}.'
                 ' Only "user" or "group" is allowed.')
 
+    if params['name'].startswith('.'):
+        if params['group'] is not None:
+            raise InvalidAPIParameters('dot-prefixed vfolders cannot be a group folder.')
+
     async with dbpool.acquire() as conn:
         # Convert group name to uuid if group name is given.
-        if isinstance(group, str):
+        if isinstance(group_id_or_name, str):
             query = (sa.select([groups.c.id])
                      .select_from(groups)
                      .where(groups.c.domain_name == domain_name)
-                     .where(groups.c.name == group))
+                     .where(groups.c.name == group_id_or_name))
             group_id = await conn.scalar(query)
         else:
-            group_id = group
+            group_id = group_id_or_name
         # Check resource policy's allowed_vfolder_hosts
         allowed_hosts = await get_allowed_vfolder_hosts_by_group(conn, resource_policy,
                                                                  domain_name, group_id)
@@ -226,7 +234,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             raise VFolderAlreadyExists
 
         # Check if group exists.
-        if group and group_id is None:
+        if group_id_or_name and group_id is None:
             raise InvalidAPIParameters('no such group')
         if group_id is not None:
             if 'group' not in allowed_vfolder_types:
@@ -286,7 +294,7 @@ async def list_folders(request: web.Request) -> web.Response:
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
 
-    log.info('VFOLDER.LIST (u:{0})', access_key)
+    log.info('VFOLDER.LIST (ak:{})', access_key)
     async with dbpool.acquire() as conn:
         params = await request.json() if request.can_read_body else request.query
         allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
@@ -335,14 +343,23 @@ async def list_folders(request: web.Request) -> web.Response:
 @server_status_required(READ_ALLOWED)
 async def list_hosts(request: web.Request) -> web.Response:
     access_key = request['keypair']['access_key']
-    log.info('VFOLDER.LIST_HOSTS (u:{0})', access_key)
+    log.info('VFOLDER.LIST_HOSTS (ak:{})', access_key)
     config = request.app['config_server']
     dbpool = request.app['dbpool']
     domain_name = request['user']['domain_name']
+    domain_admin = request['user']['role'] == UserRole.ADMIN
     resource_policy = request['keypair']['resource_policy']
+    allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
     async with dbpool.acquire() as conn:
-        allowed_hosts = await get_allowed_vfolder_hosts_by_user(conn, resource_policy,
-                                                                domain_name, request['user']['uuid'])
+        allowed_hosts: Set[str] = set()
+        if 'user' in allowed_vfolder_types:
+            allowed_hosts_by_user = await get_allowed_vfolder_hosts_by_user(
+                conn, resource_policy, domain_name, request['user']['uuid'])
+            allowed_hosts = allowed_hosts | allowed_hosts_by_user
+        if 'group' in allowed_vfolder_types:
+            allowed_hosts_by_group = await get_allowed_vfolder_hosts_by_group(
+                conn, resource_policy, domain_name, group_id=None, domain_admin=domain_admin)
+            allowed_hosts = allowed_hosts | allowed_hosts_by_group
     mount_prefix = await config.get('volumes/_mount')
     if mount_prefix is None:
         mount_prefix = '/mnt'
@@ -359,11 +376,32 @@ async def list_hosts(request: web.Request) -> web.Response:
 
 
 @atomic
+@superadmin_required
+@server_status_required(READ_ALLOWED)
+async def list_all_hosts(request: web.Request) -> web.Response:
+    access_key = request['keypair']['access_key']
+    log.info('VFOLDER.LIST_ALL_HOSTS (ak:{})', access_key)
+    config = request.app['config_server']
+    mount_prefix = await config.get('volumes/_mount')
+    if mount_prefix is None:
+        mount_prefix = '/mnt'
+    mounted_hosts = set(p.name for p in Path(mount_prefix).iterdir() if p.is_dir())
+    default_host = await config.get('volumes/_default_host')
+    if default_host not in mounted_hosts:
+        default_host = None
+    resp = {
+        'default': default_host,
+        'allowed': sorted(mounted_hosts),
+    }
+    return web.json_response(resp, status=200)
+
+
+@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 async def list_allowed_types(request: web.Request) -> web.Response:
     access_key = request['keypair']['access_key']
-    log.info('VFOLDER.LIST_ALLOWED_TYPES (u:{0})', access_key)
+    log.info('VFOLDER.LIST_ALLOWED_TYPES (ak:{})', access_key)
     allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
     return web.json_response(allowed_vfolder_types, status=200)
 
@@ -376,7 +414,7 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
     resp: Dict[str, Any] = {}
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
-    log.info('VFOLDER.GETINFO (u:{0}, f:{1})', access_key, folder_name)
+    log.info('VFOLDER.GETINFO (ak:{}, vf:{})', access_key, folder_name)
     if row['permission'] is None:
         is_owner = True
         permission = VFolderPermission.OWNER_PERM
@@ -422,7 +460,7 @@ async def rename(request: web.Request, params: Any, row: VFolderRow) -> web.Resp
     user_uuid = request['user']['uuid']
     new_name = params['new_name']
     allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
-    log.info('VFOLDER.RENAME (u:{0}, f:{1} -> {2})',
+    log.info('VFOLDER.RENAME (ak:{}, vf.old:{}, vf.new:{})',
              access_key, old_name, new_name)
     async with dbpool.acquire() as conn:
         entries = await query_accessible_vfolders(
@@ -460,7 +498,7 @@ async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     path = Path(params['path'])
-    log.info('VFOLDER.MKDIR (u:{0}, f:{1})', access_key, folder_name)
+    log.info('VFOLDER.MKDIR (ak:{}, vf:{}, path:{})', access_key, folder_name, path)
     folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
                    request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
     assert not path.is_absolute(), 'path must be relative.'
@@ -478,7 +516,9 @@ async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
 async def upload(request: web.Request, row: VFolderRow) -> web.Response:
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
-    log.info('VFOLDER.UPLOAD (u:{0}, f:{1})', access_key, folder_name)
+    log_fmt = 'VFOLDER.UPLOAD (ak:{}, vf:{})'
+    log_args = (access_key, folder_name)
+    log.info(log_fmt, *log_args)
     folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
                    request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
     reader = await request.multipart()
@@ -503,6 +543,8 @@ async def upload(request: web.Request, row: VFolderRow) -> web.Response:
             raise InvalidAPIParameters(
                 'Failed to create parent directories. '
                 f'"{e.filename}" already exists and is not a directory.')
+        log.info(log_fmt + ': accepted path:{}',
+                 *log_args, file.filename)
         with open(file_path, 'wb') as f:
             while not file.at_eof():
                 chunk = await file.read_chunk(size=8192)
@@ -522,7 +564,8 @@ async def delete_files(request: web.Request, params: Any, row: VFolderRow) -> we
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     recursive = params['recursive']
-    log.info('VFOLDER.DELETE_FILES (u:{0}, f:{1})', access_key, folder_name)
+    log.info('VFOLDER.DELETE_FILES (ak:{}, vf:{}, path:{}, recursive:{})',
+             access_key, folder_name, folder_name, recursive)
     folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
                    request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
     ops = []
@@ -559,7 +602,7 @@ async def download(request: web.Request, params: Any, row: VFolderRow) -> web.Re
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     files = params['files']
-    log.info('VFOLDER.DOWNLOAD (u:{0}, f:{1})', access_key, folder_name)
+    log.info('VFOLDER.DOWNLOAD (ak:{}, vf:{}, path:{})', access_key, folder_name, files[0])
     folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
                    request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
     for file in files:
@@ -597,7 +640,7 @@ async def download_single(request: web.Request, params: Any, row: VFolderRow) ->
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     fn = params['file']
-    log.info('VFOLDER.DOWNLOAD (u:{0}, f:{1})', access_key, folder_name)
+    log.info('VFOLDER.DOWNLOAD (ak:{}, vf:{}, path:{})', access_key, folder_name, fn)
     folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
                    request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
     try:
@@ -641,9 +684,12 @@ async def request_download(request: web.Request, params: Any, row: VFolderRow) -
     p['host'] = row['host']
     p['id'] = row['id'].hex
     p['exp'] = datetime.utcnow() + timedelta(minutes=2)
+    token = jwt.encode(p, secret, algorithm='HS256').decode('UTF-8')
     resp = {
-        'token': jwt.encode(p, secret, algorithm='HS256').decode('UTF-8')
+        'token': token,
     }
+    log.info('VFOLDER.REQUEST_DOWNLOAD_TOKEN (ak:{}, vf:{}, path:{}): generated token:{}',
+             request['keypair']['access_key'], row['name'], params['file'], token)
     return web.json_response(resp, status=200)
 
 
@@ -658,7 +704,7 @@ async def download_with_token(request) -> web.StreamResponse:
 
     assert params.get('file'), 'no file(s) specified!'
     fn = params.get('file')
-    log.info('VFOLDER.DOWNLOAD_WITH_TOKEN (id:{0}, name:{1})', params['id'], fn)
+    log.info('VFOLDER.DOWNLOAD_WITH_TOKEN (token:{}, path:{})', token, fn)
     folder_path = (request.app['VFOLDER_MOUNT'] / params['host'] /
                    request.app['VFOLDER_FSPREFIX'] / params['id'])
     try:
@@ -697,7 +743,8 @@ async def download_with_token(request) -> web.StreamResponse:
 async def list_files(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
-    log.info('VFOLDER.LIST_FILES (u:{0}, f:{1})', access_key, folder_name)
+    log.info('VFOLDER.LIST_FILES (ak:{}, vf:{}, path:{})',
+             access_key, folder_name, params['path'])
     base_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
                  request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
     try:
@@ -735,14 +782,14 @@ async def list_files(request: web.Request, params: Any, row: VFolderRow) -> web.
 async def list_sent_invitations(request: web.Request) -> web.Response:
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
-    log.info('VFOLDER.LIST_SENT_INVITATIONS (u:{0})', access_key)
+    log.info('VFOLDER.LIST_SENT_INVITATIONS (ak:{})', access_key)
     async with dbpool.acquire() as conn:
         j = sa.join(vfolders, vfolder_invitations,
                     vfolders.c.id == vfolder_invitations.c.vfolder)
         query = (sa.select([vfolder_invitations, vfolders.c.name])
                    .select_from(j)
                    .where((vfolder_invitations.c.inviter == request['user']['email']) &
-                          (vfolder_invitations.c.state == 'pending')))
+                          (vfolder_invitations.c.state == VFolderInvitationState.PENDING)))
         result = await conn.execute(query)
         invitations = await result.fetchall()
     invs_info = []
@@ -752,7 +799,7 @@ async def list_sent_invitations(request: web.Request) -> web.Response:
             'inviter': inv.inviter,
             'invitee': inv.invitee,
             'perm': inv.permission,
-            'state': inv.state,
+            'state': inv.state.value,
             'created_at': str(inv.created_at),
             'vfolder_id': str(inv.vfolder),
             'vfolder_name': inv.name,
@@ -777,13 +824,13 @@ async def update_invitation(request: web.Request, params: Any) -> web.Response:
     access_key = request['keypair']['access_key']
     inv_id = request.match_info['inv_id']
     perm = params['perm']
-    log.info('VFOLDER.UPDATE_INVITATION (u:{0})', access_key)
+    log.info('VFOLDER.UPDATE_INVITATION (ak:{}, inv:{})', access_key, inv_id)
     async with dbpool.acquire() as conn:
         query = (sa.update(vfolder_invitations)
                    .values(permission=VFolderPermission(perm))
                    .where(vfolder_invitations.c.id == inv_id)
                    .where(vfolder_invitations.c.inviter == request['user']['email'])
-                   .where(vfolder_invitations.c.state == 'pending'))
+                   .where(vfolder_invitations.c.state == VFolderInvitationState.PENDING))
         await conn.execute(query)
     resp = {'msg': f'vfolder invitation updated: {inv_id}.'}
     return web.json_response(resp, status=200)
@@ -802,7 +849,10 @@ async def invite(request: web.Request) -> web.Response:
     perm = VFolderPermission(perm)
     user_ids = params.get('user_ids', [])
     assert len(user_ids) > 0, 'no user ids'
-    log.info('VFOLDER.INVITE (u:{0}, f:{1})', access_key, folder_name)
+    log.info('VFOLDER.INVITE (ak:{}, vf:{}, inv.users:{})',
+             access_key, folder_name, ','.join(user_ids))
+    if folder_name.startswith('.'):
+        raise GenericForbidden('Cannot share private dot-prefixed vfolders.')
     async with dbpool.acquire() as conn:
         # Get virtual folder.
         query = (sa.select('*')
@@ -839,7 +889,7 @@ async def invite(request: web.Request) -> web.Response:
                        .where((vfolder_invitations.c.inviter == inviter) &
                               (vfolder_invitations.c.invitee == invitee) &
                               (vfolder_invitations.c.vfolder == vf.id) &
-                              (vfolder_invitations.c.state == 'pending')))
+                              (vfolder_invitations.c.state == VFolderInvitationState.PENDING)))
             result = await conn.execute(query)
             if result.rowcount > 0:
                 continue
@@ -855,7 +905,7 @@ async def invite(request: web.Request) -> web.Response:
                 'vfolder': vf.id,
                 'inviter': inviter,
                 'invitee': invitee,
-                'state': 'pending',
+                'state': VFolderInvitationState.PENDING,
             }))
             try:
                 await conn.execute(query)
@@ -872,14 +922,14 @@ async def invite(request: web.Request) -> web.Response:
 async def invitations(request: web.Request) -> web.Response:
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
-    log.info('VFOLDER.INVITATIONS (u:{0})', access_key)
+    log.info('VFOLDER.INVITATIONS (ak:{})', access_key)
     async with dbpool.acquire() as conn:
         j = sa.join(vfolders, vfolder_invitations,
                     vfolders.c.id == vfolder_invitations.c.vfolder)
         query = (sa.select([vfolder_invitations, vfolders.c.name])
                    .select_from(j)
                    .where((vfolder_invitations.c.invitee == request['user']['id']) &
-                          (vfolder_invitations.c.state == 'pending')))
+                          (vfolder_invitations.c.state == VFolderInvitationState.PENDING)))
         result = await conn.execute(query)
         invitations = await result.fetchall()
     invs_info = []
@@ -914,18 +964,17 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
     access_key = request['keypair']['access_key']
     user_uuid = request['user']['uuid']
     inv_id = params['inv_id']
-    log.info('VFOLDER.ACCEPT_INVITATION (u:{0})', access_key)
+    log.info('VFOLDER.ACCEPT_INVITATION (ak:{}, inv:{})', access_key, inv_id)
     async with dbpool.acquire() as conn:
         # Get invitation.
         query = (sa.select([vfolder_invitations])
                    .select_from(vfolder_invitations)
                    .where((vfolder_invitations.c.id == inv_id) &
-                          (vfolder_invitations.c.state == 'pending')))
+                          (vfolder_invitations.c.state == VFolderInvitationState.PENDING)))
         result = await conn.execute(query)
         invitation = await result.first()
         if invitation is None:
-            resp = {'msg': 'No such invitation found.'}
-            return web.json_response(resp, status=404)
+            raise GenericNotFound('No such vfolder invitation')
 
         # Get target virtual folder.
         query = (sa.select([vfolders.c.name])
@@ -934,13 +983,12 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
         result = await conn.execute(query)
         target_vfolder = await result.first()
         if target_vfolder is None:
-            resp = {'msg': 'No such virtual folder found.'}
-            return web.json_response(resp, status=404)
+            raise VFolderNotFound
 
         # Prevent accepting vfolder with duplicated name.
         j = sa.join(vfolders, vfolder_permissions,
                     vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
-        query = (sa.select('*')
+        query = (sa.select([vfolders.c.id])
                    .select_from(j)
                    .where(((vfolders.c.user == user_uuid) |
                            (vfolder_permissions.c.user == user_uuid)) &
@@ -960,11 +1008,9 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
         # Clear used invitation.
         query = (vfolder_invitations.update()
                                     .where(vfolder_invitations.c.id == inv_id)
-                                    .values(state='accepted'))
+                                    .values(state=VFolderInvitationState.ACCEPTED))
         await conn.execute(query)
-    msg = (f'User {invitation.invitee} now can access '
-           f'vfolder {invitation.vfolder}.')
-    return web.json_response({'msg': msg}, status=201)
+    return web.json_response({})
 
 
 @atomic
@@ -977,27 +1023,38 @@ async def accept_invitation(request: web.Request, params: Any) -> web.Response:
 async def delete_invitation(request: web.Request, params: Any) -> web.Response:
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
+    request_email = request['user']['email']
     inv_id = params['inv_id']
-    log.info('VFOLDER.DELETE_INVITATION (u:{0})', access_key)
-    async with dbpool.acquire() as conn:
-        query = (sa.select('*')
-                   .select_from(vfolder_invitations)
-                   .where((vfolder_invitations.c.id == inv_id) &
-                          (vfolder_invitations.c.state == 'pending')))
-        try:
+    log.info('VFOLDER.DELETE_INVITATION (ak:{}, inv:{})', access_key, inv_id)
+    try:
+        async with dbpool.acquire() as conn:
+            query = (sa.select([vfolder_invitations.c.inviter,
+                                vfolder_invitations.c.invitee])
+                       .select_from(vfolder_invitations)
+                       .where((vfolder_invitations.c.id == inv_id) &
+                              (vfolder_invitations.c.state == VFolderInvitationState.PENDING)))
             result = await conn.execute(query)
-        except psycopg2.DataError:
-            raise InvalidAPIParameters
-        row = await result.first()
-        if row is None:
-            resp = {'msg': 'No such invitation found.'}
-            return web.json_response(resp, status=404)
-        query = (vfolder_invitations.update()
-                                    .where(vfolder_invitations.c.id == inv_id)
-                                    .values(state='rejected'))
-        await conn.execute(query)
-    resp = {'msg': f'Vfolder invitation is rejected: {inv_id}.'}
-    return web.json_response(resp, status=200)
+            row = await result.first()
+            if row is None:
+                raise GenericNotFound('No such vfolder invitation')
+            if request_email == row.inviter:
+                state = VFolderInvitationState.CANCELED
+            elif request_email == row.invitee:
+                state = VFolderInvitationState.REJECTED
+            else:
+                raise GenericForbidden('Cannot change other user\'s invitaiton')
+            query = (vfolder_invitations
+                     .update()
+                     .where(vfolder_invitations.c.id == inv_id)
+                     .values(state=state))
+            await conn.execute(query)
+    except (psycopg2.IntegrityError, sa.exc.IntegrityError) as e:
+        raise InternalServerError(f'integrity error: {e}')
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        raise
+    except Exception as e:
+        raise InternalServerError(f'unexpected error: {e}')
+    return web.json_response({})
 
 
 @auth_required
@@ -1010,7 +1067,7 @@ async def delete(request: web.Request) -> web.Response:
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
     allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
-    log.info('VFOLDER.DELETE (u:{0}, f:{1})', access_key, folder_name)
+    log.info('VFOLDER.DELETE (ak:{}, vf:{})', access_key, folder_name)
     async with dbpool.acquire() as conn, conn.begin():
         entries = await query_accessible_vfolders(
             conn, user_uuid,
@@ -1051,7 +1108,7 @@ async def list_shared_vfolders(request: web.Request) -> web.Response:
     access_key = request['keypair']['access_key']
     params = await request.json() if request.can_read_body else request.query
     target_vfid = params.get('vfolder_id', None)
-    log.info('VFOLDER.LIST_SHARED_VFOLDERS (u:{0})', access_key)
+    log.info('VFOLDER.LIST_SHARED_VFOLDERS (ak:{})', access_key)
     async with dbpool.acquire() as conn:
         j = (vfolder_permissions
              .join(vfolders, vfolders.c.id == vfolder_permissions.c.vfolder)
@@ -1100,7 +1157,8 @@ async def update_shared_vfolder(request: web.Request, params: Any) -> web.Respon
     vfolder_id = params['vfolder']
     user_uuid = params['user']
     perm = params['perm']
-    log.info('VFOLDER.UPDATE_SHARED_VFOLDER(u:{0})', access_key)
+    log.info('VFOLDER.UPDATE_SHARED_VFOLDER(ak:{}, vfid:{}, uid:{}, perm:{})',
+             access_key, vfolder_id, user_uuid, perm)
     async with dbpool.acquire() as conn:
         query = (sa.update(vfolder_permissions)
                    .values(permission=VFolderPermission(perm))
@@ -1124,7 +1182,7 @@ async def get_fstab_contents(request: web.Request, params: Any) -> web.Response:
     Return the contents of `/etc/fstab` file.
     '''
     access_key = request['keypair']['access_key']
-    log.info('VFOLDER.GET_FSTAB_CONTENTS(u:{0})', access_key)
+    log.info('VFOLDER.GET_FSTAB_CONTENTS(ak:{}, ag:{})', access_key, params['agent_id'])
     if params['fstab_path'] is None:
         params['fstab_path'] = '/etc/fstab'
     if params['agent_id'] is not None:
@@ -1183,7 +1241,7 @@ async def list_mounts(request: web.Request) -> web.Response:
     '''
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
-    log.info('VFOLDER.LIST_MOUNTS(u:{0})', access_key)
+    log.info('VFOLDER.LIST_MOUNTS(ak:{})', access_key)
     config = request.app['config_server']
     mount_prefix = await config.get('volumes/_mount')
     if mount_prefix is None:
@@ -1288,7 +1346,9 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
     '''
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
-    log.info('VFOLDER.MOUNT_HOST(u:{0})', access_key)
+    log_fmt = 'VFOLDER.MOUNT_HOST(ak:{}, name:{}, fs:{}, sg:{})'
+    log_args = (access_key, params['name'], params['fs_location'], params['scaling_group'])
+    log.info(log_fmt, *log_args)
     config = request.app['config_server']
     mount_prefix = await config.get('volumes/_mount')
     if mount_prefix is None:
@@ -1354,13 +1414,12 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
         except asyncio.CacnelledError:
             raise
         except asyncio.TimeoutError:
-            log.error('VFOLDER.MOUNT_HOST(u:{}): timeout from watcher (agent:{})',
-                      access_key, agent_id)
+            log.error(log_fmt + ': timeout from watcher (ag:{})',
+                      *log_args, agent_id)
             raise
         except Exception:
-            log.exception('VFOLDER.MOUNT_HOST(u:{}): '
-                          'unexpected error while reading from watcher (agent:{})',
-                          access_key, agent_id)
+            log.exception(log_fmt + ': unexpected error while reading from watcher (ag:{})',
+                          *log_args, agent_id)
             raise
 
     client_timeout = aiohttp.ClientTimeout(total=10)
@@ -1404,7 +1463,9 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
     '''
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
-    log.info('VFOLDER.UMOUNT_HOST(u:{0})', access_key)
+    log_fmt = 'VFOLDER.UMOUNT_HOST(ak:{}, name:{}, sg:{})'
+    log_args = (access_key, params['name'], params['scaling_group'])
+    log.info(log_fmt, *log_args)
     config = request.app['config_server']
     mount_prefix = await config.get('volumes/_mount')
     if mount_prefix is None:
@@ -1484,13 +1545,12 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
         except asyncio.CacnelledError:
             raise
         except asyncio.TimeoutError:
-            log.error('VFOLDER.UMOUNT_HOST(u:{}): timeout from watcher (agent:{})',
-                      access_key, agent_id)
+            log.error(log_fmt + ': timeout from watcher (agent:{})',
+                      *log_args, agent_id)
             raise
         except Exception:
-            log.exception('VFOLDER.UMOUNT_HOST(u:{}): '
-                          'unexpected error while reading from watcher (agent:{})',
-                          access_key, agent_id)
+            log.exception(log_fmt + ': unexpected error while reading from watcher (agent:{})',
+                          *log_args, agent_id)
             raise
 
     client_timeout = aiohttp.ClientTimeout(total=10.0)
@@ -1539,6 +1599,7 @@ def create_app(default_cors_options):
     cors.add(vfolder_resource.add_route('GET',    get_info))
     cors.add(vfolder_resource.add_route('DELETE', delete))
     cors.add(add_route('GET',    r'/_/hosts', list_hosts))
+    cors.add(add_route('GET',    r'/_/all_hosts', list_all_hosts))
     cors.add(add_route('GET',    r'/_/allowed_types', list_allowed_types))
     cors.add(add_route('GET',    r'/_/download_with_token', download_with_token))
     cors.add(add_route('HEAD',   r'/_/download_with_token', download_with_token))

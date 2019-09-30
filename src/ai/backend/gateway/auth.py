@@ -18,7 +18,7 @@ import trafaret as t
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from ai.backend.common import validators as tx
 from .exceptions import (
-    GenericBadRequest, GenericNotFound,
+    GenericBadRequest, GenericForbidden, GenericNotFound,
     InvalidAuthParameters, AuthorizationFailed,
     InvalidAPIParameters,
     InternalServerError,
@@ -199,7 +199,7 @@ def auth_required(handler):
     async def wrapped(request, *args, **kwargs):
         if request.get('is_authorized', False):
             return (await handler(request, *args, **kwargs))
-        raise AuthorizationFailed
+        raise AuthorizationFailed('Unauthorized access')
 
     set_handler_attr(wrapped, 'auth_required', True)
     return wrapped
@@ -211,7 +211,7 @@ def admin_required(handler):
     async def wrapped(request, *args, **kwargs):
         if request.get('is_authorized', False) and request.get('is_admin', False):
             return (await handler(request, *args, **kwargs))
-        raise AuthorizationFailed
+        raise AuthorizationFailed('Unauthorized access')
 
     set_handler_attr(wrapped, 'auth_required', True)
     return wrapped
@@ -223,7 +223,7 @@ def superadmin_required(handler):
     async def wrapped(request, *args, **kwargs):
         if request.get('is_authorized', False) and request.get('is_superadmin', False):
             return (await handler(request, *args, **kwargs))
-        raise AuthorizationFailed
+        raise AuthorizationFailed('Unauthorized access')
 
     set_handler_attr(wrapped, 'auth_required', True)
     return wrapped
@@ -292,7 +292,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
     if params['type'] != 'keypair':
         # other types are not implemented yet.
         raise InvalidAPIParameters('Unsupported authorization type')
-    log.info('AUTH.AUTHORIZE(d:{0[domain]}, u:{0[username]}, p:****, t:{0[type]})', params)
+    log.info('AUTH.AUTHORIZE(d:{0[domain]}, u:{0[username]}, passwd:****, type:{0[type]})', params)
     dbpool = request.app['dbpool']
     user = await check_credential(
         dbpool,
@@ -302,7 +302,11 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
     async with dbpool.acquire() as conn:
         query = (sa.select([keypairs.c.access_key, keypairs.c.secret_key])
                    .select_from(keypairs)
-                   .where((keypairs.c.user == user['uuid'])))
+                   .where(
+                       (keypairs.c.user == user['uuid']) &
+                       (keypairs.c.is_active)
+                   )
+                   .order_by(sa.desc(keypairs.c.is_admin)))
         result = await conn.execute(query)
         keypair = await result.first()
     return web.json_response({
@@ -322,7 +326,9 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         t.Key('password'): t.String,
     }).allow_extra('*'))
 async def signup(request: web.Request, params: Any) -> web.Response:
-    log.info('AUTH.SIGNUP(d:{}, e:{}, p:****)', params['domain'], params['email'])
+    log_fmt = 'AUTH.SIGNUP(d:{}, email:{}, passwd:****)'
+    log_args = (params['domain'], params['email'])
+    log.info(log_fmt, *log_args)
     dbpool = request.app['dbpool']
     # Ensure user exists if CHECK_USER handler is in plugin hook.
     # TODO: Eaiser way to use plugin hooks in general? Why is it so difficult to use...
@@ -331,17 +337,27 @@ async def signup(request: web.Request, params: Any) -> web.Response:
         hook_event_types = plugin.get_hook_event_types()
         hook_event_handlers = plugin.get_handlers()
         for ev_types in hook_event_types:
-            if 'CHECK_USER' not in ev_types._member_names_:
+            if 'CHECK_USER' not in ev_types._member_names_ and \
+                    'CHECK_PASSWORD' not in ev_types._member_names_:
                 continue
             for ev_handlers in hook_event_handlers:
                 for ev_handler in ev_handlers:
-                    if ev_types.CHECK_USER == ev_handler[0]:
+                    if 'CHECK_USER' in ev_types._member_names_ and \
+                            ev_types.CHECK_USER == ev_handler[0]:
                         check_user = ev_handler[1]
                         extra_params = copy.deepcopy(params)
                         extra_params.pop('email')
                         checked_user = await check_user(params['email'], **extra_params)
+                    if 'CHECK_PASSWORD' in ev_types._member_names_ and \
+                            ev_types.CHECK_PASSWORD == ev_handler[0]:
+                        check_password = ev_handler[1]
+                        result = await check_password(params['password'])
+                        if not result['success']:
+                            reason = result.get('reason', 'too simple password')
+                            return web.json_response({'title': reason}, status=403)
+
     if isinstance(checked_user, dict) and not checked_user['success']:
-        log.info('AUTH.SIGNUP: signup not allowed')
+        log.info(log_fmt + ': signup not allowed', *log_args)
         return web.json_response({'error_msg': 'signup not allowed'}, status=403)
 
     async with dbpool.acquire() as conn:
@@ -421,25 +437,35 @@ async def signup(request: web.Request, params: Any) -> web.Response:
 
 
 @atomic
+@auth_required
 @check_api_params(
     t.Dict({
-        t.Key('domain'): t.String,
-        t.Key('email'): t.String,
+        tx.AliasedKey(['email', 'username']): t.String,
         t.Key('password'): t.String,
     }))
 async def signout(request: web.Request, params: Any) -> web.Response:
-    log.info('AUTH.SIGNOUT(d:{}, e:{})', params['domain'], params['email'])
+    domain_name = request['user']['domain_name']
+    log.info('AUTH.SIGNOUT(d:{}, email:{})', domain_name, params['email'])
     dbpool = request.app['dbpool']
-    await check_credential(
+    if request['user']['email'] != params['email']:
+        raise GenericForbidden('Not the account owner')
+    result = await check_credential(
         dbpool,
-        params['domain'], params['email'], params['password'])
-    # Inactivate the user.
+        domain_name, params['email'], params['password'])
+    if result is None:
+        raise GenericBadRequest('Invalid email and/or password')
     async with dbpool.acquire() as conn, conn.begin():
+        # Inactivate the user.
         query = (users.update()
                       .values(is_active=False)
                       .where(users.c.email == params['email']))
         await conn.execute(query)
-        return web.json_response({'message': 'success'})
+        # Inactivate every keypairs of the user.
+        query = (keypairs.update()
+                         .values(is_active=False)
+                         .where(keypairs.c.user_id == params['email']))
+        await conn.execute(query)
+    return web.json_response({})
 
 
 def create_app(default_cors_options):

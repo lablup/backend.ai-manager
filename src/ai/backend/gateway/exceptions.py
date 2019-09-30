@@ -78,7 +78,7 @@ class InternalServerError(web.HTTPInternalServerError, BackendError):
 
 class ServerMisconfiguredError(web.HTTPInternalServerError, BackendError):
     error_type  = 'https://api.backend.ai/probs/server-misconfigured'
-    error_title = 'Servier misconfigured.'
+    error_title = 'Service misconfigured.'
 
 
 class ServiceUnavailable(web.HTTPServiceUnavailable, BackendError):
@@ -119,6 +119,16 @@ class InstanceNotFound(web.HTTPNotFound, BackendError):
 class ImageNotFound(web.HTTPNotFound, BackendError):
     error_type  = 'https://api.backend.ai/probs/image-not-found'
     error_title = 'No such environment image.'
+
+
+class GroupNotFound(web.HTTPNotFound, BackendError):
+    error_type  = 'https://api.backend.ai/probs/group-not-found'
+    error_title = 'No such user group.'
+
+
+class ScalingGroupNotFound(web.HTTPNotFound, BackendError):
+    error_type  = 'https://api.backend.ai/probs/scaling-group-not-found'
+    error_title = 'No such scaling group.'
 
 
 class KernelNotFound(web.HTTPNotFound, BackendError):

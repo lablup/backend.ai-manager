@@ -60,7 +60,7 @@ class Image(graphene.ObjectType):
         return cls._convert_from_dict(r)
 
     @classmethod
-    async def load_all(cls, context, is_installed=None):
+    async def load_all(cls, context, is_installed=None, is_operation=None):
         raw_items = await context['config_server'].list_images()
         items = []
         # Convert to GQL objects
@@ -69,10 +69,18 @@ class Image(graphene.ObjectType):
             items.append(item)
         if is_installed is not None:
             items = [*filter(lambda item: item.installed == is_installed, items)]
+        if is_operation is not None:
+            def _filter_operation(item):
+                for label in item.labels:
+                    if label.key == 'ai.backend.features' and 'operation' in label.value:
+                        return not is_operation
+                return not is_operation
+            items = [*filter(_filter_operation, items)]
         return items
 
     @staticmethod
-    async def filter_allowed(context, items, domain_name, is_installed=None):
+    async def filter_allowed(context, items, domain_name,
+                             is_installed=None, is_operation=None):
         from .domain import domains
         async with context['dbpool'].acquire() as conn:
             query = (
@@ -90,6 +98,13 @@ class Image(graphene.ObjectType):
         ]
         if is_installed is not None:
             items = [*filter(lambda item: item.installed == is_installed, items)]
+        if is_operation is not None:
+            def _filter_operation(item):
+                for label in item.labels:
+                    if label.key == 'ai.backend.features' and 'operation' in label.value:
+                        return not is_operation
+                return not is_operation
+            items = [*filter(_filter_operation, items)]
         return items
 
 

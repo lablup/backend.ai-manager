@@ -4,16 +4,22 @@ import json
 import logging
 from typing import FrozenSet
 import sqlalchemy as sa
+import trafaret as t
+from typing import (
+    Any,
+)
 
 from aiohttp import web
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
 
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common import validators as tx
 
 from . import ManagerStatus
-from .auth import admin_required
+from .auth import superadmin_required
 from .exceptions import InvalidAPIParameters, ServerFrozen, ServiceUnavailable
+from .utils import check_api_params
 from ..manager.models import kernels, KernelStatus
 
 
@@ -62,7 +68,8 @@ async def detect_status_update(app):
 
 
 @atomic
-async def fetch_manager_status(request):
+async def fetch_manager_status(request: web.Request) -> web.Response:
+    log.info('MANAGER.FETCH_MANAGER_STATUS ()')
     try:
         status = await request.app['config_server'].get_manager_status()
         etcd_info = await request.app['config_server'].get_manager_nodes_info()
@@ -80,7 +87,6 @@ async def fetch_manager_status(request):
                     'id': etcd_info[''],
                     'num_proc': configs['num-proc'],
                     'service_addr': str(configs['service-addr']),
-                    'event_listen_addr': str(configs['event-listen-addr']),
                     'heartbeat_timeout': configs['heartbeat-timeout'],
                     'ssl_enabled': configs['ssl-enabled'],
                     'active_sessions': active_sessions_num,
@@ -97,15 +103,20 @@ async def fetch_manager_status(request):
         raise
 
 
-@admin_required
 @atomic
-async def update_manager_status(request):
+@superadmin_required
+@check_api_params(
+    t.Dict({
+        t.Key('status'): tx.Enum(ManagerStatus, use_name=True),
+        t.Key('force_kill', default=False): t.Bool | t.StrBool,
+    }))
+async def update_manager_status(request: web.Request, params: Any) -> web.Response:
+    log.info('MANAGER.UPDATE_MANAGER_STATUS (status:{}, force_kill:{})',
+             params['status'], params['force_kill'])
     try:
         params = await request.json()
-        status = params.get('status', None)
-        force_kill = params.get('force_kill', None)
-        assert status, 'status is missing or empty!'
-        status = ManagerStatus(status)
+        status = params['status']
+        force_kill = params['force_kill']
     except json.JSONDecodeError:
         raise InvalidAPIParameters(extra_msg='No request body!')
     except (AssertionError, ValueError) as e:
@@ -118,14 +129,14 @@ async def update_manager_status(request):
     return web.Response(status=204)
 
 
-async def init(app):
+async def init(app: web.Application) -> None:
     loop = asyncio.get_event_loop()
     app['status_watch_task'] = loop.create_task(detect_status_update(app))
     if app['pidx'] == 0:
         await app['config_server'].update_manager_status(ManagerStatus.RUNNING)
 
 
-async def shutdown(app):
+async def shutdown(app: web.Application) -> None:
     if app['pidx'] == 0:
         await app['config_server'].update_manager_status(ManagerStatus.TERMINATED)
     if app['status_watch_task'] is not None:

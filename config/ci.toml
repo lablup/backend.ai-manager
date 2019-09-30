@@ -19,7 +19,6 @@ service-addr = { host = "0.0.0.0", port = 8080 }
 ssl-enabled = false
 #ssl-cert = "/etc/backend.ai/ssl/apiserver-fullchain.pem"
 #ssl-privkey = "/etc/backend.ai/ssl/apiserver-privkey.pem"
-event-listen-addr = { host = "127.0.0.1", port = 5002 }
 
 heartbeat-timeout = 5.0
 id = "i-travis"

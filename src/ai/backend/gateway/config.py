@@ -29,7 +29,6 @@ manager_config_iv = t.Dict({
         t.Key('user', default=None): tx.UserID(default_uid=_file_perm.st_uid),
         t.Key('group', default=None): tx.GroupID(default_gid=_file_perm.st_gid),
         t.Key('service-addr', default=('0.0.0.0', 8080)): tx.HostPortPair,
-        t.Key('event-listen-addr', default=('127.0.0.1', 5002)): tx.HostPortPair,
         t.Key('heartbeat-timeout', default=5.0): t.Float[1.0:],  # type: ignore
         t.Key('secret', default=None): t.Null | t.String,
         t.Key('ssl-enabled', default=False): t.Bool | t.StrBool,
@@ -47,6 +46,8 @@ manager_config_iv = t.Dict({
     t.Key('logging'): t.Any,  # checked in ai.backend.common.logging
     t.Key('debug'): t.Dict({
         t.Key('enabled', default=False): t.Bool | t.StrBool,
+        t.Key('log-events', default=False): t.Bool | t.StrBool,
+        t.Key('log-scheduler-ticks', default=False): t.Bool | t.StrBool,
     }).allow_extra('*'),
 }).merge(config.etcd_config_iv).allow_extra('*')
 

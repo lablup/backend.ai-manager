@@ -19,10 +19,13 @@ from typing import (
 
 from aiohttp import web
 import trafaret as t
+import sqlalchemy as sa
 
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.types import AccessKey
 
 from .exceptions import InvalidAPIParameters, GenericForbidden, QueryNotImplemented
+from ..manager.models import keypairs
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.utils'))
 
@@ -35,15 +38,27 @@ def method_placeholder(orig_method):
     return _handler
 
 
-def get_access_key_scopes(request: web.Request) -> Tuple[str, str]:
-    assert request['is_authorized'], \
-           'Only authorized requests may have access key scopes'
+async def get_access_key_scopes(request: web.Request) -> Tuple[AccessKey, AccessKey]:
+    if not request['is_authorized']:
+        raise GenericForbidden('Only authorized requests may have access key scopes.')
     requester_access_key = request['keypair']['access_key']
     owner_access_key = request.query.get('owner_access_key', None)
-    if owner_access_key is not None:
-        if owner_access_key != requester_access_key and not request['is_admin']:
+    if owner_access_key is not None and owner_access_key != requester_access_key:
+        async with request.app['dbpool'].acquire() as conn:
+            query = (
+                sa.select([keypairs.c.domain])
+                .select_from(keypairs)
+                .where(keypairs.c.access_key == owner_access_key)
+            )
+            result = await conn.execute(query)
+            owner_access_key_domain = await result.scalar()
+        if request['is_superadmin']:
+            pass
+        elif request['is_admin'] and request['domain'] == owner_access_key_domain:
+            pass
+        else:
             raise GenericForbidden(
-                'Only admins can access or control sessions owned by others.')
+                'Only admins can perform operations on behalf of other users.')
         return requester_access_key, owner_access_key
     return requester_access_key, requester_access_key
 
@@ -71,6 +86,13 @@ def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None) ->
         return wrapped
 
     return wrap
+
+
+def trim_text(value: str, maxlen: int) -> str:
+    if len(value) <= maxlen:
+        return value
+    value = value[:maxlen - 3] + '...'
+    return value
 
 
 class _Infinity(numbers.Number):
@@ -221,6 +243,7 @@ async def call_non_bursty(key: Hashable, coro: Callable[[], Any], *,
             return coro()
 
 
+current_loop: Callable[[], asyncio.AbstractEventLoop]
 if hasattr(asyncio, 'get_running_loop'):  # Python 3.7+
     current_loop = asyncio.get_running_loop
 else:

@@ -18,6 +18,7 @@ class ModelFactory(ABC):
     def __init__(self, app):
         self.app = app
 
+    @abstractmethod
     def get_creation_defaults(self):
         return {}
 
@@ -124,6 +125,9 @@ class GroupFactory(ModelFactory):
 class AssociationGroupsUsersFactory(ModelFactory):
 
     model = models.association_groups_users
+
+    def get_creation_defaults(self, **kwargs):
+        return {}
 
     async def before_creation(self):
         assert 'user_id' in self.defaults and 'group_id' in self.defaults, \

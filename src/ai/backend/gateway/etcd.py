@@ -106,7 +106,6 @@ Alias keys are also URL-quoted in the same way.
    ...
  + nodes
    + manager: {instance-id}
-     - event_addr: {"tcp://manager:5001"}
      - status: {one-of-ManagerStatus-value}
    + redis: {"tcp://redis:6379"}
      - password: {redis-auth-password}
@@ -156,7 +155,7 @@ from ai.backend.common.etcd import (
 from ai.backend.common.docker import (
     login as registry_login,
 )
-from .auth import admin_required
+from .auth import superadmin_required
 from .exceptions import InvalidAPIParameters, ServerMisconfiguredError
 from .manager import ManagerStatus
 from .utils import chunked, check_api_params
@@ -200,12 +199,8 @@ class ConfigServer:
 
     async def register_myself(self, app_config):
         instance_id = await get_instance_id()
-        event_addr = app_config['manager']['event-listen-addr']
-        log.info('manager is listening agent events at {}', event_addr)
-        event_addr = '{0.host}:{0.port}'.format(event_addr)
         manager_info = {
             'nodes/manager': instance_id,
-            'nodes/manager/event_addr': event_addr,
         }
         await self.etcd.put_dict(manager_info)
 
@@ -632,18 +627,32 @@ class ConfigServer:
 
 @atomic
 async def get_resource_slots(request) -> web.Response:
+    log.info('ETCD.GET_RESOURCE_SLOTS ()')
     known_slots = await request.app['config_server'].get_resource_slots()
     return web.json_response(known_slots, status=200)
 
 
 @atomic
 async def get_vfolder_types(request) -> web.Response:
+    log.info('ETCD.GET_VFOLDER_TYPES ()')
     vfolder_types = await request.app['config_server'].get_vfolder_types()
     return web.json_response(vfolder_types, status=200)
 
 
 @atomic
-@admin_required
+@superadmin_required
+async def get_docker_registries(request) -> web.Response:
+    '''
+    Returns the list of all registered docker registries.
+    '''
+    log.info('ETCD.GET_DOCKER_REGISTRIES ()')
+    etcd = request.app['registry'].config_server.etcd
+    known_registries = await get_known_registries(etcd)
+    return web.json_response(known_registries, status=200)
+
+
+@atomic
+@superadmin_required
 @check_api_params(
     t.Dict({
         t.Key('key'): t.String,
@@ -651,6 +660,8 @@ async def get_vfolder_types(request) -> web.Response:
     }))
 async def get_config(request: web.Request, params: Any) -> web.Response:
     etcd = request.app['config_server'].etcd
+    log.info('ETCD.GET_CONFIG (ak:{}, key:{}, prefix:{})',
+             request['keypair']['access_key'], params['key'], params['prefix'])
     if params['prefix']:
         # Flatten the returned ChainMap object for JSON serialization
         value = dict(await etcd.get_prefix_dict(params['key']))
@@ -660,7 +671,7 @@ async def get_config(request: web.Request, params: Any) -> web.Response:
 
 
 @atomic
-@admin_required
+@superadmin_required
 @check_api_params(
     t.Dict({
         t.Key('key'): t.String,
@@ -669,6 +680,8 @@ async def get_config(request: web.Request, params: Any) -> web.Response:
     }))
 async def set_config(request: web.Request, params: Any) -> web.Response:
     etcd = request.app['config_server'].etcd
+    log.info('ETCD.SET_CONFIG (ak:{}, key:{}, val:{})',
+             request['keypair']['access_key'], params['key'], params['value'])
     if isinstance(params['value'], Mapping):
         updates = {}
 
@@ -691,7 +704,7 @@ async def set_config(request: web.Request, params: Any) -> web.Response:
 
 
 @atomic
-@admin_required
+@superadmin_required
 @check_api_params(
     t.Dict({
         t.Key('key'): t.String,
@@ -699,6 +712,8 @@ async def set_config(request: web.Request, params: Any) -> web.Response:
     }))
 async def delete_config(request: web.Request, params: Any) -> web.Response:
     etcd = request.app['config_server'].etcd
+    log.info('ETCD.DELETE_CONFIG (ak:{}, key:{}, prefix:{})',
+             request['keypair']['access_key'], params['key'], params['prefix'])
     if params['prefix']:
         await etcd.delete_prefix(params['key'])
     else:
@@ -725,6 +740,7 @@ def create_app(default_cors_options):
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     cors.add(app.router.add_route('GET',  r'/resource-slots', get_resource_slots))
     cors.add(app.router.add_route('GET',  r'/vfolder-types', get_vfolder_types))
+    cors.add(app.router.add_route('GET',  r'/docker-registries', get_docker_registries))
     cors.add(app.router.add_route('POST', r'/get', get_config))
     cors.add(app.router.add_route('POST', r'/set', set_config))
     cors.add(app.router.add_route('POST', r'/delete', delete_config))
