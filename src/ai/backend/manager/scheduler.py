@@ -74,6 +74,7 @@ class SessionContext:
     target_sgroup_names: MutableSequence[str]
     environ: Mapping[str, str]
     mounts: Sequence[str]
+    startup_command: Optional[str]
 
 
 @attr.s(auto_attribs=True, slots=True)
@@ -476,7 +477,7 @@ class SessionScheduler(aobject):
                 kernels.c.status,
                 kernels.c.image,
                 kernels.c.registry,
-                kernels.c.type,
+                kernels.c.sess_type,
                 kernels.c.sess_id,
                 kernels.c.access_key,
                 kernels.c.domain_name,
@@ -486,6 +487,7 @@ class SessionScheduler(aobject):
                 kernels.c.resource_opts,
                 kernels.c.environ,
                 kernels.c.mounts,
+                kernels.c.startup_command,
                 keypairs.c.resource_policy,
             ], for_update=True)
             .select_from(sa.join(
@@ -501,7 +503,7 @@ class SessionScheduler(aobject):
                 kernel_id=row['id'],
                 image_ref=ImageRef(row['image'], [row['registry']]),
                 access_key=row['access_key'],
-                sess_type=row['type'],
+                sess_type=row['sess_type'],
                 sess_id=row['sess_id'],
                 domain_name=row['domain_name'],
                 group_id=row['group_id'],
@@ -515,6 +517,7 @@ class SessionScheduler(aobject):
                     in map(lambda s: s.split('=', maxsplit=1), row['environ'])
                 },
                 mounts=row['mounts'],
+                startup_command=row['startup_command'],
             ))
         return sess_ctxs
 

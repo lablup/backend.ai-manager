@@ -8,7 +8,9 @@ from datetime import datetime, timedelta
 import functools
 import json
 import logging
+import os
 import re
+from pathlib import Path
 import secrets
 from typing import (
     Any, Optional,
@@ -17,7 +19,7 @@ from typing import (
 import uuid
 
 import aiohttp
-from aiohttp import web
+from aiohttp import web, hdrs
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
 import aiotools
@@ -41,6 +43,7 @@ from ai.backend.common.types import (
 
 from .exceptions import (
     InvalidAPIParameters,
+    GenericNotFound,
     ImageNotFound,
     KernelNotFound,
     KernelAlreadyExists,
@@ -49,7 +52,7 @@ from .exceptions import (
 )
 from .auth import auth_required
 from .utils import (
-    catch_unexpected, check_api_params, get_access_key_scopes,
+    current_loop, catch_unexpected, check_api_params, get_access_key_scopes,
 )
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (
@@ -57,7 +60,9 @@ from ..manager.models import (
     association_groups_users as agus, groups,
     keypairs, kernels,
     keypair_resource_policies,
+    vfolders,
     AgentStatus, KernelStatus,
+    query_accessible_vfolders,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.kernel'))
@@ -81,12 +86,13 @@ creation_config_v2 = t.Dict({
 creation_config_v3 = t.Dict({
     t.Key('mounts', default=None): t.Null | t.List(t.String),
     t.Key('environ', default=None): t.Null | t.Mapping(t.String, t.String),
-    tx.AliasedKey(['clusterSize', 'cluster_size'], default=None):
+    tx.AliasedKey(['cluster_size', 'clusterSize'], default=None):
         t.Null | t.Int[1:],
     tx.AliasedKey(['scaling_group', 'scalingGroup'], default=None):
         t.Null | t.String,
     t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
-    t.Key('resource_opts', default=None): t.Null | t.Mapping(t.String, t.Any),
+    tx.AliasedKey(['resource_opts', 'resourceOpts'], default=None):
+        t.Null | t.Mapping(t.String, t.Any),
 })
 
 
@@ -106,6 +112,7 @@ creation_config_v3 = t.Dict({
         t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.Bool | t.StrBool,
         t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
         t.Key('reuseIfExists', default=True) >> 'reuse': t.Bool | t.StrBool,
+        t.Key('startupCommand', default=None) >> 'startup_command': t.Null | t.String,
     }),
     loads=_json_loads)
 async def create(request: web.Request, params: Any) -> web.Response:
@@ -155,6 +162,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'service_ports': kern.service_ports,
             'created': False,
         }, status=200)
+
+    if params['sess_type'] != SessionTypes.BATCH and params['startup_comamnd'] is None:
+        raise InvalidAPIParameters('Batch sessions must have a non-empty startup command.')
 
     try:
         start_event = asyncio.Event()
@@ -258,6 +268,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             group_id=group_id,
             user_uuid=owner_uuid,
             user_role=request['user']['role'],
+            startup_command=params['startup_command'],
             session_tag=params.get('tag', None)))
         resp['kernelId'] = str(params['sess_id'])  # legacy naming
         resp['status'] = 'PENDING'
@@ -319,10 +330,10 @@ async def create(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp, status=201)
 
 
-async def kernel_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
-                           raw_kernel_id: str,
-                           reason: str = None,
-                           exit_code: int = None) -> None:
+async def handle_kernel_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
+                                  raw_kernel_id: str,
+                                  reason: str = None,
+                                  exit_code: int = None) -> None:
     kernel_id = uuid.UUID(raw_kernel_id)
     registry = app['registry']
     if event_name == 'kernel_preparing':
@@ -341,8 +352,24 @@ async def kernel_lifecycle(app: web.Application, agent_id: AgentId, event_name: 
         await registry.mark_kernel_terminated(kernel_id, reason, exit_code)
 
 
-async def instance_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
-                             reason: str = None) -> None:
+async def handle_kernel_stat_sync(app: web.Application, agent_id: AgentId, event_name: str,
+                                  raw_kernel_id: str) -> None:
+    kernel_id = uuid.UUID(raw_kernel_id)
+    await app['registry'].sync_kernel_stats(kernel_id)
+
+
+async def handle_batch_result(app: web.Application, agent_id: AgentId, event_name: str,
+                              raw_kernel_id: str, exit_code: int) -> None:
+    kernel_id = uuid.UUID(raw_kernel_id)
+    registry = app['registry']
+    if event_name == 'kernel_success':
+        await registry.set_session_result(kernel_id, True, exit_code)
+    elif event_name == 'kernel_failure':
+        await registry.set_session_result(kernel_id, False, exit_code)
+
+
+async def handle_instance_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
+                                    reason: str = None) -> None:
     if event_name == 'instance_started':
         log.info('instance_lifecycle: ag:{0} joined ({1})', agent_id, reason)
         await app['registry'].update_instance(agent_id, {
@@ -362,8 +389,8 @@ async def instance_lifecycle(app: web.Application, agent_id: AgentId, event_name
             await app['registry'].mark_agent_terminated(agent_id, AgentStatus.TERMINATED)
 
 
-async def instance_heartbeat(app: web.Application, agent_id: AgentId, event_name: str,
-                             agent_info: Mapping[str, Any]) -> None:
+async def handle_instance_heartbeat(app: web.Application, agent_id: AgentId, event_name: str,
+                                    agent_info: Mapping[str, Any]) -> None:
     await app['registry'].handle_heartbeat(agent_id, agent_info)
 
 
@@ -387,8 +414,8 @@ async def check_agent_lost(app, interval):
 
 
 # NOTE: This event is ignored during the grace period.
-async def instance_stats(app: web.Application, agent_id: AgentId, event_name: str,
-                         kern_stats) -> None:
+async def handle_instance_stats(app: web.Application, agent_id: AgentId, event_name: str,
+                                kern_stats) -> None:
     await app['registry'].handle_stats(agent_id, kern_stats)
 
 
@@ -795,35 +822,88 @@ async def list_files(request: web.Request) -> web.Response:
 @atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def get_logs(request: web.Request) -> web.Response:
-    resp = {'result': {'logs': ''}}
+@check_api_params(
+    t.Dict({
+        t.Key('owner_access_key', default=None): t.Null | t.String,
+    }))
+async def get_logs(request: web.Request, params: Any) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
-    log.info('GETLOG (ak:{0}/{1}, s:{2})',
+    log.info('GET_LOG (ak:{}/{}, s:{})',
              requester_access_key, owner_access_key, sess_id)
+    resp = {'result': {'logs': ''}}
     try:
         await registry.increment_session_usage(sess_id, owner_access_key)
         resp['result'] = await registry.get_logs(sess_id, owner_access_key)
         log.info('container log retrieved: {0!r}', resp)
     except BackendError:
-        log.exception('GETLOG: exception')
+        log.exception('GET_LOG: exception')
         raise
     return web.json_response(resp, status=200)
 
 
+@server_status_required(READ_ALLOWED)
+@auth_required
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['kernel_id', 'kernelId', 'task_id', 'taskId']) >> 'kernel_id': tx.UUID,
+    }))
+async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse:
+    log.info('GET_TASK_LOG (ak:{}, k:{})',
+             request['keypair']['access_key'], params['kernel_id'])
+    domain_name = request['user']['domain_name']
+    user_role = request['user']['role']
+    user_uuid = request['user']['uuid']
+    raw_kernel_id = params['kernel_id'].hex
+    mount_prefix = await request.app['config_server'].get('volumes/_mount')
+    fs_prefix = await request.app['config_server'].get('volumes/_fsprefix')
+    async with request.app['dbpool'].acquire() as conn, conn.begin():
+        matched_vfolders = await query_accessible_vfolders(
+            conn, user_uuid,
+            user_role=user_role, domain_name=domain_name,
+            allowed_vfolder_types=['user'],
+            extra_vf_conds=(vfolders.c.name == '.logs'))
+        if not matched_vfolders:
+            raise GenericNotFound('You do not have ".logs" vfolder for persistent task logs.')
+        log_vfolder = matched_vfolders[0]
+        log_path = (
+            Path(mount_prefix) / log_vfolder['host'] / Path(fs_prefix.lstrip('/')) /
+            log_vfolder['id'].hex /
+            'task' / raw_kernel_id[:2] / raw_kernel_id[2:4] / f'{raw_kernel_id[4:]}.log'
+        )
+
+    def check_file():
+        if not log_path.is_file():
+            raise GenericNotFound('The requested log file or the task was not found.')
+        try:
+            with open(log_path, 'rb'):
+                pass
+        except IOError:
+            raise GenericNotFound('The requested log file is not readable.')
+
+    loop = current_loop()
+    await loop.run_in_executor(None, check_file)
+    return web.FileResponse(log_path, headers={
+        hdrs.CONTENT_TYPE: "text/plain",
+    })
+
+
 async def init(app: web.Application):
     event_dispatcher = app['event_dispatcher']
-    event_dispatcher.consume('kernel_preparing', app, kernel_lifecycle)
-    event_dispatcher.consume('kernel_pulling', app, kernel_lifecycle)
-    event_dispatcher.consume('kernel_creating', app, kernel_lifecycle)
-    event_dispatcher.consume('kernel_started', app, kernel_lifecycle)
-    event_dispatcher.consume('kernel_terminating', app, kernel_lifecycle)
-    event_dispatcher.consume('kernel_terminated', app, kernel_lifecycle)
-    event_dispatcher.consume('instance_started', app, instance_lifecycle)
-    event_dispatcher.consume('instance_terminated', app, instance_lifecycle)
-    event_dispatcher.consume('instance_heartbeat', app, instance_heartbeat)
-    event_dispatcher.consume('instance_stats', app, instance_stats)
+    event_dispatcher.consume('kernel_preparing', app, handle_kernel_lifecycle)
+    event_dispatcher.consume('kernel_pulling', app, handle_kernel_lifecycle)
+    event_dispatcher.consume('kernel_creating', app, handle_kernel_lifecycle)
+    event_dispatcher.consume('kernel_started', app, handle_kernel_lifecycle)
+    event_dispatcher.consume('kernel_terminating', app, handle_kernel_lifecycle)
+    event_dispatcher.consume('kernel_terminated', app, handle_kernel_lifecycle)
+    event_dispatcher.consume('kernel_success', app, handle_batch_result)
+    event_dispatcher.consume('kernel_failure', app, handle_batch_result)
+    event_dispatcher.consume('kernel_stat_sync', app, handle_kernel_stat_sync)
+    event_dispatcher.consume('instance_started', app, handle_instance_lifecycle)
+    event_dispatcher.consume('instance_terminated', app, handle_instance_lifecycle)
+    event_dispatcher.consume('instance_heartbeat', app, handle_instance_heartbeat)
+    event_dispatcher.consume('instance_stats', app, handle_instance_stats)
 
     app['pending_waits'] = set()
 
@@ -860,6 +940,9 @@ def create_app(default_cors_options):
     cors.add(kernel_resource.add_route('PATCH',  restart))
     cors.add(kernel_resource.add_route('DELETE', destroy))
     cors.add(kernel_resource.add_route('POST',   execute))
+    task_log_resource = cors.add(app.router.add_resource(r'/_/logs'))
+    cors.add(task_log_resource.add_route('HEAD', get_task_logs))
+    cors.add(task_log_resource.add_route('GET',  get_task_logs))
     cors.add(app.router.add_route('GET',  '/{sess_id}/logs', get_logs))
     cors.add(app.router.add_route('POST', '/{sess_id}/interrupt', interrupt))
     cors.add(app.router.add_route('POST', '/{sess_id}/complete', complete))

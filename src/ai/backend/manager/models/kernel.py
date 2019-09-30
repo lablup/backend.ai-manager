@@ -79,11 +79,9 @@ LIVE_STATUS = (
 kernels = sa.Table(
     'kernels', metadata,
     IDColumn(),
-    sa.Column('type', EnumType(SessionTypes),
-              default=SessionTypes.INTERACTIVE,
-              server_default=SessionTypes.INTERACTIVE.name,
-              nullable=False, index=True),
     sa.Column('sess_id', sa.String(length=64), unique=False, index=True),
+    sa.Column('sess_type', EnumType(SessionTypes), index=True, nullable=False,
+              default=SessionTypes.INTERACTIVE, server_default=SessionTypes.INTERACTIVE.name),
     sa.Column('role', sa.String(length=16), nullable=False, default='master'),
     sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True, nullable=True),
     sa.Column('agent', sa.String(length=64), sa.ForeignKey('agents.id'), nullable=True),
@@ -125,6 +123,7 @@ kernels = sa.Table(
               nullable=False, index=True),
     sa.Column('status_changed', sa.DateTime(timezone=True), nullable=True, index=True),
     sa.Column('status_info', sa.Unicode(), nullable=True, default=sa.null()),
+    sa.Column('startup_command', sa.Text, nullable=True),
     sa.Column('result', EnumType(SessionResult),
               default=SessionResult.UNDEFINED,
               server_default=SessionResult.UNDEFINED.name,
@@ -155,6 +154,7 @@ kernel_dependencies = sa.Table(
 
 class SessionCommons:
     sess_id = graphene.String()
+    sess_type = graphene.String()
     id = graphene.ID()
     role = graphene.String()
     image = graphene.String()
@@ -171,6 +171,8 @@ class SessionCommons:
     status_info = graphene.String()
     created_at = GQLDateTime()
     terminated_at = GQLDateTime()
+    startup_command = graphene.String()
+    result = graphene.String()
 
     # hidable fields by configuration
     agent = graphene.String()
@@ -285,6 +287,7 @@ class SessionCommons:
             hide_agents = context['config']['manager']['hide-agents']
         return {
             'sess_id': row['sess_id'],
+            'sess_type': row['sess_type'].name,
             'id': row['id'],
             'role': row['role'],
             'image': row['image'],
@@ -300,6 +303,8 @@ class SessionCommons:
             'status_info': row['status_info'],
             'created_at': row['created_at'],
             'terminated_at': row['terminated_at'],
+            'startup_command': row['startup_command'],
+            'result': row['result'].name,
             'service_ports': row['service_ports'],
             'occupied_slots': row['occupied_slots'].to_json(),
             'occupied_shares': row['occupied_shares'],

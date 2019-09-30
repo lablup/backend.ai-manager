@@ -28,6 +28,7 @@ from ai.backend.common.types import (
     KernelId,
     ResourceSlot,
     SessionTypes,
+    SessionResult,
     KernelCreationConfig,
 )
 from ai.backend.common.logging import BraceStyleAdapter
@@ -247,19 +248,28 @@ class AgentRegistry:
             cols.append(sa.column(field))
         async with reenter_txn(self.dbpool, db_connection) as conn:
             if allow_stale:
-                query = (sa.select(cols)
-                           .select_from(kernels)
-                           .where(kernels.c.id == kern_id)
-                           .limit(1).offset(0))
+                query = (
+                    sa.select(cols)
+                    .select_from(kernels)
+                    .where(kernels.c.id == kern_id)
+                    .limit(1).offset(0))
             else:
-                query = (sa.select(cols)
-                           .select_from(kernels.join(agents))
-                           .where((kernels.c.id == kern_id) &
-                                  (kernels.c.status.in_([KernelStatus.BUILDING,
-                                                         KernelStatus.RUNNING])) &
-                                  (agents.c.status == AgentStatus.ALIVE) &
-                                  (agents.c.id == kernels.c.agent))
-                           .limit(1).offset(0))
+                query = (
+                    sa.select(cols)
+                    .select_from(kernels.join(agents))
+                    .where(
+                        (kernels.c.id == kern_id) &
+                        (kernels.c.status.in_([
+                            KernelStatus.BUILDING,
+                            KernelStatus.PREPARING,
+                            KernelStatus.PULLING,
+                            KernelStatus.RUNNING,
+                            KernelStatus.TERMINATING,
+                        ])) &
+                        (agents.c.status == AgentStatus.ALIVE) &
+                        (agents.c.id == kernels.c.agent)
+                    )
+                    .limit(1).offset(0))
             result = await conn.execute(query)
             row = await result.first()
             if row is None:
@@ -363,6 +373,7 @@ class AgentRegistry:
                               group_id: uuid.UUID,
                               user_uuid: str,
                               user_role: str,
+                              startup_command: str = None,
                               session_tag: str = None) -> KernelId:
 
         mounts = creation_config.get('mounts') or []
@@ -384,33 +395,34 @@ class AgentRegistry:
         # sanity check for vfolders
         allowed_vfolder_types = ['user', 'group']
         # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
-        if creation_config['mounts']:
-            mount_details = []
-            matched_mounts = set()
-            async with self.dbpool.acquire() as conn, conn.begin():
-                matched_vfolders = await query_accessible_vfolders(
-                    conn, user_uuid,
-                    user_role=user_role, domain_name=domain_name,
-                    allowed_vfolder_types=allowed_vfolder_types,
-                    extra_vf_conds=(vfolders.c.name.in_(creation_config['mounts'])))
-                for item in matched_vfolders:
-                    if item['group'] is not None and item['group'] != str(group_id):
-                        # User's accessible group vfolders should not be mounted
-                        # if not belong to the execution kernel.
-                        continue
-                    matched_mounts.add(item['name'])
-                    mount_details.append((
-                        item['name'],
-                        item['host'],
-                        item['id'].hex,
-                        item['permission'].value,
-                    ))
-                if set(creation_config['mounts']) > matched_mounts:
-                    raise VFolderNotFound
-                creation_config['mounts'] = mount_details
-            mounts = mount_details
-        else:
-            mounts = []
+        determined_mounts = []
+        matched_mounts = set()
+        async with self.dbpool.acquire() as conn, conn.begin():
+            matched_vfolders = await query_accessible_vfolders(
+                conn, user_uuid,
+                user_role=user_role, domain_name=domain_name,
+                allowed_vfolder_types=allowed_vfolder_types,
+                extra_vf_conds=(
+                    # vfolders.c.name.in_(creation_config['mounts']) |
+                    vfolders.c.name.startswith('.')
+                ))
+            for item in matched_vfolders:
+                print('mounting', item['name'])
+                if item['group'] is not None and item['group'] != str(group_id):
+                    # User's accessible group vfolders should not be mounted
+                    # if not belong to the execution kernel.
+                    continue
+                matched_mounts.add(item['name'])
+                determined_mounts.append((
+                    item['name'],
+                    item['host'],
+                    item['id'].hex,
+                    item['permission'].value,
+                ))
+            if set(creation_config['mounts']) > matched_mounts:
+                raise VFolderNotFound
+            creation_config['mounts'] = determined_mounts
+        mounts = determined_mounts
 
         # TODO: merge into a single call
         image_info = await self.config_server.inspect_image(image_ref)
@@ -513,7 +525,7 @@ class AgentRegistry:
                 'id': kernel_id,
                 'status': KernelStatus.PENDING,
                 'sess_id': sess_id,
-                'type': session_type,
+                'sess_type': session_type,
                 'role': 'master',
                 'scaling_group': scaling_group,
                 'domain_name': domain_name,
@@ -523,6 +535,7 @@ class AgentRegistry:
                 'image': image_ref.canonical,
                 'registry': image_ref.registry,
                 'tag': session_tag,
+                'startup_command': startup_command,
                 'occupied_slots': requested_slots,
                 'occupied_shares': {},
                 'resource_opts': resource_opts,
@@ -580,6 +593,7 @@ class AgentRegistry:
                     'mounts': sess_ctx.mounts,
                     'environ': sess_ctx.environ,
                     'resource_opts': sess_ctx.resource_opts,
+                    'startup_command': sess_ctx.startup_command,
                 }
                 created_info = await rpc.call.create_kernel(str(sess_ctx.kernel_id),
                                                             config)
@@ -1104,6 +1118,56 @@ class AgentRegistry:
             )
             await conn.execute(query)
 
+    async def set_session_result(self, kernel_id: KernelId,
+                                 success: bool,
+                                 exit_code: int, *,
+                                 db_conn: SAConnection = None):
+        # TODO: store exit code?
+        data = {
+            'result': SessionResult.SUCCESS if success else SessionResult.FAILURE,
+        }
+        async with reenter_txn(self.dbpool, db_conn) as conn:
+            query = (
+                sa.update(kernels)
+                .values(data)
+                .where(kernels.c.id == kernel_id)
+            )
+            await conn.execute(query)
+
+    async def sync_kernel_stats(self, kernel_id: KernelId, *,
+                                db_conn: SAConnection = None,
+                                additional_updates: dict) -> None:
+        updates = {}
+        async with reenter_txn(self.dbpool, db_conn) as conn:
+            raw_kernel_id = str(kernel_id)
+            log.debug('sync_kernel_stats(k:{})', kernel_id)
+
+            async def _get_kstats_from_redis():
+                stat_type = await self.redis_stat.type(raw_kernel_id)
+                if stat_type == 'string':
+                    kern_stat = await self.redis_stat.get(raw_kernel_id, encoding=None)
+                    if kern_stat is not None:
+                        updates['last_stat'] = msgpack.unpackb(kern_stat)
+                else:
+                    kern_stat = await self.redis_stat.hgetall(raw_kernel_id)
+                    if kern_stat is not None and 'cpu_used' in kern_stat:
+                        updates.update({
+                            'cpu_used': int(float(kern_stat['cpu_used'])),
+                            'mem_max_bytes': int(kern_stat['mem_max_bytes']),
+                            'net_rx_bytes': int(kern_stat['net_rx_bytes']),
+                            'net_tx_bytes': int(kern_stat['net_tx_bytes']),
+                            'io_read_bytes': int(kern_stat['io_read_bytes']),
+                            'io_write_bytes': int(kern_stat['io_write_bytes']),
+                            'io_max_scratch_size': int(kern_stat['io_max_scratch_size']),
+                        })
+
+            await redis.execute_with_retries(lambda: _get_kstats_from_redis())
+            updates.update(additional_updates)
+            query = (sa.update(kernels)
+                       .values(updates)
+                       .where(kernels.c.id == kernel_id))
+            await conn.execute(query)
+
     async def mark_kernel_terminated(self, kernel_id: KernelId,
                                      reason: str,
                                      exit_code: int = None) -> None:
@@ -1140,28 +1204,7 @@ class AgentRegistry:
                 'status_changed': now,
                 'terminated_at': now,
             }
-            raw_kernel_id = str(kernel_id)
-            stat_type = await self.redis_stat.type(raw_kernel_id)
-            if stat_type == 'string':
-                kern_stat = await self.redis_stat.get(raw_kernel_id, encoding=None)
-                if kern_stat is not None:
-                    updates['last_stat'] = msgpack.unpackb(kern_stat)
-            else:
-                kern_stat = await self.redis_stat.hgetall(raw_kernel_id)
-                if kern_stat is not None and 'cpu_used' in kern_stat:
-                    updates.update({
-                        'cpu_used': int(float(kern_stat['cpu_used'])),
-                        'mem_max_bytes': int(kern_stat['mem_max_bytes']),
-                        'net_rx_bytes': int(kern_stat['net_rx_bytes']),
-                        'net_tx_bytes': int(kern_stat['net_tx_bytes']),
-                        'io_read_bytes': int(kern_stat['io_read_bytes']),
-                        'io_write_bytes': int(kern_stat['io_write_bytes']),
-                        'io_max_scratch_size': int(kern_stat['io_max_scratch_size']),
-                    })
-            query = (sa.update(kernels)
-                       .values(updates)
-                       .where(kernels.c.id == kernel_id))
-            await conn.execute(query)
+            await self.sync_kernel_stats(kernel_id, db_conn=conn, additional_updates=updates)
 
             # Release resource slots.
             query = (sa.select([kernels.c.agent, kernels.c.occupied_slots])

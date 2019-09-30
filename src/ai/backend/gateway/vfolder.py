@@ -159,8 +159,8 @@ def vfolder_check_exists(handler: Callable[..., Awaitable[web.Response]]):
 @check_api_params(
     t.Dict({
         t.Key('name'): tx.Slug(allow_dot=True),
-        t.Key('host', default=None) >> 'folder_host': t.Or(t.String, t.Null),
-        tx.AliasedKey(['group', 'groupId', 'group_id'], default=None): t.Or(tx.UUID, t.String, t.Null),
+        t.Key('host', default=None) >> 'folder_host': t.String | t.Null,
+        tx.AliasedKey(['group', 'groupId', 'group_id'], default=None): tx.UUID | t.String | t.Null,
     }),
 )
 async def create(request: web.Request, params: Any) -> web.Response:
@@ -189,6 +189,10 @@ async def create(request: web.Request, params: Any) -> web.Response:
             raise ServerMisconfiguredError(
                 f'Invalid vfolder type(s): {str(allowed_vfolder_types)}.'
                 ' Only "user" or "group" is allowed.')
+
+    if params['name'].startswith('.'):
+        if params['group'] is not None:
+            raise InvalidAPIParameters('dot-prefixed vfolders cannot be a group folder.')
 
     async with dbpool.acquire() as conn:
         # Convert group name to uuid if group name is given.
@@ -847,6 +851,8 @@ async def invite(request: web.Request) -> web.Response:
     assert len(user_ids) > 0, 'no user ids'
     log.info('VFOLDER.INVITE (ak:{}, vf:{}, inv.users:{})',
              access_key, folder_name, ','.join(user_ids))
+    if folder_name.startswith('.'):
+        raise GenericForbidden('Cannot share private dot-prefixed vfolders.')
     async with dbpool.acquire() as conn:
         # Get virtual folder.
         query = (sa.select('*')
