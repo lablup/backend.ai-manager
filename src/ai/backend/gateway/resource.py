@@ -35,7 +35,7 @@ from .exceptions import (
 from .manager import READ_ALLOWED, server_status_required
 from ..manager.models import (
     agents, resource_presets,
-    domains, groups, kernels, keypairs,
+    domains, groups, kernels, keypairs, users,
     AgentStatus,
     association_groups_users,
     query_allowed_sgroups,
@@ -300,9 +300,10 @@ async def recalculate_usage(request) -> web.Response:
 
 async def get_container_stats_for_period(request, start_date, end_date, group_ids=None):
     async with request.app['dbpool'].acquire() as conn, conn.begin():
-        j = (sa.join(kernels, groups, kernels.c.group_id == groups.c.id))
+        j = (kernels.join(groups, groups.c.id == kernels.c.group_id)
+                    .join(users, users.c.uuid == kernels.c.user_uuid))
         query = (
-            sa.select([kernels, groups.c.name])
+            sa.select([kernels, groups.c.name, users.c.email])
             .select_from(j)
             .where(
                 (kernels.c.terminated_at >= start_date) &
@@ -339,6 +340,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'id': str(row['id']),
             'name': row['sess_id'],
             'access_key': row['access_key'],
+            'email': row['email'],
             'cpu_allocated': float(row.occupied_slots['cpu']) if 'cpu' in row.occupied_slots else 0,
             'cpu_used': float(last_stat['cpu_used']['current']) if last_stat else 0,
             'mem_allocated': int(row.occupied_slots['mem']) if 'mem' in row.occupied_slots else 0,
