@@ -319,10 +319,15 @@ async def list_folders(request: web.Request) -> web.Response:
                     'type': 'user' if row['user'] is not None else 'group',
                 })
         else:
+            extra_vf_conds = None
+            if params.get('group_id'):
+                extra_vf_conds = (vfolders.c.group == params['group_id'])
             entries = await query_accessible_vfolders(
                 conn, user_uuid,
                 user_role=user_role, domain_name=domain_name,
-                allowed_vfolder_types=allowed_vfolder_types)
+                allowed_vfolder_types=allowed_vfolder_types,
+                extra_vf_conds=extra_vf_conds,
+            )
         for entry in entries:
             resp.append({
                 'name': entry['name'],
