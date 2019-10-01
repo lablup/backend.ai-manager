@@ -163,7 +163,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'created': False,
         }, status=200)
 
-    if params['sess_type'] != SessionTypes.BATCH and params['startup_comamnd'] is None:
+    if params['sess_type'] == SessionTypes.BATCH and not params['startup_command']:
         raise InvalidAPIParameters('Batch sessions must have a non-empty startup command.')
 
     try:
