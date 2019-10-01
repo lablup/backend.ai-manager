@@ -419,7 +419,8 @@ class AgentRegistry:
                     item['id'].hex,
                     item['permission'].value,
                 ))
-            if set(creation_config['mounts']) > matched_mounts:
+            if creation_config['mounts'] and \
+                    set(creation_config['mounts']) > matched_mounts:
                 raise VFolderNotFound
             creation_config['mounts'] = determined_mounts
         mounts = determined_mounts
