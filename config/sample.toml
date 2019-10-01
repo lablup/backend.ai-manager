@@ -73,6 +73,11 @@ hide-agents = false
 # compatibility issues.
 # event-loop = "asyncio"
 
+# The Docker image name that is used for importing external Docker images.
+# You need to change this if your are at offline environments so that the manager
+# uses an importer image from a private registry.
+importer-image = "lablup/importer:manylinux2010"
+
 
 [docker-registry]
 # Enable or disable SSL certificate verification when accessing Docker registries.

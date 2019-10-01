@@ -8,7 +8,6 @@ from datetime import datetime, timedelta
 import functools
 import json
 import logging
-import os
 import re
 from pathlib import Path
 import secrets
@@ -269,7 +268,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             user_uuid=owner_uuid,
             user_role=request['user']['role'],
             startup_command=params['startup_command'],
-            session_tag=params.get('tag', None)))
+            session_tag=params['tag']))
         resp['kernelId'] = str(params['sess_id'])  # legacy naming
         resp['status'] = 'PENDING'
         resp['servicePorts'] = []

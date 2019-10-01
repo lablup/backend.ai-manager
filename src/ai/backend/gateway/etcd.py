@@ -364,9 +364,14 @@ class ConfigServer:
                 # content-type may not be json...
                 resp.raise_for_status()
                 data = json.loads(await resp.read())
-                raw_labels = data['container_config']['Labels']
-                if raw_labels:
-                    labels.update(raw_labels)
+                if 'container_config' in data:
+                    raw_labels = data['container_config']['Labels']
+                    if raw_labels:
+                        labels.update(raw_labels)
+                else:
+                    raw_labels = data['config']['Labels']
+                    if raw_labels:
+                        labels.update(raw_labels)
 
             log.debug('checking image repository {}:{}', image, tag)
             if not labels.get('ai.backend.kernelspec'):

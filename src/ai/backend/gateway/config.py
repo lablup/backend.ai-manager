@@ -39,6 +39,7 @@ manager_config_iv = t.Dict({
                                                        allow_nonexisting=True,
                                                        allow_devnull=True),
         t.Key('hide-agents', default=False): t.Bool,
+        t.Key('importer-image', default='lablup/importer:manylinux2010'): t.String,
     }).allow_extra('*'),
     t.Key('docker-registry'): t.Dict({
         t.Key('ssl-verify', default=True): t.Bool | t.StrBool,

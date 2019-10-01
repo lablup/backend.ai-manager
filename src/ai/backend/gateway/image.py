@@ -10,10 +10,17 @@ import sqlalchemy as sa
 import trafaret as t
 
 from ai.backend.common import validators as tx
+from ai.backend.common.docker import ImageRef
+from ai.backend.common.etcd import (
+    quote as etcd_quote,
+)
+from ai.backend.common.types import (
+    SessionTypes,
+)
 
 from .auth import auth_required
 from .exceptions import BackendError
-from ..manager import ALL_ALLOWED, server_status_required
+from .manager import ALL_ALLOWED, server_status_required
 from ..manager.models import domains, groups
 from .utils import (
     check_api_params,
@@ -31,20 +38,19 @@ ENV PYTHONUNBUFFERED=1 \
 RUN --mount=type=bind,source=wheelhouse,target=/root/wheelhouse \
     PIP_OPTS="--no-cache-dir --no-index --find-links=/root/wheelhouse" && \
     {{ runtime_path }} -m pip install ${PIP_OPTS} -U pip setuptools && \
-    {{ runtime_path }} -m pip install ${PIP_OPTS} pillow && \
+    {{ runtime_path }} -m pip install ${PIP_OPTS} Pillow && \
     {{ runtime_path }} -m pip install ${PIP_OPTS} h5py && \
     {{ runtime_path }} -m pip install ${PIP_OPTS} ipython && \
     {{ runtime_path }} -m pip install ${PIP_OPTS} jupyter && \
     {{ runtime_path }} -m pip install ${PIP_OPTS} jupyterlab
 
 # Install ipython kernelspec
-RUN {{ runtime_path }} \
-    -m ipykernel \
+RUN {{ runtime_path }} -m ipykernel install \
     --prefix={{ runtime_path.parent.parent }} \
-    install --display-name "{{ brand }} on Backend.AI" && \
+    --display-name "{{ brand }} on Backend.AI" && \
     cat /usr/local/share/jupyter/kernels/python3/kernel.json
 {%- endif %}
-COPY {{ jail_policy_path }} /etc/backend.ai/jail/policy.yml
+{# COPY {{ jail_policy_path }} /etc/backend.ai/jail/policy.yml #}
 
 LABEL ai.backend.kernelspec="1" \
       ai.backend.envs.corecount="{{ cpucount_envvars | join(',') }}" \
@@ -81,7 +87,7 @@ LABEL ai.backend.kernelspec="1" \
         t.Key('minMemory'): tx.BinarySize,
         t.Key('supportedAccelerators'): t.List(t.String),
         t.Key('runtimeType'): t.Enum('python'),
-        t.Key('runtimePath'): tx.Path(allow_nonexisting=True),
+        t.Key('runtimePath'): tx.Path(type='file', allow_nonexisting=True),
         t.Key('CPUCountEnvs'): t.List(t.String),
         t.Key('servicePorts'): t.List(t.Dict({
             t.Key('name'): t.String,
@@ -113,34 +119,46 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
 
     tpl = jinja2.Template(DOCKERFILE_TEMPLATE)
 
+    async with request.app['dbpool'].acquire() as conn, conn.begin():
+        query = (
+            sa.select([domains.c.allowed_docker_registries])
+            .select_from(domains)
+            .where(domains.c.name == request['user']['domain_name'])
+        )
+        result = await conn.execute(query)
+        allowed_docker_registries = await result.scalar()
+
+    source_image = ImageRef(params['src'], allowed_docker_registries)
+    target_image = ImageRef(params['target'], allowed_docker_registries)
+
     # TODO: validate and convert arguments to template variables
     dockerfile_content = tpl.render({
-        'base_distro': 'ubuntu16.04',
+        'base_distro': params['baseDistro'],
         'cpucount_envvars': ['NPROC', 'OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS'],
-        'runtime_type': 'python',
-        'runtime_path': '/usr/local/bin/python',
-        'service_ports': ['test1', 'test2'],
+        'runtime_type': params['runtimeType'],
+        'runtime_path': params['runtimePath'],
+        'service_ports': [],
         'min_cpu': 1,
         'min_mem': '1g',
-        'accelerators': ['cuda'],
+        'accelerators': [],
         'jail_policy_path': '/.../policy.yml',
-        'src': 'mypreciousimage:tag',
-        'brand': 'My Precious Runtime',
-    }).encode('utf8')
+        'src': params['src'],
+        'brand': params['brand'],
+    })
 
     sess_id = f'image-import-{secrets.token_urlsafe(8)}'
-    access_key = request['access_key']
+    access_key = request['keypair']['access_key']
     registry = request.app['registry']
     resource_policy = request['keypair']['resource_policy']
-    distro = 'ubuntu'
 
     async with request.app['dbpool'].acquire() as conn, conn.begin():
-        query = (sa.select([groups.c.domain_name, groups.c.id])
-                   .select_from(groups)
-                   .where(domains.c.name == params['domain'])
-                   .where(domains.c.is_active)
-                   .where(groups.c.name == params['launchOptions']['group'])
-                   .where(groups.c.is_active))
+        query = (
+            sa.select([groups.c.domain_name, groups.c.id])
+            .select_from(groups)
+            .where(domains.c.name == request['user']['domain_name'])
+            .where(domains.c.is_active)
+            .where(groups.c.name == params['launchOptions']['group'])
+            .where(groups.c.is_active))
         rows = await conn.execute(query)
         row = await rows.fetchone()
         if row is None:
@@ -150,30 +168,53 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
         params['domain'] = row.domain_name  # replace domain_name
         group_id = row.id
 
-    kernel, _ = await registry.get_or_create_session(
+    importer_image = ImageRef(
+        request.app['config']['manager']['importer-image'],
+        allowed_docker_registries,
+    )
+
+    docker_creds = {}
+    for img_ref in (source_image, target_image):
+        registry_info = await request.app['config_server'].etcd.get_prefix_dict(
+            f'config/docker/registry/{etcd_quote(img_ref.registry)}')
+        docker_creds[img_ref.registry] = {
+            'username': registry_info.get('username'),
+            'password': registry_info.get('password'),
+        }
+
+    kernel_id = await registry.enqueue_session(
         sess_id, access_key,
-        'lablup/importer:manylinux2010',
+        importer_image,
+        SessionTypes.BATCH,
         {
-            'resources': {'cpu': '1', 'mem': '1g'},
+            'resources': {'cpu': '1', 'mem': '2g'},
             'scaling_group': params['launchOptions']['scalingGroup'],
             'environ': {
-                'SRC_IMAGE': params['src'],
-                'TARGET_IMAGE': params['target'],
+                'SRC_IMAGE': source_image.canonical,
+                'TARGET_IMAGE': target_image.canonical,
                 'RUNTIME_PATH': params['runtimePath'],
-                'BUILD_SCRIPT': (base64.b64encode(dockerfile_content)
+                'BUILD_SCRIPT': (base64.b64encode(dockerfile_content.encode('utf8'))
                                  .decode('ascii')),
             }
         },
         resource_policy,
-        domain_name='default',
+        domain_name=request['user']['domain_name'],
         group_id=group_id,
         user_uuid=request['user']['uuid'],
-        tag=None,
+        user_role=request['user']['role'],
+        startup_command='/root/build-image.sh',
+        internal_data={
+            'domain_socket_proxies': ['/var/run/docker.sock'],
+            'docker_credentials': docker_creds,
+            'prevent_vfolder_mounts': True,
+        }
     )
-    # TODO: implement agent RPC option to handle special importer kernels
-    # TODO: execute "build-image.sh" in the importer kernel
-    # TODO: destroy the importer kernel after it has finished
-    return web.Response(text=dockerfile_content, status=200)
+    return web.json_response({
+        'conversionTask': {
+            'sessionId': sess_id,
+            'taskId': str(kernel_id),
+        },
+    }, status=200)
 
 
 async def init(app: web.Application):

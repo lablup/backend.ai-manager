@@ -25,6 +25,8 @@ id = "i-travis"
 pid-file = "./manager.pid"
 disabled-plugins = []
 
+importer-image = "lablup/importer:manylinux2010"
+
 
 [docker-registry]
 ssl-verify = true

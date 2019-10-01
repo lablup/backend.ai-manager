@@ -374,7 +374,8 @@ class AgentRegistry:
                               user_uuid: str,
                               user_role: str,
                               startup_command: str = None,
-                              session_tag: str = None) -> KernelId:
+                              session_tag: str = None,
+                              internal_data: dict = None) -> KernelId:
 
         mounts = creation_config.get('mounts') or []
         environ = creation_config.get('environ') or {}
@@ -419,7 +420,7 @@ class AgentRegistry:
                     item['id'].hex,
                     item['permission'].value,
                 ))
-            if set(creation_config['mounts']) > matched_mounts:
+            if set(mounts) > matched_mounts:
                 raise VFolderNotFound
             creation_config['mounts'] = determined_mounts
         mounts = determined_mounts
@@ -535,6 +536,7 @@ class AgentRegistry:
                 'image': image_ref.canonical,
                 'registry': image_ref.registry,
                 'tag': session_tag,
+                'internal_data': internal_data,
                 'startup_command': startup_command,
                 'occupied_slots': requested_slots,
                 'occupied_shares': {},
@@ -594,6 +596,7 @@ class AgentRegistry:
                     'environ': sess_ctx.environ,
                     'resource_opts': sess_ctx.resource_opts,
                     'startup_command': sess_ctx.startup_command,
+                    'internal_data': sess_ctx.internal_data,
                 }
                 created_info = await rpc.call.create_kernel(str(sess_ctx.kernel_id),
                                                             config)
