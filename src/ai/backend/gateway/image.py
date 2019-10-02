@@ -169,6 +169,7 @@ async def get_import_image_form(request: web.Request) -> web.Response:
             },
             {
                 'name': 'Import Task Options',
+                'help': 'The import task uses 1 CPU core and 2 GiB of memory.',
                 'fields': [
                     {
                         'name': 'group',
