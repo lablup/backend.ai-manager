@@ -1140,7 +1140,7 @@ class AgentRegistry:
 
     async def sync_kernel_stats(self, kernel_id: KernelId, *,
                                 db_conn: SAConnection = None,
-                                additional_updates: dict) -> None:
+                                additional_updates: dict = None) -> None:
         updates = {}
         async with reenter_txn(self.dbpool, db_conn) as conn:
             raw_kernel_id = str(kernel_id)
@@ -1166,7 +1166,8 @@ class AgentRegistry:
                         })
 
             await redis.execute_with_retries(lambda: _get_kstats_from_redis())
-            updates.update(additional_updates)
+            if additional_updates is not None:
+                updates.update(additional_updates)
             query = (sa.update(kernels)
                        .values(updates)
                        .where(kernels.c.id == kernel_id))
