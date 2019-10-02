@@ -114,7 +114,7 @@ creation_config_v3 = t.Dict({
         t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
         t.Key('reuseIfExists', default=True) >> 'reuse': t.Bool | t.StrBool,
         t.Key('startupCommand', default=None) >> 'startup_command': t.Null | t.String,
-        t.Key('owner_access_key'): t.Null | t.String,
+        t.Key('owner_access_key', default=None): t.Null | t.String,
     }),
     loads=_json_loads)
 async def create(request: web.Request, params: Any) -> web.Response:
