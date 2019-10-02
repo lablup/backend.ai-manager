@@ -399,16 +399,19 @@ class AgentRegistry:
         determined_mounts = []
         matched_mounts = set()
         async with self.dbpool.acquire() as conn, conn.begin():
+            if creation_config['mounts']:
+                extra_vf_conds = (
+                    vfolders.c.name.in_(creation_config['mounts']) |
+                    vfolders.c.name.startswith('.')
+                )
+            else:
+                extra_vf_conds = vfolders.c.name.startswith('.')
             matched_vfolders = await query_accessible_vfolders(
                 conn, user_uuid,
                 user_role=user_role, domain_name=domain_name,
                 allowed_vfolder_types=allowed_vfolder_types,
-                extra_vf_conds=(
-                    # vfolders.c.name.in_(creation_config['mounts']) |
-                    vfolders.c.name.startswith('.')
-                ))
+                extra_vf_conds=extra_vf_conds)
             for item in matched_vfolders:
-                print('mounting', item['name'])
                 if item['group'] is not None and item['group'] != str(group_id):
                     # User's accessible group vfolders should not be mounted
                     # if not belong to the execution kernel.
@@ -420,7 +423,7 @@ class AgentRegistry:
                     item['id'].hex,
                     item['permission'].value,
                 ))
-            if set(mounts) > matched_mounts:
+            if creation_config['mounts'] and set(creation_config['mounts']) > matched_mounts:
                 raise VFolderNotFound
             creation_config['mounts'] = determined_mounts
         mounts = determined_mounts

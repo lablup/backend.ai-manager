@@ -25,7 +25,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import AccessKey
 
 from .exceptions import InvalidAPIParameters, GenericForbidden, QueryNotImplemented
-from ..manager.models import keypairs
+from ..manager.models import keypairs, users
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.utils'))
 
@@ -45,9 +45,10 @@ async def get_access_key_scopes(request: web.Request) -> Tuple[AccessKey, Access
     owner_access_key = request.query.get('owner_access_key', None)
     if owner_access_key is not None and owner_access_key != requester_access_key:
         async with request.app['dbpool'].acquire() as conn:
+            j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
             query = (
-                sa.select([keypairs.c.domain])
-                .select_from(keypairs)
+                sa.select([users.c.domain_name])
+                .select_from(j)
                 .where(keypairs.c.access_key == owner_access_key)
             )
             result = await conn.execute(query)
