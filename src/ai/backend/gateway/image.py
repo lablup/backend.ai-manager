@@ -20,7 +20,7 @@ from ai.backend.common.types import (
 
 from .auth import auth_required
 from .exceptions import BackendError
-from .manager import ALL_ALLOWED, server_status_required
+from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import domains, groups
 from .utils import (
     check_api_params,
@@ -71,6 +71,119 @@ LABEL ai.backend.kernelspec="1" \
 '''
 
 
+@server_status_required(READ_ALLOWED)
+@auth_required
+async def get_import_image_form(request: web.Request) -> web.Response:
+    return web.json_response({
+        'fieldGroups': [
+            {
+                'name': 'Import options',
+                'fields': [
+                    {
+                        'name': 'src',
+                        'type': 'string',
+                        'help': 'The full Docker image name to import from. '
+                                'The registry must be accessible by the client.',
+                    },
+                    {
+                        'name': 'target',
+                        'type': 'string',
+                        'help': 'The full Docker image name of the imported image.'
+                                'The registry must be accessible by the client.',
+                    },
+                    {
+                        'name': 'brand',
+                        'type': 'string',
+                        'help': 'The name of kernel to be shown in the Jupyter\'s kernel menu.',
+                    },
+                    {
+                        'name': 'baseDistro',
+                        'type': 'choice',
+                        'choices': ['ubuntu', 'centos'],
+                        'help': 'The base Linux distribution used by the source image',
+                    },
+                    {
+                        'name': 'minCPU',
+                        'type': 'number',
+                        'min': 1,
+                        'max': None,
+                        'help': 'The minimum number of CPU cores required by the image',
+                    },
+                    {
+                        'name': 'minMemory',
+                        'type': 'binarysize',
+                        'min': '64m',
+                        'max': None,
+                        'help': 'The minimum size of the main memory required by the image',
+                    },
+                    {
+                        'name': 'supportedAccelerators',
+                        'type': 'multichoice[str]',
+                        'choices': ['cuda'],
+                        'help': 'The list of accelerators supported by the image',
+                    },
+                    {
+                        'name': 'runtimeType',
+                        'type': 'choice',
+                        'choices': ['python'],
+                        'help': 'The runtime language of the image. '
+                                'This will be used as the kernel of Jupyter service in this image.',
+                    },
+                    {
+                        'name': 'runtimePath',
+                        'type': 'string',
+                        'default': '/usr/local/bin/python',
+                        'help': 'The path to the main executalbe of runtime language of the image. '
+                                'Even for the same "python"-based images, this may differ significantly '
+                                'image by image. '
+                                'Please check this carefully not to get confused with OS-default ones '
+                                'and custom-installed ones',
+                    },
+                    {
+                        'name': 'CPUCountEnvs',
+                        'type': 'list[string]',
+                        'default': ['NPROC', 'OMP_NUM_THREADS'],
+                        'help': 'The name of environment variables to be overriden to the number of CPU '
+                                'cores actually allocated to the container',
+                    },
+                    {
+                        'name': 'servicePorts',
+                        'type': 'multichoice[template]',
+                        'templates': [
+                            {'name': 'jupyter', 'protocol': 'http', 'port': 8080},
+                            {'name': 'jupyterlab', 'protocol': 'http', 'port': 8090},
+                            {'name': 'tensorboard', 'protocol': 'http', 'port': 6006},
+                            {'name': 'digits', 'protocol': 'http', 'port': 5000},
+                            {'name': 'vscode', 'protocol': 'http', 'port': 8180},
+                            {'name': 'h2o-dai', 'protocol': 'http', 'port': 12345},
+                        ],
+                        'help': 'The list of service ports supported by this image. '
+                                'Note that sshd and ttyd are always supported regardless of '
+                                'the source image.',
+                    },
+                ]
+            },
+            {
+                'name': 'Import Task Options',
+                'fields': [
+                    {
+                        'name': 'group',
+                        'type': 'choice',
+                        'choices': [],  # TODO: implement
+                        'help': 'The user group where the import task will take resources from.',
+                    },
+                    {
+                        'name': 'scalingGroup',
+                        'type': 'choice',
+                        'choices': [],  # TODO: implement
+                        'help': 'The scaling group where the import task will take resources from.',
+                    },
+                ]
+            },
+        ]
+    })
+
+
 @server_status_required(ALL_ALLOWED)
 @auth_required
 @check_api_params(
@@ -82,7 +195,7 @@ LABEL ai.backend.kernelspec="1" \
             t.Key('group', default='default'): t.String,
         }).allow_extra('*'),
         t.Key('brand'): t.String,
-        t.Key('baseDistro'): t.Enum('ubuntu', 'centos', 'alpine'),
+        t.Key('baseDistro'): t.Enum('ubuntu', 'centos'),
         t.Key('minCPU'): t.Int[1:],
         t.Key('minMemory'): tx.BinarySize,
         t.Key('supportedAccelerators'): t.List(t.String),
@@ -232,5 +345,6 @@ def create_app(default_cors_options):
     app['prefix'] = 'image'
     app['api_versions'] = (4,)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
+    cors.add(app.router.add_route('GET', '/import', get_import_image_form))
     cors.add(app.router.add_route('POST', '/import', import_image))
     return app, []
