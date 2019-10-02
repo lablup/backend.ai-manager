@@ -328,7 +328,7 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
         }
     )
     return web.json_response({
-        'conversionTask': {
+        'importTask': {
             'sessionId': sess_id,
             'taskId': str(kernel_id),
         },
