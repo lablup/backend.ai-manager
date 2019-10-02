@@ -126,7 +126,9 @@ async def get_import_image_form(request: web.Request) -> web.Response:
                         'name': 'runtimeType',
                         'type': 'choice',
                         'choices': ['python'],
-                        'help': 'The runtime language of the image. '
+                        'help': 'The runtime type of the image. '
+                                'Currently, the source image must have installed Python 2.7, 3.5, 3.6, '
+                                'or 3.7 at least to import. '
                                 'This will be used as the kernel of Jupyter service in this image.',
                     },
                     {
@@ -135,16 +137,18 @@ async def get_import_image_form(request: web.Request) -> web.Response:
                         'default': '/usr/local/bin/python',
                         'help': 'The path to the main executalbe of runtime language of the image. '
                                 'Even for the same "python"-based images, this may differ significantly '
-                                'image by image. '
+                                'image by image. (e.g., /usr/bin/python, /usr/local/bin/python, '
+                                '/opt/something/bin/python, ...) '
                                 'Please check this carefully not to get confused with OS-default ones '
-                                'and custom-installed ones',
+                                'and custom-installed ones.',
                     },
                     {
                         'name': 'CPUCountEnvs',
                         'type': 'list[string]',
-                        'default': ['NPROC', 'OMP_NUM_THREADS'],
+                        'default': ['NPROC', 'OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS'],
                         'help': 'The name of environment variables to be overriden to the number of CPU '
-                                'cores actually allocated to the container',
+                                'cores actually allocated to the container.  Required for legacy '
+                                'computation libraries.',
                     },
                     {
                         'name': 'servicePorts',
