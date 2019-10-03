@@ -67,12 +67,12 @@ LABEL ai.backend.kernelspec="1" \
       ai.backend.service-ports="{% for item in service_ports -%}
           {{- item['name'] }}:
           {{- item['protocol'] }}:
-          {%- if item['ports'] is sequence and (item['ports'] | length) > 1 -%}
-              [{{- item['ports'] | join(',') -}}]
+          {%- if (item['ports'] | length) > 1 -%}
+              [{{ item['ports'] | join(',') }}]
           {%- else -%}
-              {{- item['ports'] -}}
+              {{ item['ports'][0] }}
           {%- endif -%}
-          {{- item['port'] }}{{ ',' if not loop.last }}
+          {{- ',' if not loop.last }}
       {%- endfor %}" \
 {%- endif %}
 '''  # noqa
@@ -244,7 +244,7 @@ async def get_import_image_form(request: web.Request) -> web.Response:
         t.Key('servicePorts'): t.List(t.Dict({
             t.Key('name'): t.String,
             t.Key('protocol'): t.Enum('http', 'tcp', 'pty'),
-            t.Key('port'): t.Int[1:65535] | t.List(t.Int[1:65535]),
+            t.Key('ports'): t.List(t.Int[1:65535]),
         })),
     }).allow_extra('*'))
 async def import_image(request: web.Request, params: Any) -> web.Response:
