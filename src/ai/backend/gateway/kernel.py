@@ -308,6 +308,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                             {
                                 'name': item['name'],
                                 'protocol': item['protocol'],
+                                'ports': item['container_ports'],
                             }
                             for item in row['service_ports']
                         ]
