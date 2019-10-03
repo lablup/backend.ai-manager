@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import Union, Sequence
+from typing import Union, Sequence, Set
 import uuid
 
 from aiopg.sa.connection import SAConnection
@@ -14,7 +14,7 @@ from .base import (
     simple_db_mutate_returning_item,
     set_if_set,
 )
-from .group import groups
+from .group import groups, resolve_group_name_or_id
 from .user import UserRole
 
 __all__: Sequence[str] = (
@@ -105,27 +105,27 @@ sgroups_for_keypairs = sa.Table(
 
 
 async def query_allowed_sgroups(db_conn: SAConnection,
-                                domain: str,
+                                domain_name: str,
                                 group: Union[uuid.UUID, str],
                                 access_key: str):
     query = (sa.select([sgroups_for_domains])
-               .where(sgroups_for_domains.c.domain == domain))
+               .where(sgroups_for_domains.c.domain == domain_name))
     result = await db_conn.execute(query)
     from_domain = {row['scaling_group'] async for row in result}
 
-    if isinstance(group, str):
-        query = (sa.select([groups.c.id])
-                   .select_from(groups)
-                   .where(groups.c.domain_name == domain)
-                   .where(groups.c.name == group))
-        group = await db_conn.scalar(query)
-    if isinstance(group, uuid.UUID):
-        query = (sa.select([sgroups_for_groups])
-                   .where(sgroups_for_groups.c.group == group))
+    group_id = await resolve_group_name_or_id(db_conn, domain_name, group)
+    from_group: Set[str]
+    if group_id is None:
+        from_group = set()  # empty
     else:
-        raise ValueError('unexpected type for group', group)
-    result = await db_conn.execute(query)
-    from_group = {row['scaling_group'] async for row in result}
+        query = (
+            sa.select([sgroups_for_groups])
+            .where(
+                (sgroups_for_groups.c.group == group_id)
+            )
+        )
+        result = await db_conn.execute(query)
+        from_group = {row['scaling_group'] async for row in result}
 
     query = (sa.select([sgroups_for_keypairs])
                .where(sgroups_for_keypairs.c.access_key == access_key))
@@ -136,7 +136,7 @@ async def query_allowed_sgroups(db_conn: SAConnection,
     query = (sa.select([scaling_groups])
                .where(
                    (scaling_groups.c.name.in_(sgroups)) &
-                   (scaling_groups.c.is_active == True)   # noqa: E712
+                   (scaling_groups.c.is_active)
                ))
     result = await db_conn.execute(query)
     return [row async for row in result]

@@ -18,9 +18,12 @@ from ai.backend.common.types import (
 )
 
 from .auth import auth_required
-from .exceptions import BackendError
+from .exceptions import InvalidAPIParameters
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
-from ..manager.models import domains, groups
+from ..manager.models import (
+    domains, groups, query_allowed_sgroups,
+    association_groups_users as agus,
+)
 from .utils import (
     check_api_params,
 )
@@ -81,6 +84,29 @@ LABEL ai.backend.kernelspec="1" \
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def get_import_image_form(request: web.Request) -> web.Response:
+    async with request.app['dbpool'].acquire() as conn, conn.begin():
+        query = (
+            sa.select([groups.c.name])
+            .select_from(
+                sa.join(groups, domains,
+                        groups.c.domain_name == domains.c.name)
+            )
+            .where(
+                (domains.c.name == request['user']['domain_name']) &
+                (domains.c.is_active) &
+                (groups.c.is_active)
+            )
+        )
+        result = await conn.execute(query)
+        rows = await result.fetchall()
+        accessible_groups = [row['name'] for row in rows]
+
+        # FIXME: Currently this only consider domain-level scaling group associations,
+        #        thus ignoring the group name query.
+        rows = await query_allowed_sgroups(
+            conn, request['user']['domain_name'], '', request['keypair']['access_key'])
+        accessible_scaling_groups = [row['name'] for row in rows]
+
     return web.json_response({
         'fieldGroups': [
             {
@@ -106,8 +132,9 @@ async def get_import_image_form(request: web.Request) -> web.Response:
                         'name': 'brand',
                         'type': 'string',
                         'label': 'Name of Jupyter kernel',
-                        'placeholder': 'Tensorflow 2.0 on Backend.AI',
-                        'help': 'The name of kernel to be shown in the Jupyter\'s kernel menu.',
+                        'placeholder': 'TensorFlow 2.0',
+                        'help': 'The name of kernel to be shown in the Jupyter\'s kernel menu. '
+                                'This will be suffixed with "on Backend.AI".',
                     },
                     {
                         'name': 'baseDistro',
@@ -199,23 +226,16 @@ async def get_import_image_form(request: web.Request) -> web.Response:
                 'help': 'The import task uses 1 CPU core and 2 GiB of memory.',
                 'fields': [
                     {
-                        'name': 'domain',
-                        'type': 'choice',
-                        'choices': [],  # TODO: implement
-                        'label': 'Domain to build image',
-                        'help': 'The domain where the import task will be executed.',
-                    },
-                    {
                         'name': 'group',
                         'type': 'choice',
-                        'choices': [],  # TODO: implement
+                        'choices': accessible_groups,
                         'label': 'Group to build image',
                         'help': 'The user group where the import task will be executed.',
                     },
                     {
                         'name': 'scalingGroup',
                         'type': 'choice',
-                        'choices': [],  # TODO: implement
+                        'choices': accessible_scaling_groups,
                         'label': 'Scaling group to build image',
                         'help': 'The scaling group where the import task will take resources from.',
                     },
@@ -306,20 +326,35 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
 
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         query = (
-            sa.select([groups.c.domain_name, groups.c.id])
-            .select_from(groups)
-            .where(domains.c.name == request['user']['domain_name'])
-            .where(domains.c.is_active)
-            .where(groups.c.name == params['launchOptions']['group'])
-            .where(groups.c.is_active))
-        rows = await conn.execute(query)
-        row = await rows.fetchone()
+            sa.select([groups.c.id])
+            .select_from(
+                sa.join(groups, domains,
+                        groups.c.domain_name == domains.c.name)
+            )
+            .where(
+                (domains.c.name == request['user']['domain_name']) &
+                (groups.c.name == params['launchOptions']['group']) &
+                (domains.c.is_active) &
+                (groups.c.is_active)
+            )
+        )
+        result = await conn.execute(query)
+        group_id = await result.scalar()
+        if group_id is None:
+            raise InvalidAPIParameters("Invalid domain or group.")
+
+        query = (
+            sa.select([agus])
+            .select_from(agus)
+            .where(
+                (agus.c.user_id == request['user']['uuid']) &
+                (agus.c.group_id == group_id)
+            )
+        )
+        result = await conn.execute(query)
+        row = await result.fetchone()
         if row is None:
-            raise BackendError(
-                f"{params['group']}: no such group "
-                f"in domain {params['domain']}")
-        params['domain'] = row.domain_name  # replace domain_name
-        group_id = row.id
+            raise InvalidAPIParameters("You do not belong to the given group.")
 
     importer_image = ImageRef(
         request.app['config']['manager']['importer-image'],

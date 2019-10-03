@@ -1,8 +1,13 @@
 import asyncio
 from collections import OrderedDict
 import re
-from typing import Sequence
+from typing import (
+    Optional, Union,
+    Sequence,
+)
+import uuid
 
+from aiopg.sa.connection import SAConnection
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import psycopg2 as pg
@@ -20,6 +25,7 @@ from .user import UserRole
 
 __all__: Sequence[str] = (
     'groups', 'association_groups_users',
+    'resolve_group_name_or_id',
     'Group', 'GroupInput', 'ModifyGroupInput',
     'CreateGroup', 'ModifyGroup', 'DeleteGroup',
 )
@@ -58,6 +64,33 @@ groups = sa.Table(
     sa.Column('allowed_vfolder_hosts', pgsql.ARRAY(sa.String), nullable=False, default='{}'),
     sa.UniqueConstraint('name', 'domain_name', name='uq_groups_name_domain_name')
 )
+
+
+async def resolve_group_name_or_id(db_conn: SAConnection,
+                                   domain_name: str,
+                                   value: Union[str, uuid.UUID]) -> Optional[uuid.UUID]:
+    if isinstance(value, str):
+        query = (
+            sa.select([groups.c.id])
+            .select_from(groups)
+            .where(
+                (groups.c.name == value) &
+                (groups.c.domain_name == domain_name)
+            )
+        )
+        return await db_conn.scalar(query)
+    elif isinstance(value, uuid.UUID):
+        query = (
+            sa.select([groups.c.id])
+            .select_from(groups)
+            .where(
+                (groups.c.id == value) &
+                (groups.c.domain_name == domain_name)
+            )
+        )
+        return await db_conn.scalar(query)
+    else:
+        raise TypeError('unexpected type for group_name_or_id')
 
 
 class Group(graphene.ObjectType):
