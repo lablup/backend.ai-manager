@@ -178,12 +178,12 @@ async def get_import_image_form(request: web.Request) -> web.Response:
                         'name': 'servicePorts',
                         'type': 'multichoice[template]',
                         'templates': [
-                            {'name': 'jupyter', 'protocol': 'http', 'port': 8080},
-                            {'name': 'jupyterlab', 'protocol': 'http', 'port': 8090},
-                            {'name': 'tensorboard', 'protocol': 'http', 'port': [6006, 6064]},
-                            {'name': 'digits', 'protocol': 'http', 'port': 5000},
-                            {'name': 'vscode', 'protocol': 'http', 'port': 8180},
-                            {'name': 'h2o-dai', 'protocol': 'http', 'port': 12345},
+                            {'name': 'jupyter', 'protocol': 'http', 'ports': [8080]},
+                            {'name': 'jupyterlab', 'protocol': 'http', 'ports': [8090]},
+                            {'name': 'tensorboard', 'protocol': 'http', 'ports': [6006]},
+                            {'name': 'digits', 'protocol': 'http', 'ports': [5000]},
+                            {'name': 'vscode', 'protocol': 'http', 'ports': [8180]},
+                            {'name': 'h2o-dai', 'protocol': 'http', 'ports': [12345]},
                         ],
                         'label': 'Supported service ports',
                         'help': 'The list of service ports supported by this image. '
