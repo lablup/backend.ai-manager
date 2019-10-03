@@ -25,7 +25,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import AccessKey
 
 from .exceptions import InvalidAPIParameters, GenericForbidden, QueryNotImplemented
-from ..manager.models import keypairs, users
+from ..manager.models import keypairs, users, UserRole
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.utils'))
 
@@ -47,17 +47,27 @@ async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tup
         owner_access_key = params.get('owner_access_key', None)
     if owner_access_key is not None and owner_access_key != requester_access_key:
         async with request.app['dbpool'].acquire() as conn:
-            j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
             query = (
-                sa.select([users.c.domain_name])
-                .select_from(j)
+                sa.select([users.c.domain_name, users.c.role])
+                .select_from(
+                    sa.join(keypairs, users,
+                            keypairs.c.user == users.c.uuid))
                 .where(keypairs.c.access_key == owner_access_key)
             )
             result = await conn.execute(query)
-            owner_access_key_domain = await result.scalar()
+            row = await result.fetchone()
+            owner_domain = row['domain_name']
+            owner_role = row['role']
         if request['is_superadmin']:
             pass
-        elif request['is_admin'] and request['domain'] == owner_access_key_domain:
+        elif request['is_admin']:
+            if request['domain'] != owner_domain:
+                raise GenericForbidden(
+                    'Domain-admins can perform operations on behalf of '
+                    'other users in the same domain only.')
+            if owner_role == UserRole.SUPERADMIN:
+                raise GenericForbidden(
+                    'Domain-admins cannot perform operations on behalf of super-admins.')
             pass
         else:
             raise GenericForbidden(
