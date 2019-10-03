@@ -244,7 +244,7 @@ async def get_import_image_form(request: web.Request) -> web.Response:
         t.Key('servicePorts'): t.List(t.Dict({
             t.Key('name'): t.String,
             t.Key('protocol'): t.Enum('http', 'tcp', 'pty'),
-            t.Key('ports'): t.List(t.Int[1:65535]),
+            t.Key('ports'): t.List(t.Int[1:65535], min_length=1),
         })),
     }).allow_extra('*'))
 async def import_image(request: web.Request, params: Any) -> web.Response:
