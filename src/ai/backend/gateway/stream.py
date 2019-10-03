@@ -321,6 +321,7 @@ async def stream_execute(request: web.Request) -> web.StreamResponse:
 @check_api_params(
     t.Dict({
         tx.AliasedKey(['app', 'service']): t.String,
+        tx.AliasedKey(['port'], default=None): t.Null | t.Int[1024:65535],
     }))
 async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
     registry = request.app['registry']
@@ -342,7 +343,19 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
         kernel_host = kernel.kernel_host
     for sport in kernel.service_ports:
         if sport['name'] == service:
-            dest = (kernel_host, sport['host_port'])
+            if params['port']:
+                try:
+                    hport_idx = sport['container_ports'].index(params['port'])
+                except ValueError:
+                    raise InvalidAPIParameters(
+                        f"Service {service} does not open the port number {params['port']}.")
+                port = sport['host_ports'][hport_idx]
+            else:
+                if 'host_ports' not in sport:
+                    port = sport['host_port']  # legacy kernels
+                else:
+                    port = sport['host_ports'][0]
+            dest = (kernel_host, port)
             break
     else:
         raise AppNotFound(f'{sess_id}:{service}')

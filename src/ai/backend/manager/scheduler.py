@@ -75,6 +75,7 @@ class SessionContext:
     environ: Mapping[str, str]
     mounts: Sequence[str]
     startup_command: Optional[str]
+    internal_data: Optional[Mapping[str, Any]]
 
 
 @attr.s(auto_attribs=True, slots=True)
@@ -488,6 +489,7 @@ class SessionScheduler(aobject):
                 kernels.c.environ,
                 kernels.c.mounts,
                 kernels.c.startup_command,
+                kernels.c.internal_data,
                 keypairs.c.resource_policy,
             ], for_update=True)
             .select_from(sa.join(
@@ -511,6 +513,7 @@ class SessionScheduler(aobject):
                 resource_policy=row['resource_policy'],
                 resource_opts=row['resource_opts'],
                 requested_slots=row['occupied_slots'],
+                internal_data=row['internal_data'],
                 target_sgroup_names=[],
                 environ={
                     k: v for k, v

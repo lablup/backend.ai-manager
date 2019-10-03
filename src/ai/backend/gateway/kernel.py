@@ -8,7 +8,6 @@ from datetime import datetime, timedelta
 import functools
 import json
 import logging
-import os
 import re
 from pathlib import Path
 import secrets
@@ -187,7 +186,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
 
         async with dbpool.acquire() as conn, conn.begin():
             if requester_access_key != owner_access_key:
-                # Admin is creating sessions for another user.
+                # Admin or superadmin is creating sessions for another user.
+                # The check for admin privileges is already done in get_access_key_scope().
                 query = (
                     sa.select([keypairs.c.user, keypairs.c.resource_policy, users.c.role])
                     .select_from(sa.join(keypairs, users, keypairs.c.user == users.c.uuid))
@@ -195,8 +195,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 )
                 result = await conn.execute(query)
                 row = await result.fetchone()
-                owner_uuid = row.user
-                owner_role = row.role
+                owner_domain = row['domain']
+                owner_uuid = row['user']
+                owner_role = row['role']
                 query = (
                     sa.select([keypair_resource_policies])
                     .select_from(keypair_resource_policies)
@@ -206,51 +207,67 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 resource_policy = await result.fetchone()
             else:
                 # Normal case when the user is creating her/his own session.
+                owner_domain = request['user']['domain_name']
                 owner_uuid = requester_uuid
                 owner_role = UserRole.USER
                 resource_policy = request['keypair']['resource_policy']
 
-            if owner_role == UserRole.SUPERADMIN:  # superadmin can spawn container in any domain and group
-                query = (sa.select([groups.c.domain_name, groups.c.id])
-                           .select_from(groups)
-                           .where(domains.c.name == params['domain'])
-                           .where(domains.c.is_active)
-                           .where(groups.c.name == params['group'])
-                           .where(groups.c.is_active))
-                rows = await conn.execute(query)
-                row = await rows.fetchone()
-                if row is None:
-                    raise BackendError(f"{params['group']}: no such group in domain {params['domain']}")
-                params['domain'] = row.domain_name  # replace domain_name
-                group_id = row.id
-            elif owner_role == UserRole.ADMIN:  # domain-admin can spawn container in any group in domain
-                if request['user']['domain_name'] != params['domain']:
-                    raise BackendError(f"{params['domain']}: not your domain")
-                query = (sa.select([groups.c.id])
-                           .select_from(groups)
-                           .where(domains.c.name == params['domain'])
-                           .where(domains.c.is_active)
-                           .where(groups.c.name == params['group'])
-                           .where(groups.c.is_active))
-                rows = await conn.execute(query)
-                row = await rows.fetchone()
-                if row is None:
-                    raise BackendError(f"{params['group']}: no such group in domain {params['domain']}")
-                group_id = row.id
-            else:  # check if the group_name is associated with one of user's group.
-                j = agus.join(groups, agus.c.group_id == groups.c.id)
-                query = (sa.select([agus])
-                           .select_from(j)
-                           .where(agus.c.user_id == owner_uuid)
-                           .where(groups.c.domain_name == params['domain'])
-                           .where(domains.c.is_active)
-                           .where(groups.c.name == params['group'])
-                           .where(groups.c.is_active))
-                rows = await conn.execute(query)
-                row = await rows.fetchone()
-                if row is None:
-                    raise BackendError(f"{params['group']}: no such group in domain {params['domain']}")
-                group_id = row.group_id
+            query = (
+                sa.select([domains.c.name])
+                .select_from(domains)
+                .where(
+                    (domains.c.name == owner_domain) &
+                    (domains.c.is_active)
+                )
+            )
+            qresult = await conn.execute(query)
+            domain_name = await qresult.scalar()
+            if domain_name is None:
+                raise InvalidAPIParameters('Invalid domain')
+
+            if owner_role == UserRole.SUPERADMIN:
+                # superadmin can spawn container in any designated domain/group.
+                query = (
+                    sa.select([groups.c.id])
+                    .select_from(groups)
+                    .where(
+                        (groups.c.domain_name == params['domain']) &
+                        (groups.c.name == params['group']) &
+                        (groups.c.is_active)
+                    ))
+                qresult = await conn.execute(query)
+                group_id = await qresult.scalar()
+            elif owner_role == UserRole.ADMIN:
+                # domain-admin can spawn container in any group in the same domain.
+                if params['domain'] != owner_domain:
+                    raise InvalidAPIParameters("You can only set the domain to the owner's domain.")
+                query = (
+                    sa.select([groups.c.id])
+                    .select_from(groups)
+                    .where(
+                        (groups.c.domain_name == owner_domain) &
+                        (groups.c.name == params['group']) &
+                        (groups.c.is_active)
+                    ))
+                qresult = await conn.execute(query)
+                group_id = await qresult.scalar()
+            else:
+                # normal users can spawn containers in their group and domain.
+                if params['domain'] != owner_domain:
+                    raise InvalidAPIParameters("You can only set the domain to your domain.")
+                query = (
+                    sa.select([agus.c.group_id])
+                    .select_from(agus.join(groups, agus.c.group_id == groups.c.id))
+                    .where(
+                        (agus.c.user_id == owner_uuid) &
+                        (groups.c.domain_name == owner_domain) &
+                        (groups.c.name == params['group']) &
+                        (groups.c.is_active)
+                    ))
+                qresult = await conn.execute(query)
+                group_id = await qresult.scalar()
+            if group_id is None:
+                raise InvalidAPIParameters('Invalid group')
 
         api_version = request['api_version']
         if (4, '20190315') <= api_version:
@@ -273,7 +290,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             user_uuid=owner_uuid,
             user_role=request['user']['role'],
             startup_command=params['startup_command'],
-            session_tag=params.get('tag', None)))
+            session_tag=params['tag']))
         resp['kernelId'] = str(params['sess_id'])  # legacy naming
         resp['status'] = 'PENDING'
         resp['servicePorts'] = []
@@ -309,6 +326,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                             {
                                 'name': item['name'],
                                 'protocol': item['protocol'],
+                                'ports': item['container_ports'],
                             }
                             for item in row['service_ports']
                         ]

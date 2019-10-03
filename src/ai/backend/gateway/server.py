@@ -356,6 +356,7 @@ async def server_main(loop, pidx, _args):
         '.manager',
         '.resource',
         '.scaling_group',
+        '.image',
     ]
 
     global_exception_handler = functools.partial(handle_loop_error, app)
