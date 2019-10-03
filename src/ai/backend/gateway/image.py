@@ -53,8 +53,18 @@ RUN {{ runtime_path }} -m ipykernel install \
 LABEL ai.backend.kernelspec="1" \
       ai.backend.envs.corecount="{{ cpucount_envvars | join(',') }}" \
       ai.backend.features="query batch uid-match" \
-{%- if accelerators %}
-      ai.backend.accelerators="{% for item in accelerators -%}
+      ai.backend.resource.min.cpu="{{ min_cpu }}" \
+      ai.backend.resource.min.mem="{{ min_mem }}" \
+      ai.backend.accelerators="{{ accelerators | join(',') }}"
+{%- if 'cuda' is in accelerators %}
+      ai.backend.resource.min.cuda.device=1 \
+      ai.backend.resource.min.cuda.shares=0.1 \
+{%- endif %}
+      ai.backend.base-distro="{{ base_distro }}" \
+      ai.backend.runtime-type="{{ runtime_type }}" \
+      ai.backend.runtime-path="{{ runtime_path }}" \
+{%- if service_ports %}
+      ai.backend.service-ports="{% for item in service_ports -%}
           {{- item['name'] }}:
           {{- item['protocol'] }}:
           {%- if item['ports'] is sequence and (item['ports'] | length) > 1 -%}
@@ -65,16 +75,6 @@ LABEL ai.backend.kernelspec="1" \
           {{- item['port'] }}{{ ',' if not loop.last }}
       {%- endfor %}" \
 {%- endif %}
-      ai.backend.resource.min.cpu="{{ min_cpu }}" \
-      ai.backend.resource.min.mem="{{ min_mem }}" \
-{%- if 'cuda' is in accelerators %}
-      ai.backend.resource.min.cuda.device=1 \
-      ai.backend.resource.min.cuda.shares=0.1 \
-{%- endif %}
-      ai.backend.base-distro="{{ base_distro }}" \
-      ai.backend.runtime-type="{{ runtime_type }}" \
-      ai.backend.runtime-path="{{ runtime_path }}" \
-      ai.backend.service-ports="{{ service_ports | join(',') }}"
 '''  # noqa
 
 

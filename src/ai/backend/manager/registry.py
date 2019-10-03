@@ -399,9 +399,9 @@ class AgentRegistry:
         determined_mounts = []
         matched_mounts = set()
         async with self.dbpool.acquire() as conn, conn.begin():
-            if creation_config['mounts']:
+            if mounts:
                 extra_vf_conds = (
-                    vfolders.c.name.in_(creation_config['mounts']) |
+                    vfolders.c.name.in_(mounts) |
                     vfolders.c.name.startswith('.')
                 )
             else:
@@ -423,7 +423,7 @@ class AgentRegistry:
                     item['id'].hex,
                     item['permission'].value,
                 ))
-            if creation_config['mounts'] and set(creation_config['mounts']) > matched_mounts:
+            if mounts and set(mounts) > matched_mounts:
                 raise VFolderNotFound
             creation_config['mounts'] = determined_mounts
         mounts = determined_mounts
