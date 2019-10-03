@@ -187,8 +187,10 @@ async def get_import_image_form(request: web.Request) -> web.Response:
                         ],
                         'label': 'Supported service ports',
                         'help': 'The list of service ports supported by this image. '
-                                'Note that sshd and ttyd are always supported regardless of '
-                                'the source image.',
+                                'Note that sshd (port 2200) and ttyd (port 7681) are intrinsic; '
+                                'they are always included regardless of the source image. '
+                                'The port number 2000-2003 are reserved by Backend.AI, and '
+                                'all port numbers must be larger than 1024 and smaller than 65535.',
                     },
                 ]
             },
