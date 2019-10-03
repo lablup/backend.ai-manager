@@ -59,6 +59,7 @@ from ..manager.models import (
     association_groups_users as agus, groups,
     keypairs, kernels,
     keypair_resource_policies,
+    users, UserRole,
     vfolders,
     AgentStatus, KernelStatus,
     query_accessible_vfolders,
@@ -112,12 +113,13 @@ creation_config_v3 = t.Dict({
         t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
         t.Key('reuseIfExists', default=True) >> 'reuse': t.Bool | t.StrBool,
         t.Key('startupCommand', default=None) >> 'startup_command': t.Null | t.String,
+        t.Key('owner_access_key', default=None): t.Null | t.String,
     }),
     loads=_json_loads)
 async def create(request: web.Request, params: Any) -> web.Response:
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
-    requester_access_key, owner_access_key = await get_access_key_scopes(request)
+    requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     requester_uuid = request['user']['uuid']
     log.info('GET_OR_CREATE (ak:{0}/{1}, img:{2}, s:{3})',
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*',
@@ -186,13 +188,14 @@ async def create(request: web.Request, params: Any) -> web.Response:
             if requester_access_key != owner_access_key:
                 # Admin is creating sessions for another user.
                 query = (
-                    sa.select([keypairs.c.user, keypairs.c.resource_policy])
-                    .select_from(keypairs)
+                    sa.select([keypairs.c.user, keypairs.c.resource_policy, users.c.role])
+                    .select_from(sa.join(keypairs, users, keypairs.c.user == users.c.uuid))
                     .where(keypairs.c.access_key == owner_access_key)
                 )
                 result = await conn.execute(query)
                 row = await result.fetchone()
-                owner_uuid = row['user']
+                owner_uuid = row.user
+                owner_role = row.role
                 query = (
                     sa.select([keypair_resource_policies])
                     .select_from(keypair_resource_policies)
@@ -203,9 +206,10 @@ async def create(request: web.Request, params: Any) -> web.Response:
             else:
                 # Normal case when the user is creating her/his own session.
                 owner_uuid = requester_uuid
+                owner_role = UserRole.USER
                 resource_policy = request['keypair']['resource_policy']
 
-            if request['is_superadmin']:  # superadmin can spawn container in any domain and group
+            if owner_role == UserRole.SUPERADMIN:  # superadmin can spawn container in any domain and group
                 query = (sa.select([groups.c.domain_name, groups.c.id])
                            .select_from(groups)
                            .where(domains.c.name == params['domain'])
@@ -218,7 +222,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                     raise BackendError(f"{params['group']}: no such group in domain {params['domain']}")
                 params['domain'] = row.domain_name  # replace domain_name
                 group_id = row.id
-            elif request['is_admin']:  # domain-admin can spawn container in any group in domain
+            elif owner_role == UserRole.ADMIN:  # domain-admin can spawn container in any group in domain
                 if request['user']['domain_name'] != params['domain']:
                     raise BackendError(f"{params['domain']}: not your domain")
                 query = (sa.select([groups.c.id])

@@ -286,7 +286,13 @@ async def create(request: web.Request, params: Any) -> web.Response:
 
 @auth_required
 @server_status_required(READ_ALLOWED)
-async def list_folders(request: web.Request) -> web.Response:
+@check_api_params(
+    t.Dict({
+        t.Key('all', default=False): t.Bool,
+        tx.AliasedKey(['group_id', 'groupId'], default=None): tx.UUID | t.String | t.Null,
+    }),
+)
+async def list_folders(request: web.Request, params: Any) -> web.Response:
     resp = []
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
@@ -296,9 +302,8 @@ async def list_folders(request: web.Request) -> web.Response:
 
     log.info('VFOLDER.LIST (ak:{})', access_key)
     async with dbpool.acquire() as conn:
-        params = await request.json() if request.can_read_body else request.query
         allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
-        if request['is_superadmin'] and params.get('all', False):
+        if request['is_superadmin'] and params['all']:
             # List all folders for superadmin if all is specified
             query = sa.select([vfolders]).select_from(vfolders)
             result = await conn.execute(query)
@@ -320,8 +325,10 @@ async def list_folders(request: web.Request) -> web.Response:
                 })
         else:
             extra_vf_conds = None
-            if params.get('group_id'):
-                extra_vf_conds = (vfolders.c.group == params['group_id'])
+            if params['group_id'] is not None:
+                # Note: user folders should be returned even when group_id is specified.
+                extra_vf_conds = ((vfolders.c.group == params['group_id']) |
+                                  (vfolders.c.user != None))
             entries = await query_accessible_vfolders(
                 conn, user_uuid,
                 user_role=user_role, domain_name=domain_name,

@@ -38,11 +38,13 @@ def method_placeholder(orig_method):
     return _handler
 
 
-async def get_access_key_scopes(request: web.Request) -> Tuple[AccessKey, AccessKey]:
+async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tuple[AccessKey, AccessKey]:
     if not request['is_authorized']:
         raise GenericForbidden('Only authorized requests may have access key scopes.')
     requester_access_key = request['keypair']['access_key']
     owner_access_key = request.query.get('owner_access_key', None)
+    if owner_access_key is None and params is not None:
+        owner_access_key = params.get('owner_access_key', None)
     if owner_access_key is not None and owner_access_key != requester_access_key:
         async with request.app['dbpool'].acquire() as conn:
             j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
