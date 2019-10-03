@@ -50,13 +50,21 @@ RUN {{ runtime_path }} -m ipykernel install \
     --display-name "{{ brand }} on Backend.AI" && \
     cat /usr/local/share/jupyter/kernels/python3/kernel.json
 {%- endif %}
-{# COPY {{ jail_policy_path }} /etc/backend.ai/jail/policy.yml #}
 
 LABEL ai.backend.kernelspec="1" \
       ai.backend.envs.corecount="{{ cpucount_envvars | join(',') }}" \
       ai.backend.features="query batch uid-match" \
 {%- if accelerators %}
-      ai.backend.accelerators="{{ accelerators | join(',') }}" \
+      ai.backend.accelerators="{% for item in accelerators -%}
+          {{- item['name'] }}:
+          {{- item['protocol'] }}:
+          {%- if item['ports'] is sequence and (item['ports'] | length) > 1 -%}
+              [{{- item['ports'] | join(',') -}}]
+          {%- else -%}
+              {{- item['ports'] -}}
+          {%- endif -%}
+          {{- item['port'] }}{{ ',' if not loop.last }}
+      {%- endfor %}" \
 {%- endif %}
       ai.backend.resource.min.cpu="{{ min_cpu }}" \
       ai.backend.resource.min.mem="{{ min_mem }}" \
@@ -68,7 +76,7 @@ LABEL ai.backend.kernelspec="1" \
       ai.backend.runtime-type="{{ runtime_type }}" \
       ai.backend.runtime-path="{{ runtime_path }}" \
       ai.backend.service-ports="{{ service_ports | join(',') }}"
-'''
+'''  # noqa
 
 
 @server_status_required(READ_ALLOWED)
@@ -173,7 +181,7 @@ async def get_import_image_form(request: web.Request) -> web.Response:
                         'templates': [
                             {'name': 'jupyter', 'protocol': 'http', 'port': 8080},
                             {'name': 'jupyterlab', 'protocol': 'http', 'port': 8090},
-                            {'name': 'tensorboard', 'protocol': 'http', 'port': 6006},
+                            {'name': 'tensorboard', 'protocol': 'http', 'port': [6006, 6064]},
                             {'name': 'digits', 'protocol': 'http', 'port': 5000},
                             {'name': 'vscode', 'protocol': 'http', 'port': 8180},
                             {'name': 'h2o-dai', 'protocol': 'http', 'port': 12345},
@@ -237,7 +245,7 @@ async def get_import_image_form(request: web.Request) -> web.Response:
         t.Key('servicePorts'): t.List(t.Dict({
             t.Key('name'): t.String,
             t.Key('protocol'): t.Enum('http', 'tcp', 'pty'),
-            t.Key('port'): t.Int[1:65535],
+            t.Key('port'): t.Int[1:65535] | t.List(t.Int[1:65535]),
         })),
     }).allow_extra('*'))
 async def import_image(request: web.Request, params: Any) -> web.Response:
@@ -282,11 +290,10 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
         'cpucount_envvars': ['NPROC', 'OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS'],
         'runtime_type': params['runtimeType'],
         'runtime_path': params['runtimePath'],
-        'service_ports': [],
-        'min_cpu': 1,
-        'min_mem': '1g',
-        'accelerators': [],
-        'jail_policy_path': '/.../policy.yml',
+        'service_ports': params['servicePorts'],
+        'min_cpu': params['minCPU'],
+        'min_mem': params['minMemory'],
+        'accelerators': params['supportedAccelerators'],
         'src': params['src'],
         'brand': params['brand'],
     })
