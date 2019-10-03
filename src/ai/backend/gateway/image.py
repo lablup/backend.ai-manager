@@ -82,24 +82,32 @@ async def get_import_image_form(request: web.Request) -> web.Response:
                     {
                         'name': 'src',
                         'type': 'string',
+                        'label': 'Source Docker image',
+                        'placeholder': 'index.docker.io/lablup/tensorflow:2.0-source',
                         'help': 'The full Docker image name to import from. '
                                 'The registry must be accessible by the client.',
                     },
                     {
                         'name': 'target',
                         'type': 'string',
+                        'label': 'Target Docker image',
+                        'placeholder': 'index.docker.io/lablup/tensorflow:2.0-target',
                         'help': 'The full Docker image name of the imported image.'
                                 'The registry must be accessible by the client.',
                     },
                     {
                         'name': 'brand',
                         'type': 'string',
+                        'label': 'Name of Jupyter kernel',
+                        'placeholder': 'Tensorflow 2.0 on Backend.AI',
                         'help': 'The name of kernel to be shown in the Jupyter\'s kernel menu.',
                     },
                     {
                         'name': 'baseDistro',
                         'type': 'choice',
                         'choices': ['ubuntu', 'centos'],
+                        'default': 'ubuntu',
+                        'label': 'Base LINUX distribution',
                         'help': 'The base Linux distribution used by the source image',
                     },
                     {
@@ -107,6 +115,7 @@ async def get_import_image_form(request: web.Request) -> web.Response:
                         'type': 'number',
                         'min': 1,
                         'max': None,
+                        'label': 'Minimum required CPU core(s)',
                         'help': 'The minimum number of CPU cores required by the image',
                     },
                     {
@@ -114,18 +123,23 @@ async def get_import_image_form(request: web.Request) -> web.Response:
                         'type': 'binarysize',
                         'min': '64m',
                         'max': None,
+                        'label': 'Minimum required memory',
                         'help': 'The minimum size of the main memory required by the image',
                     },
                     {
                         'name': 'supportedAccelerators',
                         'type': 'multichoice[str]',
                         'choices': ['cuda'],
+                        'default': 'cuda',
+                        'label': 'Supported accelerators',
                         'help': 'The list of accelerators supported by the image',
                     },
                     {
                         'name': 'runtimeType',
                         'type': 'choice',
                         'choices': ['python'],
+                        'default': 'python',
+                        'label': 'Runtime type of the image',
                         'help': 'The runtime type of the image. '
                                 'Currently, the source image must have installed Python 2.7, 3.5, 3.6, '
                                 'or 3.7 at least to import. '
@@ -135,6 +149,8 @@ async def get_import_image_form(request: web.Request) -> web.Response:
                         'name': 'runtimePath',
                         'type': 'string',
                         'default': '/usr/local/bin/python',
+                        'label': 'Path of the runtime',
+                        'placeholder': '/usr/local/bin/python',
                         'help': 'The path to the main executalbe of runtime language of the image. '
                                 'Even for the same "python"-based images, this may differ significantly '
                                 'image by image. (e.g., /usr/bin/python, /usr/local/bin/python, '
@@ -146,8 +162,9 @@ async def get_import_image_form(request: web.Request) -> web.Response:
                         'name': 'CPUCountEnvs',
                         'type': 'list[string]',
                         'default': ['NPROC', 'OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS'],
+                        'label': 'CPU count environment variables',
                         'help': 'The name of environment variables to be overriden to the number of CPU '
-                                'cores actually allocated to the container.  Required for legacy '
+                                'cores actually allocated to the container. Required for legacy '
                                 'computation libraries.',
                     },
                     {
@@ -161,6 +178,7 @@ async def get_import_image_form(request: web.Request) -> web.Response:
                             {'name': 'vscode', 'protocol': 'http', 'port': 8180},
                             {'name': 'h2o-dai', 'protocol': 'http', 'port': 12345},
                         ],
+                        'label': 'Supported service ports',
                         'help': 'The list of service ports supported by this image. '
                                 'Note that sshd and ttyd are always supported regardless of '
                                 'the source image.',
@@ -172,15 +190,24 @@ async def get_import_image_form(request: web.Request) -> web.Response:
                 'help': 'The import task uses 1 CPU core and 2 GiB of memory.',
                 'fields': [
                     {
+                        'name': 'domain',
+                        'type': 'choice',
+                        'choices': [],  # TODO: implement
+                        'label': 'Domain to build image',
+                        'help': 'The domain where the import task will be executed.',
+                    },
+                    {
                         'name': 'group',
                         'type': 'choice',
                         'choices': [],  # TODO: implement
-                        'help': 'The user group where the import task will take resources from.',
+                        'label': 'Group to build image',
+                        'help': 'The user group where the import task will be executed.',
                     },
                     {
                         'name': 'scalingGroup',
                         'type': 'choice',
                         'choices': [],  # TODO: implement
+                        'label': 'Scaling group to build image',
                         'help': 'The scaling group where the import task will take resources from.',
                     },
                 ]
