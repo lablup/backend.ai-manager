@@ -17,7 +17,7 @@ from ai.backend.common.types import (
     SessionTypes,
 )
 
-from .auth import auth_required
+from .auth import admin_required
 from .exceptions import InvalidAPIParameters
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (
@@ -82,7 +82,7 @@ LABEL ai.backend.kernelspec="1" \
 
 
 @server_status_required(READ_ALLOWED)
-@auth_required
+@admin_required
 async def get_import_image_form(request: web.Request) -> web.Response:
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         query = (
@@ -246,7 +246,7 @@ async def get_import_image_form(request: web.Request) -> web.Response:
 
 
 @server_status_required(ALL_ALLOWED)
-@auth_required
+@admin_required
 @check_api_params(
     t.Dict({
         t.Key('src'): t.String,
