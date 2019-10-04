@@ -55,7 +55,7 @@ RUN {{ runtime_path }} -m ipykernel install \
 
 LABEL ai.backend.kernelspec="1" \
       ai.backend.envs.corecount="{{ cpucount_envvars | join(',') }}" \
-      ai.backend.features="query batch uid-match" \
+      ai.backend.features="{% if has_ipykernel %}query batch {% endif %}uid-match" \
       ai.backend.resource.min.cpu="{{ min_cpu }}" \
       ai.backend.resource.min.mem="{{ min_mem }}" \
       ai.backend.accelerators="{{ accelerators | join(',') }}"
@@ -317,6 +317,7 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
         'accelerators': params['supportedAccelerators'],
         'src': params['src'],
         'brand': params['brand'],
+        'has_ipykernel': True,  # TODO: in the future, we may allow import of service-port only kernels.
     })
 
     sess_id = f'image-import-{secrets.token_urlsafe(8)}'
@@ -395,6 +396,7 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
             'domain_socket_proxies': ['/var/run/docker.sock'],
             'docker_credentials': docker_creds,
             'prevent_vfolder_mounts': True,
+            'block_service_ports': True,
         }
     )
     return web.json_response({
