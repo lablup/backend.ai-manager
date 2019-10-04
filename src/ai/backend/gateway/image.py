@@ -58,6 +58,7 @@ LABEL ai.backend.kernelspec="1" \
       ai.backend.features="{% if has_ipykernel %}query batch {% endif %}uid-match" \
       ai.backend.resource.min.cpu="{{ min_cpu }}" \
       ai.backend.resource.min.mem="{{ min_mem }}" \
+      ai.backend.resource.preferred.shmem="{{ pref_shmem }}" \
       ai.backend.accelerators="{{ accelerators | join(',') }}"
 {%- if 'cuda' is in accelerators %}
       ai.backend.resource.min.cuda.device=1 \
@@ -157,8 +158,16 @@ async def get_import_image_form(request: web.Request) -> web.Response:
                         'type': 'binarysize',
                         'min': '64m',
                         'max': None,
-                        'label': 'Minimum required memory',
+                        'label': 'Minimum required memory size',
                         'help': 'The minimum size of the main memory required by the image',
+                    },
+                    {
+                        'name': 'preferredSharedMemory',
+                        'type': 'binarysize',
+                        'min': '64m',
+                        'max': None,
+                        'label': 'Preferred shared memory size',
+                        'help': 'The preferred (default) size of the shared memory',
                     },
                     {
                         'name': 'supportedAccelerators',
@@ -257,13 +266,14 @@ async def get_import_image_form(request: web.Request) -> web.Response:
         }).allow_extra('*'),
         t.Key('brand'): t.String,
         t.Key('baseDistro'): t.Enum('ubuntu', 'centos'),
-        t.Key('minCPU'): t.Int[1:],
-        t.Key('minMemory'): tx.BinarySize,
+        t.Key('minCPU', default=1): t.Int[1:],
+        t.Key('minMemory', default='64m'): tx.BinarySize,
+        t.Key('preferredSharedMemory', default='64m'): tx.BinarySize,
         t.Key('supportedAccelerators'): t.List(t.String),
         t.Key('runtimeType'): t.Enum('python'),
         t.Key('runtimePath'): tx.Path(type='file', allow_nonexisting=True),
         t.Key('CPUCountEnvs'): t.List(t.String),
-        t.Key('servicePorts'): t.List(t.Dict({
+        t.Key('servicePorts', default=[]): t.List(t.Dict({
             t.Key('name'): t.String,
             t.Key('protocol'): t.Enum('http', 'tcp', 'pty'),
             t.Key('ports'): t.List(t.Int[1:65535], min_length=1),
@@ -314,6 +324,7 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
         'service_ports': params['servicePorts'],
         'min_cpu': params['minCPU'],
         'min_mem': params['minMemory'],
+        'pref_shmem': params['preferredSharedMemory'],
         'accelerators': params['supportedAccelerators'],
         'src': params['src'],
         'brand': params['brand'],
