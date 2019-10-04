@@ -59,14 +59,12 @@ LABEL ai.backend.kernelspec="1" \
       ai.backend.resource.min.cpu="{{ min_cpu }}" \
       ai.backend.resource.min.mem="{{ min_mem }}" \
       ai.backend.resource.preferred.shmem="{{ pref_shmem }}" \
-      ai.backend.accelerators="{{ accelerators | join(',') }}"
+      ai.backend.accelerators="{{ accelerators | join(',') }}" \
 {%- if 'cuda' is in accelerators %}
       ai.backend.resource.min.cuda.device=1 \
       ai.backend.resource.min.cuda.shares=0.1 \
 {%- endif %}
       ai.backend.base-distro="{{ base_distro }}" \
-      ai.backend.runtime-type="{{ runtime_type }}" \
-      ai.backend.runtime-path="{{ runtime_path }}" \
 {%- if service_ports %}
       ai.backend.service-ports="{% for item in service_ports -%}
           {{- item['name'] }}:
@@ -79,6 +77,8 @@ LABEL ai.backend.kernelspec="1" \
           {{- ',' if not loop.last }}
       {%- endfor %}" \
 {%- endif %}
+      ai.backend.runtime-type="{{ runtime_type }}" \
+      ai.backend.runtime-path="{{ runtime_path }}"
 '''  # noqa
 
 
