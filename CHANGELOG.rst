@@ -5,7 +5,7 @@ Changes
 -----------------------
 
 This is the last preview, feature-freeze release for v19.09 series.
-Stability updates will follow in the v19.09.0 and possibly v19.09.x releases.
+Stability updates will follow in the v19.09.0 and possibly a few more v19.09.x releases.
 
 * NEW: Image import (#171) - currently this is limited to import Python-based kernels only.
   This is implemented on top of batch tasks, with some specialization to prevent security issues
@@ -17,6 +17,10 @@ Stability updates will follow in the v19.09.0 and possibly v19.09.x releases.
   sessions (batch tasks) run the startup command immdediately after starting and automatically terminates
   after finishing it, with a success/failure result recorded in the database retrievable as the "result"
   column.
+
+  The execution logs are stored in the ".logs" user vfolder if present, which will be mounted all
+  user-owned compute sessions automatically.  This log can be retrieved at any time using the new
+  ``kernel/_/logs`` API (task-logs API).
 
 * IMPROVE: Allow admins to create sessions on behalf of other users.
 
