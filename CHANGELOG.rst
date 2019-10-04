@@ -1,6 +1,30 @@
 Changes
 =======
 
+19.09.0rc4 (2019-10-04)
+-----------------------
+
+This is the last preview, feature-freeze release for v19.09 series.
+Stability updates will follow in the v19.09.0 and possibly v19.09.x releases.
+
+* NEW: Image import (#171) - currently this is limited to import Python-based kernels only.
+  This is implemented on top of batch tasks, with some specialization to prevent security issues
+  due to direct access to agent host's Docker daemon.  Importing as service-port only image support will
+  be added in future releases.
+
+* NEW: Batch tasks (#199) - the kernel creation API now has an extra "type" parameter (default:
+  "interactive") which can be set "batch" with another new parameter "startupCommand".  The batch-type
+  sessions (batch tasks) run the startup command immdediately after starting and automatically terminates
+  after finishing it, with a success/failure result recorded in the database retrievable as the "result"
+  column.
+
+* IMPROVE: Allow admins to create sessions on behalf of other users.
+
+* SECURITY-FIX: Privilege escalation because domain-admins could run sessions on behalf of super-admins
+  in the same domain.
+
+* Various bug fixes and improvements.
+
 19.09.0rc3 (2019-09-25)
 -----------------------
 
