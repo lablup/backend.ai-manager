@@ -136,7 +136,7 @@ class Agent(graphene.ObjectType):
     async def resolve_mem_cur_bytes(self, info):
         rs = info.context['redis_stat']
         live_stat = await redis.execute_with_retries(
-            rs.get(str(self.id), encoding=None))
+            lambda: rs.get(str(self.id), encoding=None))
         if live_stat is not None:
             live_stat = msgpack.unpackb(live_stat)
             return float(live_stat['node']['mem']['current']) if live_stat else 0
