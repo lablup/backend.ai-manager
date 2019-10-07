@@ -574,8 +574,9 @@ class ConfigServer:
         return ManagerStatus(status)
 
     async def watch_manager_status(self):
-        async for ev in self.etcd.watch('manager/status'):
-            yield ev
+        async with aiotools.aclosing(self.etcd.watch('manager/status')) as agen:
+            async for ev in agen:
+                yield ev
 
     # TODO: refactor using contextvars in Python 3.7 so that the result is cached
     #       in a per-request basis.

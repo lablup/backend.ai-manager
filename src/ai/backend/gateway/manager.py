@@ -12,6 +12,7 @@ from typing import (
 from aiohttp import web
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
+from aiotools import aclosing
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common import validators as tx
@@ -59,12 +60,16 @@ class GQLMutationUnfrozenRequiredMiddleware:
 
 
 async def detect_status_update(app):
-    async for ev in app['config_server'].watch_manager_status():
-        if ev.event == 'put':
-            app['config_server'].get_manager_status.cache_clear()
-            updated_status = await app['config_server'].get_manager_status()
-            log.debug('Process-{0} detected manager status update: {1}',
-                      app['pidx'], updated_status)
+    try:
+        async with aclosing(app['config_server'].watch_manager_status()) as agen:
+            async for ev in agen:
+                if ev.event == 'put':
+                    app['config_server'].get_manager_status.cache_clear()
+                    updated_status = await app['config_server'].get_manager_status()
+                    log.debug('Process-{0} detected manager status update: {1}',
+                              app['pidx'], updated_status)
+    except asyncio.CancelledError:
+        pass
 
 
 @atomic
