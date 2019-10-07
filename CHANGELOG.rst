@@ -1,6 +1,16 @@
 Changes
 =======
 
+19.09.0 (2019-10-07)
+--------------------
+
+* FIX: Reconnection and cancellation of manager status watchers. Now the manager survives etcd restarts.
+
+* FIX: Deprecate ``ManagerStatus.PREPARING`` and ``ManagerStatus.TERMINATED`` with relevant updates for
+  HA setup
+
+* FIX: Wrap more Redis operations in GQL resolvers with retries
+
 19.09.0rc4 (2019-10-04)
 -----------------------
 
