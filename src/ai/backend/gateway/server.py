@@ -193,13 +193,17 @@ async def gw_init(app, default_cors_options):
         app, app['config']['etcd']['addr'],
         app['config']['etcd']['user'], app['config']['etcd']['password'],
         app['config']['etcd']['namespace'])
-    if app['pidx'] == 0:
-        await app['config_server'].update_manager_status(ManagerStatus.PREPARING)
 
     shared_config = await load_shared_config(app['config_server'].etcd)
     app['config'].update(shared_config)
 
     if app['pidx'] == 0:
+        mgr_status = await app['config_server'].get_manager_status()
+        if mgr_status not in (ManagerStatus.RUNNING, ManagerStatus.FROZEN):
+            # legacy transition: we now have only RUNNING or FROZEN for HA setup.
+            await app['config_server'].update_manager_status(ManagerStatus.RUNNING)
+            mgr_status = ManagerStatus.RUNNING
+        log.info('Manager status: {}', mgr_status)
         tz = app['config']['system']['timezone']
         log.info('Configured timezone: {}', tz.tzname(datetime.now()))
 
