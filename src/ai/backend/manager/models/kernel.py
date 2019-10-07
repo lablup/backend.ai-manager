@@ -7,7 +7,7 @@ from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
-from ai.backend.common import msgpack
+from ai.backend.common import msgpack, redis
 from ai.backend.common.types import (
     BinarySize,
     SessionTypes, SessionResult,
@@ -211,7 +211,8 @@ class SessionCommons:
 
     @classmethod
     async def _resolve_live_stat(cls, redis_stat, kernel_id):
-        cstat = await redis_stat.get(kernel_id, encoding=None)
+        cstat = await redis.execute_with_retries(
+            lambda: redis_stat.get(kernel_id, encoding=None))
         if cstat is not None:
             cstat = msgpack.unpackb(cstat)
         return cstat

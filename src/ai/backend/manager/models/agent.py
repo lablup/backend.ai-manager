@@ -7,7 +7,7 @@ from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
-from ai.backend.common import msgpack
+from ai.backend.common import msgpack, redis
 from ai.backend.common.types import BinarySize
 from .base import (
     metadata,
@@ -118,14 +118,16 @@ class Agent(graphene.ObjectType):
 
     async def resolve_live_stat(self, info):
         rs = info.context['redis_stat']
-        live_stat = await rs.get(str(self.id), encoding=None)
+        live_stat = await redis.execute_with_retries(
+            lambda: rs.get(str(self.id), encoding=None))
         if live_stat is not None:
             live_stat = msgpack.unpackb(live_stat)
         return live_stat
 
     async def resolve_cpu_cur_pct(self, info):
         rs = info.context['redis_stat']
-        live_stat = await rs.get(str(self.id), encoding=None)
+        live_stat = await redis.execute_with_retries(
+            lambda: rs.get(str(self.id), encoding=None))
         if live_stat is not None:
             live_stat = msgpack.unpackb(live_stat)
             return float(live_stat['node']['cpu_util']['pct'])
@@ -133,7 +135,8 @@ class Agent(graphene.ObjectType):
 
     async def resolve_mem_cur_bytes(self, info):
         rs = info.context['redis_stat']
-        live_stat = await rs.get(str(self.id), encoding=None)
+        live_stat = await redis.execute_with_retries(
+            rs.get(str(self.id), encoding=None))
         if live_stat is not None:
             live_stat = msgpack.unpackb(live_stat)
             return float(live_stat['node']['mem']['current']) if live_stat else 0
