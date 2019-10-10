@@ -1,6 +1,12 @@
 Changes
 =======
 
+19.09.2 (2019-10-11)
+--------------------
+
+* FIX: Use the canonical, normalized version number for the backend.ai-common setup dependency to silence
+  pip warnings during installation.
+
 19.09.1 (2019-10-10)
 --------------------
 
