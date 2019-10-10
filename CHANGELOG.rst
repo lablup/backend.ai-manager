@@ -1,6 +1,12 @@
 Changes
 =======
 
+19.09.1 (2019-10-10)
+--------------------
+
+* FIX: Regression of code execution API due to internal manager-to-agent RPC argument ordering.
+  You MUST update the agent to 19.09.1 as well!
+
 19.09.0 (2019-10-07)
 --------------------
 
