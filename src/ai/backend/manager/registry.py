@@ -808,7 +808,8 @@ class AgentRegistry:
             if major_api_version == 4:  # manager-agent protocol is same.
                 major_api_version = 3
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
-                coro = rpc.call.execute(major_api_version, str(kernel['id']),
+                coro = rpc.call.execute(str(kernel['id']),
+                                        major_api_version,
                                         run_id, mode, code, opts,
                                         flush_timeout)
                 if coro is None:
