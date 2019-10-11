@@ -681,8 +681,8 @@ async def get_config(request: web.Request, params: Any) -> web.Response:
 @check_api_params(
     t.Dict({
         t.Key('key'): t.String,
-        t.Key('value'): (t.String(allow_blank=True |
-                         t.Mapping(t.String(allow_blank=True), t.Any))),
+        t.Key('value'): (t.String(allow_blank=True) |
+                         t.Mapping(t.String(allow_blank=True), t.Any)),
     }))
 async def set_config(request: web.Request, params: Any) -> web.Response:
     etcd = request.app['config_server'].etcd
