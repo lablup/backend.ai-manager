@@ -189,13 +189,14 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 # Admin or superadmin is creating sessions for another user.
                 # The check for admin privileges is already done in get_access_key_scope().
                 query = (
-                    sa.select([keypairs.c.user, keypairs.c.resource_policy, users.c.role])
+                    sa.select([keypairs.c.user, keypairs.c.resource_policy,
+                               users.c.role, users.c.domain_name])
                     .select_from(sa.join(keypairs, users, keypairs.c.user == users.c.uuid))
                     .where(keypairs.c.access_key == owner_access_key)
                 )
                 result = await conn.execute(query)
                 row = await result.fetchone()
-                owner_domain = row['domain']
+                owner_domain = row['domain_name']
                 owner_uuid = row['user']
                 owner_role = row['role']
                 query = (
