@@ -329,7 +329,7 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
             if params['group_id'] is not None:
                 # Note: user folders should be returned even when group_id is specified.
                 extra_vf_conds = ((vfolders.c.group == params['group_id']) |
-                                  (vfolders.c.user != None))
+                                  (vfolders.c.user.isnot(None)))
             entries = await query_accessible_vfolders(
                 conn, user_uuid,
                 user_role=user_role, domain_name=domain_name,
@@ -1555,7 +1555,7 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
                         'message': await resp.text(),
                     }
                 return (agent_id, data,)
-        except asyncio.CacnelledError:
+        except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError:
             log.error(log_fmt + ': timeout from watcher (agent:{})',
