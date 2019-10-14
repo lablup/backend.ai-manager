@@ -34,6 +34,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.utils import Fstab
 
 from .auth import auth_required, superadmin_required
+from .config import DEFAULT_CHUNK_SIZE
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
     GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
@@ -559,7 +560,7 @@ async def upload(request: web.Request, row: VFolderRow) -> web.Response:
                  *log_args, file.filename)
         with open(file_path, 'wb') as f:
             while not file.at_eof():
-                chunk = await file.read_chunk(size=8192)
+                chunk = await file.read_chunk(size=DEFAULT_CHUNK_SIZE)
                 f.write(file.decode(chunk))
     return web.Response(status=201)
 

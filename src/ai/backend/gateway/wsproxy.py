@@ -15,6 +15,8 @@ from aiohttp import web
 
 from ai.backend.common.logging import BraceStyleAdapter
 
+from .config import DEFAULT_CHUNK_SIZE
+
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.wsproxy'))
 
 
@@ -64,7 +66,7 @@ class TCPProxy(ServiceProxy):
                 try:
                     while True:
                         try:
-                            chunk = await reader.read(8192)
+                            chunk = await reader.read(DEFAULT_CHUNK_SIZE)
                             if not chunk:
                                 break
                             await self.ws.send_bytes(chunk)

@@ -16,6 +16,8 @@ from ai.backend.common.etcd import AsyncEtcd
 _max_cpu_count = os.cpu_count()
 _file_perm = (Path(__file__).parent / 'server.py').stat()
 
+DEFAULT_CHUNK_SIZE = 256 * 1024  # 256 KiB
+
 manager_config_iv = t.Dict({
     t.Key('db'): t.Dict({
         t.Key('type', default='postgresql'): t.Enum('postgresql'),
