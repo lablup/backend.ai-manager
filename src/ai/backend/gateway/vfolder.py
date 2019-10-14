@@ -34,6 +34,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.utils import Fstab
 
 from .auth import auth_required, superadmin_required
+from .config import DEFAULT_CHUNK_SIZE
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
     GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
@@ -328,7 +329,7 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
             if params['group_id'] is not None:
                 # Note: user folders should be returned even when group_id is specified.
                 extra_vf_conds = ((vfolders.c.group == params['group_id']) |
-                                  (vfolders.c.user != None))
+                                  (vfolders.c.user.isnot(None)))
             entries = await query_accessible_vfolders(
                 conn, user_uuid,
                 user_role=user_role, domain_name=domain_name,
@@ -559,7 +560,7 @@ async def upload(request: web.Request, row: VFolderRow) -> web.Response:
                  *log_args, file.filename)
         with open(file_path, 'wb') as f:
             while not file.at_eof():
-                chunk = await file.read_chunk(size=8192)
+                chunk = await file.read_chunk(size=DEFAULT_CHUNK_SIZE)
                 f.write(file.decode(chunk))
     return web.Response(status=201)
 
@@ -628,7 +629,7 @@ async def download(request: web.Request, params: Any, row: VFolderRow) -> web.Re
                 f'You cannot download "{file}" because it is not a regular file.')
     with aiohttp.MultipartWriter('mixed') as mpwriter:
         total_payloads_length = 0
-        headers = multidict.MultiDict({'Content-Encoding': 'gzip'})
+        headers = multidict.MultiDict({'Content-Encoding': 'identity'})
         try:
             for file in files:
                 data = open(folder_path / file, 'rb')
@@ -1554,7 +1555,7 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
                         'message': await resp.text(),
                     }
                 return (agent_id, data,)
-        except asyncio.CacnelledError:
+        except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError:
             log.error(log_fmt + ': timeout from watcher (agent:{})',
