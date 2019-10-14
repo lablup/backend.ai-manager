@@ -199,7 +199,7 @@ async def gw_init(app, default_cors_options):
 
     if app['pidx'] == 0:
         mgr_status = await app['config_server'].get_manager_status()
-        if mgr_status not in (ManagerStatus.RUNNING, ManagerStatus.FROZEN):
+        if mgr_status is None or mgr_status not in (ManagerStatus.RUNNING, ManagerStatus.FROZEN):
             # legacy transition: we now have only RUNNING or FROZEN for HA setup.
             await app['config_server'].update_manager_status(ManagerStatus.RUNNING)
             mgr_status = ManagerStatus.RUNNING

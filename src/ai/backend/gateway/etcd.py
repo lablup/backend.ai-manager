@@ -571,6 +571,8 @@ class ConfigServer:
     @aiotools.lru_cache(maxsize=1, expire_after=2.0)
     async def get_manager_status(self):
         status = await self.etcd.get('manager/status')
+        if status is None:
+            return None
         return ManagerStatus(status)
 
     async def watch_manager_status(self):
