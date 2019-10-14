@@ -24,6 +24,7 @@ from aiojobs.aiohttp import atomic
 import aiotools
 from async_timeout import timeout
 from dateutil.tz import tzutc
+import multidict
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import true, null
 import trafaret as t
@@ -803,8 +804,9 @@ async def download_files(request: web.Request) -> web.Response:
         raise InternalServerError
 
     with aiohttp.MultipartWriter('mixed') as mpwriter:
+        headers = multidict.MultiDict({'Content-Encoding': 'identity'})
         for tarbytes in results:
-            mpwriter.append(tarbytes)
+            mpwriter.append(tarbytes, headers)
         return web.Response(body=mpwriter, status=200)
 
 

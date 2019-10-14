@@ -629,7 +629,7 @@ async def download(request: web.Request, params: Any, row: VFolderRow) -> web.Re
                 f'You cannot download "{file}" because it is not a regular file.')
     with aiohttp.MultipartWriter('mixed') as mpwriter:
         total_payloads_length = 0
-        headers = multidict.MultiDict({'Content-Encoding': 'gzip'})
+        headers = multidict.MultiDict({'Content-Encoding': 'identity'})
         try:
             for file in files:
                 data = open(folder_path / file, 'rb')
