@@ -3,6 +3,7 @@ Resource preset APIs.
 '''
 
 from collections import defaultdict
+import copy
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from decimal import Decimal
@@ -371,7 +372,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
                 'g_disk_used': c_info['disk_used'],
                 'g_io_read': c_info['io_read'],
                 'g_io_write': c_info['io_write'],
-                'g_device_type': c_info['device_type'],
+                'g_device_type': copy.deepcopy(c_info['device_type']),
                 'g_smp': c_info['smp'],
                 'c_infos': [c_info],
             }

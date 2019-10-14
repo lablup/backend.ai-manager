@@ -61,7 +61,7 @@ async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tup
         if request['is_superadmin']:
             pass
         elif request['is_admin']:
-            if request['domain'] != owner_domain:
+            if request['user']['domain_name'] != owner_domain:
                 raise GenericForbidden(
                     'Domain-admins can perform operations on behalf of '
                     'other users in the same domain only.')

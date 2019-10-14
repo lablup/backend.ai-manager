@@ -571,6 +571,8 @@ class ConfigServer:
     @aiotools.lru_cache(maxsize=1, expire_after=2.0)
     async def get_manager_status(self):
         status = await self.etcd.get('manager/status')
+        if status is None:
+            return None
         return ManagerStatus(status)
 
     async def watch_manager_status(self):
@@ -681,8 +683,8 @@ async def get_config(request: web.Request, params: Any) -> web.Response:
 @check_api_params(
     t.Dict({
         t.Key('key'): t.String,
-        t.Key('value'): t.Or(t.String(allow_blank=True),
-                             t.Mapping(t.String(allow_blank=True), t.Any)),
+        t.Key('value'): (t.String(allow_blank=True) |
+                         t.Mapping(t.String(allow_blank=True), t.Any)),
     }))
 async def set_config(request: web.Request, params: Any) -> web.Response:
     etcd = request.app['config_server'].etcd

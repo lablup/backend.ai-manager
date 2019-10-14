@@ -288,7 +288,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @check_api_params(
     t.Dict({
-        t.Key('all', default=False): t.Bool,
+        t.Key('all', default=False): t.Bool | t.StrBool,
         tx.AliasedKey(['group_id', 'groupId'], default=None): tx.UUID | t.String | t.Null,
     }),
 )
@@ -570,7 +570,7 @@ async def upload(request: web.Request, row: VFolderRow) -> web.Response:
 @check_api_params(
     t.Dict({
         t.Key('files'): t.List[t.String],
-        t.Key('recursive', default=False): t.Bool,
+        t.Key('recursive', default=False): t.Bool | t.StrBool,
     }))
 async def delete_files(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     folder_name = request.match_info['name']
@@ -1185,8 +1185,8 @@ async def update_shared_vfolder(request: web.Request, params: Any) -> web.Respon
 @server_status_required(READ_ALLOWED)
 @check_api_params(
     t.Dict({
-        t.Key('fstab_path', default=None): t.Or(t.String, t.Null),
-        t.Key('agent_id', default=None): t.Or(t.String, t.Null),
+        t.Key('fstab_path', default=None): t.String | t.Null,
+        t.Key('agent_id', default=None): t.String | t.Null,
     }),
 )
 async def get_fstab_contents(request: web.Request, params: Any) -> web.Response:
@@ -1340,10 +1340,10 @@ async def list_mounts(request: web.Request) -> web.Response:
         t.Key('fs_location'): t.String,
         t.Key('name'): t.String,
         t.Key('fs_type', default='nfs'): t.String,
-        t.Key('options', default=None): t.Or(t.String, t.Null),
-        t.Key('scaling_group', default=None): t.Or(t.String, t.Null),
-        t.Key('fstab_path', default=None): t.Or(t.String, t.Null),
-        t.Key('edit_fstab', default=False): t.Or(t.Bool, t.Null),
+        t.Key('options', default=None): t.String | t.Null,
+        t.Key('scaling_group', default=None): t.String | t.Null,
+        t.Key('fstab_path', default=None): t.String | t.Null,
+        t.Key('edit_fstab', default=False): t.Bool | t.StrBool,
     }),
 )
 async def mount_host(request: web.Request, params: Any) -> web.Response:
@@ -1459,9 +1459,9 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
 @check_api_params(
     t.Dict({
         t.Key('name'): t.String,
-        t.Key('scaling_group', default=None): t.Or(t.String, t.Null),
-        t.Key('fstab_path', default=None): t.Or(t.String, t.Null),
-        t.Key('edit_fstab', default=False): t.Or(t.Bool, t.Null),
+        t.Key('scaling_group', default=None): t.String | t.Null,
+        t.Key('fstab_path', default=None): t.String | t.Null,
+        t.Key('edit_fstab', default=False): t.Bool | t.StrBool,
     }),
 )
 async def umount_host(request: web.Request, params: Any) -> web.Response:
