@@ -1,6 +1,15 @@
 Changes
 =======
 
+19.09.3 (2019-10-14)
+--------------------
+
+* FIX: ManagerStatus check error during startup when clean installed.
+
+* FIX: Usage API reports wrong data due to internal reuse of list objects which should have been copied.
+
+* FIX: Passing stringified bool values to boolean API parameters (e.g., "yes", "1", "no", "0", etc.)
+
 19.09.2 (2019-10-11)
 --------------------
 
