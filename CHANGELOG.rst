@@ -1,6 +1,14 @@
 Changes
 =======
 
+19.09.4 (2019-10-15)
+--------------------
+
+* OPTIMIZE: Large file transfers are 20% to 3x faster via vfolder download API and SFTP by increasing
+  the network buffer sizes.
+
+* FIX: Wrong content-encoding header in the vfolder download API
+
 19.09.3 (2019-10-14)
 --------------------
 
