@@ -27,6 +27,8 @@ disabled-plugins = []
 
 importer-image = "lablup/importer:manylinux2010"
 
+event-loop = "asyncio"
+
 
 [docker-registry]
 ssl-verify = true

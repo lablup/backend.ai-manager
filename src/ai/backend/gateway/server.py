@@ -21,7 +21,6 @@ from aiopg.sa import create_engine
 import click
 from pathlib import Path
 from setproctitle import setproctitle
-import uvloop
 
 from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
@@ -492,6 +491,7 @@ def main(ctx, config_path, debug):
                 log_config.debug('debug mode enabled.')
 
                 if cfg['manager']['event-loop'] == 'uvloop':
+                    import uvloop
                     uvloop.install()
                     log.info('Using uvloop as the event loop backend')
                 try:
