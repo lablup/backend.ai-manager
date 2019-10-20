@@ -33,6 +33,8 @@ DOCKERFILE_TEMPLATE = r'''# syntax = docker/dockerfile:1.0-experimental
 FROM {{ src }}
 MAINTAINER Backend.AI Manager
 
+USER root
+
 {% if runtime_type == 'python' -%}
 ENV PYTHONUNBUFFERED=1 \
     LANG=C.UTF-8
