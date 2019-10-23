@@ -39,7 +39,7 @@ class ResourcePreset(graphene.ObjectType):
     resource_slots = graphene.JSONString()
 
     @classmethod
-    def from_row(cls, context, row):
+    def from_row(cls, row):
         if row is None:
             return None
         return cls(
@@ -54,7 +54,7 @@ class ResourcePreset(graphene.ObjectType):
                        .select_from(resource_presets))
             result = await conn.execute(query)
             rows = await result.fetchall()
-            return [cls.from_row(context, r) for r in rows]
+            return [cls.from_row(r) for r in rows]
 
     @classmethod
     async def batch_load_by_name(cls, context, names):
@@ -67,7 +67,7 @@ class ResourcePreset(graphene.ObjectType):
             for k in names:
                 objs_per_key[k] = None
             async for row in conn.execute(query):
-                o = cls.from_row(context, row)
+                o = cls.from_row(row)
                 objs_per_key[row.name] = o
         return tuple(objs_per_key.values())
 
