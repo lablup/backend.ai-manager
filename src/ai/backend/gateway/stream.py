@@ -413,6 +413,25 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
 @auth_required
 @check_api_params(
     t.Dict({
+        tx.AliasedKey(['app', 'service']): t.String,
+    }))
+async def feed_stream_extra_info(request: web.Request, params: Mapping[str, Any]) -> web.Response:
+    registry = request.app['registry']
+    sess_id = request.match_info['sess_id']
+    access_key = request['keypair']['access_key']
+    service = request.query.get('app', None)  # noqa
+
+    result = await asyncio.shield(
+        registry.get_service_extra(sess_id, access_key, service))
+    if result['status'] == 'failed':
+        msg = f"Failed to launch get extra info of service {service}: {result['error']}"
+        raise InternalServerError(msg)
+    return web.json_response(result['data'])
+
+@server_status_required(READ_ALLOWED)
+@auth_required
+@check_api_params(
+    t.Dict({
         t.Key('sessionId', default='*') >> 'session_id': t.String,
         t.Key('ownerAccessKey', default=None) >> 'owner_access_key': t.Null | t.String,
         tx.AliasedKey(['group', 'groupName'], default='*') >> 'group_name': t.String,
@@ -573,6 +592,7 @@ async def init(app: web.Application) -> None:
     app['stream_execute_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_proxy_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_stdin_socks'] = defaultdict(weakref.WeakSet)
+    app['stream_extra_info'] = defaultdict(weakref.WeakSet)
     app['event_queues'] = set()
     event_dispatcher = app['event_dispatcher']
     event_dispatcher.subscribe('kernel_terminated', app, kernel_terminated)
@@ -621,6 +641,7 @@ def create_app(default_cors_options):
     cors.add(add_route('GET', r'/kernel/_/events', stream_events))
     cors.add(add_route('GET', r'/kernel/{sess_id}/pty', stream_pty))
     cors.add(add_route('GET', r'/kernel/{sess_id}/execute', stream_execute))
+    cors.add(add_route('GET', r'/kernel/{sess_id}/extrainfo', feed_stream_extra_info))
     # internally both tcp/http proxies use websockets as API/agent-level transports,
     # and thus they have the same implementation here.
     cors.add(add_route('GET', r'/kernel/{sess_id}/httpproxy', stream_proxy))
