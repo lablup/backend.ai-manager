@@ -267,6 +267,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'name': params['name'],
             'host': folder_host,
             'last_used': None,
+            'creator': request['user']['email'],
             'user': user_uuid,
             'group': group_uuid,
         }))
@@ -274,6 +275,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'id': folder_id,
             'name': params['name'],
             'host': folder_host,
+            'creator': request['user']['email'],
             'user': user_uuid,
             'group': group_uuid,
         }

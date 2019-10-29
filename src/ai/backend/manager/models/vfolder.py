@@ -75,6 +75,8 @@ vfolders = sa.Table(
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
     sa.Column('last_used', sa.DateTime(timezone=True), nullable=True),
+    # To store creator information (email) for group vfolder.
+    sa.Column('creator', sa.String(length=128), nullable=True),
 
     sa.Column('user', GUID, sa.ForeignKey('users.uuid'), nullable=True),
     sa.Column('group', GUID, sa.ForeignKey('groups.id'), nullable=True),
