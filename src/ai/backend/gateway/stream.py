@@ -415,7 +415,7 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
     t.Dict({
         tx.AliasedKey(['app', 'service']): t.String,
     }))
-async def feed_stream_extra_info(request: web.Request, params: Mapping[str, Any]) -> web.Response:
+async def get_stream_apps(request: web.Request, params: Mapping[str, Any]) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
@@ -641,7 +641,7 @@ def create_app(default_cors_options):
     cors.add(add_route('GET', r'/kernel/_/events', stream_events))
     cors.add(add_route('GET', r'/kernel/{sess_id}/pty', stream_pty))
     cors.add(add_route('GET', r'/kernel/{sess_id}/execute', stream_execute))
-    cors.add(add_route('GET', r'/kernel/{sess_id}/extrainfo', feed_stream_extra_info))
+    cors.add(add_route('GET', r'/kernel/{sess_id}/apps', get_stream_apps))
     # internally both tcp/http proxies use websockets as API/agent-level transports,
     # and thus they have the same implementation here.
     cors.add(add_route('GET', r'/kernel/{sess_id}/httpproxy', stream_proxy))
