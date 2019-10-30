@@ -308,23 +308,29 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
         allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
         if request['is_superadmin'] and params['all']:
             # List all folders for superadmin if all is specified
-            query = sa.select([vfolders]).select_from(vfolders)
+            j = (vfolders.join(users, vfolders.c.user == users.c.uuid, isouter=True)
+                         .join(groups, vfolders.c.group == groups.c.id, isouter=True))
+            query = (sa.select([vfolders, users.c.email, groups.c.name], use_labels=True)
+                       .select_from(j))
             result = await conn.execute(query)
             entries = []
             async for row in result:
-                is_owner = True if row.user == user_uuid else False
+                is_owner = True if row.vfolders_user == user_uuid else False
                 permission = VFolderPermission.OWNER_PERM if is_owner \
                         else VFolderPermission.READ_ONLY
                 entries.append({
-                    'name': row.name,
-                    'id': row.id,
-                    'host': row.host,
-                    'created_at': row.created_at,
+                    'name': row.vfolders_name,
+                    'id': row.vfolders_id,
+                    'host': row.vfolders_host,
+                    'created_at': row.vfolders_created_at,
                     'is_owner': is_owner,
                     'permission': permission,
-                    'user': str(row.user) if row.user else None,
-                    'group': str(row.group) if row.group else None,
-                    'type': 'user' if row['user'] is not None else 'group',
+                    'user': str(row.vfolders_user) if row.vfolders_user else None,
+                    'group': str(row.vfolders_group) if row.vfolders_group else None,
+                    'creator': row.vfolders_creator,
+                    'user_email': row.users_email,
+                    'group_name': row.groups_name,
+                    'type': 'user' if row['vfolders_user'] is not None else 'group',
                 })
         else:
             extra_vf_conds = None
@@ -348,6 +354,9 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                 'permission': entry['permission'].value,
                 'user': str(entry['user']),
                 'group': str(entry['group']),
+                'creator': entry['creator'],
+                'user_email': entry['user_email'],
+                'group_name': entry['group_name'],
                 'type': 'user' if entry['user'] is not None else 'group',
             })
     return web.json_response(resp, status=200)
