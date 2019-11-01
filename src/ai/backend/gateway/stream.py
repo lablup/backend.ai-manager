@@ -322,6 +322,8 @@ async def stream_execute(request: web.Request) -> web.StreamResponse:
     t.Dict({
         tx.AliasedKey(['app', 'service']): t.String,
         tx.AliasedKey(['port'], default=None): t.Null | t.Int[1024:65535],
+        tx.AliasedKey(['arguments'], default=None): t.Null | t.String, # {'-P': '12345'}
+        tx.AliasedKey(['envs'], default=None): t.Null | t.String # {'PASSWORD': '12345'}
     }))
 async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
     registry = request.app['registry']
@@ -388,6 +390,11 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
 
     try:
         opts: Mapping[str, Any] = {}
+        if params['arguments'] != None:
+            opts['arguments'] = json.loads(params['arguments'])
+        if params['envs'] != None:
+            opts['envs'] = json.loads(params['envs'])
+
         result = await asyncio.shield(
             registry.start_service(sess_id, access_key, service, opts))
         if result['status'] == 'failed':

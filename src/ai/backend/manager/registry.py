@@ -853,9 +853,9 @@ class AgentRegistry:
         async with self.handle_kernel_exception('execute', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], None) as rpc:
-                coro = rpc.call.get_service_extra(str(kernel['id']), service)
+                coro = rpc.call.get_service_apps(str(kernel['id']), service)
                 if coro is None:
-                    log.warning('get_service_extra cancelled')
+                    log.warning('get_service_apps cancelled')
                     return None
                 return await coro
 
