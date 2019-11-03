@@ -105,6 +105,8 @@ class Group(graphene.ObjectType):
     allowed_vfolder_hosts = graphene.List(lambda: graphene.String)
     integration_id = graphene.String()
 
+    scaling_groups = graphene.List(lambda: graphene.String)
+
     @classmethod
     def from_row(cls, row):
         if row is None:
@@ -121,6 +123,11 @@ class Group(graphene.ObjectType):
             allowed_vfolder_hosts=row['allowed_vfolder_hosts'],
             integration_id=row['integration_id'],
         )
+
+    async def resolve_scaling_groups(self, info):
+        from .scaling_group import ScalingGroup
+        sgroups = await ScalingGroup.load_by_group(info.context, self.id)
+        return [sg.name for sg in sgroups]
 
     @staticmethod
     async def load_all(context, *,
