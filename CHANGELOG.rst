@@ -1,6 +1,21 @@
 Changes
 =======
 
+19.09.5 (2019-11-04)
+--------------------
+
+* IMPROVE: vfolders now have their creators information and relevant GQL queries include them.
+
+* FIX/IMPROE: Improve scaling-group related queries.
+
+* FIX: An error when returning resource presets after creation
+
+* FIX: Ensure "USER root" for auto-generated imported image since some images (e.g., NGC Matlab) use
+  custom user IDs.
+
+* MAINTENANCE: Update dependencies and pin trafaret to v1.2.x since its new v2.0 release breaks the
+  backward compatibility.
+
 19.09.4 (2019-10-15)
 --------------------
 
