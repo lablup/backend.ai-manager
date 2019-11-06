@@ -770,21 +770,18 @@ async def upload_files(request: web.Request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def download_files(request: web.Request) -> web.Response:
-    try:
-        registry = request.app['registry']
-        sess_id = request.match_info['sess_id']
-        requester_access_key, owner_access_key = await get_access_key_scopes(request)
-        params = await request.json(loads=_json_loads)
-        assert params.get('files'), 'no file(s) specified!'
-        files = params.get('files')
-        log.info('DOWNLOAD_FILE (ak:{0}/{1}, s:{2}, path:{3!r})',
-                 requester_access_key, owner_access_key, sess_id,
-                 files[0])
-    except (AssertionError, json.decoder.JSONDecodeError) as e:
-        log.warning('DOWNLOAD_FILE: invalid/missing parameters, {0!r}', e)
-        raise InvalidAPIParameters(extra_msg=str(e.args[0]))
-
+@check_api_params(
+    t.Dict({
+        tx.MultiKey('files'): t.List(t.String),
+    }))
+async def download_files(request: web.Request, params: Any) -> web.Response:
+    registry = request.app['registry']
+    sess_id = request.match_info['sess_id']
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
+    files = params.get('files')
+    log.info('DOWNLOAD_FILE (ak:{0}/{1}, s:{2}, path:{3!r})',
+             requester_access_key, owner_access_key, sess_id,
+             files[0])
     try:
         assert len(files) <= 5, 'Too many files'
         await registry.increment_session_usage(sess_id, owner_access_key)
@@ -798,6 +795,8 @@ async def download_files(request: web.Request) -> web.Response:
     except BackendError:
         log.exception('DOWNLOAD_FILE: exception')
         raise
+    except (ValueError, FileNotFoundError):
+        raise InvalidAPIParameters('The file is not found.')
     except Exception:
         request.app['error_monitor'].capture_exception()
         log.exception('DOWNLOAD_FILE: unexpected error!')
@@ -808,6 +807,38 @@ async def download_files(request: web.Request) -> web.Response:
         for tarbytes in results:
             mpwriter.append(tarbytes, headers)
         return web.Response(body=mpwriter, status=200)
+
+
+@auth_required
+@server_status_required(READ_ALLOWED)
+@check_api_params(
+    t.Dict({
+        t.Key('file'): t.String,
+    }))
+async def download_single(request: web.Request, params: Any) -> web.Response:
+    ''' Download single file from scratch root. Only for small files.
+    '''
+    registry = request.app['registry']
+    sess_id = request.match_info['sess_id']
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
+    file = params['file']
+    log.info('DOWNLOAD_SINGLE (ak:{0}/{1}, s:{2}, path:{3!r})',
+             requester_access_key, owner_access_key, sess_id, file)
+    try:
+        await registry.increment_session_usage(sess_id, owner_access_key)
+        result = await registry.download_file(sess_id, owner_access_key, file)
+    except asyncio.CancelledError:
+        raise
+    except BackendError:
+        log.exception('DOWNLOAD_SINGLE: exception')
+        raise
+    except (ValueError, FileNotFoundError):
+        raise InvalidAPIParameters('The file is not found.')
+    except Exception:
+        request.app['error_monitor'].capture_exception()
+        log.exception('DOWNLOAD_SINGLE: unexpected error!')
+        raise InternalServerError
+    return web.Response(body=result, status=200)
 
 
 @atomic
@@ -973,5 +1004,6 @@ def create_app(default_cors_options):
     cors.add(app.router.add_route('POST', '/{sess_id}/complete', complete))
     cors.add(app.router.add_route('POST', '/{sess_id}/upload', upload_files))
     cors.add(app.router.add_route('GET',  '/{sess_id}/download', download_files))
+    cors.add(app.router.add_route('GET',  '/{sess_id}/download_single', download_single))
     cors.add(app.router.add_route('GET',  '/{sess_id}/files', list_files))
     return app, []
