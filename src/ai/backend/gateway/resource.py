@@ -237,6 +237,9 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
         resp['keypair_limits'] = keypair_limits.to_json()
         resp['keypair_using'] = keypair_occupied.to_json()
         resp['keypair_remaining'] = keypair_remaining.to_json()
+        resp['group_limits'] = group_limits.to_json()
+        resp['group_using'] = group_occupied.to_json()
+        resp['group_remaining'] = group_remaining.to_json()
         resp['scaling_group_remaining'] = sgroup_remaining.to_json()
         resp['scaling_groups'] = per_sgroup
     return web.json_response(resp, status=200)
