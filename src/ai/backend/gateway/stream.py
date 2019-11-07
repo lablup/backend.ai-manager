@@ -322,8 +322,9 @@ async def stream_execute(request: web.Request) -> web.StreamResponse:
     t.Dict({
         tx.AliasedKey(['app', 'service']): t.String,
         tx.AliasedKey(['port'], default=None): t.Null | t.Int[1024:65535],
-        tx.AliasedKey(['arguments'], default=None): t.Null | t.String, # {'-P': '12345'}
-        tx.AliasedKey(['envs'], default=None): t.Null | t.String # {'PASSWORD': '12345'}
+        tx.AliasedKey(['arguments'], default=None): t.Null | t.String,  # stringified JSON, e.g., '{"PASSWORD": "12345"}'
+        tx.AliasedKey(['envs'], default=None): t.Null | t.String  # stringified JSON, e.g., '{"-P": "12345"}'
+                                                                  # For flag-style arguments, the value must be None.
     }))
 async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
     registry = request.app['registry']
@@ -390,9 +391,9 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
 
     try:
         opts: Mapping[str, Any] = {}
-        if params['arguments'] != None:
+        if params['arguments'] is not None:
             opts['arguments'] = json.loads(params['arguments'])
-        if params['envs'] != None:
+        if params['envs'] is not None:
             opts['envs'] = json.loads(params['envs'])
 
         result = await asyncio.shield(
@@ -429,11 +430,12 @@ async def get_stream_apps(request: web.Request, params: Mapping[str, Any]) -> we
     service = request.query.get('app', None)  # noqa
 
     result = await asyncio.shield(
-        registry.get_service_extra(sess_id, access_key, service))
+        registry.get_service_ports(sess_id, access_key, service))
     if result['status'] == 'failed':
         msg = f"Failed to launch get extra info of service {service}: {result['error']}"
         raise InternalServerError(msg)
     return web.json_response(result['data'])
+
 
 @server_status_required(READ_ALLOWED)
 @auth_required
@@ -599,7 +601,6 @@ async def init(app: web.Application) -> None:
     app['stream_execute_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_proxy_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_stdin_socks'] = defaultdict(weakref.WeakSet)
-    app['stream_extra_info'] = defaultdict(weakref.WeakSet)
     app['event_queues'] = set()
     event_dispatcher = app['event_dispatcher']
     event_dispatcher.subscribe('kernel_terminated', app, kernel_terminated)
