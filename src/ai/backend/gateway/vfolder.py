@@ -1083,7 +1083,11 @@ async def delete_invitation(request: web.Request, params: Any) -> web.Response:
 
 @auth_required
 @server_status_required(ALL_ALLOWED)
-async def delete(request: web.Request) -> web.Response:
+@check_api_params(
+    t.Dict({
+        t.Key('id', default=None): t.String | t.Null,  # only for superadmins to delete any folder
+    }))
+async def delete(request: web.Request, params: Any) -> web.Response:
     dbpool = request.app['dbpool']
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
@@ -1093,28 +1097,41 @@ async def delete(request: web.Request) -> web.Response:
     allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
     log.info('VFOLDER.DELETE (ak:{}, vf:{})', access_key, folder_name)
     async with dbpool.acquire() as conn, conn.begin():
-        entries = await query_accessible_vfolders(
-            conn, user_uuid,
-            user_role=user_role, domain_name=domain_name,
-            allowed_vfolder_types=allowed_vfolder_types)
-        for entry in entries:
-            if entry['name'] == folder_name:
-                if not entry['is_owner']:
-                    raise InvalidAPIParameters(
-                        'Cannot delete the vfolder '
-                        'that is not owned by me.')
-                break
+        # Let superadmin can delete any vfolders if id is provided.
+        if user_role == UserRole.SUPERADMIN and params.get('id'):
+            query = (sa.select([vfolders.c.host])
+                       .select_from(vfolders)
+                       .where(vfolders.c.id == params['id']))
+            folder_host = await conn.scalar(query)
+            folder_id = uuid.UUID(params['id'])
+            folder_hex = folder_id.hex
+        # Non-superadmin can delete vfolders by name only in accessible vfolders.
         else:
-            raise InvalidAPIParameters('No such vfolder.')
-        folder_path = (request.app['VFOLDER_MOUNT'] / entry['host'] /
-                       request.app['VFOLDER_FSPREFIX'] / entry['id'].hex)
+            entries = await query_accessible_vfolders(
+                conn, user_uuid,
+                user_role=user_role, domain_name=domain_name,
+                allowed_vfolder_types=allowed_vfolder_types)
+            for entry in entries:
+                if entry['name'] == folder_name:
+                    if not entry['is_owner']:
+                        raise InvalidAPIParameters(
+                            'Cannot delete the vfolder '
+                            'that is not owned by me.')
+                    break
+            else:
+                raise InvalidAPIParameters('No such vfolder.')
+            folder_host = entry['host']
+            folder_id = entry['id']
+            folder_hex = folder_id.hex
+        folder_path = (request.app['VFOLDER_MOUNT'] / folder_host /
+                       request.app['VFOLDER_FSPREFIX'] / folder_hex)
         try:
             shutil.rmtree(folder_path)
         except IOError:
             pass
-        # TODO: mark it deleted instead of really deleting
+        # TODO: mark it deleted instead of really deleting?
         query = (vfolders.delete()
-                         .where(vfolders.c.id == entry['id']))
+                         .where(vfolders.c.id == folder_id))
         await conn.execute(query)
     return web.Response(status=204)
 
