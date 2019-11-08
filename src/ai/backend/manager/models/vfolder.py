@@ -151,7 +151,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                        vfolders.c.user,
                        vfolders.c.group,
                        vfolders.c.creator,
-                       users.c.email
+                       users.c.email,
                    ])
                    .select_from(j)
                    .where(vfolders.c.user == user_uuid))
@@ -190,6 +190,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                        vfolders.c.group,
                        vfolders.c.creator,
                        vfolder_permissions.c.permission,
+                       users.c.email,
                    ])
                    .select_from(j)
                    .where(vfolder_permissions.c.user == user_uuid))
@@ -210,7 +211,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                 'user': str(row.user) if row.user else None,
                 'group': str(row.group) if row.group else None,
                 'creator': row.creator,
-                'user_email': row.user_email,
+                'user_email': row.email,
                 'group_name': None,
                 'is_owner': False,
                 'permission': row.permission,
