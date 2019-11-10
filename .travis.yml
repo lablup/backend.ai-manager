@@ -1,13 +1,12 @@
 language: python
 dist: xenial
-sudo: required
 cache: pip
 addons:
   postgresql: "9.6"
 services:
   - docker
   - postgresql
-  - redis-server
+  - redis
 addons:
   apt:
     packages:
@@ -23,23 +22,22 @@ stages:
 os:
   - linux
 python:
-  - "3.6"
-  - "3.7"
+  - "3.8"
 
 install:
   - pip install -U pip setuptools
   - pip install -U -r requirements-ci.txt
+  # temporary monkey-patch for aiozmq in Python 3.8
+  - |
+    _AIOZMQ_PATCH_FILE="/home/travis/virtualenv/python3.8.0/lib/python3.8/site-packages/aiozmq/rpc/base.py"
+    if [ -f "${_AIOZMQ_PATCH_FILE}" ]; then
+      sed -i 's/asyncio.async(\([^,]\+\), loop=[^,]\+)/asyncio.create_task(\1)/g' "${_AIOZMQ_PATCH_FILE}"
+    fi
   - mkdir -p ~/.config/backend.ai
   - psql -c 'create database testing;' -U postgres
   - cp config/ci.toml ~/.config/backend.ai/manager.toml
   - mkdir -p /tmp/scratches
   - mkdir -p /tmp/vfroot/local
-  ## install backend.ai-agent from github
-  #- cd ${HOME}/build/lablup
-  #- git clone https://github.com/lablup/backend.ai-agent.git
-  #- cd backend.ai-agent
-  #- pip install -U -e .
-  #- cd ../backend.ai-manager
 before_script:
   # etcd
   - mkdir -p /tmp/etcd
@@ -63,8 +61,6 @@ before_script:
   - docker exec -it backendai-etcd etcdctl put /sorna/testing/config/redis/addr "127.0.0.1:6379"
   - docker exec -it backendai-etcd etcdctl put /sorna/testing/volumes/_mount "/tmp/vfroot"
   - docker exec -it backendai-etcd etcdctl put /sorna/testing/volumes/_default_host "local"
-  # set capabilities to python binary
-  - sudo setcap cap_sys_ptrace,cap_sys_admin,cap_dac_override+eip $(readlink -f $(which python))
   # pull minimal kernel images
   - docker pull lablup/lua:5.3-alpine3.8
 script:
@@ -78,9 +74,10 @@ after_success:
 # stage def.
 jobs:
   include:
-    # test stage is implicitly included.
+    - stage: test
+      python: "3.8"
     - stage: deploy
-      python: "3.6"
+      python: "3.8"
       install: skip
       script: skip
       deploy:
@@ -88,12 +85,10 @@ jobs:
           tags: true
         provider: pypi
         distributions: sdist bdist_wheel
-        skip_upload_docs: true
-        user: "@token"
+        upload_docs: false
+        username: "@token"
         password:
           secure: "GRqOstZHSwzVxVWEUIE4OEC9FR2yIggzhQBkNDMqXTrzx6NGOuk3gzJLuF9n0jvXMymB9nce6dLZdHfRlahDNokbJEOpdWddjl1bHSEpzH+YLIoVaNzVC7i2hx/aEKsK6uiqaY+LD+2dbWqDPT0eZdNl1JERWEKJD+Lc0d8rJxv88RfnpZx276M0cZZnmZlWWJXby0TtwTzS6gejU/1Sdasp+PFYUhhSNa/+g2xv9EptvdezHr9iPsmBiuMAG7CtEsFh4ShK74DOuOB4HBp6uPrPMeTbVvPLknAuPFlyUIpXEm0I2iBSa65VFWaVJyXhgINAu7NS+feI0Ow1Ap6Urf12mbAIHJwqhfrrIwC2bP+0hJfWqn1FaCUY26CROBz9BL8bviMrzSpYZ6pOL50g1OPSeJ3+NXrQtIUmOfreiha0rObRAJqITYWZxrw90fpoRckO9JQC0ssG/xiGbCXVdgP4K+LqpCT/4Z9KY/LTVHV5PGYT31EOu4J2o8p9FEjWPG4Jn5Hqab1Zp8A0Q4Y/V3Y0bA2+qidWgX5REkk4vGWLfEX2j3qQYl2QBrNFpBOs9M05MzDdjjSSiwJkrLDeS936Pxh0/LfuHO2s9fzyBe9PZ4B+Lc6T02rrmUj/tbO8ENtBfmcSsej83JWTo2RPWs1OygoC1pyAWfSs0X5YfHE="
-  allow_failures:
-    - python: "3.7"
 
 notifications:
   webhooks:
