@@ -42,6 +42,8 @@ Alias keys are also URL-quoted in the same way.
        - timezone: "UTC"   # pytz-compatible timezone names (e.g., "Asia/Seoul")
      + api
        - allow-origins: "*"
+       + resources
+         - allow-group-total: ""  # return total group resource limits in check-presets
      + docker
        + registry
          + "index.docker.io": "https://registry-1.docker.io"

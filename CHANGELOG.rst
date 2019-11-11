@@ -1,6 +1,37 @@
 Changes
 =======
 
+19.12.0a1 (xxxx-xx-xx)
+----------------------
+
+* MAINTENANCE: Now it runs on Python 3.8 or higher.
+
+19.09.6 (2019-11-11)
+--------------------
+
+* FIX: vfolder were not listed when there are pending invitations for the current user.
+
+* IMPROVE: Allow superadmin to delete any vfolder.
+
+* NEW: Include group-level resource statistics and add an option to exclude them in check-presets API.
+
+* NEW: Add an API to download a single file from /home/work of containers.
+
+19.09.5 (2019-11-04)
+--------------------
+
+* IMPROVE: vfolders now have their creators information and relevant GQL queries include them.
+
+* FIX/IMPROE: Improve scaling-group related queries.
+
+* FIX: An error when returning resource presets after creation
+
+* FIX: Ensure "USER root" for auto-generated imported image since some images (e.g., NGC Matlab) use
+  custom user IDs.
+
+* MAINTENANCE: Update dependencies and pin trafaret to v1.2.x since its new v2.0 release breaks the
+  backward compatibility.
+
 19.09.4 (2019-10-15)
 --------------------
 

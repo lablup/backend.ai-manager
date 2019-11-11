@@ -234,9 +234,19 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
                 'allocatable': allocatable,
             })
 
+        # Return group stats with zeros if not allowed.
+        allow_group_total = await request.app['registry'].config_server.get(f'config/api/resources/allow-group-total')
+        if allow_group_total != '':
+            group_limits = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
+            group_occupied = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
+            group_remaining = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
+
         resp['keypair_limits'] = keypair_limits.to_json()
         resp['keypair_using'] = keypair_occupied.to_json()
         resp['keypair_remaining'] = keypair_remaining.to_json()
+        resp['group_limits'] = group_limits.to_json()
+        resp['group_using'] = group_occupied.to_json()
+        resp['group_remaining'] = group_remaining.to_json()
         resp['scaling_group_remaining'] = sgroup_remaining.to_json()
         resp['scaling_groups'] = per_sgroup
     return web.json_response(resp, status=200)
