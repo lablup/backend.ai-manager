@@ -560,6 +560,7 @@ class AgentRegistry:
                             sess_ctx: 'SessionContext',
                             agent_ctx: 'AgentAllocationContext') -> None:
 
+        auto_pull = await self.config_server.get('config/docker/image/auto_pull')
         image_info = await self.config_server.inspect_image(sess_ctx.image_ref)
         registry_url, registry_creds = \
             await get_registry_info(self.config_server.etcd,
@@ -600,6 +601,7 @@ class AgentRegistry:
                     'resource_opts': sess_ctx.resource_opts,
                     'startup_command': sess_ctx.startup_command,
                     'internal_data': sess_ctx.internal_data,
+                    'auto_pull': auto_pull,
                 }
                 created_info = await rpc.call.create_kernel(str(sess_ctx.kernel_id),
                                                             config)
