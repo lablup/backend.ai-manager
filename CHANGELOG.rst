@@ -1,6 +1,17 @@
 Changes
 =======
 
+19.09.6 (2019-11-11)
+--------------------
+
+* FIX: vfolder were not listed when there are pending invitations for the current user.
+
+* IMPROVE: Allow superadmin to delete any vfolder.
+
+* NEW: Include group-level resource statistics and add an option to exclude them in check-presets API.
+
+* NEW: Add an API to download a single file from /home/work of containers.
+
 19.09.5 (2019-11-04)
 --------------------
 
