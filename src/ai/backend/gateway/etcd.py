@@ -134,7 +134,11 @@ from decimal import Decimal
 import logging
 import json
 from pathlib import Path
-from typing import Any, Mapping, Optional, Union, Tuple
+from typing import (
+    Any, Optional, Union,
+    Mapping, DefaultDict,
+    List, Tuple,
+)
 
 import aiohttp
 from aiohttp import web
@@ -193,7 +197,7 @@ class ConfigServer:
         }
         self.etcd = AsyncEtcd(etcd_addr, namespace, scope_prefix_map, credentials=credentials)
 
-    async def get(self, key, allow_null=True):
+    async def get(self, key: str, allow_null: bool = True) -> Optional[str]:
         value = await self.etcd.get(key)
         if value is None:
             value = config_defaults.get(key, None)
@@ -202,17 +206,17 @@ class ConfigServer:
                 'A required etcd config is missing.', key)
         return value
 
-    async def register_myself(self, app_config):
+    async def register_myself(self, app_config) -> None:
         instance_id = await get_instance_id()
         manager_info = {
             'nodes/manager': instance_id,
         }
         await self.etcd.put_dict(manager_info)
 
-    async def deregister_myself(self):
+    async def deregister_myself(self) -> None:
         await self.etcd.delete_prefix('nodes/manager')
 
-    async def update_aliases_from_file(self, file: Path):
+    async def update_aliases_from_file(self, file: Path) -> None:
         log.info('Updating image aliases from "{0}"', file)
         try:
             data = yaml.load(open(file, 'r', encoding='utf-8'))
@@ -226,12 +230,12 @@ class ConfigServer:
             print(f'{alias} -> {target}')
         log.info('Done.')
 
-    async def _scan_reverse_aliases(self):
+    async def _scan_reverse_aliases(self) -> Mapping[str, List[str]]:
         aliases = await self.etcd.get_prefix('images/_aliases')
-        result = defaultdict(list)
+        result: DefaultDict[str, List[str]] = defaultdict(list)
         for key, value in aliases.items():
             result[value].append(etcd_unquote(key))
-        return result
+        return dict(result)
 
     async def _parse_image(self, image_ref, item, reverse_aliases):
         installed = (

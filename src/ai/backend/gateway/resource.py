@@ -235,7 +235,8 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             })
 
         # Return group stats with zeros if not allowed.
-        allow_group_total = await request.app['registry'].config_server.get(f'config/api/resources/allow-group-total')
+        allow_group_total = \
+            await request.app['registry'].config_server.get(f'config/api/resources/allow-group-total')
         if allow_group_total != '':
             group_limits = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
             group_occupied = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})

@@ -36,7 +36,7 @@ class EventCallback(Protocol):
         ...
 
 
-@attr.s(auto_attribs=True, slots=True, frozen=True, cmp=False)
+@attr.s(auto_attribs=True, slots=True, frozen=True, eq=False, order=False)
 class EventHandler:
     context: Any
     callback: EventCallback
