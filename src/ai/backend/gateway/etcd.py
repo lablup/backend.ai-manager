@@ -45,6 +45,8 @@ Alias keys are also URL-quoted in the same way.
        + resources
          - allow-group-total: ""  # return total group resource limits in check-presets
      + docker
+       + image
+         - auto_pull: "digest" (default) | "tag" | "none"
        + registry
          + "index.docker.io": "https://registry-1.docker.io"
            - username: "lablup"
@@ -169,6 +171,7 @@ config_defaults = {
     'volumes/_default_host': 'local',
     'volumes/_fsprefix': '/',
     'config/api/allow-origins': '*',
+    'config/docker/image/auto_pull': 'digest',
 }
 
 
