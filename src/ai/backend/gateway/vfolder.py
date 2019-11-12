@@ -1452,7 +1452,7 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
                         'message': await resp.text(),
                     }
                 return (agent_id, data,)
-        except asyncio.CacnelledError:
+        except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError:
             log.error(log_fmt + ': timeout from watcher (ag:{})',
