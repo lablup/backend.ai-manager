@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 from pprint import pformat
 from typing import (
-    Any,
+    Any, Final,
     Mapping,
 )
 
@@ -16,7 +16,7 @@ from ai.backend.common.etcd import AsyncEtcd
 _max_cpu_count = os.cpu_count()
 _file_perm = (Path(__file__).parent / 'server.py').stat()
 
-DEFAULT_CHUNK_SIZE = 256 * 1024  # 256 KiB
+DEFAULT_CHUNK_SIZE: Final = 256 * 1024  # 256 KiB
 
 manager_config_iv = t.Dict({
     t.Key('db'): t.Dict({
@@ -105,7 +105,7 @@ shared_config_iv = t.Dict({
 }).allow_extra('*')
 
 
-def load(config_path: Path = None, debug: bool = False):
+def load(config_path: Path = None, debug: bool = False) -> Mapping[str, Any]:
 
     # Determine where to read configuration.
     raw_cfg, cfg_src_path = config.read_from_file(config_path, 'manager')
@@ -157,7 +157,7 @@ def load(config_path: Path = None, debug: bool = False):
         return cfg
 
 
-async def load_shared(etcd: AsyncEtcd):
+async def load_shared(etcd: AsyncEtcd) -> Mapping[str, Any]:
     raw_cfg = await etcd.get_prefix('config')
     try:
         cfg = shared_config_iv.check(raw_cfg)

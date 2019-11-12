@@ -21,6 +21,12 @@ from aiopg.sa import create_engine
 import click
 from pathlib import Path
 from setproctitle import setproctitle
+from typing import (
+    cast,
+    Any, Final,
+    AsyncGenerator,
+    Iterable, List,
+)
 
 from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
@@ -28,7 +34,8 @@ from ai.backend.common.utils import env_info
 from ai.backend.common.monitor import DummyStatsMonitor, DummyErrorMonitor
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from ai.backend.common.plugin import (
-    discover_entrypoints, install_plugins, add_plugin_args)
+    discover_entrypoints, install_plugins
+)
 from ..manager import __version__
 from ..manager.registry import AgentRegistry
 from ..manager.scheduler import SessionScheduler
@@ -38,9 +45,13 @@ from .etcd import ConfigServer
 from .events import EventDispatcher
 from .exceptions import (BackendError, MethodNotAllowed, GenericNotFound,
                          GenericBadRequest, InternalServerError)
+from .typing import (
+    AppCreator, PluginAppCreator,
+    CORSOptions, WebRequestHandler, WebMiddleware,
+)
 from . import ManagerStatus
 
-VALID_VERSIONS = frozenset([
+VALID_VERSIONS: Final = frozenset([
     'v1.20160915',  # deprecated
     'v2.20170315',  # deprecated
     'v3.20170615',
@@ -59,17 +70,17 @@ VALID_VERSIONS = frozenset([
     # added domain/group/scaling-group ref. fields to user/keypair/vfolder objects
     'v4.20190615',
 ])
-LATEST_REV_DATES = {
+LATEST_REV_DATES: Final = {
     1: '20160915',
     2: '20170915',
     3: '20181215',
     4: '20190615',
 }
-LATEST_API_VERSION = 'v4.20190615'
+LATEST_API_VERSION: Final = 'v4.20190615'
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 
-PUBLIC_INTERFACES = [
+PUBLIC_INTERFACES: Final = [
     'pidx',
     'config',
     'config_server',
@@ -85,7 +96,7 @@ PUBLIC_INTERFACES = [
 ]
 
 
-async def hello(request) -> web.Response:
+async def hello(request: web.Request) -> web.Response:
     '''
     Returns the API version number.
     '''
@@ -95,19 +106,22 @@ async def hello(request) -> web.Response:
     })
 
 
-async def on_prepare(request, response):
+async def on_prepare(request: web.Request, response: web.StreamResponse) -> None:
     response.headers['Server'] = 'BackendAI'
 
 
 @web.middleware
-async def api_middleware(request, handler):
+async def api_middleware(request: web.Request,
+                         handler: WebRequestHandler) -> web.StreamResponse:
     _handler = handler
     method_override = request.headers.get('X-Method-Override', None)
     if method_override:
         request = request.clone(method=method_override)
         new_match_info = await request.app.router.resolve(request)
+        if new_match_info is None:
+            raise InternalServerError('No matching method handler found')
         _handler = new_match_info.handler
-        request._match_info = new_match_info
+        request._match_info = new_match_info  # type: ignore  # this is a hack
     ex = request.match_info.http_exception
     if ex is not None:
         # handled by exception_middleware
@@ -117,13 +131,13 @@ async def api_middleware(request, handler):
     api_version = new_api_version or legacy_api_version
     try:
         if api_version is None:
-            major_version = int(request.match_info.get('version', 4))
-            revision_date = LATEST_REV_DATES[major_version]
-            request['api_version'] = (major_version, revision_date)
+            path_major_version = int(request.match_info.get('version', 4))
+            revision_date = LATEST_REV_DATES[path_major_version]
+            request['api_version'] = (path_major_version, revision_date)
         else:
             assert api_version in VALID_VERSIONS
-            major_version, revision_date = api_version.split('.', maxsplit=1)
-            request['api_version'] = (int(major_version[1:]), revision_date)
+            hdr_major_version, revision_date = api_version.split('.', maxsplit=1)
+            request['api_version'] = (int(hdr_major_version[1:]), revision_date)
     except (AssertionError, ValueError, KeyError):
         raise GenericBadRequest('Unsupported API major version.')
     resp = (await _handler(request))
@@ -131,7 +145,8 @@ async def api_middleware(request, handler):
 
 
 @web.middleware
-async def exception_middleware(request, handler):
+async def exception_middleware(request: web.Request,
+                               handler: WebRequestHandler) -> web.StreamResponse:
     app = request.app
     try:
         app['stats_monitor'].report_stats(
@@ -152,7 +167,8 @@ async def exception_middleware(request, handler):
         if ex.status_code == 404:
             raise GenericNotFound
         if ex.status_code == 405:
-            raise MethodNotAllowed(ex.method, ex.allowed_methods)
+            concrete_ex = cast(web.HTTPMethodNotAllowed, ex)
+            raise MethodNotAllowed(concrete_ex.method, concrete_ex.allowed_methods)
         log.warning('Bad request: {0!r}', ex)
         raise GenericBadRequest
     except asyncio.CancelledError as e:
@@ -173,11 +189,11 @@ async def exception_middleware(request, handler):
         return resp
 
 
-async def legacy_auth_test_redirect(request):
+async def legacy_auth_test_redirect(request: web.Request) -> web.StreamResponse:
     raise web.HTTPFound('/v3/auth/test')
 
 
-async def gw_init(app, default_cors_options):
+async def gw_init(app: web.Application, default_cors_options: CORSOptions) -> None:
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     # should be done in create_app() in other modules.
     cors.add(app.router.add_route('GET', r'', hello))
@@ -328,8 +344,8 @@ def _get_legacy_handler(handler, app, major_api_version):
 
 
 @aiotools.actxmgr
-async def server_main(loop, pidx, _args):
-
+async def server_main(loop: asyncio.AbstractEventLoop,
+                      pidx: int, _args: List[Any]) -> AsyncGenerator[None, None]:
     app = web.Application(middlewares=[
         exception_middleware,
         api_middleware,
@@ -372,8 +388,8 @@ async def server_main(loop, pidx, _args):
     aiojobs.aiohttp.setup(app, **scheduler_opts)
     await gw_init(app, cors_options)
 
-    def _init_subapp(subapp, global_middlewares):
-        assert isinstance(subapp, web.Application)
+    def _init_subapp(subapp: web.Application,
+                     global_middlewares: Iterable[WebMiddleware]) -> None:
         subapp.on_response_prepare.append(on_prepare)
         # Allow subapp's access to the root app properties.
         # These are the public APIs exposed to extensions as well.
@@ -389,6 +405,8 @@ async def server_main(loop, pidx, _args):
         # (NOTE: they do not support CORS!)
         for r in subapp.router.routes():
             for version in subapp['api_versions']:
+                if r.resource is None:
+                    continue
                 subpath = r.resource.canonical
                 if subpath == f'/{prefix}':
                     subpath += '/'
@@ -396,11 +414,11 @@ async def server_main(loop, pidx, _args):
                 handler = _get_legacy_handler(r.handler, subapp, version)
                 app.router.add_route(r.method, legacy_path, handler)
 
-    def init_subapp(create_subapp):
+    def init_subapp(create_subapp: AppCreator) -> None:
         subapp, global_middlewares = create_subapp(cors_options)
         _init_subapp(subapp, global_middlewares)
 
-    def init_extapp(create_subapp):
+    def init_extapp(create_subapp: PluginAppCreator) -> None:
         subapp, global_middlewares = create_subapp(app['config']['plugins'], cors_options)
         _init_subapp(subapp, global_middlewares)
 
@@ -459,22 +477,13 @@ async def server_main(loop, pidx, _args):
         await runner.cleanup()
 
 
-def gw_args(parser):
-
-    plugins = [
-        'stats_monitor',
-        'error_monitor',
-    ]
-    add_plugin_args(parser, plugins)
-
-
 @click.group(invoke_without_command=True)
 @click.option('-f', '--config-path', '--config', type=Path, default=None,
               help='The config file path. (default: ./manager.toml and /etc/backend.ai/manager.toml)')
 @click.option('--debug', is_flag=True,
               help='Enable the debug mode and override the global log level to DEBUG.')
 @click.pass_context
-def main(ctx, config_path, debug):
+def main(ctx: click.Context, config_path: Path, debug: bool) -> None:
 
     cfg = load_config(config_path, debug)
 
@@ -510,7 +519,7 @@ def main(ctx, config_path, debug):
 
 
 @main.group(cls=LazyGroup, import_name='ai.backend.gateway.auth:cli')
-def auth():
+def auth() -> None:
     pass
 
 

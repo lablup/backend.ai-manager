@@ -13,6 +13,8 @@ from pathlib import Path
 import secrets
 from typing import (
     Any, Optional,
+    Iterable,
+    Tuple,
     Mapping, MutableMapping,
 )
 import uuid
@@ -51,6 +53,7 @@ from .exceptions import (
     InternalServerError,
 )
 from .auth import auth_required
+from .typing import CORSOptions, WebMiddleware
 from .utils import (
     current_loop, catch_unexpected, check_api_params, get_access_key_scopes,
 )
@@ -945,7 +948,7 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
     })
 
 
-async def init(app: web.Application):
+async def init(app: web.Application) -> None:
     event_dispatcher = app['event_dispatcher']
     event_dispatcher.consume('kernel_preparing', app, handle_kernel_lifecycle)
     event_dispatcher.consume('kernel_pulling', app, handle_kernel_lifecycle)
@@ -968,7 +971,7 @@ async def init(app: web.Application):
         functools.partial(check_agent_lost, app), 1.0)
 
 
-async def shutdown(app: web.Application):
+async def shutdown(app: web.Application) -> None:
     app['agent_lost_checker'].cancel()
     await app['agent_lost_checker']
 
@@ -983,7 +986,7 @@ async def shutdown(app: web.Application):
         task.cancel()
 
 
-def create_app(default_cors_options):
+def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)

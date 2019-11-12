@@ -1,21 +1,29 @@
+from __future__ import annotations
+
 from decimal import Decimal
-import functools
 import logging
 import time
+from typing import (
+    Iterable,
+    Final,
+    Tuple,
+)
 
 from aiohttp import web
 import aioredis
+from aiotools import apartial
 
 from ai.backend.common import redis
 from ai.backend.common.logging import BraceStyleAdapter
 
 from .defs import REDIS_RLIM_DB
 from .exceptions import RateLimitExceeded
+from .typing import CORSOptions, WebRequestHandler, WebMiddleware
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.ratelimit'))
 
-_time_prec = Decimal('1e-3')  # msec
-_rlim_window = 60 * 15
+_time_prec: Final = Decimal('1e-3')  # msec
+_rlim_window: Final = 60 * 15
 
 # We implement rate limiting using a rolling counter, which prevents
 # last-minute and first-minute bursts between the intervals.
@@ -38,7 +46,9 @@ return redis.call('ZCARD', access_key)
 
 
 @web.middleware
-async def rlim_middleware(app, request, handler):
+async def rlim_middleware(app: web.Application,
+                          request: web.Request,
+                          handler: WebRequestHandler) -> web.StreamResponse:
     # This is a global middleware: request.app is the root app.
     now = Decimal(time.time()).quantize(_time_prec)
     rr = app['redis_rlim']
@@ -95,10 +105,10 @@ async def shutdown(app: web.Application) -> None:
     await app['redis_rlim'].wait_closed()
 
 
-def create_app(default_cors_options):
+def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()
     app['api_versions'] = (1, 2, 3, 4)
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     # middleware must be wrapped by web.middleware at the outermost level.
-    return app, [web.middleware(functools.partial(rlim_middleware, app))]
+    return app, [web.middleware(apartial(rlim_middleware, app))]

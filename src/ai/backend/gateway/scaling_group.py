@@ -1,5 +1,9 @@
 import logging
-from typing import Any
+from typing import (
+    Any,
+    Iterable,
+    Tuple,
+)
 
 from aiohttp import web
 import aiohttp_cors
@@ -12,6 +16,7 @@ from .auth import auth_required
 from .manager import (
     READ_ALLOWED,
     server_status_required)
+from .typing import CORSOptions, WebMiddleware
 from .utils import check_api_params
 from ..manager.models import (
     query_allowed_sgroups,
@@ -44,15 +49,15 @@ async def list_available_sgroups(request: web.Request, params: Any) -> web.Respo
         }, status=200)
 
 
-async def init(app):
+async def init(app: web.Application) -> None:
     pass
 
 
-async def shutdown(app):
+async def shutdown(app: web.Application) -> None:
     pass
 
 
-def create_app(default_cors_options):
+def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()
     app['prefix'] = 'scaling-groups'
     app['api_versions'] = (2, 3, 4)

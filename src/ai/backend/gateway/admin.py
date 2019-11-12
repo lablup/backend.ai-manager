@@ -1,7 +1,11 @@
 import asyncio
 import inspect
 import logging
-from typing import Any
+from typing import (
+    Any,
+    Iterable,
+    Tuple,
+)
 import re
 
 from aiohttp import web
@@ -18,6 +22,7 @@ from ai.backend.common import validators as tx
 from .manager import GQLMutationUnfrozenRequiredMiddleware
 from .exceptions import GraphQLError as BackendGQLError
 from .auth import auth_required
+from .typing import CORSOptions, WebMiddleware
 from .utils import check_api_params, trim_text
 from ..manager.models.base import DataLoaderManager
 from ..manager.models.gql import Mutations, Queries
@@ -83,7 +88,7 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
     return web.json_response(result.data, status=200)
 
 
-async def init(app: web.Application):
+async def init(app: web.Application) -> None:
     loop = asyncio.get_event_loop()
     app['admin.gql_executor'] = AsyncioExecutor(loop=loop)
     app['admin.gql_schema'] = graphene.Schema(
@@ -92,11 +97,11 @@ async def init(app: web.Application):
         auto_camelcase=False)
 
 
-async def shutdown(app: web.Application):
+async def shutdown(app: web.Application) -> None:
     pass
 
 
-def create_app(default_cors_options):
+def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)

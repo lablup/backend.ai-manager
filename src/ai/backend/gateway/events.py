@@ -4,6 +4,7 @@ import functools
 import logging
 from typing import (
     Any,
+    Iterable,
     Sequence, Tuple,
     MutableMapping,
     Set,
@@ -22,6 +23,7 @@ from ai.backend.common.types import (
     AgentId,
 )
 from .defs import REDIS_STREAM_DB
+from .typing import CORSOptions, WebMiddleware
 from .utils import current_loop
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.events'))
@@ -217,7 +219,7 @@ async def shutdown(app: web.Application) -> None:
     pass
 
 
-def create_app(default_cors_options):
+def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()
     app['api_versions'] = (3, 4)
     app.on_startup.append(init)

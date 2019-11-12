@@ -4,7 +4,11 @@ import functools
 import hashlib, hmac
 import logging
 import secrets
-from typing import Any
+from typing import (
+    Any,
+    Iterable,
+    Tuple,
+)
 
 from aiohttp import web
 import aiohttp_cors
@@ -29,6 +33,7 @@ from ..manager.models import (
 from ..manager.models.user import UserRole, check_credential
 from ..manager.models.keypair import generate_keypair as _gen_keypair
 from ..manager.models.group import association_groups_users, groups
+from .typing import CORSOptions, WebMiddleware
 from .utils import check_api_params, set_handler_attr, get_handler_attr
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.auth'))
@@ -468,7 +473,7 @@ async def signout(request: web.Request, params: Any) -> web.Response:
     return web.json_response({})
 
 
-def create_app(default_cors_options):
+def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()
     app['prefix'] = 'auth'  # slashed to distinguish with "/vN/authorize"
     app['api_versions'] = (1, 2, 3, 4)

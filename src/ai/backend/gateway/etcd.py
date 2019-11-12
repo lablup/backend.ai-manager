@@ -136,6 +136,7 @@ import json
 from pathlib import Path
 from typing import (
     Any, Optional, Union,
+    Iterable,
     Mapping, DefaultDict,
     List, Tuple,
 )
@@ -166,6 +167,7 @@ from ai.backend.common.docker import (
 from .auth import superadmin_required
 from .exceptions import InvalidAPIParameters, ServerMisconfiguredError
 from .manager import ManagerStatus
+from .typing import CORSOptions, WebMiddleware
 from .utils import chunked, check_api_params
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
@@ -738,17 +740,17 @@ async def delete_config(request: web.Request, params: Any) -> web.Response:
     return web.json_response({'result': 'ok'})
 
 
-async def init(app: web.Application):
+async def init(app: web.Application) -> None:
     if app['pidx'] == 0:
         await app['config_server'].register_myself(app['config'])
 
 
-async def shutdown(app: web.Application):
+async def shutdown(app: web.Application) -> None:
     if app['pidx'] == 0:
         await app['config_server'].deregister_myself()
 
 
-def create_app(default_cors_options):
+def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
