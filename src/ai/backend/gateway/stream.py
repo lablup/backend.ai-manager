@@ -323,9 +323,12 @@ async def stream_execute(request: web.Request) -> web.StreamResponse:
     t.Dict({
         tx.AliasedKey(['app', 'service']): t.String,
         tx.AliasedKey(['port'], default=None): t.Null | t.Int[1024:65535],
-        tx.AliasedKey(['envs'], default=None): t.Null | t.String,  # stringified JSON, e.g., '{"PASSWORD": "12345"}'
-        tx.AliasedKey(['arguments'], default=None): t.Null | t.String  # stringified JSON, e.g., '{"-P": "12345"}'
-                                                                  # The value can be one of: None, str, List[str]
+        tx.AliasedKey(['envs'], default=None): t.Null | t.String,  # stringified JSON
+                                                                   # e.g., '{"PASSWORD": "12345"}'
+        tx.AliasedKey(['arguments'], default=None): t.Null | t.String  # stringified JSON
+                                                                       # e.g., '{"-P": "12345"}'
+                                                                       # The value can be one of:
+                                                                       # None, str, List[str]
     }))
 async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
     registry = request.app['registry']
