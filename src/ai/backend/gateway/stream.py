@@ -14,8 +14,9 @@ import secrets
 from typing import (
     Any,
     Mapping,
+    MutableMapping,
     List, Tuple,
-    Set,
+    Set, Union,
 )
 import uuid
 from urllib.parse import urlparse
@@ -322,9 +323,9 @@ async def stream_execute(request: web.Request) -> web.StreamResponse:
     t.Dict({
         tx.AliasedKey(['app', 'service']): t.String,
         tx.AliasedKey(['port'], default=None): t.Null | t.Int[1024:65535],
-        tx.AliasedKey(['arguments'], default=None): t.Null | t.String,  # stringified JSON, e.g., '{"PASSWORD": "12345"}'
-        tx.AliasedKey(['envs'], default=None): t.Null | t.String  # stringified JSON, e.g., '{"-P": "12345"}'
-                                                                  # For flag-style arguments, the value must be None.
+        tx.AliasedKey(['envs'], default=None): t.Null | t.String,  # stringified JSON, e.g., '{"PASSWORD": "12345"}'
+        tx.AliasedKey(['arguments'], default=None): t.Null | t.String  # stringified JSON, e.g., '{"-P": "12345"}'
+                                                                  # The value can be one of: None, str, List[str]
     }))
 async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
     registry = request.app['registry']
@@ -390,7 +391,7 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
     ping_cb = apartial(refresh_cb, kernel.id)
 
     try:
-        opts: Mapping[str, Any] = {}
+        opts: MutableMapping[str, Union[None, str, List[str]]] = {}
         if params['arguments'] is not None:
             opts['arguments'] = json.loads(params['arguments'])
         if params['envs'] is not None:
