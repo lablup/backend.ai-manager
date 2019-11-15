@@ -30,7 +30,7 @@ from typing import (
 
 from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
-from ai.backend.common.utils import env_info
+from ai.backend.common.utils import env_info, find_free_port
 from ai.backend.common.monitor import DummyStatsMonitor, DummyErrorMonitor
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from ai.backend.common.plugin import (
@@ -344,6 +344,17 @@ def _get_legacy_handler(handler, app, major_api_version):
 
 
 @aiotools.actxmgr
+async def server_main_logwrapper(loop: asyncio.AbstractEventLoop,
+                                 pidx: int, _args: List[Any]) -> AsyncGenerator[None, None]:
+    setproctitle(f"backend.ai: manager worker-{pidx}")
+    log_port = _args[1]
+    logger = Logger(_args[0]['logging'], is_master=False, log_port=log_port)
+    with logger:
+        async with server_main(loop, pidx, _args):
+            yield
+
+
+@aiotools.actxmgr
 async def server_main(loop: asyncio.AbstractEventLoop,
                       pidx: int, _args: List[Any]) -> AsyncGenerator[None, None]:
     app = web.Application(middlewares=[
@@ -489,8 +500,9 @@ def main(ctx: click.Context, config_path: Path, debug: bool) -> None:
 
     if ctx.invoked_subcommand is None:
         cfg['manager']['pid-file'].write_text(str(os.getpid()))
+        log_port = find_free_port()
         try:
-            logger = Logger(cfg['logging'])
+            logger = Logger(cfg['logging'], is_master=True, log_port=log_port)
             with logger:
                 ns = cfg['etcd']['namespace']
                 setproctitle(f"backend.ai: manager {ns}")
@@ -504,9 +516,9 @@ def main(ctx: click.Context, config_path: Path, debug: bool) -> None:
                     uvloop.install()
                     log.info('Using uvloop as the event loop backend')
                 try:
-                    aiotools.start_server(server_main,
+                    aiotools.start_server(server_main_logwrapper,
                                           num_workers=cfg['manager']['num-proc'],
-                                          args=(cfg,))
+                                          args=(cfg, log_port))
                 finally:
                     log.info('terminated.')
         finally:
