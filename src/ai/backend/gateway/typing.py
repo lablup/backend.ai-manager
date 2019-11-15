@@ -7,12 +7,10 @@ from typing import (
     Awaitable, Callable, Iterable,
     Tuple,
     Mapping,
-    TYPE_CHECKING,
 )
 
-if TYPE_CHECKING:
-    from aiohttp import web
-    import aiohttp_cors
+from aiohttp import web
+import aiohttp_cors
 
 
 WebRequestHandler = Callable[
