@@ -347,8 +347,8 @@ def _get_legacy_handler(handler, app, major_api_version):
 async def server_main_logwrapper(loop: asyncio.AbstractEventLoop,
                                  pidx: int, _args: List[Any]) -> AsyncGenerator[None, None]:
     setproctitle(f"backend.ai: manager worker-{pidx}")
-    log_port = _args[1]
-    logger = Logger(_args[0]['logging'], is_master=False, log_port=log_port)
+    log_endpoint = _args[1]
+    logger = Logger(_args[0]['logging'], is_master=False, log_endpoint=log_endpoint)
     with logger:
         async with server_main(loop, pidx, _args):
             yield
@@ -500,9 +500,9 @@ def main(ctx: click.Context, config_path: Path, debug: bool) -> None:
 
     if ctx.invoked_subcommand is None:
         cfg['manager']['pid-file'].write_text(str(os.getpid()))
-        log_port = find_free_port()
+        log_endpoint = f'tcp://127.0.0.1:{find_free_port()}'
         try:
-            logger = Logger(cfg['logging'], is_master=True, log_port=log_port)
+            logger = Logger(cfg['logging'], is_master=True, log_endpoint=log_endpoint)
             with logger:
                 ns = cfg['etcd']['namespace']
                 setproctitle(f"backend.ai: manager {ns}")
@@ -518,7 +518,7 @@ def main(ctx: click.Context, config_path: Path, debug: bool) -> None:
                 try:
                     aiotools.start_server(server_main_logwrapper,
                                           num_workers=cfg['manager']['num-proc'],
-                                          args=(cfg, log_port))
+                                          args=(cfg, log_endpoint))
                 finally:
                     log.info('terminated.')
         finally:

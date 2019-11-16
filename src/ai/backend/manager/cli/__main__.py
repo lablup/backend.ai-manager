@@ -9,6 +9,7 @@ import click
 
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.logging import Logger, BraceStyleAdapter
+from ai.backend.common.utils import find_free_port
 from ai.backend.gateway.config import load as load_config
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.cli'))
@@ -31,7 +32,8 @@ def main(ctx, config_path, debug):
     setproctitle(f"backend.ai: manager.cli {cfg['etcd']['namespace']}")
     if 'file' in cfg['logging']['drivers']:
         cfg['logging']['drivers'].remove('file')
-    logger = Logger(cfg['logging'])
+    log_endpoint = f'tcp://127.0.0.1:{find_free_port()}'
+    logger = Logger(cfg['logging'], is_master=True, log_endpoint=log_endpoint)
     ctx.obj = CLIContext(
         logger=logger,
         config=cfg,
