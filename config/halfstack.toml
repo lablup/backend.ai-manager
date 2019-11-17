@@ -44,6 +44,7 @@ drivers = ["console"]
 "aiopg" = "WARNING"
 "aiohttp" = "INFO"
 "ai.backend" = "INFO"
+"alembic" = "INFO"
 
 [logging.console]
 colored = true
