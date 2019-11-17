@@ -1,4 +1,6 @@
+import atexit
 import logging
+import os
 from setproctitle import setproctitle
 import subprocess
 from typing import Any, Mapping
@@ -9,7 +11,6 @@ import click
 
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.logging import Logger, BraceStyleAdapter
-from ai.backend.common.utils import find_free_port
 from ai.backend.gateway.config import load as load_config
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.cli'))
@@ -32,12 +33,23 @@ def main(ctx, config_path, debug):
     setproctitle(f"backend.ai: manager.cli {cfg['etcd']['namespace']}")
     if 'file' in cfg['logging']['drivers']:
         cfg['logging']['drivers'].remove('file')
-    log_endpoint = f'tcp://127.0.0.1:{find_free_port()}'
+    # log_endpoint = f'tcp://127.0.0.1:{find_free_port()}'
+    log_sockpath = Path(f'/tmp/backend.ai/ipc/manager-cli-{os.getpid()}.sock')
+    log_sockpath.parent.mkdir(parents=True, exist_ok=True)
+    log_endpoint = f'ipc://{log_sockpath}'
     logger = Logger(cfg['logging'], is_master=True, log_endpoint=log_endpoint)
     ctx.obj = CLIContext(
         logger=logger,
         config=cfg,
     )
+
+    def _clean_logger():
+        try:
+            os.unlink(log_sockpath)
+        except FileNotFoundError:
+            pass
+
+    atexit.register(_clean_logger)
 
 
 @main.command()
