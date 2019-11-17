@@ -30,7 +30,7 @@ from typing import (
 
 from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
-from ai.backend.common.utils import env_info, find_free_port
+from ai.backend.common.utils import env_info
 from ai.backend.common.monitor import DummyStatsMonitor, DummyErrorMonitor
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from ai.backend.common.plugin import (
@@ -500,7 +500,9 @@ def main(ctx: click.Context, config_path: Path, debug: bool) -> None:
 
     if ctx.invoked_subcommand is None:
         cfg['manager']['pid-file'].write_text(str(os.getpid()))
-        log_endpoint = f'tcp://127.0.0.1:{find_free_port()}'
+        log_sockpath = Path(f'/tmp/backend.ai/ipc/manager-logger-{os.getpid()}.sock')
+        log_sockpath.parent.mkdir(parents=True, exist_ok=True)
+        log_endpoint = f'ipc://{log_sockpath}'
         try:
             logger = Logger(cfg['logging'], is_master=True, log_endpoint=log_endpoint)
             with logger:
@@ -525,6 +527,7 @@ def main(ctx: click.Context, config_path: Path, debug: bool) -> None:
             if cfg['manager']['pid-file'].is_file():
                 # check is_file() to prevent deleting /dev/null!
                 cfg['manager']['pid-file'].unlink()
+            os.unlink(log_sockpath)
     else:
         # Click is going to invoke a subcommand.
         pass
