@@ -673,7 +673,7 @@ async def download_single(request: web.Request, params: Any, row: VFolderRow) ->
         if not file_path.exists():
             raise FileNotFoundError
     except (ValueError, FileNotFoundError):
-        raise InvalidAPIParameters('The file is not found.')
+        raise GenericNotFound('The file is not found.')
     if not file_path.is_file():
         raise InvalidAPIParameters('The file is not a regular file.')
     if request.method == 'HEAD':
