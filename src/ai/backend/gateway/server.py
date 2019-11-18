@@ -349,9 +349,12 @@ async def server_main_logwrapper(loop: asyncio.AbstractEventLoop,
     setproctitle(f"backend.ai: manager worker-{pidx}")
     log_endpoint = _args[1]
     logger = Logger(_args[0]['logging'], is_master=False, log_endpoint=log_endpoint)
-    with logger:
-        async with server_main(loop, pidx, _args):
-            yield
+    try:
+        with logger:
+            async with server_main(loop, pidx, _args):
+                yield
+    except Exception:
+        traceback.print_exc()
 
 
 @aiotools.actxmgr
