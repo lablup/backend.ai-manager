@@ -523,6 +523,7 @@ def main(ctx: click.Context, config_path: Path, debug: bool) -> None:
                 try:
                     aiotools.start_server(server_main_logwrapper,
                                           num_workers=cfg['manager']['num-proc'],
+                                          start_method='spawn',
                                           args=(cfg, log_endpoint))
                 finally:
                     log.info('terminated.')
