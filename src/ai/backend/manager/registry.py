@@ -1173,6 +1173,9 @@ class AgentRegistry:
             await redis.execute_with_retries(lambda: _get_kstats_from_redis())
             if additional_updates is not None:
                 updates.update(additional_updates)
+            if not updates:
+                log.debug('sync_kernel_stats: Nothing to sync')
+                return
             query = (sa.update(kernels)
                        .values(updates)
                        .where(kernels.c.id == kernel_id))
