@@ -849,7 +849,7 @@ class AgentRegistry:
                     return None
                 return await coro
 
-    async def get_service_ports(self, sess_id, access_key, service):
+    async def get_service_apps(self, sess_id, access_key, service):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], None) as rpc:
@@ -1183,6 +1183,8 @@ class AgentRegistry:
             await redis.execute_with_retries(lambda: _get_kstats_from_redis())
             if additional_updates is not None:
                 updates.update(additional_updates)
+            if not updates:
+                return
             query = (sa.update(kernels)
                        .values(updates)
                        .where(kernels.c.id == kernel_id))

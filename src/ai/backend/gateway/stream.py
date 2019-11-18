@@ -423,18 +423,28 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-@check_api_params(
-    t.Dict({
-        tx.AliasedKey(['app', 'service']): t.String,
-    }))
-async def get_stream_apps(request: web.Request, params: Mapping[str, Any]) -> web.Response:
+async def get_stream_apps(request: web.Request) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
-    service = request.query.get('app', None)  # noqa
 
     result = await asyncio.shield(
-        registry.get_service_ports(sess_id, access_key, service))
+        registry.get_service_apps(sess_id, access_key, None))
+    if result['status'] == 'failed':
+        msg = f"Failed to launch get extra info of session {sess_id}: {result['error']}"
+        raise InternalServerError(msg)
+    return web.json_response(result['data'])
+
+@server_status_required(READ_ALLOWED)
+@auth_required
+async def get_stream_app(request: web.Request) -> web.Response:
+    registry = request.app['registry']
+    sess_id = request.match_info['sess_id']
+    access_key = request['keypair']['access_key']
+    service = request.match_info['app']
+
+    result = await asyncio.shield(
+        registry.get_service_apps(sess_id, access_key, service))
     if result['status'] == 'failed':
         msg = f"Failed to launch get extra info of service {service}: {result['error']}"
         raise InternalServerError(msg)
@@ -654,6 +664,7 @@ def create_app(default_cors_options):
     cors.add(add_route('GET', r'/kernel/{sess_id}/pty', stream_pty))
     cors.add(add_route('GET', r'/kernel/{sess_id}/execute', stream_execute))
     cors.add(add_route('GET', r'/kernel/{sess_id}/apps', get_stream_apps))
+    cors.add(add_route('GET', r'/kernel/{sess_id}/apps/{app}', get_stream_app))
     # internally both tcp/http proxies use websockets as API/agent-level transports,
     # and thus they have the same implementation here.
     cors.add(add_route('GET', r'/kernel/{sess_id}/httpproxy', stream_proxy))
