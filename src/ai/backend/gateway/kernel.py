@@ -89,6 +89,7 @@ creation_config_v2 = t.Dict({
 })
 creation_config_v3 = t.Dict({
     t.Key('mounts', default=None): t.Null | t.List(t.String),
+    t.Key('mount_map', default=None): t.Null | t.Mapping(t.String, t.String),
     t.Key('environ', default=None): t.Null | t.Mapping(t.String, t.String),
     tx.AliasedKey(['cluster_size', 'clusterSize'], default=None):
         t.Null | t.Int[1:],
