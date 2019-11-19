@@ -7,6 +7,7 @@ from datetime import datetime
 import functools
 import importlib
 import logging
+import multiprocessing
 import os
 import pwd, grp
 import ssl
@@ -500,6 +501,7 @@ async def server_main(loop: asyncio.AbstractEventLoop,
 def main(ctx: click.Context, config_path: Path, debug: bool) -> None:
 
     cfg = load_config(config_path, debug)
+    multiprocessing.set_start_method('spawn')
 
     if ctx.invoked_subcommand is None:
         cfg['manager']['pid-file'].write_text(str(os.getpid()))
