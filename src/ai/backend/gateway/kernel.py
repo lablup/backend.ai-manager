@@ -89,6 +89,17 @@ creation_config_v2 = t.Dict({
 })
 creation_config_v3 = t.Dict({
     t.Key('mounts', default=None): t.Null | t.List(t.String),
+    t.Key('environ', default=None): t.Null | t.Mapping(t.String, t.String),
+    tx.AliasedKey(['cluster_size', 'clusterSize'], default=None):
+        t.Null | t.Int[1:],
+    tx.AliasedKey(['scaling_group', 'scalingGroup'], default=None):
+        t.Null | t.String,
+    t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
+    tx.AliasedKey(['resource_opts', 'resourceOpts'], default=None):
+        t.Null | t.Mapping(t.String, t.Any),
+})
+creation_config_v4 = t.Dict({
+    t.Key('mounts', default=None): t.Null | t.List(t.String),
     t.Key('mount_map', default=None): t.Null | t.Mapping(t.String, t.String),
     t.Key('environ', default=None): t.Null | t.Mapping(t.String, t.String),
     tx.AliasedKey(['cluster_size', 'clusterSize'], default=None):
@@ -276,7 +287,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 raise InvalidAPIParameters('Invalid group')
 
         api_version = request['api_version']
-        if (4, '20190315') <= api_version:
+        if (4, '20191119') <= api_version:
+            creation_config = creation_config_v4.check(params['config'])
+        elif (4, '20190315') <= api_version:
             creation_config = creation_config_v3.check(params['config'])
         elif 2 <= api_version[0] <= 4:
             creation_config = creation_config_v2.check(params['config'])
