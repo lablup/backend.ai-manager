@@ -77,3 +77,4 @@ alembic.ini
 
 # Local config
 manager.toml
+manager.pid
