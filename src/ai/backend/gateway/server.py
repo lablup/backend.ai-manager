@@ -72,15 +72,15 @@ VALID_VERSIONS: Final = frozenset([
     'v4.20190615',
 
     # added mount_map parameter when creating kernel
-    'v4.20191119'
+    'v5.20191215'
 ])
 LATEST_REV_DATES: Final = {
     1: '20160915',
     2: '20170915',
     3: '20181215',
-    4: '20191119',
+    4: '20191215',
 }
-LATEST_API_VERSION: Final = 'v4.20191119'
+LATEST_API_VERSION: Final = 'v5.20191215'
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 
