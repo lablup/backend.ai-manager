@@ -518,7 +518,8 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                                 status=None):
         async with context['dbpool'].acquire() as conn:
             # TODO: Extend to return terminated sessions (we need unique identifier).
-            status = KernelStatus[status] if status else KernelStatus['RUNNING']
+            #       We need a way to get kernel information other than RUNNING, such as PREPARING, ...
+            # status = KernelStatus[status] if status else KernelStatus['RUNNING']
             j = (kernels.join(groups, groups.c.id == kernels.c.group_id)
                         .join(users, users.c.uuid == kernels.c.user_uuid))
             query = (sa.select([kernels, groups.c.name, users.c.email])
