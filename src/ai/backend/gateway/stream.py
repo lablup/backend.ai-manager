@@ -435,6 +435,7 @@ async def get_stream_apps(request: web.Request) -> web.Response:
         raise InternalServerError(msg)
     return web.json_response(result['data'])
 
+
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def get_stream_app(request: web.Request) -> web.Response:
