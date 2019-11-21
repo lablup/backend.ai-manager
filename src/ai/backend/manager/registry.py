@@ -845,7 +845,7 @@ class AgentRegistry:
             async with RPCContext(kernel['agent_addr'], None) as rpc:
                 coro = rpc.call.start_service(str(kernel['id']), service, opts)
                 if coro is None:
-                    log.warning('stat_service cancelled')
+                    log.warning('start_service cancelled')
                     return None
                 return await coro
 
@@ -1173,6 +1173,8 @@ class AgentRegistry:
             await redis.execute_with_retries(lambda: _get_kstats_from_redis())
             if additional_updates is not None:
                 updates.update(additional_updates)
+            if not updates:
+                return
             query = (sa.update(kernels)
                        .values(updates)
                        .where(kernels.c.id == kernel_id))
