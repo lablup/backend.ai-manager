@@ -287,7 +287,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 raise InvalidAPIParameters('Invalid group')
 
         api_version = request['api_version']
-        if api_version[0] <= 5:
+        if 5 <= api_version[0]:
             creation_config = creation_config_v4.check(params['config'])
         elif (4, '20190315') <= api_version:
             creation_config = creation_config_v3.check(params['config'])
