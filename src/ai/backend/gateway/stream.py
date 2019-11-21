@@ -437,7 +437,7 @@ async def get_stream_apps(request: web.Request) -> web.Response:
             .where(
                 (kernels.c.sess_id == sess_id) &
                 (kernels.c.access_key == access_key)
-            ) 
+            )
         )
         result = await conn.execute(query)
         row = await result.first()
