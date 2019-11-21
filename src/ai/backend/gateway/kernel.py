@@ -327,14 +327,19 @@ async def create(request: web.Request, params: Any) -> web.Response:
                     row = await result.first()
                     if row['status'] == KernelStatus.RUNNING:
                         resp['status'] = 'RUNNING'
-                        resp['servicePorts'] = [
-                            {
+                        for item in row['service_ports']:
+                            response_dict = {
                                 'name': item['name'],
                                 'protocol': item['protocol'],
                                 'ports': item['container_ports'],
                             }
-                            for item in row['service_ports']
-                        ]
+                            if 'url_template' in item.keys():
+                                response_dict['url_template'] = item['url_template']
+                            if 'allowed_arguments' in item.keys():
+                                response_dict['allowed_arguments'] = item['allowed_arguments']
+                            if 'allowed_envs' in item.keys():
+                                response_dict['allowed_envs'] = item['allowed_envs']
+                            resp['servicePorts'].append(response_dict)
                     else:
                         resp['status'] = row['status'].name
 

@@ -424,32 +424,38 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def get_stream_apps(request: web.Request) -> web.Response:
-    registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
+    resp = []
 
-    result = await asyncio.shield(
-        registry.get_service_apps(sess_id, access_key, None))
-    if result['status'] == 'failed':
-        msg = f"Failed to launch get extra info of session {sess_id}: {result['error']}"
-        raise InternalServerError(msg)
-    return web.json_response(result['data'])
+    async with request.app['dbpool'].acquire() as conn, conn.begin():
+        query = (
+            sa.select([
+                kernels.c.service_ports,
+            ])
+            .select_from(kernels)
+            .where(
+                (kernels.c.sess_id == sess_id) &
+                (kernels.c.access_key == access_key)
+            ) 
+        )
+        result = await conn.execute(query)
+        row = await result.first()
+        for item in row['service_ports']:
+            response_dict = {
+                'name': item['name'],
+                'protocol': item['protocol'],
+                'ports': item['container_ports'],
+            }
+            if 'url_template' in item.keys():
+                response_dict['url_template'] = item['url_template']
+            if 'allowed_arguments' in item.keys():
+                response_dict['allowed_arguments'] = item['allowed_arguments']
+            if 'allowed_envs' in item.keys():
+                response_dict['allowed_envs'] = item['allowed_envs']
+            resp.append(response_dict)
 
-
-@server_status_required(READ_ALLOWED)
-@auth_required
-async def get_stream_app(request: web.Request) -> web.Response:
-    registry = request.app['registry']
-    sess_id = request.match_info['sess_id']
-    access_key = request['keypair']['access_key']
-    service = request.match_info['app']
-
-    result = await asyncio.shield(
-        registry.get_service_apps(sess_id, access_key, service))
-    if result['status'] == 'failed':
-        msg = f"Failed to launch get extra info of service {service}: {result['error']}"
-        raise InternalServerError(msg)
-    return web.json_response(result['data'])
+    return web.json_response(resp)
 
 
 @server_status_required(READ_ALLOWED)
@@ -665,7 +671,6 @@ def create_app(default_cors_options):
     cors.add(add_route('GET', r'/kernel/{sess_id}/pty', stream_pty))
     cors.add(add_route('GET', r'/kernel/{sess_id}/execute', stream_execute))
     cors.add(add_route('GET', r'/kernel/{sess_id}/apps', get_stream_apps))
-    cors.add(add_route('GET', r'/kernel/{sess_id}/apps/{app}', get_stream_app))
     # internally both tcp/http proxies use websockets as API/agent-level transports,
     # and thus they have the same implementation here.
     cors.add(add_route('GET', r'/kernel/{sess_id}/httpproxy', stream_proxy))

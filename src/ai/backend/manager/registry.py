@@ -849,16 +849,6 @@ class AgentRegistry:
                     return None
                 return await coro
 
-    async def get_service_apps(self, sess_id, access_key, service):
-        async with self.handle_kernel_exception('execute', sess_id, access_key):
-            kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], None) as rpc:
-                coro = rpc.call.get_service_apps(str(kernel['id']), service)
-                if coro is None:
-                    log.warning('get_service_apps cancelled')
-                    return None
-                return await coro
-
     async def upload_file(self, sess_id, access_key, filename, payload):
         async with self.handle_kernel_exception('upload_file', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
