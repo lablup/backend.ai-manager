@@ -13,7 +13,7 @@ future UX improvements.
 import json
 from typing import (
     Optional, Union,
-    MutableMapping,
+    Mapping,
 )
 
 from aiohttp import web
@@ -25,9 +25,12 @@ class BackendError(web.HTTPError):
     aiohttp.web.HTTPError subclasses.
     '''
 
-    status_code = 500
-    error_type  = 'https://api.backend.ai/probs/general-error'
-    error_title = 'General Backend API Error.'
+    status_code: int = 500
+    error_type: str  = 'https://api.backend.ai/probs/general-error'
+    error_title: str = 'General Backend API Error.'
+
+    content_type: str
+    extra_msg: Optional[str]
 
     def __init__(self, extra_msg=None, extra_data=None, **kwargs):
         super().__init__(**kwargs)
@@ -35,8 +38,7 @@ class BackendError(web.HTTPError):
         self.empty_body = False
         self.content_type = 'application/problem+json'
         self.extra_msg = extra_msg
-        if extra_msg:
-            self.error_title += f' ({extra_msg})'
+        self.extra_data = extra_data
         body = {
             'type': self.error_type,
             'title': self.error_title,
@@ -49,6 +51,14 @@ class BackendError(web.HTTPError):
         if self.extra_msg:
             return f'{self.error_title} ({self.extra_msg})'
         return self.error_title
+
+    def __repr__(self):
+        if self.extra_msg:
+            return f'<{type(self).__name__}: {self.error_title} ({self.extra_msg})>'
+        return f'<{type(self).__name__}: {self.error_title}>'
+
+    def __reduce__(self):
+        return (type(self), (self.extra_msg, self.extra_data))
 
 
 class GenericNotFound(web.HTTPNotFound, BackendError):
@@ -208,9 +218,9 @@ class BackendAgentError(BackendError):
     }
 
     def __init__(self, agent_error_type: str,
-                 exc_info: Union[str, AgentError, Exception, None] = None):
+                 exc_info: Union[str, AgentError, Exception, Mapping[str, Optional[str]], None] = None):
         super().__init__()
-        agent_details: MutableMapping[str, Optional[str]]
+        agent_details: Mapping[str, Optional[str]]
         if not agent_error_type.startswith('https://'):
             agent_error_type = self._short_type_map[agent_error_type.upper()]
         self.args = (
@@ -248,11 +258,14 @@ class BackendAgentError(BackendError):
                 'title': 'Unexpected exception ocurred.',
                 'exception': repr(exc_info),
             }
+        elif isinstance(exc_info, Mapping):
+            agent_details = exc_info
         else:
             agent_details = {
                 'type': agent_error_type,
                 'title': None if exc_info is None else str(exc_info),
             }
+        self.agent_details = agent_details
         self.agent_error_type = agent_error_type
         self.agent_error_title = agent_details['title']
         self.agent_exception = agent_details.get('exception', '')
@@ -263,10 +276,17 @@ class BackendAgentError(BackendError):
         }).encode()
 
     def __str__(self):
-        s = f'{self.status_code} {self.reason}'
         if self.agent_exception:
-            s += f'\n-> Agent-side error: {self.agent_exception}'
-        return s
+            return f'{self.agent_error_title} ({self.agent_exception})'
+        return f'{self.agent_error_title}'
+
+    def __repr__(self):
+        if self.agent_exception:
+            return f'<{type(self).__name__}: {self.agent_error_title} ({self.agent_exception})>'
+        return f'<{type(self).__name__}: {self.agent_error_title}>'
+
+    def __reduce__(self):
+        return (type(self), (self.agent_error_type, self.agent_details))
 
 
 class KernelCreationFailed(web.HTTPInternalServerError, BackendAgentError):
