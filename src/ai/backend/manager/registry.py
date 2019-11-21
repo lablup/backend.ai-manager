@@ -378,6 +378,7 @@ class AgentRegistry:
                               internal_data: dict = None) -> KernelId:
 
         mounts = creation_config.get('mounts') or []
+        mount_map = creation_config.get('mount_map') or {}
         environ = creation_config.get('environ') or {}
         resource_opts = creation_config.get('resource_opts') or {}
         scaling_group = creation_config.get('scaling_group')
@@ -546,6 +547,7 @@ class AgentRegistry:
                 'resource_opts': resource_opts,
                 'environ': [f'{k}={v}' for k, v in environ.items()],
                 'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
+                'mount_map': mount_map,
                 'repl_in_port': 0,
                 'repl_out_port': 0,
                 'stdin_port': 0,
@@ -597,6 +599,7 @@ class AgentRegistry:
                     'resource_slots': sess_ctx.requested_slots.to_json(),
                     'idle_timeout': resource_policy['idle_timeout'],
                     'mounts': sess_ctx.mounts,
+                    'mount_map': sess_ctx.mount_map,
                     'environ': sess_ctx.environ,
                     'resource_opts': sess_ctx.resource_opts,
                     'startup_command': sess_ctx.startup_command,
@@ -1174,6 +1177,7 @@ class AgentRegistry:
             if additional_updates is not None:
                 updates.update(additional_updates)
             if not updates:
+                log.debug('sync_kernel_stats: Nothing to sync')
                 return
             query = (sa.update(kernels)
                        .values(updates)
