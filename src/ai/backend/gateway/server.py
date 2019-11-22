@@ -70,14 +70,17 @@ VALID_VERSIONS: Final = frozenset([
     # added domain/group/scaling-group
     # added domain/group/scaling-group ref. fields to user/keypair/vfolder objects
     'v4.20190615',
+
+    # added mount_map parameter when creating kernel
+    'v5.20191215'
 ])
 LATEST_REV_DATES: Final = {
     1: '20160915',
     2: '20170915',
     3: '20181215',
-    4: '20190615',
+    4: '20191215',
 }
-LATEST_API_VERSION: Final = 'v4.20190615'
+LATEST_API_VERSION: Final = 'v5.20191215'
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 

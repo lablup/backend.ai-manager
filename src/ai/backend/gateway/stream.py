@@ -14,8 +14,9 @@ import secrets
 from typing import (
     Any,
     Mapping,
+    MutableMapping,
     List, Tuple,
-    Set,
+    Set, Union,
 )
 import uuid
 from urllib.parse import urlparse
@@ -322,6 +323,12 @@ async def stream_execute(request: web.Request) -> web.StreamResponse:
     t.Dict({
         tx.AliasedKey(['app', 'service']): t.String,
         tx.AliasedKey(['port'], default=None): t.Null | t.Int[1024:65535],
+        tx.AliasedKey(['envs'], default=None): t.Null | t.String,  # stringified JSON
+                                                                   # e.g., '{"PASSWORD": "12345"}'
+        tx.AliasedKey(['arguments'], default=None): t.Null | t.String  # stringified JSON
+                                                                       # e.g., '{"-P": "12345"}'
+                                                                       # The value can be one of:
+                                                                       # None, str, List[str]
     }))
 async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
     registry = request.app['registry']
@@ -387,7 +394,12 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
     ping_cb = apartial(refresh_cb, kernel.id)
 
     try:
-        opts: Mapping[str, Any] = {}
+        opts: MutableMapping[str, Union[None, str, List[str]]] = {}
+        if params['arguments'] is not None:
+            opts['arguments'] = json.loads(params['arguments'])
+        if params['envs'] is not None:
+            opts['envs'] = json.loads(params['envs'])
+
         result = await asyncio.shield(
             registry.start_service(sess_id, access_key, service, opts))
         if result['status'] == 'failed':
@@ -407,6 +419,43 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
         raise
     finally:
         request.app['stream_proxy_handlers'][stream_key].discard(myself)
+
+
+@server_status_required(READ_ALLOWED)
+@auth_required
+async def get_stream_apps(request: web.Request) -> web.Response:
+    sess_id = request.match_info['sess_id']
+    access_key = request['keypair']['access_key']
+    resp = []
+
+    async with request.app['dbpool'].acquire() as conn, conn.begin():
+        query = (
+            sa.select([
+                kernels.c.service_ports,
+            ])
+            .select_from(kernels)
+            .where(
+                (kernels.c.sess_id == sess_id) &
+                (kernels.c.access_key == access_key)
+            )
+        )
+        result = await conn.execute(query)
+        row = await result.first()
+        for item in row['service_ports']:
+            response_dict = {
+                'name': item['name'],
+                'protocol': item['protocol'],
+                'ports': item['container_ports'],
+            }
+            if 'url_template' in item.keys():
+                response_dict['url_template'] = item['url_template']
+            if 'allowed_arguments' in item.keys():
+                response_dict['allowed_arguments'] = item['allowed_arguments']
+            if 'allowed_envs' in item.keys():
+                response_dict['allowed_envs'] = item['allowed_envs']
+            resp.append(response_dict)
+
+    return web.json_response(resp)
 
 
 @server_status_required(READ_ALLOWED)
@@ -621,6 +670,7 @@ def create_app(default_cors_options):
     cors.add(add_route('GET', r'/kernel/_/events', stream_events))
     cors.add(add_route('GET', r'/kernel/{sess_id}/pty', stream_pty))
     cors.add(add_route('GET', r'/kernel/{sess_id}/execute', stream_execute))
+    cors.add(add_route('GET', r'/kernel/{sess_id}/apps', get_stream_apps))
     # internally both tcp/http proxies use websockets as API/agent-level transports,
     # and thus they have the same implementation here.
     cors.add(add_route('GET', r'/kernel/{sess_id}/httpproxy', stream_proxy))
