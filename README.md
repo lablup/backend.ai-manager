@@ -254,3 +254,10 @@ configurations.  You can of course change those port numbers and ranges in the c
 | 6001                       | ZeroMQ-based RPC calls from managers to agents |
 | 6009                       | HTTP watcher API |
 | 30000-31000                | Port pool for in-container services |
+
+
+LICENSES
+--------
+
+[GNU Lesser General Public License](https://github.com/lablup/backend.ai-manager/blob/master/LICENSE)
+[Dependencies](https://github.com/lablup/backend.ai-manager/blob/master/DEPENDENCIES.md)
