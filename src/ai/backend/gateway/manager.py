@@ -116,7 +116,7 @@ async def fetch_manager_status(request: web.Request) -> web.Response:
 @check_api_params(
     t.Dict({
         t.Key('status'): tx.Enum(ManagerStatus, use_name=True),
-        t.Key('force_kill', default=False): t.Bool | t.ToBool,
+        t.Key('force_kill', default=False): t.ToBool,
     }))
 async def update_manager_status(request: web.Request, params: Any) -> web.Response:
     log.info('MANAGER.UPDATE_MANAGER_STATUS (status:{}, force_kill:{})',
