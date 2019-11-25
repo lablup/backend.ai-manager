@@ -291,7 +291,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @check_api_params(
     t.Dict({
-        t.Key('all', default=False): t.Bool | t.StrBool,
+        t.Key('all', default=False): t.Bool | t.ToBool,
         tx.AliasedKey(['group_id', 'groupId'], default=None): tx.UUID | t.String | t.Null,
     }),
 )
@@ -582,7 +582,7 @@ async def upload(request: web.Request, row: VFolderRow) -> web.Response:
 @check_api_params(
     t.Dict({
         t.Key('files'): t.List[t.String],
-        t.Key('recursive', default=False): t.Bool | t.StrBool,
+        t.Key('recursive', default=False): t.Bool | t.ToBool,
     }))
 async def delete_files(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     folder_name = request.match_info['name']
@@ -1372,7 +1372,7 @@ async def list_mounts(request: web.Request) -> web.Response:
         t.Key('options', default=None): t.String | t.Null,
         t.Key('scaling_group', default=None): t.String | t.Null,
         t.Key('fstab_path', default=None): t.String | t.Null,
-        t.Key('edit_fstab', default=False): t.Bool | t.StrBool,
+        t.Key('edit_fstab', default=False): t.Bool | t.ToBool,
     }),
 )
 async def mount_host(request: web.Request, params: Any) -> web.Response:
@@ -1490,7 +1490,7 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
         t.Key('name'): t.String,
         t.Key('scaling_group', default=None): t.String | t.Null,
         t.Key('fstab_path', default=None): t.String | t.Null,
-        t.Key('edit_fstab', default=False): t.Bool | t.StrBool,
+        t.Key('edit_fstab', default=False): t.Bool | t.ToBool,
     }),
 )
 async def umount_host(request: web.Request, params: Any) -> web.Response:
