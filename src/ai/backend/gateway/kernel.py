@@ -200,6 +200,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
         cancel_handler = request.app['event_dispatcher'].subscribe('kernel_cancelled', None,
                                                                    interrupt_wait)
 
+        mount_map: MutableMapping[str, MutableMapping[str, str]] = {name: {} for name in params['config']['mounts']}
         async with dbpool.acquire() as conn, conn.begin():
             if requester_access_key != owner_access_key:
                 # Admin or superadmin is creating sessions for another user.
@@ -285,10 +286,22 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 group_id = await qresult.scalar()
             if group_id is None:
                 raise InvalidAPIParameters('Invalid group')
+            # Add unmanaged vFolders' hostPath to mount_map config
+            query = (sa.select([vfolders.c.name, vfolders.c.host, vfolders.c.unmanaged_path])
+                       .select_from(vfolders)
+                       .where(vfolders.c.name.in_(params['config']['mounts'])))
+            qresult = await conn.execute(query)
+            rows = await qresult.fetchall()
+            for row in rows:
+                if not row.host and row.unmanaged_path:
+                    mount_map[row.name].update({'host_path': row.unmanaged_path})
 
         api_version = request['api_version']
         if 5 <= api_version[0]:
             creation_config = creation_config_v4.check(params['config'])
+            mount_path_map = creation_config.get('mount_map') or {}
+            for name, path in mount_path_map.items():
+                mount_map[name].update({'mount_path': path})
         elif (4, '20190315') <= api_version:
             creation_config = creation_config_v3.check(params['config'])
         elif 2 <= api_version[0] <= 4:
@@ -297,6 +310,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
             creation_config = creation_config_v1.check(params['config'])
         else:
             raise InvalidAPIParameters('API version not supported')
+        creation_config['mount_map'] = mount_map
+        log.debug('Creation config: {0}', json.dumps(creation_config))
 
         kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
             params['sess_id'], owner_access_key,
