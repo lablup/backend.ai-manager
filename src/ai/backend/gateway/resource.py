@@ -333,15 +333,22 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             nfs = list(set([mount[1] for mount in row.mounts]))
         device_type = set()
         smp = 0
+        gpu_mem_allocated = 0
         if row.attached_devices and row.attached_devices.get('cuda'):
             for dev_info in row.attached_devices['cuda']:
                 if dev_info.get('model_name'):
                     device_type.add(dev_info['model_name'])
                 smp += dev_info.get('smp', 0)
+                gpu_mem_allocated += dev_info.get('mem', 0)
         if row.resource_opts:
             shared_memory = int(row.resource_opts.get('shmem', 0))
         else:
             shared_memory = 0
+        gpu_allocated = 0
+        if 'cuda.devices' in row.occupied_slots:
+            gpu_allocated = row.occupied_slots['cuda.devices']
+        if 'cuda.shares' in row.occupied_slots:
+            gpu_allocated = row.occupied_slots['cuda.shares']
         c_info = {
             'id': str(row['id']),
             'name': row['sess_id'],
@@ -361,7 +368,9 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'used_days': (row['terminated_at'].astimezone(local_tz).toordinal() -
                           row['created_at'].astimezone(local_tz).toordinal() + 1),
             'device_type': list(device_type),
-            'smp': float(smp),  # TODO: GPU smp
+            'smp': float(smp),
+            'gpu_mem_allocated': float(gpu_mem_allocated),
+            'gpu_allocated': float(gpu_allocated),  # devices or shares
             'nfs': nfs,
             'image_id': row['image'],  # TODO: image id
             'image_name': row['image'],
@@ -384,6 +393,8 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
                 'g_io_write': c_info['io_write'],
                 'g_device_type': copy.deepcopy(c_info['device_type']),
                 'g_smp': c_info['smp'],
+                'g_gpu_mem_allocated': c_info['gpu_mem_allocated'],
+                'g_gpu_allocated': c_info['gpu_allocated'],
                 'c_infos': [c_info],
             }
         else:
@@ -402,6 +413,8 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
                     g_dev_type.append(device)
                     objs_per_group[group_id]['g_device_type'] = list(set(g_dev_type))
             objs_per_group[group_id]['g_smp'] += c_info['smp']
+            objs_per_group[group_id]['g_gpu_mem_allocated'] += c_info['gpu_mem_allocated']
+            objs_per_group[group_id]['g_gpu_allocated'] += c_info['gpu_allocated']
             objs_per_group[group_id]['c_infos'].append(c_info)
     return list(objs_per_group.values())
 
