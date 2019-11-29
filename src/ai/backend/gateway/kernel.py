@@ -297,7 +297,6 @@ async def create(request: web.Request, params: Any) -> web.Response:
             creation_config = creation_config_v1.check(params['config'])
         else:
             raise InvalidAPIParameters('API version not supported')
-        log.debug('Creation config: {0}', json.dumps(creation_config))
 
         kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
             params['sess_id'], owner_access_key,

@@ -291,6 +291,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'creator': request['user']['email'],
             'user': user_uuid,
             'group': group_uuid,
+            'unmanaged_path': ''
         }
         resp = {
             'id': folder_id,
@@ -474,7 +475,6 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
     else:
         is_owner = row['is_owner']
         permission = row['permission']
-    log.debug('Row: {0}', row)
     # TODO: handle nested directory structure
     folder_path = get_folder_hostpath(row, request.app)
     num_files = len(list(folder_path.iterdir()))
