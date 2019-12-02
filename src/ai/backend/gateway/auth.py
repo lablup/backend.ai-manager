@@ -480,7 +480,7 @@ async def update_password(request: web.Request, params: Any) -> web.Response:
     domain_name = request['user']['domain_name']
     email = request['user']['email']
     log_fmt = 'AUTH.UDPATE_PASSWORD(d:{}, email:{})'
-    log_args = (params['domain'], params['email'])
+    log_args = (domain_name, email)
     log.info(log_fmt, *log_args)
     dbpool = request.app['dbpool']
 
