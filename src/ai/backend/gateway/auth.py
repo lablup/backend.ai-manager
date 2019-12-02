@@ -491,6 +491,8 @@ async def update_password(request: web.Request, params: Any) -> web.Response:
     if params['new_password'] != params['new_password2']:
         log.info(log_fmt + ': new password mismtach', *log_args)
         return web.json_response({'error_msg': 'new password mismitch'}, status=400)
+
+    # Check password validaty if one of plugins provide CHECK_PASSWORD handler.
     for plugin in request.app['plugins'].values():
         hook_event_types = plugin.get_hook_event_types()
         hook_event_handlers = plugin.get_handlers()
