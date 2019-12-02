@@ -468,6 +468,56 @@ async def signout(request: web.Request, params: Any) -> web.Response:
     return web.json_response({})
 
 
+@atomic
+@auth_required
+@check_api_params(
+    t.Dict({
+        t.Key('old_password'): t.String,
+        t.Key('new_password'): t.String,
+        t.Key('new_password2'): t.String,
+    }))
+async def update_password(request: web.Request, params: Any) -> web.Response:
+    domain_name = request['user']['domain_name']
+    email = request['user']['email']
+    log_fmt = 'AUTH.UDPATE_PASSWORD(d:{}, email:{})'
+    log_args = (params['domain'], params['email'])
+    log.info(log_fmt, *log_args)
+    dbpool = request.app['dbpool']
+
+    user = await check_credential(dbpool, domain_name, email, params['old_password'])
+    if user is None:
+        log.info(log_fmt + ': old password mismtach', *log_args)
+        raise AuthorizationFailed('Old password mismatch')
+    if params['new_password'] != params['new_password2']:
+        log.info(log_fmt + ': new password mismtach', *log_args)
+        return web.json_response({'error_msg': 'new password mismitch'}, status=400)
+    for plugin in request.app['plugins'].values():
+        hook_event_types = plugin.get_hook_event_types()
+        hook_event_handlers = plugin.get_handlers()
+        for ev_types in hook_event_types:
+            if 'CHECK_PASSWORD' not in ev_types._member_names_:
+                continue
+            for ev_handlers in hook_event_handlers:
+                for ev_handler in ev_handlers:
+                    if 'CHECK_PASSWORD' in ev_types._member_names_ and \
+                            ev_types.CHECK_PASSWORD == ev_handler[0]:
+                        check_password = ev_handler[1]
+                        result = await check_password(params['new_password'])
+                        if not result['success']:
+                            reason = result.get('reason', 'too simple password')
+                            return web.json_response({'title': reason}, status=403)
+
+    async with dbpool.acquire() as conn:
+        # Update user password.
+        data = {
+            'password': params['new_password'],
+            'need_password_change': False,
+        }
+        query = (users.update().values(data).where(users.c.email == email))
+        result = await conn.execute(query)
+    return web.json_response({}, status=200)
+
+
 def create_app(default_cors_options):
     app = web.Application()
     app['prefix'] = 'auth'  # slashed to distinguish with "/vN/authorize"
@@ -483,6 +533,7 @@ def create_app(default_cors_options):
     cors.add(app.router.add_route('GET', '/role', get_role))
     cors.add(app.router.add_route('POST', '/signup', signup))
     cors.add(app.router.add_route('POST', '/signout', signout))
+    cors.add(app.router.add_route('POST', '/update-password', update_password))
     return app, [auth_middleware]
 
 
