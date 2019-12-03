@@ -1,6 +1,17 @@
 Changes
 =======
 
+19.09.7 (2019-12-03)
+--------------------
+
+* NEW: Add an API for self-updating the user password (#208)
+
+* FIX: Missing status filtering for ``ComputeSession.batch_load_detail()`` GQL resolver.
+
+* IMPROVE: Add the amount of GPU allocated and GPU memory to the usage statistics API.
+
+* IMPROVE: Explicitly return HTTP 404 when file was not found for the download-single API.
+
 19.09.6 (2019-11-11)
 --------------------
 
