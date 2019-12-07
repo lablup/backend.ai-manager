@@ -518,9 +518,12 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                                 domain_name=None, access_key=None,
                                 status=None):
         async with context['dbpool'].acquire() as conn:
-            # TODO: Extend to return terminated sessions (we need unique identifier).
-            #       We need a way to get kernel information other than RUNNING, such as PREPARING, ...
-            # status = KernelStatus[status] if status else KernelStatus['RUNNING']
+            if isinstance(status, str):
+                status_list = [KernelStatus[s] for s in status.split(',')]
+            elif isinstance(status, KernelStatus):
+                status_list = [status]
+            elif status is None:
+                status_list = [KernelStatus['RUNNING']]
             j = (kernels.join(groups, groups.c.id == kernels.c.group_id)
                         .join(users, users.c.uuid == kernels.c.user_uuid))
             query = (sa.select([kernels, groups.c.name, users.c.email])
@@ -532,7 +535,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             if access_key is not None:
                 query = query.where(kernels.c.access_key == access_key)
             if status is not None:
-                query = query.where(kernels.c.status == status)
+                query = query.where(kernels.c.status.in_(status_list))
             sess_info = []
             async for row in conn.execute(query):
                 o = ComputeSession.from_row(context, row)
