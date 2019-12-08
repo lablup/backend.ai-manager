@@ -78,7 +78,7 @@ vfolders = sa.Table(
     sa.Column('last_used', sa.DateTime(timezone=True), nullable=True),
     # To store creator information (email) for group vfolder.
     sa.Column('creator', sa.String(length=128), nullable=True),
-    # For unmanaged vFolder only. 
+    # For unmanaged vFolder only.
     sa.Column('unmanaged_path', sa.String(length=512), nullable=True),
     sa.Column('user', GUID, sa.ForeignKey('users.uuid'), nullable=True),
     sa.Column('group', GUID, sa.ForeignKey('groups.id'), nullable=True),
@@ -180,12 +180,16 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                 'unmanaged_path': row.unmanaged_path,
             })
         # Scan vfolders shared with me.
-        j = (vfolders.join(vfolder_permissions,
-                           vfolders.c.id == vfolder_permissions.c.vfolder,
-                           isouter=True)
-                     .join(users,
-                           vfolders.c.user == users.c.uuid,
-                           isouter=True))
+        j = (
+            vfolders.join(
+                vfolder_permissions,
+                vfolders.c.id == vfolder_permissions.c.vfolder,
+                isouter=True)
+            .join(
+                users,
+                vfolders.c.user == users.c.uuid,
+                isouter=True)
+        )
         query = (sa.select([
                        vfolders.c.name,
                        vfolders.c.id,

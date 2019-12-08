@@ -637,6 +637,129 @@ async def upload(request: web.Request, row: VFolderRow) -> web.Response:
 @vfolder_permission_required(VFolderPermission.RW_DELETE)
 @check_api_params(
     t.Dict({
+        t.Key('path'): t.String,
+        t.Key('size'): t.Int,
+    }))
+async def create_tus_upload_session(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
+    secret = request.app['config']['manager']['secret']
+    folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
+                   request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
+    session_id = uuid.uuid4().hex
+
+    folder_name = request.match_info['name']
+    access_key = request['keypair']['access_key']
+    log_fmt = 'VFOLDER.UPLOAD_SESSION (ak:{}, vf:{}, si:{})'
+    log_args = (access_key, folder_name, session_id)
+    log.info(log_fmt, *log_args)
+
+    upload_base = folder_path / ".upload"
+    if not upload_base.exists():
+        upload_base.mkdir()
+    upload_base_path = folder_path / ".upload" / session_id
+    Path(upload_base_path).touch()
+
+    t = params
+    t['host'] = row['host']
+    t['folder'] = row['id'].hex
+    t['session_id'] = session_id
+    t['exp'] = datetime.utcnow() + timedelta(days=1)  # TODO: make it configurable
+
+    token = jwt.encode(t, secret, algorithm='HS256').decode('UTF-8')
+    resp = {
+        'token': token,
+    }
+
+    return web.json_response(resp, status=200)
+
+
+async def tus_check_session(request):
+    try:
+        secret = request.app['config']['manager']['secret']
+        token = request.match_info['session']
+        params = jwt.decode(token, secret, algorithms=['HS256'])
+    except jwt.PyJWTError:
+        log.exception('jwt error while parsing "{}"', token)
+        raise InvalidAPIParameters('Could not validate the upload session token.')
+
+    headers = await tus_session_headers(request, params)
+    return web.Response(headers=headers)
+
+
+async def tus_upload_part(request):
+    try:
+        secret = request.app['config']['manager']['secret']
+        token = request.match_info['session']
+        params = jwt.decode(token, secret, algorithms=['HS256'])
+    except jwt.PyJWTError:
+        log.exception('jwt error while parsing "{}"', token)
+        raise InvalidAPIParameters('Could not validate the upload session token.')
+
+    headers = await tus_session_headers(request, params)
+
+    folder_path = (request.app['VFOLDER_MOUNT'] / params['host'] /
+                   request.app['VFOLDER_FSPREFIX'] / params['folder'])
+    upload_base = folder_path / ".upload"
+    target_filename = upload_base / params['session_id']
+
+    with open(target_filename, 'ab') as f:
+        while not request.content.at_eof():
+            chunk = await request.content.read(DEFAULT_CHUNK_SIZE)
+            f.write(chunk)
+
+    fs = Path(target_filename).stat().st_size
+    if fs >= params['size']:
+        target_path = folder_path / params['path']
+        Path(target_filename).rename(target_path)
+        try:
+            upload_base.rmdir()  # delete .upload directory if it is empty
+        except OSError:
+            pass
+
+    headers['Upload-Offset'] = str(fs)
+    return web.Response(status=204, headers=headers)
+
+
+async def tus_options(request):
+    headers = {}
+    headers["Access-Control-Allow-Origin"] = "*"
+    headers["Access-Control-Allow-Headers"] = \
+        "Tus-Resumable, Upload-Length, Upload-Metadata, Upload-Offset, Content-Type"
+    headers["Access-Control-Expose-Headers"] = \
+        "Tus-Resumable, Upload-Length, Upload-Metadata, Upload-Offset, Content-Type"
+    headers["Access-Control-Allow-Methods"] = "*"
+    headers["Tus-Resumable"] = "1.0.0"
+    headers["Tus-Version"] = "1.0.0"
+    headers["Tus-Max-Size"] = "107374182400"  # 100G TODO: move to settings
+    headers["X-Content-Type-Options"] = "nosniff"
+    return web.Response(headers=headers)
+
+
+async def tus_session_headers(request, params):
+    folder_path = (request.app['VFOLDER_MOUNT'] / params['host'] /
+                   request.app['VFOLDER_FSPREFIX'] / params['folder'])
+    upload_base = folder_path / ".upload"
+    base_file = upload_base / params['session_id']
+    if not Path(base_file).exists():
+        raise web.HTTPNotFound()
+    headers = {}
+    headers["Access-Control-Allow-Origin"] = "*"
+    headers["Access-Control-Allow-Headers"] = \
+        "Tus-Resumable, Upload-Length, Upload-Metadata, Upload-Offset, Content-Type"
+    headers["Access-Control-Expose-Headers"] = \
+        "Tus-Resumable, Upload-Length, Upload-Metadata, Upload-Offset, Content-Type"
+    headers["Access-Control-Allow-Methods"] = "*"
+    headers["Cache-Control"] = "no-store"
+    headers["Tus-Resumable"] = "1.0.0"
+    headers['Upload-Offset'] = str(Path(base_file).stat().st_size)
+    headers['Upload-Length'] = str(params['size'])
+    return headers
+
+
+@auth_required
+@server_status_required(READ_ALLOWED)
+@vfolder_permission_required(VFolderPermission.RW_DELETE)
+@check_api_params(
+    t.Dict({
         t.Key('files'): t.List[t.String],
         t.Key('recursive', default=False): t.ToBool,
     }))
@@ -760,7 +883,7 @@ async def request_download(request: web.Request, params: Any, row: VFolderRow) -
     p['file'] = params['file']
     p['host'] = row['host']
     p['id'] = row['id'].hex
-    p['exp'] = datetime.utcnow() + timedelta(minutes=2)
+    p['exp'] = datetime.utcnow() + timedelta(minutes=2)  # TODO: make it configurable
     token = jwt.encode(p, secret, algorithm='HS256').decode('UTF-8')
     resp = {
         'token': token,
@@ -1694,6 +1817,7 @@ def create_app(default_cors_options):
     cors.add(add_route('POST',   r'/{name}/rename', rename))
     cors.add(add_route('POST',   r'/{name}/mkdir', mkdir))
     cors.add(add_route('POST',   r'/{name}/upload', upload))
+    cors.add(add_route('POST',   r'/{name}/create_upload_session', create_tus_upload_session))
     cors.add(add_route('DELETE', r'/{name}/delete_files', delete_files))
     cors.add(add_route('GET',    r'/{name}/download', download))
     cors.add(add_route('GET',    r'/{name}/download_single', download_single))
@@ -1712,4 +1836,7 @@ def create_app(default_cors_options):
     cors.add(add_route('GET',    r'/_/mounts', list_mounts))
     cors.add(add_route('POST',   r'/_/mounts', mount_host))
     cors.add(add_route('DELETE', r'/_/mounts', umount_host))
+    add_route('OPTIONS', r'/_/tus/upload/{session}', tus_options)
+    add_route('HEAD',    r'/_/tus/upload/{session}', tus_check_session)
+    add_route('PATCH',   r'/_/tus/upload/{session}', tus_upload_part)
     return app, []
