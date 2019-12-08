@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 from pprint import pformat
 from typing import (
-    Any,
+    Any, Final,
     Mapping,
 )
 
@@ -16,7 +16,7 @@ from ai.backend.common.etcd import AsyncEtcd
 _max_cpu_count = os.cpu_count()
 _file_perm = (Path(__file__).parent / 'server.py').stat()
 
-DEFAULT_CHUNK_SIZE = 256 * 1024  # 256 KiB
+DEFAULT_CHUNK_SIZE: Final = 256 * 1024  # 256 KiB
 
 manager_config_iv = t.Dict({
     t.Key('db'): t.Dict({
@@ -33,7 +33,7 @@ manager_config_iv = t.Dict({
         t.Key('service-addr', default=('0.0.0.0', 8080)): tx.HostPortPair,
         t.Key('heartbeat-timeout', default=5.0): t.Float[1.0:],  # type: ignore
         t.Key('secret', default=None): t.Null | t.String,
-        t.Key('ssl-enabled', default=False): t.Bool | t.StrBool,
+        t.Key('ssl-enabled', default=False): t.ToBool,
         t.Key('ssl-cert', default=None): t.Null | tx.Path(type='file'),
         t.Key('ssl-privkey', default=None): t.Null | tx.Path(type='file'),
         t.Key('event-loop', default='asyncio'): t.Enum('asyncio', 'uvloop'),
@@ -44,13 +44,13 @@ manager_config_iv = t.Dict({
         t.Key('importer-image', default='lablup/importer:manylinux2010'): t.String,
     }).allow_extra('*'),
     t.Key('docker-registry'): t.Dict({
-        t.Key('ssl-verify', default=True): t.Bool | t.StrBool,
+        t.Key('ssl-verify', default=True): t.ToBool,
     }).allow_extra('*'),
     t.Key('logging'): t.Any,  # checked in ai.backend.common.logging
     t.Key('debug'): t.Dict({
-        t.Key('enabled', default=False): t.Bool | t.StrBool,
-        t.Key('log-events', default=False): t.Bool | t.StrBool,
-        t.Key('log-scheduler-ticks', default=False): t.Bool | t.StrBool,
+        t.Key('enabled', default=False): t.ToBool,
+        t.Key('log-events', default=False): t.ToBool,
+        t.Key('log-scheduler-ticks', default=False): t.ToBool,
     }).allow_extra('*'),
 }).merge(config.etcd_config_iv).allow_extra('*')
 
@@ -105,7 +105,7 @@ shared_config_iv = t.Dict({
 }).allow_extra('*')
 
 
-def load(config_path: Path = None, debug: bool = False):
+def load(config_path: Path = None, debug: bool = False) -> Mapping[str, Any]:
 
     # Determine where to read configuration.
     raw_cfg, cfg_src_path = config.read_from_file(config_path, 'manager')
@@ -157,7 +157,7 @@ def load(config_path: Path = None, debug: bool = False):
         return cfg
 
 
-async def load_shared(etcd: AsyncEtcd):
+async def load_shared(etcd: AsyncEtcd) -> Mapping[str, Any]:
     raw_cfg = await etcd.get_prefix('config')
     try:
         cfg = shared_config_iv.check(raw_cfg)

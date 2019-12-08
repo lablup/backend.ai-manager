@@ -66,6 +66,7 @@ setattr(VFolderPermission, 'OWNER_PERM', VFolderPermission.RW_DELETE)
 vfolders = sa.Table(
     'vfolders', metadata,
     IDColumn('id'),
+    # host will be '' if vFolder is unmanaged
     sa.Column('host', sa.String(length=128), nullable=False),
     sa.Column('name', sa.String(length=64), nullable=False),
     sa.Column('max_files', sa.Integer(), default=1000),
@@ -77,7 +78,8 @@ vfolders = sa.Table(
     sa.Column('last_used', sa.DateTime(timezone=True), nullable=True),
     # To store creator information (email) for group vfolder.
     sa.Column('creator', sa.String(length=128), nullable=True),
-
+    # For unmanaged vFolder only.
+    sa.Column('unmanaged_path', sa.String(length=512), nullable=True),
     sa.Column('user', GUID, sa.ForeignKey('users.uuid'), nullable=True),
     sa.Column('group', GUID, sa.ForeignKey('groups.id'), nullable=True),
 )
@@ -151,6 +153,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                        vfolders.c.user,
                        vfolders.c.group,
                        vfolders.c.creator,
+                       vfolders.c.unmanaged_path,
                        users.c.email,
                    ])
                    .select_from(j)
@@ -174,6 +177,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                 'group_name': None,
                 'is_owner': True,
                 'permission': VFolderPermission.OWNER_PERM,
+                'unmanaged_path': row.unmanaged_path,
             })
         # Scan vfolders shared with me.
         j = (
@@ -197,6 +201,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                        vfolders.c.user,
                        vfolders.c.group,
                        vfolders.c.creator,
+                       vfolders.c.unmanaged_path,
                        vfolder_permissions.c.permission,
                        users.c.email,
                    ])
@@ -223,6 +228,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                 'group_name': None,
                 'is_owner': False,
                 'permission': row.permission,
+                'unmanaged_path': row.unmanaged_path,
             })
 
     if 'group' in allowed_vfolder_types:
@@ -254,6 +260,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                        vfolders.c.user,
                        vfolders.c.group,
                        vfolders.c.creator,
+                       vfolders.c.unmanaged_path,
                        groups.c.name,
                    ], use_labels=True)
                    .select_from(j)
@@ -279,6 +286,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                 'group_name': row.groups_name,
                 'is_owner': is_owner,
                 'permission': perm,
+                'unmanaged_path': row.unmanaged_path,
             })
     return entries
 

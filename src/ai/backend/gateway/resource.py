@@ -13,6 +13,8 @@ import logging
 import re
 from typing import (
     Any,
+    Iterable,
+    Tuple,
     MutableMapping,
 )
 
@@ -43,6 +45,7 @@ from ..manager.models import (
     RESOURCE_OCCUPYING_KERNEL_STATUSES,
     RESOURCE_USAGE_KERNEL_STATUSES,
 )
+from .typing import CORSOptions, WebMiddleware
 from .utils import check_api_params
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.kernel'))
@@ -235,7 +238,8 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             })
 
         # Return group stats with zeros if not allowed.
-        allow_group_total = await request.app['registry'].config_server.get(f'config/api/resources/allow-group-total')
+        allow_group_total = \
+            await request.app['registry'].config_server.get(f'config/api/resources/allow-group-total')
         if allow_group_total != '':
             group_limits = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
             group_occupied = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
@@ -737,7 +741,7 @@ async def watcher_agent_restart(request: web.Request, params: Any) -> web.Respon
                     return web.Response(text=data, status=resp.status)
 
 
-def create_app(default_cors_options):
+def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()
     app['api_versions'] = (4,)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)

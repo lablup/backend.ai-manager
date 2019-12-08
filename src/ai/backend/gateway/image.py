@@ -1,6 +1,10 @@
 import base64
 import secrets
-from typing import Any
+from typing import (
+    Any,
+    Iterable,
+    Tuple,
+)
 
 from aiohttp import web
 import aiohttp_cors
@@ -24,6 +28,7 @@ from ..manager.models import (
     domains, groups, query_allowed_sgroups,
     association_groups_users as agus,
 )
+from .typing import CORSOptions, WebMiddleware
 from .utils import (
     check_api_params,
 )
@@ -420,15 +425,15 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
     }, status=200)
 
 
-async def init(app: web.Application):
+async def init(app: web.Application) -> None:
     pass
 
 
-async def shutdown(app: web.Application):
+async def shutdown(app: web.Application) -> None:
     pass
 
 
-def create_app(default_cors_options):
+def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)

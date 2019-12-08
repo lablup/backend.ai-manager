@@ -27,6 +27,8 @@ disabled-plugins = []
 
 importer-image = "lablup/importer:manylinux2010"
 
+event-loop = "asyncio"
+
 
 [docker-registry]
 ssl-verify = true
@@ -42,6 +44,7 @@ drivers = ["console"]
 "aiopg" = "WARNING"
 "aiohttp" = "INFO"
 "ai.backend" = "INFO"
+"alembic" = "INFO"
 
 [logging.console]
 colored = true

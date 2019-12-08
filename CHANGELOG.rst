@@ -1,6 +1,11 @@
 Changes
 =======
 
+19.12.0a1 (xxxx-xx-xx)
+----------------------
+
+* MAINTENANCE: Now it runs on Python 3.8 or higher.
+
 19.09.7 (2019-12-03)
 --------------------
 

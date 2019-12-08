@@ -13,6 +13,8 @@ from pathlib import Path
 import secrets
 from typing import (
     Any, Optional,
+    Iterable,
+    Tuple,
     Mapping, MutableMapping,
 )
 import uuid
@@ -51,6 +53,7 @@ from .exceptions import (
     InternalServerError,
 )
 from .auth import auth_required
+from .typing import CORSOptions, WebMiddleware
 from .utils import (
     current_loop, catch_unexpected, check_api_params, get_access_key_scopes,
 )
@@ -95,6 +98,18 @@ creation_config_v3 = t.Dict({
     tx.AliasedKey(['resource_opts', 'resourceOpts'], default=None):
         t.Null | t.Mapping(t.String, t.Any),
 })
+creation_config_v4 = t.Dict({
+    t.Key('mounts', default=None): t.Null | t.List(t.String),
+    tx.AliasedKey(['mount_map', 'mountMap'], default=None): t.Null | t.Mapping(t.String, t.String),
+    t.Key('environ', default=None): t.Null | t.Mapping(t.String, t.String),
+    tx.AliasedKey(['cluster_size', 'clusterSize'], default=None):
+        t.Null | t.Int[1:],
+    tx.AliasedKey(['scaling_group', 'scalingGroup'], default=None):
+        t.Null | t.String,
+    t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
+    tx.AliasedKey(['resource_opts', 'resourceOpts'], default=None):
+        t.Null | t.Mapping(t.String, t.Any),
+})
 
 
 @server_status_required(ALL_ALLOWED)
@@ -110,9 +125,9 @@ creation_config_v3 = t.Dict({
         tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
         t.Key('config', default=dict): t.Mapping(t.String, t.Any),
         t.Key('tag', default=None): t.Null | t.String,
-        t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.Bool | t.StrBool,
+        t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
         t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
-        t.Key('reuseIfExists', default=True) >> 'reuse': t.Bool | t.StrBool,
+        t.Key('reuseIfExists', default=True) >> 'reuse': t.ToBool,
         t.Key('startupCommand', default=None) >> 'startup_command': t.Null | t.String,
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }),
@@ -272,7 +287,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 raise InvalidAPIParameters('Invalid group')
 
         api_version = request['api_version']
-        if (4, '20190315') <= api_version:
+        if 5 <= api_version[0]:
+            creation_config = creation_config_v4.check(params['config'])
+        elif (4, '20190315') <= api_version:
             creation_config = creation_config_v3.check(params['config'])
         elif 2 <= api_version[0] <= 4:
             creation_config = creation_config_v2.check(params['config'])
@@ -324,14 +341,19 @@ async def create(request: web.Request, params: Any) -> web.Response:
                     row = await result.first()
                     if row['status'] == KernelStatus.RUNNING:
                         resp['status'] = 'RUNNING'
-                        resp['servicePorts'] = [
-                            {
+                        for item in row['service_ports']:
+                            response_dict = {
                                 'name': item['name'],
                                 'protocol': item['protocol'],
                                 'ports': item['container_ports'],
                             }
-                            for item in row['service_ports']
-                        ]
+                            if 'url_template' in item.keys():
+                                response_dict['url_template'] = item['url_template']
+                            if 'allowed_arguments' in item.keys():
+                                response_dict['allowed_arguments'] = item['allowed_arguments']
+                            if 'allowed_envs' in item.keys():
+                                response_dict['allowed_envs'] = item['allowed_envs']
+                            resp['servicePorts'].append(response_dict)
                     else:
                         resp['status'] = row['status'].name
 
@@ -945,7 +967,7 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
     })
 
 
-async def init(app: web.Application):
+async def init(app: web.Application) -> None:
     event_dispatcher = app['event_dispatcher']
     event_dispatcher.consume('kernel_preparing', app, handle_kernel_lifecycle)
     event_dispatcher.consume('kernel_pulling', app, handle_kernel_lifecycle)
@@ -968,7 +990,7 @@ async def init(app: web.Application):
         functools.partial(check_agent_lost, app), 1.0)
 
 
-async def shutdown(app: web.Application):
+async def shutdown(app: web.Application) -> None:
     app['agent_lost_checker'].cancel()
     await app['agent_lost_checker']
 
@@ -983,7 +1005,7 @@ async def shutdown(app: web.Application):
         task.cancel()
 
 
-def create_app(default_cors_options):
+def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)

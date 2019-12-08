@@ -378,6 +378,7 @@ class AgentRegistry:
                               internal_data: dict = None) -> KernelId:
 
         mounts = creation_config.get('mounts') or []
+        mount_map = creation_config.get('mount_map') or {}
         environ = creation_config.get('environ') or {}
         resource_opts = creation_config.get('resource_opts') or {}
         scaling_group = creation_config.get('scaling_group')
@@ -422,6 +423,7 @@ class AgentRegistry:
                     item['host'],
                     item['id'].hex,
                     item['permission'].value,
+                    item['unmanaged_path'] if item['unmanaged_path'] else ''
                 ))
             if mounts and set(mounts) > matched_mounts:
                 raise VFolderNotFound
@@ -546,6 +548,7 @@ class AgentRegistry:
                 'resource_opts': resource_opts,
                 'environ': [f'{k}={v}' for k, v in environ.items()],
                 'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
+                'mount_map': mount_map,
                 'repl_in_port': 0,
                 'repl_out_port': 0,
                 'stdin_port': 0,
@@ -560,6 +563,7 @@ class AgentRegistry:
                             sess_ctx: 'SessionContext',
                             agent_ctx: 'AgentAllocationContext') -> None:
 
+        auto_pull = await self.config_server.get('config/docker/image/auto_pull')
         image_info = await self.config_server.inspect_image(sess_ctx.image_ref)
         registry_url, registry_creds = \
             await get_registry_info(self.config_server.etcd,
@@ -596,10 +600,12 @@ class AgentRegistry:
                     'resource_slots': sess_ctx.requested_slots.to_json(),
                     'idle_timeout': resource_policy['idle_timeout'],
                     'mounts': sess_ctx.mounts,
+                    'mount_map': sess_ctx.mount_map,
                     'environ': sess_ctx.environ,
                     'resource_opts': sess_ctx.resource_opts,
                     'startup_command': sess_ctx.startup_command,
                     'internal_data': sess_ctx.internal_data,
+                    'auto_pull': auto_pull,
                 }
                 created_info = await rpc.call.create_kernel(str(sess_ctx.kernel_id),
                                                             config)
@@ -843,7 +849,7 @@ class AgentRegistry:
             async with RPCContext(kernel['agent_addr'], None) as rpc:
                 coro = rpc.call.start_service(str(kernel['id']), service, opts)
                 if coro is None:
-                    log.warning('stat_service cancelled')
+                    log.warning('start_service cancelled')
                     return None
                 return await coro
 
@@ -1171,6 +1177,9 @@ class AgentRegistry:
             await redis.execute_with_retries(lambda: _get_kstats_from_redis())
             if additional_updates is not None:
                 updates.update(additional_updates)
+            if not updates:
+                log.debug('sync_kernel_stats: Nothing to sync')
+                return
             query = (sa.update(kernels)
                        .values(updates)
                        .where(kernels.c.id == kernel_id))

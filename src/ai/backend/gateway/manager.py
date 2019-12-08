@@ -6,7 +6,9 @@ from typing import FrozenSet
 import sqlalchemy as sa
 import trafaret as t
 from typing import (
-    Any,
+    Any, Final,
+    Iterable,
+    Tuple,
 )
 
 from aiohttp import web
@@ -20,6 +22,7 @@ from ai.backend.common import validators as tx
 from . import ManagerStatus
 from .auth import superadmin_required
 from .exceptions import InvalidAPIParameters, ServerFrozen, ServiceUnavailable
+from .typing import CORSOptions, WebMiddleware
 from .utils import check_api_params
 from ..manager.models import kernels, KernelStatus
 
@@ -46,8 +49,8 @@ def server_status_required(allowed_status: FrozenSet[ManagerStatus]):
     return decorator
 
 
-READ_ALLOWED = frozenset({ManagerStatus.RUNNING, ManagerStatus.FROZEN})
-ALL_ALLOWED = frozenset({ManagerStatus.RUNNING})
+READ_ALLOWED: Final = frozenset({ManagerStatus.RUNNING, ManagerStatus.FROZEN})
+ALL_ALLOWED: Final = frozenset({ManagerStatus.RUNNING})
 
 
 class GQLMutationUnfrozenRequiredMiddleware:
@@ -113,7 +116,7 @@ async def fetch_manager_status(request: web.Request) -> web.Response:
 @check_api_params(
     t.Dict({
         t.Key('status'): tx.Enum(ManagerStatus, use_name=True),
-        t.Key('force_kill', default=False): t.Bool | t.StrBool,
+        t.Key('force_kill', default=False): t.ToBool,
     }))
 async def update_manager_status(request: web.Request, params: Any) -> web.Response:
     log.info('MANAGER.UPDATE_MANAGER_STATUS (status:{}, force_kill:{})',
@@ -145,7 +148,7 @@ async def shutdown(app: web.Application) -> None:
         await app['status_watch_task']
 
 
-def create_app(default_cors_options):
+def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()
     app['api_versions'] = (2, 3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
