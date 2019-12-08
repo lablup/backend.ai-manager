@@ -176,8 +176,16 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                 'permission': VFolderPermission.OWNER_PERM,
             })
         # Scan vfolders shared with me.
-        j = (vfolders.join(vfolder_permissions, vfolders.c.id == vfolder_permissions.c.vfolder, isouter=True)
-                     .join(users, vfolders.c.user == users.c.uuid, isouter=True))
+        j = (
+            vfolders.join(
+                vfolder_permissions,
+                vfolders.c.id == vfolder_permissions.c.vfolder,
+                isouter=True)
+            .join(
+                users,
+                vfolders.c.user == users.c.uuid,
+                isouter=True)
+        )
         query = (sa.select([
                        vfolders.c.name,
                        vfolders.c.id,

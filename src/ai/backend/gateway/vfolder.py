@@ -635,7 +635,7 @@ async def create_tus_upload_session(request: web.Request, params: Any, row: VFol
     t['host'] = row['host']
     t['folder'] = row['id'].hex
     t['session_id'] = session_id
-    t['exp'] = datetime.utcnow() + timedelta(days=1) #TODO: make it configurable
+    t['exp'] = datetime.utcnow() + timedelta(days=1)  # TODO: make it configurable
 
     token = jwt.encode(t, secret, algorithm='HS256').decode('UTF-8')
     resp = {
@@ -684,7 +684,7 @@ async def tus_upload_part(request):
         target_path = folder_path / params['path']
         Path(target_filename).rename(target_path)
         try:
-            upload_base.rmdir() # delete .upload directory if it is empty
+            upload_base.rmdir()  # delete .upload directory if it is empty
         except OSError:
             pass
 
@@ -695,8 +695,10 @@ async def tus_upload_part(request):
 async def tus_options(request):
     headers = {}
     headers["Access-Control-Allow-Origin"] = "*"
-    headers["Access-Control-Allow-Headers"] = "Tus-Resumable, Upload-Length, Upload-Metadata, Upload-Offset, Content-Type"
-    headers["Access-Control-Expose-Headers"] = "Tus-Resumable, Upload-Length, Upload-Metadata, Upload-Offset, Content-Type"
+    headers["Access-Control-Allow-Headers"] = \
+        "Tus-Resumable, Upload-Length, Upload-Metadata, Upload-Offset, Content-Type"
+    headers["Access-Control-Expose-Headers"] = \
+        "Tus-Resumable, Upload-Length, Upload-Metadata, Upload-Offset, Content-Type"
     headers["Access-Control-Allow-Methods"] = "*"
     headers["Tus-Resumable"] = "1.0.0"
     headers["Tus-Version"] = "1.0.0"
@@ -714,8 +716,10 @@ async def tus_session_headers(request, params):
         raise web.HTTPNotFound()
     headers = {}
     headers["Access-Control-Allow-Origin"] = "*"
-    headers["Access-Control-Allow-Headers"] = "Tus-Resumable, Upload-Length, Upload-Metadata, Upload-Offset, Content-Type"
-    headers["Access-Control-Expose-Headers"] = "Tus-Resumable, Upload-Length, Upload-Metadata, Upload-Offset, Content-Type"
+    headers["Access-Control-Allow-Headers"] = \
+        "Tus-Resumable, Upload-Length, Upload-Metadata, Upload-Offset, Content-Type"
+    headers["Access-Control-Expose-Headers"] = \
+        "Tus-Resumable, Upload-Length, Upload-Metadata, Upload-Offset, Content-Type"
     headers["Access-Control-Allow-Methods"] = "*"
     headers["Cache-Control"] = "no-store"
     headers["Tus-Resumable"] = "1.0.0"
@@ -855,7 +859,7 @@ async def request_download(request: web.Request, params: Any, row: VFolderRow) -
     p['file'] = params['file']
     p['host'] = row['host']
     p['id'] = row['id'].hex
-    p['exp'] = datetime.utcnow() + timedelta(minutes=2)     #TODO: make it configurable
+    p['exp'] = datetime.utcnow() + timedelta(minutes=2)  # TODO: make it configurable
     token = jwt.encode(p, secret, algorithm='HS256').decode('UTF-8')
     resp = {
         'token': token,
