@@ -423,6 +423,7 @@ class AgentRegistry:
                     item['host'],
                     item['id'].hex,
                     item['permission'].value,
+                    item['unmanaged_path'] if item['unmanaged_path'] else ''
                 ))
             if mounts and set(mounts) > matched_mounts:
                 raise VFolderNotFound
