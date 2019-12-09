@@ -51,8 +51,7 @@ RUN --mount=type=bind,source=wheelhouse,target=/root/wheelhouse \
 # Install ipython kernelspec
 RUN {{ runtime_path }} -m ipykernel install \
     --prefix={{ runtime_path.parent.parent }} \
-    --display-name "{{ brand }} on Backend.AI" && \
-    cat /usr/local/share/jupyter/kernels/python3/kernel.json
+    --display-name "{{ brand }} on Backend.AI"
 {%- endif %}
 
 LABEL ai.backend.kernelspec="1" \
