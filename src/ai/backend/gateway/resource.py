@@ -312,8 +312,9 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             sa.select([kernels, groups.c.name, users.c.email])
             .select_from(j)
             .where(
-                (kernels.c.terminated_at >= start_date) &
-                (kernels.c.terminated_at < end_date) &
+                (((kernels.c.terminated_at >= start_date) & (kernels.c.terminated_at < end_date)) |
+                 ((kernels.c.created_at >= start_date) & (kernels.c.created_at < end_date) &
+                  kernels.c.terminated_at.is_(None))) &
                 (kernels.c.status.in_(RESOURCE_USAGE_KERNEL_STATUSES))
             )
             .order_by(sa.asc(kernels.c.terminated_at))
@@ -331,6 +332,12 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
         nfs = None
         if row.mounts is not None:
             nfs = list(set([mount[1] for mount in row.mounts]))
+        if row['terminated_at'] is None:
+            used_time = used_days = None
+        else:
+            used_time = str(row['terminated_at'] - row['created_at'])
+            used_days = (row['terminated_at'].astimezone(local_tz).toordinal() - \
+                         row['created_at'].astimezone(local_tz).toordinal() + 1)
         device_type = set()
         smp = 0
         gpu_mem_allocated = 0
@@ -364,9 +371,8 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
                           if last_stat else 0),
             'io_read': int(last_stat['io_read']['current']) if last_stat else 0,
             'io_write': int(last_stat['io_write']['current']) if last_stat else 0,
-            'used_time': str(row['terminated_at'] - row['created_at']),
-            'used_days': (row['terminated_at'].astimezone(local_tz).toordinal() -
-                          row['created_at'].astimezone(local_tz).toordinal() + 1),
+            'used_time': used_time,
+            'used_days': used_days,
             'device_type': list(device_type),
             'smp': float(smp),
             'gpu_mem_allocated': float(gpu_mem_allocated),
@@ -376,6 +382,8 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'image_name': row['image'],
             'created_at': str(row['created_at']),
             'terminated_at': str(row['terminated_at']),
+            'status': row['status'].name,
+            'status_changed': str(row['status_changed']),
         }
         if group_id not in objs_per_group:
             objs_per_group[group_id] = {

@@ -64,6 +64,7 @@ RESOURCE_OCCUPYING_KERNEL_STATUSES = tuple(
 # statuses to consider when calculating historical resource usage
 RESOURCE_USAGE_KERNEL_STATUSES = (
     KernelStatus.TERMINATED,
+    KernelStatus.RUNNING,
 )
 
 DEAD_KERNEL_STATUSES = (
