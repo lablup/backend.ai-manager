@@ -26,11 +26,9 @@ def cli():
     pass
 
 
-@contextlib.contextmanager
-def etcd_ctx(cli_ctx):
+@contextlib.asynccontextmanager
+async def etcd_ctx(cli_ctx):
     config = cli_ctx.config
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     creds = None
     if config['etcd']['user']:
         creds = {
@@ -43,16 +41,12 @@ def etcd_ctx(cli_ctx):
     }
     etcd = AsyncEtcd(config['etcd']['addr'], config['etcd']['namespace'],
                      scope_prefix_map, credentials=creds)
-    with contextlib.closing(loop):
-        yield loop, etcd
-    asyncio.set_event_loop(None)
+    yield etcd
 
 
-@contextlib.contextmanager
-def config_ctx(cli_ctx):
+@contextlib.asynccontextmanager
+async def config_ctx(cli_ctx):
     config = cli_ctx.config
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     ctx = {}
     ctx['config'] = config
     # scope_prefix_map is created inside ConfigServer
@@ -60,21 +54,19 @@ def config_ctx(cli_ctx):
         ctx, config['etcd']['addr'],
         config['etcd']['user'], config['etcd']['password'],
         config['etcd']['namespace'])
-    raw_redis_config = loop.run_until_complete(config_server.etcd.get_prefix('config/redis'))
+    raw_redis_config = await config_server.etcd.get_prefix('config/redis')
     config['redis'] = redis_config_iv.check(raw_redis_config)
-    ctx['redis_image'] = loop.run_until_complete(aioredis.create_redis(
+    ctx['redis_image'] = await aioredis.create_redis(
         config['redis']['addr'].as_sockaddr(),
         password=config['redis']['password'] if config['redis']['password'] else None,
         timeout=3.0,
         encoding='utf8',
-        db=REDIS_IMAGE_DB))
-    with contextlib.closing(loop):
-        try:
-            yield loop, config_server
-        finally:
-            ctx['redis_image'].close()
-            loop.run_until_complete(ctx['redis_image'].wait_closed())
-    asyncio.set_event_loop(None)
+        db=REDIS_IMAGE_DB)
+    try:
+        yield config_server
+    finally:
+        ctx['redis_image'].close()
+        await ctx['redis_image'].wait_closed()
 
 
 @cli.command()
@@ -85,10 +77,11 @@ def config_ctx(cli_ctx):
 @click.pass_obj
 def put(cli_ctx, key, value, scope):
     '''Put a single key-value pair into the etcd.'''
-    with cli_ctx.logger, etcd_ctx(cli_ctx) as (loop, etcd):
-        loop.run_until_complete(
-            etcd.put(key, value, scope=scope))
-
+    async def _put():
+        async with etcd_ctx(cli_ctx) as etcd:
+            await etcd.put(key, value, scope=scope)
+    with cli_ctx.logger:
+        asyncio.run(_put())
 
 @cli.command()
 @click.argument('key', type=str)
@@ -102,17 +95,19 @@ def put_json(cli_ctx, key, file, scope):
     Put a JSON object from FILE to the etcd as flattened key-value pairs
     under the given KEY prefix.
     '''
-    with etcd_ctx(cli_ctx) as (loop, etcd):
-        with contextlib.closing(io.BytesIO()) as buf:
-            while True:
-                part = file.read(65536)
-                if not part:
-                    break
-                buf.write(part)
-            value = json.loads(buf.getvalue())
-            value = {f'{key}/{k}': v for k, v in value.items()}
-            loop.run_until_complete(
-                etcd.put_dict(value, scope=scope))
+    async def _put_json():
+        async with etcd_ctx(cli_ctx) as (loop, etcd):
+            with contextlib.closing(io.BytesIO()) as buf:
+                while True:
+                    part = file.read(65536)
+                    if not part:
+                        break
+                    buf.write(part)
+                value = json.loads(buf.getvalue())
+                value = {f'{key}/{k}': v for k, v in value.items()}
+                await etcd.pit_dict(value, scope=scope)
+    with cli_ctx.logger:
+        asyncio.run(_put_json())
 
 
 @cli.command()
@@ -127,15 +122,18 @@ def get(cli_ctx, key, prefix, scope):
     '''
     Get the value of a key in the configured etcd namespace.
     '''
-    with cli_ctx.logger, etcd_ctx(cli_ctx) as (loop, etcd):
-        if prefix:
-            data = loop.run_until_complete(etcd.get_prefix(key, scope=scope))
-            print(json.dumps(dict(data), indent=4))
-        else:
-            val = loop.run_until_complete(etcd.get(key, scope=scope))
-            if val is None:
-                sys.exit(1)
-            print(val)
+    async def _get():
+        async with etcd_ctx(cli_ctx) as etcd:
+            if prefix:
+                data = await etcd.get_prefix(key, scope=scope)
+                print(json.dumps(dict(data), indent=4))
+            else:
+                val = await etcd.get(key, scope=scope)
+                if val is None:
+                    sys.exit(1)
+                print(val)
+    with cli_ctx.logger:
+        asyncio.run(_get())
 
 
 @cli.command()
@@ -148,39 +146,43 @@ def get(cli_ctx, key, prefix, scope):
 @click.pass_obj
 def delete(cli_ctx, key, prefix, scope):
     '''Delete the key in the configured etcd namespace.'''
-    with cli_ctx.logger, etcd_ctx(cli_ctx) as (loop, etcd):
-        if prefix:
-            loop.run_until_complete(etcd.delete_prefix(key, scope=scope))
-        else:
-            loop.run_until_complete(etcd.delete(key, scope=scope))
+    async def _delete():
+        async with etcd_ctx(cli_ctx) as etcd:
+            if prefix:
+                await etcd.delete_prefix(key, scope=scope)
+            else:
+                await etcd.delete(key, scope=scope)
+    with cli_ctx.logger:
+        asyncio.run(_delete())
 
 
 @cli.command()
 @click.pass_obj
 def list_images(cli_ctx):
     '''List everything about images.'''
-    with cli_ctx.logger, config_ctx(cli_ctx) as (loop, config_server):
-        try:
-            items = loop.run_until_complete(
-                config_server.list_images())
-            pprint(items)
-        except Exception:
-            log.exception('An error occurred.')
-
+    async def _list_images():
+        async with config_ctx(cli_ctx) as config_server:
+            try:
+                items = await config_server.list_images()
+                pprint(items)
+            except Exception:
+                log.exception('An error occurred.')
+        asyncio.run(_list_images())
 
 @cli.command()
 @click.argument('reference')
 @click.pass_obj
 def inspect_image(cli_ctx, reference):
     '''List everything about images.'''
-    with cli_ctx.logger, config_ctx(cli_ctx) as (loop, config_server):
-        try:
-            item = loop.run_until_complete(
-                config_server.inspect_image(reference))
-            pprint(item)
-        except Exception:
-            log.exception('An error occurred.')
-
+    async def _inspect_image():
+        async with config_ctx(cli_ctx) as config_server:
+            try:
+                item = await config_server.inspect_image(reference)
+                pprint(item)
+            except Exception:
+                log.exception('An error occurred.')
+    with cli_ctx.logger:
+        asyncio.run(_inspect_image())
 
 @cli.command()
 @click.argument('reference')
@@ -189,13 +191,14 @@ def inspect_image(cli_ctx, reference):
 @click.pass_obj
 def set_image_resource_limit(cli_ctx, reference, slot_type, range_value):
     '''Set the MIN:MAX values of a SLOT_TYPE limit for the given image REFERENCE.'''
-    with cli_ctx.logger, config_ctx(cli_ctx) as (loop, config_server):
-        try:
-            loop.run_until_complete(
-                config_server.set_image_resource_limit(reference, slot_type, range_value))
-        except Exception:
-            log.exception('An error occurred.')
-
+    async def _set_image_resource_limit():
+        async with config_ctx(cli_ctx) as config_server:
+            try:
+                await config_server.set_image_resource_limit(reference, slot_type, range_value)
+            except Exception:
+                log.exception('An error occurred.')
+    with cli_ctx.logger:
+        asyncio.run(_set_image_resource_limit())
 
 @cli.command()
 @click.argument('registry')
@@ -206,13 +209,14 @@ def rescan_images(cli_ctx, registry):
 
     Pass the name (usually hostname or "lablup") of the Docker registry configured as REGISTRY.
     '''
-    with cli_ctx.logger, config_ctx(cli_ctx) as (loop, config_server):
-        try:
-            loop.run_until_complete(
-                config_server.rescan_images(registry))
-        except Exception:
-            log.exception('An error occurred.')
-
+    async def _rescan_images():
+        async with config_ctx(cli_ctx) as config_server:
+            try:
+                await config_server.rescan_images(registry)
+            except Exception:
+                log.exception('An error occurred.')
+    with cli_ctx.logger:
+        asyncio.run(_rescan_images())
 
 @cli.command()
 @click.argument('alias')
@@ -220,16 +224,19 @@ def rescan_images(cli_ctx, registry):
 @click.pass_obj
 def alias(cli_ctx, alias, target):
     '''Add an image alias from the given alias to the target image reference.'''
-    with cli_ctx.logger, config_ctx(cli_ctx) as (loop, config_server):
-        loop.run_until_complete(
-            config_server.alias(alias, target))
-
+    async def _alias():
+        async with config_ctx(cli_ctx) as config_server:
+            await config_server.alias(alias, target)
+    with cli_ctx.logger:
+        asyncio.run(_alias())
 
 @cli.command()
 @click.argument('alias')
 @click.pass_obj
 def dealias(cli_ctx, alias):
     '''Remove an alias.'''
-    with cli_ctx.logger, config_ctx(cli_ctx) as (loop, config_server):
-        loop.run_until_complete(
-            config_server.dealias(alias))
+    async def _dealias():
+        async with config_ctx(cli_ctx) as config_server:
+            await config_server.dealias(alias)
+    with cli_ctx.logger:
+        asyncio.run(_dealias())
