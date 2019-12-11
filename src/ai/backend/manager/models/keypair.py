@@ -4,6 +4,9 @@ from collections import OrderedDict
 import secrets
 from typing import Sequence
 
+from cryptography.hazmat.primitives import serialization as crypto_serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.backends import default_backend as crypto_default_backend
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
@@ -38,6 +41,10 @@ keypairs = sa.Table(
     sa.Column('rate_limit', sa.Integer),
     sa.Column('num_queries', sa.Integer, server_default='0'),
 
+    # SSH Keypairs.
+    sa.Column('ssh_public_key', sa.String(length=750), nullable=True),
+    sa.Column('ssh_private_key', sa.String(length=2000), nullable=True),
+
     ForeignKeyIDColumn('user', 'users.uuid', nullable=False),
     sa.Column('resource_policy', sa.String(length=256),
               sa.ForeignKey('keypair_resource_policies.name'),
@@ -59,6 +66,8 @@ class KeyPair(graphene.ObjectType):
     num_queries = graphene.Int()
     user = graphene.UUID()
 
+    ssh_public_key = graphene.String()
+
     vfolders = graphene.List('ai.backend.manager.models.VirtualFolder')
     compute_sessions = graphene.List(
         'ai.backend.manager.models.ComputeSession',
@@ -74,6 +83,7 @@ class KeyPair(graphene.ObjectType):
     def from_row(cls, row):
         if row is None:
             return None
+        ssh_public_key = row['ssh_public_key'][:20] + '...'
         return cls(
             user_id=row['user_id'],
             access_key=row['access_key'],
@@ -88,6 +98,7 @@ class KeyPair(graphene.ObjectType):
             rate_limit=row['rate_limit'],
             num_queries=row['num_queries'],
             user=row['user'],
+            ssh_public_key=ssh_public_key
         )
 
     async def resolve_vfolders(self, info):
@@ -300,3 +311,24 @@ def generate_keypair():
     ak = 'AKIA' + base64.b32encode(secrets.token_bytes(10)).decode('ascii')
     sk = secrets.token_urlsafe(30)
     return ak, sk
+
+
+def generate_ssh_keypair():
+    '''
+    Generate RSA keypair for SSH/SFTP connection.
+    '''
+    key = rsa.generate_private_key(
+        backend=crypto_default_backend(),
+        public_exponent=65537,
+        key_size=2048
+    )
+    private_key = key.private_bytes(
+        crypto_serialization.Encoding.PEM,
+        crypto_serialization.PrivateFormat.TraditionalOpenSSL,
+        crypto_serialization.NoEncryption()
+    ).decode("utf-8")
+    public_key = key.public_key().public_bytes(
+        crypto_serialization.Encoding.OpenSSH,
+        crypto_serialization.PublicFormat.OpenSSH
+    ).decode("utf-8")
+    return (public_key, private_key)
