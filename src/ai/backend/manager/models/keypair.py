@@ -83,7 +83,6 @@ class KeyPair(graphene.ObjectType):
     def from_row(cls, row):
         if row is None:
             return None
-        ssh_public_key = row['ssh_public_key'][:20] + '...'
         return cls(
             user_id=row['user_id'],
             access_key=row['access_key'],
@@ -98,7 +97,7 @@ class KeyPair(graphene.ObjectType):
             rate_limit=row['rate_limit'],
             num_queries=row['num_queries'],
             user=row['user'],
-            ssh_public_key=ssh_public_key
+            ssh_public_key=row['ssh_public_key'],
         )
 
     async def resolve_vfolders(self, info):
@@ -229,6 +228,7 @@ class CreateKeyPair(graphene.Mutation):
 
             # Create keypair.
             ak, sk = generate_keypair()
+            pubkey, privkey = generate_ssh_keypair()
             data = {
                 'user_id': user_id,
                 'access_key': ak,
@@ -240,6 +240,8 @@ class CreateKeyPair(graphene.Mutation):
                 'rate_limit': props.rate_limit,
                 'num_queries': 0,
                 'user': user_uuid,
+                'ssh_public_key': pubkey,
+                'ssh_private_key': privkey,
             }
             insert_query = (keypairs.insert().values(data))
             try:

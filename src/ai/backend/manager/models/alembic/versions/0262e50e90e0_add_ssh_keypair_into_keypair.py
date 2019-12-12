@@ -50,8 +50,8 @@ def upgrade():
     for row in rows:
         pubkey, privkey = generate_ssh_keypair()
         query = (sa.update(keypairs)
-                   .values(ssh_public_key=pubkey,
-                           ssh_private_key=privkey))
+                   .values(ssh_public_key=pubkey, ssh_private_key=privkey)
+                   .where(keypairs.c.access_key == row.access_key))
         conn.execute(query)
 
 
