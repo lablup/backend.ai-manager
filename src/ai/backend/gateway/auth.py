@@ -576,7 +576,7 @@ def create_app(default_cors_options):
     cors.add(app.router.add_route('POST', '/signout', signout))
     cors.add(app.router.add_route('POST', '/update-password', update_password))
     cors.add(app.router.add_route('GET', '/ssh-keypair', get_ssh_keypair))
-    cors.add(app.router.add_route('POST', '/ssh-keypair', refresh_ssh_keypair))
+    cors.add(app.router.add_route('PATCH', '/ssh-keypair', refresh_ssh_keypair))
     return app, [auth_middleware]
 
 
