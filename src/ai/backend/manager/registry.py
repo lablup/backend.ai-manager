@@ -526,6 +526,19 @@ class AgentRegistry:
 
         # Create kernel object in PENDING state.
         async with self.dbpool.acquire() as conn, conn.begin():
+            # Feed SSH keypair if exists.
+            query = (sa.select([keypairs.c.ssh_public_key, keypairs.c.ssh_private_key])
+                       .select_from(keypairs)
+                       .where(keypairs.c.access_key == access_key))
+            result = await conn.execute(query)
+            row  = await result.fetchone()
+            if row['ssh_public_key'] and row['ssh_private_key']:
+                internal_data = {} if internal_data is None else internal_data
+                internal_data['ssh_keypair'] = {
+                    'public_key': row['ssh_public_key'],
+                    'private_key': row['ssh_private_key'],
+                }
+
             kernel_id = uuid.uuid4()
             query = kernels.insert().values({
                 'id': kernel_id,

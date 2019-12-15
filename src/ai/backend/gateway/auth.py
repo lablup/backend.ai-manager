@@ -31,7 +31,7 @@ from ..manager.models import (
     keypairs, keypair_resource_policies, users,
 )
 from ..manager.models.user import UserRole, check_credential
-from ..manager.models.keypair import generate_keypair as _gen_keypair
+from ..manager.models.keypair import generate_keypair as _gen_keypair, generate_ssh_keypair
 from ..manager.models.group import association_groups_users, groups
 from .typing import CORSOptions, WebMiddleware
 from .utils import check_api_params, set_handler_attr, get_handler_attr
@@ -525,6 +525,45 @@ async def update_password(request: web.Request, params: Any) -> web.Response:
     return web.json_response({}, status=200)
 
 
+@atomic
+@auth_required
+async def get_ssh_keypair(request: web.Request) -> web.Response:
+    domain_name = request['user']['domain_name']
+    access_key = request['keypair']['access_key']
+    log_fmt = 'AUTH.GET_SSH_KEYPAIR(d:{}, ak:{})'
+    log_args = (domain_name, access_key)
+    log.info(log_fmt, *log_args)
+    dbpool = request.app['dbpool']
+    async with dbpool.acquire() as conn:
+        # Get SSH public key. Return partial string from the public key just for checking.
+        query = (sa.select([keypairs.c.ssh_public_key])
+                   .where(keypairs.c.access_key == access_key))
+        pubkey = await conn.scalar(query)
+    return web.json_response({'ssh_public_key': pubkey}, status=200)
+
+
+@atomic
+@auth_required
+async def refresh_ssh_keypair(request: web.Request) -> web.Response:
+    domain_name = request['user']['domain_name']
+    access_key = request['keypair']['access_key']
+    log_fmt = 'AUTH.REFRESH_SSH_KEYPAIR(d:{}, ak:{})'
+    log_args = (domain_name, access_key)
+    log.info(log_fmt, *log_args)
+    dbpool = request.app['dbpool']
+    async with dbpool.acquire() as conn:
+        pubkey, privkey = generate_ssh_keypair()
+        data = {
+            'ssh_public_key': pubkey,
+            'ssh_private_key': privkey,
+        }
+        query = (keypairs.update()
+                         .values(data)
+                         .where(keypairs.c.access_key == access_key))
+        await conn.execute(query)
+    return web.json_response(data, status=200)
+
+
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()
     app['prefix'] = 'auth'  # slashed to distinguish with "/vN/authorize"
@@ -541,6 +580,8 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     cors.add(app.router.add_route('POST', '/signup', signup))
     cors.add(app.router.add_route('POST', '/signout', signout))
     cors.add(app.router.add_route('POST', '/update-password', update_password))
+    cors.add(app.router.add_route('GET', '/ssh-keypair', get_ssh_keypair))
+    cors.add(app.router.add_route('PATCH', '/ssh-keypair', refresh_ssh_keypair))
     return app, [auth_middleware]
 
 

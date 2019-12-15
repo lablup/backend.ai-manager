@@ -56,8 +56,7 @@ RUN --mount=type=bind,source=wheelhouse,target=/root/wheelhouse \
 # Install ipython kernelspec
 RUN {{ runtime_path }} -m ipykernel install \
     --prefix={{ runtime_path.parent.parent }} \
-    --display-name "{{ brand }} on Backend.AI" && \
-    cat /usr/local/share/jupyter/kernels/python3/kernel.json
+    --display-name "{{ brand }} on Backend.AI"
 {%- endif %}
 
 LABEL ai.backend.kernelspec="1" \
@@ -278,7 +277,7 @@ async def get_import_image_form(request: web.Request) -> web.Response:
         t.Key('preferredSharedMemory', default='64m'): tx.BinarySize,
         t.Key('supportedAccelerators'): t.List(t.String),
         t.Key('runtimeType'): t.Enum('python'),
-        t.Key('runtimePath'): tx.Path(type='file', allow_nonexisting=True),
+        t.Key('runtimePath'): tx.Path(type='file', allow_nonexisting=True, resolve=False),
         t.Key('CPUCountEnvs'): t.List(t.String),
         t.Key('servicePorts', default=[]): t.List(t.Dict({
             t.Key('name'): t.String,
