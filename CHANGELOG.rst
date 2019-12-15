@@ -1,6 +1,21 @@
 Changes
 =======
 
+19.09.8 (2019-12-16)
+--------------------
+
+* NEW: Keypair-specific SSH keypair to access intrinsic SSH service ports (#211)
+
+  - By default they are random-generated and can only be regenerated.
+  - Manual configuration will be supported in the future.
+  - Only used if ".ssh" vfolder is not mounted.
+
+* FIX: Corruption of the runtime path when importing an image due to inadvertent resolving
+  of the path in the host-side.
+
+* IMPROVE: Include statistics for running kernels (in addition to terminated ones)
+  in the usage API.
+
 19.09.7 (2019-12-03)
 --------------------
 
