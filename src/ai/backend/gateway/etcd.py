@@ -145,7 +145,10 @@ import yaml
 import yarl
 
 from ai.backend.common.identity import get_instance_id
-from ai.backend.common.docker import ImageRef, get_known_registries
+from ai.backend.common.docker import (
+    ImageRef, get_known_registries,
+    MIN_KERNELSPEC, MAX_KERNELSPEC,
+)
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import BinarySize, ResourceSlot
 from ai.backend.common.exception import UnknownImageReference
@@ -376,8 +379,11 @@ class ConfigServer:
                         labels.update(raw_labels)
 
             log.debug('checking image repository {}:{}', image, tag)
-            if not labels.get('ai.backend.kernelspec'):
+            if 'ai.backend.kernelspec' not in labels:
                 # Skip non-Backend.AI kernel images
+                return
+            if not (MIN_KERNELSPEC <= int(labels['ai.backend.kernelspec']) <= MAX_KERNELSPEC):
+                # Skip unsupported kernelspec images
                 return
 
             log.info('Updating metadata for {0}:{1}', image, tag)
