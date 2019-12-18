@@ -6,6 +6,12 @@ Changes
 
 * MAINTENANCE: Now it runs on Python 3.8 or higher.
 
+19.09.9 (2019-12-18)
+--------------------
+
+* IMPROVE: Skip containers and images with a unsupported (future) kernelspec version.
+  (lablup/backend.ai#80)
+
 19.09.8 (2019-12-16)
 --------------------
 
