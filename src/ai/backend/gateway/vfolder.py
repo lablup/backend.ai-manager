@@ -224,11 +224,11 @@ async def create(request: web.Request, params: Any) -> web.Response:
         if not unmanaged_path:
             # Check resource policy's allowed_vfolder_hosts
             allowed_hosts = await get_allowed_vfolder_hosts_by_group(conn, resource_policy,
-                                                                    domain_name, group_id)
+                                                                     domain_name, group_id)
             if folder_host not in allowed_hosts:
                 raise InvalidAPIParameters('You are not allowed to use this vfolder host.')
             vfroot = (request.app['VFOLDER_MOUNT'] / folder_host /
-                    request.app['VFOLDER_FSPREFIX'])
+                      request.app['VFOLDER_FSPREFIX'])
             if not vfroot.is_dir():
                 raise InvalidAPIParameters(f'Invalid vfolder host: {folder_host}')
 
@@ -241,7 +241,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 raise InvalidAPIParameters('You cannot create more vfolders.')
 
         # Prevent creation of vfolder with duplicated name.
-        extra_vf_conds=[vfolders.c.name == params['name']]
+        extra_vf_conds = [vfolders.c.name == params['name']]
         if not unmanaged_path:
             extra_vf_conds.append(vfolders.c.host == folder_host)
         entries = await query_accessible_vfolders(
@@ -275,9 +275,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
         try:
             folder_id = uuid.uuid4().hex
             if not unmanaged_path:
-                # Try to create actual only if vFolder is managed one 
+                # Try to create actual only if vFolder is managed one
                 folder_path = (request.app['VFOLDER_MOUNT'] / folder_host /
-                            request.app['VFOLDER_FSPREFIX'] / folder_id)
+                               request.app['VFOLDER_FSPREFIX'] / folder_id)
                 folder_path.mkdir(parents=True, exist_ok=True)
         except OSError:
             raise VFolderCreationFailed
@@ -1375,7 +1375,7 @@ async def update_shared_vfolder(request: web.Request, params: Any) -> web.Respon
                    .where(vfolder_permissions.c.vfolder == vfolder_id)
                    .where(vfolder_permissions.c.user == user_uuid))
         await conn.execute(query)
-    resp = {'msg': f'shared vfolder permission updated'}
+    resp = {'msg': 'shared vfolder permission updated'}
     return web.json_response(resp, status=200)
 
 

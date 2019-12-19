@@ -40,7 +40,7 @@ class VFolderPermission(str, enum.Enum):
 class VFolderPermissionValidator(t.Trafaret):
     def check_and_return(self, value: Any) -> str:
         if value not in ['ro', 'rw', 'wd']:
-            self._failure(f'one of "ro", "rw", or "wd" required', value=value)
+            self._failure('one of "ro", "rw", or "wd" required', value=value)
         return value
 
 
