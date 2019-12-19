@@ -903,7 +903,7 @@ async def download_with_token(request) -> web.StreamResponse:
         raise InvalidAPIParameters('Could not validate the download token.')
 
     assert params.get('file'), 'no file(s) specified!'
-    fn = params.get('file')
+    fn = params.get('file', '')
     log.info('VFOLDER.DOWNLOAD_WITH_TOKEN (token:{}, path:{})', token, fn)
     dbpool = request.app['dbpool']
     async with dbpool.acquire() as conn:
