@@ -45,14 +45,14 @@ async def query_accessible_task_templates(conn, user_uuid, *,
                     ])
                     .select_from(j)
                     .where(task_templates.c.user_uuid == user_uuid)
-                    .where(task_templates.c.is_active == True))
+                    .where(task_templates.c.is_active))
         if extra_conds is not None:
             query = query.where(extra_conds)
         result = await conn.execute(query)
         async for row in result:
             entries.append({
                 'name': row.name,
-                'id': row.id, 
+                'id': row.id,
                 'created_at': row.created_at,
                 'is_owner': True,
                 'user': str(row.user_uuid) if row.user_uuid else None,
@@ -88,7 +88,7 @@ async def query_accessible_task_templates(conn, user_uuid, *,
                     ], use_labels=True)
                     .select_from(j)
                     .where(task_templates.c.group_id.in_(group_ids))
-                    .where(task_templates.c.is_active == True))
+                    .where(task_templates.c.is_active))
         if extra_conds is not None:
             query = query.where(extra_conds)
         if 'user' in allowed_types:
@@ -98,7 +98,7 @@ async def query_accessible_task_templates(conn, user_uuid, *,
         async for row in result:
             entries.append({
                 'name': row.task_templates_name,
-                'id': row.task_templates_id, 
+                'id': row.task_templates_id,
                 'created_at': row.task_templates_created_at,
                 'is_owner': is_owner,
                 'user': str(row.task_templates_user_uuid) if row.task_templates_user_uuid else None,

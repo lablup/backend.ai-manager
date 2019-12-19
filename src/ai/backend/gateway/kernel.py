@@ -136,12 +136,13 @@ overwritten_param_check = t.Dict({
 
 @server_status_required(ALL_ALLOWED)
 @auth_required
-@check_api_params(t.Dict({
-        t.Key('clientSessionToken', default=None) >> 'sess_id':
-            t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
+@check_api_params(t.Dict(
+    {
+        t.Key('clientSessionToken',
+              default=None) >> 'sess_id': t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
         tx.AliasedKey(['image', 'lang'], default=None): t.Null | t.String,
-        tx.AliasedKey(['type', 'sessionType'], default='interactive') >> 'sess_type':
-            tx.Enum(SessionTypes),
+        tx.AliasedKey(['type', 'sessionType'],
+                      default='interactive') >> 'sess_type': tx.Enum(SessionTypes),
         tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
         tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
         t.Key('config', default=dict): t.Mapping(t.String, t.Any),
@@ -153,7 +154,8 @@ overwritten_param_check = t.Dict({
         tx.AliasedKey(['bootstrap_script', 'bootstrapScript'], default=None): t.Null | t.String,
         t.Key('owner_access_key', default=None): t.Null | t.String,
         tx.AliasedKey(['template_id', 'templateId'], default=None): t.Null | tx.UUID
-    }), loads=_json_loads)
+    }
+), loads=_json_loads)
 async def create(request: web.Request, params: Any) -> web.Response:
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
@@ -172,9 +174,12 @@ async def create(request: web.Request, params: Any) -> web.Response:
 
     if params['template_id']:
         async with dbpool.acquire() as conn, conn.begin():
-            query = (sa.select([task_templates.c.template])
-                       .select_from(task_templates)
-                       .where((task_templates.c.id == params['template_id']) & task_templates.c.is_active))
+            query = (
+                        sa.select([task_templates.c.template])
+                          .select_from(task_templates)
+                          .where((task_templates.c.id == params['template_id']) &
+                                  task_templates.c.is_active)
+                    )
             template = await conn.scalar(query)
             if not template:
                 raise TaskTemplateNotFound
@@ -190,23 +195,30 @@ async def create(request: web.Request, params: Any) -> web.Response:
         elif template['spec']['sess_type'] == 'batch':
             param_from_template['sess_type'] = SessionTypes.BATCH
 
-        if tag := template['metadata'].get('tag'):
+        # TODO: Remove `type: ignore` when mypy supports type inference for walrus operator
+        # Check https://github.com/python/mypy/issues/7316
+        # TODO: remove `NOQA` when flake8 supports Python 3.8 and walrus operator
+        # Check https://gitlab.com/pycqa/flake8/issues/599
+        if tag := template['metadata'].get('tag'):  # noqa
             param_from_template['tag'] = tag
-        if runtime_opt := template['spec']['kernel']['run']:
-            if bootstrap := runtime_opt['bootstrap']:
+        if runtime_opt := template['spec']['kernel']['run']:  # noqa
+            if bootstrap := runtime_opt['bootstrap']:  # noqa
                 param_from_template['bootstrap_script'] = bootstrap
-            if startup := runtime_opt['startup_command']:
+            if startup := runtime_opt['startup_command']:  # noqa
                 param_from_template['startup_command'] = startup
 
         config_from_template: MutableMapping[Any, Any] = {}
-        if mounts := template['spec'].get('mounts'):
+        if mounts := template['spec'].get('mounts'):  # noqa
             config_from_template['mounts'] = list(mounts.keys())
-            config_from_template['mount_map'] = {key: value for (key, value) in mounts.items() if len(value) > 0}
-        if environ := template['spec']['kernel'].get('environ'):
+            config_from_template['mount_map'] = {
+                key: value
+                for (key, value) in mounts.items()
+                if len(value) > 0
+            }
+        if environ := template['spec']['kernel'].get('environ'):  # noqa
             config_from_template['environ'] = environ
-        if resources := template['spec'].get('resources'):
+        if resources := template['spec'].get('resources'):  # noqa
             config_from_template['resources'] = resources
-
 
         drop_falsey = lambda path, key, value: bool(value)
         override_config = remap(dict(params['config']), visit=drop_falsey)
@@ -224,23 +236,23 @@ async def create(request: web.Request, params: Any) -> web.Response:
             raise InvalidAPIParameters(e2)
         params['config'] = config_from_template
 
-        if git := template['spec']['kernel']['git']:
-            if _dest := git.get('dest_dir'):
+        if git := template['spec']['kernel']['git']:  # noqa
+            if _dest := git.get('dest_dir'):  # noqa
                 target = _dest
             else:
                 target = git['repository'].split('/')[-1]
 
             cmd_builder = 'git clone '
-            if credential := git.get('credential'):
+            if credential := git.get('credential'):  # noqa
                 proto, url = git['repository'].split('://')
                 cmd_builder += f'{proto}://{credential["username"]}:{credential["password"]}@{url}'
             else:
                 cmd_builder += git['repository']
-            if branch := git.get('branch'):
+            if branch := git.get('branch'):  # noqa
                 cmd_builder += f' -b {branch}'
             cmd_builder += f' {target}\n'
 
-            if commit := git.get('commit'):
+            if commit := git.get('commit'):  # noqa
                 cmd_builder = 'CWD=$(pwd)\n' + cmd_builder
                 cmd_builder += f'cd {target}\n'
                 cmd_builder += f'git checkout {commit}\n'

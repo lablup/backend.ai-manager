@@ -83,6 +83,7 @@ def put(cli_ctx, key, value, scope):
     with cli_ctx.logger:
         asyncio.run(_put())
 
+
 @cli.command()
 @click.argument('key', type=str)
 @click.argument('file', type=click.File('rb'))
@@ -169,6 +170,7 @@ def list_images(cli_ctx):
                 log.exception('An error occurred.')
         asyncio.run(_list_images())
 
+
 @cli.command()
 @click.argument('reference')
 @click.pass_obj
@@ -183,6 +185,7 @@ def inspect_image(cli_ctx, reference):
                 log.exception('An error occurred.')
     with cli_ctx.logger:
         asyncio.run(_inspect_image())
+
 
 @cli.command()
 @click.argument('reference')
@@ -199,6 +202,7 @@ def set_image_resource_limit(cli_ctx, reference, slot_type, range_value):
                 log.exception('An error occurred.')
     with cli_ctx.logger:
         asyncio.run(_set_image_resource_limit())
+
 
 @cli.command()
 @click.argument('registry')
@@ -218,6 +222,7 @@ def rescan_images(cli_ctx, registry):
     with cli_ctx.logger:
         asyncio.run(_rescan_images())
 
+
 @cli.command()
 @click.argument('alias')
 @click.argument('target')
@@ -229,6 +234,7 @@ def alias(cli_ctx, alias, target):
             await config_server.alias(alias, target)
     with cli_ctx.logger:
         asyncio.run(_alias())
+
 
 @cli.command()
 @click.argument('alias')
