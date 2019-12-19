@@ -75,6 +75,7 @@ class SessionContext:
     environ: Mapping[str, str]
     mounts: Sequence[str]
     mount_map: Mapping[str, str]
+    bootstrap_script: Optional[str]
     startup_command: Optional[str]
     internal_data: Optional[Mapping[str, Any]]
 
@@ -542,6 +543,7 @@ class SessionScheduler(aobject):
                 kernels.c.environ,
                 kernels.c.mounts,
                 kernels.c.mount_map,
+                kernels.c.bootstrap_script,
                 kernels.c.startup_command,
                 kernels.c.internal_data,
                 keypairs.c.resource_policy,
@@ -568,6 +570,7 @@ class SessionScheduler(aobject):
                 resource_opts=row['resource_opts'],
                 requested_slots=row['occupied_slots'],
                 internal_data=row['internal_data'],
+                bootstrap_script=row['bootstrap_script'],
                 target_sgroup_names=[],
                 environ={
                     k: v for k, v

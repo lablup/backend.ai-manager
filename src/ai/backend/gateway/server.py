@@ -394,6 +394,7 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         '.manager',
         '.resource',
         '.scaling_group',
+        '.task_template',
         '.image',
     ]
 

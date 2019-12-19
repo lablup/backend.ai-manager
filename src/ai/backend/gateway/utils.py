@@ -20,6 +20,7 @@ from typing import (
 from aiohttp import web
 import trafaret as t
 import sqlalchemy as sa
+import yaml
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import AccessKey
@@ -77,19 +78,24 @@ async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tup
 
 
 def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None) -> Any:
-
     # FIXME: replace ... with [web.Request, Any...] in the future mypy
     def wrap(handler: Callable[..., Awaitable[web.Response]]):
 
         @functools.wraps(handler)
         async def wrapped(request: web.Request, *args, **kwargs) -> web.Response:
+            params: Any = {}
+            body: str = ''
             try:
                 if request.can_read_body:
-                    params = await request.json(loads=loads or json.loads)
+                    body = await request.text()
+                    if request.content_type == 'text/yaml':
+                        params = yaml.load(body, Loader=yaml.BaseLoader)
+                    else:
+                        params = (loads or json.loads)(body)
                 else:
                     params = request.query
                 params = checker.check(params)
-            except json.decoder.JSONDecodeError:
+            except (json.decoder.JSONDecodeError, yaml.YAMLError, yaml.MarkedYAMLError):
                 raise InvalidAPIParameters('Malformed body')
             except t.DataError as e:
                 raise InvalidAPIParameters(f'Input validation error',

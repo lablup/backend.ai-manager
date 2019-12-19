@@ -370,6 +370,7 @@ class AgentRegistry:
                               creation_config: dict,
                               resource_policy: dict, *,
                               domain_name: str,
+                              bootstrap_script=str,
                               group_id: uuid.UUID,
                               user_uuid: str,
                               user_role: str,
@@ -562,6 +563,7 @@ class AgentRegistry:
                 'environ': [f'{k}={v}' for k, v in environ.items()],
                 'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
                 'mount_map': mount_map,
+                'bootstrap_script': bootstrap_script,
                 'repl_in_port': 0,
                 'repl_out_port': 0,
                 'stdin_port': 0,
@@ -616,6 +618,7 @@ class AgentRegistry:
                     'mount_map': sess_ctx.mount_map,
                     'environ': sess_ctx.environ,
                     'resource_opts': sess_ctx.resource_opts,
+                    'bootstrap_script': sess_ctx.bootstrap_script,
                     'startup_command': sess_ctx.startup_command,
                     'internal_data': sess_ctx.internal_data,
                     'auto_pull': auto_pull,
