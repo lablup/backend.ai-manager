@@ -373,8 +373,8 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'disk_allocated': 0,  # TODO: disk quota limit
             'disk_used': (int(last_stat['io_scratch_size']['stats.max'])
                           if last_stat else 0),
-            'io_read': int(last_stat['io_read']['current']) if last_stat else 0,
-            'io_write': int(last_stat['io_write']['current']) if last_stat else 0,
+            'io_read': int(last_stat.get('io_read', {}).get('current', 0)) if last_stat else 0,
+            'io_write': int(last_stat.get('io_write', {}).get('current', 0)) if last_stat else 0,
             'used_time': used_time,
             'used_days': used_days,
             'device_type': list(device_type),
@@ -567,9 +567,12 @@ async def get_time_binned_monthly_stats(request, user_uuid=None):
             if 'cuda.shares' in row.occupied_slots:
                 gpu_allocated += float(row.occupied_slots['cuda.shares'])
             if row.last_stat:
-                io_read_bytes += int(row.last_stat['io_read']['current'])
-                io_write_bytes += int(row.last_stat['io_write']['current'])
-                disk_used += int(row.last_stat['io_scratch_size']['stats.max'])
+                if _stat := row.last_stat.get('io_read'):
+                    io_read_bytes += int(_stat['current'])
+                if _stat := row.last_stat.get('io_write'):
+                    io_write_bytes += int(_stat['current'])
+                if _stat := row.last_stat.get('io_scratch_size'):
+                    disk_used += int(_stat['stats.max'])
             idx += 1
         stat = {
             "date": ts,
