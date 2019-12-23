@@ -72,7 +72,7 @@ task_template_v1 = t.Dict({
 @server_status_required(READ_ALLOWED)
 @auth_required
 @check_api_params(task_template_v1)
-async def create(request: web.Request, params: Any) -> web.Response:
+async def create_task(request: web.Request, params: Any) -> web.Response:
     if params['scope']['domain'] is None:
         params['scope']['domain'] = request['user']['domain_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params['scope'])
@@ -190,7 +190,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
         tx.AliasedKey(['group_id', 'groupId'], default=None): tx.UUID | t.String | t.Null,
     }),
 )
-async def list_templates(request: web.Request, params: Any) -> web.Response:
+async def list_task(request: web.Request, params: Any) -> web.Response:
     resp = []
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
@@ -252,7 +252,7 @@ async def list_templates(request: web.Request, params: Any) -> web.Response:
         t.Key('owner_access_key', default=None): t.Null | t.String,
     })
 )
-async def get(request: web.Request, params: Any) -> web.Response:
+async def get_task(request: web.Request, params: Any) -> web.Response:
     if params['format'] not in ['yaml', 'json']:
         raise InvalidAPIParameters('format should be "yaml" or "json"')
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
@@ -282,7 +282,7 @@ async def get(request: web.Request, params: Any) -> web.Response:
 @auth_required
 @server_status_required(READ_ALLOWED)
 @check_api_params(task_template_v1)
-async def put(request: web.Request, params: Any) -> web.Response:
+async def put_task(request: web.Request, params: Any) -> web.Response:
     dbpool = request.app['dbpool']
     template_id = request.match_info['template_id']
 
@@ -318,7 +318,7 @@ async def put(request: web.Request, params: Any) -> web.Response:
         t.Key('owner_access_key', default=None): t.Null | t.String,
     })
 )
-async def delete(request: web.Request, params: Any) -> web.Response:
+async def delete_task(request: web.Request, params: Any) -> web.Response:
     dbpool = request.app['dbpool']
     template_id = request.match_info['template_id']
 
@@ -359,10 +359,11 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app.on_shutdown.append(shutdown)
     app['api_versions'] = (1, 2, 3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
-    cors.add(app.router.add_route('POST', '', create))
-    cors.add(app.router.add_route('GET', '', list_templates))
-    template_resource = cors.add(app.router.add_resource(r'/{template_id}'))
-    cors.add(template_resource.add_route('GET', get))
-    cors.add(template_resource.add_route('PUT', put))
-    cors.add(template_resource.add_route('DELETE', delete))
+    cors.add(app.router.add_route('POST', '/task', create_task))
+    cors.add(app.router.add_route('GET', '/task', list_task))
+    task_template_resource = cors.add(app.router.add_resource(r'/{template_id}'))
+    cors.add(task_template_resource.add_route('GET', get_task))
+    cors.add(task_template_resource.add_route('PUT', put_task))
+    cors.add(task_template_resource.add_route('DELETE', delete_task))
+
     return app, []
