@@ -295,7 +295,7 @@ class SchedulerDispatcher(aobject):
         # We allow a long database transaction here
         # because this scheduling handler will be executed by only one process.
         # It is executed under a globally exclusive context using aioredlock.
-        async with self.dbpool.acquire() as db_conn, db_conn.begin():
+        async with self.dbpool.acquire() as db_conn:
             sched_ctx = SchedulingContext(
                 registry=self.registry,
                 db_conn=db_conn,
@@ -304,7 +304,8 @@ class SchedulerDispatcher(aobject):
             agents_by_sgroups = await self._list_agents_by_sgroups(db_conn)
             all_scaling_groups = [*agents_by_sgroups.keys()]
             for sgroup_name in all_scaling_groups:
-                await _schedule_in_sgroup(db_conn, sgroup_name)
+                async with db_conn.begin():
+                    await _schedule_in_sgroup(db_conn, sgroup_name)
 
     async def _list_pending_sessions(self, db_conn, sgroup_name) -> List[PendingSession]:
         query = (

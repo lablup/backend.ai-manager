@@ -595,9 +595,6 @@ class AgentRegistry:
         # Create the kernel by invoking the agent
         async with self.handle_kernel_exception(
                 'create_session', sess_ctx.sess_id, sess_ctx.access_key):
-            # the agent may be pulling an image!
-            # (TODO: return early and update the kernel status
-            #        via asynchronous events)
             async with RPCContext(agent_ctx.agent_addr, None) as rpc:
                 config: KernelCreationConfig = {
                     'image': {
@@ -641,9 +638,6 @@ class AgentRegistry:
             query = (
                 kernels.update()
                 .values({
-                    # TODO: add more kernel status about image pulling
-                    # TODO: move this status transition to event handler for
-                    #       "kernel_started"
                     'scaling_group': agent_ctx.scaling_group,
                     'status': KernelStatus.RUNNING,
                     'container_id': created_info['container_id'],
