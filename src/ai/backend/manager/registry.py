@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import copy
 from datetime import datetime
@@ -50,7 +52,7 @@ from .models import (
     DEAD_KERNEL_STATUSES,
 )
 if TYPE_CHECKING:
-    from .scheduler import SchedulingContext, SessionContext, AgentAllocationContext
+    from .scheduler import SchedulingContext, PendingSession, AgentAllocationContext
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
 
@@ -572,9 +574,9 @@ class AgentRegistry:
         await self.event_dispatcher.produce_event('kernel_enqueued', [str(kernel_id)])
         return KernelId(kernel_id)
 
-    async def start_session(self, sched_ctx: 'SchedulingContext',
-                            sess_ctx: 'SessionContext',
-                            agent_ctx: 'AgentAllocationContext') -> None:
+    async def start_session(self, sched_ctx: SchedulingContext,
+                            sess_ctx: PendingSession,
+                            agent_ctx: AgentAllocationContext) -> None:
 
         auto_pull = await self.config_server.get('config/docker/image/auto_pull')
         image_info = await self.config_server.inspect_image(sess_ctx.image_ref)

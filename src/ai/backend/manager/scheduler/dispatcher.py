@@ -7,7 +7,7 @@ import logging
 import pkg_resources
 import random
 from typing import (
-    Union,
+    Any, Union,
     Awaitable,
     List, Sequence,
     Dict, Mapping,
@@ -40,6 +40,7 @@ from . import (
     ExistingSession,
     SchedulingContext,
     AgentContext,
+    AgentAllocationContext,
     AbstractScheduler,
 )
 from .predicates import (
@@ -52,6 +53,17 @@ from .predicates import (
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.scheduler'))
+
+
+def load_scheduler(name: str, scheduler_configs: Mapping[str, Any]) -> AbstractScheduler:
+    entry_prefix = 'backendai_scheduler_v10'
+    for entrypoint in pkg_resources.iter_entry_points(entry_prefix):
+        if entrypoint.name == name:
+            log.info('loading scheduler plugin "{}" from {}', name, entrypoint.module_name)
+            scheduler_cls = entrypoint.load()
+            scheduler_config = scheduler_configs.get(name, {})
+            return scheduler_cls(scheduler_config)
+    raise ImportError('Cannot load the scheduler plugin', name)
 
 
 class SchedulerDispatcher(aobject):
@@ -84,17 +96,6 @@ class SchedulerDispatcher(aobject):
         self.tick_task.cancel()
         await self.tick_task
 
-    def load_scheduler(self, name: str) -> AbstractScheduler:
-        entry_prefix = 'backendai_scheduler_v10'
-        scheduler_configs = self.config['plugins']['scheduler']
-        for entrypoint in pkg_resources.iter_entry_points(entry_prefix):
-            if entrypoint.name == name:
-                log.info('loading scheduler plugin "{}" from {}', name, entrypoint.module_name)
-                scheduler_cls = entrypoint.load()
-                scheduler_config = scheduler_configs.get(name, {})
-                return scheduler_cls(scheduler_config)
-        raise ImportError('Cannot load the scheduler plugin', name)
-
     async def generate_scheduling_tick(self) -> None:
         # A fallback for when missing enqueue events
         try:
@@ -122,6 +123,7 @@ class SchedulerDispatcher(aobject):
         known_slot_types = await self.config_server.get_resource_slots()
 
         async def _invoke_success_callbacks(
+                sess_ctx: PendingSession,
                 results: List[Union[Exception, PredicateResult]], *,
                 use_new_txn: bool = False) -> None:
             conn = None
@@ -146,6 +148,7 @@ class SchedulerDispatcher(aobject):
                 await _inner()
 
         async def _invoke_failure_callbacks(
+                sess_ctx: PendingSession,
                 results: List[Union[Exception, PredicateResult]], *,
                 use_new_txn: bool = False) -> None:
             conn = None
@@ -172,15 +175,14 @@ class SchedulerDispatcher(aobject):
                 await _inner()
 
         async def _schedule_in_sgroup(db_conn, sgroup_name):
-            sched_ctx = SchedulingContext(
-                registry=self.registry,
-                db_conn=db_conn,
-                known_slot_types=known_slot_types,
-            )
-            scheduler = self.load_scheduler(self.config['scheduler']['name'])
+            scheduler = load_scheduler(
+                self.config['scheduler']['name'],
+                self.config['plugins']['scheduler'])
             candidate_agents = agents_by_sgroups[sgroup_name]
             pending_sessions = await self._list_pending_sessions(db_conn, sgroup_name)
             existing_sessions = await self._list_existing_sessions(db_conn, sgroup_name)
+            log.debug('running scheduler (sgroup:{}, pending:{}, existing:{})',
+                      sgroup_name, len(pending_sessions), len(existing_sessions))
             zero = ResourceSlot()
             total_capacity = sum(
                 (ag.available_slots for ag in candidate_agents),
@@ -231,7 +233,7 @@ class SchedulerDispatcher(aobject):
                         has_failure = True
                 if has_failure:
                     log.debug(log_fmt + 'predicate-checks-failed', *log_args)
-                    await _invoke_failure_callbacks(check_results)
+                    await _invoke_failure_callbacks(sess_ctx, check_results)
                     # Predicate failures are *NOT* permanent errors.
                     # We need to retry the scheduling afterwards.
                     continue
@@ -240,22 +242,22 @@ class SchedulerDispatcher(aobject):
                     agent_id = scheduler.assign_agent(candidate_agents, sess_ctx)
                     if agent_id is None:
                         raise InstanceNotAvailable
-                    agent_ctx = await self._reserve_agent(
-                        sched_ctx, agent_id, sess_ctx.requested_slots)
+                    agent_alloc_ctx = await self._reserve_agent(
+                        sched_ctx, sgroup_name, agent_id, sess_ctx.requested_slots)
                 except InstanceNotAvailable:
                     log.debug(log_fmt + 'no-available-instances', *log_args)
-                    await _invoke_failure_callbacks(check_results)
+                    await _invoke_failure_callbacks(sess_ctx, check_results)
                     continue
                 except Exception:
                     log.exception(log_fmt + 'unexpected-error, during agent allocation',
                                   *log_args)
-                    await _invoke_failure_callbacks(check_results)
+                    await _invoke_failure_callbacks(sess_ctx, check_results)
                     continue
 
                 query = kernels.update().values({
-                    'agent': agent_ctx.agent_id,
-                    'agent_addr': agent_ctx.agent_addr,
-                    'scaling_group': agent_ctx.scaling_group,
+                    'agent': agent_alloc_ctx.agent_id,
+                    'agent_addr': agent_alloc_ctx.agent_addr,
+                    'scaling_group': sgroup_name,
                     'status': KernelStatus.PREPARING,
                     'status_info': 'scheduled',
                     'status_changed': datetime.now(tzutc()),
@@ -264,14 +266,14 @@ class SchedulerDispatcher(aobject):
 
                 log.debug(log_fmt + 'try-starting', *log_args)
                 task = asyncio.create_task(
-                    self.registry.start_session(sched_ctx, sess_ctx, agent_ctx))
+                    self.registry.start_session(sched_ctx, sess_ctx, agent_alloc_ctx))
 
                 async def _cb(fut):
                     if fut.exception():
                         log.error(log_fmt + 'failed-starting',
                                   *log_args, exc_info=fut.exception())
-                        await self._unreserve_agent_slots(sess_ctx, agent_ctx)
-                        await _invoke_failure_callbacks(check_results, use_new_txn=True)
+                        await self._unreserve_agent_slots(sess_ctx, agent_alloc_ctx)
+                        await _invoke_failure_callbacks(sess_ctx, check_results, use_new_txn=True)
                         async with self.dbpool.acquire() as conn, conn.begin():
                             query = kernels.update().values({
                                 'status': KernelStatus.CANCELLED,
@@ -286,7 +288,7 @@ class SchedulerDispatcher(aobject):
 
                     else:
                         log.info(log_fmt + 'started', *log_args)
-                        await _invoke_success_callbacks(check_results, use_new_txn=True)
+                        await _invoke_success_callbacks(sess_ctx, check_results, use_new_txn=True)
 
                 task.add_done_callback(lambda fut: asyncio.create_task(_cb(fut)))
 
@@ -294,12 +296,17 @@ class SchedulerDispatcher(aobject):
         # because this scheduling handler will be executed by only one process.
         # It is executed under a globally exclusive context using aioredlock.
         async with self.dbpool.acquire() as db_conn, db_conn.begin():
+            sched_ctx = SchedulingContext(
+                registry=self.registry,
+                db_conn=db_conn,
+                known_slot_types=known_slot_types,
+            )
             agents_by_sgroups = await self._list_agents_by_sgroups(db_conn)
             all_scaling_groups = [*agents_by_sgroups.keys()]
             for sgroup_name in all_scaling_groups:
                 await _schedule_in_sgroup(db_conn, sgroup_name)
 
-    async def _list_pending_sessions(self, db_conn, sgroup) -> List[PendingSession]:
+    async def _list_pending_sessions(self, db_conn, sgroup_name) -> List[PendingSession]:
         query = (
             sa.select([
                 kernels.c.id,
@@ -327,7 +334,10 @@ class SchedulerDispatcher(aobject):
             ))
             .where(
                 (kernels.c.status == KernelStatus.PENDING) &
-                (kernels.c.scaling_group == sgroup)
+                (
+                    (kernels.c.scaling_group == sgroup_name) |
+                    (kernels.c.scaling_group.is_(None))
+                )
             )
             .order_by(kernels.c.created_at)
         )
@@ -432,14 +442,15 @@ class SchedulerDispatcher(aobject):
         return dict(items_by_sgroup)
 
     async def _reserve_agent(self, sched_ctx: SchedulingContext,
+                             scaling_group: str,
                              agent_id: AgentId,
                              requested_slots: ResourceSlot) \
                              -> AgentAllocationContext:
         query = (
             sa.select([agents.c.occupied_slots], for_update=True)
             .select_from(agents)
-            .where(agents.c.id == agent_ctx.agent_id))
-        current_occupied_slots = await conn.scalar(query)
+            .where(agents.c.id == agent_id))
+        current_occupied_slots = await sched_ctx.db_conn.scalar(query)
         query = (sa.update(agents)
                    .values({
                        'occupied_slots': current_occupied_slots + requested_slots
@@ -453,7 +464,7 @@ class SchedulerDispatcher(aobject):
         agent_addr = await sched_ctx.db_conn.scalar(query)
         assert agent_addr is not None
 
-        return AgentAllocationContext(agent_id, agent_addr, row['scaling_group'])
+        return AgentAllocationContext(agent_id, agent_addr, scaling_group)
 
     async def _unreserve_agent_slots(self,
                                      sess_ctx: PendingSession,
