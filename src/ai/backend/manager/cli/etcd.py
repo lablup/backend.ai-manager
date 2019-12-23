@@ -8,8 +8,10 @@ import sys
 
 import aioredis
 import click
+from tabulate import tabulate
 
 from ai.backend.common.cli import EnumChoice, MinMaxRange
+from ai.backend.common.docker import ImageRef
 from ai.backend.common.etcd import AsyncEtcd, ConfigScopes
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.gateway.config import redis_config_iv
@@ -83,6 +85,7 @@ def put(cli_ctx, key, value, scope):
     with cli_ctx.logger:
         asyncio.run(_put())
 
+
 @cli.command()
 @click.argument('key', type=str)
 @click.argument('file', type=click.File('rb'))
@@ -96,7 +99,7 @@ def put_json(cli_ctx, key, file, scope):
     under the given KEY prefix.
     '''
     async def _put_json():
-        async with etcd_ctx(cli_ctx) as (loop, etcd):
+        async with etcd_ctx(cli_ctx) as etcd:
             with contextlib.closing(io.BytesIO()) as buf:
                 while True:
                     part = file.read(65536)
@@ -105,15 +108,39 @@ def put_json(cli_ctx, key, file, scope):
                     buf.write(part)
                 value = json.loads(buf.getvalue())
                 value = {f'{key}/{k}': v for k, v in value.items()}
-                await etcd.pit_dict(value, scope=scope)
+                await etcd.put_dict(value, scope=scope)
     with cli_ctx.logger:
         asyncio.run(_put_json())
 
 
 @cli.command()
+@click.argument('src_prefix', type=str)
+@click.argument('dst_prefix', type=str)
+@click.option('-s', '--scope', type=EnumChoice(ConfigScopes),
+              default=ConfigScopes.GLOBAL,
+              help='The configuration scope to get/put the subtree. '
+                   'To move between different scopes, use the global scope '
+                   'and specify the per-scope prefixes manually.')
+@click.pass_obj
+def move_subtree(cli_ctx, src_prefix, dst_prefix, scope):
+    '''
+    Move a subtree to another key prefix.
+    '''
+    async def _impl():
+        async with etcd_ctx(cli_ctx) as etcd:
+            subtree = await etcd.get_prefix(src_prefix, scope=scope)
+            subtree = {f'{dst_prefix}/{k}': v for k, v in subtree.items()}
+            await etcd.put_dict(subtree, scope=scope)
+            await etcd.delete_prefix(src_prefix, scope=scope)
+    with cli_ctx.logger:
+        asyncio.run(_impl())
+
+
+@cli.command()
 @click.argument('key')
 @click.option('--prefix', is_flag=True,
-              help='Get all key-value pairs prefixed with the given key as a JSON form.')
+              help='Get all key-value pairs prefixed with the given key '
+                   'as a JSON form.')
 @click.option('-s', '--scope', type=EnumChoice(ConfigScopes),
               default=ConfigScopes.GLOBAL,
               help='The configuration scope to put the value.')
@@ -157,25 +184,41 @@ def delete(cli_ctx, key, prefix, scope):
 
 
 @cli.command()
+@click.option('-s', '--short', is_flag=True,
+              help='Show only the image references and digests.')
+@click.option('-i', '--installed', is_flag=True,
+              help='Show only the installed images.')
 @click.pass_obj
-def list_images(cli_ctx):
+def list_images(cli_ctx, short, installed):
     '''List everything about images.'''
-    async def _list_images():
+    async def _impl():
         async with config_ctx(cli_ctx) as config_server:
+            displayed_items = []
             try:
                 items = await config_server.list_images()
-                pprint(items)
+                for item in items:
+                    if installed and not item['installed']:
+                        continue
+                    if short:
+                        img = ImageRef(f"{item['name']}:{item['tag']}",
+                                       item['registry'])
+                        displayed_items.append((img.canonical, item['digest']))
+                    else:
+                        pprint(item)
+                if short:
+                    print(tabulate(displayed_items, tablefmt='plain'))
             except Exception:
                 log.exception('An error occurred.')
     with cli_ctx.logger:
-        asyncio.run(_list_images())
+        asyncio.run(_impl())
+
 
 @cli.command()
 @click.argument('reference')
 @click.pass_obj
 def inspect_image(cli_ctx, reference):
     '''List everything about images.'''
-    async def _inspect_image():
+    async def _impl():
         async with config_ctx(cli_ctx) as config_server:
             try:
                 item = await config_server.inspect_image(reference)
@@ -183,7 +226,27 @@ def inspect_image(cli_ctx, reference):
             except Exception:
                 log.exception('An error occurred.')
     with cli_ctx.logger:
-        asyncio.run(_inspect_image())
+        asyncio.run(_impl())
+
+
+@cli.command()
+@click.argument('reference')
+@click.pass_obj
+def forget_image(cli_ctx, reference):
+    '''
+    Forget (delete) a specific image.
+    NOTE: aliases to the given reference are NOT deleted.
+    '''
+    async def _impl():
+        async with config_ctx(cli_ctx) as config_server:
+            try:
+                await config_server.forget_image(reference)
+                log.info('Done.')
+            except Exception:
+                log.exception('An error occurred.')
+    with cli_ctx.logger:
+        asyncio.run(_impl())
+
 
 @cli.command()
 @click.argument('reference')
@@ -195,11 +258,13 @@ def set_image_resource_limit(cli_ctx, reference, slot_type, range_value):
     async def _set_image_resource_limit():
         async with config_ctx(cli_ctx) as config_server:
             try:
-                await config_server.set_image_resource_limit(reference, slot_type, range_value)
+                await config_server.set_image_resource_limit(
+                    reference, slot_type, range_value)
             except Exception:
                 log.exception('An error occurred.')
     with cli_ctx.logger:
         asyncio.run(_set_image_resource_limit())
+
 
 @cli.command()
 @click.argument('registry')
@@ -219,6 +284,7 @@ def rescan_images(cli_ctx, registry):
     with cli_ctx.logger:
         asyncio.run(_rescan_images())
 
+
 @cli.command()
 @click.argument('alias')
 @click.argument('target')
@@ -230,6 +296,7 @@ def alias(cli_ctx, alias, target):
             await config_server.alias(alias, target)
     with cli_ctx.logger:
         asyncio.run(_alias())
+
 
 @cli.command()
 @click.argument('alias')
