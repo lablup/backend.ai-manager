@@ -12,7 +12,7 @@ import json
 import logging
 import secrets
 from typing import (
-    Any,
+    Any, Iterable,
     Mapping,
     MutableMapping,
     List, Tuple,
@@ -48,6 +48,7 @@ from .exceptions import (
     InternalServerError,
 )
 from .manager import READ_ALLOWED, server_status_required
+from .typing import CORSOptions, WebMiddleware
 from .utils import check_api_params, call_non_bursty
 from .wsproxy import TCPProxy
 from ..manager.models import kernels, groups, UserRole
@@ -659,7 +660,7 @@ async def shutdown(app: web.Application) -> None:
     await asyncio.gather(*cancelled_tasks, return_exceptions=True)
 
 
-def create_app(default_cors_options):
+def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
