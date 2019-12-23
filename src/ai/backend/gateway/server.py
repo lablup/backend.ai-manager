@@ -39,7 +39,7 @@ from ai.backend.common.plugin import (
 )
 from ..manager import __version__
 from ..manager.registry import AgentRegistry
-from ..manager.scheduler import SessionScheduler
+from ..manager.scheduler.dispatcher import SchedulerDispatcher
 from .config import load as load_config, load_shared as load_shared_config, redis_config_iv
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
 from .etcd import ConfigServer
@@ -473,7 +473,7 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         ssl_context=ssl_ctx,
     )
     await site.start()
-    session_scheduler = await SessionScheduler.new(
+    sched_dispatcher = await SchedulerDispatcher.new(
         app['config'], app['config_server'], app['registry'])
 
     if os.geteuid() == 0:
@@ -492,7 +492,7 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         yield
     finally:
         log.info('shutting down...')
-        await session_scheduler.close()
+        await sched_dispatcher.close()
         await runner.cleanup()
 
 

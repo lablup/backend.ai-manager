@@ -65,13 +65,21 @@ Alias keys are also URL-quoted in the same way.
        - {"cuda.smp"}: {"count"}
        ...
      + plugins
-       + "cuda"
-         - allocation_mode: "discrete"
+       + accelerator
+         + "cuda"
+           - allocation_mode: "discrete"
+           ...
+       + scheduler
+         + "fifo"
+         + "lifo"
+         + "drf"
          ...
      + network
        + subnet
          - agent: "0.0.0.0/0"
          - container: "0.0.0.0/0"
+     + scheduler
+       - name: {scheduler-name}
      + watcher
        - token: {some-secret}
    + volumes

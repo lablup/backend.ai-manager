@@ -11,7 +11,7 @@ from ai.backend.common.types import (
     ResourceSlot,
 )
 
-from .models import (
+from ..models import (
     domains, groups, kernels, keypairs,
     keypair_resource_policies,
     query_allowed_sgroups,
@@ -19,7 +19,7 @@ from .models import (
 )
 from . import (
     SchedulingContext,
-    SessionContext,
+    PendingSession,
     PredicateResult,
 )
 
@@ -27,7 +27,7 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.scheduler'))
 
 
 async def check_concurrency(sched_ctx: SchedulingContext,
-                            sess_ctx: SessionContext) -> PredicateResult:
+                            sess_ctx: PendingSession) -> PredicateResult:
     query = (
         sa.select([keypair_resource_policies])
         .select_from(keypair_resource_policies)
@@ -55,7 +55,7 @@ async def check_concurrency(sched_ctx: SchedulingContext,
     await sched_ctx.db_conn.execute(query)
 
     async def rollback(sched_ctx: SchedulingContext,
-                       sess_ctx: SessionContext,
+                       sess_ctx: PendingSession,
                        db_conn: SAConnection = None) -> None:
         query = (sa.update(keypairs)
                    .values(concurrency_used=keypairs.c.concurrency_used - 1)
@@ -69,13 +69,13 @@ async def check_concurrency(sched_ctx: SchedulingContext,
 
 
 async def check_dependencies(sched_ctx: SchedulingContext,
-                             sess_ctx: SessionContext) -> PredicateResult:
+                             sess_ctx: PendingSession) -> PredicateResult:
     # TODO: implement
     return PredicateResult(True, 'bypassing because it is not implemented')
 
 
 async def check_keypair_resource_limit(sched_ctx: SchedulingContext,
-                                       sess_ctx: SessionContext) -> PredicateResult:
+                                       sess_ctx: PendingSession) -> PredicateResult:
     query = (
         sa.select([keypair_resource_policies])
         .select_from(keypair_resource_policies)
@@ -92,7 +92,7 @@ async def check_keypair_resource_limit(sched_ctx: SchedulingContext,
     if not (key_occupied + sess_ctx.requested_slots <= total_keypair_allowed):
 
         async def update_status_info(sched_ctx: SchedulingContext,
-                                     sess_ctx: SessionContext,
+                                     sess_ctx: PendingSession,
                                      db_conn: SAConnection = None) -> None:
             query = (sa.update(kernels)
                        .values(status_info='out-of-resource (keypair resource quota exceeded)')
@@ -114,7 +114,7 @@ async def check_keypair_resource_limit(sched_ctx: SchedulingContext,
 
 
 async def check_group_resource_limit(sched_ctx: SchedulingContext,
-                                     sess_ctx: SessionContext) -> PredicateResult:
+                                     sess_ctx: PendingSession) -> PredicateResult:
     query = (sa.select([groups.c.total_resource_slots])
                .where(groups.c.id == sess_ctx.group_id))
     group_resource_slots = await sched_ctx.db_conn.scalar(query)
@@ -129,7 +129,7 @@ async def check_group_resource_limit(sched_ctx: SchedulingContext,
     if not (group_occupied + sess_ctx.requested_slots <= total_group_allowed):
 
         async def update_status_info(sched_ctx: SchedulingContext,
-                                     sess_ctx: SessionContext,
+                                     sess_ctx: PendingSession,
                                      db_conn: SAConnection = None) -> None:
             query = (sa.update(kernels)
                        .values(status_info='out-of-resource (group resource quota exceeded)')
@@ -151,7 +151,7 @@ async def check_group_resource_limit(sched_ctx: SchedulingContext,
 
 
 async def check_domain_resource_limit(sched_ctx: SchedulingContext,
-                                      sess_ctx: SessionContext) -> PredicateResult:
+                                      sess_ctx: PendingSession) -> PredicateResult:
     query = (sa.select([domains.c.total_resource_slots])
                .where(domains.c.name == sess_ctx.domain_name))
     domain_resource_slots = await sched_ctx.db_conn.scalar(query)
@@ -168,7 +168,7 @@ async def check_domain_resource_limit(sched_ctx: SchedulingContext,
     if not (domain_occupied + sess_ctx.requested_slots <= total_domain_allowed):
 
         async def update_status_info(sched_ctx: SchedulingContext,
-                                     sess_ctx: SessionContext,
+                                     sess_ctx: PendingSession,
                                      db_conn: SAConnection = None) -> None:
             query = (sa.update(kernels)
                        .values(status_info='out-of-resource (domain resource quota exceeded)')
@@ -190,7 +190,7 @@ async def check_domain_resource_limit(sched_ctx: SchedulingContext,
 
 
 async def check_scaling_group(sched_ctx: SchedulingContext,
-                              sess_ctx: SessionContext) -> PredicateResult:
+                              sess_ctx: PendingSession) -> PredicateResult:
     sgroups = await query_allowed_sgroups(
         sched_ctx.db_conn,
         sess_ctx.domain_name,
@@ -217,7 +217,7 @@ async def check_scaling_group(sched_ctx: SchedulingContext,
     if not target_sgroup_names:
 
         async def update_status_info(sched_ctx: SchedulingContext,
-                                     sess_ctx: SessionContext,
+                                     sess_ctx: PendingSession,
                                      db_conn: SAConnection = None) -> None:
             query = (sa.update(kernels)
                        .values(status_info='out-of-resource (no available resource in scaling groups)')

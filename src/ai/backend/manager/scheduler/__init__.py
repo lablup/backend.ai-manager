@@ -6,8 +6,7 @@ from typing import (
     Any, Optional,
     Protocol,
     Mapping,
-    Sequence,
-    Tuple,
+    Sequence, MutableSequence,
 )
 import uuid
 
@@ -22,6 +21,7 @@ from ai.backend.common.types import (
     AgentId, KernelId, AccessKey, SessionTypes,
     ResourceSlot,
 )
+from ..registry import AgentRegistry
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.scheduler'))
 
@@ -98,7 +98,7 @@ class PendingSession:
 class PredicateCallback(Protocol):
     async def __call__(self,
                        sched_ctx: SchedulingContext,
-                       sess_ctx: SessionContext,
+                       sess_ctx: PendingSession,
                        db_conn: SAConnection = None) -> None:
         ...
 
