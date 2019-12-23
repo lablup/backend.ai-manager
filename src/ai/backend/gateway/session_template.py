@@ -21,11 +21,11 @@ from .utils import check_api_params, get_access_key_scopes
 
 from ..manager.models import (
     association_groups_users as agus, domains,
-    groups, task_templates, keypairs, users, UserRole,
-    query_accessible_task_templates
+    groups, session_templates, keypairs, users, UserRole,
+    query_accessible_session_templates, TemplateType
 )
 
-log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.task_template'))
+log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.session_template'))
 
 
 task_template_v1 = t.Dict({
@@ -34,11 +34,6 @@ task_template_v1 = t.Dict({
     t.Key('metadata'): t.Dict({
         t.Key('name'): t.String,
         t.Key('tag', default=None): t.Null | t.String,
-    }),
-    t.Key('scope', default={}): t.Null | t.Dict({
-        tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.Null | t.String,
-        tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.Null | t.String,
-        t.Key('owner_access_key', default=None): t.Null | t.String,
     }),
     t.Key('spec'): t.Dict({
         tx.AliasedKey(['type', 'sessionType'],
@@ -71,11 +66,19 @@ task_template_v1 = t.Dict({
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-@check_api_params(task_template_v1)
-async def create_task(request: web.Request, params: Any) -> web.Response:
-    if params['scope']['domain'] is None:
-        params['scope']['domain'] = request['user']['domain_name']
-    requester_access_key, owner_access_key = await get_access_key_scopes(request, params['scope'])
+@check_api_params(t.Dict(
+    {
+        tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
+        tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
+        t.Key('owner_access_key', default=None): t.Null | t.String,
+        t.Key('payload'): t.String,
+        t.Key('type') >> 'template_type': tx.Enum(TemplateType)
+    }
+))
+async def create(request: web.Request, params: Any) -> web.Response:
+    if params['domain'] is None:
+        params['domain'] = request['user']['domain_name']
+    requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     requester_uuid = request['user']['uuid']
     log.info('CREATE (ak:{0}/{1})',
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
@@ -122,29 +125,29 @@ async def create_task(request: web.Request, params: Any) -> web.Response:
                 sa.select([groups.c.id])
                 .select_from(groups)
                 .where(
-                    (groups.c.domain_name == params['scope']['domain']) &
-                    (groups.c.name == params['scope']['group']) &
+                    (groups.c.domain_name == params['domain']) &
+                    (groups.c.name == params['group']) &
                     (groups.c.is_active)
                 ))
             qresult = await conn.execute(query)
             group_id = await qresult.scalar()
         elif owner_role == UserRole.ADMIN:
             # domain-admin can spawn container in any group in the same domain.
-            if params['scope']['domain'] != owner_domain:
+            if params['domain'] != owner_domain:
                 raise InvalidAPIParameters("You can only set the domain to the owner's domain.")
             query = (
                 sa.select([groups.c.id])
                 .select_from(groups)
                 .where(
                     (groups.c.domain_name == owner_domain) &
-                    (groups.c.name == params['scope']['group']) &
+                    (groups.c.name == params['group']) &
                     (groups.c.is_active)
                 ))
             qresult = await conn.execute(query)
             group_id = await qresult.scalar()
         else:
             # normal users can spawn containers in their group and domain.
-            if params['scope']['domain'] != owner_domain:
+            if params['domain'] != owner_domain:
                 raise InvalidAPIParameters("You can only set the domain to your domain.")
             query = (
                 sa.select([agus.c.group_id])
@@ -152,7 +155,7 @@ async def create_task(request: web.Request, params: Any) -> web.Response:
                 .where(
                     (agus.c.user_id == owner_uuid) &
                     (groups.c.domain_name == owner_domain) &
-                    (groups.c.name == params['scope']['group']) &
+                    (groups.c.name == params['group']) &
                     (groups.c.is_active)
                 ))
             qresult = await conn.execute(query)
@@ -160,18 +163,23 @@ async def create_task(request: web.Request, params: Any) -> web.Response:
         if group_id is None:
             raise InvalidAPIParameters('Invalid group')
 
-        body = dict(params)
-        if 'scope' in body.keys():
-            del body['scope']
-
+        log.debug('Params: {0}', params)
+        try:
+            body = json.loads(params['payload'])
+        except json.JSONDecodeError:
+            try:
+                body = yaml.load(params['payload'], Loader=yaml.BaseLoader)
+            except (yaml.YAMLError, yaml.MarkedYAMLError):
+                raise InvalidAPIParameters('Malformed payload')
+        body = task_template_v1.check(body)
         template_id = uuid.uuid4().hex
         resp = {
             'id': template_id,
             'user': user_uuid.hex,
         }
-        query = task_templates.insert().values({
+        query = session_templates.insert().values({
             'id': template_id,
-            'domain_name': params['scope']['domain'],
+            'domain_name': params['domain'],
             'group_id': group_id,
             'user_uuid': user_uuid,
             'name': body['metadata']['name'],
@@ -190,7 +198,7 @@ async def create_task(request: web.Request, params: Any) -> web.Response:
         tx.AliasedKey(['group_id', 'groupId'], default=None): tx.UUID | t.String | t.Null,
     }),
 )
-async def list_task(request: web.Request, params: Any) -> web.Response:
+async def list_template(request: web.Request, params: Any) -> web.Response:
     resp = []
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
@@ -201,31 +209,34 @@ async def list_task(request: web.Request, params: Any) -> web.Response:
     log.info('LIST (ak:{})', access_key)
     async with dbpool.acquire() as conn:
         if request['is_superadmin'] and params['all']:
-            j = (task_templates.join(users, task_templates.c.user_uuid == users.c.uuid, isouter=True)
-                               .join(groups, task_templates.c.group_id == groups.c.id, isouter=True))
-            query = (sa.select([task_templates, users.c.email, groups.c.name], use_labels=True)
+            j = (session_templates
+                    .join(users, session_templates.c.user_uuid == users.c.uuid, isouter=True)
+                    .join(groups, session_templates.c.group_id == groups.c.id, isouter=True))
+            query = (sa.select([session_templates, users.c.email, groups.c.name], use_labels=True)
                        .select_from(j)
-                       .where(task_templates.c.is_active))
+                       .where(session_templates.c.is_active))
             result = await conn.execute(query)
             entries = []
             async for row in result:
-                is_owner = True if row.task_templates_user == user_uuid else False
+                is_owner = True if row.session_templates_user == user_uuid else False
                 entries.append({
-                    'name': row.task_templates_name,
-                    'id': row.task_templates_id,
-                    'created_at': row.task_templates_created_at,
+                    'name': row.session_templates_name,
+                    'id': row.session_templates_id,
+                    'created_at': row.session_templates_created_at,
                     'is_owner': is_owner,
-                    'user': str(row.task_templates_user_uuid) if row.task_templates_user_uuid else None,
-                    'group': str(row.task_templates_group_id) if row.task_templates_group_id else None,
+                    'user': (str(row.session_templates_user_uuid)
+                             if row.session_templates_user_uuid else None),
+                    'group': (str(row.session_templates_group_id)
+                              if row.session_templates_group_id else None),
                     'user_email': row.users_email,
                     'group_name': row.groups_name,
                 })
         else:
             extra_conds = None
             if params['group_id'] is not None:
-                extra_conds = ((task_templates.c.group_id == params['group_id']))
-            entries = await query_accessible_task_templates(
-                        conn, user_uuid,
+                extra_conds = ((session_templates.c.group_id == params['group_id']))
+            entries = await query_accessible_session_templates(
+                        conn, user_uuid, TemplateType.TASK,
                         user_role=user_role, domain_name=domain_name,
                         allowed_types=['user', 'group'], extra_conds=extra_conds)
 
@@ -252,7 +263,7 @@ async def list_task(request: web.Request, params: Any) -> web.Response:
         t.Key('owner_access_key', default=None): t.Null | t.String,
     })
 )
-async def get_task(request: web.Request, params: Any) -> web.Response:
+async def get(request: web.Request, params: Any) -> web.Response:
     if params['format'] not in ['yaml', 'json']:
         raise InvalidAPIParameters('format should be "yaml" or "json"')
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
@@ -263,10 +274,10 @@ async def get_task(request: web.Request, params: Any) -> web.Response:
     dbpool = request.app['dbpool']
 
     async with dbpool.acquire() as conn, conn.begin():
-        query = (sa.select([task_templates.c.template])
-                   .select_from(task_templates)
-                   .where((task_templates.c.id == template_id) &
-                          (task_templates.c.is_active)
+        query = (sa.select([session_templates.c.template])
+                   .select_from(session_templates)
+                   .where((session_templates.c.id == template_id) &
+                          (session_templates.c.is_active)
                           ))
         template = await conn.scalar(query)
         if not template:
@@ -281,30 +292,38 @@ async def get_task(request: web.Request, params: Any) -> web.Response:
 
 @auth_required
 @server_status_required(READ_ALLOWED)
-@check_api_params(task_template_v1)
-async def put_task(request: web.Request, params: Any) -> web.Response:
+@check_api_params(
+    t.Dict({
+        t.Key('payload'): t.String,
+        t.Key('owner_access_key', default=None): t.Null | t.String,
+    })
+)
+async def put(request: web.Request, params: Any) -> web.Response:
     dbpool = request.app['dbpool']
     template_id = request.match_info['template_id']
 
-    requester_access_key, owner_access_key = await get_access_key_scopes(request, params['scope'])
+    requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     log.info('PUT (ak:{0}/{1})',
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
 
     async with dbpool.acquire() as conn, conn.begin():
-        query = (sa.select([task_templates.c.id])
-                   .select_from(task_templates)
-                   .where((task_templates.c.id == template_id) &
-                          (task_templates.c.is_active)
+        query = (sa.select([session_templates.c.id])
+                   .select_from(session_templates)
+                   .where((session_templates.c.id == template_id) &
+                          (session_templates.c.is_active)
                           ))
         result = await conn.scalar(query)
         if not result:
             raise TaskTemplateNotFound
-        body = dict(params)
-        if 'scope' in body.keys():
-            del body['scope']
-        query = (sa.update(task_templates)
+        try:
+            body = json.loads(params['payload'])
+        except json.JSONDecodeError:
+            body = yaml.load(params['payload'], Loader=yaml.BaseLoader)
+        except (yaml.YAMLError, yaml.MarkedYAMLError):
+            raise InvalidAPIParameters('Malformed payload')
+        query = (sa.update(session_templates)
                    .values(template=body, name=body['metadata']['name'])
-                   .where((task_templates.c.id == template_id)))
+                   .where((session_templates.c.id == template_id)))
         result = await conn.execute(query)
         assert result.rowcount == 1
 
@@ -318,7 +337,7 @@ async def put_task(request: web.Request, params: Any) -> web.Response:
         t.Key('owner_access_key', default=None): t.Null | t.String,
     })
 )
-async def delete_task(request: web.Request, params: Any) -> web.Response:
+async def delete(request: web.Request, params: Any) -> web.Response:
     dbpool = request.app['dbpool']
     template_id = request.match_info['template_id']
 
@@ -327,18 +346,18 @@ async def delete_task(request: web.Request, params: Any) -> web.Response:
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
 
     async with dbpool.acquire() as conn, conn.begin():
-        query = (sa.select([task_templates.c.id])
-                   .select_from(task_templates)
-                   .where((task_templates.c.id == template_id) &
-                          (task_templates.c.is_active)
+        query = (sa.select([session_templates.c.id])
+                   .select_from(session_templates)
+                   .where((session_templates.c.id == template_id) &
+                          (session_templates.c.is_active)
                           ))
         result = await conn.scalar(query)
         if not result:
             raise TaskTemplateNotFound
 
-        query = (sa.update(task_templates)
+        query = (sa.update(session_templates)
                    .values(is_active=False)
-                   .where((task_templates.c.id == template_id)))
+                   .where((session_templates.c.id == template_id)))
         result = await conn.execute(query)
         assert result.rowcount == 1
 
@@ -357,13 +376,14 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app = web.Application()
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
-    app['api_versions'] = (1, 2, 3, 4)
+    app['api_versions'] = (4, 5)
+    app['prefix'] = 'template/session'
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
-    cors.add(app.router.add_route('POST', '/task', create_task))
-    cors.add(app.router.add_route('GET', '/task', list_task))
-    task_template_resource = cors.add(app.router.add_resource(r'/{template_id}'))
-    cors.add(task_template_resource.add_route('GET', get_task))
-    cors.add(task_template_resource.add_route('PUT', put_task))
-    cors.add(task_template_resource.add_route('DELETE', delete_task))
+    cors.add(app.router.add_route('POST', '', create))
+    cors.add(app.router.add_route('GET', '', list_template))
+    template_resource = cors.add(app.router.add_resource(r'/{template_id}'))
+    cors.add(template_resource.add_route('GET', get))
+    cors.add(template_resource.add_route('PUT', put))
+    cors.add(template_resource.add_route('DELETE', delete))
 
     return app, []

@@ -70,7 +70,7 @@ from ..manager.models import (
     vfolders,
     AgentStatus, KernelStatus,
     query_accessible_vfolders,
-    task_templates
+    session_templates
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.kernel'))
@@ -175,16 +175,17 @@ async def create(request: web.Request, params: Any) -> web.Response:
     if params['template_id']:
         async with dbpool.acquire() as conn, conn.begin():
             query = (
-                        sa.select([task_templates.c.template])
-                          .select_from(task_templates)
-                          .where((task_templates.c.id == params['template_id']) &
-                                  task_templates.c.is_active)
+                        sa.select([session_templates.c.template])
+                          .select_from(session_templates)
+                          .where((session_templates.c.id == params['template_id']) &
+                                  session_templates.c.is_active)
                     )
             template = await conn.scalar(query)
             if not template:
                 raise TaskTemplateNotFound
 
         template = json.loads(template)
+        log.debug('Template: {0}', template)
 
         param_from_template = {
             'image': template['spec']['kernel']['image'],
@@ -235,6 +236,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
             log.exception(e2)
             raise InvalidAPIParameters(e2)
         params['config'] = config_from_template
+
+        log.debug('Updated param: {0}', params)
 
         if git := template['spec']['kernel']['git']:  # noqa
             if _dest := git.get('dest_dir'):  # noqa

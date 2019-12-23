@@ -77,7 +77,8 @@ async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tup
     return requester_access_key, requester_access_key
 
 
-def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None) -> Any:
+def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None,
+                     query_param_checker: t.Trafaret = None) -> Any:
     # FIXME: replace ... with [web.Request, Any...] in the future mypy
     def wrap(handler: Callable[..., Awaitable[web.Response]]):
 
@@ -86,7 +87,8 @@ def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None) ->
             params: Any = {}
             body: str = ''
             try:
-                if request.can_read_body:
+                body_exists = request.can_read_body
+                if body_exists:
                     body = await request.text()
                     if request.content_type == 'text/yaml':
                         params = yaml.load(body, Loader=yaml.BaseLoader)
@@ -95,9 +97,14 @@ def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None) ->
                 else:
                     params = request.query
                 params = checker.check(params)
-            except (json.decoder.JSONDecodeError, yaml.YAMLError, yaml.MarkedYAMLError):
+                if body_exists and query_param_checker:
+                    query_params = query_param_checker.check(request.query)
+                    kwargs['query'] = query_params
+            except (json.decoder.JSONDecodeError, yaml.YAMLError, yaml.MarkedYAMLError) as e:
+                log.exception(e)
                 raise InvalidAPIParameters('Malformed body')
             except t.DataError as e:
+                log.exception(e)
                 raise InvalidAPIParameters('Input validation error',
                                            extra_data=e.as_dict())
             return await handler(request, params, *args, **kwargs)
