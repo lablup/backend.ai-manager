@@ -167,6 +167,7 @@ def list_images(cli_ctx):
                 pprint(items)
             except Exception:
                 log.exception('An error occurred.')
+    with cli_ctx.logger:
         asyncio.run(_list_images())
 
 @cli.command()
