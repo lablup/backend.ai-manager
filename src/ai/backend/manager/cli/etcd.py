@@ -8,8 +8,10 @@ import sys
 
 import aioredis
 import click
+from tabulate import tabulate
 
 from ai.backend.common.cli import EnumChoice, MinMaxRange
+from ai.backend.common.docker import ImageRef
 from ai.backend.common.etcd import AsyncEtcd, ConfigScopes
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.gateway.config import redis_config_iv
@@ -118,7 +120,8 @@ def put_json(cli_ctx, key, file, scope):
 @cli.command()
 @click.argument('key')
 @click.option('--prefix', is_flag=True,
-              help='Get all key-value pairs prefixed with the given key as a JSON form.')
+              help='Get all key-value pairs prefixed with the given key '
+                   'as a JSON form.')
 @click.option('-s', '--scope', type=EnumChoice(ConfigScopes),
               default=ConfigScopes.GLOBAL,
               help='The configuration scope to put the value.')
@@ -156,14 +159,29 @@ def delete(cli_ctx, key, prefix, scope):
 
 
 @cli.command()
+@click.option('-s', '--short', is_flag=True,
+              help='Show only the image references and digests.')
+@click.option('-i', '--installed', is_flag=True,
+              help='Show only the installed images.')
 @click.pass_obj
-def list_images(cli_ctx):
+def list_images(cli_ctx, short, installed):
     '''List everything about images.'''
     with cli_ctx.logger, config_ctx(cli_ctx) as (loop, config_server):
         try:
+            displayed_items = []
             items = loop.run_until_complete(
                 config_server.list_images())
-            pprint(items)
+            for item in items:
+                if installed and not item['installed']:
+                    continue
+                if short:
+                    img = ImageRef(f"{item['name']}:{item['tag']}",
+                                   item['registry'])
+                    displayed_items.append((img.canonical, item['digest']))
+                else:
+                    pprint(item)
+            if short:
+                print(tabulate(displayed_items, tablefmt='plain'))
         except Exception:
             log.exception('An error occurred.')
 
@@ -178,6 +196,22 @@ def inspect_image(cli_ctx, reference):
             item = loop.run_until_complete(
                 config_server.inspect_image(reference))
             pprint(item)
+        except Exception:
+            log.exception('An error occurred.')
+
+
+@cli.command()
+@click.argument('reference')
+@click.pass_obj
+def forget_image(cli_ctx, reference):
+    '''
+    Forget (delete) a specific image.
+    NOTE: aliases to the given reference are NOT deleted.
+    '''
+    with cli_ctx.logger, config_ctx(cli_ctx) as (loop, config_server):
+        try:
+            loop.run_until_complete(config_server.forget_image(reference))
+            log.info('Done.')
         except Exception:
             log.exception('An error occurred.')
 
