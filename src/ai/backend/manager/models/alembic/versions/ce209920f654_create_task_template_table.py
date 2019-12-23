@@ -20,12 +20,16 @@ depends_on = None
 
 def upgrade():
     op.create_table(
-        'task_templates',
+        'templates',
         sa.Column('id', GUID(), server_default=sa.text('uuid_generate_v4()'), nullable=False),
         sa.Column('created_at', sa.DateTime(timezone=True),
                   server_default=sa.func.now(), index=True),
         sa.Column('is_active', sa.Boolean, default=True),
-
+        sa.Column('type',
+                  sa.Enum('TASK', 'CLUSTER', name='templatetypes'),
+                  nullable=False,
+                  server_default='TASK'
+                  ),
         sa.Column('domain_name', sa.String(length=64), sa.ForeignKey('domains.name'), nullable=False),
         sa.Column('group_id', GUID, sa.ForeignKey('groups.id'), nullable=False),
         sa.Column('user_uuid', GUID, sa.ForeignKey('users.uuid'), nullable=False),
@@ -35,4 +39,4 @@ def upgrade():
 
 
 def downgrade():
-    op.drop_table('task_templates')
+    op.drop_table('templates')

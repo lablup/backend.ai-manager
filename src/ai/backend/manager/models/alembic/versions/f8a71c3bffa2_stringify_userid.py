@@ -5,6 +5,7 @@ Revises: bf4bae8f942e
 Create Date: 2018-06-17 13:52:13.346856
 
 """
+import os 
 from alembic import op
 import sqlalchemy as sa
 from ai.backend.manager.models.base import convention
@@ -24,13 +25,14 @@ def upgrade():
         sa.Column('user_id', sa.String(length=256), index=True),
     )
 
+    choice = os.environ.get('STRINGIFY_CHOICE')
     print('Choose keypairs.user_id column migrate option:')
     print(' [a] Convert all numeric user IDs to strings directly')
     print(' [b] Convert numeric user IDs to strings using a mapping table\n'
           '     (user_id_map.txt must be present in the current working directory\n'
           '      which contains a space-sep.list of numeric and string ID pairs.)')
     print('NOTE: If you choose [b], you will not be able to downgrade!')
-    while True:
+    while choice not in ('a', 'b'):
         choice = input('Your choice? [a/b] ')
         if choice in ('a', 'b'):
             break

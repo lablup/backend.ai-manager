@@ -1,18 +1,24 @@
+import enum
 from typing import Sequence
 
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
-from .base import metadata, GUID
+from .base import metadata, GUID, EnumValueType
 from .user import UserRole
 
 __all__: Sequence[str] = (
-    'task_templates', 'query_accessible_task_templates'
+    'TemplateType', 'templates', 'query_accessible_task_templates'
 )
 
 
-task_templates = sa.Table(
-    'task_templates', metadata,
+class TemplateType(str, enum.Enum):
+    TASK = 'task'
+    CLUSTER = 'cluster'
+
+
+templates = sa.Table(
+    'templates', metadata,
     sa.Column('id', GUID, nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), index=True),
     sa.Column('is_active', sa.Boolean, default=True),
@@ -20,6 +26,11 @@ task_templates = sa.Table(
     sa.Column('domain_name', sa.String(length=64), sa.ForeignKey('domains.name'), nullable=False),
     sa.Column('group_id', GUID, sa.ForeignKey('groups.id'), nullable=True),
     sa.Column('user_uuid', GUID, sa.ForeignKey('users.uuid'), nullable=False),
+    sa.Column('type',
+              EnumValueType(TemplateType),
+              nullable=False,
+              server_default='TASK'
+              ),
 
     sa.Column('name', sa.String(length=128), nullable=True),
     sa.Column('template', pgsql.JSONB(), nullable=False)
@@ -34,18 +45,19 @@ async def query_accessible_task_templates(conn, user_uuid, *,
     entries = []
     if 'user' in allowed_types:
         # Query user templates
-        j = (task_templates.join(users, task_templates.c.user_uuid == users.c.uuid))
+        j = (templates.join(users, templates.c.user_uuid == users.c.uuid))
         query = (sa.select([
-                        task_templates.c.name,
-                        task_templates.c.id,
-                        task_templates.c.created_at,
-                        task_templates.c.user_uuid,
-                        task_templates.c.group_id,
+                        templates.c.name,
+                        templates.c.id,
+                        templates.c.created_at,
+                        templates.c.user_uuid,
+                        templates.c.group_id,
                         users.c.email
                     ])
                     .select_from(j)
-                    .where(task_templates.c.user_uuid == user_uuid)
-                    .where(task_templates.c.is_active))
+                    .where((templates.c.user_uuid == user_uuid)
+                           & templates.c.is_active
+                           & (templates.c.type == TemplateType.TASK)))
         if extra_conds is not None:
             query = query.where(extra_conds)
         result = await conn.execute(query)
@@ -77,32 +89,32 @@ async def query_accessible_task_templates(conn, user_uuid, *,
             result = await conn.execute(query)
             grps = await result.fetchall()
             group_ids = [g.group_id for g in grps]
-        j = (task_templates.join(groups, task_templates.c.group_id == groups.c.id))
+        j = (templates.join(groups, templates.c.group_id == groups.c.id))
         query = (sa.select([
-                        task_templates.c.name,
-                        task_templates.c.id,
-                        task_templates.c.created_at,
-                        task_templates.c.user_uuid,
-                        task_templates.c.group_id,
+                        templates.c.name,
+                        templates.c.id,
+                        templates.c.created_at,
+                        templates.c.user_uuid,
+                        templates.c.group_id,
                         groups.c.name
                     ], use_labels=True)
-                    .select_from(j)
-                    .where(task_templates.c.group_id.in_(group_ids))
-                    .where(task_templates.c.is_active))
+                    .where(templates.c.group_id.in_(group_ids)
+                           & templates.c.is_active
+                           & (templates.c.type == TemplateType.TASK)))
         if extra_conds is not None:
             query = query.where(extra_conds)
         if 'user' in allowed_types:
-            query = query.where(task_templates.c.user_uuid != user_uuid)
+            query = query.where(templates.c.user_uuid != user_uuid)
         result = await conn.execute(query)
         is_owner = (user_role == UserRole.ADMIN or user_role == 'admin')
         async for row in result:
             entries.append({
-                'name': row.task_templates_name,
-                'id': row.task_templates_id,
-                'created_at': row.task_templates_created_at,
+                'name': row.templates_name,
+                'id': row.templates_id,
+                'created_at': row.templates_created_at,
                 'is_owner': is_owner,
-                'user': str(row.task_templates_user_uuid) if row.task_templates_user_uuid else None,
-                'group': str(row.task_templates_group_id) if row.task_templates_group_id else None,
+                'user': str(row.templates_user_uuid) if row.templates_user_uuid else None,
+                'group': str(row.templates_group_id) if row.templates_group_id else None,
                 'user_email': None,
                 'group_name': row.groups_name,
             })
