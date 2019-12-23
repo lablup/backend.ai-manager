@@ -308,6 +308,13 @@ class ConfigServer:
             raise UnknownImageReference(reference)
         return await self._parse_image(ref, image_info, reverse_aliases)
 
+    async def forget_image(self, reference: Union[str, ImageRef]):
+        if isinstance(reference, str):
+            ref = await ImageRef.resolve_alias(reference, self.etcd)
+        else:
+            ref = reference
+        await self.etcd.delete_prefix(ref.tag_path)
+
     async def list_images(self):
         known_registries = await get_known_registries(self.etcd)
         reverse_aliases = await self._scan_reverse_aliases()
@@ -319,13 +326,16 @@ class ConfigServer:
             for image, tags in images.items():
                 if image == '':
                     continue
+                if tags == '1':
+                    continue
                 for tag, image_info in tags.items():
                     if tag == '':
                         continue
                     raw_ref = f'{etcd_unquote(registry)}/{etcd_unquote(image)}:{tag}'
                     ref = ImageRef(raw_ref, known_registries)
                     coros.append(self._parse_image(ref, image_info, reverse_aliases))
-        return await asyncio.gather(*coros)
+        result = await asyncio.gather(*coros)
+        return result
 
     async def set_image_resource_limit(self, reference: str, slot_type: str,
                                        value_range: Tuple[Optional[Decimal], Optional[Decimal]]):
