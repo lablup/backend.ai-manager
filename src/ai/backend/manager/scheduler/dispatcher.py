@@ -171,7 +171,13 @@ class SchedulerDispatcher(aobject):
             else:
                 await _inner()
 
-        async def _check_sgroup(db_conn, sgroup_name):
+        async def _schedule_in_sgroup(db_conn, sgroup_name):
+            sched_ctx = SchedulingContext(
+                registry=self.registry,
+                db_conn=db_conn,
+                known_slot_types=known_slot_types,
+            )
+            scheduler = self.load_scheduler(self.config['scheduler']['name'])
             candidate_agents = agents_by_sgroups[sgroup_name]
             pending_sessions = await self._list_pending_sessions(db_conn, sgroup_name)
             existing_sessions = await self._list_existing_sessions(db_conn, sgroup_name)
@@ -286,19 +292,12 @@ class SchedulerDispatcher(aobject):
 
         # We allow a long database transaction here
         # because this scheduling handler will be executed by only one process.
-        # (It's a globally unique singleton.)
+        # It is executed under a globally exclusive context using aioredlock.
         async with self.dbpool.acquire() as db_conn, db_conn.begin():
-            sched_ctx = SchedulingContext(
-                registry=self.registry,
-                db_conn=db_conn,
-                known_slot_types=known_slot_types,
-            )
-            scheduler = self.load_scheduler(self.config['scheduler']['name'])
             agents_by_sgroups = await self._list_agents_by_sgroups(db_conn)
             all_scaling_groups = [*agents_by_sgroups.keys()]
-
             for sgroup_name in all_scaling_groups:
-                await _check_sgroup(db_conn, sgroup_name)
+                await _schedule_in_sgroup(db_conn, sgroup_name)
 
     async def _list_pending_sessions(self, db_conn, sgroup) -> List[PendingSession]:
         query = (
