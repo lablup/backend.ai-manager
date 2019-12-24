@@ -26,7 +26,6 @@ import aiohttp_cors
 from aiojobs.aiohttp import atomic
 import aiotools
 from async_timeout import timeout
-from boltons.iterutils import remap
 from dateutil.tz import tzutc
 import multidict
 import sqlalchemy as sa
@@ -58,7 +57,7 @@ from .exceptions import (
 from .auth import auth_required
 from .typing import CORSOptions, WebMiddleware
 from .utils import (
-    current_loop, catch_unexpected, check_api_params, get_access_key_scopes,
+    current_loop, catch_unexpected, check_api_params, get_access_key_scopes, undefined
 )
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (
@@ -76,6 +75,15 @@ from ..manager.models import (
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.kernel'))
 
 _json_loads = functools.partial(json.loads, parse_float=Decimal)
+
+
+class UndefChecker(t.Trafaret):
+    def check_and_return(self, value: Any) -> object:
+        if value == undefined:
+            return value
+        else:
+            self._failure('Invalid Undef format', value=value)
+
 
 creation_config_v1 = t.Dict({
     t.Key('mounts', default=None): t.Null | t.List(t.String),
@@ -102,24 +110,46 @@ creation_config_v3 = t.Dict({
     tx.AliasedKey(['resource_opts', 'resourceOpts'], default=None):
         t.Null | t.Mapping(t.String, t.Any),
 })
+creation_config_v3_template = t.Dict({
+    t.Key('mounts', default=undefined): UndefChecker | t.Null | t.List(t.String),
+    t.Key('environ', default=undefined): UndefChecker | t.Null | t.Mapping(t.String, t.String),
+    tx.AliasedKey(['cluster_size', 'clusterSize'], default=undefined):
+        UndefChecker | t.Null | t.Int[1:],
+    tx.AliasedKey(['scaling_group', 'scalingGroup'], default=undefined):
+        UndefChecker | t.Null | t.String,
+    t.Key('resources', default=undefined): UndefChecker | t.Null | t.Mapping(t.String, t.Any),
+    tx.AliasedKey(['resource_opts', 'resourceOpts'], default=undefined):
+        UndefChecker | t.Null | t.Mapping(t.String, t.Any),
+})
 creation_config_v4 = t.Dict({
     t.Key('mounts', default=None): t.Null | t.List(t.String),
     tx.AliasedKey(['mount_map', 'mountMap'], default=None): t.Null | t.Mapping(t.String, t.String),
     t.Key('environ', default=None): t.Null | t.Mapping(t.String, t.String),
-    tx.AliasedKey(['cluster_size', 'clusterSize'], default=None):
-        t.Null | t.Int[1:],
-    tx.AliasedKey(['scaling_group', 'scalingGroup'], default=None):
-        t.Null | t.String,
+    tx.AliasedKey(['cluster_size', 'clusterSize'], default=None): t.Null | t.Int[1:],
+    tx.AliasedKey(['scaling_group', 'scalingGroup'], default=None): t.Null | t.String,
     t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
-    tx.AliasedKey(['resource_opts', 'resourceOpts'], default=None):
-        t.Null | t.Mapping(t.String, t.Any),
+    tx.AliasedKey(['resource_opts', 'resourceOpts'], default=None): t.Null | t.Mapping(t.String, t.Any),
+})
+creation_config_v4_template = t.Dict({
+    t.Key('mounts', default=undefined): UndefChecker | t.Null | t.List(t.String),
+    tx.AliasedKey(['mount_map', 'mountMap'], default=undefined):
+        UndefChecker | t.Null | t.Mapping(t.String, t.String),
+    t.Key('environ', default=undefined): UndefChecker | t.Null | t.Mapping(t.String, t.String),
+    tx.AliasedKey(['cluster_size', 'clusterSize'], default=undefined):
+        UndefChecker | t.Null | t.Int[1:],
+    tx.AliasedKey(['scaling_group', 'scalingGroup'], default=undefined):
+        UndefChecker | t.Null | t.String,
+    t.Key('resources', default=undefined): UndefChecker | t.Null | t.Mapping(t.String, t.Any),
+    tx.AliasedKey(['resource_opts', 'resourceOpts'], default=undefined):
+        UndefChecker | t.Null | t.Mapping(t.String, t.Any),
 })
 
 
 overwritten_param_check = t.Dict({
+    t.Key('template_id'): tx.UUID,
     t.Key('sess_id'): t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
     t.Key('image', default=None): t.Null | t.String,
-    t.Key('sess_type', default='interactive'): tx.Enum(SessionTypes),
+    t.Key('sess_type'): tx.Enum(SessionTypes),
     t.Key('group', default='default'): t.String,
     t.Key('domain', default='default'): t.String,
     t.Key('config', default=dict): t.Mapping(t.String, t.Any),
@@ -129,142 +159,44 @@ overwritten_param_check = t.Dict({
     t.Key('reuse', default=True): t.ToBool,
     t.Key('startup_command', default=None): t.Null | t.String,
     t.Key('bootstrap_script', default=None): t.Null | t.String,
-    t.Key('owner_access_key', default=None): t.Null | t.String,
-    t.Key('template_id', default=None): t.Any
+    t.Key('owner_access_key', default=None): t.Null | t.String
 })
 
 
-@server_status_required(ALL_ALLOWED)
-@auth_required
-@check_api_params(t.Dict(
-    {
-        t.Key('clientSessionToken',
-              default=None) >> 'sess_id': t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
-        tx.AliasedKey(['image', 'lang'], default=None): t.Null | t.String,
-        tx.AliasedKey(['type', 'sessionType'],
-                      default='interactive') >> 'sess_type': tx.Enum(SessionTypes),
-        tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
-        tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
-        t.Key('config', default=dict): t.Mapping(t.String, t.Any),
-        t.Key('tag', default=None): t.Null | t.String,
-        t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
-        t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
-        t.Key('reuseIfExists', default=True) >> 'reuse': t.ToBool,
-        t.Key('startupCommand', default=None) >> 'startup_command': t.Null | t.String,
-        tx.AliasedKey(['bootstrap_script', 'bootstrapScript'], default=None): t.Null | t.String,
-        t.Key('owner_access_key', default=None): t.Null | t.String,
-        tx.AliasedKey(['template_id', 'templateId'], default=None): t.Null | tx.UUID
-    }
-), loads=_json_loads)
-async def create(request: web.Request, params: Any) -> web.Response:
+def sub(d, old, new):
+    for k, v in d.items():
+        if isinstance(v, Mapping) or isinstance(v, dict):
+            d[k] = sub(v, old, new)
+        elif d[k] == old:
+            d[k] = new
+    return d
+
+
+def drop(d, dropval):
+    newd = {}
+    for k, v in d.items():
+        if isinstance(v, Mapping) or isinstance(v, dict):
+            newd[k] = drop(v, dropval)
+        elif v != dropval:
+            newd[k] = v
+    return newd
+
+
+async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
-    requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
-    requester_uuid = request['user']['uuid']
+    scopes_param = {
+        'owner_access_key': (None if params['owner_access_key'] is undefined
+                             else params['owner_access_key'])
+    }
+    requester_access_key, owner_access_key = await get_access_key_scopes(request, scopes_param)
     log.info('GET_OR_CREATE (ak:{0}/{1}, img:{2}, s:{3})',
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*',
              params['image'], params['sess_id'])
 
-    dbpool = request.app['dbpool']
     registry = request.app['registry']
     resp: MutableMapping[str, Any] = {}
-
-    if params['image'] is None and params['template_id'] is None:
-        raise InvalidAPIParameters('Both image and template_id can\'t be None!')
-
-    if params['template_id']:
-        async with dbpool.acquire() as conn, conn.begin():
-            query = (
-                        sa.select([session_templates.c.template])
-                          .select_from(session_templates)
-                          .where((session_templates.c.id == params['template_id']) &
-                                  session_templates.c.is_active)
-                    )
-            template = await conn.scalar(query)
-            if not template:
-                raise TaskTemplateNotFound
-
-        template = json.loads(template)
-        log.debug('Template: {0}', template)
-
-        param_from_template = {
-            'image': template['spec']['kernel']['image'],
-        }
-
-        if template['spec']['sess_type'] == 'interactive':
-            param_from_template['sess_type'] = SessionTypes.INTERACTIVE
-        elif template['spec']['sess_type'] == 'batch':
-            param_from_template['sess_type'] = SessionTypes.BATCH
-
-        # TODO: Remove `type: ignore` when mypy supports type inference for walrus operator
-        # Check https://github.com/python/mypy/issues/7316
-        # TODO: remove `NOQA` when flake8 supports Python 3.8 and walrus operator
-        # Check https://gitlab.com/pycqa/flake8/issues/599
-        if tag := template['metadata'].get('tag'):  # noqa
-            param_from_template['tag'] = tag
-        if runtime_opt := template['spec']['kernel']['run']:  # noqa
-            if bootstrap := runtime_opt['bootstrap']:  # noqa
-                param_from_template['bootstrap_script'] = bootstrap
-            if startup := runtime_opt['startup_command']:  # noqa
-                param_from_template['startup_command'] = startup
-
-        config_from_template: MutableMapping[Any, Any] = {}
-        if mounts := template['spec'].get('mounts'):  # noqa
-            config_from_template['mounts'] = list(mounts.keys())
-            config_from_template['mount_map'] = {
-                key: value
-                for (key, value) in mounts.items()
-                if len(value) > 0
-            }
-        if environ := template['spec']['kernel'].get('environ'):  # noqa
-            config_from_template['environ'] = environ
-        if resources := template['spec'].get('resources'):  # noqa
-            config_from_template['resources'] = resources
-
-        drop_falsey = lambda path, key, value: bool(value)
-        override_config = remap(dict(params['config']), visit=drop_falsey)
-        override_params = remap(dict(params), visit=drop_falsey)
-
-        config_from_template.update(override_config)
-        param_from_template.update(override_params)
-
-        try:
-            params = overwritten_param_check.check(param_from_template)
-        except RuntimeError as e1:
-            log.exception(e1)
-        except t.DataError as e2:
-            log.exception(e2)
-            raise InvalidAPIParameters(e2)
-        params['config'] = config_from_template
-
-        log.debug('Updated param: {0}', params)
-
-        if git := template['spec']['kernel']['git']:  # noqa
-            if _dest := git.get('dest_dir'):  # noqa
-                target = _dest
-            else:
-                target = git['repository'].split('/')[-1]
-
-            cmd_builder = 'git clone '
-            if credential := git.get('credential'):  # noqa
-                proto, url = git['repository'].split('://')
-                cmd_builder += f'{proto}://{credential["username"]}:{credential["password"]}@{url}'
-            else:
-                cmd_builder += git['repository']
-            if branch := git.get('branch'):  # noqa
-                cmd_builder += f' -b {branch}'
-            cmd_builder += f' {target}\n'
-
-            if commit := git.get('commit'):  # noqa
-                cmd_builder = 'CWD=$(pwd)\n' + cmd_builder
-                cmd_builder += f'cd {target}\n'
-                cmd_builder += f'git checkout {commit}\n'
-                cmd_builder += 'cd $CWD\n'
-
-            bootstrap = base64.b64decode(params.get('bootstrap_script', b'')).decode()
-            bootstrap += '\n'
-            bootstrap += cmd_builder
-            params['bootstrap_script'] = base64.b64encode(bootstrap.encode()).decode()
+    requester_uuid = request['user']['uuid']
 
     # Resolve the image reference.
     try:
@@ -407,23 +339,11 @@ async def create(request: web.Request, params: Any) -> web.Response:
             if group_id is None:
                 raise InvalidAPIParameters('Invalid group')
 
-        api_version = request['api_version']
-        if 5 <= api_version[0]:
-            creation_config = creation_config_v4.check(params['config'])
-        elif (4, '20190315') <= api_version:
-            creation_config = creation_config_v3.check(params['config'])
-        elif 2 <= api_version[0] <= 4:
-            creation_config = creation_config_v2.check(params['config'])
-        elif api_version[0] == 1:
-            creation_config = creation_config_v1.check(params['config'])
-        else:
-            raise InvalidAPIParameters('API version not supported')
-
         kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
             params['sess_id'], owner_access_key,
             requested_image_ref,
             params['sess_type'],
-            creation_config,
+            params['config'],
             resource_policy,
             domain_name=params['domain'],
             bootstrap_script=params['bootstrap_script'],
@@ -496,6 +416,186 @@ async def create(request: web.Request, params: Any) -> web.Response:
         request.app['event_dispatcher'].unsubscribe('kernel_terminated', term_handler)
         request.app['event_dispatcher'].unsubscribe('kernel_started', start_handler)
     return web.json_response(resp, status=201)
+
+
+@server_status_required(ALL_ALLOWED)
+@auth_required
+@check_api_params(t.Dict(
+    {
+        tx.AliasedKey(['template_id', 'templateId']): t.Null | tx.UUID,
+        t.Key('clientSessionToken', default=undefined) >> 'sess_id':
+            UndefChecker | t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
+        tx.AliasedKey(['image', 'lang'], default=undefined): UndefChecker | t.Null | t.String,
+        tx.AliasedKey(['type', 'sessionType'], default='interactive') >> 'sess_type':
+            tx.Enum(SessionTypes),
+        tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
+        tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
+        t.Key('config', default=dict): t.Mapping(t.String, t.Any),
+        t.Key('tag', default=undefined): UndefChecker | t.Null | t.String,
+        t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
+        t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
+        t.Key('reuseIfExists', default=True) >> 'reuse': t.ToBool,
+        t.Key('startupCommand', default=undefined) >> 'startup_command':
+            UndefChecker | t.Null | t.String,
+        tx.AliasedKey(['bootstrap_script', 'bootstrapScript'], default=undefined):
+            UndefChecker | t.Null | t.String,
+        t.Key('owner_access_key', default=undefined): UndefChecker | t.Null | t.String,
+    }
+), loads=_json_loads)
+async def create_from_template(request: web.Request, params: Any) -> web.Response:
+    dbpool = request.app['dbpool']
+
+    if params['image'] is None and params['template_id'] is None:
+        raise InvalidAPIParameters('Both image and template_id can\'t be None!')
+
+    api_version = request['api_version']
+    try:
+        if 5 <= api_version[0]:
+            params['config'] = creation_config_v4_template.check(params['config'])
+        elif (4, '20190315') <= api_version:
+            params['config'] = creation_config_v3_template.check(params['config'])
+    except t.DataError as e:
+        log.debug('Validation error: {0}', e.as_dict())
+        raise InvalidAPIParameters('Input validation error',
+                                   extra_data=e.as_dict())
+    async with dbpool.acquire() as conn, conn.begin():
+        query = (
+                    sa.select([session_templates.c.template])
+                      .select_from(session_templates)
+                      .where((session_templates.c.id == params['template_id']) &
+                                session_templates.c.is_active)
+                )
+        template = await conn.scalar(query)
+        if not template:
+            raise TaskTemplateNotFound
+
+    template = json.loads(template)
+    log.debug('Template: {0}', template)
+
+    param_from_template = {
+        'image': template['spec']['kernel']['image'],
+    }
+
+    if template['spec']['sess_type'] == 'interactive':
+        param_from_template['sess_type'] = SessionTypes.INTERACTIVE
+    elif template['spec']['sess_type'] == 'batch':
+        param_from_template['sess_type'] = SessionTypes.BATCH
+
+    # TODO: Remove `type: ignore` when mypy supports type inference for walrus operator
+    # Check https://github.com/python/mypy/issues/7316
+    # TODO: remove `NOQA` when flake8 supports Python 3.8 and walrus operator
+    # Check https://gitlab.com/pycqa/flake8/issues/599
+    if tag := template['metadata'].get('tag'):  # noqa
+        param_from_template['tag'] = tag
+    if runtime_opt := template['spec']['kernel']['run']:  # noqa
+        if bootstrap := runtime_opt['bootstrap']:  # noqa
+            param_from_template['bootstrap_script'] = bootstrap
+        if startup := runtime_opt['startup_command']:  # noqa
+            param_from_template['startup_command'] = startup
+
+    config_from_template: MutableMapping[Any, Any] = {}
+    if mounts := template['spec'].get('mounts'):  # noqa
+        config_from_template['mounts'] = list(mounts.keys())
+        config_from_template['mount_map'] = {
+            key: value
+            for (key, value) in mounts.items()
+            if len(value) > 0
+        }
+    if environ := template['spec']['kernel'].get('environ'):  # noqa
+        config_from_template['environ'] = environ
+    if resources := template['spec'].get('resources'):  # noqa
+        config_from_template['resources'] = resources
+
+    override_config = drop(dict(params['config']), undefined)
+    override_params = drop(dict(params), undefined)
+
+    log.debug('Default config: {0}', config_from_template)
+    log.debug('Default params: {0}', param_from_template)
+
+    log.debug('Override config: {0}', override_config)
+    log.debug('Override params: {0}', override_params)
+    config_from_template.update(override_config)
+    param_from_template.update(override_params)
+
+    try:
+        params = overwritten_param_check.check(param_from_template)
+    except RuntimeError as e1:
+        log.exception(e1)
+    except t.DataError as e2:
+        log.debug('Error: {0}', str(e2))
+        raise InvalidAPIParameters('Error while validating template')
+    params['config'] = config_from_template
+
+    log.debug('Updated param: {0}', params)
+
+    if git := template['spec']['kernel']['git']:  # noqa
+        if _dest := git.get('dest_dir'):  # noqa
+            target = _dest
+        else:
+            target = git['repository'].split('/')[-1]
+
+        cmd_builder = 'git clone '
+        if credential := git.get('credential'):  # noqa
+            proto, url = git['repository'].split('://')
+            cmd_builder += f'{proto}://{credential["username"]}:{credential["password"]}@{url}'
+        else:
+            cmd_builder += git['repository']
+        if branch := git.get('branch'):  # noqa
+            cmd_builder += f' -b {branch}'
+        cmd_builder += f' {target}\n'
+
+        if commit := git.get('commit'):  # noqa
+            cmd_builder = 'CWD=$(pwd)\n' + cmd_builder
+            cmd_builder += f'cd {target}\n'
+            cmd_builder += f'git checkout {commit}\n'
+            cmd_builder += 'cd $CWD\n'
+
+        bootstrap = base64.b64decode(params.get('bootstrap_script') or b'').decode()
+        bootstrap += '\n'
+        bootstrap += cmd_builder
+        params['bootstrap_script'] = base64.b64encode(bootstrap.encode()).decode()
+    return await _create(request, params, dbpool)
+
+
+@server_status_required(ALL_ALLOWED)
+@auth_required
+@check_api_params(
+    t.Dict({
+        t.Key('clientSessionToken') >> 'sess_id':
+            t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
+        tx.AliasedKey(['image', 'lang']): t.String,
+        tx.AliasedKey(['type', 'sessionType'], default='interactive') >> 'sess_type':
+            tx.Enum(SessionTypes),
+        tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
+        tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
+        t.Key('config', default=dict): t.Mapping(t.String, t.Any),
+        t.Key('tag', default=None): t.Null | t.String,
+        t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
+        t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
+        t.Key('reuseIfExists', default=True) >> 'reuse': t.ToBool,
+        t.Key('startupCommand', default=None) >> 'startup_command': t.Null | t.String,
+        t.Key('owner_access_key', default=None): t.Null | t.String,
+        t.Key('bootstrap_script', default=None): t.Null | t.String,
+    }),
+    loads=_json_loads)
+async def create_from_params(request: web.Request, params: Any) -> web.Response:
+    if params['sess_id'] in ['from-template']:
+        raise InvalidAPIParameters(f'Requested session ID {params["sess_id"]} is reserved word')
+
+    api_version = request['api_version']
+    if 5 <= api_version[0]:
+        creation_config = creation_config_v4.check(params['config'])
+    elif (4, '20190315') <= api_version:
+        creation_config = creation_config_v3.check(params['config'])
+    elif 2 <= api_version[0] <= 4:
+        creation_config = creation_config_v2.check(params['config'])
+    elif api_version[0] == 1:
+        creation_config = creation_config_v1.check(params['config'])
+    else:
+        raise InvalidAPIParameters('API version not supported')
+    params['config'] = creation_config
+
+    return await _create(request, params, request.app['dbpool'])
 
 
 async def handle_kernel_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
@@ -1133,8 +1233,9 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app.on_shutdown.append(shutdown)
     app['api_versions'] = (1, 2, 3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
-    cors.add(app.router.add_route('POST', '/create', create))  # legacy
-    cors.add(app.router.add_route('POST', '', create))
+    cors.add(app.router.add_route('POST', '/create', create_from_params))  # legacy
+    cors.add(app.router.add_route('POST', '/from-template', create_from_template))
+    cors.add(app.router.add_route('POST', '', create_from_params))
     kernel_resource = cors.add(app.router.add_resource(r'/{sess_id}'))
     cors.add(kernel_resource.add_route('GET',    get_info))
     cors.add(kernel_resource.add_route('PATCH',  restart))

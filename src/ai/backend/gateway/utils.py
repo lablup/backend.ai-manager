@@ -104,7 +104,8 @@ def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None,
                 log.exception(e)
                 raise InvalidAPIParameters('Malformed body')
             except t.DataError as e:
-                log.exception(e)
+                # log.exception(e)
+                log.debug('Validation error: {0}', e)
                 raise InvalidAPIParameters('Input validation error',
                                            extra_data=e.as_dict())
             return await handler(request, params, *args, **kwargs)
@@ -274,3 +275,19 @@ if hasattr(asyncio, 'get_running_loop'):  # Python 3.7+
     current_loop = asyncio.get_running_loop
 else:
     current_loop = asyncio.get_event_loop
+
+
+class Singleton(type):
+    _instances = {}
+
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+        return cls._instances[cls]
+
+
+class Undefined(metaclass=Singleton):
+    pass
+
+
+undefined = Undefined()
