@@ -160,7 +160,10 @@ from ai.backend.common.docker import (
     MIN_KERNELSPEC, MAX_KERNELSPEC,
 )
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import BinarySize, ResourceSlot
+from ai.backend.common.types import (
+    BinarySize, ResourceSlot,
+    current_resource_slots,
+)
 from ai.backend.common.exception import UnknownImageReference
 from ai.backend.common.etcd import (
     quote as etcd_quote,
@@ -186,7 +189,6 @@ config_defaults = {
     'config/docker/image/auto_pull': 'digest',
 }
 
-current_resource_slots: ContextVar[ResourceSlot] = ContextVar('current_resource_slots')
 current_vfolder_types: ContextVar[List[str]] = ContextVar('current_vfolder_types')
 
 
@@ -557,14 +559,9 @@ class ConfigServer:
             await self.etcd.put_dict(updates)
         log.info('done')
 
-    async def update_resource_slots(self, slot_key_and_units, *,
-                                    clear_existing: bool = True):
+    async def update_resource_slots(self, slot_key_and_units):
         updates = {}
-        if clear_existing:
-            await self.etcd.delete_prefix('config/resource_slots/')
         for k, v in slot_key_and_units.items():
-            if k in ('cpu', 'mem'):
-                continue
             # currently we support only two units
             # (where count may be fractional)
             assert v in ('bytes', 'count')
@@ -583,10 +580,10 @@ class ConfigServer:
         '''
         Returns the system-wide known resource slots and their units.
         '''
-        intrinsic_slots = {'cpu': 'count', 'mem': 'bytes'}
         try:
             ret = current_resource_slots.get()
         except LookupError:
+            intrinsic_slots = {'cpu': 'count', 'mem': 'bytes'}
             configured_slots = await self._get_resource_slots()
             ret = {**intrinsic_slots, **configured_slots}
             current_resource_slots.set(ret)
