@@ -162,6 +162,7 @@ from ai.backend.common.docker import (
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     BinarySize, ResourceSlot,
+    SlotName, SlotTypes,
     current_resource_slots,
 )
 from ai.backend.common.exception import UnknownImageReference
@@ -574,7 +575,10 @@ class ConfigServer:
 
     @aiotools.lru_cache(maxsize=1, expire_after=2.0)
     async def _get_resource_slots(self):
-        return await self.etcd.get_prefix_dict('config/resource_slots')
+        raw_data = await self.etcd.get_prefix_dict('config/resource_slots')
+        return {
+            SlotName(k): SlotTypes(v) for k, v in raw_data.items()
+        }
 
     async def get_resource_slots(self):
         '''
@@ -583,7 +587,10 @@ class ConfigServer:
         try:
             ret = current_resource_slots.get()
         except LookupError:
-            intrinsic_slots = {'cpu': 'count', 'mem': 'bytes'}
+            intrinsic_slots = {
+                SlotName('cpu'): SlotTypes('count'),
+                SlotName('mem'): SlotTypes('bytes'),
+            }
             configured_slots = await self._get_resource_slots()
             ret = {**intrinsic_slots, **configured_slots}
             current_resource_slots.set(ret)
