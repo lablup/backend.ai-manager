@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 '''
 Configuration Schema on etcd
 ----------------------------
@@ -129,6 +131,7 @@ Alias keys are also URL-quoted in the same way.
 '''
 
 import asyncio
+from contextvars import ContextVar
 from collections import defaultdict
 from decimal import Decimal
 import logging
@@ -182,6 +185,9 @@ config_defaults = {
     'config/api/allow-origins': '*',
     'config/docker/image/auto_pull': 'digest',
 }
+
+current_resource_slots: ContextVar[ResourceSlot] = ContextVar('current_resource_slots')
+current_vfolder_types: ContextVar[List[str]] = ContextVar('current_vfolder_types')
 
 
 class ConfigServer:
@@ -569,27 +575,41 @@ class ConfigServer:
         await self.etcd.put('manager/status', status.value)
         self.get_manager_status.cache_clear()
 
-    # TODO: refactor using contextvars in Python 3.7 so that the result is cached
-    #       in a per-request basis.
     @aiotools.lru_cache(maxsize=1, expire_after=2.0)
+    async def _get_resource_slots(self):
+        return await self.etcd.get_prefix_dict('config/resource_slots')
+
     async def get_resource_slots(self):
         '''
         Returns the system-wide known resource slots and their units.
         '''
         intrinsic_slots = {'cpu': 'count', 'mem': 'bytes'}
-        configured_slots = await self.etcd.get_prefix_dict('config/resource_slots')
-        return {**intrinsic_slots, **configured_slots}
+        try:
+            ret = current_resource_slots.get()
+        except LookupError:
+            configured_slots = await self._get_resource_slots()
+            ret = {**intrinsic_slots, **configured_slots}
+            current_resource_slots.set(ret)
+        return ret
 
-    @aiotools.lru_cache(maxsize=1, expire_after=60.0)
+    @aiotools.lru_cache(maxsize=1, expire_after=2.0)
+    async def _get_vfolder_types(self):
+        return await self.etcd.get_prefix_dict('volumes/_types')
+
     async def get_vfolder_types(self):
         '''
         Returns the vfolder types currently set. One of "user" and/or "group".
         If none is specified, "user" type is implicitly assumed.
         '''
-        vf_types = await self.etcd.get_prefix_dict('volumes/_types')
-        if not vf_types:
-            vf_types = {'user': ''}
-        return list(vf_types.keys())
+        try:
+            ret = current_vfolder_types.get()
+        except LookupError:
+            vf_types = await self._get_vfolder_types()
+            if not vf_types:
+                vf_types = {'user': ''}
+            ret = list(vf_types.keys())
+            current_vfolder_types.set(ret)
+        return ret
 
     @aiotools.lru_cache(maxsize=1, expire_after=5.0)
     async def get_manager_nodes_info(self):
