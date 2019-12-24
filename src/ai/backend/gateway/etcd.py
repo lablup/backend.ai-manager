@@ -538,13 +538,13 @@ class ConfigServer:
         await asyncio.gather(*coros)
         # TODO: delete images removed from registry?
 
-    async def alias(self, alias: str, target: str):
+    async def alias(self, alias: str, target: str) -> None:
         await self.etcd.put(f'images/_aliases/{etcd_quote(alias)}', target)
 
-    async def dealias(self, alias: str):
+    async def dealias(self, alias: str) -> None:
         await self.etcd.delete(f'images/_aliases/{etcd_quote(alias)}')
 
-    async def update_volumes_from_file(self, file: Path):
+    async def update_volumes_from_file(self, file: Path) -> None:
         log.info('Updating network volumes from "{0}"', file)
         try:
             data = yaml.load(open(file, 'r', encoding='utf-8'))
@@ -560,16 +560,18 @@ class ConfigServer:
             await self.etcd.put_dict(updates)
         log.info('done')
 
-    async def update_resource_slots(self, slot_key_and_units):
+    async def update_resource_slots(
+            self,
+            slot_key_and_units: Mapping[SlotName, SlotTypes]) -> None:
         updates = {}
+        known_slots = await self.get_resource_slots()
         for k, v in slot_key_and_units.items():
-            # currently we support only two units
-            # (where count may be fractional)
-            assert v in ('bytes', 'count')
-            updates[f'config/resource_slots/{k}'] = v
-        await self.etcd.put_dict(updates)
+            if k not in known_slots:
+                updates[f'config/resource_slots/{k}'] = v
+        if updates:
+            await self.etcd.put_dict(updates)
 
-    async def update_manager_status(self, status):
+    async def update_manager_status(self, status) -> None:
         await self.etcd.put('manager/status', status.value)
         self.get_manager_status.cache_clear()
 
