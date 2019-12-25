@@ -278,7 +278,7 @@ else:
 
 
 class Singleton(type):
-    _instances = {}
+    _instances: MutableMapping[Any, Any] = {}
 
     def __call__(cls, *args, **kwargs):
         if cls not in cls._instances:

@@ -83,6 +83,7 @@ class UndefChecker(t.Trafaret):
             return value
         else:
             self._failure('Invalid Undef format', value=value)
+            return None
 
 
 creation_config_v1 = t.Dict({
