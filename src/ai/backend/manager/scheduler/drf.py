@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from decimal import Decimal
 from typing import (
     Any, Optional,
     Dict,
-    List, Sequence,
+    Sequence,
     Mapping,
+    Set,
 )
+from pprint import pformat
 
 from ai.backend.common.types import (
     AccessKey, AgentId, KernelId,
@@ -27,38 +30,34 @@ class DRFScheduler(AbstractScheduler):
 
     def __init__(self, config: Mapping[str, Any]) -> None:
         super().__init__(config)
-        self.per_user_dominant_share = {}
+        self.per_user_dominant_share = defaultdict(lambda: Decimal(0))
 
     def pick_session(self,
                      total_capacity: ResourceSlot,
                      pending_sessions: Sequence[PendingSession],
                      existing_sessions: Sequence[ExistingSession],
                      ) -> Optional[KernelId]:
-
-        least_dominant_share_user: Optional[AccessKey] = None
         self.total_capacity = total_capacity
 
         # Calculate the initial dominant shares of all users.
         for existing_sess in existing_sessions:
             dominant_share = Decimal(0)
             for slot, value in existing_sess.occupying_slots.items():
-                slot_share = value / self.total_capacity[slot]
+                slot_share = Decimal(value) / Decimal(self.total_capacity[slot])
                 if dominant_share < slot_share:
                     dominant_share = slot_share
             if self.per_user_dominant_share[existing_sess.access_key] < dominant_share:
                 self.per_user_dominant_share[existing_sess.access_key] = dominant_share
 
         # Find who has the least dominant share among the pending session.
-        users_with_pending_session: List[AccessKey] = []
-        for pending_sess in pending_sessions:
-            users_with_pending_session.append(pending_sess.access_key)
-
-        least_dominant_share = Decimal(0)
-        for akey in users_with_pending_session:
-            dshare = self.per_user_dominant_share[akey]
-            if least_dominant_share < dshare:
-                least_dominant_share = dshare
-                least_dominant_share_user = akey
+        users_with_pending_session: Set[AccessKey] = {
+            pending_sess.access_key for pending_sess in pending_sessions
+        }
+        least_dominant_share_user, dshare = min(
+            ((akey, dshare)
+             for akey, dshare in self.per_user_dominant_share.items()
+             if akey in users_with_pending_session),
+            key=lambda item: item[1])
 
         # Pick the first pending session of the user
         # who has the lowest dominant share.
@@ -91,7 +90,7 @@ class DRFScheduler(AbstractScheduler):
             # when iterating over multiple pending sessions in a single scaling group.
             dominant_share_from_request = Decimal(0)
             for slot, value in pending_session.requested_slots.items():
-                slot_share = value / self.total_capacity[slot]
+                slot_share = Decimal(value) / Decimal(self.total_capacity[slot])
                 if dominant_share_from_request < slot_share:
                     dominant_share_from_request = slot_share
             if self.per_user_dominant_share[pending_session.access_key] < dominant_share_from_request:

@@ -1,16 +1,19 @@
 from typing import (
+    Any,
+    Mapping,
     Sequence,
 )
 import uuid
+from pprint import pprint
 
-import pytest  # noqa
+import pytest
 
 from ai.backend.common.docker import ImageRef
-from ai.backend.common.types import (  # noqa
+from ai.backend.common.types import (
     AccessKey, AgentId, KernelId,
     ResourceSlot, SessionTypes,
 )
-from ai.backend.manager.scheduler import PendingSession, ExistingSession, AgentContext  # noqa
+from ai.backend.manager.scheduler import PendingSession, ExistingSession, AgentContext
 from ai.backend.manager.scheduler.dispatcher import load_scheduler
 from ai.backend.manager.scheduler.fifo import FIFOSlotScheduler, LIFOSlotScheduler
 from ai.backend.manager.scheduler.drf import DRFScheduler
@@ -26,47 +29,166 @@ example_group_id = uuid.uuid4()
 
 example_total_capacity = ResourceSlot({'cpu': '4.0', 'mem': '4096'})
 
-# example_pending_sessions = [
-#     PendingSession(
-#     ),
-# ]
+
+@pytest.fixture
+def example_agents():
+    return [
+        AgentContext(
+            agent_id=AgentId('i-001'),
+            agent_addr='10.0.1.1:6001',
+            scaling_group='sg01',
+            available_slots=ResourceSlot({'cpu': '4.0', 'mem': '40,96'}),
+            occupied_slots=ResourceSlot({'cpu': '0', 'mem': '0'}),
+        )
+    ]
+
+
+pending_kernel_ids: Sequence[KernelId] = [
+    KernelId(uuid.uuid4()) for _ in range(3)
+]
 
 existing_kernel_ids: Sequence[KernelId] = [
     KernelId(uuid.uuid4()) for _ in range(3)
 ]
 
-example_existing_sessions = [
-    ExistingSession(
-        kernel_id=existing_kernel_ids[0],
-        access_key=AccessKey('user01'),
-        sess_id='es01',
-        sess_type=SessionTypes.BATCH,
-        domain_name='default',
-        group_id=example_group_id,
-        scaling_group='sg01',
-        image_ref=ImageRef('lablup/python:3.6-ubunt18.04'),
-        occupying_slots=ResourceSlot({'cpu': '1.0', 'mem': '1024'}),
-    ),
-    ExistingSession(
-        kernel_id=existing_kernel_ids[1],
-        access_key=AccessKey('user02'),
-        sess_id='es01',
-        sess_type=SessionTypes.BATCH,
-        domain_name='default',
-        group_id=example_group_id,
-        scaling_group='sg01',
-        image_ref=ImageRef('lablup/python:3.6-ubunt18.04'),
-        occupying_slots=ResourceSlot({'cpu': '1.0', 'mem': '1024'}),
-    ),
-    ExistingSession(
-        kernel_id=existing_kernel_ids[2],
-        access_key=AccessKey('user03'),
-        sess_id='es01',
-        sess_type=SessionTypes.BATCH,
-        domain_name='default',
-        group_id=example_group_id,
-        scaling_group='sg01',
-        image_ref=ImageRef('lablup/python:3.6-ubunt18.04'),
-        occupying_slots=ResourceSlot({'cpu': '1.0', 'mem': '1024'}),
-    ),
-]
+_common_dummy_for_pending_session: Mapping[str, Any] = dict(
+    image_ref=ImageRef('lablup/python:3.6-ubunt18.04'),
+    domain_name='default',
+    group_id=example_group_id,
+    resource_policy={},
+    resource_opts={},
+    mounts=[],
+    mount_map={},
+    environ={},
+    startup_command=None,
+    internal_data=None,
+)
+
+_common_dummy_for_existing_session: Mapping[str, Any] = dict(
+    image_ref=ImageRef('lablup/python:3.6-ubunt18.04'),
+    domain_name='default',
+    group_id=example_group_id,
+)
+
+
+@pytest.fixture
+def example_pending_sessions():
+    # lower indicies are enqueued first.
+    return [
+        PendingSession(
+            kernel_id=pending_kernel_ids[0],
+            access_key=AccessKey('user01'),
+            sess_id='es01',
+            sess_type=SessionTypes.BATCH,
+            scaling_group='sg01',
+            requested_slots=ResourceSlot({'cpu': '2.0', 'mem': '1024'}),
+            target_sgroup_names=[],
+            **_common_dummy_for_pending_session,
+        ),
+        PendingSession(
+            kernel_id=pending_kernel_ids[1],
+            access_key=AccessKey('user02'),
+            sess_id='es01',
+            sess_type=SessionTypes.BATCH,
+            scaling_group='sg01',
+            requested_slots=ResourceSlot({'cpu': '1.0', 'mem': '2048'}),
+            target_sgroup_names=[],
+            **_common_dummy_for_pending_session,
+        ),
+        PendingSession(
+            kernel_id=pending_kernel_ids[2],
+            access_key=AccessKey('user03'),
+            sess_id='es01',
+            sess_type=SessionTypes.BATCH,
+            scaling_group='sg01',
+            requested_slots=ResourceSlot({'cpu': '1.0', 'mem': '1024'}),
+            target_sgroup_names=[],
+            **_common_dummy_for_pending_session,
+        ),
+    ]
+
+
+@pytest.fixture
+def example_existing_sessions():
+    return [
+        ExistingSession(
+            kernel_id=existing_kernel_ids[0],
+            access_key=AccessKey('user01'),
+            sess_id='es01',
+            sess_type=SessionTypes.BATCH,
+            occupying_slots=ResourceSlot({'cpu': '3.0', 'mem': '1024'}),
+            scaling_group='sg01',
+            **_common_dummy_for_existing_session,
+        ),
+        ExistingSession(
+            kernel_id=existing_kernel_ids[1],
+            access_key=AccessKey('user02'),
+            sess_id='es01',
+            sess_type=SessionTypes.BATCH,
+            occupying_slots=ResourceSlot({'cpu': '1.0', 'mem': '2048'}),
+            scaling_group='sg01',
+            **_common_dummy_for_existing_session,
+        ),
+        ExistingSession(
+            kernel_id=existing_kernel_ids[2],
+            access_key=AccessKey('user03'),
+            sess_id='es01',
+            sess_type=SessionTypes.BATCH,
+            occupying_slots=ResourceSlot({'cpu': '4.0', 'mem': '4096'}),
+            scaling_group='sg01',
+            **_common_dummy_for_existing_session,
+        ),
+    ]
+
+
+def _find_and_pop_picked_session(pending_sessions, picked_session_id):
+    for picked_idx, pending_sess in enumerate(pending_sessions):
+        if pending_sess.kernel_id == picked_session_id:
+            break
+    else:
+        # no matching entry for picked session?
+        raise RuntimeError('should not reach here')
+    return pending_sessions.pop(picked_idx)
+
+
+def test_fifo_scheduler(example_agents, example_pending_sessions, example_existing_sessions):
+    scheduler = FIFOSlotScheduler({})
+    picked_session_id = scheduler.pick_session(
+        example_total_capacity,
+        example_pending_sessions,
+        example_existing_sessions)
+    assert picked_session_id == example_pending_sessions[0].kernel_id
+    picked_session = _find_and_pop_picked_session(example_pending_sessions, picked_session_id)
+
+    agent_id = scheduler.assign_agent(example_agents, picked_session)
+    assert agent_id == AgentId('i-001')
+
+
+def test_lifo_scheduler(example_agents, example_pending_sessions, example_existing_sessions):
+    scheduler = LIFOSlotScheduler({})
+    picked_session_id = scheduler.pick_session(
+        example_total_capacity,
+        example_pending_sessions,
+        example_existing_sessions)
+    assert picked_session_id == example_pending_sessions[2].kernel_id
+    picked_session = _find_and_pop_picked_session(example_pending_sessions, picked_session_id)
+
+    agent_id = scheduler.assign_agent(example_agents, picked_session)
+    assert agent_id == 'i-001'
+
+
+def test_drf_scheduler(example_agents, example_pending_sessions, example_existing_sessions):
+    scheduler = DRFScheduler({})
+    picked_session_id = scheduler.pick_session(
+        example_total_capacity,
+        example_pending_sessions,
+        example_existing_sessions)
+    pprint(example_pending_sessions)
+    assert picked_session_id == example_pending_sessions[1].kernel_id
+    picked_session = _find_and_pop_picked_session(example_pending_sessions, picked_session_id)
+
+    agent_id = scheduler.assign_agent(example_agents, picked_session)
+    assert agent_id == 'i-001'
+
+
+# TODO: write tests for multiple agents and scaling groups
