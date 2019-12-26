@@ -3,33 +3,33 @@ from typing import (
 )
 import uuid
 
-import pytest
+import pytest  # noqa
 
 from ai.backend.common.docker import ImageRef
-from ai.backend.common.types import (
+from ai.backend.common.types import (  # noqa
     AccessKey, AgentId, KernelId,
     ResourceSlot, SessionTypes,
 )
-from ai.backend.manager.scheduler import PendingSession, ExistingSession, AgentContext
+from ai.backend.manager.scheduler import PendingSession, ExistingSession, AgentContext  # noqa
 from ai.backend.manager.scheduler.dispatcher import load_scheduler
 from ai.backend.manager.scheduler.fifo import FIFOSlotScheduler, LIFOSlotScheduler
 from ai.backend.manager.scheduler.drf import DRFScheduler
 
 
 def test_load_intrinsic():
-    assert load_scheduler('fifo', {}) == FIFOSlotScheduler
-    assert load_scheduler('lifo', {}) == LIFOSlotScheduler
-    assert load_scheduler('drf', {}) == DRFScheduler
+    assert isinstance(load_scheduler('fifo', {}), FIFOSlotScheduler)
+    assert isinstance(load_scheduler('lifo', {}), LIFOSlotScheduler)
+    assert isinstance(load_scheduler('drf', {}), DRFScheduler)
 
 
 example_group_id = uuid.uuid4()
 
 example_total_capacity = ResourceSlot({'cpu': '4.0', 'mem': '4096'})
 
-example_pending_sessions = [
-    PendingSession(
-    ),
-]
+# example_pending_sessions = [
+#     PendingSession(
+#     ),
+# ]
 
 existing_kernel_ids: Sequence[KernelId] = [
     KernelId(uuid.uuid4()) for _ in range(3)
