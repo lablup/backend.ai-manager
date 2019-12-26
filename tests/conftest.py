@@ -76,24 +76,38 @@ def prepare_and_cleanup_databases(request, test_ns, test_db,
 
     # Clear and reset etcd namespace using CLI functions.
     cfg = load_config()
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'volumes/_mount', str(folder_mount)])
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'volumes/_fsprefix', str(folder_fsprefix)])
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'volumes/_default_host', str(folder_host)])
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'config/docker/registry/index.docker.io',
-                     'https://registry-1.docker.io'])
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'config/redis/addr', '127.0.0.1:8110'])
-    # Add fake plugin settings.
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'config/plugins/cloudia/base_url', '127.0.0.1:8090'])
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'config/plugins/cloudia/user', 'fake-cloudia-user@lablup.com'])
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'config/plugins/cloudia/password', 'fake-password'])
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.etcd.json') as f:
+        etcd_fixture = {
+            'volumes': {
+                '_mount': str(folder_mount),
+                '_fsprefix': str(folder_fsprefix),
+                '_default_host': str(folder_host),
+            },
+            'config': {
+                'docker': {
+                    'registry': {
+                        'index.docker.io': 'https://registry-1.docker.io',
+                    },
+                },
+                'redis': {
+                    'addr': '127.0.0.1:8110',
+                },
+                'plugins': {
+                    'cloudia': {
+                        'base_url': '127.0.0.1:8090',
+                        'user': 'fake-cloudia-user@lablup.com',
+                        'password': 'fake-password',
+                    }
+                }
+            },
+        }
+        json.dump(etcd_fixture, f)
+        f.flush()
+        subprocess.call([
+            'python', '-m', 'ai.backend.manager.cli',
+            'etcd', 'put-json', '', f.name,
+        ])
 
     def finalize_etcd():
         subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'delete',
@@ -480,7 +494,6 @@ async def create_app_and_client(request, test_id, test_ns,
 
 @pytest.fixture(scope='session')
 def prepare_docker_images():
-    _loop = asyncio.new_event_loop()
 
     async def pull():
         docker = aiodocker.Docker()
@@ -496,10 +509,7 @@ def prepare_docker_images():
                 await docker.pull(img)
         await docker.close()
 
-    try:
-        _loop.run_until_complete(pull())
-    finally:
-        _loop.close()
+    asyncio.run(pull())
 
 
 @pytest.fixture
