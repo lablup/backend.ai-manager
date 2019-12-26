@@ -158,7 +158,7 @@ def load(config_path: Path = None, debug: bool = False) -> Mapping[str, Any]:
     # (allow_extra will make configs to be forward-copmatible)
     try:
         cfg = config.check(raw_cfg, manager_config_iv)
-        if 'debug'in cfg and cfg['debug']['enabled']:
+        if 'debug' in cfg and cfg['debug']['enabled']:
             print('== Manager configuration ==', file=sys.stderr)
             print(pformat(cfg), file=sys.stderr)
         cfg['_src'] = cfg_src_path

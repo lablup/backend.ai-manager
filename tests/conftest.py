@@ -12,7 +12,6 @@ import signal
 import subprocess
 import tempfile
 
-import aiodocker
 import aiohttp
 from aiohttp import web
 import aiohttp_cors
@@ -54,7 +53,10 @@ def test_db(test_id):
 
 @pytest.fixture(scope='session')
 def folder_mount(test_id):
-    return Path(f'/tmp/backend.ai/vfolders-{test_id}')
+    ret = Path(f'/tmp/backend.ai-testing/vfolders-{test_id}')
+    ret.mkdir(parents=True, exist_ok=True)
+    yield ret
+    shutil.rmtree(ret.parent)
 
 
 @pytest.fixture(scope='session')
@@ -76,24 +78,38 @@ def prepare_and_cleanup_databases(request, test_ns, test_db,
 
     # Clear and reset etcd namespace using CLI functions.
     cfg = load_config()
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'volumes/_mount', str(folder_mount)])
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'volumes/_fsprefix', str(folder_fsprefix)])
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'volumes/_default_host', str(folder_host)])
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'config/docker/registry/index.docker.io',
-                     'https://registry-1.docker.io'])
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'config/redis/addr', '127.0.0.1:8110'])
-    # Add fake plugin settings.
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'config/plugins/cloudia/base_url', '127.0.0.1:8090'])
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'config/plugins/cloudia/user', 'fake-cloudia-user@lablup.com'])
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'config/plugins/cloudia/password', 'fake-password'])
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.etcd.json') as f:
+        etcd_fixture = {
+            'volumes': {
+                '_mount': str(folder_mount),
+                '_fsprefix': str(folder_fsprefix),
+                '_default_host': str(folder_host),
+            },
+            'config': {
+                'docker': {
+                    'registry': {
+                        'index.docker.io': 'https://registry-1.docker.io',
+                    },
+                },
+                'redis': {
+                    'addr': '127.0.0.1:6379',
+                },
+                'plugins': {
+                    'cloudia': {
+                        'base_url': '127.0.0.1:8090',
+                        'user': 'fake-cloudia-user@lablup.com',
+                        'password': 'fake-password',
+                    }
+                }
+            },
+        }
+        json.dump(etcd_fixture, f)
+        f.flush()
+        subprocess.call([
+            'python', '-m', 'ai.backend.manager.cli',
+            'etcd', 'put-json', '', f.name,
+        ])
 
     def finalize_etcd():
         subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'delete',
@@ -295,7 +311,7 @@ async def monitor_keypair(event_loop, app):
 
 
 @pytest.fixture
-def get_headers(app, default_keypair, prepare_docker_images):
+def get_headers(app, default_keypair):
     def create_header(method, url, req_bytes, ctype='application/json',
                       hash_type='sha256', api_version='v4.20181215',
                       keypair=default_keypair):
@@ -476,30 +492,6 @@ async def create_app_and_client(request, test_id, test_ns,
     if extra_proc:
         os.kill(extra_proc.pid, signal.SIGINT)
         extra_proc.join()
-
-
-@pytest.fixture(scope='session')
-def prepare_docker_images():
-    _loop = asyncio.new_event_loop()
-
-    async def pull():
-        docker = aiodocker.Docker()
-        images_to_pull = [
-            'lablup/kernel-lua:5.3-alpine',
-        ]
-        for img in images_to_pull:
-            try:
-                await docker.images.inspect(img)
-            except aiodocker.exceptions.DockerError as e:
-                assert e.status == 404
-                print(f'Pulling image "{img}" for testing...')
-                await docker.pull(img)
-        await docker.close()
-
-    try:
-        _loop.run_until_complete(pull())
-    finally:
-        _loop.close()
 
 
 @pytest.fixture
