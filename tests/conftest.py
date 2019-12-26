@@ -12,7 +12,6 @@ import signal
 import subprocess
 import tempfile
 
-import aiodocker
 import aiohttp
 from aiohttp import web
 import aiohttp_cors
@@ -54,7 +53,10 @@ def test_db(test_id):
 
 @pytest.fixture(scope='session')
 def folder_mount(test_id):
-    return Path(f'/tmp/backend.ai/vfolders-{test_id}')
+    ret = Path(f'/tmp/backend.ai-testing/vfolders-{test_id}')
+    ret.mkdir(parents=True, exist_ok=True)
+    yield ret
+    shutil.rmtree(ret.parent)
 
 
 @pytest.fixture(scope='session')
@@ -91,7 +93,7 @@ def prepare_and_cleanup_databases(request, test_ns, test_db,
                     },
                 },
                 'redis': {
-                    'addr': '127.0.0.1:8110',
+                    'addr': '127.0.0.1:6379',
                 },
                 'plugins': {
                     'cloudia': {
@@ -309,7 +311,7 @@ async def monitor_keypair(event_loop, app):
 
 
 @pytest.fixture
-def get_headers(app, default_keypair, prepare_docker_images):
+def get_headers(app, default_keypair):
     def create_header(method, url, req_bytes, ctype='application/json',
                       hash_type='sha256', api_version='v4.20181215',
                       keypair=default_keypair):
@@ -490,26 +492,6 @@ async def create_app_and_client(request, test_id, test_ns,
     if extra_proc:
         os.kill(extra_proc.pid, signal.SIGINT)
         extra_proc.join()
-
-
-@pytest.fixture(scope='session')
-def prepare_docker_images():
-
-    async def pull():
-        docker = aiodocker.Docker()
-        images_to_pull = [
-            'lablup/lua:5.3-alpine3.8',
-        ]
-        for img in images_to_pull:
-            try:
-                await docker.images.inspect(img)
-            except aiodocker.exceptions.DockerError as e:
-                assert e.status == 404
-                print(f'Pulling image "{img}" for testing...')
-                await docker.pull(img)
-        await docker.close()
-
-    asyncio.run(pull())
 
 
 @pytest.fixture
