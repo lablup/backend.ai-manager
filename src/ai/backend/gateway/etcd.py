@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 '''
 Configuration Schema on etcd
 ----------------------------
@@ -137,6 +139,7 @@ Alias keys are also URL-quoted in the same way.
 '''
 
 import asyncio
+from contextvars import ContextVar
 from collections import defaultdict
 from decimal import Decimal
 import logging
@@ -165,7 +168,11 @@ from ai.backend.common.docker import (
     MIN_KERNELSPEC, MAX_KERNELSPEC,
 )
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import BinarySize, ResourceSlot
+from ai.backend.common.types import (
+    BinarySize, ResourceSlot,
+    SlotName, SlotTypes,
+    current_resource_slots,
+)
 from ai.backend.common.exception import UnknownImageReference
 from ai.backend.common.etcd import (
     quote as etcd_quote,
@@ -190,6 +197,8 @@ config_defaults = {
     'config/api/allow-origins': '*',
     'config/docker/image/auto_pull': 'digest',
 }
+
+current_vfolder_types: ContextVar[List[str]] = ContextVar('current_vfolder_types')
 
 
 class ConfigServer:
@@ -537,13 +546,13 @@ class ConfigServer:
         await asyncio.gather(*coros)
         # TODO: delete images removed from registry?
 
-    async def alias(self, alias: str, target: str):
+    async def alias(self, alias: str, target: str) -> None:
         await self.etcd.put(f'images/_aliases/{etcd_quote(alias)}', target)
 
-    async def dealias(self, alias: str):
+    async def dealias(self, alias: str) -> None:
         await self.etcd.delete(f'images/_aliases/{etcd_quote(alias)}')
 
-    async def update_volumes_from_file(self, file: Path):
+    async def update_volumes_from_file(self, file: Path) -> None:
         log.info('Updating network volumes from "{0}"', file)
         try:
             data = yaml.load(open(file, 'r', encoding='utf-8'))
@@ -559,45 +568,62 @@ class ConfigServer:
             await self.etcd.put_dict(updates)
         log.info('done')
 
-    async def update_resource_slots(self, slot_key_and_units, *,
-                                    clear_existing: bool = True):
+    async def update_resource_slots(
+            self,
+            slot_key_and_units: Mapping[SlotName, SlotTypes]) -> None:
         updates = {}
-        if clear_existing:
-            await self.etcd.delete_prefix('config/resource_slots/')
+        known_slots = await self.get_resource_slots()
         for k, v in slot_key_and_units.items():
-            if k in ('cpu', 'mem'):
-                continue
-            # currently we support only two units
-            # (where count may be fractional)
-            assert v in ('bytes', 'count')
-            updates[f'config/resource_slots/{k}'] = v
-        await self.etcd.put_dict(updates)
+            if k not in known_slots:
+                updates[f'config/resource_slots/{k}'] = v
+        if updates:
+            await self.etcd.put_dict(updates)
 
-    async def update_manager_status(self, status):
+    async def update_manager_status(self, status) -> None:
         await self.etcd.put('manager/status', status.value)
         self.get_manager_status.cache_clear()
 
-    # TODO: refactor using contextvars in Python 3.7 so that the result is cached
-    #       in a per-request basis.
     @aiotools.lru_cache(maxsize=1, expire_after=2.0)
+    async def _get_resource_slots(self):
+        raw_data = await self.etcd.get_prefix_dict('config/resource_slots')
+        return {
+            SlotName(k): SlotTypes(v) for k, v in raw_data.items()
+        }
+
     async def get_resource_slots(self):
         '''
         Returns the system-wide known resource slots and their units.
         '''
-        intrinsic_slots = {'cpu': 'count', 'mem': 'bytes'}
-        configured_slots = await self.etcd.get_prefix_dict('config/resource_slots')
-        return {**intrinsic_slots, **configured_slots}
+        try:
+            ret = current_resource_slots.get()
+        except LookupError:
+            intrinsic_slots = {
+                SlotName('cpu'): SlotTypes('count'),
+                SlotName('mem'): SlotTypes('bytes'),
+            }
+            configured_slots = await self._get_resource_slots()
+            ret = {**intrinsic_slots, **configured_slots}
+            current_resource_slots.set(ret)
+        return ret
 
-    @aiotools.lru_cache(maxsize=1, expire_after=60.0)
+    @aiotools.lru_cache(maxsize=1, expire_after=2.0)
+    async def _get_vfolder_types(self):
+        return await self.etcd.get_prefix_dict('volumes/_types')
+
     async def get_vfolder_types(self):
         '''
         Returns the vfolder types currently set. One of "user" and/or "group".
         If none is specified, "user" type is implicitly assumed.
         '''
-        vf_types = await self.etcd.get_prefix_dict('volumes/_types')
-        if not vf_types:
-            vf_types = {'user': ''}
-        return list(vf_types.keys())
+        try:
+            ret = current_vfolder_types.get()
+        except LookupError:
+            vf_types = await self._get_vfolder_types()
+            if not vf_types:
+                vf_types = {'user': ''}
+            ret = list(vf_types.keys())
+            current_vfolder_types.set(ret)
+        return ret
 
     @aiotools.lru_cache(maxsize=1, expire_after=5.0)
     async def get_manager_nodes_info(self):
