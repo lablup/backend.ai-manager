@@ -160,7 +160,11 @@ from ai.backend.common.docker import (
     MIN_KERNELSPEC, MAX_KERNELSPEC,
 )
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import BinarySize, ResourceSlot
+from ai.backend.common.types import (
+    BinarySize, ResourceSlot,
+    SlotName, SlotTypes,
+    current_resource_slots,
+)
 from ai.backend.common.exception import UnknownImageReference
 from ai.backend.common.etcd import (
     quote as etcd_quote,
@@ -186,7 +190,6 @@ config_defaults = {
     'config/docker/image/auto_pull': 'digest',
 }
 
-current_resource_slots: ContextVar[ResourceSlot] = ContextVar('current_resource_slots')
 current_vfolder_types: ContextVar[List[str]] = ContextVar('current_vfolder_types')
 
 
@@ -535,13 +538,13 @@ class ConfigServer:
         await asyncio.gather(*coros)
         # TODO: delete images removed from registry?
 
-    async def alias(self, alias: str, target: str):
+    async def alias(self, alias: str, target: str) -> None:
         await self.etcd.put(f'images/_aliases/{etcd_quote(alias)}', target)
 
-    async def dealias(self, alias: str):
+    async def dealias(self, alias: str) -> None:
         await self.etcd.delete(f'images/_aliases/{etcd_quote(alias)}')
 
-    async def update_volumes_from_file(self, file: Path):
+    async def update_volumes_from_file(self, file: Path) -> None:
         log.info('Updating network volumes from "{0}"', file)
         try:
             data = yaml.load(open(file, 'r', encoding='utf-8'))
@@ -557,36 +560,39 @@ class ConfigServer:
             await self.etcd.put_dict(updates)
         log.info('done')
 
-    async def update_resource_slots(self, slot_key_and_units, *,
-                                    clear_existing: bool = True):
+    async def update_resource_slots(
+            self,
+            slot_key_and_units: Mapping[SlotName, SlotTypes]) -> None:
         updates = {}
-        if clear_existing:
-            await self.etcd.delete_prefix('config/resource_slots/')
+        known_slots = await self.get_resource_slots()
         for k, v in slot_key_and_units.items():
-            if k in ('cpu', 'mem'):
-                continue
-            # currently we support only two units
-            # (where count may be fractional)
-            assert v in ('bytes', 'count')
-            updates[f'config/resource_slots/{k}'] = v
-        await self.etcd.put_dict(updates)
+            if k not in known_slots:
+                updates[f'config/resource_slots/{k}'] = v
+        if updates:
+            await self.etcd.put_dict(updates)
 
-    async def update_manager_status(self, status):
+    async def update_manager_status(self, status) -> None:
         await self.etcd.put('manager/status', status.value)
         self.get_manager_status.cache_clear()
 
     @aiotools.lru_cache(maxsize=1, expire_after=2.0)
     async def _get_resource_slots(self):
-        return await self.etcd.get_prefix_dict('config/resource_slots')
+        raw_data = await self.etcd.get_prefix_dict('config/resource_slots')
+        return {
+            SlotName(k): SlotTypes(v) for k, v in raw_data.items()
+        }
 
     async def get_resource_slots(self):
         '''
         Returns the system-wide known resource slots and their units.
         '''
-        intrinsic_slots = {'cpu': 'count', 'mem': 'bytes'}
         try:
             ret = current_resource_slots.get()
         except LookupError:
+            intrinsic_slots = {
+                SlotName('cpu'): SlotTypes('count'),
+                SlotName('mem'): SlotTypes('bytes'),
+            }
             configured_slots = await self._get_resource_slots()
             ret = {**intrinsic_slots, **configured_slots}
             current_resource_slots.set(ret)
