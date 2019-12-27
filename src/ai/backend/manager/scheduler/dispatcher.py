@@ -183,9 +183,6 @@ class SchedulerDispatcher(aobject):
             result = await db_conn.execute(query)
             scheduler_name = await result.scalar()
             scheduler = load_scheduler(scheduler_name, self.config['plugins']['scheduler'])
-            # scheduler = load_scheduler(
-            #     self.config['scheduler']['name'],
-            #     self.config['plugins']['scheduler'])
             candidate_agents = agents_by_sgroups[sgroup_name]
             pending_sessions = await self._list_pending_sessions(db_conn, sgroup_name)
             existing_sessions = await self._list_existing_sessions(db_conn, sgroup_name)

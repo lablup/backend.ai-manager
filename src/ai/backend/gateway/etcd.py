@@ -80,8 +80,6 @@ Alias keys are also URL-quoted in the same way.
        + subnet
          - agent: "0.0.0.0/0"
          - container: "0.0.0.0/0"
-     + scheduler
-       - name: {scheduler-name}
      + watcher
        - token: {some-secret}
    + volumes
