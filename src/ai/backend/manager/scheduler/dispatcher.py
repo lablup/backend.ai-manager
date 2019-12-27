@@ -30,7 +30,7 @@ from ...gateway.etcd import ConfigServer
 from ...gateway.exceptions import InstanceNotAvailable
 from ..registry import AgentRegistry
 from ..models import (
-    agents, kernels, keypairs,
+    agents, kernels, keypairs, scaling_groups,
     AgentStatus, KernelStatus,
     RESOURCE_OCCUPYING_KERNEL_STATUSES,
 )
@@ -175,9 +175,17 @@ class SchedulerDispatcher(aobject):
                 await _inner()
 
         async def _schedule_in_sgroup(db_conn, sgroup_name):
-            scheduler = load_scheduler(
-                self.config['scheduler']['name'],
-                self.config['plugins']['scheduler'])
+            query = (
+                sa.select([scaling_groups.c.scheduler])
+                .select_from(scaling_groups)
+                .where(scaling_groups.c.name == sgroup_name)
+            )
+            result = await db_conn.execute(query)
+            scheduler_name = await result.scalar()
+            scheduler = load_scheduler(scheduler_name, self.config['plugins']['scheduler'])
+            # scheduler = load_scheduler(
+            #     self.config['scheduler']['name'],
+            #     self.config['plugins']['scheduler'])
             candidate_agents = agents_by_sgroups[sgroup_name]
             pending_sessions = await self._list_pending_sessions(db_conn, sgroup_name)
             existing_sessions = await self._list_existing_sessions(db_conn, sgroup_name)
