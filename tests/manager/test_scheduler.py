@@ -37,9 +37,16 @@ def example_agents():
             agent_id=AgentId('i-001'),
             agent_addr='10.0.1.1:6001',
             scaling_group='sg01',
-            available_slots=ResourceSlot({'cpu': '4.0', 'mem': '40,96'}),
+            available_slots=ResourceSlot({'cpu': '4.0', 'mem': '4096'}),
             occupied_slots=ResourceSlot({'cpu': '0', 'mem': '0'}),
-        )
+        ),
+        AgentContext(
+            agent_id=AgentId('i-101'),
+            agent_addr='10.0.2.1:6001',
+            scaling_group='sg02',
+            available_slots=ResourceSlot({'cpu': '3.0', 'mem': '2560'}),
+            occupied_slots=ResourceSlot({'cpu': '0', 'mem': '0'}),
+        ),
     ]
 
 
