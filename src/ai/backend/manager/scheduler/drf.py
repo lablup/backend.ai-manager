@@ -9,7 +9,6 @@ from typing import (
     Mapping,
     Set,
 )
-from pprint import pformat
 
 from ai.backend.common.types import (
     AccessKey, AgentId, KernelId,
@@ -42,8 +41,12 @@ class DRFScheduler(AbstractScheduler):
         # Calculate the initial dominant shares of all users.
         for existing_sess in existing_sessions:
             dominant_share = Decimal(0)
+            self.total_capacity.sync_keys(existing_sess.occupying_slots)
             for slot, value in existing_sess.occupying_slots.items():
-                slot_share = Decimal(value) / Decimal(self.total_capacity[slot])
+                slot_cap = Decimal(self.total_capacity[slot])
+                if slot_cap == 0:
+                    continue
+                slot_share = Decimal(value) / slot_cap
                 if dominant_share < slot_share:
                     dominant_share = slot_share
             if self.per_user_dominant_share[existing_sess.access_key] < dominant_share:
@@ -53,10 +56,11 @@ class DRFScheduler(AbstractScheduler):
         users_with_pending_session: Set[AccessKey] = {
             pending_sess.access_key for pending_sess in pending_sessions
         }
+        if not users_with_pending_session:
+            return None
         least_dominant_share_user, dshare = min(
-            ((akey, dshare)
-             for akey, dshare in self.per_user_dominant_share.items()
-             if akey in users_with_pending_session),
+            ((akey, self.per_user_dominant_share[akey])
+             for akey in users_with_pending_session),
             key=lambda item: item[1])
 
         # Pick the first pending session of the user
@@ -90,7 +94,11 @@ class DRFScheduler(AbstractScheduler):
             # when iterating over multiple pending sessions in a single scaling group.
             dominant_share_from_request = Decimal(0)
             for slot, value in pending_session.requested_slots.items():
-                slot_share = Decimal(value) / Decimal(self.total_capacity[slot])
+                self.total_capacity.sync_keys(pending_session.requested_slots)
+                slot_cap = Decimal(self.total_capacity[slot])
+                if slot_cap == 0:
+                    continue
+                slot_share = Decimal(value) / slot_cap
                 if dominant_share_from_request < slot_share:
                     dominant_share_from_request = slot_share
             if self.per_user_dominant_share[pending_session.access_key] < dominant_share_from_request:
