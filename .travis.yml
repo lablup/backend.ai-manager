@@ -42,7 +42,6 @@ install:
       sed -i 's/asyncio.async(\([^,]\+\), loop=[^,]\+)/asyncio.create_task(\1)/g' "${_AIOZMQ_PATCH_FILE}"
     fi
   - mkdir -p ~/.config/backend.ai
-  - psql -c 'create database testing;' -U postgres
   - cp config/ci.toml ~/.config/backend.ai/manager.toml
   - mkdir -p /tmp/scratches
   - mkdir -p /tmp/vfroot/local
