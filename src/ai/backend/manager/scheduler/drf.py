@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from decimal import Decimal
+import logging
 from typing import (
     Any, Optional,
     Dict,
@@ -10,6 +11,7 @@ from typing import (
     Set,
 )
 
+from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     AccessKey, AgentId, KernelId,
     ResourceSlot,
@@ -20,6 +22,8 @@ from . import (
     PendingSession,
     ExistingSession,
 )
+
+log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.scheduler'))
 
 
 class DRFScheduler(AbstractScheduler):
@@ -51,6 +55,7 @@ class DRFScheduler(AbstractScheduler):
                     dominant_share = slot_share
             if self.per_user_dominant_share[existing_sess.access_key] < dominant_share:
                 self.per_user_dominant_share[existing_sess.access_key] = dominant_share
+        log.debug('per-user dominant share: {}', dict(self.per_user_dominant_share))
 
         # Find who has the least dominant share among the pending session.
         users_with_pending_session: Set[AccessKey] = {
@@ -62,6 +67,7 @@ class DRFScheduler(AbstractScheduler):
             ((akey, self.per_user_dominant_share[akey])
              for akey in users_with_pending_session),
             key=lambda item: item[1])
+        log.debug('least dominant share user: {} ({})', least_dominant_share_user, dshare)
 
         # Pick the first pending session of the user
         # who has the lowest dominant share.
