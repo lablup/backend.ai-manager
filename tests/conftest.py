@@ -70,9 +70,9 @@ def folder_host():
     return 'local'
 
 
-@pytest.fixture(scope='session', autouse=True)
-def prepare_and_cleanup_databases(request, test_ns, test_db,
-                                  folder_mount, folder_host, folder_fsprefix):
+@pytest.fixture(scope='session', autouse=False)
+def database(request, test_ns, test_db,
+             folder_mount, folder_host, folder_fsprefix):
     os.environ['BACKEND_NAMESPACE'] = test_ns
     os.environ['BACKEND_DB_NAME'] = test_db
 
@@ -354,7 +354,7 @@ def get_headers(app, default_keypair):
 
 @pytest.fixture
 async def create_app_and_client(request, test_id, test_ns,
-                                event_loop, app,
+                                event_loop, app, database,
                                 default_keypair, user_keypair):
     client = None
     runner = None
