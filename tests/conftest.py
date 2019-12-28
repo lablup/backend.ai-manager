@@ -138,12 +138,11 @@ def database(request, test_config, test_db):
     db_addr = test_config['db']['addr']
     db_user = test_config['db']['user']
     db_pass = test_config['db']['password']
-    db_name = test_config['db']['name']
     if db_pass:
         # TODO: escape/urlquote db_pass
-        db_url = f'postgresql://{db_user}:{db_pass}@{db_addr}/{db_name}'
+        db_url = f'postgresql://{db_user}:{db_pass}@{db_addr}'
     else:
-        db_url = f'postgresql://{db_user}@{db_addr}/{db_name}'
+        db_url = f'postgresql://{db_user}@{db_addr}'
     conn = pg.connect(db_url)
     conn.set_isolation_level(pg.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
     cur = conn.cursor()
