@@ -34,7 +34,7 @@ class EventCallback(Protocol):
                        context: Any,
                        agent_id: AgentId,
                        event_name: str,
-                       *args):
+                       *args) -> None:
         ...
 
 

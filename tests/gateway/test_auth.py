@@ -96,6 +96,6 @@ async def test_authorize(create_app_and_client, get_headers):
         assert data['echo'] == req_data['echo']
 
     # Try multiple different hashing schemes
-    await do_authorize('sha256', 'v4.20181215')
-    await do_authorize('sha256', 'v3.20170615')
-    await do_authorize('sha1', 'v3.20170615')
+    await do_authorize('sha256', 'v5.20191215')
+    await do_authorize('sha256', 'v4.20190615')
+    await do_authorize('sha1', 'v4.20190615')

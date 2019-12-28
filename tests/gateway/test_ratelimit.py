@@ -26,6 +26,7 @@ async def test_check_rlim_for_authrized_query(create_app_and_client,
     ret = await client.post(url, data=req_bytes, headers=headers)
 
     assert ret.status == 200
-    assert '1000' == ret.headers['X-RateLimit-Limit']
-    assert '999' == ret.headers['X-RateLimit-Remaining']
+    # The default example keypair's ratelimit is 30000.
+    assert '30000' == ret.headers['X-RateLimit-Limit']
+    assert '29999' == ret.headers['X-RateLimit-Remaining']
     assert str(rlim._rlim_window) == ret.headers['X-RateLimit-Window']

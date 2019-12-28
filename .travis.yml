@@ -2,15 +2,16 @@ language: python
 dist: xenial
 cache: pip
 addons:
-  postgresql: "9.6"
+  postgresql: "10"
+  apt:
+    packages:
+    - postgresql-10
+    - postgresql-client-10
+    - libsnappy-dev
 services:
   - docker
   - postgresql
   - redis
-addons:
-  apt:
-    packages:
-    - libsnappy-dev
 
 # stage decl.
 stages:
@@ -41,11 +42,13 @@ install:
       sed -i 's/asyncio.async(\([^,]\+\), loop=[^,]\+)/asyncio.create_task(\1)/g' "${_AIOZMQ_PATCH_FILE}"
     fi
   - mkdir -p ~/.config/backend.ai
-  - psql -c 'create database testing;' -U postgres
   - cp config/ci.toml ~/.config/backend.ai/manager.toml
   - mkdir -p /tmp/scratches
   - mkdir -p /tmp/vfroot/local
 before_script:
+  # db setup
+  - psql -c "CREATE DATABASE testing;" -U postgres
+  - psql -c "CREATE USER lablup WITH PASSWORD 'develove'; ALTER USER lablup WITH SUPERUSER;" -U postgres
   # etcd
   - mkdir -p /tmp/etcd
   - docker run -d -p 2379:2379 -p 2380:2380

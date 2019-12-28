@@ -43,6 +43,8 @@ class BackendError(web.HTTPError):
             'type': self.error_type,
             'title': self.error_title,
         }
+        if extra_msg is not None:
+            body['msg'] = extra_msg
         if extra_data is not None:
             body['data'] = extra_data
         self.body = json.dumps(body).encode()
