@@ -138,11 +138,12 @@ def database(request, test_config, test_db):
     db_addr = test_config['db']['addr']
     db_user = test_config['db']['user']
     db_pass = test_config['db']['password']
+    # Temporarily use "testing" dbname until we create our own db.
     if db_pass:
         # TODO: escape/urlquote db_pass
-        db_url = f'postgresql://{db_user}:{db_pass}@{db_addr}'
+        db_url = f'postgresql://{db_user}:{db_pass}@{db_addr}/testing'
     else:
-        db_url = f'postgresql://{db_user}@{db_addr}'
+        db_url = f'postgresql://{db_user}@{db_addr}/testing'
     conn = pg.connect(db_url)
     conn.set_isolation_level(pg.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
     cur = conn.cursor()
@@ -164,7 +165,7 @@ def database(request, test_config, test_db):
     request.addfinalizer(finalize_db)
 
     # Load the database schema using CLI function.
-    alembic_url = db_url + '/' + test_db
+    alembic_url = f'postgresql://{db_user}:{db_pass}@{db_addr}/{test_db}'
     with tempfile.NamedTemporaryFile(mode='w', encoding='utf8') as alembic_cfg:
         alembic_sample_cfg = here / '..' / 'alembic.ini.sample'
         alembic_cfg_data = alembic_sample_cfg.read_text()
