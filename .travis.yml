@@ -2,15 +2,16 @@ language: python
 dist: xenial
 cache: pip
 addons:
-  postgresql: "9.6"
+  postgresql: "10"
+  apt:
+    packages:
+    - postgresql-10
+    - postgresql-client-10
+    - libsnappy-dev
 services:
   - docker
   - postgresql
   - redis
-addons:
-  apt:
-    packages:
-    - libsnappy-dev
 
 # stage decl.
 stages:
@@ -46,6 +47,8 @@ install:
   - mkdir -p /tmp/scratches
   - mkdir -p /tmp/vfroot/local
 before_script:
+  # db setup
+  - psql -c "CREATE USER lablup WITH PASSWORD 'develove';" -U postgres
   # etcd
   - mkdir -p /tmp/etcd
   - docker run -d -p 2379:2379 -p 2380:2380

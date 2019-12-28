@@ -23,7 +23,6 @@ import psycopg2 as pg
 import pytest
 
 from ai.backend.common.argparse import host_port_pair
-from ai.backend.common.types import HostPortPair
 from ai.backend.gateway.config import load as load_config
 from ai.backend.gateway.etcd import ConfigServer
 from ai.backend.gateway.server import (
@@ -74,8 +73,9 @@ def vfolder_host():
 
 
 @pytest.fixture(scope='session')
-def test_config(test_id):
+def test_config(test_id, test_db):
     cfg = load_config()
+    cfg['db']['name'] = test_db
     return cfg
 
 
