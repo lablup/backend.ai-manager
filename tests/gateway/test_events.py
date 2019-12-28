@@ -14,17 +14,10 @@ from ai.backend.common.types import (
 
 
 @pytest.fixture
-async def dispatcher(app, event_loop):
+async def dispatcher(app, test_config, event_loop):
     aiojobs.aiohttp.setup(app)
     app.freeze()
-    app['config'] = {
-        'redis': redis_config_iv.check({
-            'addr': 'localhost:6379',
-        }),
-        'debug': {
-            'log-events': False,
-        }
-    }
+    app['config'] = test_config
     await app.on_startup.send(app)
     scheduler = aiojobs.aiohttp.get_scheduler_from_app(app)
     assert scheduler is not None

@@ -163,6 +163,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     BinarySize, ResourceSlot,
     SlotName, SlotTypes,
+    HostPortPair,
     current_resource_slots,
 )
 from ai.backend.common.exception import UnknownImageReference
@@ -195,7 +196,11 @@ current_vfolder_types: ContextVar[List[str]] = ContextVar('current_vfolder_types
 
 class ConfigServer:
 
-    def __init__(self, app_ctx, etcd_addr, etcd_user, etcd_password, namespace):
+    def __init__(self, app_ctx: Mapping[str, Any],
+                 etcd_addr: HostPortPair,
+                 etcd_user: Optional[str],
+                 etcd_password: Optional[str],
+                 namespace: str) -> None:
         # WARNING: importing etcd3/grpc must be done after forks.
         from ai.backend.common.etcd import AsyncEtcd
         self.context = app_ctx
@@ -220,15 +225,16 @@ class ConfigServer:
                 'A required etcd config is missing.', key)
         return value
 
-    async def register_myself(self, app_config) -> None:
+    async def register_myself(self) -> None:
         instance_id = await get_instance_id()
         manager_info = {
-            'nodes/manager': instance_id,
+            f'nodes/manager/{instance_id}': 'up',
         }
         await self.etcd.put_dict(manager_info)
 
     async def deregister_myself(self) -> None:
-        await self.etcd.delete_prefix('nodes/manager')
+        instance_id = await get_instance_id()
+        await self.etcd.delete_prefix(f'nodes/manager/{instance_id}')
 
     async def update_aliases_from_file(self, file: Path) -> None:
         log.info('Updating image aliases from "{0}"', file)
@@ -784,7 +790,7 @@ async def delete_config(request: web.Request, params: Any) -> web.Response:
 
 async def init(app: web.Application) -> None:
     if app['pidx'] == 0:
-        await app['config_server'].register_myself(app['config'])
+        await app['config_server'].register_myself()
 
 
 async def shutdown(app: web.Application) -> None:

@@ -25,6 +25,7 @@ import pytest
 from ai.backend.common.argparse import host_port_pair
 from ai.backend.common.types import HostPortPair
 from ai.backend.gateway.config import load as load_config
+from ai.backend.gateway.etcd import ConfigServer
 from ai.backend.gateway.server import (
     gw_init, gw_shutdown,
     exception_middleware, api_middleware,
@@ -36,14 +37,16 @@ from ai.backend.manager.models import agents, kernels, keypairs, vfolders
 here = Path(__file__).parent
 
 
-@pytest.fixture(scope='session')
+@pytest.fixture(scope='session', autouse=True)
 def test_id():
     return secrets.token_hex(12)
 
 
-@pytest.fixture(scope='session')
+@pytest.fixture(scope='session', autouse=True)
 def test_ns(test_id):
-    return f'testing-ns-{test_id}'
+    ret = f'testing-ns-{test_id}'
+    os.environ['BACKEND_NAMESPACE'] = ret
+    return ret
 
 
 @pytest.fixture(scope='session')
@@ -52,7 +55,7 @@ def test_db(test_id):
 
 
 @pytest.fixture(scope='session')
-def folder_mount(test_id):
+def vfolder_mount(test_id):
     ret = Path(f'/tmp/backend.ai-testing/vfolders-{test_id}')
     ret.mkdir(parents=True, exist_ok=True)
     yield ret
@@ -60,31 +63,33 @@ def folder_mount(test_id):
 
 
 @pytest.fixture(scope='session')
-def folder_fsprefix(test_id):
+def vfolder_fsprefix(test_id):
     # NOTE: the prefix must NOT start with "/"
     return Path('fsprefix/inner/')
 
 
 @pytest.fixture(scope='session')
-def folder_host():
+def vfolder_host():
     return 'local'
 
 
-@pytest.fixture(scope='session', autouse=False)
-def database(request, test_ns, test_db,
-             folder_mount, folder_host, folder_fsprefix):
-    os.environ['BACKEND_NAMESPACE'] = test_ns
-    os.environ['BACKEND_DB_NAME'] = test_db
-
-    # Clear and reset etcd namespace using CLI functions.
+@pytest.fixture(scope='session')
+def test_config(test_id):
     cfg = load_config()
+    return cfg
 
+
+@pytest.fixture(scope='session')
+def etcd_fixture(test_id, test_config, vfolder_mount, vfolder_fsprefix, vfolder_host):
+    # Clear and reset etcd namespace using CLI functions.
     with tempfile.NamedTemporaryFile(mode='w', suffix='.etcd.json') as f:
         etcd_fixture = {
             'volumes': {
-                '_mount': str(folder_mount),
-                '_fsprefix': str(folder_fsprefix),
-                '_default_host': str(folder_host),
+                '_mount': str(vfolder_mount),
+                '_fsprefix': str(vfolder_fsprefix),
+                '_default_host': str(vfolder_host),
+            },
+            'nodes': {
             },
             'config': {
                 'docker': {
@@ -110,16 +115,31 @@ def database(request, test_ns, test_db,
             'python', '-m', 'ai.backend.manager.cli',
             'etcd', 'put-json', '', f.name,
         ])
+    yield
+    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'delete',
+                     '', '--prefix'])
 
-    def finalize_etcd():
-        subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'delete',
-                         '', '--prefix'])
-    request.addfinalizer(finalize_etcd)
+
+@pytest.fixture
+async def config_server(app, etcd_fixture):
+    server = ConfigServer(
+        app,
+        app['config']['etcd']['addr'],
+        app['config']['etcd']['user'],
+        app['config']['etcd']['password'],
+        app['config']['etcd']['namespace'],
+    )
+    yield server
+
+
+@pytest.fixture(scope='session')
+def database(request, test_config, test_db):
+    os.environ['BACKEND_DB_NAME'] = test_db
 
     # Create database using low-level psycopg2 API.
-    db_addr = cfg['db']['addr']
-    db_user = cfg['db']['user']
-    db_pass = cfg['db']['password']
+    db_addr = test_config['db']['addr']
+    db_user = test_config['db']['user']
+    db_pass = test_config['db']['password']
     if db_pass:
         # TODO: escape/urlquote db_pass
         db_url = f'postgresql://{db_user}:{db_pass}@{db_addr}'
@@ -228,30 +248,12 @@ class Client:
 
 
 @pytest.fixture
-async def app(event_loop, test_ns, test_db, unused_tcp_port_factory):
-    """
-    For tests that do not require actual server running.
-    """
+async def app(event_loop, test_config, unused_tcp_port_factory):
     app = web.Application(middlewares=[
         exception_middleware,
         api_middleware,
     ])
-    app['config'] = load_config()
-
-    # Override settings for testing.
-    app['config']['db']['name'] = test_db
-    app['config']['etcd']['namespace'] = test_ns
-    app['config']['manager']['num-proc'] = 2
-    app['config']['manager']['heartbeat-timeout'] = 10.0
-    app['config']['manager']['service-addr'] = HostPortPair(
-        '127.0.0.1', unused_tcp_port_factory())
-    # import ssl
-    # app['config'].ssl_cert = here / 'sample-ssl-cert' / 'sample.crt'
-    # app['config'].ssl_key = here / 'sample-ssl-cert' / 'sample.key'
-    # app['sslctx'] = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
-    # app['sslctx'].load_cert_chain(str(app['config'].ssl_cert),
-    #                            str(app['config'].ssl_key))
-
+    app['config'] = test_config
     app['pidx'] = 0
     return app
 
@@ -405,7 +407,7 @@ async def create_app_and_client(request, test_id, test_ns,
         await runner.setup()
         site = web.TCPSite(
             runner,
-            app['config']['manager']['service-addr'].host,
+            str(app['config']['manager']['service-addr'].host),
             app['config']['manager']['service-addr'].port,
             ssl_context=app.get('sslctx'),
             **server_params,
