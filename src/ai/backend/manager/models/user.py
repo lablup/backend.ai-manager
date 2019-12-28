@@ -474,7 +474,7 @@ class DeleteUser(graphene.Mutation):
 
 
 def _hash_password(password):
-    return bcrypt.hash(password, rounds=12)
+    return bcrypt.using(rounds=12).hash(password)
 
 
 def _verify_password(guess, hashed):
