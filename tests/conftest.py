@@ -23,7 +23,7 @@ import psycopg2 as pg
 import pytest
 
 from ai.backend.common.argparse import host_port_pair
-from ai.backend.gateway.config import load as load_config
+from ai.backend.gateway.config import load as load_config, redis_config_iv
 from ai.backend.gateway.etcd import ConfigServer
 from ai.backend.gateway.server import (
     gw_init, gw_shutdown,
@@ -76,6 +76,10 @@ def vfolder_host():
 def test_config(test_id, test_db):
     cfg = load_config()
     cfg['db']['name'] = test_db
+    # In normal setups, this is read from etcd.
+    cfg['redis'] = redis_config_iv.check({
+        'addr': {'host': '127.0.0.1', 'port': '6379'},
+    })
     return cfg
 
 

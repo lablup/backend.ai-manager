@@ -4,7 +4,6 @@ import aiojobs.aiohttp
 from aiohttp import web
 import pytest
 
-from ai.backend.gateway.config import redis_config_iv
 from ai.backend.gateway.events import (
     EventDispatcher,
 )
