@@ -4,10 +4,10 @@ Changes
 19.12.0a2 (2019-12-31)
 ----------------------
 
-* NEW: User-manageable session templates written in YAML to reuse session creation parameters.
+* NEW: User-manageable session templates written in YAML to reuse session creation parameters. (#213)
 
 * NEW: User-customizable per-scaling-group session queue scheduler plugins and three intrinsic plugins:
-  FIFO, LIFO, and the DRF (dominant resource fairness) scheduler.
+  FIFO, LIFO, and the DRF (dominant resource fairness) scheduler. (#212)
 
 19.12.0a1 (2019-12-26)
 ----------------------
