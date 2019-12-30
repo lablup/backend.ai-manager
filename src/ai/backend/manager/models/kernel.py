@@ -104,6 +104,7 @@ kernels = sa.Table(
     sa.Column('mount_map', pgsql.JSONB(), nullable=True, default={}),
     sa.Column('attached_devices', pgsql.JSONB(), nullable=True, default={}),
     sa.Column('resource_opts', pgsql.JSONB(), nullable=True, default={}),
+    sa.Column('bootstrap_script', sa.String(length=16 * 1024), nullable=True),
 
     # Port mappings
     # If kernel_host is NULL, it is assumed to be same to the agent host or IP.
