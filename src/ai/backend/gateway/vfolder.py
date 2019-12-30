@@ -902,8 +902,11 @@ async def download_with_token(request) -> web.StreamResponse:
         log.exception('jwt error while parsing "{}"', token)
         raise InvalidAPIParameters('Could not validate the download token.')
 
-    assert params.get('file'), 'no file(s) specified!'
-    fn = params.get('file', '')
+    iv = t.Dict({
+        t.Key('file'): t.String,
+    })
+    params = iv.check(params)
+    fn = params['file']
     log.info('VFOLDER.DOWNLOAD_WITH_TOKEN (token:{}, path:{})', token, fn)
     dbpool = request.app['dbpool']
     async with dbpool.acquire() as conn:
@@ -1048,16 +1051,19 @@ async def update_invitation(request: web.Request, params: Any) -> web.Response:
 @atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
-async def invite(request: web.Request) -> web.Response:
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['perm', 'permission'], default='rw'): VFolderPermissionValidator,
+        tx.AliasedKey(['user_ids', 'userIDs']): t.List(t.String),
+    })
+)
+async def invite(request: web.Request, params: Any) -> web.Response:
     dbpool = request.app['dbpool']
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     user_uuid = request['user']['uuid']
-    params = await request.json()
-    perm = params.get('perm', VFolderPermission.READ_WRITE.value)
-    perm = VFolderPermission(perm)
-    user_ids = params.get('user_ids', [])
-    assert len(user_ids) > 0, 'no user ids'
+    perm = params['perm']
+    user_ids = params['user_ids']
     log.info('VFOLDER.INVITE (ak:{}, vf:{}, inv.users:{})',
              access_key, folder_name, ','.join(user_ids))
     if folder_name.startswith('.'):
@@ -1160,14 +1166,18 @@ async def invitations(request: web.Request) -> web.Response:
 @atomic
 @auth_required
 @server_status_required(ALL_ALLOWED)
-@check_api_params(t.Dict({t.Key('inv_id'): t.String}))
+@check_api_params(
+    t.Dict({
+        t.Key('inv_id'): t.String,
+    })
+)
 async def accept_invitation(request: web.Request, params: Any) -> web.Response:
     '''Accept invitation by invitee.
 
     * `inv_ak` parameter is removed from 19.06 since virtual folder's ownership is
     moved from keypair to a user or a group.
 
-    :params inv_id: ID of vfolder_invitations row.
+    :param inv_id: ID of vfolder_invitations row.
     '''
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
@@ -1308,7 +1318,12 @@ async def delete(request: web.Request) -> web.Response:
 @atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
-async def list_shared_vfolders(request: web.Request) -> web.Response:
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['vfolder_id', 'vfolderId']): tx.UUID,
+    })
+)
+async def list_shared_vfolders(request: web.Request, params: Any) -> web.Response:
     '''
     List shared vfolders.
 
@@ -1316,8 +1331,7 @@ async def list_shared_vfolders(request: web.Request) -> web.Response:
     '''
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
-    params = await request.json() if request.can_read_body else request.query
-    target_vfid = params.get('vfolder_id', None)
+    target_vfid = params['vfolder_id']
     log.info('VFOLDER.LIST_SHARED_VFOLDERS (ak:{})', access_key)
     async with dbpool.acquire() as conn:
         j = (vfolder_permissions

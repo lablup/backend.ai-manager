@@ -1,4 +1,4 @@
 -e git+https://github.com/lablup/backend.ai-common@master#egg=backend.ai-common
--e git+https://github.com/pycqa/pyflakes@1911c20#egg=pyflakes
--e git+https://github.com/pycqa/pycodestyle@d219c68#egg=pycodestyle
+-e git+https://github.com/pycqa/pyflakes@master#egg=pyflakes
+-e git+https://github.com/pycqa/pycodestyle@master#egg=pycodestyle
 -e .[build,test,ci]

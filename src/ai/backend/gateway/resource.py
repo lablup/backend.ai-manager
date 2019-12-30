@@ -60,7 +60,7 @@ async def list_presets(request) -> web.Response:
     Returns the list of all resource presets.
     '''
     log.info('LIST_PRESETS (ak:{})', request['keypair']['access_key'])
-    known_slot_types = await request.app['registry'].config_server.get_resource_slots()
+    await request.app['registry'].config_server.get_resource_slots()
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         query = (
             sa.select([resource_presets])
@@ -71,7 +71,7 @@ async def list_presets(request) -> web.Response:
         #     query = query.where(resource_presets.c.scaling_group == scaling_group)
         resp: MutableMapping[str, Any] = {'presets': []}
         async for row in conn.execute(query):
-            preset_slots = row['resource_slots'].filter_slots(known_slot_types)
+            preset_slots = row['resource_slots'].normalize_slots(ignore_unknown=True)
             resp['presets'].append({
                 'name': row['name'],
                 'resource_slots': preset_slots.to_json(),
@@ -226,7 +226,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
         async for row in conn.execute(query):
             # Check if there are any agent that can allocate each preset.
             allocatable = False
-            preset_slots = row['resource_slots'].filter_slots(known_slot_types)
+            preset_slots = row['resource_slots'].normalize_slots(ignore_unknown=True)
             for agent_slot in agent_slots:
                 if agent_slot >= preset_slots and keypair_remaining >= preset_slots:
                     allocatable = True

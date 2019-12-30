@@ -30,6 +30,8 @@ from ai.backend.common.types import (
     SessionTypes,
     SessionResult,
     KernelCreationConfig,
+    SlotName,
+    SlotTypes,
 )
 from ai.backend.common.logging import BraceStyleAdapter
 from ..gateway.exceptions import (
@@ -979,10 +981,10 @@ class AgentRegistry:
                 row = await result.first()
 
                 slot_key_and_units = {
-                    k: v[0] for k, v in
+                    SlotName(k): SlotTypes(v[0]) for k, v in
                     agent_info['resource_slots'].items()}
                 available_slots = ResourceSlot({
-                    k: v[1] for k, v in
+                    SlotName(k): v[1] for k, v in
                     agent_info['resource_slots'].items()})
                 sgroup = agent_info.get('scaling_group', 'default')
 
@@ -1006,7 +1008,6 @@ class AgentRegistry:
                     })
                     result = await conn.execute(query)
                     assert result.rowcount == 1
-                    # TODO: aggregate from all agents, instead of replacing everytime
                     await self.config_server.update_resource_slots(slot_key_and_units)
                 elif row.status == AgentStatus.ALIVE:
                     updates = {}
@@ -1035,7 +1036,6 @@ class AgentRegistry:
                                })
                                .where(agents.c.id == agent_id))
                     await conn.execute(query)
-                    # TODO: aggregate from all agents, instead of replacing everytime
                     await self.config_server.update_resource_slots(slot_key_and_units)
                 else:
                     log.error('should not reach here! {0}', type(row.status))

@@ -53,9 +53,9 @@ from .typing import (
 from . import ManagerStatus
 
 VALID_VERSIONS: Final = frozenset([
-    'v1.20160915',  # deprecated
-    'v2.20170315',  # deprecated
-    'v3.20170615',
+    # 'v1.20160915',  # deprecated
+    # 'v2.20170315',  # deprecated
+    # 'v3.20170615',  # deprecated
 
     # authentication changed not to use request bodies
     'v4.20181215',
@@ -136,7 +136,7 @@ async def api_middleware(request: web.Request,
     api_version = new_api_version or legacy_api_version
     try:
         if api_version is None:
-            path_major_version = int(request.match_info.get('version', 4))
+            path_major_version = int(request.match_info.get('version', 5))
             revision_date = LATEST_REV_DATES[path_major_version]
             request['api_version'] = (path_major_version, revision_date)
         else:
@@ -420,19 +420,6 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         aiojobs.aiohttp.setup(subapp, **scheduler_opts)
         app.add_subapp('/' + prefix, subapp)
         app.middlewares.extend(global_middlewares)
-
-        # Add legacy version-prefixed routes to the root app with some hacks
-        # (NOTE: they do not support CORS!)
-        for r in subapp.router.routes():
-            for version in subapp['api_versions']:
-                if r.resource is None:
-                    continue
-                subpath = r.resource.canonical
-                if subpath == f'/{prefix}':
-                    subpath += '/'
-                legacy_path = f'/v{version}{subpath}'
-                handler = _get_legacy_handler(r.handler, subapp, version)
-                app.router.add_route(r.method, legacy_path, handler)
 
     def init_subapp(create_subapp: AppCreator) -> None:
         subapp, global_middlewares = create_subapp(cors_options)

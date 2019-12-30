@@ -1,10 +1,17 @@
 Changes
 =======
 
-19.12.0a1 (xxxx-xx-xx)
+19.12.0a1 (2019-12-26)
 ----------------------
 
 * MAINTENANCE: Now it runs on Python 3.8 or higher.
+
+* IMPROVE: ResourceSlots are now more permissive so that agents with different sets of
+  accelerator plugins can now coexist in a single cluster. (#214)
+
+* NEW: more convenient etcd commands: ``quote``, ``unquote``, ``move-subtree``
+
+* IMPROVE: "--short" and "--installed" options added to ``etcd list-images`` command.
 
 19.09.9 (2019-12-18)
 --------------------

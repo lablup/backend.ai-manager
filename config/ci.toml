@@ -8,9 +8,9 @@ password = ""
 [db]
 type = "postgresql"
 addr = { host = "localhost", port = 5432 }
-name = "testing"
-user = "postgres"
-password = ""
+name = "testing_db_XXX"  # auto-generated for every test run
+user = "lablup"
+password = "develove"
 
 
 [manager]
