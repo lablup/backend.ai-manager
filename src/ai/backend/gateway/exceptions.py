@@ -148,6 +148,11 @@ class KernelNotFound(web.HTTPNotFound, BackendError):
     error_title = 'No such kernel.'
 
 
+class TaskTemplateNotFound(web.HTTPNotFound, BackendError):
+    error_type  = 'https://api.backend.ai/probs/kernel-not-found'
+    error_title = 'No such task template.'
+
+
 class AppNotFound(web.HTTPNotFound, BackendError):
     error_type  = 'https://api.backend.ai/probs/app-not-found'
     error_title = 'No such app service provided by the session.'
