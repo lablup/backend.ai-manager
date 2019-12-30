@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import copy
 from datetime import datetime
@@ -52,7 +54,7 @@ from .models import (
     DEAD_KERNEL_STATUSES,
 )
 if TYPE_CHECKING:
-    from .scheduler import SchedulingContext, SessionContext, AgentAllocationContext
+    from .scheduler import SchedulingContext, PendingSession, AgentAllocationContext
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
 
@@ -576,9 +578,9 @@ class AgentRegistry:
         await self.event_dispatcher.produce_event('kernel_enqueued', [str(kernel_id)])
         return KernelId(kernel_id)
 
-    async def start_session(self, sched_ctx: 'SchedulingContext',
-                            sess_ctx: 'SessionContext',
-                            agent_ctx: 'AgentAllocationContext') -> None:
+    async def start_session(self, sched_ctx: SchedulingContext,
+                            sess_ctx: PendingSession,
+                            agent_ctx: AgentAllocationContext) -> None:
 
         auto_pull = await self.config_server.get('config/docker/image/auto_pull')
         image_info = await self.config_server.inspect_image(sess_ctx.image_ref)
@@ -597,9 +599,6 @@ class AgentRegistry:
         # Create the kernel by invoking the agent
         async with self.handle_kernel_exception(
                 'create_session', sess_ctx.sess_id, sess_ctx.access_key):
-            # the agent may be pulling an image!
-            # (TODO: return early and update the kernel status
-            #        via asynchronous events)
             async with RPCContext(agent_ctx.agent_addr, None) as rpc:
                 config: KernelCreationConfig = {
                     'image': {
@@ -644,9 +643,6 @@ class AgentRegistry:
             query = (
                 kernels.update()
                 .values({
-                    # TODO: add more kernel status about image pulling
-                    # TODO: move this status transition to event handler for
-                    #       "kernel_started"
                     'scaling_group': agent_ctx.scaling_group,
                     'status': KernelStatus.RUNNING,
                     'container_id': created_info['container_id'],

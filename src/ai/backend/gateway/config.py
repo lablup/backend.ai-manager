@@ -76,6 +76,13 @@ _shdefs: Mapping[str, Any] = {
             'container': '0.0.0.0/0',
         },
     },
+    'plugins': {
+        'accelerator': {},
+        'scheduler': {},
+    },
+    'scheduler': {
+        'name': 'fifo',
+    },
     'watcher': {
         'token': None,
     }
@@ -92,7 +99,15 @@ shared_config_iv = t.Dict({
         t.Key('addr', default=_shdefs['redis']['addr']): tx.HostPortPair,
         t.Key('password', default=_shdefs['redis']['password']): t.Null | t.String,
     }).allow_extra('*'),
-    t.Key('plugins', default={}): t.Mapping(t.String, t.Mapping(t.String, t.Any)),
+    t.Key('plugins', default=_shdefs['plugins']): t.Dict({
+        t.Key('accelerator', default=_shdefs['plugins']['accelerator']):
+            t.Mapping(t.String, t.Mapping(t.String, t.Any)),
+        t.Key('scheduler', default=_shdefs['plugins']['scheduler']):
+            t.Mapping(t.String, t.Mapping(t.String, t.Any)),
+    }).allow_extra('*'),
+    t.Key('scheduler', default=_shdefs['scheduler']): t.Dict({
+        t.Key('name', default=_shdefs['scheduler']['name']): t.String,
+    }).allow_extra('*'),
     t.Key('network', default=_shdefs['network']): t.Dict({
         t.Key('subnet', default=_shdefs['network']['subnet']): t.Dict({
             t.Key('agent', default=_shdefs['network']['subnet']['agent']): tx.IPNetwork,
