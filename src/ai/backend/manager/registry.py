@@ -984,11 +984,10 @@ class AgentRegistry:
                     agent_info['resource_slots'].items()})
                 sgroup = agent_info.get('scaling_group', 'default')
 
-                # compare and update etcd slot_keys
-
                 if row is None or row.status is None:
                     # new agent detected!
                     log.info('agent {0} joined!', agent_id)
+                    await self.config_server.update_resource_slots(slot_key_and_units)
                     query = agents.insert().values({
                         'id': agent_id,
                         'status': AgentStatus.ALIVE,
@@ -1004,7 +1003,6 @@ class AgentRegistry:
                     })
                     result = await conn.execute(query)
                     assert result.rowcount == 1
-                    await self.config_server.update_resource_slots(slot_key_and_units)
                 elif row.status == AgentStatus.ALIVE:
                     updates = {}
                     if row.available_slots != available_slots:
@@ -1013,11 +1011,13 @@ class AgentRegistry:
                         updates['scaling_group'] = sgroup
                     # occupied_slots are updated when kernels starts/terminates
                     if updates:
+                        await self.config_server.update_resource_slots(slot_key_and_units)
                         query = (sa.update(agents)
                                    .values(updates)
                                    .where(agents.c.id == agent_id))
                         await conn.execute(query)
                 elif row.status in (AgentStatus.LOST, AgentStatus.TERMINATED):
+                    await self.config_server.update_resource_slots(slot_key_and_units)
                     instance_rejoin = True
                     query = (sa.update(agents)
                                .values({
@@ -1032,7 +1032,6 @@ class AgentRegistry:
                                })
                                .where(agents.c.id == agent_id))
                     await conn.execute(query)
-                    await self.config_server.update_resource_slots(slot_key_and_units)
                 else:
                     log.error('should not reach here! {0}', type(row.status))
 

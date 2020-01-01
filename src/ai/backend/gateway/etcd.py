@@ -147,7 +147,7 @@ from typing import (
     Any, Optional, Union,
     Iterable,
     Mapping, DefaultDict,
-    List, Tuple,
+    Sequence, List, Tuple,
 )
 
 import aiohttp
@@ -310,7 +310,7 @@ class ConfigServer:
             raise UnknownImageReference(reference)
         return ref
 
-    async def inspect_image(self, reference: Union[str, ImageRef]):
+    async def inspect_image(self, reference: Union[str, ImageRef]) -> Mapping[str, Any]:
         if isinstance(reference, str):
             ref = await ImageRef.resolve_alias(reference, self.etcd)
         else:
@@ -321,14 +321,14 @@ class ConfigServer:
             raise UnknownImageReference(reference)
         return await self._parse_image(ref, image_info, reverse_aliases)
 
-    async def forget_image(self, reference: Union[str, ImageRef]):
+    async def forget_image(self, reference: Union[str, ImageRef]) -> None:
         if isinstance(reference, str):
             ref = await ImageRef.resolve_alias(reference, self.etcd)
         else:
             ref = reference
         await self.etcd.delete_prefix(ref.tag_path)
 
-    async def list_images(self):
+    async def list_images(self) -> Sequence[Mapping[str, Any]]:
         known_registries = await get_known_registries(self.etcd)
         reverse_aliases = await self._scan_reverse_aliases()
         data = await self.etcd.get_prefix('images')
@@ -530,7 +530,7 @@ class ConfigServer:
         for kvlist in chunked(sorted(all_updates.items()), 16):
             await self.etcd.put_dict(dict(kvlist))
 
-    async def rescan_images(self, registry: str = None):
+    async def rescan_images(self, registry: str = None) -> None:
         if registry is None:
             registries = []
             data = await self.etcd.get_prefix('config/docker/registry')
@@ -573,13 +573,14 @@ class ConfigServer:
         log.info('done')
 
     async def update_resource_slots(
-            self,
-            slot_key_and_units: Mapping[SlotName, SlotTypes]) -> None:
+        self,
+        slot_key_and_units: Mapping[SlotName, SlotTypes],
+    ) -> None:
         updates = {}
         known_slots = await self.get_resource_slots()
         for k, v in slot_key_and_units.items():
-            if k not in known_slots:
-                updates[f'config/resource_slots/{k}'] = v
+            if k not in known_slots or v != known_slots[k]:
+                updates[f'config/resource_slots/{k}'] = v.value
         if updates:
             await self.etcd.put_dict(updates)
 
@@ -594,7 +595,7 @@ class ConfigServer:
             SlotName(k): SlotTypes(v) for k, v in raw_data.items()
         }
 
-    async def get_resource_slots(self):
+    async def get_resource_slots(self) -> Mapping[SlotName, SlotTypes]:
         '''
         Returns the system-wide known resource slots and their units.
         '''
@@ -614,7 +615,7 @@ class ConfigServer:
     async def _get_vfolder_types(self):
         return await self.etcd.get_prefix_dict('volumes/_types')
 
-    async def get_vfolder_types(self):
+    async def get_vfolder_types(self) -> Sequence[str]:
         '''
         Returns the vfolder types currently set. One of "user" and/or "group".
         If none is specified, "user" type is implicitly assumed.
