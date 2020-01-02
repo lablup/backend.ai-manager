@@ -222,6 +222,9 @@ class ConfigServer:
         }
         self.etcd = AsyncEtcd(etcd_addr, namespace, scope_prefix_map, credentials=credentials)
 
+    async def close(self) -> None:
+        await self.etcd.close()
+
     async def get(self, key: str, allow_null: bool = True) -> Optional[str]:
         value = await self.etcd.get(key)
         if value is None:

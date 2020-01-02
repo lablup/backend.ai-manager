@@ -8,8 +8,8 @@ from typing import (
     Sequence, Tuple,
     MutableMapping,
     Set,
+    Protocol,
 )
-from typing_extensions import Protocol
 
 from aiohttp import web
 import aioredis

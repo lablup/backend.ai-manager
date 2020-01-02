@@ -312,6 +312,7 @@ async def gw_cleanup(app):
     await app['redis_live'].wait_closed()
     app['dbpool'].close()
     await app['dbpool'].wait_closed()
+    await app['config_server'].close()
 
 
 def handle_loop_error(app, loop, context):

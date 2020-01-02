@@ -47,7 +47,10 @@ async def etcd_ctx(cli_ctx):
     }
     etcd = AsyncEtcd(config['etcd']['addr'], config['etcd']['namespace'],
                      scope_prefix_map, credentials=creds)
-    yield etcd
+    try:
+        yield etcd
+    finally:
+        await etcd.close()
 
 
 @contextlib.asynccontextmanager
@@ -73,6 +76,7 @@ async def config_ctx(cli_ctx):
     finally:
         ctx['redis_image'].close()
         await ctx['redis_image'].wait_closed()
+        await config_server.close()
 
 
 @cli.command()
