@@ -13,6 +13,13 @@ import pwd, grp
 import ssl
 import sys
 import traceback
+from typing import (
+    cast,
+    Any, Final,
+    AsyncGenerator,
+    Iterable, List,
+    Mapping, MutableMapping,
+)
 
 from aiohttp import web
 import aiohttp_cors
@@ -22,12 +29,6 @@ from aiopg.sa import create_engine
 import click
 from pathlib import Path
 from setproctitle import setproctitle
-from typing import (
-    cast,
-    Any, Final,
-    AsyncGenerator,
-    Iterable, List,
-)
 
 from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
@@ -99,6 +100,8 @@ PUBLIC_INTERFACES: Final = [
     'error_monitor',
     'plugins',
 ]
+
+public_interface_objs: MutableMapping[str, Any] = {}
 
 
 async def hello(request: web.Request) -> web.Response:
@@ -198,16 +201,7 @@ async def legacy_auth_test_redirect(request: web.Request) -> web.StreamResponse:
     raise web.HTTPFound('/v3/auth/test')
 
 
-async def gw_init(app: web.Application, default_cors_options: CORSOptions) -> None:
-    cors = aiohttp_cors.setup(app, defaults=default_cors_options)
-    # should be done in create_app() in other modules.
-    cors.add(app.router.add_route('GET', r'', hello))
-    cors.add(app.router.add_route('GET', r'/', hello))
-
-    # legacy redirects
-    cors.add(app.router.add_route('GET', r'/v{version:\d+}/authorize',
-                                  legacy_auth_test_redirect))
-
+async def config_server_ctx(app: web.Application) -> AsyncGenerator[None, None]:
     # populate public interfaces
     app['config_server'] = ConfigServer(
         app, app['config']['etcd']['addr'],
@@ -216,7 +210,12 @@ async def gw_init(app: web.Application, default_cors_options: CORSOptions) -> No
 
     shared_config = await load_shared_config(app['config_server'].etcd)
     app['config'].update(shared_config)
+    _update_public_interface_objs(app)
+    yield
+    # await app['config_server'].close()
 
+
+async def manager_status_ctx(app: web.Application) -> AsyncGenerator[None, None]:
     if app['pidx'] == 0:
         mgr_status = await app['config_server'].get_manager_status()
         if mgr_status is None or mgr_status not in (ManagerStatus.RUNNING, ManagerStatus.FROZEN):
@@ -226,19 +225,12 @@ async def gw_init(app: web.Application, default_cors_options: CORSOptions) -> No
         log.info('Manager status: {}', mgr_status)
         tz = app['config']['system']['timezone']
         log.info('Configured timezone: {}', tz.tzname(datetime.now()))
+    yield
 
-    app['dbpool'] = await create_engine(
-        host=app['config']['db']['addr'].host, port=app['config']['db']['addr'].port,
-        user=app['config']['db']['user'], password=app['config']['db']['password'],
-        dbname=app['config']['db']['name'],
-        echo=bool(app['config']['logging']['level'] == 'DEBUG'),
-        minsize=8, maxsize=256,
-        timeout=60, pool_recycle=120,
-    )
 
+async def redis_ctx(app: web.Application) -> AsyncGenerator[None, None]:
     redis_config = await app['config_server'].etcd.get_prefix('config/redis')
     app['config']['redis'] = redis_config_iv.check(redis_config)
-
     app['redis_live'] = await redis.connect_with_retries(
         app['config']['redis']['addr'].as_sockaddr(),
         password=(app['config']['redis']['password']
@@ -260,9 +252,39 @@ async def gw_init(app: web.Application, default_cors_options: CORSOptions) -> No
         timeout=3.0,
         encoding='utf8',
         db=REDIS_IMAGE_DB)
+    _update_public_interface_objs(app)
+    yield
+    app['redis_image'].close()
+    await app['redis_image'].wait_closed()
+    app['redis_stat'].close()
+    await app['redis_stat'].wait_closed()
+    app['redis_live'].close()
+    await app['redis_live'].wait_closed()
 
+
+async def database_ctx(app: web.Application) -> AsyncGenerator[None, None]:
+    app['dbpool'] = await create_engine(
+        host=app['config']['db']['addr'].host, port=app['config']['db']['addr'].port,
+        user=app['config']['db']['user'], password=app['config']['db']['password'],
+        dbname=app['config']['db']['name'],
+        echo=bool(app['config']['logging']['level'] == 'DEBUG'),
+        minsize=8, maxsize=256,
+        timeout=60, pool_recycle=120,
+    )
+    _update_public_interface_objs(app)
+    yield
+    app['dbpool'].close()
+    await app['dbpool'].wait_closed()
+
+
+async def event_dispatcher_ctx(app: web.Application) -> AsyncGenerator[None, None]:
     app['event_dispatcher'] = await EventDispatcher.new(app)
+    _update_public_interface_objs(app)
+    yield
+    await app['event_dispatcher'].close()
 
+
+async def agent_registry_ctx(app: web.Application) -> AsyncGenerator[None, None]:
     app['registry'] = AgentRegistry(
         app['config_server'],
         app['dbpool'],
@@ -271,20 +293,35 @@ async def gw_init(app: web.Application, default_cors_options: CORSOptions) -> No
         app['redis_image'],
         app['event_dispatcher'])
     await app['registry'].init()
+    _update_public_interface_objs(app)
+    yield
+    await app['registry'].shutdown()
 
+
+async def sched_dispatcher_ctx(app: web.Application) -> AsyncGenerator[None, None]:
+    sched_dispatcher = await SchedulerDispatcher.new(
+        app['config'], app['config_server'], app['registry'])
+    yield
+    await sched_dispatcher.close()
+
+
+async def monitoring_ctx(app: web.Application) -> AsyncGenerator[None, None]:
     # Detect and install monitoring plugins.
     app['stats_monitor'] = DummyStatsMonitor()
     app['error_monitor'] = DummyErrorMonitor()
     app['stats_monitor.enabled'] = False
     app['error_monitor.enabled'] = False
-
     # Install stats hook plugins.
     plugins = [
         'stats_monitor',
         'error_monitor',
     ]
     install_plugins(plugins, app, 'dict', app['config'])
+    _update_public_interface_objs(app)
+    yield
 
+
+async def hook_plugins_ctx(app: web.Application) -> AsyncGenerator[None, None]:
     # Install other hook plugins inside app['plugins'].
     plugins = [
         'hanati_hook',
@@ -296,26 +333,34 @@ async def gw_init(app: web.Application, default_cors_options: CORSOptions) -> No
         if app['pidx'] == 0:
             log.info('Loading hook plugin: {0}', plugin_name)
         await plugin_registry.init()
+    _update_public_interface_objs(app)
+    yield
 
 
-async def gw_shutdown(app):
-    await app['event_dispatcher'].close()
+async def webapp_plugins_ctx(app: web.Application) -> AsyncGenerator[None, None]:
+
+    def init_extapp(create_subapp: PluginAppCreator) -> None:
+        subapp, global_middlewares = create_subapp(app['config']['plugins'], app['cors_opts'])
+        _init_subapp(subapp, global_middlewares)
+
+    plugins = [
+        'hanati_webapp',
+    ]
+    for plugin_info in discover_entrypoints(
+        plugins, disable_plugins=app['config']['manager']['disabled-plugins']):
+        plugin_group, plugin_name, entrypoint = plugin_info
+        if app['pidx'] == 0:
+            log.info('Loading app plugin: {0}', entrypoint.module_name)
+        plugin = entrypoint.load()
+        init_extapp(getattr(plugin, 'create_app'))
+    yield
 
 
-async def gw_cleanup(app):
-    await app['registry'].shutdown()
-    app['redis_image'].close()
-    await app['redis_image'].wait_closed()
-    app['redis_stat'].close()
-    await app['redis_stat'].wait_closed()
-    app['redis_live'].close()
-    await app['redis_live'].wait_closed()
-    app['dbpool'].close()
-    await app['dbpool'].wait_closed()
-    await app['config_server'].close()
-
-
-def handle_loop_error(app, loop, context):
+def handle_loop_error(
+    app: web.Application,
+    loop: asyncio.AbstractEventLoop,
+    context: Mapping[str, Any],
+) -> None:
     exception = context.get('exception')
     msg = context.get('message', '(empty message)')
     if exception is not None:
@@ -349,18 +394,37 @@ def _get_legacy_handler(handler, app, major_api_version):
     return _wrapped_handler
 
 
-@aiotools.actxmgr
-async def server_main_logwrapper(loop: asyncio.AbstractEventLoop,
-                                 pidx: int, _args: List[Any]) -> AsyncGenerator[None, None]:
-    setproctitle(f"backend.ai: manager worker-{pidx}")
-    log_endpoint = _args[1]
-    logger = Logger(_args[0]['logging'], is_master=False, log_endpoint=log_endpoint)
-    try:
-        with logger:
-            async with server_main(loop, pidx, _args):
-                yield
-    except Exception:
-        traceback.print_exc()
+def _init_subapp(pkgname: str,
+                 root_app: web.Application,
+                 subapp: web.Application,
+                 global_middlewares: Iterable[WebMiddleware]) -> None:
+    subapp.on_response_prepare.append(on_prepare)
+
+    async def _copy_public_interface_objs(subapp: web.Application):
+        # Allow subapp's access to the root app properties.
+        # These are the public APIs exposed to plugins as well.
+        for key, obj in public_interface_objs.items():
+            subapp[key] = obj
+
+    # We must copy the public interface prior to all user-defined startup signal handlers.
+    subapp.on_startup.insert(0, _copy_public_interface_objs)
+    prefix = subapp.get('prefix', pkgname.split('.')[-1].replace('_', '-'))
+    aiojobs.aiohttp.setup(subapp, **root_app['scheduler_opts'])
+    root_app.add_subapp('/' + prefix, subapp)
+    root_app.middlewares.extend(global_middlewares)
+
+
+def init_subapp(pkgname: str, root_app: web.Application, create_subapp: AppCreator) -> None:
+    subapp, global_middlewares = create_subapp(root_app['cors_opts'])
+    _init_subapp(pkgname, root_app, subapp, global_middlewares)
+
+
+def _update_public_interface_objs(root_app: web.Application) -> None:
+    # This must be called in clean_ctx functions so that
+    # we keep the public interface up-to-date.
+    for key in PUBLIC_INTERFACES:
+        if key in root_app and key not in public_interface_objs:
+            public_interface_objs[key] = root_app[key]
 
 
 @aiotools.actxmgr
@@ -370,21 +434,40 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         exception_middleware,
         api_middleware,
     ])
-    cors_options = {
+    global_exception_handler = functools.partial(handle_loop_error, app)
+    loop.set_exception_handler(global_exception_handler)
+    app['config'] = _args[0]
+    app['cors_opts'] = {
         '*': aiohttp_cors.ResourceOptions(
             allow_credentials=False,
             expose_headers="*", allow_headers="*"),
     }
-    app.on_response_prepare.append(on_prepare)
-    app['config'] = _args[0]
-    ssl_ctx = None
-    if app['config']['manager']['ssl-enabled']:
-        ssl_ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        ssl_ctx.load_cert_chain(
-            str(app['config']['manager']['ssl-cert']),
-            str(app['config']['manager']['ssl-privkey']),
-        )
+    app['scheduler_opts'] = {
+        'limit': 2048,
+        'close_timeout': 30,
+        'exception_handler': global_exception_handler,
+    }
     app['pidx'] = pidx
+    _update_public_interface_objs(app)
+    app.on_response_prepare.append(on_prepare)
+    app.cleanup_ctx.append(config_server_ctx)
+    app.cleanup_ctx.append(monitoring_ctx)
+    app.cleanup_ctx.append(manager_status_ctx)
+    app.cleanup_ctx.append(redis_ctx)
+    app.cleanup_ctx.append(database_ctx)
+    app.cleanup_ctx.append(event_dispatcher_ctx)
+    app.cleanup_ctx.append(agent_registry_ctx)
+    app.cleanup_ctx.append(sched_dispatcher_ctx)
+    app.cleanup_ctx.append(webapp_plugins_ctx)
+    app.cleanup_ctx.append(hook_plugins_ctx)
+    aiojobs.aiohttp.setup(app, **app['scheduler_opts'])
+    cors = aiohttp_cors.setup(app, defaults=app['cors_opts'])
+    # should be done in create_app() in other modules.
+    cors.add(app.router.add_route('GET', r'', hello))
+    cors.add(app.router.add_route('GET', r'/', hello))
+    # legacy redirects
+    cors.add(app.router.add_route('GET', r'/v{version:\d+}/authorize',
+                                  legacy_auth_test_redirect))
 
     subapp_pkgs = [
         '.etcd', '.events',
@@ -398,58 +481,19 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         '.session_template',
         '.image',
     ]
-
-    global_exception_handler = functools.partial(handle_loop_error, app)
-    scheduler_opts = {
-        'limit': 2048,
-        'close_timeout': 30,
-        'exception_handler': global_exception_handler,
-    }
-    loop.set_exception_handler(global_exception_handler)
-    aiojobs.aiohttp.setup(app, **scheduler_opts)
-    await gw_init(app, cors_options)
-
-    def _init_subapp(subapp: web.Application,
-                     global_middlewares: Iterable[WebMiddleware]) -> None:
-        subapp.on_response_prepare.append(on_prepare)
-        # Allow subapp's access to the root app properties.
-        # These are the public APIs exposed to extensions as well.
-        for key in PUBLIC_INTERFACES:
-            if key in app:
-                subapp[key] = app[key]
-        prefix = subapp.get('prefix', pkgname.split('.')[-1].replace('_', '-'))
-        aiojobs.aiohttp.setup(subapp, **scheduler_opts)
-        app.add_subapp('/' + prefix, subapp)
-        app.middlewares.extend(global_middlewares)
-
-    def init_subapp(create_subapp: AppCreator) -> None:
-        subapp, global_middlewares = create_subapp(cors_options)
-        _init_subapp(subapp, global_middlewares)
-
-    def init_extapp(create_subapp: PluginAppCreator) -> None:
-        subapp, global_middlewares = create_subapp(app['config']['plugins'], cors_options)
-        _init_subapp(subapp, global_middlewares)
-
     for pkgname in subapp_pkgs:
         if pidx == 0:
             log.info('Loading module: {0}', pkgname[1:])
         subapp_mod = importlib.import_module(pkgname, 'ai.backend.gateway')
-        init_subapp(getattr(subapp_mod, 'create_app'))
+        init_subapp(pkgname, app, getattr(subapp_mod, 'create_app'))
 
-    plugins = [
-        'hanati_webapp',
-    ]
-    for plugin_info in discover_entrypoints(
-            plugins, disable_plugins=app['config']['manager']['disabled-plugins']):
-        plugin_group, plugin_name, entrypoint = plugin_info
-        if pidx == 0:
-            log.info('Loading app plugin: {0}', entrypoint.module_name)
-        plugin = entrypoint.load()
-        init_extapp(getattr(plugin, 'create_app'))
-
-    app.on_shutdown.append(gw_shutdown)
-    app.on_cleanup.append(gw_cleanup)
-
+    ssl_ctx = None
+    if app['config']['manager']['ssl-enabled']:
+        ssl_ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        ssl_ctx.load_cert_chain(
+            str(app['config']['manager']['ssl-cert']),
+            str(app['config']['manager']['ssl-privkey']),
+        )
     runner = web.AppRunner(app)
     await runner.setup()
     service_addr = app['config']['manager']['service-addr']
@@ -462,8 +506,6 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         ssl_context=ssl_ctx,
     )
     await site.start()
-    sched_dispatcher = await SchedulerDispatcher.new(
-        app['config'], app['config_server'], app['registry'])
 
     if os.geteuid() == 0:
         uid = app['config']['manager']['user']
@@ -481,8 +523,21 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         yield
     finally:
         log.info('shutting down...')
-        await sched_dispatcher.close()
         await runner.cleanup()
+
+
+@aiotools.actxmgr
+async def server_main_logwrapper(loop: asyncio.AbstractEventLoop,
+                                 pidx: int, _args: List[Any]) -> AsyncGenerator[None, None]:
+    setproctitle(f"backend.ai: manager worker-{pidx}")
+    log_endpoint = _args[1]
+    logger = Logger(_args[0]['logging'], is_master=False, log_endpoint=log_endpoint)
+    try:
+        with logger:
+            async with server_main(loop, pidx, _args):
+                yield
+    except Exception:
+        traceback.print_exc()
 
 
 @click.group(invoke_without_command=True)

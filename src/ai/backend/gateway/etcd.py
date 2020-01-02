@@ -145,6 +145,7 @@ import json
 from pathlib import Path
 from typing import (
     Any, Optional, Union,
+    AsyncGenerator,
     Iterable,
     Mapping, DefaultDict,
     Sequence, List, Tuple,
@@ -798,20 +799,17 @@ async def delete_config(request: web.Request, params: Any) -> web.Response:
     return web.json_response({'result': 'ok'})
 
 
-async def init(app: web.Application) -> None:
+async def app_ctx(app: web.Application) -> AsyncGenerator[None, None]:
     if app['pidx'] == 0:
         await app['config_server'].register_myself()
-
-
-async def shutdown(app: web.Application) -> None:
+    yield
     if app['pidx'] == 0:
         await app['config_server'].deregister_myself()
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()
-    app.on_startup.append(init)
-    app.on_shutdown.append(shutdown)
+    app.cleanup_ctx.append(app_ctx)
     app['prefix'] = 'config'
     app['api_versions'] = (3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
