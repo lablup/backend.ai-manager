@@ -38,10 +38,10 @@ class VFolderPermission(str, enum.Enum):
 
 
 class VFolderPermissionValidator(t.Trafaret):
-    def check_and_return(self, value: Any) -> str:
+    def check_and_return(self, value: Any) -> VFolderPermission:
         if value not in ['ro', 'rw', 'wd']:
             self._failure('one of "ro", "rw", or "wd" required', value=value)
-        return value
+        return VFolderPermission(value)
 
 
 class VFolderInvitationState(str, enum.Enum):

@@ -1039,7 +1039,7 @@ async def update_invitation(request: web.Request, params: Any) -> web.Response:
     log.info('VFOLDER.UPDATE_INVITATION (ak:{}, inv:{})', access_key, inv_id)
     async with dbpool.acquire() as conn:
         query = (sa.update(vfolder_invitations)
-                   .values(permission=VFolderPermission(perm))
+                   .values(permission=perm)
                    .where(vfolder_invitations.c.id == inv_id)
                    .where(vfolder_invitations.c.inviter == request['user']['email'])
                    .where(vfolder_invitations.c.state == VFolderInvitationState.PENDING))
@@ -1385,7 +1385,7 @@ async def update_shared_vfolder(request: web.Request, params: Any) -> web.Respon
              access_key, vfolder_id, user_uuid, perm)
     async with dbpool.acquire() as conn:
         query = (sa.update(vfolder_permissions)
-                   .values(permission=VFolderPermission(perm))
+                   .values(permission=perm)
                    .where(vfolder_permissions.c.vfolder == vfolder_id)
                    .where(vfolder_permissions.c.user == user_uuid))
         await conn.execute(query)
