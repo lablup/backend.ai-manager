@@ -16,8 +16,8 @@ import traceback
 from typing import (
     cast,
     Any, Final,
-    AsyncGenerator,
-    Iterable, List,
+    AsyncIterator,
+    Iterable, List, Sequence,
     Mapping, MutableMapping,
 )
 
@@ -33,7 +33,6 @@ from setproctitle import setproctitle
 from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.utils import env_info
-from ai.backend.common.monitor import DummyStatsMonitor, DummyErrorMonitor
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from ai.backend.common.plugin import (
     discover_entrypoints, install_plugins
@@ -49,7 +48,8 @@ from .exceptions import (BackendError, MethodNotAllowed, GenericNotFound,
                          GenericBadRequest, InternalServerError)
 from .typing import (
     AppCreator, PluginAppCreator,
-    CORSOptions, WebRequestHandler, WebMiddleware,
+    WebRequestHandler, WebMiddleware,
+    CleanupContext,
 )
 from . import ManagerStatus
 
@@ -157,21 +157,20 @@ async def exception_middleware(request: web.Request,
                                handler: WebRequestHandler) -> web.StreamResponse:
     app = request.app
     try:
-        app['stats_monitor'].report_stats(
-            'increment', 'ai.backend.gateway.api.requests')
+        if (stats_monitor := app.get('stats_monitor', None)) is not None:
+            stats_monitor.report_stats('increment', 'ai.backend.gateway.api.requests')
         resp = (await handler(request))
     except BackendError as ex:
-        app['error_monitor'].capture_exception()
-        app['stats_monitor'].report_stats(
-            'increment', 'ai.backend.gateway.api.failures')
-        app['stats_monitor'].report_stats(
-            'increment', f'ai.backend.gateway.api.status.{ex.status_code}')
+        if (error_monitor := app.get('error_monitor', None)) is not None:
+            error_monitor.capture_exception()
+        if (stats_monitor := app.get('stats_monitor', None)) is not None:
+            stats_monitor.report_stats('increment', 'ai.backend.gateway.api.failures')
+            stats_monitor.report_stats('increment', f'ai.backend.gateway.api.status.{ex.status_code}')
         raise
     except web.HTTPException as ex:
-        app['stats_monitor'].report_stats(
-            'increment', 'ai.backend.gateway.api.failures')
-        app['stats_monitor'].report_stats(
-            'increment', f'ai.backend.gateway.api.status.{ex.status_code}')
+        if (stats_monitor := app.get('stats_monitor', None)) is not None:
+            stats_monitor.report_stats('increment', 'ai.backend.gateway.api.failures')
+            stats_monitor.report_stats('increment', f'ai.backend.gateway.api.status.{ex.status_code}')
         if ex.status_code == 404:
             raise GenericNotFound
         if ex.status_code == 405:
@@ -185,15 +184,16 @@ async def exception_middleware(request: web.Request,
         log.debug('Request cancelled ({0} {1})', request.method, request.rel_url)
         raise e
     except Exception as e:
-        app['error_monitor'].capture_exception()
+        if (error_monitor := app.get('error_monitor', None)) is not None:
+            error_monitor.capture_exception()
         log.exception('Uncaught exception in HTTP request handlers {0!r}', e)
         if app['config']['debug']['enabled']:
             raise InternalServerError(traceback.format_exc())
         else:
             raise InternalServerError()
     else:
-        app['stats_monitor'].report_stats(
-            'increment', f'ai.backend.gateway.api.status.{resp.status}')
+        if (stats_monitor := app.get('stats_monitor', None)) is not None:
+            stats_monitor.report_stats('increment', f'ai.backend.gateway.api.status.{resp.status}')
         return resp
 
 
@@ -201,7 +201,7 @@ async def legacy_auth_test_redirect(request: web.Request) -> web.StreamResponse:
     raise web.HTTPFound('/v3/auth/test')
 
 
-async def config_server_ctx(app: web.Application) -> AsyncGenerator[None, None]:
+async def config_server_ctx(app: web.Application) -> AsyncIterator[None]:
     # populate public interfaces
     app['config_server'] = ConfigServer(
         app, app['config']['etcd']['addr'],
@@ -210,12 +210,14 @@ async def config_server_ctx(app: web.Application) -> AsyncGenerator[None, None]:
 
     shared_config = await load_shared_config(app['config_server'].etcd)
     app['config'].update(shared_config)
+    redis_config = await app['config_server'].etcd.get_prefix('config/redis')
+    app['config']['redis'] = redis_config_iv.check(redis_config)
     _update_public_interface_objs(app)
     yield
     # await app['config_server'].close()
 
 
-async def manager_status_ctx(app: web.Application) -> AsyncGenerator[None, None]:
+async def manager_status_ctx(app: web.Application) -> AsyncIterator[None]:
     if app['pidx'] == 0:
         mgr_status = await app['config_server'].get_manager_status()
         if mgr_status is None or mgr_status not in (ManagerStatus.RUNNING, ManagerStatus.FROZEN):
@@ -228,9 +230,7 @@ async def manager_status_ctx(app: web.Application) -> AsyncGenerator[None, None]
     yield
 
 
-async def redis_ctx(app: web.Application) -> AsyncGenerator[None, None]:
-    redis_config = await app['config_server'].etcd.get_prefix('config/redis')
-    app['config']['redis'] = redis_config_iv.check(redis_config)
+async def redis_ctx(app: web.Application) -> AsyncIterator[None]:
     app['redis_live'] = await redis.connect_with_retries(
         app['config']['redis']['addr'].as_sockaddr(),
         password=(app['config']['redis']['password']
@@ -262,7 +262,7 @@ async def redis_ctx(app: web.Application) -> AsyncGenerator[None, None]:
     await app['redis_live'].wait_closed()
 
 
-async def database_ctx(app: web.Application) -> AsyncGenerator[None, None]:
+async def database_ctx(app: web.Application) -> AsyncIterator[None]:
     app['dbpool'] = await create_engine(
         host=app['config']['db']['addr'].host, port=app['config']['db']['addr'].port,
         user=app['config']['db']['user'], password=app['config']['db']['password'],
@@ -277,14 +277,14 @@ async def database_ctx(app: web.Application) -> AsyncGenerator[None, None]:
     await app['dbpool'].wait_closed()
 
 
-async def event_dispatcher_ctx(app: web.Application) -> AsyncGenerator[None, None]:
+async def event_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
     app['event_dispatcher'] = await EventDispatcher.new(app)
     _update_public_interface_objs(app)
     yield
     await app['event_dispatcher'].close()
 
 
-async def agent_registry_ctx(app: web.Application) -> AsyncGenerator[None, None]:
+async def agent_registry_ctx(app: web.Application) -> AsyncIterator[None]:
     app['registry'] = AgentRegistry(
         app['config_server'],
         app['dbpool'],
@@ -298,19 +298,14 @@ async def agent_registry_ctx(app: web.Application) -> AsyncGenerator[None, None]
     await app['registry'].shutdown()
 
 
-async def sched_dispatcher_ctx(app: web.Application) -> AsyncGenerator[None, None]:
+async def sched_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
     sched_dispatcher = await SchedulerDispatcher.new(
         app['config'], app['config_server'], app['registry'])
     yield
     await sched_dispatcher.close()
 
 
-async def monitoring_ctx(app: web.Application) -> AsyncGenerator[None, None]:
-    # Detect and install monitoring plugins.
-    app['stats_monitor'] = DummyStatsMonitor()
-    app['error_monitor'] = DummyErrorMonitor()
-    app['stats_monitor.enabled'] = False
-    app['error_monitor.enabled'] = False
+async def monitoring_ctx(app: web.Application) -> AsyncIterator[None]:
     # Install stats hook plugins.
     plugins = [
         'stats_monitor',
@@ -321,7 +316,7 @@ async def monitoring_ctx(app: web.Application) -> AsyncGenerator[None, None]:
     yield
 
 
-async def hook_plugins_ctx(app: web.Application) -> AsyncGenerator[None, None]:
+async def hook_plugins_ctx(app: web.Application) -> AsyncIterator[None]:
     # Install other hook plugins inside app['plugins'].
     plugins = [
         'hanati_hook',
@@ -337,22 +332,23 @@ async def hook_plugins_ctx(app: web.Application) -> AsyncGenerator[None, None]:
     yield
 
 
-async def webapp_plugins_ctx(app: web.Application) -> AsyncGenerator[None, None]:
+async def webapp_plugins_ctx(app: web.Application) -> AsyncIterator[None]:
 
-    def init_extapp(create_subapp: PluginAppCreator) -> None:
+    def init_extapp(pkg_name: str, root_app: web.Application, create_subapp: PluginAppCreator) -> None:
         subapp, global_middlewares = create_subapp(app['config']['plugins'], app['cors_opts'])
-        _init_subapp(subapp, global_middlewares)
+        _init_subapp(pkg_name, root_app, subapp, global_middlewares)
 
     plugins = [
         'hanati_webapp',
     ]
     for plugin_info in discover_entrypoints(
-        plugins, disable_plugins=app['config']['manager']['disabled-plugins']):
+        plugins, disable_plugins=app['config']['manager']['disabled-plugins']
+    ):
         plugin_group, plugin_name, entrypoint = plugin_info
         if app['pidx'] == 0:
             log.info('Loading app plugin: {0}', entrypoint.module_name)
         plugin = entrypoint.load()
-        init_extapp(getattr(plugin, 'create_app'))
+        init_extapp(entrypoint.module_name, app, getattr(plugin, 'create_app'))
     yield
 
 
@@ -364,37 +360,20 @@ def handle_loop_error(
     exception = context.get('exception')
     msg = context.get('message', '(empty message)')
     if exception is not None:
-        app['error_monitor'].set_context(context)
+        if (error_monitor := app.get('error_monitor', None)) is not None:
+            error_monitor.set_context(context)
         if sys.exc_info()[0] is not None:
             log.exception('Error inside event loop: {0}', msg)
-            app['error_monitor'].capture_exception(True)
+            if error_monitor is not None:
+                error_monitor.capture_exception(True)
         else:
             exc_info = (type(exception), exception, exception.__traceback__)
             log.error('Error inside event loop: {0}', msg, exc_info=exc_info)
-            app['error_monitor'].capture_exception(exc_info)
+            if error_monitor is not None:
+                error_monitor.capture_exception(exc_info)
 
 
-def _get_legacy_handler(handler, app, major_api_version):
-
-    @functools.wraps(handler)
-    async def _wrapped_handler(request):
-        request['api_version'] = (
-            major_api_version,
-            LATEST_REV_DATES[major_api_version],
-        )
-        # This is a hack to support legacy routes without altering aiohttp core.
-        m = web.UrlMappingMatchInfo(request._match_info,
-                                    request._match_info.route)
-        m['version'] = major_api_version
-        m.add_app(app)
-        m.freeze()
-        request._match_info = m
-        return await handler(request)
-
-    return _wrapped_handler
-
-
-def _init_subapp(pkgname: str,
+def _init_subapp(pkg_name: str,
                  root_app: web.Application,
                  subapp: web.Application,
                  global_middlewares: Iterable[WebMiddleware]) -> None:
@@ -408,15 +387,15 @@ def _init_subapp(pkgname: str,
 
     # We must copy the public interface prior to all user-defined startup signal handlers.
     subapp.on_startup.insert(0, _copy_public_interface_objs)
-    prefix = subapp.get('prefix', pkgname.split('.')[-1].replace('_', '-'))
+    prefix = subapp.get('prefix', pkg_name.split('.')[-1].replace('_', '-'))
     aiojobs.aiohttp.setup(subapp, **root_app['scheduler_opts'])
     root_app.add_subapp('/' + prefix, subapp)
     root_app.middlewares.extend(global_middlewares)
 
 
-def init_subapp(pkgname: str, root_app: web.Application, create_subapp: AppCreator) -> None:
+def init_subapp(pkg_name: str, root_app: web.Application, create_subapp: AppCreator) -> None:
     subapp, global_middlewares = create_subapp(root_app['cors_opts'])
-    _init_subapp(pkgname, root_app, subapp, global_middlewares)
+    _init_subapp(pkg_name, root_app, subapp, global_middlewares)
 
 
 def _update_public_interface_objs(root_app: web.Application) -> None:
@@ -427,48 +406,69 @@ def _update_public_interface_objs(root_app: web.Application) -> None:
             public_interface_objs[key] = root_app[key]
 
 
-@aiotools.actxmgr
-async def server_main(loop: asyncio.AbstractEventLoop,
-                      pidx: int, _args: List[Any]) -> AsyncGenerator[None, None]:
+def build_root_app(pidx: int,
+                   config: Mapping[str, Any], *,
+                   cleanup_contexts: Sequence[CleanupContext] = None,
+                   subapp_pkgs: Sequence[str] = None,
+                   scheduler_opts: Mapping[str, Any] = None) -> web.Application:
+    public_interface_objs.clear()
     app = web.Application(middlewares=[
         exception_middleware,
         api_middleware,
     ])
     global_exception_handler = functools.partial(handle_loop_error, app)
+    loop = asyncio.get_running_loop()
     loop.set_exception_handler(global_exception_handler)
-    app['config'] = _args[0]
+    app['config'] = config
     app['cors_opts'] = {
         '*': aiohttp_cors.ResourceOptions(
             allow_credentials=False,
             expose_headers="*", allow_headers="*"),
     }
-    app['scheduler_opts'] = {
+    default_scheduler_opts = {
         'limit': 2048,
         'close_timeout': 30,
         'exception_handler': global_exception_handler,
     }
+    app['scheduler_opts'] = {
+        **default_scheduler_opts,
+        **(scheduler_opts if scheduler_opts is not None else {}),
+    }
     app['pidx'] = pidx
     _update_public_interface_objs(app)
     app.on_response_prepare.append(on_prepare)
-    app.cleanup_ctx.append(config_server_ctx)
-    app.cleanup_ctx.append(monitoring_ctx)
-    app.cleanup_ctx.append(manager_status_ctx)
-    app.cleanup_ctx.append(redis_ctx)
-    app.cleanup_ctx.append(database_ctx)
-    app.cleanup_ctx.append(event_dispatcher_ctx)
-    app.cleanup_ctx.append(agent_registry_ctx)
-    app.cleanup_ctx.append(sched_dispatcher_ctx)
-    app.cleanup_ctx.append(webapp_plugins_ctx)
-    app.cleanup_ctx.append(hook_plugins_ctx)
+    if cleanup_contexts is None:
+        app.cleanup_ctx.append(config_server_ctx)
+        app.cleanup_ctx.append(monitoring_ctx)
+        app.cleanup_ctx.append(manager_status_ctx)
+        app.cleanup_ctx.append(redis_ctx)
+        app.cleanup_ctx.append(database_ctx)
+        app.cleanup_ctx.append(event_dispatcher_ctx)
+        app.cleanup_ctx.append(agent_registry_ctx)
+        app.cleanup_ctx.append(sched_dispatcher_ctx)
+        app.cleanup_ctx.append(webapp_plugins_ctx)
+        app.cleanup_ctx.append(hook_plugins_ctx)
+    else:
+        app.cleanup_ctx.extend(cleanup_contexts)
     aiojobs.aiohttp.setup(app, **app['scheduler_opts'])
     cors = aiohttp_cors.setup(app, defaults=app['cors_opts'])
     # should be done in create_app() in other modules.
     cors.add(app.router.add_route('GET', r'', hello))
     cors.add(app.router.add_route('GET', r'/', hello))
-    # legacy redirects
-    cors.add(app.router.add_route('GET', r'/v{version:\d+}/authorize',
-                                  legacy_auth_test_redirect))
+    if subapp_pkgs is None:
+        subapp_pkgs = []
+    for pkg_name in subapp_pkgs:
+        if pidx == 0:
+            log.info('Loading module: {0}', pkg_name[1:])
+        subapp_mod = importlib.import_module(pkg_name, 'ai.backend.gateway')
+        init_subapp(pkg_name, app, getattr(subapp_mod, 'create_app'))
+    return app
 
+
+@aiotools.actxmgr
+async def server_main(loop: asyncio.AbstractEventLoop,
+                      pidx: int,
+                      _args: List[Any]) -> AsyncIterator[None]:
     subapp_pkgs = [
         '.etcd', '.events',
         '.auth', '.ratelimit',
@@ -481,11 +481,7 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         '.session_template',
         '.image',
     ]
-    for pkgname in subapp_pkgs:
-        if pidx == 0:
-            log.info('Loading module: {0}', pkgname[1:])
-        subapp_mod = importlib.import_module(pkgname, 'ai.backend.gateway')
-        init_subapp(pkgname, app, getattr(subapp_mod, 'create_app'))
+    app = build_root_app(pidx, _args[0], subapp_pkgs=subapp_pkgs)
 
     ssl_ctx = None
     if app['config']['manager']['ssl-enabled']:
@@ -528,7 +524,7 @@ async def server_main(loop: asyncio.AbstractEventLoop,
 
 @aiotools.actxmgr
 async def server_main_logwrapper(loop: asyncio.AbstractEventLoop,
-                                 pidx: int, _args: List[Any]) -> AsyncGenerator[None, None]:
+                                 pidx: int, _args: List[Any]) -> AsyncIterator[None]:
     setproctitle(f"backend.ai: manager worker-{pidx}")
     log_endpoint = _args[1]
     logger = Logger(_args[0]['logging'], is_master=False, log_endpoint=log_endpoint)
