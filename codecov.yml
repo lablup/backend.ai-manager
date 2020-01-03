@@ -1,0 +1,2 @@
+ignore:
+  - src/ai/backend/manager/models/alembic
