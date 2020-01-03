@@ -43,6 +43,8 @@ class BackendError(web.HTTPError):
             'type': self.error_type,
             'title': self.error_title,
         }
+        if extra_msg is not None:
+            body['msg'] = extra_msg
         if extra_data is not None:
             body['data'] = extra_data
         self.body = json.dumps(body).encode()
@@ -144,6 +146,11 @@ class ScalingGroupNotFound(web.HTTPNotFound, BackendError):
 class KernelNotFound(web.HTTPNotFound, BackendError):
     error_type  = 'https://api.backend.ai/probs/kernel-not-found'
     error_title = 'No such kernel.'
+
+
+class TaskTemplateNotFound(web.HTTPNotFound, BackendError):
+    error_type  = 'https://api.backend.ai/probs/kernel-not-found'
+    error_title = 'No such task template.'
 
 
 class AppNotFound(web.HTTPNotFound, BackendError):

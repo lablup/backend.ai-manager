@@ -20,6 +20,7 @@ from typing import (
 from aiohttp import web
 import trafaret as t
 import sqlalchemy as sa
+import yaml
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import AccessKey
@@ -76,23 +77,34 @@ async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tup
     return requester_access_key, requester_access_key
 
 
-def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None) -> Any:
-
+def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None,
+                     query_param_checker: t.Trafaret = None) -> Any:
     # FIXME: replace ... with [web.Request, Any...] in the future mypy
     def wrap(handler: Callable[..., Awaitable[web.Response]]):
 
         @functools.wraps(handler)
         async def wrapped(request: web.Request, *args, **kwargs) -> web.Response:
+            params: Any = {}
+            body: str = ''
             try:
-                if request.can_read_body:
-                    params = await request.json(loads=loads or json.loads)
+                body_exists = request.can_read_body
+                if body_exists:
+                    body = await request.text()
+                    if request.content_type == 'text/yaml':
+                        params = yaml.load(body, Loader=yaml.BaseLoader)
+                    else:
+                        params = (loads or json.loads)(body)
                 else:
                     params = request.query
                 params = checker.check(params)
-            except json.decoder.JSONDecodeError:
+                if body_exists and query_param_checker:
+                    query_params = query_param_checker.check(request.query)
+                    kwargs['query'] = query_params
+            except (json.decoder.JSONDecodeError, yaml.YAMLError, yaml.MarkedYAMLError) as e:
+                log.exception(e)
                 raise InvalidAPIParameters('Malformed body')
             except t.DataError as e:
-                raise InvalidAPIParameters(f'Input validation error',
+                raise InvalidAPIParameters('Input validation error',
                                            extra_data=e.as_dict())
             return await handler(request, params, *args, **kwargs)
 
@@ -261,3 +273,19 @@ if hasattr(asyncio, 'get_running_loop'):  # Python 3.7+
     current_loop = asyncio.get_running_loop
 else:
     current_loop = asyncio.get_event_loop
+
+
+class Singleton(type):
+    _instances: MutableMapping[Any, Any] = {}
+
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+        return cls._instances[cls]
+
+
+class Undefined(metaclass=Singleton):
+    pass
+
+
+undefined = Undefined()

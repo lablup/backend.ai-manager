@@ -259,8 +259,9 @@ class CreateUser(graphene.Mutation):
                     o = User.from_row(await result.first())
 
                     # Create user's first access_key and secret_key.
-                    from .keypair import generate_keypair, keypairs
+                    from .keypair import generate_keypair, generate_ssh_keypair, keypairs
                     ak, sk = generate_keypair()
+                    pubkey, privkey = generate_ssh_keypair()
                     is_admin = True if data['role'] in [UserRole.SUPERADMIN, UserRole.ADMIN] else False
                     kp_data = {
                         'user_id': email,
@@ -273,6 +274,8 @@ class CreateUser(graphene.Mutation):
                         'rate_limit': 10000,
                         'num_queries': 0,
                         'user': o.uuid,
+                        'ssh_public_key': pubkey,
+                        'ssh_private_key': privkey,
                     }
                     query = (keypairs.insert().values(kp_data))
                     await conn.execute(query)
@@ -471,7 +474,7 @@ class DeleteUser(graphene.Mutation):
 
 
 def _hash_password(password):
-    return bcrypt.hash(password, rounds=12)
+    return bcrypt.using(rounds=12).hash(password)
 
 
 def _verify_password(guess, hashed):

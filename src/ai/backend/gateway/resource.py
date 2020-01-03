@@ -60,7 +60,7 @@ async def list_presets(request) -> web.Response:
     Returns the list of all resource presets.
     '''
     log.info('LIST_PRESETS (ak:{})', request['keypair']['access_key'])
-    known_slot_types = await request.app['registry'].config_server.get_resource_slots()
+    await request.app['registry'].config_server.get_resource_slots()
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         query = (
             sa.select([resource_presets])
@@ -71,7 +71,7 @@ async def list_presets(request) -> web.Response:
         #     query = query.where(resource_presets.c.scaling_group == scaling_group)
         resp: MutableMapping[str, Any] = {'presets': []}
         async for row in conn.execute(query):
-            preset_slots = row['resource_slots'].filter_slots(known_slot_types)
+            preset_slots = row['resource_slots'].normalize_slots(ignore_unknown=True)
             resp['presets'].append({
                 'name': row['name'],
                 'resource_slots': preset_slots.to_json(),
@@ -226,7 +226,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
         async for row in conn.execute(query):
             # Check if there are any agent that can allocate each preset.
             allocatable = False
-            preset_slots = row['resource_slots'].filter_slots(known_slot_types)
+            preset_slots = row['resource_slots'].normalize_slots(ignore_unknown=True)
             for agent_slot in agent_slots:
                 if agent_slot >= preset_slots and keypair_remaining >= preset_slots:
                     allocatable = True
@@ -239,7 +239,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
 
         # Return group stats with zeros if not allowed.
         allow_group_total = \
-            await request.app['registry'].config_server.get(f'config/api/resources/allow-group-total')
+            await request.app['registry'].config_server.get('config/api/resources/allow-group-total')
         if allow_group_total != '':
             group_limits = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
             group_occupied = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
@@ -316,8 +316,9 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             sa.select([kernels, groups.c.name, users.c.email])
             .select_from(j)
             .where(
-                (kernels.c.terminated_at >= start_date) &
-                (kernels.c.terminated_at < end_date) &
+                (((kernels.c.terminated_at >= start_date) & (kernels.c.terminated_at < end_date)) |
+                 ((kernels.c.created_at >= start_date) & (kernels.c.created_at < end_date) &
+                  kernels.c.terminated_at.is_(None))) &
                 (kernels.c.status.in_(RESOURCE_USAGE_KERNEL_STATUSES))
             )
             .order_by(sa.asc(kernels.c.terminated_at))
@@ -335,6 +336,12 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
         nfs = None
         if row.mounts is not None:
             nfs = list(set([mount[1] for mount in row.mounts]))
+        if row['terminated_at'] is None:
+            used_time = used_days = None
+        else:
+            used_time = str(row['terminated_at'] - row['created_at'])
+            used_days = (row['terminated_at'].astimezone(local_tz).toordinal() -
+                         row['created_at'].astimezone(local_tz).toordinal() + 1)
         device_type = set()
         smp = 0
         gpu_mem_allocated = 0
@@ -366,11 +373,10 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'disk_allocated': 0,  # TODO: disk quota limit
             'disk_used': (int(last_stat['io_scratch_size']['stats.max'])
                           if last_stat else 0),
-            'io_read': int(last_stat['io_read']['current']) if last_stat else 0,
-            'io_write': int(last_stat['io_write']['current']) if last_stat else 0,
-            'used_time': str(row['terminated_at'] - row['created_at']),
-            'used_days': (row['terminated_at'].astimezone(local_tz).toordinal() -
-                          row['created_at'].astimezone(local_tz).toordinal() + 1),
+            'io_read': int(_stat['current']) if (_stat := last_stat.get('io_read')) else 0,  # noqa
+            'io_write': int(_stat['current']) if (_stat := last_stat.get('io_write')) else 0,  # noqa
+            'used_time': used_time,
+            'used_days': used_days,
             'device_type': list(device_type),
             'smp': float(smp),
             'gpu_mem_allocated': float(gpu_mem_allocated),
@@ -380,6 +386,8 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'image_name': row['image'],
             'created_at': str(row['created_at']),
             'terminated_at': str(row['terminated_at']),
+            'status': row['status'].name,
+            'status_changed': str(row['status_changed']),
         }
         if group_id not in objs_per_group:
             objs_per_group[group_id] = {
@@ -559,9 +567,10 @@ async def get_time_binned_monthly_stats(request, user_uuid=None):
             if 'cuda.shares' in row.occupied_slots:
                 gpu_allocated += float(row.occupied_slots['cuda.shares'])
             if row.last_stat:
-                io_read_bytes += int(row.last_stat['io_read']['current'])
-                io_write_bytes += int(row.last_stat['io_write']['current'])
-                disk_used += int(row.last_stat['io_scratch_size']['stats.max'])
+                io_read_bytes += int(_stat['current']) if (_stat := row.last_stat.get('io_read')) else 0  # noqa
+                io_write_bytes += int(_stat['current']) if (_stat := row.last_stat.get('io_write')) else 0  # noqa
+                disk_used += int(_stat['stats.max']) \
+                    if (_stat := row.last_stat.get('io_scratch_size')) else 0  # noqa
             idx += 1
         stat = {
             "date": ts,

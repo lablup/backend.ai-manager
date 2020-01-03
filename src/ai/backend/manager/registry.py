@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import copy
 from datetime import datetime
@@ -30,6 +32,8 @@ from ai.backend.common.types import (
     SessionTypes,
     SessionResult,
     KernelCreationConfig,
+    SlotName,
+    SlotTypes,
 )
 from ai.backend.common.logging import BraceStyleAdapter
 from ..gateway.exceptions import (
@@ -50,7 +54,7 @@ from .models import (
     DEAD_KERNEL_STATUSES,
 )
 if TYPE_CHECKING:
-    from .scheduler import SchedulingContext, SessionContext, AgentAllocationContext
+    from .scheduler import SchedulingContext, PendingSession, AgentAllocationContext
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
 
@@ -370,6 +374,7 @@ class AgentRegistry:
                               creation_config: dict,
                               resource_policy: dict, *,
                               domain_name: str,
+                              bootstrap_script=str,
                               group_id: uuid.UUID,
                               user_uuid: str,
                               user_role: str,
@@ -423,6 +428,7 @@ class AgentRegistry:
                     item['host'],
                     item['id'].hex,
                     item['permission'].value,
+                    item['unmanaged_path'] if item['unmanaged_path'] else ''
                 ))
             if mounts and set(mounts) > matched_mounts:
                 raise VFolderNotFound
@@ -525,6 +531,19 @@ class AgentRegistry:
 
         # Create kernel object in PENDING state.
         async with self.dbpool.acquire() as conn, conn.begin():
+            # Feed SSH keypair if exists.
+            query = (sa.select([keypairs.c.ssh_public_key, keypairs.c.ssh_private_key])
+                       .select_from(keypairs)
+                       .where(keypairs.c.access_key == access_key))
+            result = await conn.execute(query)
+            row  = await result.fetchone()
+            if row['ssh_public_key'] and row['ssh_private_key']:
+                internal_data = {} if internal_data is None else internal_data
+                internal_data['ssh_keypair'] = {
+                    'public_key': row['ssh_public_key'],
+                    'private_key': row['ssh_private_key'],
+                }
+
             kernel_id = uuid.uuid4()
             query = kernels.insert().values({
                 'id': kernel_id,
@@ -548,6 +567,7 @@ class AgentRegistry:
                 'environ': [f'{k}={v}' for k, v in environ.items()],
                 'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
                 'mount_map': mount_map,
+                'bootstrap_script': bootstrap_script,
                 'repl_in_port': 0,
                 'repl_out_port': 0,
                 'stdin_port': 0,
@@ -558,9 +578,9 @@ class AgentRegistry:
         await self.event_dispatcher.produce_event('kernel_enqueued', [str(kernel_id)])
         return KernelId(kernel_id)
 
-    async def start_session(self, sched_ctx: 'SchedulingContext',
-                            sess_ctx: 'SessionContext',
-                            agent_ctx: 'AgentAllocationContext') -> None:
+    async def start_session(self, sched_ctx: SchedulingContext,
+                            sess_ctx: PendingSession,
+                            agent_ctx: AgentAllocationContext) -> None:
 
         auto_pull = await self.config_server.get('config/docker/image/auto_pull')
         image_info = await self.config_server.inspect_image(sess_ctx.image_ref)
@@ -579,9 +599,6 @@ class AgentRegistry:
         # Create the kernel by invoking the agent
         async with self.handle_kernel_exception(
                 'create_session', sess_ctx.sess_id, sess_ctx.access_key):
-            # the agent may be pulling an image!
-            # (TODO: return early and update the kernel status
-            #        via asynchronous events)
             async with RPCContext(agent_ctx.agent_addr, None) as rpc:
                 config: KernelCreationConfig = {
                     'image': {
@@ -602,6 +619,7 @@ class AgentRegistry:
                     'mount_map': sess_ctx.mount_map,
                     'environ': sess_ctx.environ,
                     'resource_opts': sess_ctx.resource_opts,
+                    'bootstrap_script': sess_ctx.bootstrap_script,
                     'startup_command': sess_ctx.startup_command,
                     'internal_data': sess_ctx.internal_data,
                     'auto_pull': auto_pull,
@@ -625,9 +643,6 @@ class AgentRegistry:
             query = (
                 kernels.update()
                 .values({
-                    # TODO: add more kernel status about image pulling
-                    # TODO: move this status transition to event handler for
-                    #       "kernel_started"
                     'scaling_group': agent_ctx.scaling_group,
                     'status': KernelStatus.RUNNING,
                     'container_id': created_info['container_id'],
@@ -962,18 +977,17 @@ class AgentRegistry:
                 row = await result.first()
 
                 slot_key_and_units = {
-                    k: v[0] for k, v in
+                    SlotName(k): SlotTypes(v[0]) for k, v in
                     agent_info['resource_slots'].items()}
                 available_slots = ResourceSlot({
-                    k: v[1] for k, v in
+                    SlotName(k): v[1] for k, v in
                     agent_info['resource_slots'].items()})
                 sgroup = agent_info.get('scaling_group', 'default')
-
-                # compare and update etcd slot_keys
 
                 if row is None or row.status is None:
                     # new agent detected!
                     log.info('agent {0} joined!', agent_id)
+                    await self.config_server.update_resource_slots(slot_key_and_units)
                     query = agents.insert().values({
                         'id': agent_id,
                         'status': AgentStatus.ALIVE,
@@ -989,8 +1003,6 @@ class AgentRegistry:
                     })
                     result = await conn.execute(query)
                     assert result.rowcount == 1
-                    # TODO: aggregate from all agents, instead of replacing everytime
-                    await self.config_server.update_resource_slots(slot_key_and_units)
                 elif row.status == AgentStatus.ALIVE:
                     updates = {}
                     if row.available_slots != available_slots:
@@ -999,11 +1011,13 @@ class AgentRegistry:
                         updates['scaling_group'] = sgroup
                     # occupied_slots are updated when kernels starts/terminates
                     if updates:
+                        await self.config_server.update_resource_slots(slot_key_and_units)
                         query = (sa.update(agents)
                                    .values(updates)
                                    .where(agents.c.id == agent_id))
                         await conn.execute(query)
                 elif row.status in (AgentStatus.LOST, AgentStatus.TERMINATED):
+                    await self.config_server.update_resource_slots(slot_key_and_units)
                     instance_rejoin = True
                     query = (sa.update(agents)
                                .values({
@@ -1018,8 +1032,6 @@ class AgentRegistry:
                                })
                                .where(agents.c.id == agent_id))
                     await conn.execute(query)
-                    # TODO: aggregate from all agents, instead of replacing everytime
-                    await self.config_server.update_resource_slots(slot_key_and_units)
                 else:
                     log.error('should not reach here! {0}', type(row.status))
 

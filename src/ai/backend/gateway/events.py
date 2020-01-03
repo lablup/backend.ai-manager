@@ -8,8 +8,8 @@ from typing import (
     Sequence, Tuple,
     MutableMapping,
     Set,
+    Protocol,
 )
-from typing_extensions import Protocol
 
 from aiohttp import web
 import aioredis
@@ -34,7 +34,7 @@ class EventCallback(Protocol):
                        context: Any,
                        agent_id: AgentId,
                        event_name: str,
-                       *args):
+                       *args) -> None:
         ...
 
 
@@ -148,7 +148,9 @@ class EventDispatcher(aobject):
         for consumer in self.consumers[event_name]:
             cb = consumer.callback
             try:
-                if asyncio.iscoroutine(cb) or asyncio.iscoroutinefunction(cb):
+                if asyncio.iscoroutine(cb):
+                    await scheduler.spawn(cb)
+                elif asyncio.iscoroutinefunction(cb):
                     await scheduler.spawn(cb(consumer.context, agent_id, event_name, *args))
                 else:
                     cb = functools.partial(cb, consumer.context, agent_id, event_name, *args)
@@ -168,7 +170,9 @@ class EventDispatcher(aobject):
         for subscriber in self.subscribers[event_name]:
             cb = subscriber.callback
             try:
-                if asyncio.iscoroutine(cb) or asyncio.iscoroutinefunction(cb):
+                if asyncio.iscoroutine(cb):
+                    await scheduler.spawn(cb)
+                elif asyncio.iscoroutinefunction(cb):
                     await scheduler.spawn(cb(subscriber.context, agent_id, event_name, *args))
                 else:
                     cb = functools.partial(cb, subscriber.context, agent_id, event_name, *args)

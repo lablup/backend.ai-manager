@@ -1,10 +1,46 @@
 Changes
 =======
 
-19.12.0a1 (xxxx-xx-xx)
+19.12.0a2 (2019-12-31)
+----------------------
+
+* NEW: User-manageable session templates written in YAML to reuse session creation parameters. (#213)
+
+* NEW: User-customizable per-scaling-group session queue scheduler plugins and three intrinsic plugins:
+  FIFO, LIFO, and the DRF (dominant resource fairness) scheduler. (#212)
+
+19.12.0a1 (2019-12-26)
 ----------------------
 
 * MAINTENANCE: Now it runs on Python 3.8 or higher.
+
+* IMPROVE: ResourceSlots are now more permissive so that agents with different sets of
+  accelerator plugins can now coexist in a single cluster. (#214)
+
+* NEW: more convenient etcd commands: ``quote``, ``unquote``, ``move-subtree``
+
+* IMPROVE: "--short" and "--installed" options added to ``etcd list-images`` command.
+
+19.09.9 (2019-12-18)
+--------------------
+
+* IMPROVE: Skip containers and images with a unsupported (future) kernelspec version.
+  (lablup/backend.ai#80)
+
+19.09.8 (2019-12-16)
+--------------------
+
+* NEW: Keypair-specific SSH keypair to access intrinsic SSH service ports (#211)
+
+  - By default they are random-generated and can only be regenerated.
+  - Manual configuration will be supported in the future.
+  - Only used if ".ssh" vfolder is not mounted.
+
+* FIX: Corruption of the runtime path when importing an image due to inadvertent resolving
+  of the path in the host-side.
+
+* IMPROVE: Include statistics for running kernels (in addition to terminated ones)
+  in the usage API.
 
 19.09.7 (2019-12-03)
 --------------------

@@ -11,6 +11,7 @@ from . import vfolder as _vfolder
 from . import resource_policy as _rpolicy
 from . import resource_preset as _rpreset
 from . import scaling_group as _sgroup
+from . import session_template as _sessiontemplate
 
 __all__ = (
     'metadata',
@@ -25,6 +26,7 @@ __all__ = (
     *_rpolicy.__all__,
     *_rpreset.__all__,
     *_sgroup.__all__,
+    *_sessiontemplate.__all__,
 )
 
 from .agent import *  # noqa
@@ -38,3 +40,4 @@ from .vfolder import *  # noqa
 from .resource_policy import *  # noqa
 from .resource_preset import *  # noqa
 from .scaling_group import *  # noqa
+from .session_template import *  # noqa
