@@ -197,10 +197,6 @@ async def exception_middleware(request: web.Request,
         return resp
 
 
-async def legacy_auth_test_redirect(request: web.Request) -> web.StreamResponse:
-    raise web.HTTPFound('/v3/auth/test')
-
-
 async def config_server_ctx(app: web.Application) -> AsyncIterator[None]:
     # populate public interfaces
     app['config_server'] = ConfigServer(
