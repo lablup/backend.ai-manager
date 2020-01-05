@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 import copy
 from datetime import datetime
 import logging
@@ -69,10 +70,12 @@ class PeerInvoker(Peer):
     class _CallStub:
 
         _cached_funcs: Dict[str, Callable]
+        order_key: ContextVar[str]
 
         def __init__(self, peer: Peer):
             self._cached_funcs = {}
             self.peer = peer
+            self.order_key = ContextVar('order_key', default=None)
 
         def __getattr__(self, name: str):
             if f := self._cached_funcs.get(name, None):
@@ -84,7 +87,8 @@ class PeerInvoker(Peer):
                         'kwargs': kwargs,
                     }
                     self.peer.last_used = time.monotonic()
-                    ret = await self.peer.invoke(name, request_body)
+                    ret = await self.peer.invoke(name, request_body,
+                                                 order_key=self.order_key.get())
                     self.peer.last_used = time.monotonic()
                     return ret
                 self._cached_funcs[name] = _wrapped
@@ -100,7 +104,7 @@ class PeerInvoker(Peer):
 
 
 @aiotools.actxmgr
-async def RPCContext(addr, timeout=None):
+async def RPCContext(addr, timeout=None, *, order_key: str = None):
     global agent_peers
     peer = agent_peers.get(addr, None)
     if peer is None:
@@ -114,6 +118,7 @@ async def RPCContext(addr, timeout=None):
         agent_peers[addr] = peer
     try:
         with _timeout(timeout):
+            peer.call.order_key.set(order_key)
             yield peer
     except RPCUserError as orig_exc:
         raise AgentError(orig_exc.name, orig_exc.args)
@@ -635,7 +640,7 @@ class AgentRegistry:
         # Create the kernel by invoking the agent
         async with self.handle_kernel_exception(
                 'create_session', sess_ctx.sess_id, sess_ctx.access_key):
-            async with RPCContext(agent_ctx.agent_addr, None) as rpc:
+            async with RPCContext(agent_ctx.agent_addr, None, order_key=sess_ctx.sess_id) as rpc:
                 config: KernelCreationConfig = {
                     'image': {
                         'registry': {
@@ -786,7 +791,7 @@ class AgentRegistry:
                         )
             except KernelNotFound:
                 raise
-            async with RPCContext(kernel['agent_addr'], 30) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 last_stat = await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
                 return {
                     **(last_stat if last_stat is not None else {}),
@@ -817,7 +822,7 @@ class AgentRegistry:
             image_ref = ImageRef(kernel['image'], [kernel['registry']])
             image_info = await self.config_server.inspect_image(image_ref)
 
-            async with RPCContext(kernel['agent_addr'], 30) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 environ = {
                      k: v for k, v in
                      map(lambda s: s.split('=', 1), kernel['environ'])
@@ -863,7 +868,7 @@ class AgentRegistry:
             major_api_version = api_version[0]
             if major_api_version == 4:  # manager-agent protocol is same.
                 major_api_version = 3
-            async with RPCContext(kernel['agent_addr'], 30) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 coro = rpc.call.execute(str(kernel['id']),
                                         major_api_version,
                                         run_id, mode, code, opts,
@@ -876,7 +881,7 @@ class AgentRegistry:
     async def interrupt_session(self, sess_id, access_key):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 30) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 coro = rpc.call.interrupt_kernel(str(kernel['id']))
                 if coro is None:
                     log.warning('interrupt cancelled')
@@ -886,7 +891,7 @@ class AgentRegistry:
     async def get_completions(self, sess_id, access_key, mode, text, opts):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 10) as rpc:
+            async with RPCContext(kernel['agent_addr'], 10, order_key=sess_id) as rpc:
                 coro = rpc.call.get_completions(str(kernel['id']), mode, text, opts)
                 if coro is None:
                     log.warning('get_completions cancelled')
@@ -896,7 +901,7 @@ class AgentRegistry:
     async def start_service(self, sess_id, access_key, service, opts):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], None) as rpc:
+            async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
                 coro = rpc.call.start_service(str(kernel['id']), service, opts)
                 if coro is None:
                     log.warning('start_service cancelled')
@@ -906,7 +911,7 @@ class AgentRegistry:
     async def upload_file(self, sess_id, access_key, filename, payload):
         async with self.handle_kernel_exception('upload_file', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], None) as rpc:
+            async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
                 coro = rpc.call.upload_file(str(kernel['id']), filename, payload)
                 if coro is None:
                     log.warning('upload_file cancelled')
@@ -917,7 +922,7 @@ class AgentRegistry:
         async with self.handle_kernel_exception('download_file', sess_id,
                                                 access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], None) as rpc:
+            async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
                 coro = rpc.call.download_file(str(kernel['id']), filepath)
                 if coro is None:
                     log.warning('download_file cancelled')
@@ -927,7 +932,7 @@ class AgentRegistry:
     async def list_files(self, sess_id, access_key, path):
         async with self.handle_kernel_exception('list_files', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 30) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 coro = rpc.call.list_files(str(kernel['id']), path)
                 if coro is None:
                     log.warning('list_files cancelled')
@@ -937,7 +942,7 @@ class AgentRegistry:
     async def get_logs(self, sess_id, access_key):
         async with self.handle_kernel_exception('get_logs', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 30) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 coro = rpc.call.get_logs(str(kernel['id']))
                 if coro is None:
                     log.warning('get_logs cancelled')
@@ -948,7 +953,7 @@ class AgentRegistry:
         async with self.handle_kernel_exception('refresh_session',
                                                 sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 30) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 coro = rpc.call.refresh_idle(str(kernel['id']))
                 if coro is None:
                     log.warning('refresh_session cancelled')
