@@ -4,11 +4,10 @@ import asyncio
 import copy
 from datetime import datetime
 import logging
-import json
-import sys
 import time
 from typing import (
-    MutableMapping,
+    Callable,
+    Dict, MutableMapping,
     TYPE_CHECKING,
 )
 import uuid
@@ -23,7 +22,7 @@ from dateutil.tz import tzutc
 import snappy
 import sqlalchemy as sa
 from yarl import URL
-import zmq, zmq.asyncio
+import zmq.asyncio
 
 from ai.backend.common import msgpack, redis
 from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
@@ -69,6 +68,8 @@ class PeerInvoker(Peer):
 
     class _CallStub:
 
+        _cached_funcs: Dict[str, Callable]
+
         def __init__(self, peer: Peer):
             self._cached_funcs = {}
             self.peer = peer
@@ -83,8 +84,6 @@ class PeerInvoker(Peer):
                         'kwargs': kwargs,
                     }
                     self.peer.last_used = time.monotonic()
-                    print(args)
-                    print(kwargs)
                     ret = await self.peer.invoke(name, request_body)
                     self.peer.last_used = time.monotonic()
                     return ret
@@ -108,8 +107,8 @@ async def RPCContext(addr, timeout=None):
         peer = PeerInvoker(
             connect=ZeroMQAddress(addr),
             transport=ZeroMQRPCTransport,
-            serializer=lambda o: json.dumps(o).encode('utf8'),
-            deserializer=lambda b: json.loads(b),
+            serializer=msgpack.packb,
+            deserializer=msgpack.unpackb,
         )
         await peer.__aenter__()
         agent_peers[addr] = peer
