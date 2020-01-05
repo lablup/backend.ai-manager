@@ -4,19 +4,21 @@ import asyncio
 import copy
 from datetime import datetime
 import logging
+import json
 import sys
+import time
 from typing import (
     MutableMapping,
     TYPE_CHECKING,
 )
 import uuid
 
-import aiozmq, aiozmq.rpc
-from aiozmq.rpc.base import GenericError, NotFoundError, ParametersError
 from aiopg.sa.connection import SAConnection
 from aiopg.sa.engine import Engine as SAEngine
 import aiotools
 from async_timeout import timeout as _timeout
+from callosum.rpc import Peer, RPCUserError
+from callosum.lower.zeromq import ZeroMQAddress, ZeroMQRPCTransport
 from dateutil.tz import tzutc
 import snappy
 import sqlalchemy as sa
@@ -63,47 +65,87 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.registry'))
 agent_peers: MutableMapping[str, zmq.asyncio.Socket] = {}  # agent-addr to socket
 
 
+class PeerInvoker(Peer):
+
+    class _CallStub:
+
+        def __init__(self, peer: Peer):
+            self._cached_funcs = {}
+            self.peer = peer
+
+        def __getattr__(self, name: str):
+            if f := self._cached_funcs.get(name, None):
+                return f
+            else:
+                async def _wrapped(*args, **kwargs):
+                    request_body = {
+                        'args': args,
+                        'kwargs': kwargs,
+                    }
+                    self.peer.last_used = time.monotonic()
+                    print(args)
+                    print(kwargs)
+                    ret = await self.peer.invoke(name, request_body)
+                    self.peer.last_used = time.monotonic()
+                    return ret
+                self._cached_funcs[name] = _wrapped
+                return _wrapped
+
+    call: _CallStub
+    last_used: float
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.call = self._CallStub(self)
+        self.last_used = time.monotonic()
+
+
 @aiotools.actxmgr
 async def RPCContext(addr, timeout=None):
-    preserved_exceptions = (
-        NotFoundError,
-        ParametersError,
-        asyncio.TimeoutError,
-        asyncio.CancelledError,
-        asyncio.InvalidStateError,
-    )
     global agent_peers
     peer = agent_peers.get(addr, None)
     if peer is None:
-        peer = await aiozmq.rpc.connect_rpc(
-            connect=addr, error_table={
-                'concurrent.futures._base.TimeoutError': asyncio.TimeoutError,
-            })
-        peer.transport.setsockopt(zmq.LINGER, 1000)
+        peer = PeerInvoker(
+            connect=ZeroMQAddress(addr),
+            transport=ZeroMQRPCTransport,
+            serializer=lambda o: json.dumps(o).encode('utf8'),
+            deserializer=lambda b: json.loads(b),
+        )
+        await peer.__aenter__()
         agent_peers[addr] = peer
     try:
         with _timeout(timeout):
             yield peer
-    except preserved_exceptions:
-        raise
+    except RPCUserError as orig_exc:
+        raise AgentError(orig_exc.name, orig_exc.args)
     except Exception:
-        exc_type, exc, tb = sys.exc_info()
-        if issubclass(exc_type, GenericError):
-            e = AgentError(exc.args[0], exc.args[1], exc_repr=exc.args[2])
-            raise e.with_traceback(tb)
-        elif issubclass(exc_type, TypeError):
-            if exc.args[0] == "'NoneType' object is not iterable":
-                log.warning('The agent has cancelled the operation '
-                            'or the kernel has terminated too quickly.')
-                # In this case, you may need to use "--debug-skip-container-deletion"
-                # CLI option in the agent and check out the container logs via
-                # "docker logs" command to see what actually happened.
-            else:
-                e = AgentError(exc_type, exc.args)
-                raise e.with_traceback(tb)
-        else:
-            e = AgentError(exc_type, exc.args)
-            raise e.with_traceback(tb)
+        raise
+
+
+async def scrub_agent_peers():
+    '''
+    TODO: apply timer
+    Periodically clean up agent connections if they are unused for a long time.
+    '''
+    global agent_peers
+    closing_tasks = []
+    now = time.monotonic()
+    removed_addrs = []
+    for addr, peer in agent_peers.items():
+        if peer.last_used + 30.0 > now:
+            removed_addrs.append(addr)
+            closing_tasks.append(peer.__aexit__(None, None, None))
+    for addr in removed_addrs:
+        del agent_peers[addr]
+    await asyncio.gather(*closing_tasks, return_exceptions=True)
+
+
+async def cleanup_agent_peers():
+    global agent_peers
+    closing_tasks = []
+    for addr, peer in agent_peers.items():
+        closing_tasks.append(peer.__aexit__(None, None, None))
+    await asyncio.gather(*closing_tasks, return_exceptions=True)
 
 
 @aiotools.actxmgr
@@ -141,12 +183,7 @@ class AgentRegistry:
         self.heartbeat_lock = asyncio.Lock()
 
     async def shutdown(self) -> None:
-        global agent_peers
-        closing_tasks = []
-        for addr, peer in agent_peers.items():
-            peer.close()
-            closing_tasks.append(peer.wait_closed())
-        await asyncio.gather(*closing_tasks)
+        await cleanup_agent_peers()
 
     async def get_instance(self, inst_id, field=None):
         async with self.dbpool.acquire() as conn, conn.begin():
@@ -1077,8 +1114,7 @@ class AgentRegistry:
             row = await result.first()
             peer = agent_peers.pop(row['addr'], None)
             if peer is not None:
-                peer.close()
-                await peer.wait_closed()
+                await peer.__aexit__(None, None, None)
             prev_status = row['status']
             if prev_status in (None, AgentStatus.LOST, AgentStatus.TERMINATED):
                 return
