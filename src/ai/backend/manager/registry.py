@@ -7,7 +7,7 @@ from datetime import datetime
 import logging
 import time
 from typing import (
-    Callable,
+    Callable, Optional,
     Dict, MutableMapping,
     TYPE_CHECKING,
 )
@@ -70,7 +70,7 @@ class PeerInvoker(Peer):
     class _CallStub:
 
         _cached_funcs: Dict[str, Callable]
-        order_key: ContextVar[str]
+        order_key: ContextVar[Optional[str]]
 
         def __init__(self, peer: Peer):
             self._cached_funcs = {}
