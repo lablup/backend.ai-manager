@@ -1,27 +1,29 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 import copy
 from datetime import datetime
 import logging
-import sys
+import time
 from typing import (
-    MutableMapping,
+    Callable, Optional,
+    Dict, MutableMapping,
     TYPE_CHECKING,
 )
 import uuid
 
-import aiozmq, aiozmq.rpc
-from aiozmq.rpc.base import GenericError, NotFoundError, ParametersError
 from aiopg.sa.connection import SAConnection
 from aiopg.sa.engine import Engine as SAEngine
 import aiotools
 from async_timeout import timeout as _timeout
+from callosum.rpc import Peer, RPCUserError
+from callosum.lower.zeromq import ZeroMQAddress, ZeroMQRPCTransport
 from dateutil.tz import tzutc
 import snappy
 import sqlalchemy as sa
 from yarl import URL
-import zmq, zmq.asyncio
+import zmq.asyncio
 
 from ai.backend.common import msgpack, redis
 from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
@@ -63,47 +65,91 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.registry'))
 agent_peers: MutableMapping[str, zmq.asyncio.Socket] = {}  # agent-addr to socket
 
 
+class PeerInvoker(Peer):
+
+    class _CallStub:
+
+        _cached_funcs: Dict[str, Callable]
+        order_key: ContextVar[Optional[str]]
+
+        def __init__(self, peer: Peer):
+            self._cached_funcs = {}
+            self.peer = peer
+            self.order_key = ContextVar('order_key', default=None)
+
+        def __getattr__(self, name: str):
+            if f := self._cached_funcs.get(name, None):
+                return f
+            else:
+                async def _wrapped(*args, **kwargs):
+                    request_body = {
+                        'args': args,
+                        'kwargs': kwargs,
+                    }
+                    self.peer.last_used = time.monotonic()
+                    ret = await self.peer.invoke(name, request_body,
+                                                 order_key=self.order_key.get())
+                    self.peer.last_used = time.monotonic()
+                    return ret
+                self._cached_funcs[name] = _wrapped
+                return _wrapped
+
+    call: _CallStub
+    last_used: float
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.call = self._CallStub(self)
+        self.last_used = time.monotonic()
+
+
 @aiotools.actxmgr
-async def RPCContext(addr, timeout=None):
-    preserved_exceptions = (
-        NotFoundError,
-        ParametersError,
-        asyncio.TimeoutError,
-        asyncio.CancelledError,
-        asyncio.InvalidStateError,
-    )
+async def RPCContext(addr, timeout=None, *, order_key: str = None):
     global agent_peers
     peer = agent_peers.get(addr, None)
     if peer is None:
-        peer = await aiozmq.rpc.connect_rpc(
-            connect=addr, error_table={
-                'concurrent.futures._base.TimeoutError': asyncio.TimeoutError,
-            })
-        peer.transport.setsockopt(zmq.LINGER, 1000)
+        peer = PeerInvoker(
+            connect=ZeroMQAddress(addr),
+            transport=ZeroMQRPCTransport,
+            serializer=msgpack.packb,
+            deserializer=msgpack.unpackb,
+        )
+        await peer.__aenter__()
         agent_peers[addr] = peer
     try:
         with _timeout(timeout):
+            peer.call.order_key.set(order_key)
             yield peer
-    except preserved_exceptions:
-        raise
+    except RPCUserError as orig_exc:
+        raise AgentError(orig_exc.name, orig_exc.args)
     except Exception:
-        exc_type, exc, tb = sys.exc_info()
-        if issubclass(exc_type, GenericError):
-            e = AgentError(exc.args[0], exc.args[1], exc_repr=exc.args[2])
-            raise e.with_traceback(tb)
-        elif issubclass(exc_type, TypeError):
-            if exc.args[0] == "'NoneType' object is not iterable":
-                log.warning('The agent has cancelled the operation '
-                            'or the kernel has terminated too quickly.')
-                # In this case, you may need to use "--debug-skip-container-deletion"
-                # CLI option in the agent and check out the container logs via
-                # "docker logs" command to see what actually happened.
-            else:
-                e = AgentError(exc_type, exc.args)
-                raise e.with_traceback(tb)
-        else:
-            e = AgentError(exc_type, exc.args)
-            raise e.with_traceback(tb)
+        raise
+
+
+async def scrub_agent_peers():
+    '''
+    TODO: apply timer
+    Periodically clean up agent connections if they are unused for a long time.
+    '''
+    global agent_peers
+    closing_tasks = []
+    now = time.monotonic()
+    removed_addrs = []
+    for addr, peer in agent_peers.items():
+        if peer.last_used + 30.0 > now:
+            removed_addrs.append(addr)
+            closing_tasks.append(peer.__aexit__(None, None, None))
+    for addr in removed_addrs:
+        del agent_peers[addr]
+    await asyncio.gather(*closing_tasks, return_exceptions=True)
+
+
+async def cleanup_agent_peers():
+    global agent_peers
+    closing_tasks = []
+    for addr, peer in agent_peers.items():
+        closing_tasks.append(peer.__aexit__(None, None, None))
+    await asyncio.gather(*closing_tasks, return_exceptions=True)
 
 
 @aiotools.actxmgr
@@ -141,12 +187,7 @@ class AgentRegistry:
         self.heartbeat_lock = asyncio.Lock()
 
     async def shutdown(self) -> None:
-        global agent_peers
-        closing_tasks = []
-        for addr, peer in agent_peers.items():
-            peer.close()
-            closing_tasks.append(peer.wait_closed())
-        await asyncio.gather(*closing_tasks)
+        await cleanup_agent_peers()
 
     async def get_instance(self, inst_id, field=None):
         async with self.dbpool.acquire() as conn, conn.begin():
@@ -599,7 +640,7 @@ class AgentRegistry:
         # Create the kernel by invoking the agent
         async with self.handle_kernel_exception(
                 'create_session', sess_ctx.sess_id, sess_ctx.access_key):
-            async with RPCContext(agent_ctx.agent_addr, None) as rpc:
+            async with RPCContext(agent_ctx.agent_addr, None, order_key=sess_ctx.sess_id) as rpc:
                 config: KernelCreationConfig = {
                     'image': {
                         'registry': {
@@ -750,7 +791,7 @@ class AgentRegistry:
                         )
             except KernelNotFound:
                 raise
-            async with RPCContext(kernel['agent_addr'], 30) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 last_stat = await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
                 return {
                     **(last_stat if last_stat is not None else {}),
@@ -781,7 +822,7 @@ class AgentRegistry:
             image_ref = ImageRef(kernel['image'], [kernel['registry']])
             image_info = await self.config_server.inspect_image(image_ref)
 
-            async with RPCContext(kernel['agent_addr'], 30) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 environ = {
                      k: v for k, v in
                      map(lambda s: s.split('=', 1), kernel['environ'])
@@ -827,7 +868,7 @@ class AgentRegistry:
             major_api_version = api_version[0]
             if major_api_version == 4:  # manager-agent protocol is same.
                 major_api_version = 3
-            async with RPCContext(kernel['agent_addr'], 30) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 coro = rpc.call.execute(str(kernel['id']),
                                         major_api_version,
                                         run_id, mode, code, opts,
@@ -840,7 +881,7 @@ class AgentRegistry:
     async def interrupt_session(self, sess_id, access_key):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 30) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 coro = rpc.call.interrupt_kernel(str(kernel['id']))
                 if coro is None:
                     log.warning('interrupt cancelled')
@@ -850,7 +891,7 @@ class AgentRegistry:
     async def get_completions(self, sess_id, access_key, mode, text, opts):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 10) as rpc:
+            async with RPCContext(kernel['agent_addr'], 10, order_key=sess_id) as rpc:
                 coro = rpc.call.get_completions(str(kernel['id']), mode, text, opts)
                 if coro is None:
                     log.warning('get_completions cancelled')
@@ -860,7 +901,7 @@ class AgentRegistry:
     async def start_service(self, sess_id, access_key, service, opts):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], None) as rpc:
+            async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
                 coro = rpc.call.start_service(str(kernel['id']), service, opts)
                 if coro is None:
                     log.warning('start_service cancelled')
@@ -870,7 +911,7 @@ class AgentRegistry:
     async def upload_file(self, sess_id, access_key, filename, payload):
         async with self.handle_kernel_exception('upload_file', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], None) as rpc:
+            async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
                 coro = rpc.call.upload_file(str(kernel['id']), filename, payload)
                 if coro is None:
                     log.warning('upload_file cancelled')
@@ -881,7 +922,7 @@ class AgentRegistry:
         async with self.handle_kernel_exception('download_file', sess_id,
                                                 access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], None) as rpc:
+            async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
                 coro = rpc.call.download_file(str(kernel['id']), filepath)
                 if coro is None:
                     log.warning('download_file cancelled')
@@ -891,7 +932,7 @@ class AgentRegistry:
     async def list_files(self, sess_id, access_key, path):
         async with self.handle_kernel_exception('list_files', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 30) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 coro = rpc.call.list_files(str(kernel['id']), path)
                 if coro is None:
                     log.warning('list_files cancelled')
@@ -901,7 +942,7 @@ class AgentRegistry:
     async def get_logs(self, sess_id, access_key):
         async with self.handle_kernel_exception('get_logs', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 30) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 coro = rpc.call.get_logs(str(kernel['id']))
                 if coro is None:
                     log.warning('get_logs cancelled')
@@ -912,7 +953,7 @@ class AgentRegistry:
         async with self.handle_kernel_exception('refresh_session',
                                                 sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 30) as rpc:
+            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 coro = rpc.call.refresh_idle(str(kernel['id']))
                 if coro is None:
                     log.warning('refresh_session cancelled')
@@ -1077,8 +1118,7 @@ class AgentRegistry:
             row = await result.first()
             peer = agent_peers.pop(row['addr'], None)
             if peer is not None:
-                peer.close()
-                await peer.wait_closed()
+                await peer.__aexit__(None, None, None)
             prev_status = row['status']
             if prev_status in (None, AgentStatus.LOST, AgentStatus.TERMINATED):
                 return

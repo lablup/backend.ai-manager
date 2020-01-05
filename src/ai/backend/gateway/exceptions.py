@@ -202,9 +202,9 @@ class ServerFrozen(web.HTTPServiceUnavailable, BackendError):
 class AgentError(RuntimeError):
     '''
     A dummy exception class to distinguish agent-side errors passed via
-    aiozmq.rpc calls.
+    agent rpc calls.
 
-    It carrise two args tuple: the exception type and exception arguments from
+    It carries two args tuple: the exception type and exception arguments from
     the agent.
     '''
 
