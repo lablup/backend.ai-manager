@@ -24,7 +24,6 @@
 | Click                          | 7.0        | BSD                                                          |
 | Jinja2                         | 2.10       | BSD                                                          |
 | MarkupSafe                     | 1.0        | BSD                                                          |
-| aiozmq                         | 0.7.1      | BSD                                                          |
 | appnope                        | 0.1.0      | BSD                                                          |
 | backcall                       | 0.1.0      | BSD                                                          |
 | colorama                       | 0.3.9      | BSD                                                          |
@@ -64,6 +63,7 @@
 | pexpect                        | 4.6.0      | ISC license                                                  |
 | chardet                        | 3.0.4      | LGPL                                                         |
 | pyzmq                          | 17.1.2     | LGPL+BSD                                                     |
+| callosum                       | 0.9.1      | MIT                                                          |
 | ConfigArgParse                 | 0.12.0     | MIT                                                          |
 | Keras-Applications             | 1.0.8      | MIT                                                          |
 | Keras-Preprocessing            | 1.1.0      | MIT                                                          |
