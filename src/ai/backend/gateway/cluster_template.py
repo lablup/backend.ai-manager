@@ -6,12 +6,11 @@ from aiohttp import web
 import aiohttp_cors
 import sqlalchemy as sa
 import trafaret as t
-from typing import Any, Tuple
+from typing import Any, Tuple, List
 import yaml
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import SessionTypes
 
 from .auth import auth_required
 from .exceptions import InvalidAPIParameters, TaskTemplateNotFound
@@ -25,41 +24,23 @@ from ..manager.models import (
     query_accessible_session_templates, TemplateType
 )
 
-log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.session_template'))
+log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.cluster_template'))
 
 
-task_template_v1 = t.Dict({
+cluster_template_v1 = t.Dict({
     tx.AliasedKey(['api_version', 'apiVersion']): t.String,
-    t.Key('kind'): t.Enum('taskTemplate', 'task_template'),
+    t.Key('kind'): t.Enum('clusterTemplate', 'cluster_template'),
     t.Key('metadata'): t.Dict({
-        t.Key('name'): t.String,
-        t.Key('tag', default=None): t.Null | t.String,
+        t.Key('name'): t.String
     }),
     t.Key('spec'): t.Dict({
-        tx.AliasedKey(['type', 'sessionType'],
-                      default='interactive') >> 'sess_type': tx.Enum(SessionTypes),
-        t.Key('kernel'): t.Dict({
-            t.Key('image'): t.String,
-            t.Key('environ', default={}): t.Null | t.Mapping(t.String, t.String),
-            t.Key('run', default=None): t.Null | t.Dict({
-                t.Key('bootstrap', default=None): t.Null | t.String,
-                tx.AliasedKey(['startup', 'startup_command', 'startupCommand'],
-                              default=None) >> 'startup_command': t.Null | t.String
-            }),
-            t.Key('git', default=None): t.Null | t.Dict({
-                t.Key('repository'): t.String,
-                t.Key('commit', default=None): t.Null | t.String,
-                t.Key('branch', default=None): t.Null | t.String,
-                t.Key('credential', default=None): t.Null | t.Dict({
-                    t.Key('username'): t.String,
-                    t.Key('password'): t.String
-                }),
-                tx.AliasedKey(['destination_dir', 'destinationDir'],
-                              default=None) >> 'dest_dir': t.Null | t.String
-            })
-        }),
+        t.Key('environ', default={}): t.Null | t.Mapping(t.String, t.String),
         t.Key('mounts', default={}): t.Null | t.Mapping(t.String, t.Any),
-        t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any)
+        t.Key('nodes'): t.List(t.Dict({
+            t.Key('role'): t.Enum('master', 'worker'),
+            tx.AliasedKey(['session_template', 'sessionTemplate']): tx.UUID,
+            t.Key('replicas', default=1): t.Int
+        }))
     })
 }).allow_extra('*')
 
@@ -71,8 +52,7 @@ task_template_v1 = t.Dict({
         tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
         tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
         t.Key('owner_access_key', default=None): t.Null | t.String,
-        t.Key('payload'): t.String,
-        t.Key('type') >> 'template_type': tx.Enum(TemplateType)
+        t.Key('payload'): t.String
     }
 ))
 async def create(request: web.Request, params: Any) -> web.Response:
@@ -171,7 +151,18 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 body = yaml.load(params['payload'], Loader=yaml.BaseLoader)
             except (yaml.YAMLError, yaml.MarkedYAMLError):
                 raise InvalidAPIParameters('Malformed payload')
-        body = task_template_v1.check(body)
+        body = cluster_template_v1.check(body)
+        defined_roles: List[str] = []
+
+        for node in body['spec']['nodes']:
+            if node['role'] in defined_roles:
+                raise InvalidAPIParameters('Each role can only be defined once')
+            if node['role'] == 'master' and node['replicas'] != 1:
+                raise InvalidAPIParameters('Only one master node can be created per cluster')
+            defined_roles.append(node['role'])
+
+        if not 'master' in defined_roles:
+            raise InvalidAPIParameters('master node is required for a cluster')
         template_id = uuid.uuid4().hex
         resp = {
             'id': template_id,
@@ -184,7 +175,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'user_uuid': user_uuid,
             'name': body['metadata']['name'],
             'template': body,
-            'type': TemplateType.TASK,
+            'type': TemplateType.CLUSTER,
         })
         result = await conn.execute(query)
         assert result.rowcount == 1
@@ -216,7 +207,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
             query = (sa.select([session_templates, users.c.email, groups.c.name], use_labels=True)
                        .select_from(j)
                        .where((session_templates.c.is_active) &
-                              (session_templates.c.type == TemplateType.TASK)))
+                              (session_templates.c.type == TemplateType.CLUSTER)))
             result = await conn.execute(query)
             entries = []
             async for row in result:
@@ -238,7 +229,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
             if params['group_id'] is not None:
                 extra_conds = ((session_templates.c.group_id == params['group_id']))
             entries = await query_accessible_session_templates(
-                        conn, user_uuid, TemplateType.TASK,
+                        conn, user_uuid, TemplateType.CLUSTER,
                         user_role=user_role, domain_name=domain_name,
                         allowed_types=['user', 'group'], extra_conds=extra_conds)
 
@@ -280,7 +271,7 @@ async def get(request: web.Request, params: Any) -> web.Response:
                    .select_from(session_templates)
                    .where((session_templates.c.id == template_id) &
                           (session_templates.c.is_active) &
-                          (session_templates.c.type == TemplateType.TASK)
+                          (session_templates.c.type == TemplateType.CLUSTER)
                           ))
         template = await conn.scalar(query)
         if not template:
@@ -314,7 +305,7 @@ async def put(request: web.Request, params: Any) -> web.Response:
                    .select_from(session_templates)
                    .where((session_templates.c.id == template_id) &
                           (session_templates.c.is_active) &
-                          (session_templates.c.type == TemplateType.TASK)
+                          (session_templates.c.type == TemplateType.CLUSTER)
                           ))
         result = await conn.scalar(query)
         if not result:
@@ -325,7 +316,10 @@ async def put(request: web.Request, params: Any) -> web.Response:
             body = yaml.load(params['payload'], Loader=yaml.BaseLoader)
         except (yaml.YAMLError, yaml.MarkedYAMLError):
             raise InvalidAPIParameters('Malformed payload')
-        body = task_template_v1.check(body)
+        body = cluster_template_v1.check(body)
+        for role in body['spec']['node']:
+            if role['replicas']['min'] is None and role['replicas']['max'] is None:
+                raise InvalidAPIParameters("Both 'min' and 'max' value can't be None")
         query = (sa.update(session_templates)
                    .values(template=body, name=body['metadata']['name'])
                    .where((session_templates.c.id == template_id)))
@@ -355,7 +349,7 @@ async def delete(request: web.Request, params: Any) -> web.Response:
                    .select_from(session_templates)
                    .where((session_templates.c.id == template_id) &
                           (session_templates.c.is_active) &
-                          (session_templates.c.type == TemplateType.TASK)
+                          (session_templates.c.type == TemplateType.CLUSTER)
                           ))
         result = await conn.scalar(query)
         if not result:
@@ -383,7 +377,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     app['api_versions'] = (4, 5)
-    app['prefix'] = 'template/session'
+    app['prefix'] = 'template/cluster'
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     cors.add(app.router.add_route('POST', '', create))
     cors.add(app.router.add_route('GET', '', list_template))

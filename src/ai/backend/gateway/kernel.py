@@ -42,6 +42,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     AgentId, KernelId,
     SessionTypes,
+    KernelEnqueueingConfig,
 )
 
 from .exceptions import (
@@ -183,6 +184,108 @@ def drop(d, dropval):
     return newd
 
 
+async def _query_userinfo(request: web.Request, params: Any, conn: Any) -> Tuple[str, str, str]:
+    if params['domain'] is None:
+        params['domain'] = request['user']['domain_name']
+    scopes_param = {
+        'owner_access_key': (None if params['owner_access_key'] is undefined
+                             else params['owner_access_key'])
+    }
+    requester_access_key, owner_access_key = await get_access_key_scopes(request, scopes_param)
+    requester_uuid = request['user']['uuid']
+
+    owner_uuid = ''
+    group_id = ''
+    resource_policy = ''
+
+    if requester_access_key != owner_access_key:
+        # Admin or superadmin is creating sessions for another user.
+        # The check for admin privileges is already done in get_access_key_scope().
+        query = (
+            sa.select([keypairs.c.user, keypairs.c.resource_policy,
+                        users.c.role, users.c.domain_name])
+            .select_from(sa.join(keypairs, users, keypairs.c.user == users.c.uuid))
+            .where(keypairs.c.access_key == owner_access_key)
+        )
+        result = await conn.execute(query)
+        row = await result.fetchone()
+        owner_domain = row['domain_name']
+        owner_uuid = row['user']
+        owner_role = row['role']
+        query = (
+            sa.select([keypair_resource_policies])
+            .select_from(keypair_resource_policies)
+            .where(keypair_resource_policies.c.name == row['resource_policy'])
+        )
+        result = await conn.execute(query)
+        resource_policy = await result.fetchone()
+    else:
+        # Normal case when the user is creating her/his own session.
+        owner_domain = request['user']['domain_name']
+        owner_uuid = requester_uuid
+        owner_role = UserRole.USER
+        resource_policy = request['keypair']['resource_policy']
+
+    query = (
+        sa.select([domains.c.name])
+        .select_from(domains)
+        .where(
+            (domains.c.name == owner_domain) &
+            (domains.c.is_active)
+        )
+    )
+    qresult = await conn.execute(query)
+    domain_name = await qresult.scalar()
+    if domain_name is None:
+        raise InvalidAPIParameters('Invalid domain')
+
+    if owner_role == UserRole.SUPERADMIN:
+        # superadmin can spawn container in any designated domain/group.
+        query = (
+            sa.select([groups.c.id])
+            .select_from(groups)
+            .where(
+                (groups.c.domain_name == params['domain']) &
+                (groups.c.name == params['group']) &
+                (groups.c.is_active)
+            ))
+        qresult = await conn.execute(query)
+        group_id = await qresult.scalar()
+    elif owner_role == UserRole.ADMIN:
+        # domain-admin can spawn container in any group in the same domain.
+        if params['domain'] != owner_domain:
+            raise InvalidAPIParameters("You can only set the domain to the owner's domain.")
+        query = (
+            sa.select([groups.c.id])
+            .select_from(groups)
+            .where(
+                (groups.c.domain_name == owner_domain) &
+                (groups.c.name == params['group']) &
+                (groups.c.is_active)
+            ))
+        qresult = await conn.execute(query)
+        group_id = await qresult.scalar()
+    else:
+        # normal users can spawn containers in their group and domain.
+        if params['domain'] != owner_domain:
+            raise InvalidAPIParameters("You can only set the domain to your domain.")
+        query = (
+            sa.select([agus.c.group_id])
+            .select_from(agus.join(groups, agus.c.group_id == groups.c.id))
+            .where(
+                (agus.c.user_id == owner_uuid) &
+                (groups.c.domain_name == owner_domain) &
+                (groups.c.name == params['group']) &
+                (groups.c.is_active)
+            ))
+        qresult = await conn.execute(query)
+        group_id = await qresult.scalar()
+    if group_id is None:
+        raise InvalidAPIParameters('Invalid group')
+
+    return owner_uuid, group_id, resource_policy
+
+
 async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
@@ -197,7 +300,6 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
 
     registry = request.app['registry']
     resp: MutableMapping[str, Any] = {}
-    requester_uuid = request['user']['uuid']
 
     # Resolve the image reference.
     try:
@@ -255,103 +357,24 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
                                                                    interrupt_wait)
 
         async with dbpool.acquire() as conn, conn.begin():
-            if requester_access_key != owner_access_key:
-                # Admin or superadmin is creating sessions for another user.
-                # The check for admin privileges is already done in get_access_key_scope().
-                query = (
-                    sa.select([keypairs.c.user, keypairs.c.resource_policy,
-                               users.c.role, users.c.domain_name])
-                    .select_from(sa.join(keypairs, users, keypairs.c.user == users.c.uuid))
-                    .where(keypairs.c.access_key == owner_access_key)
-                )
-                result = await conn.execute(query)
-                row = await result.fetchone()
-                owner_domain = row['domain_name']
-                owner_uuid = row['user']
-                owner_role = row['role']
-                query = (
-                    sa.select([keypair_resource_policies])
-                    .select_from(keypair_resource_policies)
-                    .where(keypair_resource_policies.c.name == row['resource_policy'])
-                )
-                result = await conn.execute(query)
-                resource_policy = await result.fetchone()
-            else:
-                # Normal case when the user is creating her/his own session.
-                owner_domain = request['user']['domain_name']
-                owner_uuid = requester_uuid
-                owner_role = UserRole.USER
-                resource_policy = request['keypair']['resource_policy']
-
-            query = (
-                sa.select([domains.c.name])
-                .select_from(domains)
-                .where(
-                    (domains.c.name == owner_domain) &
-                    (domains.c.is_active)
-                )
-            )
-            qresult = await conn.execute(query)
-            domain_name = await qresult.scalar()
-            if domain_name is None:
-                raise InvalidAPIParameters('Invalid domain')
-
-            if owner_role == UserRole.SUPERADMIN:
-                # superadmin can spawn container in any designated domain/group.
-                query = (
-                    sa.select([groups.c.id])
-                    .select_from(groups)
-                    .where(
-                        (groups.c.domain_name == params['domain']) &
-                        (groups.c.name == params['group']) &
-                        (groups.c.is_active)
-                    ))
-                qresult = await conn.execute(query)
-                group_id = await qresult.scalar()
-            elif owner_role == UserRole.ADMIN:
-                # domain-admin can spawn container in any group in the same domain.
-                if params['domain'] != owner_domain:
-                    raise InvalidAPIParameters("You can only set the domain to the owner's domain.")
-                query = (
-                    sa.select([groups.c.id])
-                    .select_from(groups)
-                    .where(
-                        (groups.c.domain_name == owner_domain) &
-                        (groups.c.name == params['group']) &
-                        (groups.c.is_active)
-                    ))
-                qresult = await conn.execute(query)
-                group_id = await qresult.scalar()
-            else:
-                # normal users can spawn containers in their group and domain.
-                if params['domain'] != owner_domain:
-                    raise InvalidAPIParameters("You can only set the domain to your domain.")
-                query = (
-                    sa.select([agus.c.group_id])
-                    .select_from(agus.join(groups, agus.c.group_id == groups.c.id))
-                    .where(
-                        (agus.c.user_id == owner_uuid) &
-                        (groups.c.domain_name == owner_domain) &
-                        (groups.c.name == params['group']) &
-                        (groups.c.is_active)
-                    ))
-                qresult = await conn.execute(query)
-                group_id = await qresult.scalar()
-            if group_id is None:
-                raise InvalidAPIParameters('Invalid group')
+            owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
 
         kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
             params['sess_id'], owner_access_key,
-            requested_image_ref,
+            [{
+                'image_ref': requested_image_ref,
+                'cluster_role': 'master',
+                'creation_config': params['config'],
+                'bootstrap_script': params['bootstrap_script'],
+                'startup_command': params['startup_command'],
+            }],
+            params['config']['scaling_group'],
             params['sess_type'],
-            params['config'],
             resource_policy,
             domain_name=params['domain'],
-            bootstrap_script=params['bootstrap_script'],
             group_id=group_id,
             user_uuid=owner_uuid,
             user_role=request['user']['role'],
-            startup_command=params['startup_command'],
             session_tag=params['tag']))
         resp['kernelId'] = str(params['sess_id'])  # legacy naming
         resp['status'] = 'PENDING'
@@ -597,6 +620,252 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
     params['config'] = creation_config
 
     return await _create(request, params, request.app['dbpool'])
+
+
+@server_status_required(ALL_ALLOWED)
+@auth_required
+@check_api_params(
+    t.Dict({
+        t.Key('clientSessionToken') >> 'sess_id':
+            t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
+        tx.AliasedKey(['template_id', 'templateId']): t.Null | tx.UUID,
+        tx.AliasedKey(['type', 'sessionType'], default='interactive') >> 'sess_type':
+            tx.Enum(SessionTypes),
+        tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
+        tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
+        tx.AliasedKey(['scaling_group', 'scalingGroup'], default=None): t.Null | t.String,
+        t.Key('tag', default=None): t.Null | t.String,
+        t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
+        t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
+        t.Key('owner_access_key', default=None): t.Null | t.String,
+    }),
+    loads=_json_loads)
+async def create_cluster(request: web.Request, params: Any) -> web.Response:
+    dbpool = request.app['dbpool']
+    if params['domain'] is None:
+        params['domain'] = request['user']['domain_name']
+    scopes_param = {
+        'owner_access_key': (None if params['owner_access_key'] is undefined
+                             else params['owner_access_key'])
+    }
+    requester_access_key, owner_access_key = await get_access_key_scopes(request, scopes_param)
+    log.info('GET_OR_CREATE (ak:{0}/{1}, img:{2}, s:{3})',
+             requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*',
+             params['image'], params['sess_id'])
+
+    registry = request.app['registry']
+    resp: MutableMapping[str, Any] = {}
+
+    # Check existing (owner_access_key, session) kernel instance
+    try:
+        # NOTE: We can reuse the session IDs of TERMINATED sessions only.
+        # NOTE: Reusing a session in the PENDING status returns an empty value in service_ports.
+        kern = await registry.get_session(params['sess_id'], owner_access_key)
+        running_image_ref = ImageRef(kern['image'], [kern['registry']])
+        raise KernelAlreadyExists
+    except KernelNotFound:
+        pass
+
+    async with dbpool.acquire() as conn, conn.begin():
+        query = (
+                    sa.select([session_templates.c.template])
+                      .select_from(session_templates)
+                      .where((session_templates.c.id == params['template_id']) &
+                             session_templates.c.is_active)
+                )
+        template = await conn.scalar(query)
+        if not template:
+            raise TaskTemplateNotFound
+
+        template = json.loads(template)
+        
+        kernel_configs = []
+        for node in template['spec']['nodes']:
+            # Resolve session template.
+            query = (sa.select([session_templates.c.template])
+                       .select_from(session_templates)
+                       .where((session_templates.c.id == node['session_template']) &
+                              session_templates.c.is_active))
+            session_template = await conn.scalar(query)
+            if not template:
+                raise TaskTemplateNotFound
+            session_template = json.loads(session_template)
+            
+            kernel_config = {
+                'image_ref': session_template['spec']['kernel']['image'],
+                'creation_config': {}
+            }
+
+            if session_template['spec']['sess_type'] == 'interactive':
+                kernel_config['sess_type'] = SessionTypes.INTERACTIVE
+            elif session_template['spec']['sess_type'] == 'batch':
+                kernel_config['sess_type'] = SessionTypes.BATCH
+
+            # TODO: Remove `type: ignore` when mypy supports type inference for walrus operator
+            # Check https://github.com/python/mypy/issues/7316
+            # TODO: remove `NOQA` when flake8 supports Python 3.8 and walrus operator
+            # Check https://gitlab.com/pycqa/flake8/issues/599
+            if tag := session_template['metadata'].get('tag'):  # noqa
+                kernel_config['tag'] = tag
+            if runtime_opt := session_template['spec']['kernel']['run']:  # noqa
+                if bootstrap := runtime_opt['bootstrap']:  # noqa
+                    kernel_config['bootstrap_script'] = bootstrap
+                if startup := runtime_opt['startup_command']:  # noqa
+                    kernel_config['startup_command'] = startup
+
+            if resources := template['spec'].get('resources'):  # noqa
+                kernel_config['creation_config']['resources'] = resources
+            if mounts := template['spec'].get('mounts'):  # noqa
+                kernel_config['creation_config']['mounts'] = list(mounts.keys())
+                kernel_config['creation_config']['mount_map'] = {
+                    key: value
+                    for (key, value) in mounts.items()
+                    if len(value) > 0
+                }
+            if environ := template['spec']['kernel'].get('environ'):  # noqa
+                kernel_config['creation_config']['environ'] = environ
+
+            if git := session_template['spec']['kernel']['git']:  # noqa
+                if _dest := git.get('dest_dir'):  # noqa
+                    target = _dest
+                else:
+                    target = git['repository'].split('/')[-1]
+
+                cmd_builder = 'git clone '
+                if credential := git.get('credential'):  # noqa
+                    proto, url = git['repository'].split('://')
+                    cmd_builder += f'{proto}://{credential["username"]}:{credential["password"]}@{url}'
+                else:
+                    cmd_builder += git['repository']
+                if branch := git.get('branch'):  # noqa
+                    cmd_builder += f' -b {branch}'
+                cmd_builder += f' {target}\n'
+
+                if commit := git.get('commit'):  # noqa
+                    cmd_builder = 'CWD=$(pwd)\n' + cmd_builder
+                    cmd_builder += f'cd {target}\n'
+                    cmd_builder += f'git checkout {commit}\n'
+                    cmd_builder += 'cd $CWD\n'
+
+                bootstrap = base64.b64decode(kernel_config.get('bootstrap_script') or b'').decode()
+                bootstrap += '\n'
+                bootstrap += cmd_builder
+                kernel_config['bootstrap_script'] = base64.b64encode(bootstrap.encode()).decode()
+
+            # Resolve the image reference.
+            try:
+                requested_image_ref = \
+                    await ImageRef.resolve_alias(params['image'], request.app['config_server'].etcd)
+                async with dbpool.acquire() as conn, conn.begin():
+                    query = (sa.select([domains.c.allowed_docker_registries])
+                            .select_from(domains)
+                            .where(domains.c.name == params['domain']))
+                    allowed_registries = await conn.scalar(query)
+                    if requested_image_ref.registry not in allowed_registries:
+                        raise AliasResolutionFailed
+            except AliasResolutionFailed:
+                raise ImageNotFound
+
+            for i in range(len(node['replicas'])):
+                body = {'idx': i+1}
+                body.update(kernel_config)
+                kernel_configs.append(body)
+
+    try:
+        start_event = asyncio.Event()
+        kernel_id: Optional[KernelId] = None
+
+        def interrupt_wait(ctx: Any, event_name: str, agent_id: AgentId,
+                           started_kernel_id: str, *args, **kwargs) -> None:
+            nonlocal start_event, kernel_id
+            if kernel_id is not None and started_kernel_id == str(kernel_id):
+                start_event.set()
+
+        start_handler = request.app['event_dispatcher'].subscribe('kernel_started', None,
+                                                                  interrupt_wait)
+        term_handler = request.app['event_dispatcher'].subscribe('kernel_terminated', None,
+                                                                 interrupt_wait)
+        cancel_handler = request.app['event_dispatcher'].subscribe('kernel_cancelled', None,
+                                                                   interrupt_wait)
+
+        async with dbpool.acquire() as conn, conn.begin():
+            owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
+
+        kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
+            params['sess_id'], owner_access_key,
+            kernel_configs,
+            params['scaling_group'],
+            params['sess_type'],
+            resource_policy,
+            domain_name=params['domain'],
+            group_id=group_id,
+            user_uuid=owner_uuid,
+            user_role=request['user']['role'],
+            session_tag=params['tag']))
+        resp['kernelId'] = str(params['sess_id'])  # legacy naming
+        resp['status'] = 'PENDING'
+        resp['servicePorts'] = []
+        resp['created'] = True
+
+        if not params['enqueue_only']:
+            request.app['pending_waits'].add(asyncio.Task.current_task())
+            max_wait = params['max_wait_seconds']
+            try:
+                if max_wait > 0:
+                    with timeout(max_wait):
+                        await start_event.wait()
+                else:
+                    await start_event.wait()
+            except asyncio.TimeoutError:
+                resp['status'] = 'TIMEOUT'
+            else:
+                await asyncio.sleep(0.5)
+                async with request.app['dbpool'].acquire() as conn, conn.begin():
+                    query = (
+                        sa.select([
+                            kernels.c.status,
+                            kernels.c.service_ports,
+                        ])
+                        .select_from(kernels)
+                        .where(kernels.c.id == kernel_id)
+                    )
+                    result = await conn.execute(query)
+                    row = await result.first()
+                    if row['status'] == KernelStatus.RUNNING:
+                        resp['status'] = 'RUNNING'
+                        for item in row['service_ports']:
+                            response_dict = {
+                                'name': item['name'],
+                                'protocol': item['protocol'],
+                                'ports': item['container_ports'],
+                            }
+                            if 'url_template' in item.keys():
+                                response_dict['url_template'] = item['url_template']
+                            if 'allowed_arguments' in item.keys():
+                                response_dict['allowed_arguments'] = item['allowed_arguments']
+                            if 'allowed_envs' in item.keys():
+                                response_dict['allowed_envs'] = item['allowed_envs']
+                            resp['servicePorts'].append(response_dict)
+                    else:
+                        resp['status'] = row['status'].name
+
+    except asyncio.CancelledError:
+        raise
+    except BackendError:
+        log.exception('GET_OR_CREATE: exception')
+        raise
+    except UnknownImageReference:
+        raise InvalidAPIParameters(f"Unknown image reference: {params['image']}")
+    except Exception:
+        request.app['error_monitor'].capture_exception()
+        log.exception('GET_OR_CREATE: unexpected error!')
+        raise InternalServerError
+    finally:
+        request.app['pending_waits'].discard(asyncio.Task.current_task())
+        request.app['event_dispatcher'].unsubscribe('kernel_cancelled', cancel_handler)
+        request.app['event_dispatcher'].unsubscribe('kernel_terminated', term_handler)
+        request.app['event_dispatcher'].unsubscribe('kernel_started', start_handler)
+    return web.json_response(resp, status=201)
 
 
 async def handle_kernel_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,

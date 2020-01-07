@@ -96,7 +96,7 @@ async def check_keypair_resource_limit(sched_ctx: SchedulingContext,
                                      db_conn: SAConnection = None) -> None:
             query = (sa.update(kernels)
                        .values(status_info='out-of-resource (keypair resource quota exceeded)')
-                       .where(kernels.c.id == sess_ctx.kernel_id))
+                       .where(kernels.c.sess_id == sess_ctx.sess_id))
             if db_conn is not None:
                 await db_conn.execute(query)
             else:
@@ -133,7 +133,7 @@ async def check_group_resource_limit(sched_ctx: SchedulingContext,
                                      db_conn: SAConnection = None) -> None:
             query = (sa.update(kernels)
                        .values(status_info='out-of-resource (group resource quota exceeded)')
-                       .where(kernels.c.id == sess_ctx.kernel_id))
+                       .where(kernels.c.id == sess_ctx.sess_id))
             if db_conn is not None:
                 await db_conn.execute(query)
             else:
@@ -172,7 +172,7 @@ async def check_domain_resource_limit(sched_ctx: SchedulingContext,
                                      db_conn: SAConnection = None) -> None:
             query = (sa.update(kernels)
                        .values(status_info='out-of-resource (domain resource quota exceeded)')
-                       .where(kernels.c.id == sess_ctx.kernel_id))
+                       .where(kernels.c.sess_id == sess_ctx.sess_id))
             if db_conn is not None:
                 await db_conn.execute(query)
             else:
@@ -221,7 +221,7 @@ async def check_scaling_group(sched_ctx: SchedulingContext,
                                      db_conn: SAConnection = None) -> None:
             query = (sa.update(kernels)
                        .values(status_info='out-of-resource (no available resource in scaling groups)')
-                       .where(kernels.c.id == sess_ctx.kernel_id))
+                       .where(kernels.c.sess_id == sess_ctx.sess_id))
             if db_conn is not None:
                 await db_conn.execute(query)
             else:

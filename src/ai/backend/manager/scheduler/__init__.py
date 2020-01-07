@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABCMeta, abstractmethod
 import logging
 from typing import (
-    Any, Optional,
+    Any, List, Optional,
     Protocol,
     Mapping,
     Sequence, MutableSequence,
@@ -60,14 +60,14 @@ class SchedulingContext:
 
 @attr.s(auto_attribs=True, slots=True)
 class ExistingSession:
-    kernel_id: KernelId
+    kernels: List[KernelInfo]
     access_key: AccessKey
     sess_id: str
+    sess_uuid: uuid.UUID
     sess_type: SessionTypes
     domain_name: str
     group_id: uuid.UUID
     scaling_group: str
-    image_ref: ImageRef
     occupying_slots: ResourceSlot
 
 
@@ -75,25 +75,51 @@ class ExistingSession:
 class PendingSession:
     '''
     Context for individual session-related information used during scheduling.
+    Resource parameters defined here should contain total amount of resources
+    for all kernels in one session.
     '''
-    kernel_id: KernelId
+    kernels: List[KernelInfo]
     access_key: AccessKey
     sess_id: str
+    sess_uuid: uuid.UUID
     sess_type: SessionTypes
     domain_name: str
     group_id: uuid.UUID
     scaling_group: str
-    image_ref: ImageRef
-    resource_policy: dict
+    resource_policy: str
     resource_opts: Mapping[str, Any]
     requested_slots: ResourceSlot
     target_sgroup_names: MutableSequence[str]
     environ: Mapping[str, str]
     mounts: Sequence[str]
     mount_map: Mapping[str, str]
+    internal_data: Optional[Mapping[str, Any]]
+
+
+@attr.s(auto_attribs=True, slots=True)
+class KernelInfo:
+    '''
+    Representing invididual kernel info.
+    Resource parameters defined here should contain single value of resource
+    for each kernel.
+    '''
+    kernel_id: KernelId
+    role: str
+    idx: int
+    image_ref: ImageRef
+    resource_opts: Mapping[str, Any]
+    requested_slots: ResourceSlot
     bootstrap_script: Optional[str]
     startup_command: Optional[str]
-    internal_data: Optional[Mapping[str, Any]]
+
+    def __str__(self):
+        return self.kernel_id + '#' + self.role
+
+
+@attr.s(auto_attribs=True, slots=True)
+class KernelAgentBinding:
+    kernel: KernelInfo
+    agent_alloc_ctx: AgentAllocationContext
 
 
 class PredicateCallback(Protocol):
@@ -138,7 +164,7 @@ class AbstractScheduler(metaclass=ABCMeta):
             total_capacity: ResourceSlot,
             pending_sessions: Sequence[PendingSession],
             existing_sessions: Sequence[ExistingSession],
-    ) -> Optional[KernelId]:
+    ) -> Optional[str]:
         return None
 
     @abstractmethod

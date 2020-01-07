@@ -81,6 +81,7 @@ kernels = sa.Table(
     'kernels', metadata,
     IDColumn(),
     sa.Column('sess_id', sa.String(length=64), unique=False, index=True),
+    sa.Column('sess_uuid', GUID, nullable=False),
     sa.Column('sess_type', EnumType(SessionTypes), index=True, nullable=False,
               default=SessionTypes.INTERACTIVE, server_default=SessionTypes.INTERACTIVE.name),
     sa.Column('role', sa.String(length=16), nullable=False, default='master'),

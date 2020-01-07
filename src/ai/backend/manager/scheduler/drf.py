@@ -39,7 +39,7 @@ class DRFScheduler(AbstractScheduler):
                      total_capacity: ResourceSlot,
                      pending_sessions: Sequence[PendingSession],
                      existing_sessions: Sequence[ExistingSession],
-                     ) -> Optional[KernelId]:
+                     ) -> Optional[str]:
         self.total_capacity = total_capacity
 
         # Calculate the initial dominant shares of all users.
@@ -73,7 +73,7 @@ class DRFScheduler(AbstractScheduler):
         # who has the lowest dominant share.
         for pending_sess in pending_sessions:
             if pending_sess.access_key == least_dominant_share_user:
-                return pending_sess.kernel_id
+                return pending_sess.sess_id
 
         return None
 

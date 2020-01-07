@@ -27,9 +27,9 @@ class FIFOSlotScheduler(AbstractScheduler):
                      total_capacity: ResourceSlot,
                      pending_sessions: Sequence[PendingSession],
                      existing_sessions: Sequence[ExistingSession],
-                     ) -> Optional[KernelId]:
+                     ) -> Optional[str]:
         # Just pick the first pending session.
-        return pending_sessions[0].kernel_id
+        return pending_sessions[0].sess_id
 
     def assign_agent(self,
                      agents: Sequence[AgentContext],
@@ -55,9 +55,9 @@ class LIFOSlotScheduler(AbstractScheduler):
                      total_capacity: ResourceSlot,
                      pending_sessions: Sequence[PendingSession],
                      existing_sessions: Sequence[ExistingSession],
-                     ) -> Optional[KernelId]:
+                     ) -> Optional[str]:
         # Just pick the last pending session.
-        return pending_sessions[-1].kernel_id
+        return pending_sessions[-1].sess_id
 
     def assign_agent(self,
                      agents: Sequence[AgentContext],
