@@ -1,6 +1,15 @@
 Changes
 =======
 
+19.12.0b1 (2020-01-xx)
+----------------------
+
+* IMPROVE: Now our manager-to-agent RPC uses `Callosum <https://github.com/lablup/callosum>_` instead of
+  aiozmq, supporting Python 3.8 natively. (#209, #79)
+
+* Internally refactored the main function for easier writing of future unit tests by composing different
+  resource cleanup contexts in a modular way.
+
 19.12.0a2 (2019-12-31)
 ----------------------
 

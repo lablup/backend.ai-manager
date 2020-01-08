@@ -486,7 +486,8 @@ def set_if_set(src, target, name, *, clean_func=None):
             target[name] = v
 
 
-def populate_fixture(db_connection, fixture_data):
+def populate_fixture(db_connection, fixture_data, *,
+                     ignore_unique_violation: bool = False):
 
     def insert(table, row):
         # convert enumtype to native values
@@ -504,7 +505,12 @@ def populate_fixture(db_connection, fixture_data):
             if len(pk_cols) == 0:
                 # some tables may not have primary keys.
                 # (e.g., m2m relationship)
-                insert(table, row)
+                try:
+                    insert(table, row)
+                except sa.exc.IntegrityError as e:
+                    if ignore_unique_violation and isinstance(e.orig, pg.errors.UniqueViolation):
+                        continue
+                    raise
                 continue
             # compose pk match where clause
             pk_match = functools.reduce(lambda x, y: x & y, [

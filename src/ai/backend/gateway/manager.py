@@ -138,8 +138,7 @@ async def update_manager_status(request: web.Request, params: Any) -> web.Respon
 
 
 async def init(app: web.Application) -> None:
-    loop = asyncio.get_event_loop()
-    app['status_watch_task'] = loop.create_task(detect_status_update(app))
+    app['status_watch_task'] = asyncio.create_task(detect_status_update(app))
 
 
 async def shutdown(app: web.Application) -> None:

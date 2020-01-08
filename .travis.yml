@@ -35,12 +35,6 @@ install:
       sed -i "s%\(backend.ai-common\)@master%\1@${BRANCH}%" requirements-ci.txt
     fi
   - pip install -U -r requirements-ci.txt
-  - |
-    # temporary monkey-patch for aiozmq in Python 3.8
-    _AIOZMQ_PATCH_FILE="/home/travis/virtualenv/python3.8.0/lib/python3.8/site-packages/aiozmq/rpc/base.py"
-    if [ -f "${_AIOZMQ_PATCH_FILE}" ]; then
-      sed -i 's/asyncio.async(\([^,]\+\), loop=[^,]\+)/asyncio.create_task(\1)/g' "${_AIOZMQ_PATCH_FILE}"
-    fi
   - mkdir -p ~/.config/backend.ai
   - cp config/ci.toml ~/.config/backend.ai/manager.toml
   - mkdir -p /tmp/scratches

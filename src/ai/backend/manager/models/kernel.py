@@ -312,7 +312,6 @@ class SessionCommons:
             'result': row['result'].name,
             'service_ports': row['service_ports'],
             'occupied_slots': row['occupied_slots'].to_json(),
-            'occupied_shares': row['occupied_shares'],
             'mounts': row['mounts'],
             'resource_opts': row['resource_opts'],
             'num_queries': row['num_queries'],
@@ -334,6 +333,7 @@ class SessionCommons:
             'io_max_scratch_size': 0,
             'io_cur_scratch_size': 0,
             'lang': row['image'],
+            'occupied_shares': row['occupied_shares'],
             'mem_slot': BinarySize.from_str(
                 row['occupied_slots'].get('mem', 0)) // mega,
             'cpu_slot': float(row['occupied_slots'].get('cpu', 0)),
