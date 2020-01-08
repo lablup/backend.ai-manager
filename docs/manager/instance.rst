@@ -10,4 +10,4 @@ Instance
 
 .. autoexception:: InstanceNotAvailableError
 
-.. autoexception:: KernelNotFoundError
+.. autoexception:: SessionNotFoundError

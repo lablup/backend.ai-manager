@@ -41,7 +41,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
     InstanceNotFound,
-    KernelNotFound,
+    SessionNotFound,
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
     ScalingGroupNotFound,
@@ -318,7 +318,7 @@ class AgentRegistry:
             result = await conn.execute(query)
             row = await result.first()
             if row is None:
-                raise KernelNotFound
+                raise SessionNotFound
             return row
 
     async def get_session(self, sess_id: str, access_key: str, *,
@@ -371,7 +371,7 @@ class AgentRegistry:
             result = await conn.execute(query)
             row = await result.first()
             if row is None:
-                raise KernelNotFound
+                raise SessionNotFound
             return row
 
     async def get_sessions(self, sess_ids, field=None, allow_stale=False,
@@ -380,7 +380,7 @@ class AgentRegistry:
         Batched version of :meth:`get_session() <AgentRegistry.get_session>`.
         The order of the returend array is same to the order of ``sess_ids``.
         For non-existent or missing kernel IDs, it fills None in their
-        positions without raising KernelNotFound exception.
+        positions without raising SessionNotFound exception.
         '''
 
         cols = [kernels.c.id, kernels.c.sess_id,
@@ -769,7 +769,7 @@ class AgentRegistry:
                                                     for_update=True,
                                                     db_connection=conn)
                     if domain_name is not None and kernel.domain_name != domain_name:
-                        raise KernelNotFound
+                        raise SessionNotFound
                     if kernel.status == KernelStatus.PENDING:
                         await self.set_session_status(sess_id, access_key,
                                                       KernelStatus.CANCELLED,
@@ -789,7 +789,7 @@ class AgentRegistry:
                             'kernel_terminating',
                             (str(kernel.id), 'user-requested'),
                         )
-            except KernelNotFound:
+            except SessionNotFound:
                 raise
             async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 last_stat = await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')

@@ -143,9 +143,9 @@ class ScalingGroupNotFound(web.HTTPNotFound, BackendError):
     error_title = 'No such scaling group.'
 
 
-class KernelNotFound(web.HTTPNotFound, BackendError):
+class SessionNotFound(web.HTTPNotFound, BackendError):
     error_type  = 'https://api.backend.ai/probs/kernel-not-found'
-    error_title = 'No such kernel.'
+    error_title = 'No such session.'
 
 
 class TaskTemplateNotFound(web.HTTPNotFound, BackendError):
@@ -158,9 +158,9 @@ class AppNotFound(web.HTTPNotFound, BackendError):
     error_title = 'No such app service provided by the session.'
 
 
-class KernelAlreadyExists(web.HTTPBadRequest, BackendError):
+class SessionAlreadyExists(web.HTTPBadRequest, BackendError):
     error_type  = 'https://api.backend.ai/probs/kernel-already-exists'
-    error_title = 'The kernel already exists with ' \
+    error_title = 'The session already exists with ' \
                   'a different runtime type (language).'
 
 

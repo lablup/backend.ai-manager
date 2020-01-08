@@ -48,8 +48,8 @@ from .exceptions import (
     InvalidAPIParameters,
     GenericNotFound,
     ImageNotFound,
-    KernelNotFound,
-    KernelAlreadyExists,
+    SessionNotFound,
+    SessionAlreadyExists,
     BackendError,
     InternalServerError,
     TaskTemplateNotFound
@@ -220,15 +220,15 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
         kern = await registry.get_session(params['sess_id'], owner_access_key)
         running_image_ref = ImageRef(kern['image'], [kern['registry']])
         if running_image_ref != requested_image_ref:
-            raise KernelAlreadyExists
+            raise SessionAlreadyExists
         create = False
-    except KernelNotFound:
+    except SessionNotFound:
         create = True
     if not create:
         if not params['reuse']:
-            raise KernelAlreadyExists
+            raise SessionAlreadyExists
         return web.json_response({
-            'kernelId': str(kern.sess_id),  # legacy naming
+            'sessId': str(kern.sess_id),  # legacy naming
             'status': kern.status.name,
             'service_ports': kern.service_ports,
             'created': False,
@@ -353,7 +353,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             user_role=request['user']['role'],
             startup_command=params['startup_command'],
             session_tag=params['tag']))
-        resp['kernelId'] = str(params['sess_id'])  # legacy naming
+        resp['sessId'] = str(params['sess_id'])  # legacy naming
         resp['status'] = 'PENDING'
         resp['servicePorts'] = []
         resp['created'] = True
@@ -1148,7 +1148,7 @@ async def get_logs(request: web.Request, params: Any) -> web.Response:
 @auth_required
 @check_api_params(
     t.Dict({
-        tx.AliasedKey(['kernel_id', 'kernelId', 'task_id', 'taskId']) >> 'kernel_id': tx.UUID,
+        tx.AliasedKey(['sess_id', 'sessId', 'task_id', 'taskId']) >> 'kernel_id': tx.UUID,
     }))
 async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse:
     log.info('GET_TASK_LOG (ak:{}, k:{})',
