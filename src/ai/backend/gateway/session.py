@@ -1,5 +1,5 @@
 '''
-REST-style kernel session management APIs.
+REST-style session management APIs.
 '''
 
 import asyncio
@@ -72,7 +72,7 @@ from ..manager.models import (
     session_templates
 )
 
-log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.kernel'))
+log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.session'))
 
 _json_loads = functools.partial(json.loads, parse_float=Decimal)
 
@@ -1237,11 +1237,11 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     cors.add(app.router.add_route('POST', '/create', create_from_params))  # legacy
     cors.add(app.router.add_route('POST', '/from-template', create_from_template))
     cors.add(app.router.add_route('POST', '', create_from_params))
-    kernel_resource = cors.add(app.router.add_resource(r'/{sess_id}'))
-    cors.add(kernel_resource.add_route('GET',    get_info))
-    cors.add(kernel_resource.add_route('PATCH',  restart))
-    cors.add(kernel_resource.add_route('DELETE', destroy))
-    cors.add(kernel_resource.add_route('POST',   execute))
+    session_resource = cors.add(app.router.add_resource(r'/{sess_id}'))
+    cors.add(session_resource.add_route('GET',    get_info))
+    cors.add(session_resource.add_route('PATCH',  restart))
+    cors.add(session_resource.add_route('DELETE', destroy))
+    cors.add(session_resource.add_route('POST',   execute))
     task_log_resource = cors.add(app.router.add_resource(r'/_/logs'))
     cors.add(task_log_resource.add_route('HEAD', get_task_logs))
     cors.add(task_log_resource.add_route('GET',  get_task_logs))
