@@ -479,6 +479,7 @@ class AgentRegistry:
                 raise VFolderNotFound
         mounts = determined_mounts
         ids = []
+        is_multicontainer = len(kernel_configs) > 1
 
         for kernel in kernel_configs:
             creation_config = kernel['creation_config']
@@ -581,8 +582,9 @@ class AgentRegistry:
                     )))
 
             environ = kernel_configs[0]['creation_config'].get('environ') or {}
-            environ['BACKEND_CLUSTER_ROLE'] = kernel['cluster_role']
-            environ['BACKEND_CLUSTER_ROLE_IDX'] = str(kernel['idx'])
+            if is_multicontainer:
+                environ['BACKEND_CLUSTER_ROLE'] = kernel['cluster_role']
+                environ['BACKEND_CLUSTER_ROLE_IDX'] = str(kernel['idx'])
             # Create kernel object in PENDING state.
             async with self.dbpool.acquire() as conn, conn.begin():
                 # Feed SSH keypair if exists.
@@ -606,7 +608,7 @@ class AgentRegistry:
                     'sess_uuid': sess_uuid,
                     'sess_type': session_type,
                     'role': kernel['cluster_role'],
-                    'idx': kernel['idx'],
+                    'idx': kernel['idx'] if is_multicontainer else None,
                     'scaling_group': scaling_group,
                     'domain_name': domain_name,
                     'group_id': group_id,
@@ -686,7 +688,7 @@ class AgentRegistry:
                         'internal_data': sess_ctx.internal_data,
                         'auto_pull': auto_pull,
                     }
-                    if len(sess_ctx.kernels) > 0:
+                    if len(sess_ctx.kernels) > 1:
                         network_name = f'bai-{sess_ctx.sess_uuid}'
                         
                         config['cluster'] = {
