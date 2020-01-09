@@ -30,6 +30,11 @@ Changes
 
 * IMPROVE: "--short" and "--installed" options added to ``etcd list-images`` command.
 
+19.09.10 (2020-01-09)
+---------------------
+
+* IMPROVE: Include agent IDs in the usage API
+
 19.09.9 (2019-12-18)
 --------------------
 
