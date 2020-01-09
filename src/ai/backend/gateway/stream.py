@@ -668,12 +668,12 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app['api_versions'] = (2, 3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     add_route = app.router.add_route
-    cors.add(add_route('GET', r'/kernel/_/events', stream_events))
-    cors.add(add_route('GET', r'/kernel/{sess_id}/pty', stream_pty))
-    cors.add(add_route('GET', r'/kernel/{sess_id}/execute', stream_execute))
-    cors.add(add_route('GET', r'/kernel/{sess_id}/apps', get_stream_apps))
+    cors.add(add_route('GET', r'/session/_/events', stream_events))
+    cors.add(add_route('GET', r'/session/{sess_id}/pty', stream_pty))
+    cors.add(add_route('GET', r'/session/{sess_id}/execute', stream_execute))
+    cors.add(add_route('GET', r'/session/{sess_id}/apps', get_stream_apps))
     # internally both tcp/http proxies use websockets as API/agent-level transports,
     # and thus they have the same implementation here.
-    cors.add(add_route('GET', r'/kernel/{sess_id}/httpproxy', stream_proxy))
-    cors.add(add_route('GET', r'/kernel/{sess_id}/tcpproxy', stream_proxy))
+    cors.add(add_route('GET', r'/session/{sess_id}/httpproxy', stream_proxy))
+    cors.add(add_route('GET', r'/session/{sess_id}/tcpproxy', stream_proxy))
     return app, []
