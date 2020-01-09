@@ -221,7 +221,9 @@ class SchedulerDispatcher(aobject):
                     raise RuntimeError('should not reach here')
                 sess_ctx = pending_sessions.pop(picked_idx)
                 log_fmt = 'schedule(k:{}, s:{}, ak:{}): '
-                log_args = (', '.join(sess_ctx.kernels), sess_ctx.sess_id, sess_ctx.access_key)
+                log_args = (', '.join(list(map(lambda x: str(x), sess_ctx.kernels))),
+                            sess_ctx.sess_id,
+                            sess_ctx.access_key)
                 log.debug(log_fmt + 'try-scheduling', *log_args)
                 loaded = []
 
@@ -436,6 +438,7 @@ class SchedulerDispatcher(aobject):
                 kernels.c.registry,
                 kernels.c.sess_type,
                 kernels.c.sess_id,
+                kernels.c.role,
                 kernels.c.sess_uuid,
                 kernels.c.access_key,
                 kernels.c.domain_name,

@@ -113,7 +113,7 @@ class KernelInfo:
     startup_command: Optional[str]
 
     def __str__(self):
-        return self.kernel_id + '#' + self.role
+        return f'{self.kernel_id}#{self.role}'
 
 
 @attr.s(auto_attribs=True, slots=True)

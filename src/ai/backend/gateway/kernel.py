@@ -649,9 +649,9 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                              else params['owner_access_key'])
     }
     requester_access_key, owner_access_key = await get_access_key_scopes(request, scopes_param)
-    log.info('GET_OR_CREATE (ak:{0}/{1}, img:{2}, s:{3})',
+    log.info('CREAT_CLUSTER (ak:{0}/{1}, s:{3})',
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*',
-             params['image'], params['sess_id'])
+             params['sess_id'])
 
     registry = request.app['registry']
     resp: MutableMapping[str, Any] = {}
@@ -661,7 +661,6 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
         # NOTE: We can reuse the session IDs of TERMINATED sessions only.
         # NOTE: Reusing a session in the PENDING status returns an empty value in service_ports.
         kern = await registry.get_session(params['sess_id'], owner_access_key)
-        running_image_ref = ImageRef(kern['image'], [kern['registry']])
         raise KernelAlreadyExists
     except KernelNotFound:
         pass
@@ -678,7 +677,21 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
             raise TaskTemplateNotFound
 
         template = json.loads(template)
-        
+        mounts = []
+        mount_map = {}
+        environ = {}
+
+        if _mounts := template['spec'].get('mounts'):  # noqa
+            mounts = list(_mounts.keys())
+            mount_map = {
+                key: value
+                for (key, value) in _mounts.items()
+                if len(value) > 0
+            }
+        if _environ := template['spec'].get('environ'):  # noqa
+            environ = _environ
+
+
         kernel_configs = []
         for node in template['spec']['nodes']:
             # Resolve session template.
@@ -693,7 +706,12 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
             
             kernel_config = {
                 'image_ref': session_template['spec']['kernel']['image'],
-                'creation_config': {}
+                'cluster_role': node['role'],
+                'creation_config': {
+                    'mount': mounts, 
+                    'mount_map': mount_map,
+                    'environ': environ
+                }
             }
 
             if session_template['spec']['sess_type'] == 'interactive':
@@ -715,15 +733,6 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
 
             if resources := template['spec'].get('resources'):  # noqa
                 kernel_config['creation_config']['resources'] = resources
-            if mounts := template['spec'].get('mounts'):  # noqa
-                kernel_config['creation_config']['mounts'] = list(mounts.keys())
-                kernel_config['creation_config']['mount_map'] = {
-                    key: value
-                    for (key, value) in mounts.items()
-                    if len(value) > 0
-                }
-            if environ := template['spec']['kernel'].get('environ'):  # noqa
-                kernel_config['creation_config']['environ'] = environ
 
             if git := session_template['spec']['kernel']['git']:  # noqa
                 if _dest := git.get('dest_dir'):  # noqa
@@ -755,7 +764,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
             # Resolve the image reference.
             try:
                 requested_image_ref = \
-                    await ImageRef.resolve_alias(params['image'], request.app['config_server'].etcd)
+                    await ImageRef.resolve_alias(kernel_config['image_ref'], request.app['config_server'].etcd)
                 async with dbpool.acquire() as conn, conn.begin():
                     query = (sa.select([domains.c.allowed_docker_registries])
                             .select_from(domains)
@@ -763,10 +772,11 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                     allowed_registries = await conn.scalar(query)
                     if requested_image_ref.registry not in allowed_registries:
                         raise AliasResolutionFailed
+                    kernel_config['image_ref'] = requested_image_ref
             except AliasResolutionFailed:
                 raise ImageNotFound
 
-            for i in range(len(node['replicas'])):
+            for i in range(node['replicas']):
                 body = {'idx': i+1}
                 body.update(kernel_config)
                 kernel_configs.append(body)
@@ -1505,6 +1515,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     cors.add(app.router.add_route('POST', '/create', create_from_params))  # legacy
     cors.add(app.router.add_route('POST', '/from-template', create_from_template))
+    cors.add(app.router.add_route('POST', '/cluster', create_cluster))
     cors.add(app.router.add_route('POST', '', create_from_params))
     kernel_resource = cors.add(app.router.add_resource(r'/{sess_id}'))
     cors.add(kernel_resource.add_route('GET',    get_info))

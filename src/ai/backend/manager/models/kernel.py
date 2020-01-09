@@ -134,6 +134,8 @@ kernels = sa.Table(
               nullable=False, index=True),
     sa.Column('internal_data', pgsql.JSONB(), nullable=True),
 
+    sa.Column('idx', sa.Integer, nullable=True, default=None),
+
     # Resource metrics measured upon termination
     sa.Column('num_queries', sa.BigInteger(), default=0),
     sa.Column('last_stat', pgsql.JSONB(), nullable=True, default=sa.null()),

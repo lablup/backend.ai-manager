@@ -49,9 +49,6 @@ from ..gateway.exceptions import (
     ScalingGroupNotFound,
     VFolderNotFound,
     AgentError)
-from .scheduler import (
-    KernelInfo
-)
 from .models import (
     agents, kernels, keypairs, vfolders,
     keypair_resource_policies,
@@ -61,7 +58,7 @@ from .models import (
     DEAD_KERNEL_STATUSES,
 )
 if TYPE_CHECKING:
-    from .scheduler import SchedulingContext, PendingSession, AgentAllocationContext
+    from .scheduler import SchedulingContext, PendingSession, AgentAllocationContext, KernelInfo
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
 
@@ -304,6 +301,7 @@ class AgentRegistry:
 
         cols = [kernels.c.id, kernels.c.status,
                 kernels.c.sess_id, kernels.c.access_key,
+                kernels.c.role,
                 kernels.c.agent_addr, kernels.c.kernel_host,
                 kernels.c.image, kernels.c.registry,
                 kernels.c.service_ports]
@@ -617,14 +615,14 @@ class AgentRegistry:
                     'registry': image_ref.registry,
                     'tag': session_tag,
                     'internal_data': internal_data,
-                    'startup_command': kernel['startup_command'],
+                    'startup_command': kernel.get('startup_command'),
                     'occupied_slots': requested_slots,
                     'occupied_shares': {},
                     'resource_opts': resource_opts,
                     'environ': [f'{k}={v}' for k, v in environ.items()],
                     'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
                     'mount_map': mount_map,
-                    'bootstrap_script': kernel['bootstrap_script'],
+                    'bootstrap_script': kernel.get('bootstrap_script'),
                     'repl_in_port': 0,
                     'repl_out_port': 0,
                     'stdin_port': 0,
@@ -641,6 +639,7 @@ class AgentRegistry:
     async def start_session(self, sched_ctx: SchedulingContext,
                             sess_ctx: PendingSession,
                             kernels_with_agent: List[List[Any]]) -> None:
+        do_create_network = True
         for kernel_with_agent in kernels_with_agent:
             kernel: KernelInfo = kernel_with_agent[0]
             agent_ctx: AgentAllocationContext = kernel_with_agent[1]
@@ -688,11 +687,17 @@ class AgentRegistry:
                     }
                     if len(sess_ctx.kernels) > 0:
                         network_name = f'bai-{sess_ctx.sess_uuid}'
+                        
                         config['cluster'] = {
                             'network': network_name,
+                            'role': kernel.role,
                             'hostname': kernel.role + str(kernel.idx)
                         }
-                        await rpc.call.create_network(network_name)
+                        if do_create_network:
+                            error = await rpc.call.create_network(network_name)
+                            if error is not None:
+                                raise KernelCreationFailed(f'Error while creating overlay network: {error}')
+
                     created_info = await rpc.call.create_kernel(str(kernel.kernel_id),
                                                                 config)
                     if created_info is None:
@@ -794,13 +799,14 @@ class AgentRegistry:
                 'destroy_session', sess_id, access_key, set_error=True):
             try:
                 async with self.dbpool.acquire() as conn, conn.begin():
-                    kernels = await self.get_session(sess_id, access_key,
+                    kernel_list = await self.get_session(sess_id, access_key,
                                                     field=[kernels.c.domain_name],
                                                     for_update=True,
                                                     db_connection=conn)
             except KernelNotFound:
                 raise
-            for kernel in kernels:
+            master_stat = {}
+            for kernel in kernel_list:
                 if domain_name is not None and kernel.domain_name != domain_name:
                     raise KernelNotFound
                 if kernel.status == KernelStatus.PENDING:
@@ -812,7 +818,8 @@ class AgentRegistry:
                         'kernel_cancelled',
                         (str(kernel.id), 'user-requested'),
                     )
-                    return {'status': 'cancelled'}
+                    if kernel.role == 'master':
+                        master_stat = {'status': 'cancelled'}
                 else:
                     await self.set_session_status(sess_id, access_key,
                                                     KernelStatus.TERMINATING,
@@ -822,13 +829,22 @@ class AgentRegistry:
                         'kernel_terminating',
                         (str(kernel.id), 'user-requested'),
                     )
-                async with RPCContext(kernel['agent_addr'], 30) as rpc:
-                    last_stat = await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
-                    await rpc.call.destroy_network(f'bai-{kernel["sess_uuid"]}')
-                    return {
-                        **(last_stat if last_stat is not None else {}),
-                        'status': 'terminated',
-                    }
+                if kernel['agent_addr'] is None:
+                    await self.mark_kernel_terminated(str(kernel.id), 'Unknown error while allocating')
+                    if kernel.role == 'master':
+                        master_stat = {'status': 'terminated'}
+                else:
+                    async with RPCContext(kernel['agent_addr'], 30) as rpc:
+                        last_stat = await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
+                        if kernel.role == 'master':
+                            error = await rpc.call.destroy_network(f'bai-{kernel["sess_uuid"]}')
+                            if error is not None:
+                                raise InvalidAPIParameters(f'Error while destroying overlay network: {error}')
+                            master_stat = {
+                                **(last_stat if last_stat is not None else {}),
+                                'status': 'terminated',
+                            }
+            return master_stat
 
     async def restart_session(self, sess_id, access_key):
         async with self.handle_kernel_exception(
@@ -1043,7 +1059,8 @@ class AgentRegistry:
             async with self.dbpool.acquire() as conn, conn.begin():
                 query = (sa.select([agents.c.status,
                                     agents.c.scaling_group,
-                                    agents.c.available_slots],
+                                    agents.c.available_slots,
+                                    agents.c.clusterized],
                                    for_update=True)
                            .select_from(agents)
                            .where(agents.c.id == agent_id))
@@ -1074,7 +1091,7 @@ class AgentRegistry:
                         'lost_at': None,
                         'version': agent_info['version'],
                         'compute_plugins': agent_info['compute_plugins'],
-                        'clusterized': agent_info['swarm_enabled']
+                        'clusterized': agent_info.get('swarm_enabled', False)
                     })
                     result = await conn.execute(query)
                     assert result.rowcount == 1
@@ -1084,6 +1101,8 @@ class AgentRegistry:
                         updates['available_slots'] = available_slots
                     if row.scaling_group != sgroup:
                         updates['scaling_group'] = sgroup
+                    if row.clusterized != agent_info.get('swarm_enabled', False):
+                        updates['clusterized'] = agent_info.get('swarm_enabled', False)
                     # occupied_slots are updated when kernels starts/terminates
                     if updates:
                         await self.config_server.update_resource_slots(slot_key_and_units)
@@ -1104,7 +1123,7 @@ class AgentRegistry:
                                    'available_slots': available_slots,
                                    'version': agent_info['version'],
                                    'compute_plugins': agent_info['compute_plugins'],
-                                   'clusterized': agent_info['swarm_enabled']
+                                   'clusterized': agent_info.get('swarm_enabled', False)
                                })
                                .where(agents.c.id == agent_id))
                     await conn.execute(query)

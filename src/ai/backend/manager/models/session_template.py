@@ -58,7 +58,7 @@ async def query_accessible_session_templates(conn, user_uuid, template_type: Tem
                     .select_from(j)
                     .where((session_templates.c.user_uuid == user_uuid) &
                            session_templates.c.is_active &
-                           (session_templates.c.type == TemplateType.TASK)))
+                           (session_templates.c.type == template_type)))
         if extra_conds is not None:
             query = query.where(extra_conds)
         result = await conn.execute(query)
@@ -101,7 +101,7 @@ async def query_accessible_session_templates(conn, user_uuid, template_type: Tem
                     ], use_labels=True)
                     .where(session_templates.c.group_id.in_(group_ids) &
                            session_templates.c.is_active &
-                           (session_templates.c.type == TemplateType.TASK)))
+                           (session_templates.c.type == template_type)))
         if extra_conds is not None:
             query = query.where(extra_conds)
         if 'user' in allowed_types:

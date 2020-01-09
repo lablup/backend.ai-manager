@@ -155,6 +155,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
         defined_roles: List[str] = []
 
         for node in body['spec']['nodes']:
+            node['session_template'] = str(node['session_template'])
             if node['role'] in defined_roles:
                 raise InvalidAPIParameters('Each role can only be defined once')
             if node['role'] == 'master' and node['replicas'] != 1:

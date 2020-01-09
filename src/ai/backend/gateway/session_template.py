@@ -71,8 +71,7 @@ task_template_v1 = t.Dict({
         tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
         tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
         t.Key('owner_access_key', default=None): t.Null | t.String,
-        t.Key('payload'): t.String,
-        t.Key('type') >> 'template_type': tx.Enum(TemplateType)
+        t.Key('payload'): t.String
     }
 ))
 async def create(request: web.Request, params: Any) -> web.Response:
