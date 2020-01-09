@@ -697,6 +697,7 @@ class AgentRegistry:
                             error = await rpc.call.create_network(network_name)
                             if error is not None:
                                 raise KernelCreationFailed(f'Error while creating overlay network: {error}')
+                            do_create_network = False
 
                     created_info = await rpc.call.create_kernel(str(kernel.kernel_id),
                                                                 config)
