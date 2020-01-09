@@ -317,8 +317,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             .select_from(j)
             .where(
                 (((kernels.c.terminated_at >= start_date) & (kernels.c.terminated_at < end_date)) |
-                 ((kernels.c.created_at >= start_date) & (kernels.c.created_at < end_date) &
-                  kernels.c.terminated_at.is_(None))) &
+                 ((kernels.c.created_at < end_date) & kernels.c.terminated_at.is_(None))) &
                 (kernels.c.status.in_(RESOURCE_USAGE_KERNEL_STATUSES))
             )
             .order_by(sa.asc(kernels.c.terminated_at))
@@ -365,6 +364,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'name': row['sess_id'],
             'access_key': row['access_key'],
             'email': row['email'],
+            'agent': row['agent'],
             'cpu_allocated': float(row.occupied_slots['cpu']) if 'cpu' in row.occupied_slots else 0,
             'cpu_used': float(last_stat['cpu_used']['current']) if last_stat else 0,
             'mem_allocated': int(row.occupied_slots['mem']) if 'mem' in row.occupied_slots else 0,
