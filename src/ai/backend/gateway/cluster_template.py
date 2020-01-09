@@ -318,9 +318,17 @@ async def put(request: web.Request, params: Any) -> web.Response:
         except (yaml.YAMLError, yaml.MarkedYAMLError):
             raise InvalidAPIParameters('Malformed payload')
         body = cluster_template_v1.check(body)
-        for role in body['spec']['node']:
-            if role['replicas']['min'] is None and role['replicas']['max'] is None:
-                raise InvalidAPIParameters("Both 'min' and 'max' value can't be None")
+        defined_roles: List[str] = []
+        for node in body['spec']['nodes']:
+            node['session_template'] = str(node['session_template'])
+            if node['role'] in defined_roles:
+                raise InvalidAPIParameters('Each role can only be defined once')
+            if node['role'] == 'master' and node['replicas'] != 1:
+                raise InvalidAPIParameters('Only one master node can be created per cluster')
+            defined_roles.append(node['role'])
+
+        if not 'master' in defined_roles:
+            raise InvalidAPIParameters('master node is required for a cluster')
         query = (sa.update(session_templates)
                    .values(template=body, name=body['metadata']['name'])
                    .where((session_templates.c.id == template_id)))

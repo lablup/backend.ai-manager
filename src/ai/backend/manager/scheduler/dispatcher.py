@@ -439,6 +439,7 @@ class SchedulerDispatcher(aobject):
                 kernels.c.sess_type,
                 kernels.c.sess_id,
                 kernels.c.role,
+                kernels.c.idx,
                 kernels.c.sess_uuid,
                 kernels.c.access_key,
                 kernels.c.domain_name,
@@ -483,6 +484,7 @@ class SchedulerDispatcher(aobject):
             session.kernels.append(KernelInfo(  # type: ignore
                 kernel_id=row['id'],
                 role=row['role'],
+                idx=row['idx'],
                 image_ref=ImageRef(row['image'], [row['registry']]),
                 resource_opts={},
                 requested_slots=ResourceSlot(),

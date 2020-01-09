@@ -70,7 +70,7 @@ async def stream_pty(request: web.Request) -> web.StreamResponse:
     api_version = request['api_version']
     try:
         kernel = await asyncio.shield(
-            registry.get_session(sess_id, access_key, field=extra_fields))
+            registry.get_session_master(sess_id, access_key, field=extra_fields))
     except KernelNotFound:
         raise
     log.info('STREAM_PTY(ak:{0}, s:{1})', access_key, sess_id)
@@ -120,7 +120,7 @@ async def stream_pty(request: web.Request) -> web.StreamResponse:
                             # else.
                             app['stream_stdin_socks'][stream_key].discard(socks[0])
                             socks[1].close()
-                            kernel = await asyncio.shield(registry.get_session(
+                            kernel = await asyncio.shield(registry.get_session_master(
                                 sess_id, access_key, field=extra_fields))
                             stdin_sock, stdout_sock = await connect_streams(kernel)
                             socks[0] = stdin_sock
@@ -231,7 +231,7 @@ async def stream_execute(request: web.Request) -> web.StreamResponse:
     api_version = request['api_version']
     log.info('STREAM_EXECUTE(ak:{0}, s:{1})', access_key, sess_id)
     try:
-        _ = await asyncio.shield(registry.get_session(sess_id, access_key))  # noqa
+        _ = await asyncio.shield(registry.get_session_master(sess_id, access_key))  # noqa
     except KernelNotFound:
         raise
 
@@ -342,7 +342,7 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
     request.app['stream_proxy_handlers'][stream_key].add(myself)
 
     try:
-        kernel = await asyncio.shield(registry.get_session(sess_id, access_key))
+        kernel = await asyncio.shield(registry.get_session_master(sess_id, access_key))
     except KernelNotFound:
         raise
     if kernel.kernel_host is None:

@@ -337,7 +337,7 @@ class AgentRegistry:
                                  db_connection=None):
         return (await self.get_session(sess_id, access_key, 
                                        field=field, for_update=for_update,
-                                       db_connection=db_connection)
+                                       db_connection=db_connection, role='master')
                 )[0]
 
     async def get_session_by_uuid(self, sess_uuid: str, access_key: str, *, 
@@ -354,7 +354,8 @@ class AgentRegistry:
         true, it skips checking validity of the kernel owner instance.
         '''
         cols = [kernels.c.id, kernels.c.status,
-                kernels.c.sess_id, kernels.c.access_key,
+                kernels.c.sess_id, kernels.c.sess_uuid,
+                kernels.c.access_key,
                 kernels.c.agent_addr, kernels.c.kernel_host,
                 kernels.c.image, kernels.c.registry,
                 kernels.c.service_ports]
@@ -801,7 +802,7 @@ class AgentRegistry:
             try:
                 async with self.dbpool.acquire() as conn, conn.begin():
                     kernel_list = await self.get_session(sess_id, access_key,
-                                                    field=[kernels.c.domain_name],
+                                                    field=[kernels.c.domain_name, kernels.c.sess_uuid],
                                                     for_update=True,
                                                     db_connection=conn)
             except KernelNotFound:
@@ -838,13 +839,16 @@ class AgentRegistry:
                     async with RPCContext(kernel['agent_addr'], 30) as rpc:
                         last_stat = await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
                         if kernel.role == 'master':
-                            error = await rpc.call.destroy_network(f'bai-{kernel["sess_uuid"]}')
-                            if error is not None:
-                                raise InvalidAPIParameters(f'Error while destroying overlay network: {error}')
                             master_stat = {
                                 **(last_stat if last_stat is not None else {}),
                                 'status': 'terminated',
                             }
+            if len(kernel_list) > 1:
+                async with RPCContext(kernel['agent_addr'], 30) as rpc:
+                    error = await rpc.call.destroy_network(f'bai-{kernel_list[0]["sess_uuid"]}')
+                    if error is not None:
+                        log.error(f'Error while destroying overlay network: {error}')
+                        raise KernelDestructionFailed(f'Error while destroying overlay network: {error}')
             return master_stat
 
     async def restart_session(self, sess_id, access_key):

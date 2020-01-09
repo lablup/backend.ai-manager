@@ -675,8 +675,6 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
         template = await conn.scalar(query)
         if not template:
             raise TaskTemplateNotFound
-
-        template = json.loads(template)
         mounts = []
         mount_map = {}
         environ = {}
@@ -691,6 +689,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
         if _environ := template['spec'].get('environ'):  # noqa
             environ = _environ
 
+        log.debug('cluster template: {}', template)
 
         kernel_configs = []
         for node in template['spec']['nodes']:
@@ -702,8 +701,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
             session_template = await conn.scalar(query)
             if not template:
                 raise TaskTemplateNotFound
-            session_template = json.loads(session_template)
-            
+            log.debug('task template: {}', session_template)
             kernel_config = {
                 'image_ref': session_template['spec']['kernel']['image'],
                 'cluster_role': node['role'],
