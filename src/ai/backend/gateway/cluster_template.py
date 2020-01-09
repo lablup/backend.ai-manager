@@ -37,7 +37,7 @@ cluster_template_v1 = t.Dict({
         t.Key('environ', default={}): t.Null | t.Mapping(t.String, t.String),
         t.Key('mounts', default={}): t.Null | t.Mapping(t.String, t.Any),
         t.Key('nodes'): t.List(t.Dict({
-            t.Key('role'): t.Enum('master', 'worker'),
+            t.Key('role'): t.String,
             tx.AliasedKey(['session_template', 'sessionTemplate']): tx.UUID,
             t.Key('replicas', default=1): t.Int
         }))
