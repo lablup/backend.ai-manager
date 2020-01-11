@@ -157,8 +157,10 @@ kernel_dependencies = sa.Table(
 
 
 class SessionCommons:
-    sess_id = graphene.String()
-    sess_type = graphene.String()
+    sess_id = graphene.String()    # legacy
+    sess_type = graphene.String()  # legacy
+    session_id = graphene.String()
+    session_type = graphene.String()
     id = graphene.ID()
     role = graphene.String()
     image = graphene.String()
@@ -293,6 +295,8 @@ class SessionCommons:
         return {
             'sess_id': row['sess_id'],
             'sess_type': row['sess_type'].name,
+            'session_id': row['sess_id'],
+            'session_type': row['sess_type'].name,
             'id': row['id'],
             'role': row['role'],
             'image': row['image'],
