@@ -228,7 +228,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
         if not params['reuse']:
             raise SessionAlreadyExists
         return web.json_response({
-            'sessId': str(kern.sess_id),  # legacy naming
+            'sessionId': str(kern.sess_id),  # legacy naming
             'status': kern.status.name,
             'service_ports': kern.service_ports,
             'created': False,
@@ -353,7 +353,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             user_role=request['user']['role'],
             startup_command=params['startup_command'],
             session_tag=params['tag']))
-        resp['sessId'] = str(params['sess_id'])  # legacy naming
+        resp['sessionId'] = str(params['sess_id'])  # legacy naming
         resp['status'] = 'PENDING'
         resp['servicePorts'] = []
         resp['created'] = True
@@ -1148,7 +1148,7 @@ async def get_logs(request: web.Request, params: Any) -> web.Response:
 @auth_required
 @check_api_params(
     t.Dict({
-        tx.AliasedKey(['sess_id', 'sessId', 'task_id', 'taskId']) >> 'kernel_id': tx.UUID,
+        tx.AliasedKey(['session_id', 'sessionId', 'task_id', 'taskId']) >> 'kernel_id': tx.UUID,
     }))
 async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse:
     log.info('GET_TASK_LOG (ak:{}, k:{})',
