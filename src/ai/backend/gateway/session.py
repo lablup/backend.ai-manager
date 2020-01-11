@@ -148,7 +148,7 @@ creation_config_v4_template = t.Dict({
 
 overwritten_param_check = t.Dict({
     t.Key('template_id'): tx.UUID,
-    t.Key('sess_id'): t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
+    t.Key('session_id'): t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
     t.Key('image', default=None): t.Null | t.String,
     t.Key('sess_type'): tx.Enum(SessionTypes),
     t.Key('group', default='default'): t.String,
@@ -193,7 +193,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     requester_access_key, owner_access_key = await get_access_key_scopes(request, scopes_param)
     log.info('GET_OR_CREATE (ak:{0}/{1}, img:{2}, s:{3})',
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*',
-             params['image'], params['sess_id'])
+             params['image'], params['session_id'])
 
     registry = request.app['registry']
     resp: MutableMapping[str, Any] = {}
@@ -217,7 +217,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     try:
         # NOTE: We can reuse the session IDs of TERMINATED sessions only.
         # NOTE: Reusing a session in the PENDING status returns an empty value in service_ports.
-        kern = await registry.get_session(params['sess_id'], owner_access_key)
+        kern = await registry.get_session(params['session_id'], owner_access_key)
         running_image_ref = ImageRef(kern['image'], [kern['registry']])
         if running_image_ref != requested_image_ref:
             raise SessionAlreadyExists
@@ -228,7 +228,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
         if not params['reuse']:
             raise SessionAlreadyExists
         return web.json_response({
-            'sessionId': str(kern.sess_id),  # legacy naming
+            'sessionId': str(kern.session_id),  # legacy naming
             'status': kern.status.name,
             'service_ports': kern.service_ports,
             'created': False,
@@ -341,7 +341,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
                 raise InvalidAPIParameters('Invalid group')
 
         kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
-            params['sess_id'], owner_access_key,
+            params['session_id'], owner_access_key,
             requested_image_ref,
             params['sess_type'],
             params['config'],
@@ -353,7 +353,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             user_role=request['user']['role'],
             startup_command=params['startup_command'],
             session_tag=params['tag']))
-        resp['sessionId'] = str(params['sess_id'])  # legacy naming
+        resp['sessionId'] = str(params['session_id'])  # legacy naming
         resp['status'] = 'PENDING'
         resp['servicePorts'] = []
         resp['created'] = True
@@ -424,7 +424,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
 @check_api_params(t.Dict(
     {
         tx.AliasedKey(['template_id', 'templateId']): t.Null | tx.UUID,
-        t.Key('clientSessionToken', default=undefined) >> 'sess_id':
+        t.Key('clientSessionToken', default=undefined) >> 'session_id':
             UndefChecker | t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
         tx.AliasedKey(['image', 'lang'], default=undefined): UndefChecker | t.Null | t.String,
         tx.AliasedKey(['type', 'sessionType'], default='interactive') >> 'sess_type':
@@ -562,7 +562,7 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
 @auth_required
 @check_api_params(
     t.Dict({
-        t.Key('clientSessionToken') >> 'sess_id':
+        t.Key('clientSessionToken') >> 'session_id':
             t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
         tx.AliasedKey(['image', 'lang']): t.String,
         tx.AliasedKey(['type', 'sessionType'], default='interactive') >> 'sess_type':
@@ -580,8 +580,8 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
     }),
     loads=_json_loads)
 async def create_from_params(request: web.Request, params: Any) -> web.Response:
-    if params['sess_id'] in ['from-template']:
-        raise InvalidAPIParameters(f'Requested session ID {params["sess_id"]} is reserved word')
+    if params['session_id'] in ['from-template']:
+        raise InvalidAPIParameters(f'Requested session ID {params["session_id"]} is reserved word')
 
     api_version = request['api_version']
     if 5 <= api_version[0]:
@@ -750,15 +750,15 @@ async def stats_monitor_update_timer(app):
 @auth_required
 async def destroy(request: web.Request) -> web.Response:
     registry = request.app['registry']
-    sess_id = request.match_info['sess_id']
+    session_id = request.match_info['session_id']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     domain_name = None
     if requester_access_key != owner_access_key and \
             not request['is_superadmin'] and request['is_admin']:
         domain_name = request['user']['domain_name']
     log.info('DESTROY (ak:{0}/{1}, s:{2})',
-             requester_access_key, owner_access_key, sess_id)
-    last_stat = await registry.destroy_session(sess_id, owner_access_key,
+             requester_access_key, owner_access_key, session_id)
+    last_stat = await registry.destroy_session(session_id, owner_access_key,
                                                domain_name=domain_name)
     resp = {
         'stats': last_stat,
@@ -773,13 +773,13 @@ async def get_info(request: web.Request) -> web.Response:
     # NOTE: This API should be replaced with GraphQL version.
     resp = {}
     registry = request.app['registry']
-    sess_id = request.match_info['sess_id']
+    session_id = request.match_info['session_id']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('GETINFO (ak:{0}/{1}, s:{2})',
-             requester_access_key, owner_access_key, sess_id)
+             requester_access_key, owner_access_key, session_id)
     try:
-        await registry.increment_session_usage(sess_id, owner_access_key)
-        kern = await registry.get_session(sess_id, owner_access_key, field='*')
+        await registry.increment_session_usage(session_id, owner_access_key)
+        kern = await registry.get_session(session_id, owner_access_key, field='*')
         resp['domainName'] = kern.domain_name
         resp['groupId'] = str(kern.group_id)
         resp['userId'] = str(kern.user_uuid)
@@ -820,13 +820,13 @@ async def get_info(request: web.Request) -> web.Response:
 @auth_required
 async def restart(request: web.Request) -> web.Response:
     registry = request.app['registry']
-    sess_id = request.match_info['sess_id']
+    session_id = request.match_info['session_id']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('RESTART (ak:{0}/{1}, s:{2})',
-             requester_access_key, owner_access_key, sess_id)
+             requester_access_key, owner_access_key, session_id)
     try:
-        await registry.increment_session_usage(sess_id, owner_access_key)
-        await registry.restart_session(sess_id, owner_access_key)
+        await registry.increment_session_usage(session_id, owner_access_key)
+        await registry.restart_session(session_id, owner_access_key)
     except BackendError:
         log.exception('RESTART: exception')
         raise
@@ -842,17 +842,17 @@ async def restart(request: web.Request) -> web.Response:
 async def execute(request: web.Request) -> web.Response:
     resp = {}
     registry = request.app['registry']
-    sess_id = request.match_info['sess_id']
+    session_id = request.match_info['session_id']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     try:
         params = await request.json(loads=json.loads)
         log.info('EXECUTE(ak:{0}/{1}, s:{2})',
-                 requester_access_key, owner_access_key, sess_id)
+                 requester_access_key, owner_access_key, session_id)
     except json.decoder.JSONDecodeError:
         log.warning('EXECUTE: invalid/missing parameters')
         raise InvalidAPIParameters
     try:
-        await registry.increment_session_usage(sess_id, owner_access_key)
+        await registry.increment_session_usage(session_id, owner_access_key)
         api_version = request['api_version']
         if api_version[0] == 1:
             run_id = params.get('runId', secrets.token_hex(8))
@@ -876,10 +876,10 @@ async def execute(request: web.Request) -> web.Response:
         if mode == 'complete':
             # For legacy
             resp['result'] = await registry.get_completions(
-                sess_id, owner_access_key, code, opts)
+                session_id, owner_access_key, code, opts)
         else:
             raw_result = await registry.execute(
-                sess_id, owner_access_key,
+                session_id, owner_access_key,
                 api_version, run_id, mode, code, opts,
                 flush_timeout=2.0)
             if raw_result is None:
@@ -924,13 +924,13 @@ async def execute(request: web.Request) -> web.Response:
 @auth_required
 async def interrupt(request: web.Request) -> web.Response:
     registry = request.app['registry']
-    sess_id = request.match_info['sess_id']
+    session_id = request.match_info['session_id']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('INTERRUPT(ak:{0}/{1}, s:{2})',
-             requester_access_key, owner_access_key, sess_id)
+             requester_access_key, owner_access_key, session_id)
     try:
-        await registry.increment_session_usage(sess_id, owner_access_key)
-        await registry.interrupt_session(sess_id, owner_access_key)
+        await registry.increment_session_usage(session_id, owner_access_key)
+        await registry.interrupt_session(session_id, owner_access_key)
     except BackendError:
         log.exception('INTERRUPT: exception')
         raise
@@ -948,20 +948,20 @@ async def complete(request: web.Request) -> web.Response:
         }
     }
     registry = request.app['registry']
-    sess_id = request.match_info['sess_id']
+    session_id = request.match_info['session_id']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     try:
         params = await request.json(loads=json.loads)
         log.info('COMPLETE(ak:{0}/{1}, s:{2})',
-                 requester_access_key, owner_access_key, sess_id)
+                 requester_access_key, owner_access_key, session_id)
     except json.decoder.JSONDecodeError:
         raise InvalidAPIParameters
     try:
         code = params.get('code', '')
         opts = params.get('options', None) or {}
-        await registry.increment_session_usage(sess_id, owner_access_key)
+        await registry.increment_session_usage(session_id, owner_access_key)
         resp['result'] = await request.app['registry'].get_completions(
-            sess_id, owner_access_key, code, opts)
+            session_id, owner_access_key, code, opts)
     except AssertionError:
         raise InvalidAPIParameters
     except BackendError:
@@ -976,12 +976,12 @@ async def upload_files(request: web.Request) -> web.Response:
     loop = asyncio.get_event_loop()
     reader = await request.multipart()
     registry = request.app['registry']
-    sess_id = request.match_info['sess_id']
+    session_id = request.match_info['session_id']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('UPLOAD_FILE (ak:{0}/{1}, s:{2})',
-             requester_access_key, owner_access_key, sess_id)
+             requester_access_key, owner_access_key, session_id)
     try:
-        await registry.increment_session_usage(sess_id, owner_access_key)
+        await registry.increment_session_usage(session_id, owner_access_key)
         file_count = 0
         upload_tasks = []
         async for file in aiotools.aiter(reader.next, None):
@@ -1003,7 +1003,7 @@ async def upload_files(request: web.Request) -> web.Response:
             data = file.decode(b''.join(chunks))
             log.debug('received file: {0} ({1:,} bytes)', file.filename, recv_size)
             t = loop.create_task(
-                registry.upload_file(sess_id, owner_access_key,
+                registry.upload_file(session_id, owner_access_key,
                                      file.filename, data))
             upload_tasks.append(t)
         await asyncio.gather(*upload_tasks)
@@ -1021,18 +1021,18 @@ async def upload_files(request: web.Request) -> web.Response:
     }))
 async def download_files(request: web.Request, params: Any) -> web.Response:
     registry = request.app['registry']
-    sess_id = request.match_info['sess_id']
+    session_id = request.match_info['session_id']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     files = params.get('files')
     log.info('DOWNLOAD_FILE (ak:{0}/{1}, s:{2}, path:{3!r})',
-             requester_access_key, owner_access_key, sess_id,
+             requester_access_key, owner_access_key, session_id,
              files[0])
     try:
         assert len(files) <= 5, 'Too many files'
-        await registry.increment_session_usage(sess_id, owner_access_key)
+        await registry.increment_session_usage(session_id, owner_access_key)
         # TODO: Read all download file contents. Need to fix by using chuncking, etc.
         results = await asyncio.gather(*map(
-            functools.partial(registry.download_file, sess_id, owner_access_key),
+            functools.partial(registry.download_file, session_id, owner_access_key),
             files))
         log.debug('file(s) inside container retrieved')
     except asyncio.CancelledError:
@@ -1064,14 +1064,14 @@ async def download_single(request: web.Request, params: Any) -> web.Response:
     ''' Download single file from scratch root. Only for small files.
     '''
     registry = request.app['registry']
-    sess_id = request.match_info['sess_id']
+    session_id = request.match_info['session_id']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     file = params['file']
     log.info('DOWNLOAD_SINGLE (ak:{0}/{1}, s:{2}, path:{3!r})',
-             requester_access_key, owner_access_key, sess_id, file)
+             requester_access_key, owner_access_key, session_id, file)
     try:
-        await registry.increment_session_usage(sess_id, owner_access_key)
-        result = await registry.download_file(sess_id, owner_access_key, file)
+        await registry.increment_session_usage(session_id, owner_access_key)
+        result = await registry.download_file(session_id, owner_access_key, file)
     except asyncio.CancelledError:
         raise
     except BackendError:
@@ -1091,12 +1091,12 @@ async def download_single(request: web.Request, params: Any) -> web.Response:
 @auth_required
 async def list_files(request: web.Request) -> web.Response:
     try:
-        sess_id = request.match_info['sess_id']
+        session_id = request.match_info['session_id']
         requester_access_key, owner_access_key = await get_access_key_scopes(request)
         params = await request.json(loads=json.loads)
         path = params.get('path', '.')
         log.info('LIST_FILES (ak:{0}/{1}, s:{2}, path:{3})',
-                 requester_access_key, owner_access_key, sess_id, path)
+                 requester_access_key, owner_access_key, session_id, path)
     except (asyncio.TimeoutError, AssertionError,
             json.decoder.JSONDecodeError) as e:
         log.warning('LIST_FILES: invalid/missing parameters, {0!r}', e)
@@ -1104,8 +1104,8 @@ async def list_files(request: web.Request) -> web.Response:
     resp: MutableMapping[str, Any] = {}
     try:
         registry = request.app['registry']
-        await registry.increment_session_usage(sess_id, owner_access_key)
-        result = await registry.list_files(sess_id, owner_access_key, path)
+        await registry.increment_session_usage(session_id, owner_access_key)
+        result = await registry.list_files(session_id, owner_access_key, path)
         resp.update(result)
         log.debug('container file list for {0} retrieved', path)
     except asyncio.CancelledError:
@@ -1129,14 +1129,14 @@ async def list_files(request: web.Request) -> web.Response:
     }))
 async def get_logs(request: web.Request, params: Any) -> web.Response:
     registry = request.app['registry']
-    sess_id = request.match_info['sess_id']
+    session_id = request.match_info['session_id']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('GET_LOG (ak:{}/{}, s:{})',
-             requester_access_key, owner_access_key, sess_id)
+             requester_access_key, owner_access_key, session_id)
     resp = {'result': {'logs': ''}}
     try:
-        await registry.increment_session_usage(sess_id, owner_access_key)
-        resp['result'] = await registry.get_logs(sess_id, owner_access_key)
+        await registry.increment_session_usage(session_id, owner_access_key)
+        resp['result'] = await registry.get_logs(session_id, owner_access_key)
         log.info('container log retrieved: {0!r}', resp)
     except BackendError:
         log.exception('GET_LOG: exception')
@@ -1237,7 +1237,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     cors.add(app.router.add_route('POST', '/create', create_from_params))  # legacy
     cors.add(app.router.add_route('POST', '/from-template', create_from_template))
     cors.add(app.router.add_route('POST', '', create_from_params))
-    session_resource = cors.add(app.router.add_resource(r'/{sess_id}'))
+    session_resource = cors.add(app.router.add_resource(r'/{session_id}'))
     cors.add(session_resource.add_route('GET',    get_info))
     cors.add(session_resource.add_route('PATCH',  restart))
     cors.add(session_resource.add_route('DELETE', destroy))
@@ -1245,11 +1245,11 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     task_log_resource = cors.add(app.router.add_resource(r'/_/logs'))
     cors.add(task_log_resource.add_route('HEAD', get_task_logs))
     cors.add(task_log_resource.add_route('GET',  get_task_logs))
-    cors.add(app.router.add_route('GET',  '/{sess_id}/logs', get_logs))
-    cors.add(app.router.add_route('POST', '/{sess_id}/interrupt', interrupt))
-    cors.add(app.router.add_route('POST', '/{sess_id}/complete', complete))
-    cors.add(app.router.add_route('POST', '/{sess_id}/upload', upload_files))
-    cors.add(app.router.add_route('GET',  '/{sess_id}/download', download_files))
-    cors.add(app.router.add_route('GET',  '/{sess_id}/download_single', download_single))
-    cors.add(app.router.add_route('GET',  '/{sess_id}/files', list_files))
+    cors.add(app.router.add_route('GET',  '/{session_id}/logs', get_logs))
+    cors.add(app.router.add_route('POST', '/{session_id}/interrupt', interrupt))
+    cors.add(app.router.add_route('POST', '/{session_id}/complete', complete))
+    cors.add(app.router.add_route('POST', '/{session_id}/upload', upload_files))
+    cors.add(app.router.add_route('GET',  '/{session_id}/download', download_files))
+    cors.add(app.router.add_route('GET',  '/{session_id}/download_single', download_single))
+    cors.add(app.router.add_route('GET',  '/{session_id}/files', list_files))
     return app, []
