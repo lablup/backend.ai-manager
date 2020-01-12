@@ -62,8 +62,8 @@ class SchedulingContext:
 class ExistingSession:
     kernel_id: KernelId
     access_key: AccessKey
-    sess_id: str
-    sess_type: SessionTypes
+    session_name: str
+    session_type: SessionTypes
     domain_name: str
     group_id: uuid.UUID
     scaling_group: str
@@ -78,8 +78,8 @@ class PendingSession:
     '''
     kernel_id: KernelId
     access_key: AccessKey
-    sess_id: str
-    sess_type: SessionTypes
+    session_name: str
+    session_type: SessionTypes
     domain_name: str
     group_id: uuid.UUID
     scaling_group: str

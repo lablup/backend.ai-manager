@@ -159,7 +159,7 @@ kernel_dependencies = sa.Table(
 class SessionCommons:
     sess_id = graphene.String()    # legacy
     sess_type = graphene.String()  # legacy
-    session_id = graphene.String()
+    session_name = graphene.String()
     session_type = graphene.String()
     id = graphene.ID()
     role = graphene.String()
@@ -293,11 +293,11 @@ class SessionCommons:
         else:
             hide_agents = context['config']['manager']['hide-agents']
         return {
-            'sess_id': row['sess_id'],
-            'sess_type': row['sess_type'].name,
-            'session_id': row['sess_id'],
+            'sess_id': row['sess_id'],           # legacy, will be deprecated
+            'sess_type': row['sess_type'].name,  # legacy, will be deprecated
+            'session_name': row['sess_id'],
             'session_type': row['sess_type'].name,
-            'id': row['id'],
+            'id': row['id'],                     # legacy, will be replaced with session UUID
             'role': row['role'],
             'image': row['image'],
             'registry': row['registry'],
@@ -319,7 +319,7 @@ class SessionCommons:
             'mounts': row['mounts'],
             'resource_opts': row['resource_opts'],
             'num_queries': row['num_queries'],
-            # optinally hidden
+            # optionally hidden
             'agent': row['agent'] if not hide_agents else None,
             'container_id': row['container_id'] if not hide_agents else None,
             # live_stat is resolved by Graphene

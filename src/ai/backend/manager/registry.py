@@ -8,6 +8,7 @@ import logging
 import time
 from typing import (
     Callable, Optional,
+    Container,
     Dict, MutableMapping,
     TYPE_CHECKING,
 )
@@ -269,8 +270,13 @@ class AgentRegistry:
                 await error_callback()
             raise
 
-    async def get_kernel(self, kern_id: uuid.UUID, field=None, allow_stale=False,
-                         db_connection=None):
+    async def get_kernel(
+        self,
+        kern_id: uuid.UUID,
+        field=None,
+        allow_stale: bool = False,
+        db_connection=None,
+    ):
         '''
         Retreive the kernel information from the given kernel ID.
         This ID is unique for all individual agent-spawned containers.
@@ -321,11 +327,15 @@ class AgentRegistry:
                 raise SessionNotFound
             return row
 
-    async def get_session(self, sess_id: str, access_key: str, *,
-                          field=None,
-                          allow_stale=False,
-                          for_update=False,
-                          db_connection=None):
+    async def get_session(
+        self,
+        session_name: str,
+        access_key: str, *,
+        field=None,
+        allow_stale=False,
+        for_update=False,
+        db_connection=None,
+    ):
         '''
         Retreive the kernel information from the session ID (client-side
         session token).  If the kernel is composed of multiple containers, it
@@ -353,7 +363,7 @@ class AgentRegistry:
             if allow_stale:
                 query = (sa.select(cols, for_update=for_update)
                            .select_from(kernels)
-                           .where((kernels.c.sess_id == sess_id) &
+                           .where((kernels.c.sess_id == session_name) &
                                   (kernels.c.access_key == access_key) &
                                   (kernels.c.role == 'master'))
                            .limit(1).offset(0))
@@ -362,7 +372,7 @@ class AgentRegistry:
                     sa.select(cols, for_update=for_update)
                     .select_from(kernels)
                     .where(
-                        (kernels.c.sess_id == sess_id) &
+                        (kernels.c.sess_id == session_name) &
                         (kernels.c.access_key == access_key) &
                         (kernels.c.role == 'master') &
                         ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES))
@@ -374,8 +384,13 @@ class AgentRegistry:
                 raise SessionNotFound
             return row
 
-    async def get_sessions(self, sess_ids, field=None, allow_stale=False,
-                           db_connection=None):
+    async def get_sessions(
+        self,
+        session_names: Container[str],
+        field=None,
+        allow_stale=False,
+        db_connection=None,
+    ):
         '''
         Batched version of :meth:`get_session() <AgentRegistry.get_session>`.
         The order of the returend array is same to the order of ``sess_ids``.
@@ -396,12 +411,12 @@ class AgentRegistry:
             if allow_stale:
                 query = (sa.select(cols)
                            .select_from(kernels)
-                           .where((kernels.c.sess_id.in_(sess_ids)) &
+                           .where((kernels.c.sess_id.in_(session_names)) &
                                   (kernels.c.role == 'master')))
             else:
                 query = (sa.select(cols)
                            .select_from(kernels.join(agents))
-                           .where((kernels.c.sess_id.in_(sess_ids)) &
+                           .where((kernels.c.sess_id.in_(session_names)) &
                                   (kernels.c.role == 'master') &
                                   (agents.c.status == AgentStatus.ALIVE) &
                                   (agents.c.id == kernels.c.agent)))
@@ -409,20 +424,23 @@ class AgentRegistry:
             rows = await result.fetchall()
             return rows
 
-    async def enqueue_session(self, sess_id: str, access_key: str,
-                              image_ref: ImageRef,
-                              session_type: SessionTypes,
-                              creation_config: dict,
-                              resource_policy: dict, *,
-                              domain_name: str,
-                              bootstrap_script=str,
-                              group_id: uuid.UUID,
-                              user_uuid: str,
-                              user_role: str,
-                              startup_command: str = None,
-                              session_tag: str = None,
-                              internal_data: dict = None) -> KernelId:
-
+    async def enqueue_session(
+        self,
+        session_name: str,
+        access_key: str,
+        image_ref: ImageRef,
+        session_type: SessionTypes,
+        creation_config: dict,
+        resource_policy: dict, *,
+        domain_name: str,
+        bootstrap_script=str,
+        group_id: uuid.UUID,
+        user_uuid: str,
+        user_role: str,
+        startup_command: str = None,
+        session_tag: str = None,
+        internal_data: dict = None,
+    ) -> KernelId:
         mounts = creation_config.get('mounts') or []
         mount_map = creation_config.get('mount_map') or {}
         environ = creation_config.get('environ') or {}
@@ -589,8 +607,8 @@ class AgentRegistry:
             query = kernels.insert().values({
                 'id': kernel_id,
                 'status': KernelStatus.PENDING,
-                'sess_id': sess_id,
-                'sess_type': session_type,
+                'sess_id': session_name,    # TODO: rename column to session_name
+                'sess_type': session_type,  # TODO: rename column to session_type
                 'role': 'master',
                 'scaling_group': scaling_group,
                 'domain_name': domain_name,
@@ -619,10 +637,12 @@ class AgentRegistry:
         await self.event_dispatcher.produce_event('kernel_enqueued', [str(kernel_id)])
         return KernelId(kernel_id)
 
-    async def start_session(self, sched_ctx: SchedulingContext,
-                            sess_ctx: PendingSession,
-                            agent_ctx: AgentAllocationContext) -> None:
-
+    async def start_session(
+        self,
+        sched_ctx: SchedulingContext,
+        sess_ctx: PendingSession,
+        agent_ctx: AgentAllocationContext,
+    ) -> None:
         auto_pull = await self.config_server.get('config/docker/image/auto_pull')
         image_info = await self.config_server.inspect_image(sess_ctx.image_ref)
         registry_url, registry_creds = \
@@ -639,8 +659,8 @@ class AgentRegistry:
 
         # Create the kernel by invoking the agent
         async with self.handle_kernel_exception(
-                'create_session', sess_ctx.sess_id, sess_ctx.access_key):
-            async with RPCContext(agent_ctx.agent_addr, None, order_key=sess_ctx.sess_id) as rpc:
+                'create_session', sess_ctx.session_name, sess_ctx.access_key):
+            async with RPCContext(agent_ctx.agent_addr, None, order_key=sess_ctx.session_name) as rpc:
                 config: KernelCreationConfig = {
                     'image': {
                         'registry': {
@@ -653,7 +673,7 @@ class AgentRegistry:
                         'canonical': sess_ctx.image_ref.canonical,
                         'labels': image_info['labels'],
                     },
-                    'session_type': sess_ctx.sess_type.value,
+                    'session_type': sess_ctx.session_type.value,
                     'resource_slots': sess_ctx.requested_slots.to_json(),
                     'idle_timeout': resource_policy['idle_timeout'],
                     'mounts': sess_ctx.mounts,
@@ -671,7 +691,7 @@ class AgentRegistry:
                     raise KernelCreationFailed('ooops')
 
         log.debug('start_session(s:{}, ak:{}, k:{}) -> created on ag:{}\n{!r}',
-                  sess_ctx.sess_id, sess_ctx.access_key, sess_ctx.kernel_id,
+                  sess_ctx.session_name, sess_ctx.access_key, sess_ctx.kernel_id,
                   agent_ctx.agent_id, created_info)
         assert str(sess_ctx.kernel_id) == created_info['id']
 

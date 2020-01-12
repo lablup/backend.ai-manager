@@ -211,7 +211,7 @@ class SchedulerDispatcher(aobject):
                 sess_ctx = pending_sessions.pop(picked_idx)
 
                 log_fmt = 'schedule(k:{}, s:{}, ak:{}): '
-                log_args = (sess_ctx.kernel_id, sess_ctx.sess_id, sess_ctx.access_key)
+                log_args = (sess_ctx.kernel_id, sess_ctx.session_name, sess_ctx.access_key)
                 log.debug(log_fmt + 'try-scheduling', *log_args)
 
                 predicates: Sequence[Awaitable[PredicateResult]] = [
@@ -353,8 +353,8 @@ class SchedulerDispatcher(aobject):
             items.append(PendingSession(
                 kernel_id=row['id'],
                 access_key=row['access_key'],
-                sess_type=row['sess_type'],
-                sess_id=row['sess_id'],
+                session_type=row['sess_type'],
+                session_name=row['sess_id'],
                 domain_name=row['domain_name'],
                 group_id=row['group_id'],
                 scaling_group=row['scaling_group'],
@@ -412,8 +412,8 @@ class SchedulerDispatcher(aobject):
             items.append(ExistingSession(
                 kernel_id=row['id'],
                 access_key=row['access_key'],
-                sess_type=row['sess_type'],
-                sess_id=row['sess_id'],
+                session_type=row['sess_type'],
+                session_name=row['sess_id'],
                 domain_name=row['domain_name'],
                 group_id=row['group_id'],
                 scaling_group=row['scaling_group'],
