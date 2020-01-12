@@ -109,8 +109,8 @@ def example_pending_sessions():
         PendingSession(
             kernel_id=pending_kernel_ids[0],
             access_key=AccessKey('user01'),
-            sess_id='es01',
-            sess_type=SessionTypes.BATCH,
+            session_name='es01',
+            session_type=SessionTypes.BATCH,
             scaling_group='sg01',
             requested_slots=ResourceSlot({
                 'cpu': Decimal('2.0'),
@@ -124,8 +124,8 @@ def example_pending_sessions():
         PendingSession(
             kernel_id=pending_kernel_ids[1],
             access_key=AccessKey('user02'),
-            sess_id='es01',
-            sess_type=SessionTypes.BATCH,
+            session_name='es01',
+            session_type=SessionTypes.BATCH,
             scaling_group='sg01',
             requested_slots=ResourceSlot({
                 'cpu': Decimal('1.0'),
@@ -139,8 +139,8 @@ def example_pending_sessions():
         PendingSession(
             kernel_id=pending_kernel_ids[2],
             access_key=AccessKey('user03'),
-            sess_id='es01',
-            sess_type=SessionTypes.BATCH,
+            session_name='es01',
+            session_type=SessionTypes.BATCH,
             scaling_group='sg01',
             requested_slots=ResourceSlot({
                 'cpu': Decimal('1.0'),
@@ -160,8 +160,8 @@ def example_existing_sessions():
         ExistingSession(
             kernel_id=existing_kernel_ids[0],
             access_key=AccessKey('user01'),
-            sess_id='es01',
-            sess_type=SessionTypes.BATCH,
+            session_name='es01',
+            session_type=SessionTypes.BATCH,
             occupying_slots=ResourceSlot({
                 'cpu': Decimal('3.0'),
                 'mem': Decimal('1024'),
@@ -174,8 +174,8 @@ def example_existing_sessions():
         ExistingSession(
             kernel_id=existing_kernel_ids[1],
             access_key=AccessKey('user02'),
-            sess_id='es01',
-            sess_type=SessionTypes.BATCH,
+            session_name='es01',
+            session_type=SessionTypes.BATCH,
             occupying_slots=ResourceSlot({
                 'cpu': Decimal('1.0'),
                 'mem': Decimal('2048'),
@@ -188,8 +188,8 @@ def example_existing_sessions():
         ExistingSession(
             kernel_id=existing_kernel_ids[2],
             access_key=AccessKey('user03'),
-            sess_id='es01',
-            sess_type=SessionTypes.BATCH,
+            session_name='es01',
+            session_type=SessionTypes.BATCH,
             occupying_slots=ResourceSlot({
                 'cpu': Decimal('4.0'),
                 'mem': Decimal('4096'),

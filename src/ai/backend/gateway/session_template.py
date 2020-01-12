@@ -37,7 +37,7 @@ task_template_v1 = t.Dict({
     }),
     t.Key('spec'): t.Dict({
         tx.AliasedKey(['type', 'sessionType'],
-                      default='interactive') >> 'sess_type': tx.Enum(SessionTypes),
+                      default='interactive') >> 'session_type': tx.Enum(SessionTypes),
         t.Key('kernel'): t.Dict({
             t.Key('image'): t.String,
             t.Key('environ', default={}): t.Null | t.Mapping(t.String, t.String),

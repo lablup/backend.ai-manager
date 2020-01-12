@@ -42,7 +42,7 @@ from ai.backend.common.types import (
 
 from .auth import auth_required
 from .exceptions import (
-    AppNotFound, GroupNotFound, KernelNotFound,
+    AppNotFound, GroupNotFound, SessionNotFound,
     BackendError,
     InvalidAPIParameters, GenericForbidden,
     InternalServerError,
@@ -71,7 +71,7 @@ async def stream_pty(request: web.Request) -> web.StreamResponse:
     try:
         kernel = await asyncio.shield(
             registry.get_session(sess_id, access_key, field=extra_fields))
-    except KernelNotFound:
+    except SessionNotFound:
         raise
     log.info('STREAM_PTY(ak:{0}, s:{1})', access_key, sess_id)
 
@@ -232,7 +232,7 @@ async def stream_execute(request: web.Request) -> web.StreamResponse:
     log.info('STREAM_EXECUTE(ak:{0}, s:{1})', access_key, sess_id)
     try:
         _ = await asyncio.shield(registry.get_session(sess_id, access_key))  # noqa
-    except KernelNotFound:
+    except SessionNotFound:
         raise
 
     await asyncio.shield(registry.increment_session_usage(sess_id, access_key))
@@ -343,7 +343,7 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
 
     try:
         kernel = await asyncio.shield(registry.get_session(sess_id, access_key))
-    except KernelNotFound:
+    except SessionNotFound:
         raise
     if kernel.kernel_host is None:
         kernel_host = urlparse(kernel.agent_addr).hostname
@@ -530,7 +530,7 @@ async def kernel_terminated(app: web.Application, agent_id: AgentId, event_name:
     try:
         kernel = await app['registry'].get_kernel(
             kernel_id, (kernels.c.role, kernels.c.status), allow_stale=True)
-    except KernelNotFound:
+    except SessionNotFound:
         return
     if kernel.role == 'master':
         sess_id = kernel['sess_id']
@@ -668,12 +668,12 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app['api_versions'] = (2, 3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     add_route = app.router.add_route
-    cors.add(add_route('GET', r'/kernel/_/events', stream_events))
-    cors.add(add_route('GET', r'/kernel/{sess_id}/pty', stream_pty))
-    cors.add(add_route('GET', r'/kernel/{sess_id}/execute', stream_execute))
-    cors.add(add_route('GET', r'/kernel/{sess_id}/apps', get_stream_apps))
+    cors.add(add_route('GET', r'/session/_/events', stream_events))
+    cors.add(add_route('GET', r'/session/{sess_id}/pty', stream_pty))
+    cors.add(add_route('GET', r'/session/{sess_id}/execute', stream_execute))
+    cors.add(add_route('GET', r'/session/{sess_id}/apps', get_stream_apps))
     # internally both tcp/http proxies use websockets as API/agent-level transports,
     # and thus they have the same implementation here.
-    cors.add(add_route('GET', r'/kernel/{sess_id}/httpproxy', stream_proxy))
-    cors.add(add_route('GET', r'/kernel/{sess_id}/tcpproxy', stream_proxy))
+    cors.add(add_route('GET', r'/session/{sess_id}/httpproxy', stream_proxy))
+    cors.add(add_route('GET', r'/session/{sess_id}/tcpproxy', stream_proxy))
     return app, []
