@@ -105,9 +105,6 @@ shared_config_iv = t.Dict({
         t.Key('scheduler', default=_shdefs['plugins']['scheduler']):
             t.Mapping(t.String, t.Mapping(t.String, t.Any)),
     }).allow_extra('*'),
-    t.Key('scheduler', default=_shdefs['scheduler']): t.Dict({
-        t.Key('name', default=_shdefs['scheduler']['name']): t.String,
-    }).allow_extra('*'),
     t.Key('network', default=_shdefs['network']): t.Dict({
         t.Key('subnet', default=_shdefs['network']['subnet']): t.Dict({
             t.Key('agent', default=_shdefs['network']['subnet']['agent']): tx.IPNetwork,
