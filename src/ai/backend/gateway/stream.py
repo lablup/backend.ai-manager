@@ -12,7 +12,7 @@ import json
 import logging
 import secrets
 from typing import (
-    Any, Iterable,
+    Any, Iterable, AsyncIterator,
     Mapping,
     MutableMapping,
     List, Tuple,
@@ -27,11 +27,9 @@ from aiohttp import web
 import aiohttp_cors
 from aiohttp_sse import sse_response
 from aiotools import apartial
-import aiozmq
-from aiozmq import create_zmq_stream as aiozmq_sock
 import sqlalchemy as sa
 import trafaret as t
-import zmq
+import zmq, zmq.asyncio
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
@@ -69,7 +67,7 @@ async def stream_pty(request: web.Request) -> web.StreamResponse:
     extra_fields = (kernels.c.stdin_port, kernels.c.stdout_port)
     api_version = request['api_version']
     try:
-        kernel = await asyncio.shield(
+        compute_session = await asyncio.shield(
             registry.get_session(session_name, access_key, field=extra_fields))
     except SessionNotFound:
         raise
@@ -82,25 +80,27 @@ async def stream_pty(request: web.Request) -> web.StreamResponse:
     myself = asyncio.Task.current_task()
     app['stream_pty_handlers'][stream_key].add(myself)
 
-    async def connect_streams(kernel):
+    async def connect_streams(compute_session) -> Tuple[zmq.asyncio.Socket, zmq.asyncio.Socket]:
         # TODO: refactor as custom row/table method
-        if kernel.kernel_host is None:
-            kernel_host = urlparse(kernel.agent_addr).hostname
+        if compute_session.kernel_host is None:
+            kernel_host = urlparse(compute_session.agent_addr).hostname
         else:
-            kernel_host = kernel.kernel_host
-        stdin_addr = f'tcp://{kernel_host}:{kernel.stdin_port}'
+            kernel_host = compute_session.kernel_host
+        stdin_addr = f'tcp://{kernel_host}:{compute_session.stdin_port}'
         log.debug('stream_pty({0}): stdin: {1}', stream_key, stdin_addr)
-        stdin_sock = await aiozmq_sock(zmq.PUB, connect=stdin_addr)
-        stdin_sock.transport.setsockopt(zmq.LINGER, 100)
-        stdout_addr = f'tcp://{kernel_host}:{kernel.stdout_port}'
+        stdin_sock = await app['zctx'].socket(zmq.PUB)
+        stdin_sock.connect(stdin_addr)
+        stdin_sock.setsockopt(zmq.LINGER, 100)
+        stdout_addr = f'tcp://{kernel_host}:{compute_session.stdout_port}'
         log.debug('stream_pty({0}): stdout: {1}', stream_key, stdout_addr)
-        stdout_sock = await aiozmq_sock(zmq.SUB, connect=stdout_addr)
-        stdout_sock.transport.setsockopt(zmq.LINGER, 100)
-        stdout_sock.transport.subscribe(b'')
+        stdout_sock = await app['zctx'].socket(zmq.SUB)
+        stdout_sock.connect(stdout_addr)
+        stdout_sock.setsockopt(zmq.LINGER, 100)
+        stdout_sock.subscribe(b'')
         return stdin_sock, stdout_sock
 
     # Wrap sockets in a list so that below coroutines can share reference changes.
-    socks = list(await connect_streams(kernel))
+    socks = list(await connect_streams(compute_session))
     app['stream_stdin_socks'][stream_key].add(socks[0])
     stream_sync = asyncio.Event()
 
@@ -113,11 +113,9 @@ async def stream_pty(request: web.Request) -> web.StreamResponse:
                     if data['type'] == 'stdin':
                         raw_data = base64.b64decode(data['chars'].encode('ascii'))
                         try:
-                            socks[0].write([raw_data])
-                        except (AttributeError, aiozmq.ZmqStreamClosed):
-                            # AttributeError occurs when stdin_sock._transport
-                            # is None because it's already closed somewhere
-                            # else.
+                            await socks[0].send_mlutipart([raw_data])
+                        except (RuntimeError, zmq.error.ZMQError):
+                            # when socks[0] is closed, re-initiate the connection.
                             app['stream_stdin_socks'][stream_key].discard(socks[0])
                             socks[1].close()
                             kernel = await asyncio.shield(registry.get_session(
@@ -151,7 +149,7 @@ async def stream_pty(request: web.Request) -> web.StreamResponse:
                             # handlers get a new one with changed stdin/stdout
                             # ports.
                             log.debug('stream_stdin: restart requested')
-                            if not socks[0].at_closing():
+                            if not socks[0].closed:
                                 await asyncio.shield(
                                     registry.restart_session(session_name, access_key))
                                 socks[0].close()
@@ -171,7 +169,7 @@ async def stream_pty(request: web.Request) -> web.StreamResponse:
             log.exception('stream_stdin({0}): unexpected error', stream_key)
         finally:
             log.debug('stream_stdin({0}): terminated', stream_key)
-            if not socks[0].at_closing():
+            if not socks[0].closed:
                 socks[0].close()
 
     async def stream_stdout():
@@ -180,8 +178,12 @@ async def stream_pty(request: web.Request) -> web.StreamResponse:
         try:
             while True:
                 try:
-                    data = await socks[1].read()
-                except aiozmq.ZmqStreamClosed:
+                    data = await socks[1].recv_multipart()
+                except (asyncio.CancelledError, zmq.error.ZMQError):
+                    if socks[0] not in app['stream_stdin_socks']:
+                        # we are terminating
+                        return
+                    # connection is closed, so wait until stream_stdin() recovers it.
                     await stream_sync.wait()
                     stream_sync.clear()
                     log.debug('stream_stdout({0}): zmq stream reset', stream_key)
@@ -193,7 +195,7 @@ async def stream_pty(request: web.Request) -> web.StreamResponse:
                     'data': base64.b64encode(data[0]).decode('ascii'),
                 }, ensure_ascii=False))
         except asyncio.CancelledError:
-            raise
+            pass
         except:
             app['error_monitor'].capture_exception()
             log.exception('stream_stdout({0}): unexpected error', stream_key)
@@ -204,9 +206,9 @@ async def stream_pty(request: web.Request) -> web.StreamResponse:
     # According to aiohttp docs, reading ws must be done inside this task.
     # We execute the stdout handler as another task.
     try:
-        stdout_task = asyncio.ensure_future(stream_stdout())
+        stdout_task = asyncio.create_task(stream_stdout())
         await stream_stdin()
-    except:
+    except Exception:
         app['error_monitor'].capture_exception()
         log.exception('stream_pty({0}): unexpected error', stream_key)
     finally:
@@ -618,11 +620,12 @@ async def enqueue_result_update(app: web.Application, agent_id: AgentId, event_n
         q.put_nowait((event_name, row, reason))
 
 
-async def init(app: web.Application) -> None:
+async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
     app['stream_pty_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_execute_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_proxy_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_stdin_socks'] = defaultdict(weakref.WeakSet)
+    app['zctx'] = zmq.asyncio.Context()
     app['event_queues'] = set()
     event_dispatcher = app['event_dispatcher']
     event_dispatcher.subscribe('kernel_terminated', app, kernel_terminated)
@@ -637,8 +640,8 @@ async def init(app: web.Application) -> None:
     event_dispatcher.subscribe('kernel_success', app, enqueue_result_update)
     event_dispatcher.subscribe('kernel_failure', app, enqueue_result_update)
 
+    yield
 
-async def shutdown(app: web.Application) -> None:
     cancelled_tasks: List[asyncio.Task] = []
     for per_kernel_handlers in app['stream_pty_handlers'].values():
         for handler in list(per_kernel_handlers):
@@ -658,12 +661,12 @@ async def shutdown(app: web.Application) -> None:
     for q in app['event_queues']:
         q.put_nowait(sentinel)
     await asyncio.gather(*cancelled_tasks, return_exceptions=True)
+    app['zctx'].term()
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()
-    app.on_startup.append(init)
-    app.on_shutdown.append(shutdown)
+    app.cleanup_ctx.append(stream_app_ctx)
     app['prefix'] = 'stream'
     app['api_versions'] = (2, 3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
