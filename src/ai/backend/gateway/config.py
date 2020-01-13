@@ -80,9 +80,6 @@ _shdefs: Mapping[str, Any] = {
         'accelerator': {},
         'scheduler': {},
     },
-    'scheduler': {
-        'name': 'fifo',
-    },
     'watcher': {
         'token': None,
     }
