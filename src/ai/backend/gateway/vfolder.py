@@ -45,7 +45,7 @@ from .manager import (
     server_status_required,
 )
 from .resource import get_watcher_info
-from .utils import check_api_params
+from .utils import check_api_params, current_loop
 from ..manager.models import (
     agents, AgentStatus, kernels, KernelStatus,
     users, groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
@@ -382,12 +382,13 @@ async def delete_by_id(request: web.Request, params: Any) -> web.Response:
         folder_hex = folder_id.hex
         folder_path = (request.app['VFOLDER_MOUNT'] / folder_host /
                        request.app['VFOLDER_FSPREFIX'] / folder_hex)
-        try:
-            shutil.rmtree(folder_path)
-        except IOError:
-            pass
         query = (vfolders.delete().where(vfolders.c.id == folder_id))
         await conn.execute(query)
+        try:
+            loop = current_loop()
+            await loop.run_in_executor(None, lambda: shutil.rmtree(folder_path))  # type: ignore
+        except IOError:
+            pass
     return web.Response(status=204)
 
 
@@ -638,8 +639,13 @@ async def delete_files(request: web.Request, params: Any, row: VFolderRow) -> we
                     'Set recursive option to remove it.')
         elif file_path.is_file():
             ops.append(functools.partial(os.unlink, file_path))
-    for op in ops:
-        op()
+
+    def _do_ops():
+        for op in ops:
+            op()
+
+    loop = current_loop()
+    await loop.run_in_executor(None, _do_ops)
     resp: Dict[str, Any] = {}
     return web.json_response(resp, status=200)
 
@@ -1140,12 +1146,13 @@ async def delete(request: web.Request) -> web.Response:
         folder_hex = folder_id.hex
         folder_path = (request.app['VFOLDER_MOUNT'] / folder_host /
                        request.app['VFOLDER_FSPREFIX'] / folder_hex)
-        try:
-            shutil.rmtree(folder_path)
-        except IOError:
-            pass
         query = (vfolders.delete().where(vfolders.c.id == folder_id))
         await conn.execute(query)
+        try:
+            loop = current_loop()
+            await loop.run_in_executor(None, lambda: shutil.rmtree(folder_path))  # type: ignore
+        except IOError:
+            pass
     return web.Response(status=204)
 
 
