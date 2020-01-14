@@ -362,7 +362,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             gpu_allocated = row.occupied_slots['cuda.shares']
         c_info = {
             'id': str(row['id']),
-            'name': row['sess_id'],
+            'name': row['session_id'],
             'access_key': row['access_key'],
             'email': row['email'],
             'cpu_allocated': float(row.occupied_slots['cpu']) if 'cpu' in row.occupied_slots else 0,

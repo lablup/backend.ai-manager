@@ -244,7 +244,7 @@ class AgentRegistry:
         owner instance.
         '''
 
-        cols = [kernels.c.id, kernels.c.sess_id,
+        cols = [kernels.c.id, kernels.c.session_id,
                 kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.access_key]
         if field == '*':
             cols = [sa.text('*')]
@@ -300,7 +300,7 @@ class AgentRegistry:
         '''
 
         cols = [kernels.c.id, kernels.c.status,
-                kernels.c.sess_id, kernels.c.access_key,
+                kernels.c.session_id, kernels.c.access_key,
                 kernels.c.role,
                 kernels.c.agent_addr, kernels.c.kernel_host,
                 kernels.c.image, kernels.c.registry,
@@ -318,7 +318,7 @@ class AgentRegistry:
                 sa.select(cols, for_update=for_update)
                 .select_from(kernels)
                 .where(
-                    (kernels.c.sess_id == sess_id) &
+                    (kernels.c.session_id == sess_id) &
                     (kernels.c.access_key == access_key) &
                     ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES))
                 )
@@ -354,7 +354,7 @@ class AgentRegistry:
         true, it skips checking validity of the kernel owner instance.
         '''
         cols = [kernels.c.id, kernels.c.status,
-                kernels.c.sess_id, kernels.c.sess_uuid,
+                kernels.c.session_id, kernels.c.session_uuid,
                 kernels.c.access_key,
                 kernels.c.agent_addr, kernels.c.kernel_host,
                 kernels.c.image, kernels.c.registry,
@@ -372,7 +372,7 @@ class AgentRegistry:
                 sa.select(cols, for_update=for_update)
                 .select_from(kernels)
                 .where(
-                    (kernels.c.sess_uuid == sess_uuid) &
+                    (kernels.c.session_uuid == sess_uuid) &
                     (kernels.c.access_key == access_key)
                 )
             )
@@ -391,7 +391,7 @@ class AgentRegistry:
         positions without raising KernelNotFound exception.
         '''
 
-        cols = [kernels.c.id, kernels.c.sess_id,
+        cols = [kernels.c.id, kernels.c.session_id,
                 kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.access_key,
                 kernels.c.service_ports]
         if isinstance(field, (tuple, list)):
@@ -404,12 +404,12 @@ class AgentRegistry:
             if allow_stale:
                 query = (sa.select(cols)
                            .select_from(kernels)
-                           .where((kernels.c.sess_id.in_(sess_ids)) &
+                           .where((kernels.c.session_id.in_(sess_ids)) &
                                   (kernels.c.role == 'master')))
             else:
                 query = (sa.select(cols)
                            .select_from(kernels.join(agents))
-                           .where((kernels.c.sess_id.in_(sess_ids)) &
+                           .where((kernels.c.session_id.in_(sess_ids)) &
                                   (kernels.c.role == 'master') &
                                   (agents.c.status == AgentStatus.ALIVE) &
                                   (agents.c.id == kernels.c.agent)))
@@ -804,7 +804,7 @@ class AgentRegistry:
             try:
                 async with self.dbpool.acquire() as conn, conn.begin():
                     kernel_list = await self.get_session(sess_id, access_key,
-                                                    field=[kernels.c.domain_name, kernels.c.sess_uuid],
+                                                    field=[kernels.c.domain_name, kernels.c.session_uuid],
                                                     for_update=True,
                                                     db_connection=conn)
             except KernelNotFound:
@@ -1021,7 +1021,7 @@ class AgentRegistry:
         async with reenter_txn(self.dbpool, conn) as conn:
             query = (sa.update(kernels)
                        .values(updated_fields)
-                       .where((kernels.c.sess_id == sess_id) &
+                       .where((kernels.c.session_id == sess_id) &
                               (kernels.c.access_key == access_key)))
             await conn.execute(query)
 
@@ -1029,7 +1029,7 @@ class AgentRegistry:
         async with reenter_txn(self.dbpool, conn) as conn:
             query = (sa.update(kernels)
                        .values(num_queries=kernels.c.num_queries + 1)
-                       .where((kernels.c.sess_id == sess_id) &
+                       .where((kernels.c.session_id == sess_id) &
                               (kernels.c.access_key == access_key) &
                               (kernels.c.role == 'master')))
             await conn.execute(query)
@@ -1217,7 +1217,7 @@ class AgentRegistry:
                 sa.update(kernels)
                 .values(data)
                 .where(
-                    (kernels.c.sess_id == sess_id) &
+                    (kernels.c.session_id == sess_id) &
                     (kernels.c.access_key == access_key) &
                     ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES))
                 )
@@ -1366,7 +1366,7 @@ class AgentRegistry:
         async with self.dbpool.acquire() as conn, conn.begin():
             query = (sa.select([kernels.c.id])
                     .select_from(kernels)
-                    .where((kernels.c.sess_id == sess_id) &
+                    .where((kernels.c.session_id == sess_id) &
                             (kernels.c.access_key == access_key) &
                             ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES)))
                     .limit(1).offset(0)
@@ -1379,7 +1379,7 @@ class AgentRegistry:
 
     async def kernel_id_to_sess_id(self, kernel_id: str, access_key: str) -> str:
         async with self.dbpool.acquire() as conn, conn.begin():
-            query = (sa.select([kernels.c.sess_id])
+            query = (sa.select([kernels.c.session_id])
                     .select_from(kernels)
                     .where((kernels.c.id == kernel_id) &
                             (kernels.c.access_key == access_key) &
@@ -1396,7 +1396,7 @@ class AgentRegistry:
         async with self.dbpool.acquire() as conn, conn.begin():
             query = (sa.select([kernels.c.id])
                     .select_from(kernels)
-                    .where((kernels.c.sess_uuid == sess_uuid) &
+                    .where((kernels.c.session_uuid == sess_uuid) &
                             (kernels.c.access_key == access_key) &
                             ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES)))
                     .limit(1).offset(0)
@@ -1409,7 +1409,7 @@ class AgentRegistry:
 
     async def kernel_id_to_sess_uuid(self, kernel_id: str, access_key: str) -> str:
         async with self.dbpool.acquire() as conn, conn.begin():
-            query = (sa.select([kernels.c.sess_uuid])
+            query = (sa.select([kernels.c.session_uuid])
                     .select_from(kernels)
                     .where((kernels.c.id == kernel_id) &
                             (kernels.c.access_key == access_key) &

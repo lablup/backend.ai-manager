@@ -80,9 +80,9 @@ LIVE_STATUS = (
 kernels = sa.Table(
     'kernels', metadata,
     IDColumn(),
-    sa.Column('sess_id', sa.String(length=64), unique=False, index=True),
-    sa.Column('sess_uuid', GUID, nullable=False),
-    sa.Column('sess_type', EnumType(SessionTypes), index=True, nullable=False,
+    sa.Column('session_id', sa.String(length=64), unique=False, index=True),
+    sa.Column('session_uuid', GUID, nullable=False),
+    sa.Column('session_type', EnumType(SessionTypes), index=True, nullable=False,
               default=SessionTypes.INTERACTIVE, server_default=SessionTypes.INTERACTIVE.name),
     sa.Column('role', sa.String(length=16), nullable=False, default='master'),
     sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True, nullable=True),
@@ -140,11 +140,11 @@ kernels = sa.Table(
     sa.Column('num_queries', sa.BigInteger(), default=0),
     sa.Column('last_stat', pgsql.JSONB(), nullable=True, default=sa.null()),
 
-    sa.Index('ix_kernels_sess_id_role', 'sess_id', 'role', unique=False),
+    sa.Index('ix_kernels_sess_id_role', 'session_id', 'role', unique=False),
     sa.Index('ix_kernels_updated_order',
              sa.func.greatest('created_at', 'terminated_at', 'status_changed'),
              unique=False),
-    sa.Index('ix_kernels_unique_sess_token', 'access_key', 'sess_id',
+    sa.Index('ix_kernels_unique_sess_token', 'access_key', 'session_id',
              unique=True,
              postgresql_where=sa.text(
                  "status NOT IN ('TERMINATED', 'CANCELLED') and "
@@ -294,8 +294,8 @@ class SessionCommons:
         else:
             hide_agents = context['config']['manager']['hide-agents']
         return {
-            'sess_id': row['sess_id'],
-            'sess_type': row['sess_type'].name,
+            'sess_id': row['session_id'],
+            'sess_type': row['session_type'].name,
             'id': row['id'],
             'role': row['role'],
             'image': row['image'],
@@ -386,7 +386,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             status_list = [status]
         async with context['dbpool'].acquire() as conn:
             query = (
-                sa.select([sa.func.count(kernels.c.sess_id)])
+                sa.select([sa.func.count(kernels.c.session_id)])
                 .select_from(kernels)
                 .where(kernels.c.role == 'master')
                 .as_scalar()
@@ -534,7 +534,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             query = (sa.select([kernels, groups.c.name, users.c.email])
                        .select_from(j)
                        .where((kernels.c.role == 'master') &
-                              (kernels.c.sess_id.in_(sess_ids))))
+                              (kernels.c.session_id.in_(sess_ids))))
             if domain_name is not None:
                 query = query.where(kernels.c.domain_name == domain_name)
             if access_key is not None:
@@ -581,7 +581,7 @@ class ComputeWorker(SessionCommons, graphene.ObjectType):
         async with context['dbpool'].acquire() as conn:
             query = (sa.select([kernels])
                        .select_from(kernels)
-                       .where((kernels.c.sess_id.in_(sess_ids)) &
+                       .where((kernels.c.session_id.in_(sess_ids)) &
                               (kernels.c.role == 'worker'))
                        .order_by(sa.desc(kernels.c.created_at)))
             if domain_name is not None:

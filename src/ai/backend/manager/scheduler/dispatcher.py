@@ -307,7 +307,7 @@ class SchedulerDispatcher(aobject):
                                     'status': KernelStatus.CANCELLED,
                                     'status_info': 'failed-to-start',
                                     'status_changed': datetime.now(tzutc()),
-                                }).where(kernels.c.sess_id == sess_ctx.sess_id)
+                                }).where(kernels.c.session_id == sess_ctx.sess_id)
                                 await conn.execute(query)
                             await self.registry.event_dispatcher.produce_event(
                                 'kernel_cancelled',
@@ -328,7 +328,7 @@ class SchedulerDispatcher(aobject):
                                 'status': KernelStatus.CANCELLED,
                                 'status_info': 'failed-to-start',
                                 'status_changed': datetime.now(tzutc()),
-                            }).where(kernels.c.sess_id == sess_ctx.sess_id)
+                            }).where(kernels.c.session_id == sess_ctx.sess_id)
                             await conn.execute(query)
 
         # We allow a long database transaction here
@@ -355,9 +355,9 @@ class SchedulerDispatcher(aobject):
                 kernels.c.role,
                 kernels.c.idx,
                 kernels.c.registry,
-                kernels.c.sess_type,
-                kernels.c.sess_id,
-                kernels.c.sess_uuid,
+                kernels.c.session_type,
+                kernels.c.session_id,
+                kernels.c.session_uuid,
                 kernels.c.access_key,
                 kernels.c.domain_name,
                 kernels.c.group_id,
@@ -387,15 +387,15 @@ class SchedulerDispatcher(aobject):
         )
         items: MutableMapping[str, PendingSession] = {}
         async for row in db_conn.execute(query):
-            if _session := items.get(row['sess_id']):
+            if _session := items.get(row['session_id']):
                 session = _session
             else:
                 session = PendingSession(
                     kernels=[],
                     access_key=row['access_key'],
-                    sess_type=row['sess_type'],
-                    sess_id=row['sess_id'],
-                    sess_uuid=row['sess_uuid'],
+                    sess_type=row['session_type'],
+                    sess_id=row['session_id'],
+                    sess_uuid=row['session_uuid'],
                     domain_name=row['domain_name'],
                     group_id=row['group_id'],
                     scaling_group=row['scaling_group'],
@@ -411,7 +411,7 @@ class SchedulerDispatcher(aobject):
                     mounts=row['mounts'],
                     mount_map=row['mount_map'],
                 )
-                items[row['sess_id']] = session
+                items[row['session_id']] = session
             # TODO: Remove `type: ignore` when mypy supports type inference for walrus operator
             # Check https://github.com/python/mypy/issues/7316
             session.kernels.append(KernelInfo(  # type: ignore
@@ -437,10 +437,10 @@ class SchedulerDispatcher(aobject):
                 kernels.c.image,
                 kernels.c.registry,
                 kernels.c.sess_type,
-                kernels.c.sess_id,
+                kernels.c.session_id,
                 kernels.c.role,
                 kernels.c.idx,
-                kernels.c.sess_uuid,
+                kernels.c.session_uuid,
                 kernels.c.access_key,
                 kernels.c.domain_name,
                 kernels.c.group_id,
@@ -466,21 +466,21 @@ class SchedulerDispatcher(aobject):
         )
         items: MutableMapping[str, ExistingSession] = {}
         async for row in db_conn.execute(query):
-            if _session := items.get(row['sess_id']):
+            if _session := items.get(row['session_id']):
                 session = _session
             else:
                 session = ExistingSession(
                     kernels=[],
                     access_key=row['access_key'],
-                    sess_type=row['sess_type'],
-                    sess_id=row['sess_id'],
-                    sess_uuid=row['sess_uuid'],
+                    sess_type=row['session_type'],
+                    sess_id=row['session_id'],
+                    sess_uuid=row['session_uuid'],
                     domain_name=row['domain_name'],
                     group_id=row['group_id'],
                     scaling_group=row['scaling_group'],
                     occupying_slots=row['occupied_slots'],
                 )
-                items[row['sess_id']] = session
+                items[row['session_id']] = session
             session.kernels.append(KernelInfo(  # type: ignore
                 kernel_id=row['id'],
                 role=row['role'],

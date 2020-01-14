@@ -436,7 +436,7 @@ async def get_stream_apps(request: web.Request) -> web.Response:
             ])
             .select_from(kernels)
             .where(
-                (kernels.c.sess_id == sess_id) &
+                (kernels.c.session_id == sess_id) &
                 (kernels.c.access_key == access_key)
             )
         )
@@ -511,11 +511,11 @@ async def stream_events(request: web.Request, params: Mapping[str, Any]) -> web.
                 if group_id != '*' and row['group_id'] != group_id:
                     continue
                 if session_id != '*' and not (
-                        (row['sess_id'] == session_id) and
+                        (row['session_id'] == session_id) and
                         (row['access_key'] == access_key)):
                     continue
                 await resp.send(json.dumps({
-                    'sessionId': str(row['sess_id']),
+                    'sessionId': str(row['session_id']),
                     'ownerAccessKey': row['access_key'],
                     'reason': reason,
                 }), event=event_name)
@@ -563,7 +563,7 @@ async def enqueue_status_update(app: web.Application, agent_id: AgentId, event_n
         query = (
             sa.select([
                 kernels.c.role,
-                kernels.c.sess_id,
+                kernels.c.session_id,
                 kernels.c.access_key,
                 kernels.c.domain_name,
                 kernels.c.group_id,
@@ -593,7 +593,7 @@ async def enqueue_result_update(app: web.Application, agent_id: AgentId, event_n
         query = (
             sa.select([
                 kernels.c.role,
-                kernels.c.sess_id,
+                kernels.c.session_id,
                 kernels.c.access_key,
                 kernels.c.domain_name,
                 kernels.c.group_id,
