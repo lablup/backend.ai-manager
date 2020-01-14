@@ -81,7 +81,7 @@ def main(username_pattern: str, num_users: int,
             'description': 'Auto-generated user account',
             'is_active': require_password_change,
             'domain_name': domain,
-            'role': 'USER',
+            'role': 'user',
         }
         fixture['users'].append(u)
         kp = {
@@ -114,7 +114,6 @@ def main(username_pattern: str, num_users: int,
             print(f'Generated user fixtures are saved at {fixture_path}')
         else:
             subprocess.run([
-                'scripts/run-with-halfstack.sh',
                 'python', '-m', 'ai.backend.manager.cli',
                 'fixture', 'populate', ftmp.name,
             ], check=True)
