@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 import stat
 from typing import (
-    Any, Awaitable, Callable,
+    Any, Union, Awaitable, Callable,
     Dict, Mapping, MutableMapping,
     Tuple,
     Set,
@@ -46,6 +46,7 @@ from .manager import (
     server_status_required,
 )
 from .resource import get_watcher_info
+from .typing import Sentinel
 from .utils import check_api_params, current_loop
 from ..manager.models import (
     agents, AgentStatus, kernels, KernelStatus,
@@ -58,7 +59,7 @@ from ..manager.models import (
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
 
-eof_sentinel = object()
+eof_sentinel = Sentinel()
 
 VFolderRow = Mapping[str, Any]
 
@@ -634,7 +635,7 @@ async def upload(request: web.Request, row: VFolderRow) -> web.Response:
         log.info(log_fmt + ': accepted path:{}',
                  *log_args, file.filename)
 
-        q = janus.Queue(maxsize=DEFAULT_INFLIGHT_CHUNKS)
+        q: janus.Queue[Union[bytes, Sentinel]] = janus.Queue(maxsize=DEFAULT_INFLIGHT_CHUNKS)
 
         def _write():
             with open(file_path, 'wb') as f:

@@ -34,3 +34,7 @@ PluginAppCreator = Callable[
 ]
 
 CleanupContext = Callable[[web.Application], AsyncIterator[None]]
+
+
+class Sentinel(object):
+    pass
