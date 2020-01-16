@@ -17,6 +17,7 @@ _max_cpu_count = os.cpu_count()
 _file_perm = (Path(__file__).parent / 'server.py').stat()
 
 DEFAULT_CHUNK_SIZE = 256 * 1024  # 256 KiB
+DEFAULT_INFLIGHT_CHUNKS = 8
 
 manager_config_iv = t.Dict({
     t.Key('db'): t.Dict({
