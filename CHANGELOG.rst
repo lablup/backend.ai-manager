@@ -30,6 +30,13 @@ Changes
 
 * IMPROVE: "--short" and "--installed" options added to ``etcd list-images`` command.
 
+19.09.11 (2020-01-16)
+---------------------
+
+* FIX: Potential blocking due to file I/O contention in the vfolder API. (#219)
+
+* IMPROVE: Update the batch user creation script.
+
 19.09.10 (2020-01-09)
 ---------------------
 

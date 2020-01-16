@@ -24,6 +24,7 @@ import aiohttp_cors
 import aiojobs
 from aiojobs.aiohttp import atomic
 import aiotools
+import janus
 import multidict
 import sqlalchemy as sa
 import psycopg2
@@ -34,7 +35,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.utils import Fstab
 
 from .auth import auth_required, superadmin_required
-from .config import DEFAULT_CHUNK_SIZE
+from .config import DEFAULT_CHUNK_SIZE, DEFAULT_INFLIGHT_CHUNKS
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
     GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
@@ -56,6 +57,8 @@ from ..manager.models import (
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
+
+eof_sentinel = object()
 
 VFolderRow = Mapping[str, Any]
 
@@ -278,7 +281,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 # Try to create actual only if vFolder is managed one
                 folder_path = (request.app['VFOLDER_MOUNT'] / folder_host /
                                request.app['VFOLDER_FSPREFIX'] / folder_id)
-                folder_path.mkdir(parents=True, exist_ok=True)
+                loop = current_loop()
+                await loop.run_in_executor(None, lambda: folder_path.mkdir(parents=True, exist_ok=True))
         except OSError:
             raise VFolderCreationFailed
         user_uuid = str(user_uuid) if group_id is None else None
@@ -507,7 +511,8 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
         permission = row['permission']
     # TODO: handle nested directory structure
     folder_path = get_folder_hostpath(row, request.app)
-    num_files = len(list(folder_path.iterdir()))
+    loop = current_loop()
+    num_files = await loop.run_in_executor(None, lambda: len(list(folder_path.iterdir())))
     resp = {
         'name': row['name'],
         'id': row['id'].hex,
@@ -585,7 +590,8 @@ async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     folder_path = get_folder_hostpath(row, request.app)
     assert not path.is_absolute(), 'path must be relative.'
     try:
-        (folder_path / path).mkdir(parents=True, exist_ok=True)
+        loop = current_loop()
+        await loop.run_in_executor(None, lambda: (folder_path / path).mkdir(parents=True, exist_ok=True))
     except FileExistsError as e:
         raise InvalidAPIParameters(
             f'"{e.filename}" already exists and is not a directory.')
@@ -619,17 +625,38 @@ async def upload(request: web.Request, row: VFolderRow) -> web.Response:
                 'it already exists and not a regular file.')
         file_dir = (folder_path / file.filename).parent
         try:
-            file_dir.mkdir(parents=True, exist_ok=True)
+            loop = current_loop()
+            await loop.run_in_executor(None, lambda: file_dir.mkdir(parents=True, exist_ok=True))
         except FileExistsError as e:
             raise InvalidAPIParameters(
                 'Failed to create parent directories. '
                 f'"{e.filename}" already exists and is not a directory.')
         log.info(log_fmt + ': accepted path:{}',
                  *log_args, file.filename)
-        with open(file_path, 'wb') as f:
+
+        q = janus.Queue(maxsize=DEFAULT_INFLIGHT_CHUNKS)
+
+        def _write():
+            with open(file_path, 'wb') as f:
+                while True:
+                    chunk = q.sync_q.get()
+                    if chunk is eof_sentinel:
+                        break
+                    f.write(file.decode(chunk))
+                    q.sync_q.task_done()
+
+        loop = current_loop()
+        try:
+            fut = loop.run_in_executor(None, _write)
             while not file.at_eof():
                 chunk = await file.read_chunk(size=DEFAULT_CHUNK_SIZE)
-                f.write(file.decode(chunk))
+                await q.async_q.put(chunk)
+            await q.async_q.put(eof_sentinel)
+            await fut
+        finally:
+            q.close()
+            await q.wait_closed()
+
     return web.Response(status=201)
 
 
@@ -975,19 +1002,24 @@ async def list_files(request: web.Request, params: Any, row: VFolderRow) -> web.
     if not folder_path.is_dir():
         raise InvalidAPIParameters('The target path must be a directory.')
     files = []
-    for f in os.scandir(folder_path):
-        fstat = f.stat()
-        ctime = fstat.st_ctime  # TODO: way to get concrete create time?
-        mtime = fstat.st_mtime
-        atime = fstat.st_atime
-        files.append({
-            'mode': stat.filemode(fstat.st_mode),
-            'size': fstat.st_size,
-            'ctime': ctime,
-            'mtime': mtime,
-            'atime': atime,
-            'filename': f.name,
-        })
+
+    def _scan():
+        for f in os.scandir(folder_path):
+            fstat = f.stat()
+            ctime = fstat.st_ctime  # TODO: way to get concrete create time?
+            mtime = fstat.st_mtime
+            atime = fstat.st_atime
+            files.append({
+                'mode': stat.filemode(fstat.st_mode),
+                'size': fstat.st_size,
+                'ctime': ctime,
+                'mtime': mtime,
+                'atime': atime,
+                'filename': f.name,
+            })
+
+    loop = current_loop()
+    await loop.run_in_executor(None, _scan)
     resp = {
         'files': json.dumps(files),
     }
