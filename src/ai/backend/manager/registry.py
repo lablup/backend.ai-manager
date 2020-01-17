@@ -591,7 +591,9 @@ class AgentRegistry:
         # Create kernel object in PENDING state.
         async with self.dbpool.acquire() as conn, conn.begin():
             # Feed SSH keypair and dotfiles if exists.
-            query = (sa.select([keypairs.c.ssh_public_key, keypairs.c.ssh_private_key, keypairs.c.dotfiles])
+            query = (sa.select([keypairs.c.ssh_public_key,
+                                keypairs.c.ssh_private_key,
+                                keypairs.c.dotfiles])
                        .select_from(keypairs)
                        .where(keypairs.c.access_key == access_key))
             result = await conn.execute(query)

@@ -1,18 +1,13 @@
-import json
 import logging
 import re
-import uuid
 
 from aiohttp import web
 import aiohttp_cors
-import sqlalchemy as sa
 import trafaret as t
 from typing import Any, Tuple
-import yaml
 
-from ai.backend.common import msgpack, validators as tx
+from ai.backend.common import msgpack
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import SessionTypes
 
 from .auth import auth_required
 from .exceptions import (
@@ -26,7 +21,7 @@ from .utils import check_api_params, get_access_key_scopes
 from ..manager.models import (
     keypairs
 )
-from ..manager.models.keypair import query_available_dotfiles, Dotfile, MAXIMUM_DOTFILE_SIZE
+from ..manager.models.keypair import query_available_dotfiles, MAXIMUM_DOTFILE_SIZE
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.dotfile'))
 
@@ -55,7 +50,6 @@ async def create(request: web.Request, params: Any) -> web.Response:
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     log.info('CREATE (ak:{0}/{1})',
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
-    user_uuid = request['user']['uuid']
     dbpool = request.app['dbpool']
 
     async with dbpool.acquire() as conn, conn.begin():
@@ -75,7 +69,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
         dotfile_packed = msgpack.packb(new_dotfiles)
         if len(dotfile_packed) > MAXIMUM_DOTFILE_SIZE:
             raise DotfileCreationFailed('No leftover space for dotfile storage')
-        
+
         query = (keypairs.update()
                          .values(dotfiles=dotfile_packed)
                          .where(keypairs.c.access_key == owner_access_key))
@@ -129,7 +123,6 @@ async def update(request: web.Request, params: Any) -> web.Response:
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     log.info('CREATE (ak:{0}/{1})',
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
-    user_uuid = request['user']['uuid']
     dbpool = request.app['dbpool']
 
     async with dbpool.acquire() as conn, conn.begin():
@@ -143,7 +136,7 @@ async def update(request: web.Request, params: Any) -> web.Response:
         dotfile_packed = msgpack.packb(new_dotfiles)
         if len(dotfile_packed) > MAXIMUM_DOTFILE_SIZE:
             raise DotfileCreationFailed('No leftover space for dotfile storage')
-        
+
         query = (keypairs.update()
                          .values(dotfiles=dotfile_packed)
                          .where(keypairs.c.access_key == owner_access_key))
