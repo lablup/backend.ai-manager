@@ -1,6 +1,12 @@
 Changes
 =======
 
+19.09.11 (2020-01-17)
+---------------------
+
+* FIX: Potential exhaustion of DB connection pool due to long file I/O operations in the vfolder API
+  (#219)
+
 19.09.11 (2020-01-16)
 ---------------------
 
