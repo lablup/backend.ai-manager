@@ -47,7 +47,7 @@ def validate_path(path: str) -> bool:
     {
         t.Key('data'): t.String,
         t.Key('path'): t.String,
-        t.Key('permission', default='755'): t.Null | t.Regexp(r'^[0-9]{3}$', re.ASCII),
+        t.Key('permission'): t.Regexp(r'^[0-9]{3}$', re.ASCII),
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }
 ))
@@ -121,7 +121,7 @@ async def list_or_get(request: web.Request, params: Any) -> web.Response:
     {
         t.Key('data'): t.String,
         t.Key('path'): t.String,
-        t.Key('permission', default='644'): t.Null | t.Regexp(r'^[0-9]{3}$', re.ASCII),
+        t.Key('permission'): t.Regexp(r'^[0-9]{3}$', re.ASCII),
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }
 ))
@@ -155,12 +155,13 @@ async def update(request: web.Request, params: Any) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @check_api_params(
     t.Dict({
+        t.Key('path'): t.String,
         t.Key('owner_access_key', default=None): t.Null | t.String,
     })
 )
 async def delete(request: web.Request, params: Any) -> web.Response:
     dbpool = request.app['dbpool']
-    path = request.match_info['dotfile_path']
+    path = params['path']
 
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     log.info('DELETE (ak:{0}/{1})',
