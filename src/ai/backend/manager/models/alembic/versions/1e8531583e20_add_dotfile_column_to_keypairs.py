@@ -19,12 +19,8 @@ depends_on = None
 def upgrade():
     op.add_column(
         'keypairs',
-        sa.Column('dotfiles', sa.LargeBinary(length=64 * 1024), nullable=True)
+        sa.Column('dotfiles', sa.LargeBinary(length=64 * 1024), nullable=False, server_default='\\x90')
     )
-    connection = op.get_bind()
-    query = "UPDATE keypairs SET dotfiles = '\\x90'"
-    connection.execute(query)
-    op.alter_column('keypairs', 'dotfiles', nullable=False)
 
 
 def downgrade():

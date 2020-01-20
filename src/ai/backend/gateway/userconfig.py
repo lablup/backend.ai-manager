@@ -1,10 +1,10 @@
 import logging
 import re
+from typing import Any, Tuple
 
 from aiohttp import web
 import aiohttp_cors
 import trafaret as t
-from typing import Any, Tuple
 
 from ai.backend.common import msgpack
 from ai.backend.common.logging import BraceStyleAdapter
@@ -21,7 +21,7 @@ from .utils import check_api_params, get_access_key_scopes
 from ..manager.models import (
     keypairs
 )
-from ..manager.models.keypair import query_available_dotfiles, MAXIMUM_DOTFILE_SIZE
+from ..manager.models.keypair import query_owned_dotfiles, MAXIMUM_DOTFILE_SIZE
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.dotfile'))
 
@@ -40,9 +40,9 @@ def validate_path(path: str) -> bool:
 @auth_required
 @check_api_params(t.Dict(
     {
-        t.Key('data'): t.String,
+        t.Key('data'): t.String(max_length=MAXIMUM_DOTFILE_SIZE),
         t.Key('path'): t.String,
-        t.Key('permission'): t.Regexp(r'^[0-9]{3}$', re.ASCII),
+        t.Key('permission'): t.Regexp(r'^[0-7]{3}$', re.ASCII),
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }
 ))
@@ -54,7 +54,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
 
     async with dbpool.acquire() as conn, conn.begin():
         path: str = params['path']
-        dotfiles, leftover_space = await query_available_dotfiles(conn, owner_access_key)
+        dotfiles, leftover_space = await query_owned_dotfiles(conn, owner_access_key)
         if leftover_space == 0:
             raise DotfileCreationFailed('No leftover space for dotfile storage')
         if len(dotfiles) == 100:
@@ -93,13 +93,13 @@ async def list_or_get(request: web.Request, params: Any) -> web.Response:
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
     async with dbpool.acquire() as conn:
         if params['path']:
-            dotfiles, _ = await query_available_dotfiles(conn, owner_access_key)
+            dotfiles, _ = await query_owned_dotfiles(conn, owner_access_key)
             for dotfile in dotfiles:
                 if dotfile['path'] == params['path']:
                     return web.json_response(dotfile)
             raise DotfileNotFound
         else:
-            dotfiles, _ = await query_available_dotfiles(conn, access_key)
+            dotfiles, _ = await query_owned_dotfiles(conn, access_key)
             for entry in dotfiles:
                 resp.append({
                     'path': entry['path'],
@@ -113,9 +113,9 @@ async def list_or_get(request: web.Request, params: Any) -> web.Response:
 @auth_required
 @check_api_params(t.Dict(
     {
-        t.Key('data'): t.String,
+        t.Key('data'): t.String(max_length=MAXIMUM_DOTFILE_SIZE),
         t.Key('path'): t.String,
-        t.Key('permission'): t.Regexp(r'^[0-9]{3}$', re.ASCII),
+        t.Key('permission'): t.Regexp(r'^[0-7]{3}$', re.ASCII),
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }
 ))
@@ -127,7 +127,7 @@ async def update(request: web.Request, params: Any) -> web.Response:
 
     async with dbpool.acquire() as conn, conn.begin():
         path: str = params['path']
-        dotfiles, _ = await query_available_dotfiles(conn, owner_access_key)
+        dotfiles, _ = await query_owned_dotfiles(conn, owner_access_key)
         new_dotfiles = [x for x in dotfiles if x['path'] != path]
         if len(new_dotfiles) == len(dotfiles):
             raise DotfileNotFound
@@ -161,7 +161,7 @@ async def delete(request: web.Request, params: Any) -> web.Response:
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
 
     async with dbpool.acquire() as conn, conn.begin():
-        dotfiles, _ = await query_available_dotfiles(conn, owner_access_key)
+        dotfiles, _ = await query_owned_dotfiles(conn, owner_access_key)
         new_dotfiles = [x for x in dotfiles if x['path'] != path]
         if len(new_dotfiles) == len(dotfiles):
             raise DotfileNotFound
@@ -186,10 +186,11 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     app['api_versions'] = (4, 5)
+    app['prefix'] = 'user-config'
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
-    cors.add(app.router.add_route('POST', '', create))
-    cors.add(app.router.add_route('GET', '', list_or_get))
-    cors.add(app.router.add_route('PATCH', '', update))
-    cors.add(app.router.add_route('DELETE', '', delete))
+    cors.add(app.router.add_route('POST', '/dotfiles', create))
+    cors.add(app.router.add_route('GET', '/dotfiles', list_or_get))
+    cors.add(app.router.add_route('PATCH', '/dotfiles', update))
+    cors.add(app.router.add_route('DELETE', '/dotfiles', delete))
 
     return app, []

@@ -26,7 +26,7 @@ __all__: Sequence[str] = (
     'KeyPair', 'KeyPairInput',
     'CreateKeyPair', 'ModifyKeyPair', 'DeleteKeyPair',
     'Dotfile', 'MAXIMUM_DOTFILE_SIZE',
-    'query_available_dotfiles'
+    'query_owned_dotfiles'
 )
 
 
@@ -350,7 +350,7 @@ def generate_ssh_keypair():
     return (public_key, private_key)
 
 
-async def query_available_dotfiles(conn, access_key) -> Tuple[List[Dotfile], int]:
+async def query_owned_dotfiles(conn, access_key) -> Tuple[List[Dotfile], int]:
     query = (sa.select([keypairs.c.dotfiles])
                .select_from(keypairs)
                .where(keypairs.c.access_key == access_key))
