@@ -328,10 +328,10 @@ async def stream_execute(request: web.Request) -> web.StreamResponse:
         tx.AliasedKey(['port'], default=None): t.Null | t.Int[1024:65535],
         tx.AliasedKey(['envs'], default=None): t.Null | t.String,  # stringified JSON
                                                                    # e.g., '{"PASSWORD": "12345"}'
-        tx.AliasedKey(['arguments'], default=None): t.Null | t.String  # stringified JSON
-                                                                       # e.g., '{"-P": "12345"}'
-                                                                       # The value can be one of:
-                                                                       # None, str, List[str]
+        tx.AliasedKey(['arguments'], default=None): t.Null | t.String,  # stringified JSON
+                                                                        # e.g., '{"-P": "12345"}'
+                                                                        # The value can be one of:
+                                                                        # None, str, List[str]
     }))
 async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
     registry = request.app['registry']
@@ -380,6 +380,8 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
     elif sport['protocol'] == 'http':
         proxy_cls = TCPProxy
         # proxy_cls = HTTPProxy
+    elif sport['protocol'] == 'preopen_ports':
+        proxy_cls = TCPProxy
     else:
         raise InvalidAPIParameters(
             f"Unsupported service protocol: {sport['protocol']}")
