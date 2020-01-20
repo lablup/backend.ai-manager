@@ -116,7 +116,7 @@ def vfolder_permission_required(perm: VFolderPermission):
                 if len(entries) == 0:
                     raise VFolderNotFound(
                         'Your operation may be permission denied.')
-                return await handler(request, entries[0], *args, **kwargs)
+            return await handler(request, entries[0], *args, **kwargs)
 
         return _wrapped
 
@@ -154,7 +154,7 @@ def vfolder_check_exists(handler: Callable[..., Awaitable[web.Response]]):
             row = await result.first()
             if row is None:
                 raise VFolderNotFound()
-            return await handler(request, row, *args, **kwargs)
+        return await handler(request, row, *args, **kwargs)
 
     return _wrapped
 
