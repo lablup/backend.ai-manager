@@ -379,7 +379,7 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
     elif sport['protocol'] == 'http':
         proxy_cls = TCPProxy
         # proxy_cls = HTTPProxy
-    elif sport['protocol'] == 'preopen_ports':
+    elif sport['protocol'] == 'preopen':
         proxy_cls = TCPProxy
     else:
         raise InvalidAPIParameters(
