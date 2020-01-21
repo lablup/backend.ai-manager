@@ -237,6 +237,7 @@ class ConfigServer:
         installed = (
             await self.context['redis_image'].scard(image_ref.canonical)
         ) > 0
+        installed_agents = await self.context['redis_image'].smembers(image_ref.canonical)
 
         res_limits = []
         for slot_key, slot_range in item['resource'].items():
@@ -270,6 +271,7 @@ class ConfigServer:
             'resource_limits': res_limits,
             'supported_accelerators': accels,
             'installed': installed,
+            'installed_agents': installed_agents,
         }
 
     async def _check_image(self, reference: str) -> ImageRef:
