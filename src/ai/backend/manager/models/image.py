@@ -29,6 +29,7 @@ class Image(graphene.ObjectType):
     resource_limits = graphene.List(ResourceLimit)
     supported_accelerators = graphene.List(graphene.String)
     installed = graphene.Boolean()
+    installed_agents = graphene.List(graphene.String)
     # legacy field
     hash = graphene.String()
 
@@ -50,6 +51,7 @@ class Image(graphene.ObjectType):
                 for v in data['resource_limits']],
             supported_accelerators=data['supported_accelerators'],
             installed=data['installed'],
+            installed_agents=data.get('installed_agents', []),
             # legacy
             hash=data['digest'],
         )
