@@ -684,6 +684,7 @@ class AgentRegistry:
                     'startup_command': sess_ctx.startup_command,
                     'internal_data': sess_ctx.internal_data,
                     'auto_pull': auto_pull,
+                    'preopen_ports': sess_ctx.preopen_ports,
                 }
                 created_info = await rpc.call.create_kernel(str(sess_ctx.kernel_id),
                                                             config)
