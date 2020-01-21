@@ -324,8 +324,7 @@ async def stream_execute(request: web.Request) -> web.StreamResponse:
 @auth_required
 @check_api_params(
     t.Dict({
-        tx.AliasedKey(['app', 'service']): t.String,
-        tx.AliasedKey(['port'], default=None): t.Null | t.Int[1024:65535],
+        tx.AliasedKey(['app', 'service']): t.String | t.Int[1024:65535],
         tx.AliasedKey(['envs'], default=None): t.Null | t.String,  # stringified JSON
                                                                    # e.g., '{"PASSWORD": "12345"}'
         tx.AliasedKey(['arguments'], default=None): t.Null | t.String,  # stringified JSON
@@ -352,7 +351,7 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
     else:
         kernel_host = kernel.kernel_host
     for sport in kernel.service_ports:
-        if sport['name'] == service:
+        if sport['name'] == str(service):
             if params['port']:
                 try:
                     hport_idx = sport['container_ports'].index(params['port'])
