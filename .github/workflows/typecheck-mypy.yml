@@ -15,6 +15,7 @@ jobs:
         python-version: 3.8
     - name: Install dependencies
       run: |
+        sudo apt-get install libsnappy-dev
         python -m pip install -U pip setuptools
         # Use the same branch (if exists) for the backend.ai-common installation
         set +e
