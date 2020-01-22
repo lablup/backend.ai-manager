@@ -17,10 +17,12 @@ jobs:
       run: |
         python -m pip install -U pip setuptools
         # Use the same branch (if exists) for the backend.ai-common installation
+        set +e
         git ls-remote --heads 'https://github.com/lablup/backend.ai-common' | grep -q "refs/heads/${GITHUB_REF##*/}"
         if [ $? -eq 0 ]; then
           sed -i "s%\(backend.ai-common\)@master%\1@${GITHUB_REF##*/}%" requirements/typecheck.txt
         fi
+        set -e
         python -m pip install -U -r requirements/typecheck.txt
     - name: Type check with mypy
       run: |
