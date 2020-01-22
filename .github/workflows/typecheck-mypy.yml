@@ -1,0 +1,30 @@
+name: Type check with mypy
+
+on: [push]
+
+jobs:
+  typecheck:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: Set up Python 3.8
+      uses: actions/setup-python@v1
+      with:
+        python-version: 3.8
+    - name: Install dependencies
+      run: |
+        sudo apt-get install libsnappy-dev
+        python -m pip install -U pip setuptools
+        # Use the same branch (if exists) for the backend.ai-common installation
+        set +e
+        git ls-remote --heads 'https://github.com/lablup/backend.ai-common' | grep -q "refs/heads/${GITHUB_REF##*/}"
+        if [ $? -eq 0 ]; then
+          sed -i "s%\(backend.ai-common\)@master%\1@${GITHUB_REF##*/}%" requirements/typecheck.txt
+        fi
+        set -e
+        python -m pip install -U -r requirements/typecheck.txt
+    - name: Type check with mypy
+      run: |
+        python -m mypy src/ai/backend
