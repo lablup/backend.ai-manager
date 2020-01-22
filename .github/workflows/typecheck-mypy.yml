@@ -1,6 +1,6 @@
 name: Type check with mypy
 
-on: [push]
+on: [push, pull_request]
 
 jobs:
   typecheck:
