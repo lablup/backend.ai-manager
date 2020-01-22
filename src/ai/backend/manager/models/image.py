@@ -4,6 +4,7 @@ import graphene
 import sqlalchemy as sa
 
 from ai.backend.common.logging import BraceStyleAdapter
+from .user import UserRole
 from .base import BigInt, KVPair, ResourceLimit
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
@@ -34,7 +35,9 @@ class Image(graphene.ObjectType):
     hash = graphene.String()
 
     @classmethod
-    def _convert_from_dict(cls, data):
+    def _convert_from_dict(cls, context, data):
+        is_superadmin = (context['user']['role'] == UserRole.SUPERADMIN)
+        hide_agents = False if is_superadmin else context['config']['manager']['hide-agents']
         return cls(
             name=data['name'],
             humanized_name=data['humanized_name'],
@@ -51,7 +54,7 @@ class Image(graphene.ObjectType):
                 for v in data['resource_limits']],
             supported_accelerators=data['supported_accelerators'],
             installed=data['installed'],
-            installed_agents=data.get('installed_agents', []),
+            installed_agents=data.get('installed_agents', []) if not hide_agents else None,
             # legacy
             hash=data['digest'],
         )
@@ -59,7 +62,7 @@ class Image(graphene.ObjectType):
     @classmethod
     async def load_item(cls, context, reference):
         r = await context['config_server'].inspect_image(reference)
-        return cls._convert_from_dict(r)
+        return cls._convert_from_dict(context, r)
 
     @classmethod
     async def load_all(cls, context, is_installed=None, is_operation=None):
@@ -67,7 +70,7 @@ class Image(graphene.ObjectType):
         items = []
         # Convert to GQL objects
         for r in raw_items:
-            item = cls._convert_from_dict(r)
+            item = cls._convert_from_dict(context, r)
             items.append(item)
         if is_installed is not None:
             items = [*filter(lambda item: item.installed == is_installed, items)]
