@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import io
 import json
 import logging
 from pprint import pprint
