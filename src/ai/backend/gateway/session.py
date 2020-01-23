@@ -433,7 +433,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
         tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
         tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
         tx.AliasedKey(['preopen_ports', 'preopenPorts'], default=None):
-            t.Null | t.List(t.Int[1024:65535]),
+            t.Null | t.Tuple(t.Int[1024:65535]),
         t.Key('config', default=dict): t.Mapping(t.String, t.Any),
         t.Key('tag', default=undefined): UndefChecker | t.Null | t.String,
         t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
@@ -573,7 +573,7 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
         tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
         tx.AliasedKey(['preopen_ports', 'preopenPorts'], default=None):
-            t.Null | t.List(t.Int[1024:65535]),
+            t.Null | t.Tuple(t.Int[1024:65535]),
         t.Key('config', default=dict): t.Mapping(t.String, t.Any),
         t.Key('tag', default=None): t.Null | t.String,
         t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,

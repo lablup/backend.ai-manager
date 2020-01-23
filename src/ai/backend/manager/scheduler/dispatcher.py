@@ -372,6 +372,7 @@ class SchedulerDispatcher(aobject):
                 mount_map=row['mount_map'],
                 bootstrap_script=row['bootstrap_script'],
                 startup_command=row['startup_command'],
+                preopen_ports=row.get('preopen_ports', None)
             ))
         return items
 
