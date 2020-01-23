@@ -1,0 +1,7 @@
+ignore:
+  - src/ai/backend/manager/models/alembic
+coverage:
+  status:
+    project:
+      default:
+        threshold: 5%
