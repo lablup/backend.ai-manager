@@ -60,9 +60,9 @@ async def test_register_myself(config_server, mocker):
 async def test_update_aliases_from_file(config_server, image_aliases):
     await config_server.update_aliases_from_file(Path(image_aliases))
     alias_data = await config_server.etcd.get_prefix('images/_aliases')
-    assert alias_data == {
+    assert dict(alias_data) == {
         'my-python': 'test-python:latest',
-        'my-python%3A3.6': 'test-python:3.6-debian',
+        'my-python:3.6': 'test-python:3.6-debian',
     }
 
 
