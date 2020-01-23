@@ -130,6 +130,7 @@ creation_config_v4 = t.Dict({
     tx.AliasedKey(['scaling_group', 'scalingGroup'], default=None): t.Null | t.String,
     t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
     tx.AliasedKey(['resource_opts', 'resourceOpts'], default=None): t.Null | t.Mapping(t.String, t.Any),
+    tx.AliasedKey(['preopen_ports', 'preopenPorts'], default=None): t.Null | t.Tuple(t.Int[1024:65535]),
 })
 creation_config_v4_template = t.Dict({
     t.Key('mounts', default=undefined): UndefChecker | t.Null | t.List(t.String),
@@ -432,8 +433,6 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             tx.Enum(SessionTypes),
         tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
         tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
-        tx.AliasedKey(['preopen_ports', 'preopenPorts'], default=None):
-            t.Null | t.Tuple(t.Int[1024:65535]),
         t.Key('config', default=dict): t.Mapping(t.String, t.Any),
         t.Key('tag', default=undefined): UndefChecker | t.Null | t.String,
         t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
@@ -572,8 +571,6 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
             tx.Enum(SessionTypes),
         tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
         tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
-        tx.AliasedKey(['preopen_ports', 'preopenPorts'], default=None):
-            t.Null | t.Tuple(t.Int[1024:65535]),
         t.Key('config', default=dict): t.Mapping(t.String, t.Any),
         t.Key('tag', default=None): t.Null | t.String,
         t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,

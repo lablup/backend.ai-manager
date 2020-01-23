@@ -324,7 +324,7 @@ async def stream_execute(request: web.Request) -> web.StreamResponse:
 @auth_required
 @check_api_params(
     t.Dict({
-        tx.AliasedKey(['app', 'service']): t.String | t.Int[1024:65535],
+        tx.AliasedKey(['app', 'service']): t.String,
         tx.AliasedKey(['envs'], default=None): t.Null | t.String,  # stringified JSON
                                                                    # e.g., '{"PASSWORD": "12345"}'
         tx.AliasedKey(['arguments'], default=None): t.Null | t.String,  # stringified JSON
@@ -336,7 +336,7 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
     registry = request.app['registry']
     session_name = request.match_info['session_name']
     access_key = request['keypair']['access_key']
-    service = request.query.get('app', None)  # noqa
+    service = params['app']
 
     stream_key = (session_name, access_key)
     myself = asyncio.Task.current_task()
@@ -351,19 +351,11 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
     else:
         kernel_host = kernel.kernel_host
     for sport in kernel.service_ports:
-        if sport['name'] == str(service):
-            if params['port']:
-                try:
-                    hport_idx = sport['container_ports'].index(params['port'])
-                except ValueError:
-                    raise InvalidAPIParameters(
-                        f"Service {service} does not open the port number {params['port']}.")
-                port = sport['host_ports'][hport_idx]
+        if sport['name'] == service:
+            if 'host_ports' not in sport:
+                port = sport['host_port']  # legacy kernels
             else:
-                if 'host_ports' not in sport:
-                    port = sport['host_port']  # legacy kernels
-                else:
-                    port = sport['host_ports'][0]
+                port = sport['host_ports'][0]
             dest = (kernel_host, port)
             break
     else:
