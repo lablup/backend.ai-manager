@@ -112,15 +112,8 @@ def put_json(cli_ctx, key, file, scope):
     async def _impl():
         async with etcd_ctx(cli_ctx) as etcd:
             try:
-                with contextlib.closing(io.BytesIO()) as buf:
-                    while True:
-                        part = file.read(65536)
-                        if not part:
-                            break
-                        buf.write(part)
-                    value = json.loads(buf.getvalue())
-                    value = {f'{key}/{k}': v for k, v in value.items()}
-                    await etcd.put_dict(value, scope=scope)
+                value = json.load(file)
+                await etcd.put_prefix(key, value, scope=scope)
             except Exception:
                 log.exception('An error occurred.')
     with cli_ctx.logger:
