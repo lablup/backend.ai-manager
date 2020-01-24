@@ -179,6 +179,21 @@ class VFolderAlreadyExists(web.HTTPBadRequest, BackendError):
     error_title = 'The virtual folder already exists with the same name.'
 
 
+class DotfileCreationFailed(web.HTTPBadRequest, BackendError):
+    error_type  = 'https://api.backend.ai/probs/generic-bad-request'
+    error_title = 'Dotfile creation has failed.'
+
+
+class DotfileAlreadyExists(web.HTTPBadRequest, BackendError):
+    error_type  = 'https://api.backend.ai/probs/generic-bad-request'
+    error_title = 'Dotfile already exists.'
+
+
+class DotfileNotFound(web.HTTPNotFound, BackendError):
+    error_type  = 'https://api.backend.ai/probs/generic-not-found'
+    error_title = 'Requested Dotfile not found.'
+
+
 class QuotaExceeded(web.HTTPPreconditionFailed, BackendError):
     error_type  = 'https://api.backend.ai/probs/quota-exceeded'
     error_title = 'You have reached your resource limit.'

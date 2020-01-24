@@ -45,7 +45,7 @@ def upgrade():
 
     # Fill in SSH keypairs in every keypairs.
     conn = op.get_bind()
-    query = sa.select([keypairs])
+    query = sa.select([keypairs.c.access_key]).select_from(keypairs)
     rows = conn.execute(query).fetchall()
     for row in rows:
         pubkey, privkey = generate_ssh_keypair()
