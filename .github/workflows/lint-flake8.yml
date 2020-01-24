@@ -27,4 +27,9 @@ jobs:
         python -m pip install -U -r requirements/lint.txt
     - name: Lint with flake8
       run: |
-        python -m flake8 src/ai/backend tests --count --statistics
+        if [ "$GITHUB_EVENT_NAME" == "pull_request" -a -n "$GITHUB_HEAD_REF" ]; then
+          echo "(skipping matchers for pull request from local branches)"
+        else
+          echo "::add-matcher::.github/workflows/flake8-matcher.json"
+        fi
+        python -m flake8 src/ai/backend tests

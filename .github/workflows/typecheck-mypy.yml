@@ -27,4 +27,9 @@ jobs:
         python -m pip install -U -r requirements/typecheck.txt
     - name: Type check with mypy
       run: |
-        python -m mypy src/ai/backend
+        if [ "$GITHUB_EVENT_NAME" == "pull_request" -a -n "$GITHUB_HEAD_REF" ]; then
+          echo "(skipping matchers for pull request from local branches)"
+        else
+          echo "::add-matcher::.github/workflows/mypy-matcher.json"
+        fi
+        python -m mypy --no-color-output src/ai/backend
