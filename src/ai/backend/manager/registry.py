@@ -435,7 +435,7 @@ class AgentRegistry:
         domain_name: str,
         bootstrap_script=str,
         group_id: uuid.UUID,
-        user_uuid: str,
+        user_uuid: uuid.UUID,
         user_role: str,
         startup_command: str = None,
         session_tag: str = None,
