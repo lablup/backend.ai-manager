@@ -463,6 +463,10 @@ class AgentRegistry:
         # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
         determined_mounts = []
         matched_mounts = set()
+        # per-user package storage information should be stored in following format:
+        # [vFolder ID, User UUID, vFolder Host]
+        # User UUID should be None if vFolder type is group
+        package_directory = None
         async with self.dbpool.acquire() as conn, conn.begin():
             if mounts:
                 extra_vf_conds = (
@@ -481,14 +485,20 @@ class AgentRegistry:
                     # User's accessible group vfolders should not be mounted
                     # if not belong to the execution kernel.
                     continue
-                matched_mounts.add(item['name'])
-                determined_mounts.append((
-                    item['name'],
-                    item['host'],
-                    item['id'].hex,
-                    item['permission'].value,
-                    item['unmanaged_path'] if item['unmanaged_path'] else ''
-                ))
+                if item['name'] == '.local':
+                    if (not package_directory) or item['group'] is None:
+                        package_directory = [item['id'].hex,
+                                             None if item['group'] is None else user_uuid.hex,
+                                             item['host']]
+                else:
+                    matched_mounts.add(item['name'])
+                    determined_mounts.append((
+                        item['name'],
+                        item['host'],
+                        item['id'].hex,
+                        item['permission'].value,
+                        item['unmanaged_path'] if item['unmanaged_path'] else ''
+                    ))
             if mounts and set(mounts) > matched_mounts:
                 raise VFolderNotFound
             creation_config['mounts'] = determined_mounts
@@ -630,6 +640,7 @@ class AgentRegistry:
                 'environ': [f'{k}={v}' for k, v in environ.items()],
                 'mounts': [list(mount) for mount in mounts],  # postgres save tuple as str
                 'mount_map': mount_map,
+                'package_directory': package_directory,
                 'bootstrap_script': bootstrap_script,
                 'repl_in_port': 0,
                 'repl_out_port': 0,
@@ -682,6 +693,7 @@ class AgentRegistry:
                     'idle_timeout': resource_policy['idle_timeout'],
                     'mounts': sess_ctx.mounts,
                     'mount_map': sess_ctx.mount_map,
+                    'package_directory': sess_ctx.package_directory,
                     'environ': sess_ctx.environ,
                     'resource_opts': sess_ctx.resource_opts,
                     'bootstrap_script': sess_ctx.bootstrap_script,

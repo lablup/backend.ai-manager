@@ -330,6 +330,7 @@ class SchedulerDispatcher(aobject):
                 kernels.c.environ,
                 kernels.c.mounts,
                 kernels.c.mount_map,
+                kernels.c.package_directory,
                 kernels.c.bootstrap_script,
                 kernels.c.startup_command,
                 kernels.c.internal_data,
@@ -370,6 +371,7 @@ class SchedulerDispatcher(aobject):
                 },
                 mounts=row['mounts'],
                 mount_map=row['mount_map'],
+                package_directory=row['package_directory'],
                 bootstrap_script=row['bootstrap_script'],
                 startup_command=row['startup_command'],
             ))
