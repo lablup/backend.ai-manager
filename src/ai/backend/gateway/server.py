@@ -573,7 +573,6 @@ def main(ctx: click.Context, config_path: Path, debug: bool) -> None:
             if cfg['manager']['pid-file'].is_file():
                 # check is_file() to prevent deleting /dev/null!
                 cfg['manager']['pid-file'].unlink()
-            os.unlink(log_sockpath)
     else:
         # Click is going to invoke a subcommand.
         pass
