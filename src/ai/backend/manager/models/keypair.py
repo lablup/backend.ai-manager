@@ -2,7 +2,7 @@ import asyncio
 import base64
 from collections import OrderedDict
 import secrets
-from typing import Sequence
+from typing import Sequence, List, Tuple
 
 from cryptography.hazmat.primitives import serialization as crypto_serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -12,6 +12,8 @@ from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import false
 import psycopg2 as pg
+
+from ai.backend.common import msgpack
 
 from .base import (
     metadata, ForeignKeyIDColumn,
@@ -23,8 +25,12 @@ __all__: Sequence[str] = (
     'keypairs',
     'KeyPair', 'KeyPairInput',
     'CreateKeyPair', 'ModifyKeyPair', 'DeleteKeyPair',
+    'Dotfile', 'MAXIMUM_DOTFILE_SIZE',
+    'query_owned_dotfiles'
 )
 
+
+MAXIMUM_DOTFILE_SIZE = 64 * 1024  # 61 KiB
 
 keypairs = sa.Table(
     'keypairs', metadata,
@@ -49,6 +55,8 @@ keypairs = sa.Table(
     sa.Column('resource_policy', sa.String(length=256),
               sa.ForeignKey('keypair_resource_policies.name'),
               nullable=False),
+    # dotfiles column, \x90 means empty list in msgpack
+    sa.Column('dotfiles', sa.LargeBinary(length=MAXIMUM_DOTFILE_SIZE), nullable=False, default=b'\x90')
 )
 
 
@@ -306,6 +314,9 @@ class DeleteKeyPair(graphene.Mutation):
         return await simple_db_mutate(cls, info.context, delete_query)
 
 
+Dotfile = dict()
+
+
 def generate_keypair():
     '''
     AWS-like access key and secret key generation.
@@ -334,3 +345,12 @@ def generate_ssh_keypair():
         crypto_serialization.PublicFormat.OpenSSH
     ).decode("utf-8")
     return (public_key, private_key)
+
+
+async def query_owned_dotfiles(conn, access_key) -> Tuple[List[dict], int]:
+    query = (sa.select([keypairs.c.dotfiles])
+               .select_from(keypairs)
+               .where(keypairs.c.access_key == access_key))
+    packed_dotfile = await conn.scalar(query)
+    rows = msgpack.unpackb(packed_dotfile)
+    return rows, MAXIMUM_DOTFILE_SIZE - len(packed_dotfile)
