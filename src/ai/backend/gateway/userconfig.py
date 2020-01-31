@@ -172,6 +172,40 @@ async def delete(request: web.Request, params: Any) -> web.Response:
         return web.json_response({'success': True})
 
 
+@server_status_required(READ_ALLOWED)
+@auth_required
+@check_api_params(t.Dict(
+    {
+        t.Key('data'): t.String(max_length=MAXIMUM_DOTFILE_SIZE),
+    }
+))
+async def update_bootstrap_script(request: web.Request, params: Any) -> web.Response:
+    dbpool = request.app['dbpool']
+    access_key = request['keypair']['access_key']
+    log.info('UPDATE_BOOTSTRAP_SCRIPT (ak:{0})', access_key)
+    async with dbpool.acquire() as conn, conn.begin():
+        packed_script = msgpack.packb(params.get('data', ''))
+        query = (keypairs.update()
+                         .values(bootstrap_script=packed_script)
+                         .where(keypairs.c.access_key == access_key))
+        await conn.execute(query)
+    return web.json_response({})
+
+
+@auth_required
+@server_status_required(READ_ALLOWED)
+async def get_bootstrap_script(request: web.Request, params: Any) -> web.Response:
+    dbpool = request.app['dbpool']
+    access_key = request['keypair']['access_key']
+    log.info('GET_BOOTSTRAP_SCRIPT (ak:{0})', access_key)
+    async with dbpool.acquire() as conn:
+        script, _ = await query_bootstrap_script(conn, access_key)
+        print('# bootstrap-script content:', script)
+        import sys
+        sys.stdout.flush()
+        return web.json_response(script)
+
+
 async def init(app: web.Application) -> None:
     pass
 
@@ -191,5 +225,7 @@ def create_app(default_cors_options):
     cors.add(app.router.add_route('GET', '/dotfiles', list_or_get))
     cors.add(app.router.add_route('PATCH', '/dotfiles', update))
     cors.add(app.router.add_route('DELETE', '/dotfiles', delete))
+    cors.add(app.router.add_route('POST', '/bootstrap-script', update_bootstrap_script))
+    cors.add(app.router.add_route('GET', '/bootstrap-script', get_bootstrap_script))
 
     return app, []
