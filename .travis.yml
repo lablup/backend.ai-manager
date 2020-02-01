@@ -75,7 +75,7 @@ after_success:
 # stage def.
 jobs:
   include:
-    # test stage is implicitly included.
+    - stage: test
     - stage: deploy
       python: "3.6"
       install: skip
