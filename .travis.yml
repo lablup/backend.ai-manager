@@ -1,13 +1,12 @@
 language: python
 dist: xenial
-sudo: required
 cache: pip
 addons:
   postgresql: "9.6"
 services:
   - docker
   - postgresql
-  - redis-server
+  - redis
 addons:
   apt:
     packages:
@@ -85,8 +84,8 @@ jobs:
           tags: true
         provider: pypi
         distributions: sdist bdist_wheel
-        skip_upload_docs: true
-        user: "__token__"
+        upload_docs: false
+        username: "__token__"
         password:
           secure: "n8go6UQ6HeKBX3Eun+m0rQGtpm+FHB6QwpE5EneRnLpCYUpU6XjmkwhVF+BY+JolQBDITB1wAQ9cJXto/jSw2clKY/hPF27PasLBFdu0GM7gkmy1eyJNjkOvzrzhKZ87Y4YdCZoIcMXALDjwxAi+G15zD4TYK8DvDhDGl6TtUVmHhYtFMX5hq/X7x+hDREmnCVLuxrW5/joJ3byupGBj+mE0QI9CxFep0K8TvzGI+8mLMvxqL3LFcvopAh/AIC5R342yCsfRPPJ+gUGXChPne2dMLuF5tmhA32o3db7Yru/JaANwED/0y4jzYWTHf3RzZFKY63GHJj+vPLKGyZv8dSGHYsR/gkCTAPbjWatlcprEFMNETtRQrvgI67canxGe51hW2HZCOXC90Jt7wBzE+3XdBFHMad8rvtyejZyZO+Zj1gT9eHwrbt7fBhqREd1hp9sl3zfQ136nmTCScWQ1ubFClokQiuvDrXWj+FJxBQOrIdVH9M65lTgp+FMwYJBd+/f9rUSjklYE85GoTV7EQq9nh/W28XZEkyfb5UmxndJ7mTkJ1Nsj9/2+xm1OrNV2h8TYtmdg70QLd8fq3lnKUuQyl6LPreM6B+/w9r6CUpa+lmK3RMosjQ/+lkdv2DzP45rHN7qn1LJRTq2xAnQeDyuCdqXQ61/3yWeTJ457cWc="
 
