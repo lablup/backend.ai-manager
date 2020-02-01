@@ -14,7 +14,7 @@ from .base import (
     simple_db_mutate_returning_item,
     set_if_set,
 )
-from .group import groups, resolve_group_name_or_id
+from .group import resolve_group_name_or_id
 from .user import UserRole
 
 __all__: Sequence[str] = (

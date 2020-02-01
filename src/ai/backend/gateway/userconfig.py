@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Any, Tuple
+from typing import Any
 
 from aiohttp import web
 import aiohttp_cors
