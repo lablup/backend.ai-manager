@@ -20,7 +20,9 @@ from .utils import check_api_params, get_access_key_scopes
 from ..manager.models import (
     keypairs
 )
-from ..manager.models.keypair import query_owned_dotfiles, MAXIMUM_DOTFILE_SIZE
+from ..manager.models.keypair import (
+    query_bootstrap_script, query_owned_dotfiles, MAXIMUM_DOTFILE_SIZE
+)
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.dotfile'))
 
@@ -194,15 +196,12 @@ async def update_bootstrap_script(request: web.Request, params: Any) -> web.Resp
 
 @auth_required
 @server_status_required(READ_ALLOWED)
-async def get_bootstrap_script(request: web.Request, params: Any) -> web.Response:
+async def get_bootstrap_script(request: web.Request) -> web.Response:
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
     log.info('GET_BOOTSTRAP_SCRIPT (ak:{0})', access_key)
     async with dbpool.acquire() as conn:
         script, _ = await query_bootstrap_script(conn, access_key)
-        print('# bootstrap-script content:', script)
-        import sys
-        sys.stdout.flush()
         return web.json_response(script)
 
 
