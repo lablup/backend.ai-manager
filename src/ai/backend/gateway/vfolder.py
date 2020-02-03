@@ -729,36 +729,18 @@ async def tus_upload_part(request):
                    request.app['VFOLDER_FSPREFIX'] / params['folder'])
     upload_base = folder_path / ".upload"
     target_filename = upload_base / params['session_id']
-    
-    q: janus.Queue[Union[bytes, Sentinel]] = janus.Queue(maxsize=DEFAULT_INFLIGHT_CHUNKS)
 
-    def _write():
-        with open(target_filename, 'ab') as f:
-            while True:
-                chunk = q.sync_q.get()
-                if chunk is eof_sentinel:
-                    break
-                f.write(chunk)
-                q.sync_q.task_done()
-
-    loop = current_loop()
-    try:
-        fut = loop.run_in_executor(None, _write)
+    with open(target_filename, 'ab') as f:
         while not request.content.at_eof():
-            chunk = await request.content.read(size=DEFAULT_CHUNK_SIZE)
-            await q.async_q.put(chunk)
-        await q.async_q.put(eof_sentinel)
-        await fut
-    finally:
-        q.close()
-        await q.wait_closed()
+            chunk = await request.content.read(DEFAULT_CHUNK_SIZE)
+            f.write(chunk)
 
     fs = Path(target_filename).stat().st_size
     if fs >= params['size']:
         target_path = folder_path / params['path']
         Path(target_filename).rename(target_path)
         try:
-            await loop.run_in_executor(None, lambda: upload_base.rmdir())
+            upload_base.rmdir()  # delete .upload directory if it is empty
         except OSError:
             pass
 
