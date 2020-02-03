@@ -20,12 +20,14 @@ from ai.backend.manager.scheduler import PendingSession, ExistingSession, AgentC
 from ai.backend.manager.scheduler.dispatcher import load_scheduler
 from ai.backend.manager.scheduler.fifo import FIFOSlotScheduler, LIFOSlotScheduler
 from ai.backend.manager.scheduler.drf import DRFScheduler
+from ai.backend.manager.scheduler.mof import MOFScheduler
 
 
 def test_load_intrinsic():
     assert isinstance(load_scheduler('fifo', {}), FIFOSlotScheduler)
     assert isinstance(load_scheduler('lifo', {}), LIFOSlotScheduler)
     assert isinstance(load_scheduler('drf', {}), DRFScheduler)
+    assert isinstance(load_scheduler('mof', {}), MOFScheduler)
 
 
 example_group_id = uuid.uuid4()
@@ -68,6 +70,86 @@ def example_agents():
                 'mem': Decimal('0'),
                 'cuda.shares': Decimal('0'),
                 'rocm.devices': Decimal('0'),
+            }),
+        ),
+    ]
+
+
+@pytest.fixture
+def example_agents_first_one_assigned():
+    return [
+        AgentContext(
+            agent_id=AgentId('i-001'),
+            agent_addr='10.0.1.1:6001',
+            scaling_group='sg01',
+            available_slots=ResourceSlot({
+                'cpu': Decimal('2.0'),
+                'mem': Decimal('2048'),
+                'cuda.shares': Decimal('2.0'),
+                'rocm.devices': Decimal('1'),
+            }),
+            occupied_slots=ResourceSlot({
+                'cpu': Decimal('2.0'),
+                'mem': Decimal('2048'),
+                'cuda.shares': Decimal('2.0'),
+                'rocm.devices': Decimal('1'),
+            }),
+        ),
+        AgentContext(
+            agent_id=AgentId('i-101'),
+            agent_addr='10.0.2.1:6001',
+            scaling_group='sg02',
+            available_slots=ResourceSlot({
+                'cpu': Decimal('3.0'),
+                'mem': Decimal('2560'),
+                'cuda.shares': Decimal('1.0'),
+                'rocm.devices': Decimal('8'),
+            }),
+            occupied_slots=ResourceSlot({
+                'cpu': Decimal('0'),
+                'mem': Decimal('0'),
+                'cuda.shares': Decimal('0'),
+                'rocm.devices': Decimal('0'),
+            }),
+        ),
+    ]
+
+
+@pytest.fixture
+def example_agents_no_valid():
+    return [
+        AgentContext(
+            agent_id=AgentId('i-001'),
+            agent_addr='10.0.1.1:6001',
+            scaling_group='sg01',
+            available_slots=ResourceSlot({
+                'cpu': Decimal('0'),
+                'mem': Decimal('0'),
+                'cuda.shares': Decimal('0'),
+                'rocm.devices': Decimal('0'),
+            }),
+            occupied_slots=ResourceSlot({
+                'cpu': Decimal('4.0'),
+                'mem': Decimal('4096'),
+                'cuda.shares': Decimal('4.0'),
+                'rocm.devices': Decimal('2'),
+            }),
+        ),
+        AgentContext(
+            agent_id=AgentId('i-101'),
+            agent_addr='10.0.2.1:6001',
+            scaling_group='sg02',
+            available_slots=ResourceSlot({
+                'cpu': Decimal('0'),
+                'mem': Decimal('0'),
+                'cuda.shares': Decimal('0'),
+                'rocm.devices': Decimal('0'),
+            }),
+            occupied_slots=ResourceSlot({
+                'cpu': Decimal('3.0'),
+                'mem': Decimal('2560'),
+                'cuda.shares': Decimal('1.0'),
+                'rocm.devices': Decimal('8'),
             }),
         ),
     ]
@@ -219,7 +301,8 @@ def test_fifo_scheduler(example_agents, example_pending_sessions, example_existi
         example_pending_sessions,
         example_existing_sessions)
     assert picked_session_id == example_pending_sessions[0].kernel_id
-    picked_session = _find_and_pop_picked_session(example_pending_sessions, picked_session_id)
+    picked_session = _find_and_pop_picked_session(
+        example_pending_sessions, picked_session_id)
 
     agent_id = scheduler.assign_agent(example_agents, picked_session)
     assert agent_id == AgentId('i-001')
@@ -232,7 +315,8 @@ def test_lifo_scheduler(example_agents, example_pending_sessions, example_existi
         example_pending_sessions,
         example_existing_sessions)
     assert picked_session_id == example_pending_sessions[2].kernel_id
-    picked_session = _find_and_pop_picked_session(example_pending_sessions, picked_session_id)
+    picked_session = _find_and_pop_picked_session(
+        example_pending_sessions, picked_session_id)
 
     agent_id = scheduler.assign_agent(example_agents, picked_session)
     assert agent_id == 'i-001'
@@ -246,10 +330,56 @@ def test_drf_scheduler(example_agents, example_pending_sessions, example_existin
         example_existing_sessions)
     pprint(example_pending_sessions)
     assert picked_session_id == example_pending_sessions[1].kernel_id
-    picked_session = _find_and_pop_picked_session(example_pending_sessions, picked_session_id)
+    picked_session = _find_and_pop_picked_session(
+        example_pending_sessions, picked_session_id)
 
     agent_id = scheduler.assign_agent(example_agents, picked_session)
     assert agent_id == 'i-001'
+
+
+def test_mof_scheduler_first_assign(example_agents, example_pending_sessions, example_existing_sessions):
+    scheduler = MOFScheduler({})
+    picked_session_id = scheduler.pick_session(
+        example_total_capacity,
+        example_pending_sessions,
+        example_existing_sessions)
+    assert picked_session_id == example_pending_sessions[0].kernel_id
+    picked_session = _find_and_pop_picked_session(
+        example_pending_sessions, picked_session_id)
+
+    agent_id = scheduler.assign_agent(example_agents, picked_session)
+    assert agent_id == 'i-001'
+
+
+def test_mof_scheduler_second_assign(example_agents_first_one_assigned, example_pending_sessions,
+                                     example_existing_sessions):
+    scheduler = MOFScheduler({})
+    picked_session_id = scheduler.pick_session(
+        example_total_capacity,
+        example_pending_sessions,
+        example_existing_sessions)
+    assert picked_session_id == example_pending_sessions[0].kernel_id
+    picked_session = _find_and_pop_picked_session(
+        example_pending_sessions, picked_session_id)
+
+    agent_id = scheduler.assign_agent(
+        example_agents_first_one_assigned, picked_session)
+    assert agent_id == 'i-101'
+
+
+def test_mof_scheduler_no_valid_agent(example_agents_no_valid, example_pending_sessions,
+                                      example_existing_sessions):
+    scheduler = MOFScheduler({})
+    picked_session_id = scheduler.pick_session(
+        example_total_capacity,
+        example_pending_sessions,
+        example_existing_sessions)
+    assert picked_session_id == example_pending_sessions[0].kernel_id
+    picked_session = _find_and_pop_picked_session(
+        example_pending_sessions, picked_session_id)
+
+    agent_id = scheduler.assign_agent(example_agents_no_valid, picked_session)
+    assert agent_id is None
 
 
 # TODO: write tests for multiple agents and scaling groups
