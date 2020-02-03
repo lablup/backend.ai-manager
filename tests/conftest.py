@@ -3,7 +3,6 @@ from datetime import datetime
 import hashlib, hmac
 from importlib import import_module
 import json
-import multiprocessing as mp
 import os
 from pathlib import Path
 import re
@@ -25,27 +24,34 @@ import psycopg2 as pg
 import pytest
 
 from ai.backend.common.argparse import host_port_pair
+from ai.backend.gateway.config import load as load_config, redis_config_iv
+from ai.backend.gateway.etcd import ConfigServer
 from ai.backend.common.types import HostPortPair
-from ai.backend.gateway.config import load as load_config
 from ai.backend.gateway.server import (
     gw_init, gw_shutdown,
     exception_middleware, api_middleware,
     _get_legacy_handler,
     PUBLIC_INTERFACES)
 from ai.backend.manager.models.base import populate_fixture
-from ai.backend.manager.models import agents, kernels, keypairs, vfolders
+from ai.backend.manager.models import (
+    scaling_groups,
+    agents,
+    kernels, keypairs, vfolders,
+)
 
 here = Path(__file__).parent
 
 
-@pytest.fixture(scope='session')
+@pytest.fixture(scope='session', autouse=True)
 def test_id():
     return secrets.token_hex(12)
 
 
-@pytest.fixture(scope='session')
+@pytest.fixture(scope='session', autouse=True)
 def test_ns(test_id):
-    return f'testing-ns-{test_id}'
+    ret = f'testing-ns-{test_id}'
+    os.environ['BACKEND_NAMESPACE'] = ret
+    return ret
 
 
 @pytest.fixture(scope='session')
@@ -55,7 +61,10 @@ def test_db(test_id):
 
 @pytest.fixture(scope='session')
 def folder_mount(test_id):
-    return Path(f'/tmp/backend.ai/vfolders-{test_id}')
+    ret = Path(f'/tmp/backend.ai-testing/vfolders-{test_id}')
+    ret.mkdir(parents=True, exist_ok=True)
+    yield ret
+    shutil.rmtree(ret.parent)
 
 
 @pytest.fixture(scope='session')
@@ -69,47 +78,90 @@ def folder_host():
     return 'local'
 
 
-@pytest.fixture(scope='session', autouse=True)
-def prepare_and_cleanup_databases(request, test_ns, test_db,
-                                  folder_mount, folder_host, folder_fsprefix):
-    os.environ['BACKEND_NAMESPACE'] = test_ns
-    os.environ['BACKEND_DB_NAME'] = test_db
-
-    # Clear and reset etcd namespace using CLI functions.
+@pytest.fixture(scope='session')
+def test_config(test_id, test_db):
     cfg = load_config()
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'volumes/_mount', str(folder_mount)])
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'volumes/_fsprefix', str(folder_fsprefix)])
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'volumes/_default_host', str(folder_host)])
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'config/docker/registry/index.docker.io',
-                     'https://registry-1.docker.io'])
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'config/redis/addr', '127.0.0.1:8110'])
-    # Add fake plugin settings.
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'config/plugins/cloudia/base_url', '127.0.0.1:8090'])
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'config/plugins/cloudia/user', 'fake-cloudia-user@lablup.com'])
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'put',
-                     'config/plugins/cloudia/password', 'fake-password'])
+    cfg['db']['name'] = test_db
+    cfg['manager']['num-proc'] = 1
+    cfg['manager']['heartbeat-timeout'] = 10.0
+    cfg['manager']['service-addr'] = HostPortPair('localhost', 29100)
+    # In normal setups, this is read from etcd.
+    cfg['redis'] = redis_config_iv.check({
+        'addr': {'host': '127.0.0.1', 'port': '6379'},
+    })
+    return cfg
 
-    def finalize_etcd():
-        subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'delete',
-                         '', '--prefix'])
-    request.addfinalizer(finalize_etcd)
+
+@pytest.fixture(scope='session')
+def etcd_fixture(test_id, test_config, vfolder_mount, vfolder_fsprefix, vfolder_host):
+    # Clear and reset etcd namespace using CLI functions.
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.etcd.json') as f:
+        etcd_fixture = {
+            'volumes': {
+                '_mount': str(vfolder_mount),
+                '_fsprefix': str(vfolder_fsprefix),
+                '_default_host': str(vfolder_host),
+            },
+            'nodes': {
+            },
+            'config': {
+                'docker': {
+                    'registry': {
+                        'index.docker.io': 'https://registry-1.docker.io',
+                    },
+                },
+                'redis': {
+                    'addr': '127.0.0.1:6379',
+                },
+                'plugins': {
+                    'cloudia': {
+                        'base_url': '127.0.0.1:8090',
+                        'user': 'fake-cloudia-user@lablup.com',
+                        'password': 'fake-password',
+                    }
+                }
+            },
+        }
+        json.dump(etcd_fixture, f)
+        f.flush()
+        subprocess.call([
+            'python', '-m', 'ai.backend.manager.cli',
+            'etcd', 'put-json', '', f.name,
+        ])
+    yield
+    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'delete',
+                     '', '--prefix'])
+
+
+@pytest.fixture
+async def config_server(app, etcd_fixture):
+    server = ConfigServer(
+        app,
+        app['config']['etcd']['addr'],
+        app['config']['etcd']['user'],
+        app['config']['etcd']['password'],
+        app['config']['etcd']['namespace'],
+    )
+    yield server
+
+
+@pytest.fixture(scope='session')
+def database(request, test_config, test_db):
+    '''
+    Create a new database for the current test session
+    and install the table schema using alembic.
+    '''
+    db_addr = test_config['db']['addr']
+    db_user = test_config['db']['user']
+    db_pass = test_config['db']['password']
 
     # Create database using low-level psycopg2 API.
-    db_addr = cfg['db']['addr']
-    db_user = cfg['db']['user']
-    db_pass = cfg['db']['password']
+    # Temporarily use "testing" dbname until we create our own db.
     if db_pass:
         # TODO: escape/urlquote db_pass
-        db_url = f'postgresql://{db_user}:{db_pass}@{db_addr}'
+        db_url = f'postgresql://{db_user}:{db_pass}@{db_addr}/testing'
     else:
-        db_url = f'postgresql://{db_user}@{db_addr}'
+        db_url = f'postgresql://{db_user}@{db_addr}/testing'
     conn = pg.connect(db_url)
     conn.set_isolation_level(pg.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
     cur = conn.cursor()
@@ -131,7 +183,7 @@ def prepare_and_cleanup_databases(request, test_ns, test_db,
     request.addfinalizer(finalize_db)
 
     # Load the database schema using CLI function.
-    alembic_url = db_url + '/' + test_db
+    alembic_url = f'postgresql://{db_user}:{db_pass}@{db_addr}/{test_db}'
     with tempfile.NamedTemporaryFile(mode='w', encoding='utf8') as alembic_cfg:
         alembic_sample_cfg = here / '..' / 'alembic.ini.sample'
         alembic_cfg_data = alembic_sample_cfg.read_text()
@@ -144,7 +196,18 @@ def prepare_and_cleanup_databases(request, test_ns, test_db,
         subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'schema', 'oneshot',
                          '-f', alembic_cfg.name])
 
-    # Populate example_keypair fixture
+
+@pytest.fixture()
+def database_fixture(test_config, test_db, database):
+    '''
+    Populate the example data as fixtures to the database
+    and delete them after use.
+    '''
+    db_addr = test_config['db']['addr']
+    db_user = test_config['db']['user']
+    db_pass = test_config['db']['password']
+    alembic_url = f'postgresql://{db_user}:{db_pass}@{db_addr}/{test_db}'
+
     fixtures = {}
     fixtures.update(json.loads(
         (Path(__file__).parent.parent /
@@ -154,9 +217,25 @@ def prepare_and_cleanup_databases(request, test_ns, test_db,
          'sample-configs' / 'example-resource-presets.json').read_text()))
     engine = sa.create_engine(alembic_url)
     conn = engine.connect()
-    populate_fixture(conn, fixtures)
-    conn.close()
-    engine.dispose()
+    try:
+        populate_fixture(conn, fixtures, ignore_unique_violation=True)
+    finally:
+        conn.close()
+        engine.dispose()
+
+    yield
+
+    engine = sa.create_engine(alembic_url)
+    conn = engine.connect()
+    try:
+        conn.execute((vfolders.delete()))
+        conn.execute((kernels.delete()))
+        conn.execute((agents.delete()))
+        conn.execute((keypairs.delete()))
+        conn.execute((scaling_groups.delete()))
+    finally:
+        conn.close()
+        engine.dispose()
 
 
 class Client:
@@ -213,7 +292,7 @@ class Client:
 
 
 @pytest.fixture
-async def app(event_loop, test_ns, test_db, unused_tcp_port_factory):
+async def app(event_loop, test_config, unused_tcp_port_factory):
     """
     For tests that do not require actual server running.
     """
@@ -221,15 +300,11 @@ async def app(event_loop, test_ns, test_db, unused_tcp_port_factory):
         exception_middleware,
         api_middleware,
     ])
-    app['config'] = load_config()
+    app['config'] = test_config
 
     # Override settings for testing.
-    app['config']['db']['name'] = test_db
-    app['config']['etcd']['namespace'] = test_ns
     app['config']['manager']['num-proc'] = 2
-    app['config']['manager']['heartbeat-timeout'] = 10.0
-    app['config']['manager']['service-addr'] = HostPortPair(
-        '127.0.0.1', unused_tcp_port_factory())
+
     # import ssl
     # app['config'].ssl_cert = here / 'sample-ssl-cert' / 'sample.crt'
     # app['config'].ssl_key = here / 'sample-ssl-cert' / 'sample.key'
@@ -244,26 +319,6 @@ async def app(event_loop, test_ns, test_db, unused_tcp_port_factory):
 @pytest.fixture
 async def default_keypair(event_loop, app):
     """Global admin keypair"""
-    # access_key = 'AKIAIOSFODNN7EXAMPLE'
-    # config = app['config']
-    # pool = await create_engine(
-    #     host=config.db_addr[0], port=config.db_addr[1],
-    #     user=config.db_user, password=config.db_password,
-    #     dbname=config.db_name, minsize=1, maxsize=4
-    # )
-    # async with pool.acquire() as conn:
-    #     query = (sa.select([keypairs.c.access_key, keypairs.c.secret_key])
-    #                .select_from(keypairs)
-    #                .where(keypairs.c.access_key == access_key))
-    #     result = await conn.execute(query)
-    #     row = await result.first()
-    #     keypair = {
-    #         'access_key': access_key,
-    #         'secret_key': row.secret_key,
-    #     }
-    # pool.close()
-    # await pool.wait_closed()
-    # return keypair
     return {
         'access_key': 'AKIAIOSFODNN7EXAMPLE',
         'secret_key': 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
