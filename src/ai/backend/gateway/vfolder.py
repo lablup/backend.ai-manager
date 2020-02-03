@@ -729,7 +729,7 @@ async def tus_upload_part(request):
                    request.app['VFOLDER_FSPREFIX'] / params['folder'])
     upload_base = folder_path / ".upload"
     target_filename = upload_base / params['session_id']
-
+    
     q: janus.Queue[Union[bytes, Sentinel]] = janus.Queue(maxsize=DEFAULT_INFLIGHT_CHUNKS)
 
     def _write():
