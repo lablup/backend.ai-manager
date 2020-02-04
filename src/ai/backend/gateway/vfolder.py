@@ -938,6 +938,8 @@ async def download_with_token(request) -> web.StreamResponse:
 
     iv = t.Dict({
         t.Key('file'): t.String,
+        t.Key('host'): t.String,
+        t.Key('id'): t.String,
     })
     params = iv.check(params)
     fn = params['file']
