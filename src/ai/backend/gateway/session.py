@@ -399,6 +399,13 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
                             if 'allowed_envs' in item.keys():
                                 response_dict['allowed_envs'] = item['allowed_envs']
                             resp['servicePorts'].append(response_dict)
+                        for port_no in params['config']['preopen_ports']:
+                            response_dict = {
+                                'name': str(port_no),
+                                'protocol': 'preopen',
+                                'ports': [port_no],
+                            }
+                            resp['servicePorts'].append(response_dict)
                     else:
                         resp['status'] = row['status'].name
 
