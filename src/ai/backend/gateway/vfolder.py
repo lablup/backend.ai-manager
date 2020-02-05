@@ -745,7 +745,7 @@ async def tus_upload_part(request):
     try:
         fut = loop.run_in_executor(None, _write)
         while not request.content.at_eof():
-            chunk = await request.content.read(size=DEFAULT_CHUNK_SIZE)
+            chunk = await request.content.read(DEFAULT_CHUNK_SIZE)
             await q.async_q.put(chunk)
         await q.async_q.put(eof_sentinel)
         await fut
