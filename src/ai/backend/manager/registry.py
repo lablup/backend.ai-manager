@@ -446,6 +446,7 @@ class AgentRegistry:
         environ = creation_config.get('environ') or {}
         resource_opts = creation_config.get('resource_opts') or {}
         scaling_group = creation_config.get('scaling_group')
+        preopen_ports = creation_config.get('preopen_ports') or []
 
         # Check scaling group availability if scaling_group parameter is given.
         # If scaling_group is not provided, it will be selected in scheduling step.
@@ -635,6 +636,7 @@ class AgentRegistry:
                 'repl_out_port': 0,
                 'stdin_port': 0,
                 'stdout_port': 0,
+                'preopen_ports': preopen_ports,
             })
             await conn.execute(query)
 
