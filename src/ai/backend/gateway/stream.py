@@ -17,6 +17,7 @@ from typing import (
     MutableMapping,
     List, Tuple,
     Set, Union,
+    Sequence
 )
 import uuid
 from urllib.parse import urlparse
@@ -526,6 +527,43 @@ async def stream_events(request: web.Request, params: Mapping[str, Any]) -> web.
         return resp
 
 
+@server_status_required(READ_ALLOWED)
+@auth_required
+@check_api_params(t.Dict({
+    tx.AliasedKey(['task_id', 'taskId']): t.String,
+    t.Key('ownerAccessKey', default=None) >> 'owner_access_key': t.Null | t.String,
+}))
+async def stream_background_task(request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
+    app = request.app
+    task_id = uuid.UUID(params['task_id'])
+    access_key = params['owner_access_key']
+    if access_key is None:
+        access_key = request['keypair']['access_key']
+
+    task_queues = app['task_queues']  # type: Set[asyncio.Queue]
+    my_queue = asyncio.Queue()          # type: asyncio.Queue[Tuple[str, dict, str]]
+    log.info('STREAM_BACKGROUND_TASK (ak:{}, t:{})', access_key, task_id)
+
+    task_queues.add(my_queue)
+    try:
+        async with sse_response(request) as resp:
+            while True:
+                evdata: Sequence = await my_queue.get()
+                if evdata is sentinel:
+                    break
+                event_task_id: str = evdata[1]
+                if task_id != uuid.UUID(event_task_id):
+                    continue
+                await resp.send(json.dumps({
+                    'taskId': str(task_id),
+                    'currentProgress': evdata[2],
+                    'totalProgress':  evdata[3]
+                }), event=evdata[0])
+    finally:
+        task_queues.remove(my_queue)
+        return resp
+
+
 async def kernel_terminated(app: web.Application, agent_id: AgentId, event_name: str,
                             kernel_id: KernelId, reason: str,
                             exit_code: int = None) -> None:
@@ -620,6 +658,14 @@ async def enqueue_result_update(app: web.Application, agent_id: AgentId, event_n
         q.put_nowait((event_name, row, reason))
 
 
+async def enqueue_task_status_update(app: web.Application, agent_id: AgentId, event_name: str,
+                                     raw_task_id: str,
+                                     current_progress: Union[int, float] = None,
+                                     total_progress: Union[int, float] = None):
+    for q in app['task_queues']:
+        q.put_nowait((event_name, raw_task_id, current_progress, total_progress, ))
+
+
 async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
     app['stream_pty_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_execute_handlers'] = defaultdict(weakref.WeakSet)
@@ -627,6 +673,7 @@ async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
     app['stream_stdin_socks'] = defaultdict(weakref.WeakSet)
     app['zctx'] = zmq.asyncio.Context()
     app['event_queues'] = set()
+    app['task_queues'] = set()
     event_dispatcher = app['event_dispatcher']
     event_dispatcher.subscribe('kernel_terminated', app, kernel_terminated)
     event_dispatcher.subscribe('kernel_enqueued', app, enqueue_status_update)
@@ -639,6 +686,8 @@ async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
     event_dispatcher.subscribe('kernel_cancelled', app, enqueue_status_update)
     event_dispatcher.subscribe('kernel_success', app, enqueue_result_update)
     event_dispatcher.subscribe('kernel_failure', app, enqueue_result_update)
+    event_dispatcher.subscribe('task_update', app, enqueue_task_status_update)
+    event_dispatcher.subscribe('task_done', app, enqueue_task_status_update)
 
     yield
 
@@ -660,6 +709,8 @@ async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
                 cancelled_tasks.append(handler)
     for q in app['event_queues']:
         q.put_nowait(sentinel)
+    for q in app['task_queues']:
+        q.put_nowait(sentinel)
     await asyncio.gather(*cancelled_tasks, return_exceptions=True)
     app['zctx'].term()
 
@@ -671,6 +722,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app['api_versions'] = (2, 3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     add_route = app.router.add_route
+    cors.add(add_route('GET', r'/background-task', stream_background_task))
     cors.add(add_route('GET', r'/session/_/events', stream_events))
     cors.add(add_route('GET', r'/session/{session_name}/pty', stream_pty))
     cors.add(add_route('GET', r'/session/{session_name}/execute', stream_execute))
