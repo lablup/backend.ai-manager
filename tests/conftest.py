@@ -24,8 +24,13 @@ import psycopg2 as pg
 import pytest
 
 from ai.backend.common.argparse import host_port_pair
-from ai.backend.gateway.config import load as load_config, redis_config_iv
+from ai.backend.gateway.config import (
+    load as load_config,
+    # load_shared as load_shared_config,
+    redis_config_iv,
+)
 from ai.backend.gateway.etcd import ConfigServer
+# from ai.backend.gateway.events import EventDispatcher
 from ai.backend.common.types import HostPortPair
 from ai.backend.gateway.server import (
     gw_init, gw_shutdown,
@@ -60,7 +65,7 @@ def test_db(test_id):
 
 
 @pytest.fixture(scope='session')
-def folder_mount(test_id):
+def vfolder_mount(test_id):
     ret = Path(f'/tmp/backend.ai-testing/vfolders-{test_id}')
     ret.mkdir(parents=True, exist_ok=True)
     yield ret
@@ -68,13 +73,13 @@ def folder_mount(test_id):
 
 
 @pytest.fixture(scope='session')
-def folder_fsprefix(test_id):
+def vfolder_fsprefix(test_id):
     # NOTE: the prefix must NOT start with "/"
     return Path('fsprefix/inner/')
 
 
 @pytest.fixture(scope='session')
-def folder_host():
+def vfolder_host():
     return 'local'
 
 
@@ -292,7 +297,7 @@ class Client:
 
 
 @pytest.fixture
-async def app(event_loop, test_config, unused_tcp_port_factory):
+async def app(event_loop, test_config):
     """
     For tests that do not require actual server running.
     """
@@ -300,6 +305,7 @@ async def app(event_loop, test_config, unused_tcp_port_factory):
         exception_middleware,
         api_middleware,
     ])
+    app['pidx'] = 0
     app['config'] = test_config
 
     # Override settings for testing.
@@ -312,8 +318,24 @@ async def app(event_loop, test_config, unused_tcp_port_factory):
     # app['sslctx'].load_cert_chain(str(app['config'].ssl_cert),
     #                            str(app['config'].ssl_key))
 
-    app['pidx'] = 0
-    return app
+    # Load some basic modules
+    # app['event_dispatcher'] = await EventDispatcher.new(app)
+    app['event_dispatcher'] = None  # TODO: implement properly
+    app['config_server'] = ConfigServer(
+        app,
+        app['config']['etcd']['addr'],
+        app['config']['etcd']['user'],
+        app['config']['etcd']['password'],
+        app['config']['etcd']['namespace'],
+    )
+    # shared_config = await load_shared_config(app['config_server'].etcd)
+    # app['config'].update(shared_config)
+
+    try:
+        yield app
+    finally:
+        await app['config_server'].close()
+        # await app['event_dispatcher'].close()
 
 
 @pytest.fixture
