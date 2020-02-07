@@ -4,7 +4,6 @@ import functools
 import logging
 from typing import Callable, List, Union
 import uuid
-from uuid import UUID
 
 from aiojobs import Scheduler
 
@@ -19,11 +18,11 @@ class ProgressReporter:
     event_dispatcher: EventDispatcher
     total_progress: Union[int, float]
     current_progress: Union[int, float]
-    task_id: UUID
+    task_id: uuid.UUID
     loop: AbstractEventLoop
 
     def __init__(self, event_dispatcher: EventDispatcher,
-                       task_id: UUID,
+                       task_id: uuid.UUID,
                        loop: AbstractEventLoop):
         self.event_dispatcher = event_dispatcher
         self.task_id = task_id
@@ -54,7 +53,7 @@ class BackgroundTask:
 
     def start_background_task(self,
                                     coro: Callable,
-                                    sched: Scheduler = None) -> UUID:
+                                    sched: Scheduler = None) -> uuid.UUID:
         task_id = uuid.uuid4()
         reporter = ProgressReporter(self.event_dispatcher, task_id, self.loop)
         p = coro(reporter)
