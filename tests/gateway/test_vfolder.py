@@ -9,13 +9,12 @@ import sqlalchemy as sa
 import subprocess
 
 from ai.backend.manager.models import (
-    groups, keypairs, keypair_resource_policies, users,
+    users, groups, keypairs,
     vfolders, vfolder_invitations, vfolder_permissions,
     VFolderInvitationState, VFolderPermission
 )
 from ai.backend.manager.models.user import UserRole
 from tests.model_factory import (
-    get_random_string,
     AssociationGroupsUsersFactory, DomainFactory, GroupFactory, UserFactory,
     VFolderFactory, VFolderInvitationFactory, VFolderPermissionFactory
 )
@@ -1266,7 +1265,7 @@ class TestInvitation:
 
         inviter = 'admin@lablup.com'
         invitee = 'user@lablup.com'
-        vfinv = await VFolderInvitationFactory(app).create(
+        await VFolderInvitationFactory(app).create(
             inviter=inviter, invitee=invitee,
             vfolder=folder_info['id'])
 
@@ -1313,7 +1312,7 @@ class TestInvitation:
 
         inviter = 'admin@lablup.com'
         invitee = 'user@lablup.com'
-        vfinv = await VFolderInvitationFactory(app).create(
+        await VFolderInvitationFactory(app).create(
             inviter=inviter, invitee=invitee,
             vfolder=folder_info['id'])
 
@@ -1515,7 +1514,7 @@ class TestInvitation:
         folder_info = await create_vfolder()
 
         shared_to = await UserFactory(app).get(email='user@lablup.com')
-        vfinv = await VFolderPermissionFactory(app).create(
+        await VFolderPermissionFactory(app).create(
             vfolder=folder_info['id'], user=shared_to['uuid'],
             permission=VFolderPermission('rw'))
 
@@ -1562,7 +1561,7 @@ class TestInvitation:
         folder_info = await create_vfolder()
 
         shared_to = await UserFactory(app).get(email='user@lablup.com')
-        vfinv = await VFolderPermissionFactory(app).create(
+        await VFolderPermissionFactory(app).create(
             vfolder=folder_info['id'], user=shared_to['uuid'],
             permission=VFolderPermission('ro'))
 
@@ -1579,7 +1578,6 @@ class TestInvitation:
                                                          user=shared_to['uuid'])
         assert ret.status == 200
         assert vfperm['permission'] == 'rw'
-
 
 
 class TestJoinedVfolderManipulations:
