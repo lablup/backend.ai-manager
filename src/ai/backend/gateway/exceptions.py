@@ -50,14 +50,24 @@ class BackendError(web.HTTPError):
         self.body = json.dumps(body).encode()
 
     def __str__(self):
+        lines = []
         if self.extra_msg:
-            return f'{self.error_title} ({self.extra_msg})'
-        return self.error_title
+            lines.append(f'{self.error_title} ({self.extra_msg})')
+        else:
+            lines.append(self.error_title)
+        if self.extra_data:
+            lines.append(' -> extra_data: ' + repr(self.extra_data))
+        return '\n'.join(lines)
 
     def __repr__(self):
+        lines = []
         if self.extra_msg:
-            return f'<{type(self).__name__}: {self.error_title} ({self.extra_msg})>'
-        return f'<{type(self).__name__}: {self.error_title}>'
+            lines.append(f'<{type(self).__name__}: {self.error_title} ({self.extra_msg})>')
+        else:
+            lines.append(f'<{type(self).__name__}: {self.error_title}>')
+        if self.extra_data:
+            lines.append(' -> extra_data: ' + repr(self.extra_data))
+        return '\n'.join(lines)
 
     def __reduce__(self):
         return (type(self), (self.extra_msg, self.extra_data))
