@@ -392,6 +392,8 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
             registry.start_service(sess_id, access_key, service, opts))
         if result['status'] == 'failed':
             msg = f"Failed to launch the app service: {result['error']}"
+            # Raising InternalServerError directly skips logging error details in the manager-side.
+            log.error(msg)
             raise InternalServerError(msg)
 
         # TODO: weakref to proxies for graceful shutdown?
