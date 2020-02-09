@@ -56,7 +56,10 @@ keypairs = sa.Table(
               sa.ForeignKey('keypair_resource_policies.name'),
               nullable=False),
     # dotfiles column, \x90 means empty list in msgpack
-    sa.Column('dotfiles', sa.LargeBinary(length=MAXIMUM_DOTFILE_SIZE), nullable=False, default=b'\x90')
+    sa.Column('dotfiles', sa.LargeBinary(length=MAXIMUM_DOTFILE_SIZE), nullable=False, default=b'\x90'),
+    # bootstrap script column, \x90 means empty list in msgpack
+    sa.Column('bootstrap_script', sa.LargeBinary(length=MAXIMUM_DOTFILE_SIZE),
+              nullable=False, default=b'\x90'),
 )
 
 
@@ -351,3 +354,12 @@ async def query_owned_dotfiles(conn, access_key) -> Tuple[List[dict], int]:
     packed_dotfile = await conn.scalar(query)
     rows = msgpack.unpackb(packed_dotfile)
     return rows, MAXIMUM_DOTFILE_SIZE - len(packed_dotfile)
+
+
+async def query_bootstrap_script(conn, access_key) -> Tuple[List[dict], int]:
+    query = (sa.select([keypairs.c.bootstrap_script])
+               .select_from(keypairs)
+               .where(keypairs.c.access_key == access_key))
+    packed_script = await conn.scalar(query)
+    script = msgpack.unpackb(packed_script)
+    return script, MAXIMUM_DOTFILE_SIZE - len(packed_script)
