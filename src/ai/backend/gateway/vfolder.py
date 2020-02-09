@@ -707,7 +707,7 @@ async def tus_upload_part(request):
     upload_base = folder_path / ".upload"
     target_filename = upload_base / params['session_id']
 
-    q: janus.Queue[Union[bytes, Sentinel]] = janus.Queue(maxsize=DEFAULT_INFLIGHT_CHUNKS)
+    q: 'janus.Queue[Union[bytes, _Sentinel]]' = janus.Queue(maxsize=DEFAULT_INFLIGHT_CHUNKS)
 
     def _write():
         with open(target_filename, 'ab') as f:
