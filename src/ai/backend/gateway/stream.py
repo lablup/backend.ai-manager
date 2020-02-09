@@ -391,8 +391,9 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
         result = await asyncio.shield(
             registry.start_service(sess_id, access_key, service, opts))
         if result['status'] == 'failed':
-            msg = f"Failed to launch the app service: {result['error']}"
-            raise InternalServerError(msg)
+            raise InternalServerError(
+                "Failed to launch the app service",
+                extra_data=result['error'])
 
         # TODO: weakref to proxies for graceful shutdown?
         ws = web.WebSocketResponse(autoping=False)

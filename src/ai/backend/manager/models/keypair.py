@@ -25,7 +25,7 @@ __all__: Sequence[str] = (
     'keypairs',
     'KeyPair', 'KeyPairInput',
     'CreateKeyPair', 'ModifyKeyPair', 'DeleteKeyPair',
-    'Dotfile', 'MAXIMUM_DOTFILE_SIZE',
+    'MAXIMUM_DOTFILE_SIZE',
     'query_owned_dotfiles'
 )
 
@@ -315,9 +315,6 @@ class DeleteKeyPair(graphene.Mutation):
             .where(keypairs.c.access_key == access_key)
         )
         return await simple_db_mutate(cls, info.context, delete_query)
-
-
-Dotfile = dict()
 
 
 def generate_keypair():

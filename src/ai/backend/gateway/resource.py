@@ -235,7 +235,9 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             })
 
         # Return group stats with zeros if not allowed.
-        allow_group_total = await request.app['registry'].config_server.get(f'config/api/resources/allow-group-total')
+        allow_group_total = await request.app['registry'].config_server.get(
+            'config/api/resources/allow-group-total'
+        )
         if allow_group_total != '':
             group_limits = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
             group_occupied = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
@@ -335,7 +337,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             used_time = used_days = None
         else:
             used_time = str(row['terminated_at'] - row['created_at'])
-            used_days = (row['terminated_at'].astimezone(local_tz).toordinal() - \
+            used_days = (row['terminated_at'].astimezone(local_tz).toordinal() -
                          row['created_at'].astimezone(local_tz).toordinal() + 1)
         device_type = set()
         smp = 0

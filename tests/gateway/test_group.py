@@ -5,7 +5,7 @@ import pytest
 import sqlalchemy as sa
 
 from ai.backend.manager.models import association_groups_users, groups
-from tests.model_factory import AssociationGroupsUsersFactory, GroupFactory
+from tests.model_factory import GroupFactory
 
 
 @pytest.mark.asyncio

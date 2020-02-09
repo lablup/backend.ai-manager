@@ -35,20 +35,36 @@ class BackendError(web.HTTPError):
         self.empty_body = False
         self.content_type = 'application/problem+json'
         self.extra_msg = extra_msg
-        if extra_msg:
-            self.error_title += f' ({extra_msg})'
+        self.extra_data = extra_data
         body = {
             'type': self.error_type,
             'title': self.error_title,
         }
+        if extra_msg is not None:
+            body['msg'] = extra_msg
         if extra_data is not None:
             body['data'] = extra_data
         self.body = json.dumps(body).encode()
 
     def __str__(self):
+        lines = []
         if self.extra_msg:
-            return f'{self.error_title} ({self.extra_msg})'
-        return self.error_title
+            lines.append(f'{self.error_title} ({self.extra_msg})')
+        else:
+            lines.append(self.error_title)
+        if self.extra_data:
+            lines.append(' -> extra_data: ' + repr(self.extra_data))
+        return '\n'.join(lines)
+
+    def __repr__(self):
+        lines = []
+        if self.extra_msg:
+            lines.append(f'<{type(self).__name__}: {self.error_title} ({self.extra_msg})>')
+        else:
+            lines.append(f'<{type(self).__name__}: {self.error_title}>')
+        if self.extra_data:
+            lines.append(' -> extra_data: ' + repr(self.extra_data))
+        return '\n'.join(lines)
 
 
 class GenericNotFound(web.HTTPNotFound, BackendError):

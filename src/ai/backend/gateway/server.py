@@ -139,6 +139,9 @@ async def exception_middleware(request, handler):
             'increment', 'ai.backend.gateway.api.requests')
         resp = (await handler(request))
     except BackendError as ex:
+        if ex.status_code == 500:
+            log.exception('Internal server error raised inside handlers')
+            raise
         app['error_monitor'].capture_exception()
         app['stats_monitor'].report_stats(
             'increment', 'ai.backend.gateway.api.failures')

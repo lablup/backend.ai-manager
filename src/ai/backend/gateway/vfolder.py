@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 import stat
 from typing import (
-    Any, Awaitable, Callable,
+    Any, Awaitable, Callable, Union,
     Dict, Mapping, MutableMapping,
     Tuple,
     Set,
@@ -58,7 +58,12 @@ from ..manager.models import (
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
 
-eof_sentinel = object()
+
+class _Sentinel:
+    pass
+
+
+eof_sentinel = _Sentinel()
 
 VFolderRow = Mapping[str, Any]
 
@@ -607,7 +612,7 @@ async def upload(request: web.Request, row: VFolderRow) -> web.Response:
         log.info(log_fmt + ': accepted path:{}',
                  *log_args, file.filename)
 
-        q = janus.Queue(maxsize=DEFAULT_INFLIGHT_CHUNKS)
+        q: 'janus.Queue[Union[bytes, _Sentinel]]' = janus.Queue(maxsize=DEFAULT_INFLIGHT_CHUNKS)
 
         def _write():
             with open(file_path, 'wb') as f:
@@ -702,17 +707,35 @@ async def tus_upload_part(request):
     upload_base = folder_path / ".upload"
     target_filename = upload_base / params['session_id']
 
-    with open(target_filename, 'ab') as f:
+    q: 'janus.Queue[Union[bytes, _Sentinel]]' = janus.Queue(maxsize=DEFAULT_INFLIGHT_CHUNKS)
+
+    def _write():
+        with open(target_filename, 'ab') as f:
+            while True:
+                chunk = q.sync_q.get()
+                if chunk is eof_sentinel:
+                    break
+                f.write(chunk)
+                q.sync_q.task_done()
+
+    loop = current_loop()
+    try:
+        fut = loop.run_in_executor(None, _write)
         while not request.content.at_eof():
             chunk = await request.content.read(DEFAULT_CHUNK_SIZE)
-            f.write(chunk)
+            await q.async_q.put(chunk)
+        await q.async_q.put(eof_sentinel)
+        await fut
+    finally:
+        q.close()
+        await q.wait_closed()
 
     fs = Path(target_filename).stat().st_size
     if fs >= params['size']:
         target_path = folder_path / params['path']
         Path(target_filename).rename(target_path)
         try:
-            upload_base.rmdir()  # delete .upload directory if it is empty
+            await loop.run_in_executor(None, lambda: upload_base.rmdir())
         except OSError:
             pass
 
