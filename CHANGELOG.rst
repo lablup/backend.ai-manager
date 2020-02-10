@@ -1,6 +1,11 @@
 Changes
 =======
 
+19.09.14 (2020-02-11)
+---------------------
+
+* FIX: Missing agent address updates upon receiving heartbeats while the agents are alive. (#231)
+
 19.09.13 (2020-02-10)
 ---------------------
 
