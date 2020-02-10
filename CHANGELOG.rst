@@ -4,7 +4,7 @@ Changes
 19.09.13 (2020-02-10)
 ---------------------
 
-* NEW: Include the IDs of agents who has the images installed when fetch the image list (#222)
+* NEW: Include the agent IDs where each image is installed when fetching the image list (#222)
 
 * NEW: API for managing user-specific dotfiles, which are automatically populated for all new sessions.
   (#220)
