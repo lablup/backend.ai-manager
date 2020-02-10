@@ -1033,6 +1033,7 @@ class AgentRegistry:
             # Check and update status of the agent record in DB
             async with self.dbpool.acquire() as conn, conn.begin():
                 query = (sa.select([agents.c.status,
+                                    agents.c.addr,
                                     agents.c.scaling_group,
                                     agents.c.available_slots],
                                    for_update=True)
@@ -1047,9 +1048,10 @@ class AgentRegistry:
                 available_slots = ResourceSlot({
                     SlotName(k): v[1] for k, v in
                     agent_info['resource_slots'].items()})
+                current_addr = agent_info['addr']
                 sgroup = agent_info.get('scaling_group', 'default')
 
-                if row is None or row.status is None:
+                if row is None or row['status'] is None:
                     # new agent detected!
                     log.info('agent {0} joined!', agent_id)
                     await self.config_server.update_resource_slots(slot_key_and_units)
@@ -1068,12 +1070,14 @@ class AgentRegistry:
                     })
                     result = await conn.execute(query)
                     assert result.rowcount == 1
-                elif row.status == AgentStatus.ALIVE:
+                elif row['status'] == AgentStatus.ALIVE:
                     updates = {}
-                    if row.available_slots != available_slots:
+                    if row['available_slots'] != available_slots:
                         updates['available_slots'] = available_slots
-                    if row.scaling_group != sgroup:
+                    if row['scaling_group'] != sgroup:
                         updates['scaling_group'] = sgroup
+                    if row['addr'] != current_addr:
+                        updates['addr'] = current_addr
                     # occupied_slots are updated when kernels starts/terminates
                     if updates:
                         await self.config_server.update_resource_slots(slot_key_and_units)
@@ -1081,7 +1085,7 @@ class AgentRegistry:
                                    .values(updates)
                                    .where(agents.c.id == agent_id))
                         await conn.execute(query)
-                elif row.status in (AgentStatus.LOST, AgentStatus.TERMINATED):
+                elif row['status'] in (AgentStatus.LOST, AgentStatus.TERMINATED):
                     await self.config_server.update_resource_slots(slot_key_and_units)
                     instance_rejoin = True
                     query = (sa.update(agents)
