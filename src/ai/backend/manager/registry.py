@@ -524,22 +524,17 @@ class AgentRegistry:
 
         # Create kernel object in PENDING state.
         async with self.dbpool.acquire() as conn, conn.begin():
-            # Feed SSH keypair, bootstrap script, and dotfiles if exists.
+            # Feed SSH keypair and dotfiles if exists.
             query = (sa.select([keypairs.c.ssh_public_key,
                                 keypairs.c.ssh_private_key,
-                                keypairs.c.dotfiles,
-                                keypairs.c.bootstrap_script])
+                                keypairs.c.dotfiles])
                        .select_from(keypairs)
                        .where(keypairs.c.access_key == access_key))
             result = await conn.execute(query)
             row  = await result.fetchone()
             dotfiles = msgpack.unpackb(row['dotfiles'])
-            bootstrap_script = msgpack.unpackb(row['bootstrap_script'])
             internal_data = {} if internal_data is None else internal_data
-            internal_data.update({
-                'dotfiles': dotfiles,
-                'bootstrap_script': bootstrap_script,
-            })
+            internal_data.update({'dotfiles': dotfiles})
             if row['ssh_public_key'] and row['ssh_private_key']:
                 internal_data['ssh_keypair'] = {
                     'public_key': row['ssh_public_key'],
