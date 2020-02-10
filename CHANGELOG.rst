@@ -7,6 +7,7 @@ Changes
 * NEW: Include the IDs of agents who has the images installed when fetch the image list (#222)
 
 * NEW: API for managing user-specific dotfiles, which are automatically populated for all new sessions.
+  (#220)
 
 * FIX: Missing error logging for InternalServerError raised by service-port streaming API handler
 
