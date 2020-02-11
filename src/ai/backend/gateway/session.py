@@ -690,12 +690,11 @@ async def handle_instance_stats(app: web.Application, agent_id: AgentId, event_n
 
 
 async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name: str,
-                            raw_kernel_id: str, log: str):
-    log.info('Received kernel log {}', raw_kernel_id)
+                            raw_kernel_id: str, log_str: str):
     dbpool = app['dbpool']
     async with dbpool.acquire() as conn, conn.begin():
         query = (sa.update(kernels)
-                    .values([kernels.c.container_log])
+                    .values(container_log=log_str)
                     .where(kernels.c.id == raw_kernel_id))
         await conn.execute(query)
 
