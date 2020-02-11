@@ -689,6 +689,17 @@ async def handle_instance_stats(app: web.Application, agent_id: AgentId, event_n
     await app['registry'].handle_stats(agent_id, kern_stats)
 
 
+async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name: str,
+                            raw_kernel_id: str, log: str):
+    log.info('Received kernel log {}', raw_kernel_id)
+    dbpool = app['dbpool']
+    async with dbpool.acquire() as conn, conn.begin():
+        query = (sa.update(kernels)
+                    .values([kernels.c.container_log])
+                    .where(kernels.c.id == raw_kernel_id))
+        await conn.execute(query)
+
+
 async def stats_monitor_update(app):
     with app['stats_monitor'] as stats_monitor:
         stats_monitor.report_stats(
@@ -1131,10 +1142,21 @@ async def list_files(request: web.Request) -> web.Response:
 async def get_logs(request: web.Request, params: Any) -> web.Response:
     registry = request.app['registry']
     session_name = request.match_info['session_name']
+    dbpool = request.app['dbpool']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('GET_LOG (ak:{}/{}, s:{})',
              requester_access_key, owner_access_key, session_name)
     resp = {'result': {'logs': ''}}
+    async with dbpool.acquire() as conn, conn.begin():
+        query = (sa.select([kernels.c.container_log])
+                  .select_from(kernels)
+                  .where((kernels.c.sess_id == session_name) &
+                         (kernels.c.role == 'master'))
+                  .limit(1))
+        logs = await conn.scalar(query)
+        if logs is not None:
+            resp['result']['logs'] = logs
+            return web.json_response(resp, status=200)
     try:
         await registry.increment_session_usage(session_name, owner_access_key)
         resp['result'] = await registry.get_logs(session_name, owner_access_key)
@@ -1202,6 +1224,7 @@ async def init(app: web.Application) -> None:
     event_dispatcher.consume('kernel_success', app, handle_batch_result)
     event_dispatcher.consume('kernel_failure', app, handle_batch_result)
     event_dispatcher.consume('kernel_stat_sync', app, handle_kernel_stat_sync)
+    event_dispatcher.consume('kernel_log', app, handle_kernel_log)
     event_dispatcher.consume('instance_started', app, handle_instance_lifecycle)
     event_dispatcher.consume('instance_terminated', app, handle_instance_lifecycle)
     event_dispatcher.consume('instance_heartbeat', app, handle_instance_heartbeat)
