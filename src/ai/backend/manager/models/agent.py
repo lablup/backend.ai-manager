@@ -130,8 +130,11 @@ class Agent(graphene.ObjectType):
             lambda: rs.get(str(self.id), encoding=None))
         if live_stat is not None:
             live_stat = msgpack.unpackb(live_stat)
-            return float(live_stat['node']['cpu_util']['pct'])
-        return 0
+            try:
+                return float(live_stat['node']['cpu_util']['pct'])
+            except (KeyError, TypeError, ValueError):
+                return 0.0
+        return 0.0
 
     async def resolve_mem_cur_bytes(self, info):
         rs = info.context['redis_stat']
@@ -139,7 +142,10 @@ class Agent(graphene.ObjectType):
             lambda: rs.get(str(self.id), encoding=None))
         if live_stat is not None:
             live_stat = msgpack.unpackb(live_stat)
-            return float(live_stat['node']['mem']['current']) if live_stat else 0
+            try:
+                return int(live_stat['node']['mem']['current'])
+            except (KeyError, TypeError, ValueError):
+                return 0
         return 0
 
     async def resolve_computations(self, info, status=None):
