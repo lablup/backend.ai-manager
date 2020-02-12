@@ -39,6 +39,7 @@ from ai.backend.common.types import (
     SlotTypes,
 )
 from ai.backend.common.logging import BraceStyleAdapter
+from .defs import INTRINSIC_SLOTS
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
     InstanceNotFound,
@@ -533,9 +534,10 @@ class AgentRegistry:
                     'Your resource request has resource type(s) '
                     'not supported by the image.')
 
-            # If the resource is not specified, fill them with image minimums.
+            # If intrinsic resources are not specified,
+            # fill them with image minimums.
             for k, v in requested_slots.items():
-                if v is None or v == 0:
+                if (v is None or v == 0) and k in INTRINSIC_SLOTS:
                     requested_slots[k] = image_min_slots[k]
         else:
             # Handle the legacy clients (prior to v19.03)
