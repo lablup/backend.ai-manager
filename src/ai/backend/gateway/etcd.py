@@ -183,6 +183,7 @@ from ai.backend.common.docker import (
     login as registry_login,
 )
 from .auth import superadmin_required
+from ..manager.defs import INTRINSIC_SLOTS
 from .exceptions import InvalidAPIParameters, ServerMisconfiguredError
 from .manager import ManagerStatus
 from .typing import CORSOptions, WebMiddleware
@@ -608,12 +609,8 @@ class ConfigServer:
         try:
             ret = current_resource_slots.get()
         except LookupError:
-            intrinsic_slots = {
-                SlotName('cpu'): SlotTypes('count'),
-                SlotName('mem'): SlotTypes('bytes'),
-            }
             configured_slots = await self._get_resource_slots()
-            ret = {**intrinsic_slots, **configured_slots}
+            ret = {**INTRINSIC_SLOTS, **configured_slots}
             current_resource_slots.set(ret)
         return ret
 
