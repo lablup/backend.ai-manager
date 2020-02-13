@@ -358,12 +358,6 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
                 port = sport['host_ports'][0]
             dest = (kernel_host, port)
             break
-        elif service in map(str, sport.get('host_ports', [])):
-            port = int(service)
-            break
-        elif service == str(sport.get('host_port', '')):
-            port = int(service)
-            break
     else:
         raise AppNotFound(f'{session_name}:{service}')
 
