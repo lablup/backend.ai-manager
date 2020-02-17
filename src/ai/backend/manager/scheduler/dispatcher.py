@@ -25,6 +25,8 @@ from ai.backend.common.types import (
     AgentId,
     ResourceSlot,
 )
+from ai.backend.common.identity import get_instance_id
+from ai.backend.common.utils import get_random_seq
 from ...gateway.defs import REDIS_LIVE_DB
 from ...gateway.etcd import ConfigServer
 from ...gateway.exceptions import InstanceNotAvailable
@@ -71,11 +73,18 @@ class SchedulerDispatcher(aobject):
     config_server: ConfigServer
     registry: AgentRegistry
 
-    def __init__(self, config: dict, config_server: ConfigServer, registry: AgentRegistry) -> None:
+    def __init__(
+        self,
+        config: dict,
+        config_server: ConfigServer,
+        registry: AgentRegistry,
+        pidx: int,
+    ) -> None:
         self.config = config
         self.config_server = config_server
         self.registry = registry
         self.dbpool = registry.dbpool
+        self.pidx = pidx
 
     async def __ainit__(self) -> None:
         log.info('Session scheduler started')
@@ -97,25 +106,43 @@ class SchedulerDispatcher(aobject):
         await self.tick_task
 
     async def generate_scheduling_tick(self) -> None:
-        # A fallback for when missing enqueue events
+        """
+        Periodically generate a scheduling event.
+        """
+        await asyncio.sleep(3.0)
         try:
-            await asyncio.sleep(30 * random.uniform(1, 4))
             while True:
-                await asyncio.sleep(30 * 2.5)
-                await self.registry.event_dispatcher.produce_event(
-                    'kernel_enqueued', [None])
+                manager_instances = await self.config_server.etcd.get_prefix_dict('nodes/manager')
+                num_managers = len(manager_instances)
+                # assume that all managers have the same number of workers
+                total_workers = num_managers * self.config['manager']['num-proc']
+                try:
+                    my_instance_idx = sorted(manager_instances.keys()).index(await get_instance_id())
+                except KeyError:
+                    await asyncio.sleep(2.0)
+                    continue
+                my_worker_idx = (my_instance_idx * total_workers) + self.pidx
+                my_initial_delay = [*get_random_seq(total_workers * 5, total_workers, 5)][my_worker_idx]
+                await asyncio.sleep(my_initial_delay)
+                run_count = 0
+                while run_count < 3:
+                    await asyncio.sleep(5)
+                    await self.registry.event_dispatcher.produce_event(
+                        'kernel_enqueued', [None])
+                    run_count += 1
         except asyncio.CancelledError:
             pass
+        except Exception:
+            log.exception('scheduling-tick: unexpected error')
 
     async def schedule(self, ctx: object, agent_id: AgentId, event_name: str,
                        *args, **kwargs) -> None:
-        lock = await self.lock_manager.lock('manager.scheduler')
         try:
+            lock = await self.lock_manager.lock('manager.scheduler')
             async with lock:
-                await asyncio.sleep(0.5)
                 await self.schedule_impl()
         except aioredlock.LockError as e:
-            log.debug('schedule(): temporary locking failure', exc_info=e)
+            log.debug('schedule(): temporary locking failure; will be retried.')
             # The dispatcher will try the next chance.
 
     async def schedule_impl(self) -> None:
