@@ -3,7 +3,7 @@ import enum
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-from .base import IDColumn, GUID
+from .base import metadata, IDColumn, GUID
 __all__ = [
     'error_logs',
     'LogSeverity'
@@ -17,7 +17,7 @@ class LogSeverity(str, enum.Enum):
 
 
 error_logs = sa.Table(
-    'error_logs',
+    'error_logs', metadata,
     IDColumn(),
     sa.Column('created_at', sa.DateTime(timezone=True),
                 server_default=sa.func.now(), index=True),
