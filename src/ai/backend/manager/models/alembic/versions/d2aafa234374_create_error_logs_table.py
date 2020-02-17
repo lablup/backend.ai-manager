@@ -41,3 +41,4 @@ def upgrade():
 
 def downgrade():
     op.drop_table('error_logs')
+    op.execute('DROP TYPE errorlog_severity')
