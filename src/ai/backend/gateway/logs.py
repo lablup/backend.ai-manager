@@ -30,7 +30,7 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.logs'))
         t.Key('source'): t.String,
         t.Key('message'): t.String,
         t.Key('context_lang'): t.String,
-        t.Key('context_env'): tx.JSON,
+        t.Key('context_env'): tx.JSONString,
         t.Key('request_url', default=None): t.Null | t.String,
         t.Key('request_status', default=None): t.Null | t.Int,
         t.Key('traceback', default=None): t.Null | t.String
