@@ -1,24 +1,31 @@
 import logging
 import sys
 import traceback
-from typing import Any
+from typing import Any, Optional, Type
+
+from aiohttp import web
 
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.types import (
+    AgentId, KernelId,
+    SessionTypes,
+)
 from ..models import error_logs, LogSeverity
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 
 class ErrorMonitor:
-    def __init__(self, dbpool):
-        self.dbpool = dbpool
+    def __init__(self, app):
+        self.dbpool = app['dbpool']
+        app['event_dispatcher'].consume('agent_error', app, self.handle_agent_error)
 
-    async def capture_exception(self, exc: Exception = None, user = None, context_env: Any = None,
-                                severity: LogSeverity = None):
+    async def capture_exception(self, exc: Optional[BaseException] = None, user = None, context_env: Any = None,
+                                severity: Optional[LogSeverity] = None):
         if exc:
-            exc_type = type(exc)
             tb = exc.__traceback__
         else:
-            exc_type, exc, tb = sys.exc_info()
+            _, exc, tb = sys.exc_info()
+        exc_type: Any = type(exc)
         if severity is None:
             severity = LogSeverity.ERROR
         async with self.dbpool.acquire() as conn, conn.begin():
@@ -34,7 +41,7 @@ class ErrorMonitor:
             await conn.execute(query)
         log.debug('Manager log collected: {}', str(exc))
 
-    async def handle_agent_error(app: web.Application, agent_id: AgentId, event_name: str,
+    async def handle_agent_error(self, app: web.Application, agent_id: AgentId, event_name: str,
                                 message: str,
                                 traceback: str = None,
                                 user = None,
@@ -53,4 +60,4 @@ class ErrorMonitor:
                 'traceback': traceback
             })
             await conn.execute(query)
-        log.debug('Agent log collected: {}', str(exc))
+        log.debug('Agent log collected: {}', message)

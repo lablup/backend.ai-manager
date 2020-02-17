@@ -307,13 +307,12 @@ async def sched_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
 
 async def monitoring_ctx(app: web.Application) -> AsyncIterator[None]:
     # Install stats hook plugins.
-    app['error_monitor'] = ErrorMonitor(app['dbpool'])
+    app['error_monitor'] = ErrorMonitor(app)
     plugins = [
         'stats_monitor',
     ]
     install_plugins(plugins, app, 'dict', app['config'])
     _update_public_interface_objs(app)
-    app['event_dispatcher'].consume('agent_error', app['error_monitor'].handle_agent_error)
     yield
 
 
