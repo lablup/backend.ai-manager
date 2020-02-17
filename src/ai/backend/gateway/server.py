@@ -38,6 +38,7 @@ from ai.backend.common.plugin import (
     discover_entrypoints, install_plugins
 )
 from ..manager import __version__
+from ..manager.plugin.error_monitor import ErrorMonitor
 from ..manager.registry import AgentRegistry
 from ..manager.scheduler.dispatcher import SchedulerDispatcher
 from .config import load as load_config, load_shared as load_shared_config, redis_config_iv
@@ -306,9 +307,9 @@ async def sched_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
 
 async def monitoring_ctx(app: web.Application) -> AsyncIterator[None]:
     # Install stats hook plugins.
+    app['error_monitor'] = ErrorMonitor(app['dbpool'])
     plugins = [
         'stats_monitor',
-        'error_monitor',
     ]
     install_plugins(plugins, app, 'dict', app['config'])
     _update_public_interface_objs(app)
@@ -364,12 +365,12 @@ def handle_loop_error(
         if sys.exc_info()[0] is not None:
             log.exception('Error inside event loop: {0}', msg)
             if error_monitor is not None:
-                error_monitor.capture_exception(True)
+                error_monitor.capture_exception()
         else:
             exc_info = (type(exception), exception, exception.__traceback__)
             log.error('Error inside event loop: {0}', msg, exc_info=exc_info)
             if error_monitor is not None:
-                error_monitor.capture_exception(exc_info)
+                error_monitor.capture_exception(exception)
 
 
 def _init_subapp(pkg_name: str,
