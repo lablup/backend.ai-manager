@@ -5,7 +5,6 @@ from collections import defaultdict
 from datetime import datetime
 import logging
 import pkg_resources
-import random
 from typing import (
     Any, Union,
     Awaitable,
@@ -141,7 +140,7 @@ class SchedulerDispatcher(aobject):
             lock = await self.lock_manager.lock('manager.scheduler')
             async with lock:
                 await self.schedule_impl()
-        except aioredlock.LockError as e:
+        except aioredlock.LockError:
             log.debug('schedule(): temporary locking failure; will be retried.')
             # The dispatcher will try the next chance.
 
