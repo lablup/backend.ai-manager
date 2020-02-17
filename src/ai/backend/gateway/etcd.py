@@ -117,8 +117,8 @@ Alias keys are also URL-quoted in the same way.
      ...
    ...
  + nodes
-   + manager: {instance-id}
-     - status: {one-of-ManagerStatus-value}
+   + manager
+     + {instance-id}: "up"
    + redis: {"tcp://redis:6379"}
      - password: {redis-auth-password}
    + agents
