@@ -118,13 +118,15 @@ Alias keys are also URL-quoted in the same way.
    ...
  + nodes
    + manager
-     + {instance-id}: "up"
+     - {instance-id}: "up"
+     ...
    + redis: {"tcp://redis:6379"}
      - password: {redis-auth-password}
    + agents
      + {instance-id}: {"starting","running"}  # ConfigScopes.NODE
        - ip: {"127.0.0.1"}
        - watcher_port: {"6009"}
+     ...
  + sgroup
    + {name}  # ConfigScopes.SGROUP
      - swarm-manager/token
