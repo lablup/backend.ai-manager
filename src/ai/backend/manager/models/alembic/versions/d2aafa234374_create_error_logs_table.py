@@ -1,7 +1,7 @@
 """Create error_logs table
 
 Revision ID: d2aafa234374
-Revises: 1e8531583e20
+Revises: 3bb80d1887d6
 Create Date: 2020-02-12 13:55:12.450743
 
 """
@@ -13,7 +13,7 @@ from ai.backend.manager.models.base import IDColumn, GUID
 
 # revision identifiers, used by Alembic.
 revision = 'd2aafa234374'
-down_revision = '1e8531583e20'
+down_revision = '3bb80d1887d6'
 branch_labels = None
 depends_on = None
 
