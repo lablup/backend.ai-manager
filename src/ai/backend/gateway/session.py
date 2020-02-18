@@ -203,7 +203,11 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
 
     if mount_map := params['config'].get('mount_map'):
         for p in mount_map.values():
-            if p is not None and not verify_vfolder_name('/'.join(p.parts[3:])):
+            if p is None:
+                continue
+            if not p.startswith('/home/work/'):
+                raise InvalidAPIParameters(f'Path {p} should start with /home/work/')
+            if p is not None and not verify_vfolder_name(p.replace('/home/work/', '')):
                 raise InvalidAPIParameters(f'Path {str(p)} is reserved for internal operations.')
 
     # Resolve the image reference.
