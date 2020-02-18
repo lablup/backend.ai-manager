@@ -15,7 +15,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import SessionTypes
 
 from .auth import auth_required
-from .config import reserved_vfolder_names
+from .config import RESERVED_VFOLDER_NAMES
 from .exceptions import InvalidAPIParameters, TaskTemplateNotFound
 from .manager import READ_ALLOWED, server_status_required
 from .typing import CORSOptions, Iterable, WebMiddleware
@@ -176,7 +176,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
         body = task_template_v1.check(body)
         if mounts := body['spec'].get('mounts'):
             basepath = Path('/home/work')
-            fullpath = [basepath / x for x in reserved_vfolder_names]
+            fullpath = [basepath / x for x in RESERVED_VFOLDER_NAMES]
             for p in mounts.values():
                 if p is not None and Path(p) in fullpath:
                     raise InvalidAPIParameters(f'Path {str(p)} is reserved for internal operations.')

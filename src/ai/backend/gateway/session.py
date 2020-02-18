@@ -55,7 +55,7 @@ from .exceptions import (
     TaskTemplateNotFound
 )
 from .auth import auth_required
-from .config import reserved_vfolder_names
+from .config import RESERVED_VFOLDER_NAMES
 from .typing import CORSOptions, WebMiddleware
 from .utils import (
     current_loop, catch_unexpected, check_api_params, get_access_key_scopes, undefined
@@ -203,7 +203,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
 
     if mount_map := params['config'].get('mount_map'):
         basepath = Path('/home/work')
-        fullpath = [basepath / x for x in reserved_vfolder_names]
+        fullpath = [basepath / x for x in RESERVED_VFOLDER_NAMES]
         for p in mount_map.values():
             if Path(p) in fullpath:
                 raise InvalidAPIParameters(f'Path {str(p)} is reserved for internal operations.')

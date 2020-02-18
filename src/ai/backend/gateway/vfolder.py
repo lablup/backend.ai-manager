@@ -35,7 +35,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.utils import Fstab
 
 from .auth import auth_required, superadmin_required
-from .config import DEFAULT_CHUNK_SIZE, DEFAULT_INFLIGHT_CHUNKS, reserved_vfolder_names
+from .config import DEFAULT_CHUNK_SIZE, DEFAULT_INFLIGHT_CHUNKS, RESERVED_VFOLDER_NAMES
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
     GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
@@ -210,7 +210,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 f'Invalid vfolder type(s): {str(allowed_vfolder_types)}.'
                 ' Only "user" or "group" is allowed.')
 
-    if params['name'] in reserved_vfolder_names:
+    if params['name'] in RESERVED_VFOLDER_NAMES:
         raise InvalidAPIParameters(f'{params["name"]} is reserved for internal operations.')
     if params['name'].startswith('.'):
         if params['group'] is not None:
