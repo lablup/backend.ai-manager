@@ -359,6 +359,7 @@ class SchedulerDispatcher(aobject):
                 kernels.c.bootstrap_script,
                 kernels.c.startup_command,
                 kernels.c.internal_data,
+                kernels.c.preopen_ports,
                 keypairs.c.resource_policy,
             ], for_update=True)
             .select_from(sa.join(
@@ -398,6 +399,7 @@ class SchedulerDispatcher(aobject):
                 mount_map=row['mount_map'],
                 bootstrap_script=row['bootstrap_script'],
                 startup_command=row['startup_command'],
+                preopen_ports=row['preopen_ports'],
             ))
         return items
 
