@@ -16,10 +16,10 @@ from .exceptions import (
 )
 from .manager import READ_ALLOWED, server_status_required
 from .typing import CORSOptions, Iterable, WebMiddleware
-from .utils import check_api_params, get_access_key_scopes, verify_dotfile_name
+from .utils import check_api_params, get_access_key_scopes
 
 from ..manager.models import (
-    keypairs
+    keypairs, verify_dotfile_name
 )
 from ..manager.models.keypair import query_owned_dotfiles, MAXIMUM_DOTFILE_SIZE
 

@@ -47,7 +47,7 @@ from .manager import (
 )
 from .resource import get_watcher_info
 from .typing import Sentinel
-from .utils import check_api_params, current_loop, verify_vfolder_name
+from .utils import check_api_params, current_loop
 from ..manager.models import (
     agents, AgentStatus, kernels, KernelStatus,
     users, groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
@@ -55,6 +55,7 @@ from ..manager.models import (
     query_accessible_vfolders,
     get_allowed_vfolder_hosts_by_group, get_allowed_vfolder_hosts_by_user,
     UserRole,
+    verify_vfolder_name
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))

@@ -57,8 +57,7 @@ from .exceptions import (
 from .auth import auth_required
 from .typing import CORSOptions, WebMiddleware
 from .utils import (
-    current_loop, catch_unexpected, check_api_params, get_access_key_scopes, undefined,
-    verify_vfolder_name
+    current_loop, catch_unexpected, check_api_params, get_access_key_scopes, undefined
 )
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (
@@ -70,7 +69,8 @@ from ..manager.models import (
     vfolders,
     AgentStatus, KernelStatus,
     query_accessible_vfolders,
-    session_templates
+    session_templates,
+    verify_vfolder_name
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.session'))

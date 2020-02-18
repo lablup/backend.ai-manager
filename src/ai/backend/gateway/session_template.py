@@ -17,12 +17,13 @@ from .auth import auth_required
 from .exceptions import InvalidAPIParameters, TaskTemplateNotFound
 from .manager import READ_ALLOWED, server_status_required
 from .typing import CORSOptions, Iterable, WebMiddleware
-from .utils import check_api_params, get_access_key_scopes, verify_vfolder_name
+from .utils import check_api_params, get_access_key_scopes
 
 from ..manager.models import (
     association_groups_users as agus, domains,
     groups, session_templates, keypairs, users, UserRole,
-    query_accessible_session_templates, TemplateType
+    query_accessible_session_templates, TemplateType,
+    verify_vfolder_name
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.session_template'))
