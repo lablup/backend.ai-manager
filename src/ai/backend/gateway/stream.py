@@ -325,6 +325,11 @@ async def stream_execute(request: web.Request) -> web.StreamResponse:
 @check_api_params(
     t.Dict({
         tx.AliasedKey(['app', 'service']): t.String,
+        # The port argument is only required to use secondary ports
+        # when the target app listens multiple TCP ports.
+        # Otherwise it should be omitted or set to the same value of
+        # the actual port number used by the app.
+        tx.AliasedKey(['port'], default=None): t.Null | t.Int[1024:65535],
         tx.AliasedKey(['envs'], default=None): t.Null | t.String,  # stringified JSON
                                                                    # e.g., '{"PASSWORD": "12345"}'
         tx.AliasedKey(['arguments'], default=None): t.Null | t.String,  # stringified JSON
@@ -352,11 +357,21 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
         kernel_host = kernel.kernel_host
     for sport in kernel.service_ports:
         if sport['name'] == service:
-            if 'host_ports' not in sport:
-                port = sport['host_port']  # legacy kernels
+            if params['port']:
+                # using one of the primary/secondary ports of the app
+                try:
+                    hport_idx = sport['container_ports'].index(params['port'])
+                except ValueError:
+                    raise InvalidAPIParameters(
+                        f"Service {service} does not open the port number {params['port']}.")
+                host_port = sport['host_ports'][hport_idx]
             else:
-                port = sport['host_ports'][0]
-            dest = (kernel_host, port)
+                # using the default (primary) port of the app
+                if 'host_ports' not in sport:
+                    host_port = sport['host_port']  # legacy kernels
+                else:
+                    host_port = sport['host_ports'][0]
+            dest = (kernel_host, host_port)
             break
     else:
         raise AppNotFound(f'{session_name}:{service}')
@@ -367,10 +382,8 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
         proxy_cls = TCPProxy
     elif sport['protocol'] == 'pty':
         raise NotImplementedError
-        # proxy_cls = TermProxy
     elif sport['protocol'] == 'http':
         proxy_cls = TCPProxy
-        # proxy_cls = HTTPProxy
     elif sport['protocol'] == 'preopen':
         proxy_cls = TCPProxy
     else:
