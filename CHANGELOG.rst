@@ -1,6 +1,15 @@
 Changes
 =======
 
+19.09.15 (2020-02-18)
+---------------------
+
+* FIX: Add a check for reserved names when creating vfolder and user dotfiles (#238)
+
+* FIX: Remove a bogus error when livestat is missing while agents are starting up (#233)
+
+* MAINTENANCE: Update dependencies and add missing asynctest test dependency for Python 3.6/3.7 (#239)
+
 19.09.14 (2020-02-11)
 ---------------------
 
