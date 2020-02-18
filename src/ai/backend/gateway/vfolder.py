@@ -63,6 +63,7 @@ eof_sentinel = Sentinel()
 
 VFolderRow = Mapping[str, Any]
 
+
 def vfolder_permission_required(perm: VFolderPermission):
     '''
     Checks if the target vfolder exists and is either:
