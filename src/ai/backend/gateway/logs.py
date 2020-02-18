@@ -1,3 +1,4 @@
+from datetime import datetime
 import logging
 
 from aiohttp import web
@@ -77,7 +78,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
     }),
 )
 async def list_logs(request: web.Request, params: Any) -> web.Response:
-    resp = []
+    resp = {'logs': []}
     dbpool = request.app['dbpool']
     domain_name = request['user']['domain_name']
     user_role = request['user']['role']
@@ -87,9 +88,10 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
     log.info('LIST (ak:{0}/{1})',
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
     async with dbpool.acquire() as conn:
+        is_admin = True
         query = (sa.select('*')
                    .select_from(error_logs)
-                   .order_by(error_logs.c.timestamp.desc())
+                   .order_by(sa.desc(error_logs.c.created_at))
                    .limit(params['page_size']))
         if params['page_no'] > 1:
             query = query.offset((params['page_no'] - 1) * params['page_size'])
@@ -105,16 +107,33 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
             user_ids = [g.id for g in usrs]
             query = query.where(error_logs.c.user_id.in_(user_ids))
         else:
+            is_admin = False
             query = (query.where((error_logs.c.user_id == user_uuid) &
                                  (not error_logs.c.is_cleared)))
 
         result = await conn.execute(query)
         async for row in result:
-            resp.append(row)
+            result_item = {
+                'log_id': str(row['id']),
+                'created_at': datetime.timestamp(row['created_at']),
+                'severity': row['severity'],
+                'source': row['source'],
+                'user': row['user'],
+                'is_read': row['is_read'],
+                'message': row['message'],
+                'context_lang': row['context_lang'],
+                'context_env': row['context_env'],
+                'request_url': row['request_url'],
+                'request_status': row['request_status'],
+                'traceback': row['traceback'],
+            }
+            if is_admin:
+                result_item['is_cleared'] = row['is_cleared']
+            resp['logs'].append(result_item)
         if params['mark_read']:
             update = (sa.update(error_logs)
                         .values(is_read=True)
-                        .where(error_logs.c.id.in_([x['id'] for x in resp])))
+                        .where(error_logs.c.id.in_([x['log_id'] for x in resp['logs']])))
             await conn.execute(update)
         return web.json_response(resp, status=200)
 
@@ -173,7 +192,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     app['api_versions'] = (4, 5)
-    app['prefix'] = '/logs/error'
+    app['prefix'] = 'logs/error'
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     cors.add(app.router.add_route('POST', '', create))
     cors.add(app.router.add_route('GET', '', list_logs))
