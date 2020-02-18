@@ -22,7 +22,8 @@ from .utils import check_api_params, get_access_key_scopes
 from ..manager.models import (
     association_groups_users as agus, domains,
     groups, session_templates, keypairs, users, UserRole,
-    query_accessible_session_templates, TemplateType
+    query_accessible_session_templates, TemplateType,
+    verify_vfolder_name
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.session_template'))
@@ -172,6 +173,15 @@ async def create(request: web.Request, params: Any) -> web.Response:
             except (yaml.YAMLError, yaml.MarkedYAMLError):
                 raise InvalidAPIParameters('Malformed payload')
         body = task_template_v1.check(body)
+        if mounts := body['spec'].get('mounts'):
+            for p in mounts.values():
+                if p is None:
+                    continue
+                if not p.startswith('/home/work/'):
+                    raise InvalidAPIParameters(f'Path {p} should start with /home/work/')
+                if not verify_vfolder_name(p.replace('/home/work/', '')):
+                    raise InvalidAPIParameters(f'Path {p} is reserved for internal operations.')
+
         template_id = uuid.uuid4().hex
         resp = {
             'id': template_id,

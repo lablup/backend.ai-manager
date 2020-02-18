@@ -55,6 +55,7 @@ from ..manager.models import (
     query_accessible_vfolders,
     get_allowed_vfolder_hosts_by_group, get_allowed_vfolder_hosts_by_user,
     UserRole,
+    verify_vfolder_name
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
@@ -211,6 +212,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 f'Invalid vfolder type(s): {str(allowed_vfolder_types)}.'
                 ' Only "user" or "group" is allowed.')
 
+    if not verify_vfolder_name(params['name']):
+        raise InvalidAPIParameters(f'{params["name"]} is reserved for internal operations.')
     if params['name'].startswith('.'):
         if params['group'] is not None:
             raise InvalidAPIParameters('dot-prefixed vfolders cannot be a group folder.')

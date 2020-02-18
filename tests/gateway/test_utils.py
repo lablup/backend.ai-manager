@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from ai.backend.manager.models import verify_dotfile_name, verify_vfolder_name
 from ai.backend.gateway.utils import (
     call_non_bursty,
 )
@@ -45,3 +46,18 @@ async def test_call_non_bursty():
     for _ in range(64):
         await call_non_bursty(key, execute)
     assert execution_count == 5
+
+
+def test_vfolder_name_validator():
+    assert not verify_vfolder_name('.bashrc')
+    assert not verify_vfolder_name('.terminfo')
+    assert verify_vfolder_name('bashrc')
+    assert verify_vfolder_name('.config')
+
+
+def test_dotfile_name_validator():
+    assert not verify_dotfile_name('.terminfo')
+    assert not verify_dotfile_name('.config')
+    assert not verify_dotfile_name('.ssh/authorized_keys')
+    assert verify_dotfile_name('.bashrc')
+    assert verify_dotfile_name('.ssh/id_rsa')
