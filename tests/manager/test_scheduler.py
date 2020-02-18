@@ -175,6 +175,7 @@ _common_dummy_for_pending_session: Mapping[str, Any] = dict(
     bootstrap_script=None,
     startup_command=None,
     internal_data=None,
+    preopen_ports=[],
 )
 
 _common_dummy_for_existing_session: Mapping[str, Any] = dict(
