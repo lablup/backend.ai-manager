@@ -1,5 +1,6 @@
 import json
 import logging
+from pathlib import Path
 import uuid
 
 from aiohttp import web
@@ -14,6 +15,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import SessionTypes
 
 from .auth import auth_required
+from .config import reserved_vfolder_names
 from .exceptions import InvalidAPIParameters, TaskTemplateNotFound
 from .manager import READ_ALLOWED, server_status_required
 from .typing import CORSOptions, Iterable, WebMiddleware
@@ -172,6 +174,13 @@ async def create(request: web.Request, params: Any) -> web.Response:
             except (yaml.YAMLError, yaml.MarkedYAMLError):
                 raise InvalidAPIParameters('Malformed payload')
         body = task_template_v1.check(body)
+        if mounts := body['spec'].get('mounts'):
+            basepath = Path('/home/work')
+            fullpath = [basepath / x for x in reserved_vfolder_names]
+            for p in mounts.values():
+                if p is not None and Path(p) in fullpath:
+                    raise InvalidAPIParameters(f'Path {str(p)} is reserved for internal operations.')
+
         template_id = uuid.uuid4().hex
         resp = {
             'id': template_id,

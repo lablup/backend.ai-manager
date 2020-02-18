@@ -35,7 +35,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.utils import Fstab
 
 from .auth import auth_required, superadmin_required
-from .config import DEFAULT_CHUNK_SIZE, DEFAULT_INFLIGHT_CHUNKS
+from .config import DEFAULT_CHUNK_SIZE, DEFAULT_INFLIGHT_CHUNKS, reserved_vfolder_names
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
     GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
@@ -62,7 +62,6 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
 eof_sentinel = Sentinel()
 
 VFolderRow = Mapping[str, Any]
-
 
 def vfolder_permission_required(perm: VFolderPermission):
     '''
@@ -211,6 +210,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 f'Invalid vfolder type(s): {str(allowed_vfolder_types)}.'
                 ' Only "user" or "group" is allowed.')
 
+    if params['name'] in reserved_vfolder_names:
+        raise InvalidAPIParameters(f'{params["name"]} is reserved for internal operations.')
     if params['name'].startswith('.'):
         if params['group'] is not None:
             raise InvalidAPIParameters('dot-prefixed vfolders cannot be a group folder.')

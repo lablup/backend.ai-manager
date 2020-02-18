@@ -18,6 +18,7 @@ _file_perm = (Path(__file__).parent / 'server.py').stat()
 
 DEFAULT_CHUNK_SIZE: Final = 256 * 1024  # 256 KiB
 DEFAULT_INFLIGHT_CHUNKS: Final = 8
+reserved_vfolder_names = ['.terminfo', '.jupyter', '.bashrc', '.bash_profile', '.vimrc', '.tmux.conf']
 
 manager_config_iv = t.Dict({
     t.Key('db'): t.Dict({
