@@ -961,6 +961,7 @@ async def download_with_token(request) -> web.StreamResponse:
         t.Key('file'): t.String,
         t.Key('host'): t.String,
         t.Key('id'): t.String,
+        t.Key('exp'): t.Int,
     })
     params = iv.check(params)
     fn = params['file']
