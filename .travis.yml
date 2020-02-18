@@ -3,14 +3,13 @@ dist: xenial
 cache: pip
 addons:
   postgresql: "9.6"
+  apt:
+    packages:
+    - libsnappy-dev
 services:
   - docker
   - postgresql
   - redis
-addons:
-  apt:
-    packages:
-    - libsnappy-dev
 
 # stage decl.
 stages:
