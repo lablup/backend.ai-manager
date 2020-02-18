@@ -360,16 +360,14 @@ def handle_loop_error(
     exception = context.get('exception')
     msg = context.get('message', '(empty message)')
     if exception is not None:
-        if (error_monitor := app.get('error_monitor', None)) is not None:
-            error_monitor.set_context(context)
         if sys.exc_info()[0] is not None:
             log.exception('Error inside event loop: {0}', msg)
-            if error_monitor is not None:
+            if error_monitor := app.get('error_monitor', None):
                 asyncio.run(error_monitor.capture_exception())
         else:
             exc_info = (type(exception), exception, exception.__traceback__)
             log.error('Error inside event loop: {0}', msg, exc_info=exc_info)
-            if error_monitor is not None:
+            if error_monitor := app.get('error_monitor', None):
                 asyncio.run(error_monitor.capture_exception(exception))
 
 
