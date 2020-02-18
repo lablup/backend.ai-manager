@@ -50,7 +50,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
         if len(dotfiles) == 100:
             raise DotfileCreationFailed('Dotfile creation limit reached')
         if not verify_dotfile_name(path):
-            raise InvalidAPIParameters(path)
+            raise InvalidAPIParameters(f'Dotfile {path} is reserved for internal operations.')
         duplicate = [x for x in dotfiles if x['path'] == path]
         if len(duplicate) > 0:
             raise DotfileAlreadyExists
