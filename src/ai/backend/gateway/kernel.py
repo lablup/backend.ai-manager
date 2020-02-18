@@ -64,6 +64,7 @@ from ..manager.models import (
     vfolders,
     AgentStatus, KernelStatus,
     query_accessible_vfolders,
+    verify_vfolder_name,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.kernel'))
@@ -129,6 +130,16 @@ async def create(request: web.Request, params: Any) -> web.Response:
     dbpool = request.app['dbpool']
     registry = request.app['registry']
     resp: MutableMapping[str, Any] = {}
+
+    mount_map = params['config'].get('mount_map')
+    if mount_map is not None:
+        for p in mount_map.values():
+            if p is None:
+                continue
+            if not p.startswith('/home/work/'):
+                raise InvalidAPIParameters(f'Path {p} should start with /home/work/')
+            if p is not None and not verify_vfolder_name(p.replace('/home/work/', '')):
+                raise InvalidAPIParameters(f'Path {str(p)} is reserved for internal operations.')
 
     # Resolve the image reference.
     try:

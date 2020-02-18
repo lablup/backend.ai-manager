@@ -13,6 +13,7 @@ import sqlalchemy as sa
 from sqlalchemy.sql.expression import false
 import psycopg2 as pg
 
+from ai.backend.gateway.config import RESERVED_DOTFILES
 from ai.backend.common import msgpack
 
 from .base import (
@@ -26,7 +27,8 @@ __all__: Sequence[str] = (
     'KeyPair', 'KeyPairInput',
     'CreateKeyPair', 'ModifyKeyPair', 'DeleteKeyPair',
     'MAXIMUM_DOTFILE_SIZE',
-    'query_owned_dotfiles'
+    'query_owned_dotfiles',
+    'verify_dotfile_name',
 )
 
 
@@ -351,3 +353,9 @@ async def query_owned_dotfiles(conn, access_key) -> Tuple[List[dict], int]:
     packed_dotfile = await conn.scalar(query)
     rows = msgpack.unpackb(packed_dotfile)
     return rows, MAXIMUM_DOTFILE_SIZE - len(packed_dotfile)
+
+
+def verify_dotfile_name(dotfile: str) -> bool:
+    if dotfile in RESERVED_DOTFILES:
+        return False
+    return True

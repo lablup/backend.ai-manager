@@ -7,6 +7,7 @@ from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 import trafaret as t
 
+from ai.backend.gateway.config import RESERVED_VFOLDER_PATTERNS, RESERVED_VFOLDERS
 from .base import (
     metadata, EnumValueType, GUID, IDColumn,
     Item, PaginatedList,
@@ -24,6 +25,7 @@ __all__: Sequence[str] = (
     'query_accessible_vfolders',
     'get_allowed_vfolder_hosts_by_group',
     'get_allowed_vfolder_hosts_by_user',
+    'verify_vfolder_name'
 )
 
 
@@ -125,6 +127,15 @@ vfolder_permissions = sa.Table(
               nullable=False),
     sa.Column('user', GUID, sa.ForeignKey('users.uuid'), nullable=False),
 )
+
+
+def verify_vfolder_name(folder: str) -> bool:
+    if folder in RESERVED_VFOLDERS:
+        return False
+    for pattern in RESERVED_VFOLDER_PATTERNS:
+        if pattern.match(folder):
+            return False
+    return True
 
 
 async def query_accessible_vfolders(conn, user_uuid, *,
