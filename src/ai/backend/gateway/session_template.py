@@ -15,11 +15,10 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import SessionTypes
 
 from .auth import auth_required
-from .config import RESERVED_VFOLDER_NAMES
 from .exceptions import InvalidAPIParameters, TaskTemplateNotFound
 from .manager import READ_ALLOWED, server_status_required
 from .typing import CORSOptions, Iterable, WebMiddleware
-from .utils import check_api_params, get_access_key_scopes
+from .utils import check_api_params, get_access_key_scopes, verify_vfolder_name
 
 from ..manager.models import (
     association_groups_users as agus, domains,
@@ -175,11 +174,13 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 raise InvalidAPIParameters('Malformed payload')
         body = task_template_v1.check(body)
         if mounts := body['spec'].get('mounts'):
-            basepath = Path('/home/work')
-            fullpath = [basepath / x for x in RESERVED_VFOLDER_NAMES]
             for p in mounts.values():
-                if p is not None and Path(p) in fullpath:
-                    raise InvalidAPIParameters(f'Path {str(p)} is reserved for internal operations.')
+                if p is None:
+                    continue
+                if not p.startswith('/home/work/'):
+                    raise InvalidAPIParameters(f'Path {p} should start with /home/work/')
+                if not verify_vfolder_name(p.replace('/home/work/', '')):
+                    raise InvalidAPIParameters(f'Path {p} is reserved for internal operations.')
 
         template_id = uuid.uuid4().hex
         resp = {

@@ -35,7 +35,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.utils import Fstab
 
 from .auth import auth_required, superadmin_required
-from .config import DEFAULT_CHUNK_SIZE, DEFAULT_INFLIGHT_CHUNKS, RESERVED_VFOLDER_NAMES
+from .config import DEFAULT_CHUNK_SIZE, DEFAULT_INFLIGHT_CHUNKS
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
     GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
@@ -47,7 +47,7 @@ from .manager import (
 )
 from .resource import get_watcher_info
 from .typing import Sentinel
-from .utils import check_api_params, current_loop
+from .utils import check_api_params, current_loop, verify_vfolder_name
 from ..manager.models import (
     agents, AgentStatus, kernels, KernelStatus,
     users, groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
@@ -211,7 +211,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 f'Invalid vfolder type(s): {str(allowed_vfolder_types)}.'
                 ' Only "user" or "group" is allowed.')
 
-    if params['name'] in RESERVED_VFOLDER_NAMES:
+    if not verify_vfolder_name(params['name']):
         raise InvalidAPIParameters(f'{params["name"]} is reserved for internal operations.')
     if params['name'].startswith('.'):
         if params['group'] is not None:
