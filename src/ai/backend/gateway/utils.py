@@ -25,7 +25,6 @@ import yaml
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import AccessKey
 
-from .config import RESERVED_VFOLDER_PATTERNS, RESERVED_VFOLDERS, RESERVED_DOTFILES
 from .exceptions import InvalidAPIParameters, GenericForbidden, QueryNotImplemented
 from ..manager.models import keypairs, users, UserRole
 
@@ -119,21 +118,6 @@ def trim_text(value: str, maxlen: int) -> str:
         return value
     value = value[:maxlen - 3] + '...'
     return value
-
-
-def verify_vfolder_name(folder: str) -> bool:
-    if folder in RESERVED_VFOLDERS:
-        return False
-    for pattern in RESERVED_VFOLDER_PATTERNS:
-        if pattern.match(folder):
-            return False
-    return True
-
-
-def verify_dotfile_name(dotfile: str) -> bool:
-    if dotfile in RESERVED_DOTFILES:
-        return False
-    return True
 
 
 class _Infinity(numbers.Number):
