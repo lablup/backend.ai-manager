@@ -268,13 +268,6 @@ async def call_non_bursty(key: Hashable, coro: Callable[[], Any], *,
             return coro()
 
 
-current_loop: Callable[[], asyncio.AbstractEventLoop]
-if hasattr(asyncio, 'get_running_loop'):  # Python 3.7+
-    current_loop = asyncio.get_running_loop  # type: ignore
-else:
-    current_loop = asyncio.get_event_loop
-
-
 class Singleton(type):
     _instances: MutableMapping[Any, Any] = {}
 
