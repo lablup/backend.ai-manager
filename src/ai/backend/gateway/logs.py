@@ -1,5 +1,6 @@
 from datetime import datetime
 import logging
+import uuid
 
 from aiohttp import web
 import aiohttp_cors
@@ -38,8 +39,7 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.logs'))
     }
 ))
 async def create(request: web.Request, params: Any) -> web.Response:
-    if params['domain'] is None:
-        params['domain'] = request['user']['domain_name']
+    params['domain'] = request['user']['domain_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     requester_uuid = request['user']['uuid']
     log.info('CREATE (ak:{0}/{1})',
@@ -48,7 +48,6 @@ async def create(request: web.Request, params: Any) -> web.Response:
     dbpool = request.app['dbpool']
 
     async with dbpool.acquire() as conn, conn.begin():
-        log.debug('Params: {0}', params)
         resp = {
             'success': True
         }
@@ -72,9 +71,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @check_api_params(
     t.Dict({
-        t.Key('mark_read', default=False): t.Bool,
-        t.Key('page_size', default=20): t.Int(lt=101),
-        t.Key('page_no', default=1): t.Int
+        t.Key('mark_read', default='false'): t.Enum('true', 'True', 'false', 'False'),
+        t.Key('page_size', default=20): tx.IntFromStr(lt=101),
+        t.Key('page_no', default=1): tx.IntFromStr()
     }),
 )
 async def list_logs(request: web.Request, params: Any) -> web.Response:
@@ -93,6 +92,8 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
                    .select_from(error_logs)
                    .order_by(sa.desc(error_logs.c.created_at))
                    .limit(params['page_size']))
+        count_query = (sa.select([sa.func.count(error_logs.c.message)])
+                         .select_from(error_logs))
         if params['page_no'] > 1:
             query = query.offset((params['page_no'] - 1) * params['page_size'])
         if request['is_superadmin']:
@@ -105,11 +106,15 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
             result = await conn.execute(usr_query)
             usrs = await result.fetchall()
             user_ids = [g.id for g in usrs]
-            query = query.where(error_logs.c.user_id.in_(user_ids))
+            where = error_logs.c.user_id.in_(user_ids)
+            query = query.where(where)
+            count_query = query.where(where)
         else:
             is_admin = False
-            query = (query.where((error_logs.c.user_id == user_uuid) &
-                                 (not error_logs.c.is_cleared)))
+            where = ((error_logs.c.user_id == user_uuid) &
+                     (not error_logs.c.is_cleared))
+            query = query.where(where)
+            count_query = query.where(where)
 
         result = await conn.execute(query)
         async for row in result:
@@ -127,10 +132,13 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
                 'request_status': row['request_status'],
                 'traceback': row['traceback'],
             }
+            if result_item['user'] is not None:
+                result_item['user'] = str(result_item['user'])
             if is_admin:
                 result_item['is_cleared'] = row['is_cleared']
             resp['logs'].append(result_item)
-        if params['mark_read']:
+        resp['count'] = await conn.scalar(count_query)
+        if params['mark_read'].lower() == 'true':
             update = (sa.update(error_logs)
                         .values(is_read=True)
                         .where(error_logs.c.id.in_([x['log_id'] for x in resp['logs']])))
@@ -140,25 +148,19 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
 
 @auth_required
 @server_status_required(READ_ALLOWED)
-@check_api_params(
-    t.Dict({
-        t.Key('log_id'): t.List(tx.UUID)
-    })
-)
-async def clear(request: web.Request, params: Any) -> web.Response:
+async def clear(request: web.Request) -> web.Response:
     dbpool = request.app['dbpool']
     domain_name = request['user']['domain_name']
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
+    log_id = uuid.UUID(request.match_info['log_id'])
 
-    requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
-    log.info('CLEAR (ak:{0}/{1})',
-             requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
+    log.info('CLEAR')
     async with dbpool.acquire() as conn, conn.begin():
         query = (sa.update(error_logs)
                    .values(is_cleared=True))
         if request['is_superadmin']:
-            query = query.where(error_logs.c.id.in_(params['log_id']))
+            query = query.where(error_logs.c.id == log_id)
         elif user_role == UserRole.ADMIN or user_role == 'admin':
             j = (groups.join(agus, groups.c.id == agus.c.group_id))
             usr_query = (sa.select([agus.c.user_id])
@@ -168,13 +170,13 @@ async def clear(request: web.Request, params: Any) -> web.Response:
             usrs = await result.fetchall()
             user_ids = [g.id for g in usrs]
             query = query.where((error_logs.c.user_id.in_(user_ids)) &
-                                (error_logs.c.id.in_(params['log_id'])))
+                                (error_logs.c.id == log_id))
         else:
             query = (query.where((error_logs.c.user_id == user_uuid) &
-                                 (error_logs.c.id.in_(params['log_id']))))
+                                 (error_logs.c.id == log_id)))
 
         result = await conn.execute(query)
-        assert result.rowcount == len(params['log_id'])
+        assert result.rowcount == 1
 
         return web.json_response({'success': True}, status=200)
 
@@ -196,6 +198,6 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     cors.add(app.router.add_route('POST', '', create))
     cors.add(app.router.add_route('GET', '', list_logs))
-    cors.add(app.router.add_route('POST', '/clear', clear))
+    cors.add(app.router.add_route('POST', r'/{log_id}/clear', clear))
 
     return app, []
