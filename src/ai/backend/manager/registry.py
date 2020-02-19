@@ -668,6 +668,7 @@ class AgentRegistry:
         # Create the kernel by invoking the agent
         async with self.handle_kernel_exception(
                 'create_session', sess_ctx.session_name, sess_ctx.access_key):
+            created_info = None
             async with RPCContext(agent_ctx.agent_addr, None, order_key=sess_ctx.session_name) as rpc:
                 config: KernelCreationConfig = {
                     'image': {
@@ -696,8 +697,8 @@ class AgentRegistry:
                 }
                 created_info = await rpc.call.create_kernel(str(sess_ctx.kernel_id),
                                                             config)
-                if created_info is None:
-                    raise KernelCreationFailed('ooops')
+            if created_info is None:
+                raise KernelCreationFailed('ooops')
 
         log.debug('start_session(s:{}, ak:{}, k:{}) -> created on ag:{}\n{!r}',
                   sess_ctx.session_name, sess_ctx.access_key, sess_ctx.kernel_id,
