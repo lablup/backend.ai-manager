@@ -6,7 +6,7 @@ from aiohttp import web
 import aiohttp_cors
 import sqlalchemy as sa
 import trafaret as t
-from typing import Any, Tuple
+from typing import Any, Tuple, MutableMapping
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
@@ -77,7 +77,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
     }),
 )
 async def list_logs(request: web.Request, params: Any) -> web.Response:
-    resp = {'logs': []}
+    resp: MutableMapping[str, Any] = {'logs': []}
     dbpool = request.app['dbpool']
     domain_name = request['user']['domain_name']
     user_role = request['user']['role']
