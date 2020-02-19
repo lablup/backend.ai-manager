@@ -72,8 +72,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
 @check_api_params(
     t.Dict({
         t.Key('mark_read', default='false'): t.Enum('true', 'True', 'false', 'False'),
-        t.Key('page_size', default=20): tx.IntFromStr(lt=101),
-        t.Key('page_no', default=1): tx.IntFromStr()
+        t.Key('page_size', default=20): t.ToInt(lt=101),
+        t.Key('page_no', default=1): t.ToInt()
     }),
 )
 async def list_logs(request: web.Request, params: Any) -> web.Response:
