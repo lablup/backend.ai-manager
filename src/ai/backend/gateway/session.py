@@ -240,9 +240,9 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             raise SessionAlreadyExists
         return web.json_response({
             'sessionId': None,   # TODO: will be implemented in multi-container session
-            'sessionName': str(kern.session_id),
-            'status': kern.status.name,
-            'service_ports': kern.service_ports,
+            'sessionName': str(kern['sess_id']),
+            'status': kern['status'].name,
+            'service_ports': kern['service_ports'],
             'created': False,
         }, status=200)
 
@@ -792,30 +792,30 @@ async def get_info(request: web.Request) -> web.Response:
     try:
         await registry.increment_session_usage(session_name, owner_access_key)
         kern = await registry.get_session(session_name, owner_access_key, field='*')
-        resp['domainName'] = kern.domain_name
-        resp['groupId'] = str(kern.group_id)
-        resp['userId'] = str(kern.user_uuid)
-        resp['lang'] = kern.image  # legacy
-        resp['image'] = kern.image
-        resp['registry'] = kern.registry
-        resp['tag'] = kern.tag
+        resp['domainName'] = kern['domain_name']
+        resp['groupId'] = str(kern['group_id'])
+        resp['userId'] = str(kern['user_uuid'])
+        resp['lang'] = kern['image']  # legacy
+        resp['image'] = kern['image']
+        resp['registry'] = kern['registry']
+        resp['tag'] = kern['tag']
 
         # Resource occupation
-        resp['containerId'] = str(kern.container_id)
-        resp['occupiedSlots'] = str(kern.occupied_slots)
-        resp['occupiedShares'] = str(kern.occupied_shares)
-        resp['environ'] = str(kern.environ)
+        resp['containerId'] = str(kern['container_id'])
+        resp['occupiedSlots'] = str(kern['occupied_slots'])
+        resp['occupiedShares'] = str(kern['occupied_shares'])
+        resp['environ'] = str(kern['environ'])
 
         # Lifecycle
-        resp['status'] = kern.status.name  # "e.g. 'KernelStatus.RUNNING' -> 'RUNNING' "
-        resp['statusInfo'] = str(kern.status_info)
-        age = datetime.now(tzutc()) - kern.created_at
+        resp['status'] = kern['status'].name  # "e.g. 'KernelStatus.RUNNING' -> 'RUNNING' "
+        resp['statusInfo'] = str(kern['status_info'])
+        age = datetime.now(tzutc()) - kern['created_at']
         resp['age'] = int(age.total_seconds() * 1000)  # age in milliseconds
-        resp['creationTime'] = str(kern.created_at)
-        resp['terminationTime'] = str(kern.terminated_at) if kern.terminated_at else None
+        resp['creationTime'] = str(kern['created_at'])
+        resp['terminationTime'] = str(kern['terminated_at']) if kern['terminated_at'] else None
 
-        resp['numQueriesExecuted'] = kern.num_queries
-        resp['lastStat'] = kern.last_stat
+        resp['numQueriesExecuted'] = kern['num_queries']
+        resp['lastStat'] = kern['last_stat']
 
         # Resource limits collected from agent heartbeats were erased, as they were deprecated
         # TODO: factor out policy/image info as a common repository
