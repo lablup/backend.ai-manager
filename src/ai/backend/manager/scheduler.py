@@ -1,11 +1,12 @@
 import asyncio
 from datetime import datetime
+from decimal import Decimal
 import logging
 import random
 from typing import (
     Any, Union,
     Awaitable, Optional,
-    Sequence, MutableSequence, List,
+    Sequence, MutableSequence, List, Tuple,
     Mapping,
 )
 from typing_extensions import (
@@ -316,6 +317,24 @@ async def check_scaling_group(sched_ctx: SchedulingContext,
     return PredicateResult(True)
 
 
+def key_by_requested_slots(
+    agent_slots: ResourceSlot,
+    requested_slots: ResourceSlot,
+) -> Tuple[int, ResourceSlot]:
+    unused_slot_keys = set()
+    for k, v in requested_slots.items():
+        if v == Decimal(0):
+            unused_slot_keys.add(k)
+    num_extras = 0
+    for k, v in agent_slots.items():
+        if k in unused_slot_keys and v > Decimal(0):
+            num_extras += 1
+    # Put back agents with more extra slot types
+    # (e.g., accelerators)
+    # Also put front agents with exactly required slot types
+    return (-num_extras, agent_slots)
+
+
 class SessionScheduler(aobject):
 
     config_server: ConfigServer
@@ -619,7 +638,9 @@ class SessionScheduler(aobject):
         # allowing the total ordering property.
         if possible_agent_slots:
             agent_id, _, current_occupied_slots = \
-                max(possible_agent_slots, key=lambda s: s[1])
+                max(possible_agent_slots,
+                    key=lambda ag_slots: key_by_requested_slots(ag_slots[1],
+                                                                sess_ctx.requested_slots))
         else:
             raise InstanceNotAvailable
 
