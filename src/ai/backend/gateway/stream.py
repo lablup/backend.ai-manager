@@ -25,7 +25,7 @@ import aiohttp
 from aiohttp import web
 import aiohttp_cors
 from aiohttp_sse import sse_response
-from aiotools import apartial
+from aiotools import apartial, adefer
 import aiozmq
 from aiozmq import create_zmq_stream as aiozmq_sock
 import sqlalchemy as sa
@@ -58,7 +58,8 @@ sentinel = object()
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def stream_pty(request: web.Request) -> web.StreamResponse:
+@adefer
+async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
     app = request.app
     registry = app['registry']
     sess_id = request.match_info['sess_id']
@@ -79,6 +80,7 @@ async def stream_pty(request: web.Request) -> web.StreamResponse:
 
     myself = asyncio.Task.current_task()
     app['stream_pty_handlers'][stream_key].add(myself)
+    defer(lambda: app['stream_pty_handlers'][stream_key].discard(myself))
 
     async def connect_streams(kernel):
         # TODO: refactor as custom row/table method
@@ -100,6 +102,7 @@ async def stream_pty(request: web.Request) -> web.StreamResponse:
     # Wrap sockets in a list so that below coroutines can share reference changes.
     socks = list(await connect_streams(kernel))
     app['stream_stdin_socks'][stream_key].add(socks[0])
+    defer(lambda: app['stream_stdin_socks'][stream_key].discard(socks[0]))
     stream_sync = asyncio.Event()
 
     async def stream_stdin():
@@ -208,8 +211,6 @@ async def stream_pty(request: web.Request) -> web.StreamResponse:
         app['error_monitor'].capture_exception()
         log.exception('stream_pty({0}): unexpected error', stream_key)
     finally:
-        app['stream_pty_handlers'][stream_key].discard(myself)
-        app['stream_stdin_socks'][stream_key].discard(socks[0])
         stdout_task.cancel()
         await stdout_task
     return ws
@@ -217,7 +218,8 @@ async def stream_pty(request: web.Request) -> web.StreamResponse:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def stream_execute(request: web.Request) -> web.StreamResponse:
+@adefer
+async def stream_execute(defer, request: web.Request) -> web.StreamResponse:
     '''
     WebSocket-version of gateway.kernel.execute().
     '''
@@ -239,6 +241,7 @@ async def stream_execute(request: web.Request) -> web.StreamResponse:
 
     myself = asyncio.Task.current_task()
     app['stream_execute_handlers'][stream_key].add(myself)
+    defer(lambda: app['stream_execute_handlers'][stream_key].discard(myself))
 
     # This websocket connection itself is a "run".
     run_id = secrets.token_hex(8)
@@ -312,7 +315,6 @@ async def stream_execute(request: web.Request) -> web.StreamResponse:
             })
         raise
     finally:
-        app['stream_execute_handlers'][stream_key].discard(myself)
         return ws
 
 
@@ -323,7 +325,8 @@ async def stream_execute(request: web.Request) -> web.StreamResponse:
         tx.AliasedKey(['app', 'service']): t.String,
         tx.AliasedKey(['port'], default=None): t.Null | t.Int[1024:65535],
     }))
-async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
+@adefer
+async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     access_key = request['keypair']['access_key']
@@ -332,6 +335,7 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
     stream_key = (sess_id, access_key)
     myself = asyncio.Task.current_task()
     request.app['stream_proxy_handlers'][stream_key].add(myself)
+    defer(lambda: request.app['stream_proxy_handlers'][stream_key].discard(myself))
 
     try:
         kernel = await asyncio.shield(registry.get_session(sess_id, access_key))
@@ -406,8 +410,6 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
     except asyncio.CancelledError:
         log.debug('stream_proxy({}, {}) cancelled', stream_key, service)
         raise
-    finally:
-        request.app['stream_proxy_handlers'][stream_key].discard(myself)
 
 
 @server_status_required(READ_ALLOWED)
@@ -418,7 +420,8 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
         t.Key('ownerAccessKey', default=None) >> 'owner_access_key': t.Null | t.String,
         tx.AliasedKey(['group', 'groupName'], default='*') >> 'group_name': t.String,
     }))
-async def stream_events(request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
+@adefer
+async def stream_events(defer, request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
     app = request.app
     session_id = params['session_id']
     user_role = request['user']['role']
@@ -446,6 +449,7 @@ async def stream_events(request: web.Request, params: Mapping[str, Any]) -> web.
                 raise GroupNotFound
             group_id = row['id']
     event_queues.add(my_queue)
+    defer(lambda: event_queues.remove(my_queue))
     try:
         async with sse_response(request) as resp:
             while True:
@@ -471,7 +475,6 @@ async def stream_events(request: web.Request, params: Mapping[str, Any]) -> web.
                     'reason': reason,
                 }), event=event_name)
     finally:
-        event_queues.remove(my_queue)
         return resp
 
 
