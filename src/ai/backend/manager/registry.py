@@ -466,7 +466,7 @@ class AgentRegistry:
         async with self.dbpool.acquire() as conn, conn.begin():
             if mounts:
                 extra_vf_conds = (
-                    vfolders.c.name.in_(mounts) | 
+                    vfolders.c.name.in_(mounts) |
                     (vfolders.c.name.startswith('.') & vfolders.c.name != '.local')
                 )
             else:
@@ -671,10 +671,11 @@ class AgentRegistry:
                 allowed_vfolder_types=['user', 'group'],
                 extra_vf_conds=(vfolders.c.name == '.local'))
             for folder in matched_vfolders:
-                if (folder['group'] is not None and folder['group'] != str(sess_ctx.group_id)) or package_directory is None:
-                    package_directory = [item['id'].hex,
-                                         None if item['group'] is None else user_uuid.hex,
-                                         item['host']]
+                if (folder['group'] is not None and folder['group'] != str(sess_ctx.group_id))\
+                        or package_directory is None:
+                    package_directory = [folder['id'].hex,
+                                         None if folder['group'] is None else sess_ctx.user_uuid.hex,
+                                         folder['host']]
                     if folder['group'] is not None:
                         break
 

@@ -81,6 +81,7 @@ class PendingSession:
     session_name: str
     session_type: SessionTypes
     domain_name: str
+    user_uuid: uuid.UUID
     group_id: uuid.UUID
     scaling_group: str
     image_ref: ImageRef
