@@ -91,7 +91,6 @@ class PendingSession:
     environ: Mapping[str, str]
     mounts: Sequence[str]
     mount_map: Mapping[str, str]
-    package_directory: Sequence[str]
     bootstrap_script: Optional[str]
     startup_command: Optional[str]
     internal_data: Optional[Mapping[str, Any]]

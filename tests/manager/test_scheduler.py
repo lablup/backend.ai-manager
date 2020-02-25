@@ -89,7 +89,6 @@ _common_dummy_for_pending_session: Mapping[str, Any] = dict(
     resource_opts={},
     mounts=[],
     mount_map={},
-    package_directory=None,
     environ={},
     bootstrap_script=None,
     startup_command=None,
