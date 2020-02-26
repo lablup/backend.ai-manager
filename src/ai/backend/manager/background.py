@@ -2,7 +2,7 @@ import asyncio
 from asyncio import AbstractEventLoop, Task
 import functools
 import logging
-from typing import Callable, List, Union
+from typing import Callable, Set, Union
 import uuid
 
 from aiojobs import Scheduler
@@ -28,31 +28,28 @@ class ProgressReporter:
         self.task_id = task_id
         self.loop = loop
 
-    def set_progress_total(self, value: Union[int, float]):
+    async def set_progress_total(self, value: Union[int, float]):
         self.total_progress = value
 
-    def update_progress(self, current: Union[int, float]):
+    async def update_progress(self, current: Union[int, float], message: str = None):
         self.current_progress = current
-        asyncio.ensure_future(
-            self.event_dispatcher.produce_event(
-                'task_update',
-                (str(self.task_id), current, self.total_progress, )
-            )
+        await self.event_dispatcher.produce_event(
+            'task_update',
+            (str(self.task_id), current, self.total_progress, message, )
         )
 
 
 class BackgroundTask:
     event_dispatcher: EventDispatcher
     loop: AbstractEventLoop
-    ongoing_tasks: List[Task]
+    ongoing_tasks: Set[Task]
 
     def __init__(self, event_dispatcher, loop=None):
         self.event_dispatcher = event_dispatcher
         self.loop = loop or asyncio.get_event_loop()
-        self.ongoing_tasks: List[Task] = []
+        self.ongoing_tasks: Set[Task] = set()
 
-    def start_background_task(self,
-                                    coro: Callable,
+    def start_background_task(self, coro: Callable,
                                     sched: Scheduler = None) -> uuid.UUID:
         task_id = uuid.uuid4()
         reporter = ProgressReporter(self.event_dispatcher, task_id, self.loop)
@@ -63,17 +60,18 @@ class BackgroundTask:
             raise NotImplementedError
         else:
             task: Task = self.loop.create_task(p)
-            task.add_done_callback(functools.partial(self.done_cb, task_id))
-            self.ongoing_tasks.append(task)
+            task.add_done_callback(functools.partial(self.done_cb, task_id=task_id))
+            self.ongoing_tasks.add(task)
         return task_id
 
     def done_cb(self, task, task_id):
-        asyncio.ensure_future(
+        asyncio.create_task(
             self.event_dispatcher.produce_event(
                 'task_done',
                 (str(task_id), )
             )
         )
+        self.ongoing_tasks.remove(task)
 
     async def shutdown(self):
         log.info('Clenaing up remaining tasks...')

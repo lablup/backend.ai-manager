@@ -464,6 +464,18 @@ async def get_stream_apps(request: web.Request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
+async def mock_background_task(request: web.Request) -> web.Response:
+    async def _mock_task(reporter):
+        await reporter.set_progress_total(2)
+        for i in range(2):
+            await asyncio.sleep(i)
+            await reporter.update_progress(i + 1, message='Interval: 0.1 seconds')
+    task_id = request.app['background_task'].start_background_task(_mock_task)
+    return web.json_response({'task_id': str(task_id)}, status=200)
+
+
+@server_status_required(READ_ALLOWED)
+@auth_required
 @check_api_params(
     t.Dict({
         tx.AliasedKey(['name', 'sessionName'], default='*') >> 'session_name': t.String,
@@ -540,11 +552,11 @@ async def stream_background_task(request: web.Request, params: Mapping[str, Any]
     if access_key is None:
         access_key = request['keypair']['access_key']
 
-    task_queues = app['task_queues']  # type: Set[asyncio.Queue]
+    task_update_queues = app['task_update_queues']  # type: Set[asyncio.Queue]
     my_queue = asyncio.Queue()          # type: asyncio.Queue[Tuple[str, dict, str]]
     log.info('STREAM_BACKGROUND_TASK (ak:{}, t:{})', access_key, task_id)
 
-    task_queues.add(my_queue)
+    task_update_queues.add(my_queue)
     try:
         async with sse_response(request) as resp:
             while True:
@@ -554,13 +566,16 @@ async def stream_background_task(request: web.Request, params: Mapping[str, Any]
                 event_task_id: str = evdata[1]
                 if task_id != uuid.UUID(event_task_id):
                     continue
-                await resp.send(json.dumps({
+                body = {
                     'taskId': str(task_id),
                     'currentProgress': evdata[2],
                     'totalProgress':  evdata[3]
-                }), event=evdata[0])
+                }
+                if evdata[4] is not None:
+                    body['message'] = evdata[4]
+                await resp.send(json.dumps(body), event=evdata[0])
     finally:
-        task_queues.remove(my_queue)
+        task_update_queues.remove(my_queue)
         return resp
 
 
@@ -661,9 +676,10 @@ async def enqueue_result_update(app: web.Application, agent_id: AgentId, event_n
 async def enqueue_task_status_update(app: web.Application, agent_id: AgentId, event_name: str,
                                      raw_task_id: str,
                                      current_progress: Union[int, float] = None,
-                                     total_progress: Union[int, float] = None):
-    for q in app['task_queues']:
-        q.put_nowait((event_name, raw_task_id, current_progress, total_progress, ))
+                                     total_progress: Union[int, float] = None,
+                                     message: str = None):
+    for q in app['task_update_queues']:
+        q.put_nowait((event_name, raw_task_id, current_progress, total_progress, message, ))
 
 
 async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
@@ -673,7 +689,7 @@ async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
     app['stream_stdin_socks'] = defaultdict(weakref.WeakSet)
     app['zctx'] = zmq.asyncio.Context()
     app['event_queues'] = set()
-    app['task_queues'] = set()
+    app['task_update_queues'] = set()
     event_dispatcher = app['event_dispatcher']
     event_dispatcher.subscribe('kernel_terminated', app, kernel_terminated)
     event_dispatcher.subscribe('kernel_enqueued', app, enqueue_status_update)
@@ -709,7 +725,7 @@ async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
                 cancelled_tasks.append(handler)
     for q in app['event_queues']:
         q.put_nowait(sentinel)
-    for q in app['task_queues']:
+    for q in app['task_update_queues']:
         q.put_nowait(sentinel)
     await asyncio.gather(*cancelled_tasks, return_exceptions=True)
     app['zctx'].term()
@@ -723,6 +739,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     add_route = app.router.add_route
     cors.add(add_route('GET', r'/background-task', stream_background_task))
+    cors.add(add_route('POST', r'/test-background-task', mock_background_task))
     cors.add(add_route('GET', r'/session/_/events', stream_events))
     cors.add(add_route('GET', r'/session/{session_name}/pty', stream_pty))
     cors.add(add_route('GET', r'/session/{session_name}/execute', stream_execute))
