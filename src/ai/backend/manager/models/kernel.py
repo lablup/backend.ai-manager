@@ -133,7 +133,7 @@ kernels = sa.Table(
               server_default=SessionResult.UNDEFINED.name,
               nullable=False, index=True),
     sa.Column('internal_data', pgsql.JSONB(), nullable=True),
-    sa.Column('container_log', sa.String, nullable=True),
+    sa.Column('container_log', sa.LargeBinary, nullable=True),
     # Resource metrics measured upon termination
     sa.Column('num_queries', sa.BigInteger(), default=0),
     sa.Column('last_stat', pgsql.JSONB(), nullable=True, default=sa.null()),

@@ -705,16 +705,17 @@ async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name:
                             raw_kernel_id: str, container_id: str):
     dbpool = app['dbpool']
     connection: aioredis.Redis = await redis.connect_with_retries(
-                app.config['redis']['addr'].as_sockaddr(),
+                app['config']['redis']['addr'].as_sockaddr(),
                 db=REDIS_STREAM_DB,
-                password=(app.config['redis']['password']
-                          if app.config['redis']['password'] else None),
+                password=(app['config']['redis']['password']
+                          if app['config']['redis']['password'] else None),
                 encoding=None,
     )
-    logs = await redis.execute_with_retries(lambda: connection.get(f'containerlog.{container_id}'))
+    logs = await redis.execute_with_retries(
+            lambda: connection.lrange(f'containerlog.{container_id}', 0, -1))
     async with dbpool.acquire() as conn, conn.begin():
         query = (sa.update(kernels)
-                    .values(container_log=''.join(logs))
+                    .values(container_log=b''.join(logs))
                     .where(kernels.c.id == raw_kernel_id))
         await conn.execute(query)
     connection.close()
