@@ -30,7 +30,21 @@ Changes
 
 * IMPROVE: "--short" and "--installed" options added to ``etcd list-images`` command.
 
-19.09.11 (2020-01-17)
+19.09.13 (2020-02-10)
+---------------------
+
+* NEW: Include the agent IDs where each image is installed when fetching the image list (#222)
+
+* NEW: API for managing user-specific dotfiles, which are automatically populated for all new sessions.
+  (#220)
+
+* FIX: Missing error logging for InternalServerError raised by service-port streaming API handler
+
+* FIX: Make the tus.io upload handler to use asynchronous file I/O (#228, lablup/backend.ai#106)
+
+* MAINTENANCE: Improve internal CI/CD pipelines (#225)
+
+19.09.12 (2020-01-17)
 ---------------------
 
 * FIX: Potential exhaustion of DB connection pool due to long file I/O operations in the vfolder API

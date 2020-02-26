@@ -325,19 +325,23 @@ async def stream_execute(request: web.Request) -> web.StreamResponse:
 @check_api_params(
     t.Dict({
         tx.AliasedKey(['app', 'service']): t.String,
+        # The port argument is only required to use secondary ports
+        # when the target app listens multiple TCP ports.
+        # Otherwise it should be omitted or set to the same value of
+        # the actual port number used by the app.
         tx.AliasedKey(['port'], default=None): t.Null | t.Int[1024:65535],
         tx.AliasedKey(['envs'], default=None): t.Null | t.String,  # stringified JSON
                                                                    # e.g., '{"PASSWORD": "12345"}'
-        tx.AliasedKey(['arguments'], default=None): t.Null | t.String  # stringified JSON
-                                                                       # e.g., '{"-P": "12345"}'
-                                                                       # The value can be one of:
-                                                                       # None, str, List[str]
+        tx.AliasedKey(['arguments'], default=None): t.Null | t.String,  # stringified JSON
+                                                                        # e.g., '{"-P": "12345"}'
+                                                                        # The value can be one of:
+                                                                        # None, str, List[str]
     }))
 async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
     registry = request.app['registry']
     session_name = request.match_info['session_name']
     access_key = request['keypair']['access_key']
-    service = request.query.get('app', None)  # noqa
+    service = params['app']
 
     stream_key = (session_name, access_key)
     myself = asyncio.Task.current_task()
@@ -354,18 +358,20 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
     for sport in kernel.service_ports:
         if sport['name'] == service:
             if params['port']:
+                # using one of the primary/secondary ports of the app
                 try:
                     hport_idx = sport['container_ports'].index(params['port'])
                 except ValueError:
                     raise InvalidAPIParameters(
                         f"Service {service} does not open the port number {params['port']}.")
-                port = sport['host_ports'][hport_idx]
+                host_port = sport['host_ports'][hport_idx]
             else:
+                # using the default (primary) port of the app
                 if 'host_ports' not in sport:
-                    port = sport['host_port']  # legacy kernels
+                    host_port = sport['host_port']  # legacy kernels
                 else:
-                    port = sport['host_ports'][0]
-            dest = (kernel_host, port)
+                    host_port = sport['host_ports'][0]
+            dest = (kernel_host, host_port)
             break
     else:
         raise AppNotFound(f'{session_name}:{service}')
@@ -376,10 +382,10 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
         proxy_cls = TCPProxy
     elif sport['protocol'] == 'pty':
         raise NotImplementedError
-        # proxy_cls = TermProxy
     elif sport['protocol'] == 'http':
         proxy_cls = TCPProxy
-        # proxy_cls = HTTPProxy
+    elif sport['protocol'] == 'preopen':
+        proxy_cls = TCPProxy
     else:
         raise InvalidAPIParameters(
             f"Unsupported service protocol: {sport['protocol']}")
@@ -406,8 +412,9 @@ async def stream_proxy(request: web.Request, params: Mapping[str, Any]) -> web.S
         result = await asyncio.shield(
             registry.start_service(session_name, access_key, service, opts))
         if result['status'] == 'failed':
-            msg = f"Failed to launch the app service: {result['error']}"
-            raise InternalServerError(msg)
+            raise InternalServerError(
+                "Failed to launch the app service",
+                extra_data=result['error'])
 
         # TODO: weakref to proxies for graceful shutdown?
         ws = web.WebSocketResponse(autoping=False)

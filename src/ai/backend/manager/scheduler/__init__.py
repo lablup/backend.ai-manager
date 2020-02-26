@@ -6,7 +6,7 @@ from typing import (
     Any, Optional,
     Protocol,
     Mapping,
-    Sequence, MutableSequence,
+    Sequence, MutableSequence, List,
 )
 import uuid
 
@@ -95,6 +95,7 @@ class PendingSession:
     bootstrap_script: Optional[str]
     startup_command: Optional[str]
     internal_data: Optional[Mapping[str, Any]]
+    preopen_ports: List[int]
 
 
 class PredicateCallback(Protocol):
