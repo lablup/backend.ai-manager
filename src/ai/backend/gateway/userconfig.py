@@ -20,7 +20,7 @@ from .utils import check_api_params, get_access_key_scopes
 
 from ..manager.models import (
     keypairs, vfolders, verify_dotfile_name, query_accessible_vfolders,
-    query_owned_dotfiles, MAXIMUM_DOTFILE_SIZE
+    query_owned_dotfiles, MAXIMUM_DOTFILE_SIZE,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.dotfile'))

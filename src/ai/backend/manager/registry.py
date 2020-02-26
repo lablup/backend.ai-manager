@@ -55,7 +55,7 @@ from .models import (
     AgentStatus, KernelStatus,
     query_accessible_vfolders, query_allowed_sgroups,
     RESOURCE_OCCUPYING_KERNEL_STATUSES,
-    DEAD_KERNEL_STATUSES
+    DEAD_KERNEL_STATUSES,
 )
 if TYPE_CHECKING:
     from .scheduler import SchedulingContext, PendingSession, AgentAllocationContext
