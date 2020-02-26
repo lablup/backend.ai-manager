@@ -469,10 +469,10 @@ class AgentRegistry:
             if mounts:
                 extra_vf_conds = (
                     vfolders.c.name.in_(mounts) |
-                    (vfolders.c.name.startswith('.') & vfolders.c.name != '.local')
+                    ((vfolders.c.name.startswith('.')) & (vfolders.c.name != '.local'))
                 )
             else:
-                extra_vf_conds = (vfolders.c.name.startswith('.') & vfolders.c.name != '.local')
+                extra_vf_conds = ((vfolders.c.name.startswith('.')) & (vfolders.c.name != '.local'))
             matched_vfolders = await query_accessible_vfolders(
                 conn, user_uuid,
                 user_role=user_role, domain_name=domain_name,
@@ -675,7 +675,7 @@ class AgentRegistry:
                 allowed_vfolder_types=['user', 'group'],
                 extra_vf_conds=(vfolders.c.name == '.local'))
             for folder in matched_vfolders:
-                if (folder['group'] is not None and folder['group'] != str(sess_ctx.group_id))\
+                if (folder['group'] is not None and folder['group'] == str(sess_ctx.group_id))\
                         or package_directory is None:
                     package_directory = [folder['id'].hex,
                                          None if folder['group'] is None else sess_ctx.user_uuid.hex,
