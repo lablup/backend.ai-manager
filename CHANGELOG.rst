@@ -1,6 +1,13 @@
 Changes
 =======
 
+19.09.16 (2020-02-27)
+---------------------
+
+* FIX: Fix potential memory leaks in streaming APIs (#243)
+
+* IMPROVE: Favor CPU agents for session creation requests without accelerators (#242)
+
 19.09.15 (2020-02-18)
 ---------------------
 
