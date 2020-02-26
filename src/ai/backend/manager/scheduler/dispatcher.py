@@ -384,7 +384,6 @@ class SchedulerDispatcher(aobject):
                 session_type=row['sess_type'],
                 session_name=row['sess_id'],
                 domain_name=row['domain_name'],
-                user_uuid=row['user_uuid'],
                 group_id=row['group_id'],
                 scaling_group=row['scaling_group'],
                 image_ref=ImageRef(row['image'], [row['registry']]),

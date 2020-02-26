@@ -668,9 +668,12 @@ class AgentRegistry:
             # per-user package storage information should be stored in following format:
             # [vFolder ID, User UUID, vFolder Host]
             # User UUID should be None if vFolder type is group
-
+            query = (sa.select([keypairs.c.user])
+                       .select_from(keypairs)
+                       .where(keypairs.c.access_key == sess_ctx.access_key))
+            user_uuid = await conn.scalar(query)
             matched_vfolders = await query_accessible_vfolders(
-                conn, sess_ctx.user_uuid,
+                conn, user_uuid,
                 domain_name=sess_ctx.domain_name,
                 allowed_vfolder_types=['user', 'group'],
                 extra_vf_conds=(vfolders.c.name == '.local'))
@@ -678,7 +681,7 @@ class AgentRegistry:
                 if (folder['group'] is not None and folder['group'] == str(sess_ctx.group_id))\
                         or package_directory is None:
                     package_directory = [folder['id'].hex,
-                                         None if folder['group'] is None else sess_ctx.user_uuid.hex,
+                                         None if folder['group'] is None else user_uuid.hex,
                                          folder['host']]
                     if folder['group'] is not None:
                         break
