@@ -1,14 +1,30 @@
 Changes
 =======
 
-19.12.0b1 (2020-01-xx)
+19.12.0b1 (2020-02-xx)
 ----------------------
+
+* BREAKING-CHANGE: API v5 compliant GraphQL schema (#XXX)
+
+* BREAKING-CHANGE: Rename all APIs to use "session" instead of "kernel" (#216)
+
+* NEW: Add pre-open service ports to allow user-written applications listening on a container port and
+  make such ports accessible via the stream proxy API. (#221)
+
+* NEW: Add vfolder large-file upload APIs using the tus.io protocol (#210)
+
+* NEW: Add a minimum-occupied slot first scheduler.
 
 * IMPROVE: Now our manager-to-agent RPC uses `Callosum <https://github.com/lablup/callosum>_` instead of
   aiozmq, supporting Python 3.8 natively. (#209, #79)
 
+* IMPROVE: Reduce possibility of aioredlock locking errors (#236)
+
+* IMPROVE: Auto-fill the minimum resource slots for intrinsic slots only to allow execution of sessions
+  with different set of accelerators simultaneously. (#234)
+
 * Internally refactored the main function for easier writing of future unit tests by composing different
-  resource cleanup contexts in a modular way.
+  resource cleanup contexts in a modular way, using aiohttp's cleanup contexts.
 
 19.12.0a2 (2019-12-31)
 ----------------------
