@@ -24,6 +24,7 @@ import aiohttp
 from aiohttp import web, hdrs
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
+import aioredis
 import aiotools
 from async_timeout import timeout
 from dateutil.tz import tzutc
@@ -43,7 +44,7 @@ from ai.backend.common.types import (
     AgentId, KernelId,
     SessionTypes,
 )
-
+from .defs import REDIS_STREAM_DB
 from .exceptions import (
     InvalidAPIParameters,
     GenericNotFound,
@@ -711,13 +712,24 @@ async def handle_instance_stats(app: web.Application, agent_id: AgentId, event_n
 
 
 async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name: str,
-                            raw_kernel_id: str, log_str: str):
+                            raw_kernel_id: str, container_id: str):
     dbpool = app['dbpool']
+    connection: aioredis.Redis = await redis.connect_with_retries(
+                app['config']['redis']['addr'].as_sockaddr(),
+                db=REDIS_STREAM_DB,
+                password=(app['config']['redis']['password']
+                          if app['config']['redis']['password'] else None),
+                encoding=None,
+    )
+    logs = await redis.execute_with_retries(
+            lambda: connection.lrange(f'containerlog.{container_id}', 0, -1))
     async with dbpool.acquire() as conn, conn.begin():
         query = (sa.update(kernels)
-                    .values(container_log=log_str)
+                    .values(container_log=b''.join(logs))
                     .where(kernels.c.id == raw_kernel_id))
         await conn.execute(query)
+    connection.close()
+    await connection.wait_closed()
 
 
 async def stats_monitor_update(app):
