@@ -163,6 +163,9 @@ async def exception_middleware(request: web.Request,
             stats_monitor.report_stats('increment', 'ai.backend.gateway.api.requests')
         resp = (await handler(request))
     except BackendError as ex:
+        if ex.status_code == 500:
+            log.exception('Internal server error raised inside handlers')
+            raise
         if (error_monitor := app.get('error_monitor', None)) is not None:
             error_monitor.capture_exception()
         if (stats_monitor := app.get('stats_monitor', None)) is not None:
@@ -298,7 +301,7 @@ async def agent_registry_ctx(app: web.Application) -> AsyncIterator[None]:
 
 async def sched_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
     sched_dispatcher = await SchedulerDispatcher.new(
-        app['config'], app['config_server'], app['registry'])
+        app['config'], app['config_server'], app['registry'], app['pidx'])
     yield
     await sched_dispatcher.close()
 

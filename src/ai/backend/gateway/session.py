@@ -69,7 +69,8 @@ from ..manager.models import (
     vfolders,
     AgentStatus, KernelStatus,
     query_accessible_vfolders,
-    session_templates
+    session_templates,
+    verify_vfolder_name,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.session'))
@@ -130,6 +131,7 @@ creation_config_v4 = t.Dict({
     tx.AliasedKey(['scaling_group', 'scalingGroup'], default=None): t.Null | t.String,
     t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
     tx.AliasedKey(['resource_opts', 'resourceOpts'], default=None): t.Null | t.Mapping(t.String, t.Any),
+    tx.AliasedKey(['preopen_ports', 'preopenPorts'], default=None): t.Null | t.List(t.Int[1024:65535]),
 })
 creation_config_v4_template = t.Dict({
     t.Key('mounts', default=undefined): UndefChecker | t.Null | t.List(t.String),
@@ -199,6 +201,25 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     resp: MutableMapping[str, Any] = {}
     requester_uuid = request['user']['uuid']
 
+    if mount_map := params['config'].get('mount_map'):
+        for p in mount_map.values():
+            if p is None:
+                continue
+            if not p.startswith('/home/work/'):
+                raise InvalidAPIParameters(f'Path {p} should start with /home/work/')
+            if p is not None and not verify_vfolder_name(p.replace('/home/work/', '')):
+                raise InvalidAPIParameters(f'Path {str(p)} is reserved for internal operations.')
+
+    mount_map = params['config'].get('mount_map')
+    if mount_map is not None:
+        for p in mount_map.values():
+            if p is None:
+                continue
+            if not p.startswith('/home/work/'):
+                raise InvalidAPIParameters(f'Path {p} should start with /home/work/')
+            if p is not None and not verify_vfolder_name(p.replace('/home/work/', '')):
+                raise InvalidAPIParameters(f'Path {str(p)} is reserved for internal operations.')
+
     # Resolve the image reference.
     try:
         requested_image_ref = \
@@ -229,9 +250,9 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             raise SessionAlreadyExists
         return web.json_response({
             'sessionId': None,   # TODO: will be implemented in multi-container session
-            'sessionName': str(kern.session_id),
-            'status': kern.status.name,
-            'service_ports': kern.service_ports,
+            'sessionName': str(kern['sess_id']),
+            'status': kern['status'].name,
+            'service_ports': kern['service_ports'],
             'created': False,
         }, status=200)
 
@@ -781,30 +802,30 @@ async def get_info(request: web.Request) -> web.Response:
     try:
         await registry.increment_session_usage(session_name, owner_access_key)
         kern = await registry.get_session(session_name, owner_access_key, field='*')
-        resp['domainName'] = kern.domain_name
-        resp['groupId'] = str(kern.group_id)
-        resp['userId'] = str(kern.user_uuid)
-        resp['lang'] = kern.image  # legacy
-        resp['image'] = kern.image
-        resp['registry'] = kern.registry
-        resp['tag'] = kern.tag
+        resp['domainName'] = kern['domain_name']
+        resp['groupId'] = str(kern['group_id'])
+        resp['userId'] = str(kern['user_uuid'])
+        resp['lang'] = kern['image']  # legacy
+        resp['image'] = kern['image']
+        resp['registry'] = kern['registry']
+        resp['tag'] = kern['tag']
 
         # Resource occupation
-        resp['containerId'] = str(kern.container_id)
-        resp['occupiedSlots'] = str(kern.occupied_slots)
-        resp['occupiedShares'] = str(kern.occupied_shares)
-        resp['environ'] = str(kern.environ)
+        resp['containerId'] = str(kern['container_id'])
+        resp['occupiedSlots'] = str(kern['occupied_slots'])
+        resp['occupiedShares'] = str(kern['occupied_shares'])
+        resp['environ'] = str(kern['environ'])
 
         # Lifecycle
-        resp['status'] = kern.status.name  # "e.g. 'KernelStatus.RUNNING' -> 'RUNNING' "
-        resp['statusInfo'] = str(kern.status_info)
-        age = datetime.now(tzutc()) - kern.created_at
+        resp['status'] = kern['status'].name  # "e.g. 'KernelStatus.RUNNING' -> 'RUNNING' "
+        resp['statusInfo'] = str(kern['status_info'])
+        age = datetime.now(tzutc()) - kern['created_at']
         resp['age'] = int(age.total_seconds() * 1000)  # age in milliseconds
-        resp['creationTime'] = str(kern.created_at)
-        resp['terminationTime'] = str(kern.terminated_at) if kern.terminated_at else None
+        resp['creationTime'] = str(kern['created_at'])
+        resp['terminationTime'] = str(kern['terminated_at']) if kern['terminated_at'] else None
 
-        resp['numQueriesExecuted'] = kern.num_queries
-        resp['lastStat'] = kern.last_stat
+        resp['numQueriesExecuted'] = kern['num_queries']
+        resp['lastStat'] = kern['last_stat']
 
         # Resource limits collected from agent heartbeats were erased, as they were deprecated
         # TODO: factor out policy/image info as a common repository

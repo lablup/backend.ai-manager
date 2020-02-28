@@ -39,6 +39,7 @@ from ai.backend.common.types import (
     SlotTypes,
 )
 from ai.backend.common.logging import BraceStyleAdapter
+from .defs import INTRINSIC_SLOTS
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
     InstanceNotFound,
@@ -446,6 +447,7 @@ class AgentRegistry:
         environ = creation_config.get('environ') or {}
         resource_opts = creation_config.get('resource_opts') or {}
         scaling_group = creation_config.get('scaling_group')
+        preopen_ports = creation_config.get('preopen_ports') or []
 
         # Check scaling group availability if scaling_group parameter is given.
         # If scaling_group is not provided, it will be selected in scheduling step.
@@ -532,9 +534,10 @@ class AgentRegistry:
                     'Your resource request has resource type(s) '
                     'not supported by the image.')
 
-            # If the resource is not specified, fill them with image minimums.
+            # If intrinsic resources are not specified,
+            # fill them with image minimums.
             for k, v in requested_slots.items():
-                if v is None or v == 0:
+                if (v is None or v == 0) and k in INTRINSIC_SLOTS:
                     requested_slots[k] = image_min_slots[k]
         else:
             # Handle the legacy clients (prior to v19.03)
@@ -635,6 +638,7 @@ class AgentRegistry:
                 'repl_out_port': 0,
                 'stdin_port': 0,
                 'stdout_port': 0,
+                'preopen_ports': preopen_ports,
             })
             await conn.execute(query)
 
@@ -664,6 +668,7 @@ class AgentRegistry:
         # Create the kernel by invoking the agent
         async with self.handle_kernel_exception(
                 'create_session', sess_ctx.session_name, sess_ctx.access_key):
+            created_info = None
             async with RPCContext(agent_ctx.agent_addr, None, order_key=sess_ctx.session_name) as rpc:
                 config: KernelCreationConfig = {
                     'image': {
@@ -688,11 +693,12 @@ class AgentRegistry:
                     'startup_command': sess_ctx.startup_command,
                     'internal_data': sess_ctx.internal_data,
                     'auto_pull': auto_pull,
+                    'preopen_ports': sess_ctx.preopen_ports,
                 }
                 created_info = await rpc.call.create_kernel(str(sess_ctx.kernel_id),
                                                             config)
-                if created_info is None:
-                    raise KernelCreationFailed('ooops')
+            if created_info is None:
+                raise KernelCreationFailed('ooops')
 
         log.debug('start_session(s:{}, ak:{}, k:{}) -> created on ag:{}\n{!r}',
                   sess_ctx.session_name, sess_ctx.access_key, sess_ctx.kernel_id,
@@ -1033,6 +1039,7 @@ class AgentRegistry:
             # Check and update status of the agent record in DB
             async with self.dbpool.acquire() as conn, conn.begin():
                 query = (sa.select([agents.c.status,
+                                    agents.c.addr,
                                     agents.c.scaling_group,
                                     agents.c.available_slots],
                                    for_update=True)
@@ -1047,9 +1054,10 @@ class AgentRegistry:
                 available_slots = ResourceSlot({
                     SlotName(k): v[1] for k, v in
                     agent_info['resource_slots'].items()})
+                current_addr = agent_info['addr']
                 sgroup = agent_info.get('scaling_group', 'default')
 
-                if row is None or row.status is None:
+                if row is None or row['status'] is None:
                     # new agent detected!
                     log.info('agent {0} joined!', agent_id)
                     await self.config_server.update_resource_slots(slot_key_and_units)
@@ -1068,12 +1076,14 @@ class AgentRegistry:
                     })
                     result = await conn.execute(query)
                     assert result.rowcount == 1
-                elif row.status == AgentStatus.ALIVE:
+                elif row['status'] == AgentStatus.ALIVE:
                     updates = {}
-                    if row.available_slots != available_slots:
+                    if row['available_slots'] != available_slots:
                         updates['available_slots'] = available_slots
-                    if row.scaling_group != sgroup:
+                    if row['scaling_group'] != sgroup:
                         updates['scaling_group'] = sgroup
+                    if row['addr'] != current_addr:
+                        updates['addr'] = current_addr
                     # occupied_slots are updated when kernels starts/terminates
                     if updates:
                         await self.config_server.update_resource_slots(slot_key_and_units)
@@ -1081,7 +1091,7 @@ class AgentRegistry:
                                    .values(updates)
                                    .where(agents.c.id == agent_id))
                         await conn.execute(query)
-                elif row.status in (AgentStatus.LOST, AgentStatus.TERMINATED):
+                elif row['status'] in (AgentStatus.LOST, AgentStatus.TERMINATED):
                     await self.config_server.update_resource_slots(slot_key_and_units)
                     instance_rejoin = True
                     query = (sa.update(agents)
