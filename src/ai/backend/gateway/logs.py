@@ -6,6 +6,7 @@ import uuid
 
 from aiohttp import web
 import aiohttp_cors
+import aioredlock
 import aiotools
 import sqlalchemy as sa
 import trafaret as t
@@ -15,6 +16,7 @@ from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
 
 from .auth import auth_required
+from .defs import REDIS_LIVE_DB
 from .manager import READ_ALLOWED, server_status_required
 from .typing import CORSOptions, Iterable, WebMiddleware
 from .utils import check_api_params, get_access_key_scopes
@@ -195,22 +197,37 @@ async def log_cleanup_task(app: web.Application, interval):
         lifetime = checker.check(raw_lifetime)
     except ValueError:
         lifetime = dt.timedelta(days=90)
-        log.info('Retention value updated in etcd not recognized by trafaret validator, falling back to 90 days')
+        log.info('Retention value specified in etcd not recognized by'
+                 'trafaret validator, falling back to 90 days')
     boundary = datetime.now() - lifetime
-    async with dbpool.acquire() as conn, conn.begin():
-        query = (sa.select([error_logs.c.id])
-                    .select_from(error_logs)
-                    .where(error_logs.c.created_at < boundary))
-        result = await conn.execute(query)
-        log_ids = []
-        async for row in result:
-            log_ids.append(row['id'])
-        query = error_logs.delete().where(error_logs.c.id.in_(log_ids))
-        result = await conn.execute(query)
-        assert result.rowcount == len(log_ids)
+    try:
+        lock = await app['log_cleanup_lock'].lock('gateway.logs')
+        async with lock:
+            async with dbpool.acquire() as conn, conn.begin():
+                query = (sa.select([error_logs.c.id])
+                            .select_from(error_logs)
+                            .where(error_logs.c.created_at < boundary))
+                result = await conn.execute(query)
+                log_ids = []
+                async for row in result:
+                    log_ids.append(row['id'])
+                if len(log_ids) > 0:
+                    log.info('Cleaning up {} log{}', len(log_ids), 's' if len(log_ids) > 1 else '')
+                query = error_logs.delete().where(error_logs.c.id.in_(log_ids))
+                result = await conn.execute(query)
+                assert result.rowcount == len(log_ids)
+
+    except aioredlock.LockError:
+        log.debug('schedule(): temporary locking failure; will be retried.')
 
 
 async def init(app: web.Application) -> None:
+    app['log_cleanup_lock'] = aioredlock.Aioredlock([
+        {'host': str(app['config']['redis']['addr'][0]),
+         'port': app['config']['redis']['addr'][1],
+         'password': app['config']['redis']['password'] if app['config']['redis']['password'] else None,
+         'db': REDIS_LIVE_DB},
+    ])
     app['log_cleanup_task'] = aiotools.create_timer(
         functools.partial(log_cleanup_task, app), 5.0)
 
