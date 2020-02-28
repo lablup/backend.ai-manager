@@ -11,6 +11,9 @@ Changes
 * NEW: Add pre-open service ports to allow user-written applications listening on a container port and
   make such ports accessible via the stream proxy API. (#221)
 
+* NEW: Error logging API and an intrinsic plugin to store all unhandled exceptions in agents and
+  managers. (Agent exceptions are passed via the event bus.) (#235)
+
 * NEW: Now all CLI commands are accessible via ``backend.ai mgr`` (lablup/backend.ai#101)
 
 * NEW: Add vfolder large-file upload APIs using the tus.io protocol (#210)
