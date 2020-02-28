@@ -107,25 +107,25 @@ async def test_background_task(etcd_fixture, create_app_and_client):
 
     async def update_sub(app_ctx: web.Application, agent_id: AgentId, event_name: str,
                          raw_task_id: str,
-                         current_progress = None,
-                         total_progress = None,
-                         message: str = None) -> None:
+                         current_progress=None,
+                         total_progress=None,
+                         message: str=None) -> None:
         assert app_ctx is app
-        assert raw_task_id is str(task_id)
-        assert event_name is 'task_update'
-        assert total_progress is 2
+        assert raw_task_id == str(task_id)
+        assert event_name == 'task_update'
+        assert total_progress == 2
         assert message in ['BGTask ex1', 'BGTask ex2']
         if message == 'BGTask ex1':
-            assert current_progress is 1
+            assert current_progress == 1
         else:
-            assert current_progress is 2
+            assert current_progress == 2
 
     async def done_sub(app_ctx: web.Application, agent_id: AgentId, event_name: str,
                        raw_task_id: str) -> None:
         assert app_ctx is app
-        assert raw_task_id is str(task_id)
-        assert event_name is 'task_done'
-    
+        assert raw_task_id == str(task_id)
+        assert event_name == 'task_done'
+
     async def _mock_task(reporter):
         await reporter.set_progress_total(2)
         await asyncio.sleep(1)
@@ -155,8 +155,8 @@ async def test_background_task_fail(etcd_fixture, create_app_and_client):
     async def fail_sub(app_ctx: web.Application, agent_id: AgentId, event_name: str,
                        raw_task_id: str) -> None:
         assert app_ctx is app
-        assert raw_task_id is str(task_id)
-        assert event_name is 'task_fail'
+        assert raw_task_id == str(task_id)
+        assert event_name == 'task_fail'
     
     async def _mock_task(reporter):
         await reporter.set_progress_total(2)
