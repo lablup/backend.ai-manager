@@ -721,11 +721,16 @@ async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name:
                           if app['config']['redis']['password'] else None),
                 encoding=None,
     )
-    logs = await redis.execute_with_retries(
-            lambda: connection.lrange(f'containerlog.{container_id}', 0, -1))
+    logs = b''
+    list_size = await redis.execute_with_retries(
+            lambda: connection.llen(f'containerlog.{container_id}'))
+    pop_lambda = lambda: connection.lpop(f'containerlog.{container_id}')
+    for i in range(list_size):
+        logs += await redis.execute_with_retries(pop_lambda)
+
     async with dbpool.acquire() as conn, conn.begin():
         query = (sa.update(kernels)
-                    .values(container_log=b''.join(logs))
+                    .values(container_log=logs)
                     .where(kernels.c.id == raw_kernel_id))
         await conn.execute(query)
     connection.close()
@@ -1183,11 +1188,14 @@ async def get_logs(request: web.Request, params: Any) -> web.Response:
         query = (sa.select([kernels.c.container_log])
                   .select_from(kernels)
                   .where((kernels.c.sess_id == session_name) &
+                         (kernels.c.container_log.isnot(None)) &
                          (kernels.c.role == 'master'))
+                  .order_by(sa.desc(kernels.c.created_at))
                   .limit(1))
         logs = await conn.scalar(query)
         if logs is not None:
-            resp['result']['logs'] = logs
+            log.debug('logs: {}', logs)
+            resp['result']['logs'] = logs.decode('utf-8')
             return web.json_response(resp, status=200)
     try:
         await registry.increment_session_usage(session_name, owner_access_key)

@@ -17,7 +17,7 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column('kernels', sa.Column('container_log', sa.LargeBinary, nullable=True))
+    op.add_column('kernels', sa.Column('container_log', sa.LargeBinary(), nullable=True))
 
 
 def downgrade():
