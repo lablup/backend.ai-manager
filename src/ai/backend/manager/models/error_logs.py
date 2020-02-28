@@ -14,6 +14,8 @@ class LogSeverity(str, enum.Enum):
     CRITICAL = 'critical'
     ERROR = 'error'
     WARNING = 'warning'
+    INFO = 'info'
+    DEBUG = 'debug'
 
 
 error_logs = sa.Table(

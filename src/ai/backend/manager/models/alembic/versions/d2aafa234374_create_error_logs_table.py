@@ -24,7 +24,7 @@ def upgrade():
         IDColumn(),
         sa.Column('created_at', sa.DateTime(timezone=True),
                   server_default=sa.func.now(), index=True),
-        sa.Column('severity', sa.Enum('critical', 'error', 'warning', name='errorlog_severity'),
+        sa.Column('severity', sa.Enum('critical', 'error', 'warning', 'info', 'debug', name='errorlog_severity'),
                   index=True),
         sa.Column('source', sa.String),
         sa.Column('user', GUID, sa.ForeignKey('users.uuid'), nullable=True, index=True),

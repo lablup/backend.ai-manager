@@ -1,9 +1,12 @@
+import datetime as dt
 from datetime import datetime
+import functools
 import logging
 import uuid
 
 from aiohttp import web
 import aiohttp_cors
+import aiotools
 import sqlalchemy as sa
 import trafaret as t
 from typing import Any, Tuple, MutableMapping
@@ -181,12 +184,40 @@ async def mark_cleared(request: web.Request) -> web.Response:
         return web.json_response({'success': True}, status=200)
 
 
+async def log_cleanup_task(app: web.Application, interval):
+    dbpool = app['dbpool']
+    etcd = app['config_server'].etcd
+    raw_lifetime = await etcd.get('config/logs/error/retention')
+    if raw_lifetime is None:
+        raw_lifetime = '90d'
+    checker = tx.TimeDuration()
+    try:
+        lifetime = checker.check(raw_lifetime)
+    except ValueError:
+        lifetime = dt.timedelta(days=90)
+        log.info('Retention value updated in etcd not recognized by trafaret validator, falling back to 90 days')
+    boundary = datetime.now() - lifetime
+    async with dbpool.acquire() as conn, conn.begin():
+        query = (sa.select([error_logs.c.id])
+                    .select_from(error_logs)
+                    .where(error_logs.c.created_at < boundary))
+        result = await conn.execute(query)
+        log_ids = []
+        async for row in result:
+            log_ids.append(row['id'])
+        query = error_logs.delete().where(error_logs.c.id.in_(log_ids))
+        result = await conn.execute(query)
+        assert result.rowcount == len(log_ids)
+
+
 async def init(app: web.Application) -> None:
-    pass
+    app['log_cleanup_task'] = aiotools.create_timer(
+        functools.partial(log_cleanup_task, app), 5.0)
 
 
 async def shutdown(app: web.Application) -> None:
-    pass
+    app['log_cleanup_task'].cancel()
+    await app['log_cleanup_task']
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
