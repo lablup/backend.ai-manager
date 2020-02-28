@@ -40,7 +40,7 @@ from ai.backend.common.plugin import (
 from ..manager import __version__
 from ..manager.registry import AgentRegistry
 from ..manager.scheduler.dispatcher import SchedulerDispatcher
-from ..manager.background import BackgroundTask
+from ..manager.background import BackgroundTaskManager
 from .config import load as load_config, load_shared as load_shared_config, redis_config_iv
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
 from .etcd import ConfigServer
@@ -315,7 +315,7 @@ async def monitoring_ctx(app: web.Application) -> AsyncIterator[None]:
 
 
 async def background_task_ctx(app: web.Application) -> AsyncIterator[None]:
-    app['background_task'] = BackgroundTask(app['event_dispatcher'])
+    app['background_task'] = BackgroundTaskManager(app['event_dispatcher'])
     _update_public_interface_objs(app)
     yield
     await app['background_task'].shutdown()

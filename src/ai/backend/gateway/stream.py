@@ -464,18 +464,6 @@ async def get_stream_apps(request: web.Request) -> web.Response:
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def mock_background_task(request: web.Request) -> web.Response:
-    async def _mock_task(reporter):
-        await reporter.set_progress_total(2)
-        for i in range(2):
-            await asyncio.sleep(i)
-            await reporter.update_progress(i + 1, message='Interval: 0.1 seconds')
-    task_id = request.app['background_task'].start_background_task(_mock_task)
-    return web.json_response({'task_id': str(task_id)}, status=200)
-
-
-@server_status_required(READ_ALLOWED)
-@auth_required
 @check_api_params(
     t.Dict({
         tx.AliasedKey(['name', 'sessionName'], default='*') >> 'session_name': t.String,
@@ -704,6 +692,8 @@ async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
     event_dispatcher.subscribe('kernel_failure', app, enqueue_result_update)
     event_dispatcher.subscribe('task_update', app, enqueue_task_status_update)
     event_dispatcher.subscribe('task_done', app, enqueue_task_status_update)
+    event_dispatcher.subscribe('task_cancel', app, enqueue_task_status_update)
+    event_dispatcher.subscribe('task_fail', app, enqueue_task_status_update)
 
     yield
 
@@ -739,7 +729,6 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     add_route = app.router.add_route
     cors.add(add_route('GET', r'/background-task', stream_background_task))
-    cors.add(add_route('POST', r'/test-background-task', mock_background_task))
     cors.add(add_route('GET', r'/session/_/events', stream_events))
     cors.add(add_route('GET', r'/session/{session_name}/pty', stream_pty))
     cors.add(add_route('GET', r'/session/{session_name}/execute', stream_execute))

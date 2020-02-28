@@ -4,7 +4,7 @@ from aiohttp import web
 import pytest
 
 from ai.backend.gateway.server import (
-    config_server_ctx, event_dispatcher_ctx,
+    config_server_ctx, event_dispatcher_ctx, background_task_ctx,
 )
 from ai.backend.common.types import (
     AgentId,
@@ -90,6 +90,84 @@ async def test_error_on_dispatch(etcd_fixture, create_app_and_client, event_loop
     assert 'OverflowError' in exception_log
 
     event_loop.set_exception_handler(old_handler)
+
+    await dispatcher.redis_producer.flushdb()
+    await dispatcher.close()
+
+
+@pytest.mark.asyncio
+async def test_background_task(etcd_fixture, create_app_and_client):
+    app, client = await create_app_and_client(
+        [config_server_ctx, event_dispatcher_ctx, background_task_ctx],
+        ['.events'],
+    )
+    dispatcher = app['event_dispatcher']
+    assert len(dispatcher.subscribers) == 0
+    task_id = None
+
+    async def update_sub(app_ctx: web.Application, agent_id: AgentId, event_name: str,
+                         raw_task_id: str,
+                         current_progress = None,
+                         total_progress = None,
+                         message: str = None) -> None:
+        assert app_ctx is app
+        assert raw_task_id is str(task_id)
+        assert event_name is 'task_update'
+        assert total_progress is 2
+        assert message in ['BGTask ex1', 'BGTask ex2']
+        if message == 'BGTask ex1':
+            assert current_progress is 1
+        else:
+            assert current_progress is 2
+
+    async def done_sub(app_ctx: web.Application, agent_id: AgentId, event_name: str,
+                       raw_task_id: str) -> None:
+        assert app_ctx is app
+        assert raw_task_id is str(task_id)
+        assert event_name is 'task_done'
+    
+    async def _mock_task(reporter):
+        await reporter.set_progress_total(2)
+        await asyncio.sleep(1)
+        await reporter.update_progress(1, message='BGTask ex1')
+        await asyncio.sleep(0.5)
+        await reporter.update_progress(2, message='BGTask ex2')
+
+    dispatcher.subscribe('task_update', app, update_sub)
+    dispatcher.subscribe('task_done', app, done_sub)
+    task_id = request.app['background_task'].start_background_task(_mock_task, name='MockTask1234')
+    await asyncio.sleep(2)
+
+    await dispatcher.redis_producer.flushdb()
+    await dispatcher.close()
+
+
+@pytest.mark.asyncio
+async def test_background_task_fail(etcd_fixture, create_app_and_client):
+    app, client = await create_app_and_client(
+        [config_server_ctx, event_dispatcher_ctx, background_task_ctx],
+        ['.events'],
+    )
+    dispatcher = app['event_dispatcher']
+    assert len(dispatcher.subscribers) == 0
+    task_id = None
+
+    async def fail_sub(app_ctx: web.Application, agent_id: AgentId, event_name: str,
+                       raw_task_id: str) -> None:
+        assert app_ctx is app
+        assert raw_task_id is str(task_id)
+        assert event_name is 'task_fail'
+    
+    async def _mock_task(reporter):
+        await reporter.set_progress_total(2)
+        await asyncio.sleep(1)
+        await reporter.update_progress(1, message='BGTask ex1')
+        raise Exception
+
+    dispatcher.subscribe('task_update', app, update_sub)
+    dispatcher.subscribe('task_fail', app, done_sub)
+    task_id = request.app['background_task'].start_background_task(_mock_task, name='MockTask1234')
+    await asyncio.sleep(2)
 
     await dispatcher.redis_producer.flushdb()
     await dispatcher.close()
