@@ -71,7 +71,7 @@ after_script:
 jobs:
   include:
     - stage: test
-      python: "3.8"
+      # if there is only one case in the build matrix, we should include the test stage explicitly.
     - stage: deploy
       python: "3.8"
       install: skip
