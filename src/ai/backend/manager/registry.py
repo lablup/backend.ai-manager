@@ -5,6 +5,7 @@ from contextvars import ContextVar
 import copy
 from datetime import datetime
 import logging
+from pathlib import Path
 import time
 from typing import (
     Callable, Optional,
@@ -49,6 +50,7 @@ from ..gateway.exceptions import (
     ScalingGroupNotFound,
     VFolderNotFound,
     AgentError)
+from ..gateway.utils import current_loop
 from .models import (
     agents, kernels, keypairs, vfolders,
     keypair_resource_policies,
@@ -677,14 +679,33 @@ class AgentRegistry:
                 domain_name=sess_ctx.domain_name,
                 allowed_vfolder_types=['user', 'group'],
                 extra_vf_conds=(vfolders.c.name == '.local'))
+            # Check if package directory (.local) is configured
+            row = None
             for folder in matched_vfolders:
                 if (folder['group'] is not None and folder['group'] == str(sess_ctx.group_id))\
-                        or package_directory is None:
-                    package_directory = [folder['id'].hex,
-                                         None if folder['group'] is None else user_uuid.hex,
-                                         folder['host']]
+                        or row is None:
+                    row = folder
                     if folder['group'] is not None:
                         break
+            if row is not None:
+                # Manipulate per-user directory if target vfolder is owned by group
+                if row['group'] is not None:
+                    if row['unmanaged_path']:
+                        folder_path = Path(row['unmanaged_path'])
+                    else:
+                        mount_prefix = await self.config_server.get('volumes/_mount')
+                        fs_prefix = await self.config_server.get('volumes/_fsprefix')
+                        folder_path = (Path(mount_prefix) / row['host'] /
+                                       fs_prefix.lstrip('/') / row['id'].hex)
+                    folder_path /= user_uuid.hex
+                    loop = current_loop()
+                    mkdir_lambda = lambda: folder_path.mkdir(parents=True, exist_ok=True)
+                    await loop.run_in_executor(None, mkdir_lambda)
+                package_directory = [
+                    row['id'].hex,
+                    None if row['group'] is None else user_uuid.hex,
+                    folder['host']
+                ]
 
         # Create the kernel by invoking the agent
         async with self.handle_kernel_exception(
