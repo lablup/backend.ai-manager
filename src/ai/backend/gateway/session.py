@@ -69,7 +69,8 @@ from ..manager.models import (
     vfolders,
     AgentStatus, KernelStatus,
     query_accessible_vfolders,
-    session_templates
+    session_templates,
+    verify_vfolder_name
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.session'))
@@ -130,6 +131,7 @@ creation_config_v4 = t.Dict({
     tx.AliasedKey(['scaling_group', 'scalingGroup'], default=None): t.Null | t.String,
     t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
     tx.AliasedKey(['resource_opts', 'resourceOpts'], default=None): t.Null | t.Mapping(t.String, t.Any),
+    tx.AliasedKey(['preopen_ports', 'preopenPorts'], default=None): t.Null | t.List(t.Int[1024:65535]),
 })
 creation_config_v4_template = t.Dict({
     t.Key('mounts', default=undefined): UndefChecker | t.Null | t.List(t.String),
@@ -198,6 +200,15 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     registry = request.app['registry']
     resp: MutableMapping[str, Any] = {}
     requester_uuid = request['user']['uuid']
+
+    if mount_map := params['config'].get('mount_map'):
+        for p in mount_map.values():
+            if p is None:
+                continue
+            if not p.startswith('/home/work/'):
+                raise InvalidAPIParameters(f'Path {p} should start with /home/work/')
+            if p is not None and not verify_vfolder_name(p.replace('/home/work/', '')):
+                raise InvalidAPIParameters(f'Path {str(p)} is reserved for internal operations.')
 
     # Resolve the image reference.
     try:
