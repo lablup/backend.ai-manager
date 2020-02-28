@@ -109,7 +109,7 @@ async def test_background_task(etcd_fixture, create_app_and_client):
                          raw_task_id: str,
                          current_progress=None,
                          total_progress=None,
-                         message: str=None) -> None:
+                         message: str = None) -> None:
         assert app_ctx is app
         assert raw_task_id == str(task_id)
         assert event_name == 'task_update'
@@ -135,7 +135,7 @@ async def test_background_task(etcd_fixture, create_app_and_client):
 
     dispatcher.subscribe('task_update', app, update_sub)
     dispatcher.subscribe('task_done', app, done_sub)
-    task_id = request.app['background_task'].start_background_task(_mock_task, name='MockTask1234')
+    task_id = app['background_task'].start_background_task(_mock_task, name='MockTask1234')
     await asyncio.sleep(2)
 
     await dispatcher.redis_producer.flushdb()
@@ -157,16 +157,15 @@ async def test_background_task_fail(etcd_fixture, create_app_and_client):
         assert app_ctx is app
         assert raw_task_id == str(task_id)
         assert event_name == 'task_fail'
-    
+
     async def _mock_task(reporter):
         await reporter.set_progress_total(2)
         await asyncio.sleep(1)
         await reporter.update_progress(1, message='BGTask ex1')
         raise Exception
 
-    dispatcher.subscribe('task_update', app, update_sub)
-    dispatcher.subscribe('task_fail', app, done_sub)
-    task_id = request.app['background_task'].start_background_task(_mock_task, name='MockTask1234')
+    dispatcher.subscribe('task_fail', app, fail_sub)
+    task_id = app['background_task'].start_background_task(_mock_task, name='MockTask1234')
     await asyncio.sleep(2)
 
     await dispatcher.redis_producer.flushdb()
