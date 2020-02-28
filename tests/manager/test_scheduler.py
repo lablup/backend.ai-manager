@@ -76,6 +76,42 @@ def example_agents():
 
 
 @pytest.fixture
+def example_mixed_agents():
+    return [
+        AgentContext(
+            agent_id=AgentId('i-gpu'),
+            agent_addr='10.0.1.1:6001',
+            scaling_group='sg01',
+            available_slots=ResourceSlot({
+                'cpu': Decimal('4.0'),
+                'mem': Decimal('4096'),
+                'cuda.shares': Decimal('4.0'),
+            }),
+            occupied_slots=ResourceSlot({
+                'cpu': Decimal('0'),
+                'mem': Decimal('0'),
+                'cuda.shares': Decimal('0'),
+            }),
+        ),
+        AgentContext(
+            agent_id=AgentId('i-cpu'),
+            agent_addr='10.0.2.1:6001',
+            scaling_group='sg02',
+            available_slots=ResourceSlot({
+                'cpu': Decimal('3.0'),
+                'mem': Decimal('2560'),
+                'cuda.shares': Decimal('0'),
+            }),
+            occupied_slots=ResourceSlot({
+                'cpu': Decimal('0'),
+                'mem': Decimal('0'),
+                'cuda.shares': Decimal('0'),
+            }),
+        ),
+    ]
+
+
+@pytest.fixture
 def example_agents_first_one_assigned():
     return [
         AgentContext(
@@ -189,7 +225,7 @@ _common_dummy_for_existing_session: Mapping[str, Any] = dict(
 def example_pending_sessions():
     # lower indicies are enqueued first.
     return [
-        PendingSession(
+        PendingSession(  # rocm
             kernel_id=pending_kernel_ids[0],
             access_key=AccessKey('user01'),
             session_name='es01',
@@ -204,7 +240,7 @@ def example_pending_sessions():
             target_sgroup_names=[],
             **_common_dummy_for_pending_session,
         ),
-        PendingSession(
+        PendingSession(  # cuda
             kernel_id=pending_kernel_ids[1],
             access_key=AccessKey('user02'),
             session_name='es01',
@@ -219,7 +255,7 @@ def example_pending_sessions():
             target_sgroup_names=[],
             **_common_dummy_for_pending_session,
         ),
-        PendingSession(
+        PendingSession(  # cpu-only
             kernel_id=pending_kernel_ids[2],
             access_key=AccessKey('user03'),
             session_name='es01',
@@ -321,6 +357,58 @@ def test_lifo_scheduler(example_agents, example_pending_sessions, example_existi
 
     agent_id = scheduler.assign_agent(example_agents, picked_session)
     assert agent_id == 'i-001'
+
+
+def test_fifo_scheduler_favor_cpu_for_requests_without_accelerators(
+    example_mixed_agents,
+    example_pending_sessions,
+):
+    scheduler = FIFOSlotScheduler({})
+    for idx in range(3):
+        picked_session_id = scheduler.pick_session(
+            example_total_capacity,
+            example_pending_sessions,
+            [])
+        assert picked_session_id == example_pending_sessions[0].kernel_id
+        picked_session = _find_and_pop_picked_session(
+            example_pending_sessions, picked_session_id)
+        agent_id = scheduler.assign_agent(example_mixed_agents, picked_session)
+        if idx == 0:
+            # example_mixed_agents do not have any agent with ROCM accelerators.
+            assert agent_id is None
+        elif idx == 1:
+            assert agent_id == AgentId('i-gpu')
+        elif idx == 2:
+            # It should favor the CPU-only agent if the requested slots
+            # do not include accelerators.
+            assert agent_id == AgentId('i-cpu')
+
+
+def test_lifo_scheduler_favor_cpu_for_requests_without_accelerators(
+    example_mixed_agents,
+    example_pending_sessions,
+):
+    # Check the reverse with the LIFO scheduler.
+    # The result must be same.
+    scheduler = LIFOSlotScheduler({})
+    for idx in range(3):
+        picked_session_id = scheduler.pick_session(
+            example_total_capacity,
+            example_pending_sessions,
+            [])
+        assert picked_session_id == example_pending_sessions[-1].kernel_id
+        picked_session = _find_and_pop_picked_session(
+            example_pending_sessions, picked_session_id)
+        agent_id = scheduler.assign_agent(example_mixed_agents, picked_session)
+        if idx == 2:
+            # example_mixed_agents do not have any agent with ROCM accelerators.
+            assert agent_id is None
+        elif idx == 1:
+            assert agent_id == AgentId('i-gpu')
+        elif idx == 0:
+            # It should favor the CPU-only agent if the requested slots
+            # do not include accelerators.
+            assert agent_id == AgentId('i-cpu')
 
 
 def test_drf_scheduler(example_agents, example_pending_sessions, example_existing_sessions):
