@@ -38,7 +38,7 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.logs'))
         t.Key('traceback', default=None): t.Null | t.String
     }
 ))
-async def create(request: web.Request, params: Any) -> web.Response:
+async def append(request: web.Request, params: Any) -> web.Response:
     params['domain'] = request['user']['domain_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     requester_uuid = request['user']['uuid']
@@ -71,7 +71,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @check_api_params(
     t.Dict({
-        t.Key('mark_read', default='false'): t.Enum('true', 'True', 'false', 'False'),
+        t.Key('mark_read', default=False): t.ToBool(),
         t.Key('page_size', default=20): t.ToInt(lt=101),
         t.Key('page_no', default=1): t.ToInt()
     }),
@@ -148,7 +148,7 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
 
 @auth_required
 @server_status_required(READ_ALLOWED)
-async def clear(request: web.Request) -> web.Response:
+async def mark_cleared(request: web.Request) -> web.Response:
     dbpool = request.app['dbpool']
     domain_name = request['user']['domain_name']
     user_role = request['user']['role']
@@ -196,8 +196,8 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app['api_versions'] = (4, 5)
     app['prefix'] = 'logs/error'
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
-    cors.add(app.router.add_route('POST', '', create))
+    cors.add(app.router.add_route('POST', '', append))
     cors.add(app.router.add_route('GET', '', list_logs))
-    cors.add(app.router.add_route('POST', r'/{log_id}/clear', clear))
+    cors.add(app.router.add_route('POST', r'/{log_id}/clear', mark_cleared))
 
     return app, []
