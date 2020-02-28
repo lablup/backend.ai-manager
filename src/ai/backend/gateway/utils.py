@@ -95,7 +95,8 @@ def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None,
                     else:
                         params = (loads or json.loads)(body)
                 else:
-                    params = request.query
+                    params = dict(request.query)
+                log.debug('Raw params: {}', params)
                 params = checker.check(params)
                 if body_exists and query_param_checker:
                     query_params = query_param_checker.check(request.query)
