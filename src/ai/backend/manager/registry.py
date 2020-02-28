@@ -471,28 +471,47 @@ class AgentRegistry:
             if mounts:
                 extra_vf_conds = (
                     vfolders.c.name.in_(mounts) |
-                    ((vfolders.c.name.startswith('.')) & (vfolders.c.name != '.local'))
+                    vfolders.c.name.startswith('.')
                 )
             else:
-                extra_vf_conds = ((vfolders.c.name.startswith('.')) & (vfolders.c.name != '.local'))
+                extra_vf_conds = vfolders.c.name.startswith('.')
             matched_vfolders = await query_accessible_vfolders(
                 conn, user_uuid,
                 user_role=user_role, domain_name=domain_name,
                 allowed_vfolder_types=allowed_vfolder_types,
                 extra_vf_conds=extra_vf_conds)
+
             for item in matched_vfolders:
+                log.debug('Matched vFolder: {}, {}, {}', item['name'], item['group'], item['user'])
                 if item['group'] is not None and item['group'] != str(group_id):
                     # User's accessible group vfolders should not be mounted
                     # if not belong to the execution kernel.
                     continue
-                matched_mounts.add(item['name'])
-                determined_mounts.append({
-                    item['name'],
-                    item['host'],
-                    item['id'].hex,
-                    item['permission'].value,
-                    item['unmanaged_path'] if item['unmanaged_path'] else ''
-                })
+                if item['name'] == '.local' and item['group'] is not None:
+                    mount_prefix = await self.config_server.get('volumes/_mount')
+                    fs_prefix = await self.config_server.get('volumes/_fsprefix')
+                    folder_path = (Path(mount_prefix) / item['host'] /
+                                   fs_prefix.lstrip('/') / item['id'].hex / user_uuid.hex)
+                    loop = current_loop()
+                    mkdir_lambda = lambda: folder_path.mkdir(parents=True, exist_ok=True)
+                    await loop.run_in_executor(None, mkdir_lambda)
+                    matched_mounts.add(item['name'])
+                    determined_mounts.append((
+                        item['name'],
+                        item['host'],
+                        f'{item["id"].hex}/{user_uuid.hex}',
+                        item['permission'].value,
+                        ''
+                    ))
+                else:
+                    matched_mounts.add(item['name'])
+                    determined_mounts.append((
+                        item['name'],
+                        item['host'],
+                        item['id'].hex,
+                        item['permission'].value,
+                        item['unmanaged_path'] if item['unmanaged_path'] else '',
+                    ))
             if mounts and set(mounts) > matched_mounts:
                 raise VFolderNotFound
             creation_config['mounts'] = determined_mounts
@@ -658,7 +677,6 @@ class AgentRegistry:
         registry_url, registry_creds = \
             await get_registry_info(self.config_server.etcd,
                                     sess_ctx.image_ref.registry)
-        package_directory = None
         async with self.dbpool.acquire() as conn, conn.begin():
             query = (
                 sa.select([keypair_resource_policies])
@@ -667,45 +685,6 @@ class AgentRegistry:
             )
             result = await conn.execute(query)
             resource_policy = await result.first()
-            # per-user package storage information should be stored in following format:
-            # [vFolder ID, User UUID, vFolder Host]
-            # User UUID should be None if vFolder type is group
-            query = (sa.select([keypairs.c.user])
-                       .select_from(keypairs)
-                       .where(keypairs.c.access_key == sess_ctx.access_key))
-            user_uuid = await conn.scalar(query)
-            matched_vfolders = await query_accessible_vfolders(
-                conn, user_uuid,
-                domain_name=sess_ctx.domain_name,
-                allowed_vfolder_types=['user', 'group'],
-                extra_vf_conds=(vfolders.c.name == '.local'))
-            # Check if package directory (.local) is configured
-            row = None
-            for folder in matched_vfolders:
-                if (folder['group'] is not None and folder['group'] == str(sess_ctx.group_id))\
-                        or row is None:
-                    row = folder
-                    if folder['group'] is not None:
-                        break
-            if row is not None:
-                # Manipulate per-user directory if target vfolder is owned by group
-                if row['group'] is not None:
-                    if row['unmanaged_path']:
-                        folder_path = Path(row['unmanaged_path'])
-                    else:
-                        mount_prefix = await self.config_server.get('volumes/_mount')
-                        fs_prefix = await self.config_server.get('volumes/_fsprefix')
-                        folder_path = (Path(mount_prefix) / row['host'] /
-                                       fs_prefix.lstrip('/') / row['id'].hex)
-                    folder_path /= user_uuid.hex
-                    loop = current_loop()
-                    mkdir_lambda = lambda: folder_path.mkdir(parents=True, exist_ok=True)
-                    await loop.run_in_executor(None, mkdir_lambda)
-                package_directory = [
-                    row['id'].hex,
-                    None if row['group'] is None else user_uuid.hex,
-                    folder['host']
-                ]
 
         # Create the kernel by invoking the agent
         async with self.handle_kernel_exception(
@@ -729,7 +708,6 @@ class AgentRegistry:
                     'idle_timeout': resource_policy['idle_timeout'],
                     'mounts': sess_ctx.mounts,
                     'mount_map': sess_ctx.mount_map,
-                    'package_directory': package_directory,
                     'environ': sess_ctx.environ,
                     'resource_opts': sess_ctx.resource_opts,
                     'bootstrap_script': sess_ctx.bootstrap_script,

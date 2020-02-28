@@ -349,7 +349,6 @@ class SchedulerDispatcher(aobject):
                 kernels.c.sess_id,
                 kernels.c.access_key,
                 kernels.c.domain_name,
-                kernels.c.user_uuid,
                 kernels.c.group_id,
                 kernels.c.scaling_group,
                 kernels.c.occupied_slots,
