@@ -1,6 +1,5 @@
 import asyncio
 from asyncio import AbstractEventLoop, Task
-import functools
 import logging
 from typing import Callable, Set, Union
 import uuid
@@ -51,9 +50,10 @@ class BackgroundTaskManager:
                                     sched: Scheduler = None) -> uuid.UUID:
         task_id = uuid.uuid4()
         async def _callback_wrapper():
+
             reporter = ProgressReporter(self.event_dispatcher, task_id)
             try:
-                ret = await coro(reporter)
+                await coro(reporter)
                 task_result = 'task_done'
             except asyncio.CancelledError:
                 task_result = 'task_cancel'
