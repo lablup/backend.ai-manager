@@ -368,7 +368,7 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                     'user_email': row.users_email,
                     'group_name': row.groups_name,
                     'type': 'user' if row['vfolders_user'] is not None else 'group',
-                    'unmanaged_path': row.unmanaged_path
+                    'unmanaged_path': row.vfolders_unmanaged_path
                 })
         else:
             extra_vf_conds = None
