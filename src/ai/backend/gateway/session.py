@@ -43,6 +43,7 @@ from ai.backend.common.types import (
     AgentId, KernelId,
     SessionTypes,
 )
+from ai.backend.common.utils import current_loop
 
 from .exceptions import (
     InvalidAPIParameters,
@@ -57,7 +58,7 @@ from .exceptions import (
 from .auth import auth_required
 from .typing import CORSOptions, WebMiddleware
 from .utils import (
-    current_loop, catch_unexpected, check_api_params, get_access_key_scopes, undefined
+    catch_unexpected, check_api_params, get_access_key_scopes, undefined
 )
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (
