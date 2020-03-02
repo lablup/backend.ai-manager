@@ -636,7 +636,7 @@ async def upload(request: web.Request, row: VFolderRow) -> web.Response:
                 target_filename=file_path,
                 access_mode='wb',
                 decode=file.decode,
-                maxsize=DEFAULT_INFLIGHT_CHUNKS) as writer:
+                max_chunks=DEFAULT_INFLIGHT_CHUNKS) as writer:
             while not file.at_eof():
                 chunk = await file.read_chunk(size=DEFAULT_CHUNK_SIZE)
                 await writer.write(chunk)
@@ -717,7 +717,7 @@ async def tus_upload_part(request):
             loop=current_loop(),
             target_filename=target_filename,
             access_mode='ab',
-            maxsize=DEFAULT_INFLIGHT_CHUNKS) as writer:
+            max_chunks=DEFAULT_INFLIGHT_CHUNKS) as writer:
         while not request.content.at_eof():
             chunk = await request.content.read(DEFAULT_CHUNK_SIZE)
             await writer.write(chunk)

@@ -34,4 +34,3 @@ PluginAppCreator = Callable[
 ]
 
 CleanupContext = Callable[[web.Application], AsyncIterator[None]]
-
