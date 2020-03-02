@@ -45,6 +45,7 @@ from ai.backend.common.types import (
     AgentId, KernelId,
     SessionTypes,
 )
+from ai.backend.common.utils import current_loop
 from .defs import REDIS_STREAM_DB
 from .exceptions import (
     InvalidAPIParameters,
@@ -59,7 +60,7 @@ from .exceptions import (
 from .auth import auth_required
 from .typing import CORSOptions, WebMiddleware
 from .utils import (
-    current_loop, catch_unexpected, check_api_params, get_access_key_scopes, undefined
+    catch_unexpected, check_api_params, get_access_key_scopes, undefined
 )
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (
@@ -432,7 +433,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     except UnknownImageReference:
         raise InvalidAPIParameters(f"Unknown image reference: {params['image']}")
     except Exception:
-        request.app['error_monitor'].capture_exception()
+        await request.app['error_monitor'].capture_exception(user=owner_uuid)
         log.exception('GET_OR_CREATE: unexpected error!')
         raise InternalServerError
     finally:
@@ -806,7 +807,7 @@ async def stats_monitor_update_timer(app):
         except asyncio.CancelledError:
             break
         except:
-            app['error_monitor'].capture_exception()
+            await app['error_monitor'].capture_exception()
             log.exception('stats_monitor_update unexpected error')
         try:
             await asyncio.sleep(5)
@@ -899,7 +900,7 @@ async def restart(request: web.Request) -> web.Response:
         log.exception('RESTART: exception')
         raise
     except:
-        request.app['error_monitor'].capture_exception()
+        await request.app['error_monitor'].capture_exception(user=request['user']['uuid'])
         log.exception('RESTART: unexpected error')
         raise web.HTTPInternalServerError
     return web.Response(status=204)
@@ -1111,7 +1112,7 @@ async def download_files(request: web.Request, params: Any) -> web.Response:
     except (ValueError, FileNotFoundError):
         raise InvalidAPIParameters('The file is not found.')
     except Exception:
-        request.app['error_monitor'].capture_exception()
+        await request.app['error_monitor'].capture_exception(user=request['user']['uuid'])
         log.exception('DOWNLOAD_FILE: unexpected error!')
         raise InternalServerError
 
@@ -1148,7 +1149,7 @@ async def download_single(request: web.Request, params: Any) -> web.Response:
     except (ValueError, FileNotFoundError):
         raise InvalidAPIParameters('The file is not found.')
     except Exception:
-        request.app['error_monitor'].capture_exception()
+        await request.app['error_monitor'].capture_exception(user=request['user']['uuid'])
         log.exception('DOWNLOAD_SINGLE: unexpected error!')
         raise InternalServerError
     return web.Response(body=result, status=200)
@@ -1182,7 +1183,7 @@ async def list_files(request: web.Request) -> web.Response:
         log.exception('LIST_FILES: exception')
         raise
     except Exception:
-        request.app['error_monitor'].capture_exception()
+        await request.app['error_monitor'].capture_exception(user=request['user']['uuid'])
         log.exception('LIST_FILES: unexpected error!')
         raise InternalServerError
     return web.json_response(resp, status=200)

@@ -38,6 +38,7 @@ from ai.backend.common.plugin import (
     discover_entrypoints, install_plugins
 )
 from ..manager import __version__
+from ..manager.plugin.error_monitor import ErrorMonitor
 from ..manager.registry import AgentRegistry
 from ..manager.scheduler.dispatcher import SchedulerDispatcher
 from .config import load as load_config, load_shared as load_shared_config, redis_config_iv
@@ -165,7 +166,7 @@ async def exception_middleware(request: web.Request,
             log.exception('Internal server error raised inside handlers')
             raise
         if (error_monitor := app.get('error_monitor', None)) is not None:
-            error_monitor.capture_exception()
+            await error_monitor.capture_exception()
         if (stats_monitor := app.get('stats_monitor', None)) is not None:
             stats_monitor.report_stats('increment', 'ai.backend.gateway.api.failures')
             stats_monitor.report_stats('increment', f'ai.backend.gateway.api.status.{ex.status_code}')
@@ -188,7 +189,7 @@ async def exception_middleware(request: web.Request,
         raise e
     except Exception as e:
         if (error_monitor := app.get('error_monitor', None)) is not None:
-            error_monitor.capture_exception()
+            await error_monitor.capture_exception()
         log.exception('Uncaught exception in HTTP request handlers {0!r}', e)
         if app['config']['debug']['enabled']:
             raise InternalServerError(traceback.format_exc())
@@ -306,9 +307,9 @@ async def sched_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
 
 async def monitoring_ctx(app: web.Application) -> AsyncIterator[None]:
     # Install stats hook plugins.
+    app['error_monitor'] = ErrorMonitor(app)
     plugins = [
         'stats_monitor',
-        'error_monitor',
     ]
     install_plugins(plugins, app, 'dict', app['config'])
     _update_public_interface_objs(app)
@@ -359,17 +360,15 @@ def handle_loop_error(
     exception = context.get('exception')
     msg = context.get('message', '(empty message)')
     if exception is not None:
-        if (error_monitor := app.get('error_monitor', None)) is not None:
-            error_monitor.set_context(context)
         if sys.exc_info()[0] is not None:
             log.exception('Error inside event loop: {0}', msg)
-            if error_monitor is not None:
-                error_monitor.capture_exception(True)
+            if error_monitor := app.get('error_monitor', None):
+                asyncio.run(error_monitor.capture_exception())
         else:
             exc_info = (type(exception), exception, exception.__traceback__)
             log.error('Error inside event loop: {0}', msg, exc_info=exc_info)
-            if error_monitor is not None:
-                error_monitor.capture_exception(exc_info)
+            if error_monitor := app.get('error_monitor', None):
+                asyncio.run(error_monitor.capture_exception(exception))
 
 
 def _init_subapp(pkg_name: str,
@@ -438,11 +437,11 @@ def build_root_app(pidx: int,
     app.on_response_prepare.append(on_prepare)
     if cleanup_contexts is None:
         app.cleanup_ctx.append(config_server_ctx)
-        app.cleanup_ctx.append(monitoring_ctx)
         app.cleanup_ctx.append(manager_status_ctx)
         app.cleanup_ctx.append(redis_ctx)
         app.cleanup_ctx.append(database_ctx)
         app.cleanup_ctx.append(event_dispatcher_ctx)
+        app.cleanup_ctx.append(monitoring_ctx)
         app.cleanup_ctx.append(agent_registry_ctx)
         app.cleanup_ctx.append(sched_dispatcher_ctx)
         app.cleanup_ctx.append(webapp_plugins_ctx)
@@ -480,6 +479,7 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         '.session_template',
         '.image',
         '.userconfig',
+        '.logs',
     ]
     app = build_root_app(pidx, _args[0], subapp_pkgs=subapp_pkgs)
 

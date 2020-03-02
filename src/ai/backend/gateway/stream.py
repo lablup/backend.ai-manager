@@ -168,7 +168,7 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
             # Agent or kernel is terminated.
             raise
         except Exception:
-            app['error_monitor'].capture_exception()
+            await app['error_monitor'].capture_exception(user=request['user']['uuid'])
             log.exception('stream_stdin({0}): unexpected error', stream_key)
         finally:
             log.debug('stream_stdin({0}): terminated', stream_key)
@@ -200,7 +200,7 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
         except asyncio.CancelledError:
             pass
         except:
-            app['error_monitor'].capture_exception()
+            await app['error_monitor'].capture_exception(user=request['user']['uuid'])
             log.exception('stream_stdout({0}): unexpected error', stream_key)
         finally:
             log.debug('stream_stdout({0}): terminated', stream_key)
@@ -212,7 +212,7 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
         stdout_task = asyncio.create_task(stream_stdout())
         await stream_stdin()
     except Exception:
-        app['error_monitor'].capture_exception()
+        await app['error_monitor'].capture_exception(user=request['user']['uuid'])
         log.exception('stream_pty({0}): unexpected error', stream_key)
     finally:
         stdout_task.cancel()
