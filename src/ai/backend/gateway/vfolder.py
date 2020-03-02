@@ -31,7 +31,7 @@ import trafaret as t
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.utils import AsyncJanusWriter, current_loop, Fstab
+from ai.backend.common.utils import AsyncFileWriter, current_loop, Fstab
 
 from .auth import auth_required, superadmin_required
 from .config import DEFAULT_CHUNK_SIZE, DEFAULT_INFLIGHT_CHUNKS
@@ -631,7 +631,7 @@ async def upload(request: web.Request, row: VFolderRow) -> web.Response:
         log.info(log_fmt + ': accepted path:{}',
                  *log_args, file.filename)
 
-        async with AsyncJanusWriter(
+        async with AsyncFileWriter(
                 loop=current_loop(),
                 target_filename=file_path,
                 access_mode='wb',
@@ -713,7 +713,7 @@ async def tus_upload_part(request):
     upload_base = folder_path / ".upload"
     target_filename = upload_base / params['session_id']
 
-    async with AsyncJanusWriter(
+    async with AsyncFileWriter(
             loop=current_loop(),
             target_filename=target_filename,
             access_mode='ab',
