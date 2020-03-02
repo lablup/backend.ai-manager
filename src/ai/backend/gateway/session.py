@@ -7,6 +7,7 @@ import base64
 from decimal import Decimal
 from datetime import datetime, timedelta
 import functools
+from io import BytesIO
 import json
 import logging
 import re
@@ -714,27 +715,45 @@ async def handle_instance_stats(app: web.Application, agent_id: AgentId, event_n
 async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name: str,
                             raw_kernel_id: str, container_id: str):
     dbpool = app['dbpool']
-    connection: aioredis.Redis = await redis.connect_with_retries(
-                app['config']['redis']['addr'].as_sockaddr(),
-                db=REDIS_STREAM_DB,
-                password=(app['config']['redis']['password']
-                          if app['config']['redis']['password'] else None),
-                encoding=None,
+    redis_conn: aioredis.Redis = await redis.connect_with_retries(
+        app['config']['redis']['addr'].as_sockaddr(),
+        db=REDIS_STREAM_DB,
+        password=(app['config']['redis']['password']
+                  if app['config']['redis']['password'] else None),
+        encoding=None,
     )
-    logs = b''
-    list_size = await redis.execute_with_retries(
-            lambda: connection.llen(f'containerlog.{container_id}'))
-    pop_lambda = lambda: connection.lpop(f'containerlog.{container_id}')
-    for i in range(list_size):
-        logs += await redis.execute_with_retries(pop_lambda)
-
-    async with dbpool.acquire() as conn, conn.begin():
-        query = (sa.update(kernels)
-                    .values(container_log=logs)
-                    .where(kernels.c.id == raw_kernel_id))
-        await conn.execute(query)
-    connection.close()
-    await connection.wait_closed()
+    # The log data is at most 10 MiB.
+    log_buffer = BytesIO()
+    log_key = f'containerlog.{container_id}'
+    try:
+        list_size = await redis.execute_with_retries(
+            lambda: redis_conn.llen(log_key)
+        )
+        if list_size is None:
+            # The log data is expired due to a very slow event delivery.
+            # (should never happen!)
+            log.warning('tried to store console logs for cid:{}, but the data is expired',
+                        container_id)
+            return
+        for _ in range(list_size):
+            # Read chunk-by-chunk to allow interleaving with other Redis operations.
+            chunk = await redis.execute_with_retries(lambda: redis_conn.lpop(log_key))
+            log_buffer.write(chunk)
+        try:
+            async with dbpool.acquire() as conn, conn.begin():
+                query = (sa.update(kernels)
+                            .values(container_log=log_buffer.getvalue())
+                            .where(kernels.c.id == raw_kernel_id))
+                await conn.execute(query)
+        finally:
+            # Clear the log data from Redis when done.
+            await redis.execute_with_retries(
+                lambda: redis_conn.delete(log_key)
+            )
+    finally:
+        log_buffer.close()
+        redis_conn.close()
+        await redis_conn.wait_closed()
 
 
 async def stats_monitor_update(app):
