@@ -1214,7 +1214,7 @@ async def get_logs(request: web.Request, params: Any) -> web.Response:
                   .limit(1))
         logs = await conn.scalar(query)
         if logs is not None:
-            log.debug('logs: {}', logs)
+            log.debug('returning log from database record')
             resp['result']['logs'] = logs.decode('utf-8')
             return web.json_response(resp, status=200)
     try:
