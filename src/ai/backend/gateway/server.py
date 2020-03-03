@@ -32,6 +32,7 @@ from setproctitle import setproctitle
 
 from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
+from ai.backend.common.config import redis_config_iv
 from ai.backend.common.utils import env_info
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from ai.backend.common.plugin import (
@@ -41,7 +42,7 @@ from ..manager import __version__
 from ..manager.plugin.error_monitor import ErrorMonitor
 from ..manager.registry import AgentRegistry
 from ..manager.scheduler.dispatcher import SchedulerDispatcher
-from .config import load as load_config, load_shared as load_shared_config, redis_config_iv
+from .config import load as load_config, load_shared as load_shared_config
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
 from .etcd import ConfigServer
 from .events import EventDispatcher
@@ -208,10 +209,12 @@ async def config_server_ctx(app: web.Application) -> AsyncIterator[None]:
         app['config']['etcd']['user'], app['config']['etcd']['password'],
         app['config']['etcd']['namespace'])
 
-    shared_config = await load_shared_config(app['config_server'].etcd)
-    app['config'].update(shared_config)
-    redis_config = await app['config_server'].etcd.get_prefix('config/redis')
-    app['config']['redis'] = redis_config_iv.check(redis_config)
+    app['config'].update(
+        await load_shared_config(app['config_server'].etcd)
+    )
+    app['config']['redis'] = redis_config_iv.check(
+        await app['config_server'].etcd.get_prefix('config/redis')
+    )
     _update_public_interface_objs(app)
     yield
     # await app['config_server'].close()
