@@ -23,7 +23,7 @@ import sqlalchemy as sa
 import psycopg2 as pg
 import pytest
 
-from ai.backend.gateway.config import load as load_config, redis_config_iv
+from ai.backend.gateway.config import load as load_config
 from ai.backend.gateway.etcd import ConfigServer
 from ai.backend.gateway.server import (
     build_root_app,
@@ -34,6 +34,7 @@ from ai.backend.manager.models import (
     agents,
     kernels, keypairs, vfolders,
 )
+from ai.backend.common.config import redis_config_iv
 from ai.backend.common.types import HostPortPair
 
 here = Path(__file__).parent
