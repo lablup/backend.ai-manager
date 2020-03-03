@@ -17,12 +17,12 @@ jobs:
       run: |
         sudo apt-get install libsnappy-dev
         python -m pip install -U pip setuptools
-        echo "HEAD: ${GITHUB_REF##*/} (${GITHUB_REF})"
+        echo "HEAD: ${GITHUB_REF#refs/heads/} (${GITHUB_REF})"
         # Use the same branch (if exists) for the backend.ai-common installation
         set +e
-        git ls-remote --heads 'https://github.com/lablup/backend.ai-common' | grep -q "refs/heads/${GITHUB_REF##*/}"
+        git ls-remote --heads 'https://github.com/lablup/backend.ai-common' | grep -q "${GITHUB_REF}"
         if [ $? -eq 0 ]; then
-          sed -i "s%\(backend.ai-common\)@master%\1@${GITHUB_REF##*/}%" requirements/lint.txt
+          sed -i "s%\(backend.ai-common\)@master%\1@${GITHUB_REF#refs/heads/}%" requirements/lint.txt
         fi
         set -e
         python -m pip install -U -r requirements/lint.txt
