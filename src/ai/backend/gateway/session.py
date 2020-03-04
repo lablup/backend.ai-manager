@@ -7,6 +7,7 @@ import base64
 from decimal import Decimal
 from datetime import datetime, timedelta
 import functools
+from io import BytesIO
 import json
 import logging
 import re
@@ -24,6 +25,7 @@ import aiohttp
 from aiohttp import web, hdrs
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
+import aioredis
 import aiotools
 from async_timeout import timeout
 from dateutil.tz import tzutc
@@ -44,7 +46,7 @@ from ai.backend.common.types import (
     SessionTypes,
 )
 from ai.backend.common.utils import current_loop
-
+from .defs import REDIS_STREAM_DB
 from .exceptions import (
     InvalidAPIParameters,
     GenericNotFound,
@@ -711,6 +713,50 @@ async def handle_instance_stats(app: web.Application, agent_id: AgentId, event_n
     await app['registry'].handle_stats(agent_id, kern_stats)
 
 
+async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name: str,
+                            raw_kernel_id: str, container_id: str):
+    dbpool = app['dbpool']
+    redis_conn: aioredis.Redis = await redis.connect_with_retries(
+        app['config']['redis']['addr'].as_sockaddr(),
+        db=REDIS_STREAM_DB,
+        password=(app['config']['redis']['password']
+                  if app['config']['redis']['password'] else None),
+        encoding=None,
+    )
+    # The log data is at most 10 MiB.
+    log_buffer = BytesIO()
+    log_key = f'containerlog.{container_id}'
+    try:
+        list_size = await redis.execute_with_retries(
+            lambda: redis_conn.llen(log_key)
+        )
+        if list_size is None:
+            # The log data is expired due to a very slow event delivery.
+            # (should never happen!)
+            log.warning('tried to store console logs for cid:{}, but the data is expired',
+                        container_id)
+            return
+        for _ in range(list_size):
+            # Read chunk-by-chunk to allow interleaving with other Redis operations.
+            chunk = await redis.execute_with_retries(lambda: redis_conn.lpop(log_key))
+            log_buffer.write(chunk)
+        try:
+            async with dbpool.acquire() as conn, conn.begin():
+                query = (sa.update(kernels)
+                            .values(container_log=log_buffer.getvalue())
+                            .where(kernels.c.id == raw_kernel_id))
+                await conn.execute(query)
+        finally:
+            # Clear the log data from Redis when done.
+            await redis.execute_with_retries(
+                lambda: redis_conn.delete(log_key)
+            )
+    finally:
+        log_buffer.close()
+        redis_conn.close()
+        await redis_conn.wait_closed()
+
+
 async def stats_monitor_update(app):
     with app['stats_monitor'] as stats_monitor:
         stats_monitor.report_stats(
@@ -1153,10 +1199,24 @@ async def list_files(request: web.Request) -> web.Response:
 async def get_logs(request: web.Request, params: Any) -> web.Response:
     registry = request.app['registry']
     session_name = request.match_info['session_name']
+    dbpool = request.app['dbpool']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('GET_LOG (ak:{}/{}, s:{})',
              requester_access_key, owner_access_key, session_name)
     resp = {'result': {'logs': ''}}
+    async with dbpool.acquire() as conn, conn.begin():
+        query = (sa.select([kernels.c.container_log])
+                  .select_from(kernels)
+                  .where((kernels.c.sess_id == session_name) &
+                         (kernels.c.container_log.isnot(None)) &
+                         (kernels.c.role == 'master'))
+                  .order_by(sa.desc(kernels.c.created_at))
+                  .limit(1))
+        logs = await conn.scalar(query)
+        if logs is not None:
+            log.debug('returning log from database record')
+            resp['result']['logs'] = logs.decode('utf-8')
+            return web.json_response(resp, status=200)
     try:
         await registry.increment_session_usage(session_name, owner_access_key)
         resp['result'] = await registry.get_logs(session_name, owner_access_key)
@@ -1224,6 +1284,7 @@ async def init(app: web.Application) -> None:
     event_dispatcher.consume('kernel_success', app, handle_batch_result)
     event_dispatcher.consume('kernel_failure', app, handle_batch_result)
     event_dispatcher.consume('kernel_stat_sync', app, handle_kernel_stat_sync)
+    event_dispatcher.consume('kernel_log', app, handle_kernel_log)
     event_dispatcher.consume('instance_started', app, handle_instance_lifecycle)
     event_dispatcher.consume('instance_terminated', app, handle_instance_lifecycle)
     event_dispatcher.consume('instance_heartbeat', app, handle_instance_heartbeat)

@@ -38,4 +38,4 @@ jobs:
         else
           echo "::add-matcher::.github/workflows/mypy-matcher.json"
         fi
-        python -m mypy --no-color-output src/ai/backend
+        python -m mypy --no-color-output src/ai/backend tests

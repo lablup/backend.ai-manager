@@ -10,7 +10,6 @@ import subprocess
 import tempfile
 from typing import (
     Any, Optional,
-    AsyncGenerator,
     Sequence,
     Mapping,
     Tuple,
@@ -27,6 +26,9 @@ from ai.backend.gateway.config import load as load_config
 from ai.backend.gateway.etcd import ConfigServer
 from ai.backend.gateway.server import (
     build_root_app,
+)
+from ai.backend.gateway.typing import (
+    CleanupContext,
 )
 from ai.backend.manager.models.base import populate_fixture
 from ai.backend.manager.models import (
@@ -302,7 +304,7 @@ async def create_app_and_client(test_config):
     runner: Optional[web.BaseRunner] = None
 
     async def app_builder(
-        cleanup_contexts: Sequence[AsyncGenerator[None, None]] = None,
+        cleanup_contexts: Sequence[CleanupContext] = None,
         subapp_pkgs: Sequence[str] = None,
         scheduler_opts: Mapping[str, Any] = None,
     ) -> Tuple[web.Application, Client]:
