@@ -1196,12 +1196,12 @@ async def list_files(request: web.Request) -> web.Response:
     t.Dict({
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }))
-async def get_logs(request: web.Request, params: Any) -> web.Response:
+async def get_container_logs(request: web.Request, params: Any) -> web.Response:
     registry = request.app['registry']
     session_name = request.match_info['session_name']
     dbpool = request.app['dbpool']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
-    log.info('GET_LOG (ak:{}/{}, s:{})',
+    log.info('GET_CONTAINER_LOG (ak:{}/{}, s:{})',
              requester_access_key, owner_access_key, session_name)
     resp = {'result': {'logs': ''}}
     async with dbpool.acquire() as conn, conn.begin():
@@ -1222,7 +1222,7 @@ async def get_logs(request: web.Request, params: Any) -> web.Response:
         resp['result'] = await registry.get_logs(session_name, owner_access_key)
         log.info('container log retrieved: {0!r}', resp)
     except BackendError:
-        log.exception('GET_LOG: exception')
+        log.exception('GET_CONTAINER_LOG: exception')
         raise
     return web.json_response(resp, status=200)
 
@@ -1329,7 +1329,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     task_log_resource = cors.add(app.router.add_resource(r'/_/logs'))
     cors.add(task_log_resource.add_route('HEAD', get_task_logs))
     cors.add(task_log_resource.add_route('GET',  get_task_logs))
-    cors.add(app.router.add_route('GET',  '/{session_name}/logs', get_logs))
+    cors.add(app.router.add_route('GET',  '/{session_name}/logs', get_container_logs))
     cors.add(app.router.add_route('POST', '/{session_name}/interrupt', interrupt))
     cors.add(app.router.add_route('POST', '/{session_name}/complete', complete))
     cors.add(app.router.add_route('POST', '/{session_name}/upload', upload_files))
