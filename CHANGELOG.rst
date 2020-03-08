@@ -1,6 +1,11 @@
 Changes
 =======
 
+19.09.18 (2020-03-08)
+---------------------
+
+* MAINTENANCE: Update backend.ai-common dependency.
+
 19.09.17 (2020-02-27)
 ---------------------
 
