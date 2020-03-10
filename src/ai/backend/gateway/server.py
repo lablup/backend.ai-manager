@@ -33,7 +33,7 @@ from setproctitle import setproctitle
 from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.config import redis_config_iv
-from ai.backend.common.utils import env_info
+from ai.backend.common.utils import env_info, current_loop
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from ai.backend.common.plugin import (
     discover_entrypoints, install_plugins
@@ -356,22 +356,24 @@ async def webapp_plugins_ctx(app: web.Application) -> AsyncIterator[None]:
 
 
 def handle_loop_error(
-    app: web.Application,
+    root_app: web.Application,
     loop: asyncio.AbstractEventLoop,
     context: Mapping[str, Any],
 ) -> None:
+    if isinstance(loop, aiojobs.Scheduler):
+        loop = current_loop()
     exception = context.get('exception')
     msg = context.get('message', '(empty message)')
     if exception is not None:
         if sys.exc_info()[0] is not None:
             log.exception('Error inside event loop: {0}', msg)
-            if error_monitor := app.get('error_monitor', None):
-                asyncio.run(error_monitor.capture_exception())
+            if error_monitor := root_app.get('error_monitor', None):
+                loop.create_task(error_monitor.capture_exception())
         else:
             exc_info = (type(exception), exception, exception.__traceback__)
             log.error('Error inside event loop: {0}', msg, exc_info=exc_info)
-            if error_monitor := app.get('error_monitor', None):
-                asyncio.run(error_monitor.capture_exception(exception))
+            if error_monitor := root_app.get('error_monitor', None):
+                loop.create_task(error_monitor.capture_exception(exception))
 
 
 def _init_subapp(pkg_name: str,

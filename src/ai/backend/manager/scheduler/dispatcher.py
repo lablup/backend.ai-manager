@@ -5,6 +5,7 @@ from collections import defaultdict
 from datetime import datetime
 import logging
 import pkg_resources
+import time
 from typing import (
     Any, Union,
     Awaitable,
@@ -17,6 +18,7 @@ import aioredlock
 from dateutil.tz import tzutc
 import sqlalchemy as sa
 
+from ai.backend.common import redis
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.docker import ImageRef
 from ai.backend.common.types import (
@@ -72,6 +74,32 @@ class SchedulerDispatcher(aobject):
     config_server: ConfigServer
     registry: AgentRegistry
 
+    tick_script = '''
+    local key_last_sync = KEYS[1]
+    local key_schedulers = KEYS[2]
+    local member_id = ARGV[1]
+    local sync_interval = tonumber(ARGV[2])
+    local sync_time = tonumber(redis.call('GET', key_last_sync))
+    local current_time = tonumber(redis.call('TIME')[1])
+    if sync_time == nil then
+      sync_time = current_time
+      redis.call('SET', key_last_sync, sync_time)
+    elseif current_time >= sync_time + sync_interval then
+      sync_time = sync_time + sync_interval
+      redis.call('SET', key_last_sync, sync_time)
+    end
+    redis.call('SADD', key_schedulers, member_id)
+    local members = redis.call('SMEMBERS', key_schedulers)
+    local member_count = tonumber(redis.call('SCARD', key_schedulers))
+    table.sort(members)
+    for i, member in ipairs(members) do
+      if member == member_id then
+        return {i * (sync_interval / (member_count + 1)), sync_time}
+      end
+    end
+    return {0, sync_time}
+    '''
+
     def __init__(
         self,
         config: dict,
@@ -106,29 +134,31 @@ class SchedulerDispatcher(aobject):
 
     async def generate_scheduling_tick(self) -> None:
         """
-        Periodically generate a scheduling event.
+        Periodically generate a scheduling event, considering other manager worker instances,
+        using a distributed spread-interval clock.  All workers get a chance to dispatch
+        the scheduler once in a minute.  Increasing the number of workers shortens the interval
+        between each scheduler dispatch.
+
+        This function relies on the wall clock of the Redis server, and is not affected
+        by clock skews of the manager instances using differences of monotonic clocks.
         """
-        await asyncio.sleep(3.0)
+        instance_id = await get_instance_id()
+        scheduler_id = f"{instance_id}.{self.pidx}"
+        base_time = await redis.execute_with_retries(lambda: self.registry.redis_live.time())
+        base_mono = time.monotonic()
+        last_sync_time = base_time
         try:
             while True:
-                manager_instances = await self.config_server.etcd.get_prefix_dict('nodes/manager')
-                num_managers = len(manager_instances)
-                # assume that all managers have the same number of workers
-                total_workers = num_managers * self.config['manager']['num-proc']
-                try:
-                    my_instance_idx = sorted(manager_instances.keys()).index(await get_instance_id())
-                except KeyError:
-                    await asyncio.sleep(2.0)
-                    continue
-                my_worker_idx = (my_instance_idx * total_workers) + self.pidx
-                my_initial_delay = [*get_random_seq(total_workers * 5, total_workers, 5)][my_worker_idx]
-                await asyncio.sleep(my_initial_delay)
-                run_count = 0
-                while run_count < 3:
-                    await asyncio.sleep(5)
-                    await self.registry.event_dispatcher.produce_event(
-                        'kernel_enqueued', [None])
-                    run_count += 1
+                now = base_time + (time.monotonic() - base_mono)
+                local_sync_delay, next_sync_time = await redis.execute_script(
+                    self.registry.redis_live, 'scheduler_tick', self.tick_script,
+                    ['_last_scheduler_sync', '_schedulers'],
+                    [scheduler_id, str(60)],
+                )
+                await asyncio.sleep(2)
+                if now > next_sync_time + local_sync_delay and last_sync_time != next_sync_time:
+                    last_sync_time = next_sync_time
+                    await self.registry.event_dispatcher.produce_event('kernel_enqueued', [None])
         except asyncio.CancelledError:
             pass
         except Exception:
