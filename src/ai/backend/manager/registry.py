@@ -791,6 +791,9 @@ class AgentRegistry:
                     )
                     return {'status': 'cancelled'}
                 if kernel.status not in (KernelStatus.ERROR, KernelStatus.TERMINATING):
+                    # This is allowed, but if agents are working normally,
+                    # the session will become invisible and unaccessible but STILL occupy the actual
+                    # resources until the super-admin manually kills & deletes the container.
                     log.warning('force-terminating session in normal status! (k:{}, status:{})',
                                 kernel.id, kernel.status)
                 await self.set_session_status(
