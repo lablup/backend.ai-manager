@@ -44,6 +44,7 @@ from ai.backend.common.types import (
 from .exceptions import (
     InvalidAPIParameters,
     GenericNotFound,
+    GenericForbidden,
     ImageNotFound,
     KernelNotFound,
     KernelAlreadyExists,
@@ -514,18 +515,27 @@ async def stats_monitor_update_timer(app):
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def destroy(request: web.Request) -> web.Response:
+@check_api_params(
+    t.Dict({
+        t.Key('forced', default='false'): t.StrBool(),
+    }))
+async def destroy(request: web.Request, params: Any) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
+    if params['forced'] and request['user']['role'] not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        raise GenericForbidden('insufficient permission to force-terminate')
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     domain_name = None
     if requester_access_key != owner_access_key and \
             not request['is_superadmin'] and request['is_admin']:
         domain_name = request['user']['domain_name']
-    log.info('DESTROY (ak:{0}/{1}, s:{2})',
-             requester_access_key, owner_access_key, sess_id)
-    last_stat = await registry.destroy_session(sess_id, owner_access_key,
-                                               domain_name=domain_name)
+    log.info('DESTROY (ak:{0}/{1}, s:{2}, forced:{3})',
+             requester_access_key, owner_access_key, sess_id, params['forced'])
+    last_stat = await registry.destroy_session(
+        sess_id, owner_access_key,
+        forced=params['forced'],
+        domain_name=domain_name,
+    )
     resp = {
         'stats': last_stat,
     }
