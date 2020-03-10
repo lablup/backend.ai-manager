@@ -1,6 +1,11 @@
 Changes
 =======
 
+19.09.19 (2020-03-xx)
+---------------------
+
+* NEW: Add "forced" option to the session destruction API (#250)
+
 19.09.18 (2020-03-08)
 ---------------------
 
