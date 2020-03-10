@@ -27,7 +27,6 @@ from ai.backend.common.types import (
     ResourceSlot,
 )
 from ai.backend.common.identity import get_instance_id
-from ai.backend.common.utils import get_random_seq
 from ...gateway.defs import REDIS_LIVE_DB
 from ...gateway.etcd import ConfigServer
 from ...gateway.exceptions import InstanceNotAvailable
