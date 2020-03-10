@@ -517,7 +517,7 @@ async def stats_monitor_update_timer(app):
 @auth_required
 @check_api_params(
     t.Dict({
-        t.Key('forced', default='false'): t.ToBool(),
+        t.Key('forced', default='false'): t.StrBool(),
     }))
 async def destroy(request: web.Request, params: Any) -> web.Response:
     registry = request.app['registry']
@@ -533,7 +533,7 @@ async def destroy(request: web.Request, params: Any) -> web.Response:
              requester_access_key, owner_access_key, sess_id, params['forced'])
     last_stat = await registry.destroy_session(
         sess_id, owner_access_key,
-        force=params['forced'],
+        forced=params['forced'],
         domain_name=domain_name,
     )
     resp = {
