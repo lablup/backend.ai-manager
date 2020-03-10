@@ -2,7 +2,6 @@
 Resource preset APIs.
 '''
 
-from collections import defaultdict
 import copy
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
@@ -36,7 +35,7 @@ from .exceptions import (
 from .manager import READ_ALLOWED, server_status_required
 from ..manager.models import (
     agents, resource_presets,
-    domains, groups, kernels, keypairs, users,
+    domains, groups, kernels, users,
     AgentStatus,
     association_groups_users,
     query_allowed_sgroups,
