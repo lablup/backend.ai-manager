@@ -730,31 +730,43 @@ class AgentRegistry:
                 concurrency_used_per_key[row.access_key] += 1
                 occupied_slots_per_agent[row.agent] += ResourceSlot(row.occupied_slots)
 
-            # Update concurrency_used for keypairs with running containers.
-            for ak, used in concurrency_used_per_key.items():
+            if len(concurrency_used_per_key) > 0:
+                # Update concurrency_used for keypairs with running containers.
+                for ak, used in concurrency_used_per_key.items():
+                    query = (sa.update(keypairs)
+                               .values(concurrency_used=used)
+                               .where(keypairs.c.access_key == ak))
+                    await conn.execute(query)
+                # Update all other keypairs to have concurrency_used = 0.
                 query = (sa.update(keypairs)
-                           .values(concurrency_used=used)
-                           .where(keypairs.c.access_key == ak))
+                           .values(concurrency_used=0)
+                           .where(keypairs.c.concurrency_used != 0)
+                           .where(sa.not_(keypairs.c.access_key.in_(concurrency_used_per_key.keys()))))
                 await conn.execute(query)
-            # Update all other keypairs to have concurrency_used = 0.
-            query = (sa.update(keypairs)
-                       .values(concurrency_used=0)
-                       .where(keypairs.c.concurrency_used != 0)
-                       .where(sa.not_(keypairs.c.access_key.in_(concurrency_used_per_key.keys()))))
-            await conn.execute(query)
+            else:
+                query = (sa.update(keypairs)
+                           .values(concurrency_used=0)
+                           .where(keypairs.c.concurrency_used != 0))
+                await conn.execute(query)
 
-            # Update occupied_slots for agents with running containers.
-            for aid, slots in occupied_slots_per_agent.items():
+            if len(occupied_slots_per_agent) > 0:
+                # Update occupied_slots for agents with running containers.
+                for aid, slots in occupied_slots_per_agent.items():
+                    query = (sa.update(agents)
+                               .values(occupied_slots=slots)
+                               .where(agents.c.id == aid))
+                    await conn.execute(query)
+                # Update all other agents to have empty occupied_slots.
                 query = (sa.update(agents)
-                           .values(occupied_slots=slots)
-                           .where(agents.c.id == aid))
+                           .values(occupied_slots=ResourceSlot({}))
+                           .where(agents.c.status == AgentStatus.ALIVE)
+                           .where(sa.not_(agents.c.id.in_(occupied_slots_per_agent.keys()))))
                 await conn.execute(query)
-            # Update all other agents to have empty occupied_slots.
-            query = (sa.update(agents)
-                       .values(occupied_slots=ResourceSlot({}))
-                       .where(agents.c.status == AgentStatus.ALIVE)
-                       .where(sa.not_(agents.c.id.in_(occupied_slots_per_agent.keys()))))
-            await conn.execute(query)
+            else:
+                query = (sa.update(agents)
+                           .values(occupied_slots=ResourceSlot({}))
+                           .where(agents.c.status == AgentStatus.ALIVE))
+                await conn.execute(query)
 
     async def destroy_session(
         self,
