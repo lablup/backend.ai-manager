@@ -514,7 +514,11 @@ async def stats_monitor_update_timer(app):
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def destroy(request: web.Request) -> web.Response:
+@check_api_params(
+    t.Dict({
+        t.Key('forced', default='false'): t.ToBool(),
+    }))
+async def destroy(request: web.Request, params: Any) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
@@ -522,10 +526,13 @@ async def destroy(request: web.Request) -> web.Response:
     if requester_access_key != owner_access_key and \
             not request['is_superadmin'] and request['is_admin']:
         domain_name = request['user']['domain_name']
-    log.info('DESTROY (ak:{0}/{1}, s:{2})',
-             requester_access_key, owner_access_key, sess_id)
-    last_stat = await registry.destroy_session(sess_id, owner_access_key,
-                                               domain_name=domain_name)
+    log.info('DESTROY (ak:{0}/{1}, s:{2}, forced:{3})',
+             requester_access_key, owner_access_key, sess_id, params['forced'])
+    last_stat = await registry.destroy_session(
+        sess_id, owner_access_key,
+        force=params['forced'],
+        domain_name=domain_name,
+    )
     resp = {
         'stats': last_stat,
     }
