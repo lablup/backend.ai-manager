@@ -591,7 +591,8 @@ async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     assert not path.is_absolute(), 'path must be relative.'
     try:
         loop = current_loop()
-        await loop.run_in_executor(None, lambda: (folder_path / path).mkdir(parents=True, exist_ok=True))
+        await loop.run_in_executor(
+            None, lambda: (folder_path / path).mkdir(parents=True, exist_ok=False))
     except FileExistsError as e:
         raise InvalidAPIParameters(
             f'"{e.filename}" already exists and is not a directory.')
