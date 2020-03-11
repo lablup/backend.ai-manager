@@ -1,4 +1,3 @@
-import asyncio
 import inspect
 import logging
 from typing import (
@@ -89,8 +88,7 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
 
 
 async def init(app: web.Application) -> None:
-    loop = asyncio.get_event_loop()
-    app['admin.gql_executor'] = AsyncioExecutor(loop=loop)
+    app['admin.gql_executor'] = AsyncioExecutor()
     app['admin.gql_schema'] = graphene.Schema(
         query=Queries,
         mutation=Mutations,
