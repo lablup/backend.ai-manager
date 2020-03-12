@@ -74,6 +74,7 @@ from ..manager.models import (
     query_accessible_vfolders,
     session_templates,
     verify_vfolder_name,
+    DEAD_KERNEL_STATUSES,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.session'))
@@ -743,8 +744,8 @@ async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name:
         try:
             async with dbpool.acquire() as conn, conn.begin():
                 query = (sa.update(kernels)
-                            .values(container_log=log_buffer.getvalue())
-                            .where(kernels.c.id == raw_kernel_id))
+                           .values(container_log=log_buffer.getvalue())
+                           .where(kernels.c.id == raw_kernel_id))
                 await conn.execute(query)
         finally:
             # Clear the log data from Redis when done.
@@ -1205,24 +1206,36 @@ async def get_container_logs(request: web.Request, params: Any) -> web.Response:
              requester_access_key, owner_access_key, session_name)
     resp = {'result': {'logs': ''}}
     async with dbpool.acquire() as conn, conn.begin():
-        query = (sa.select([kernels.c.container_log])
-                  .select_from(kernels)
-                  .where((kernels.c.sess_id == session_name) &
-                         (kernels.c.container_log.isnot(None)) &
-                         (kernels.c.role == 'master'))
-                  .order_by(sa.desc(kernels.c.created_at))
-                  .limit(1))
-        logs = await conn.scalar(query)
-        if logs is not None:
-            log.debug('returning log from database record')
-            resp['result']['logs'] = logs.decode('utf-8')
-            return web.json_response(resp, status=200)
+        query = (sa.select([kernels.c.status])
+                   .select_from(kernels)
+                   .where((kernels.c.sess_id == session_name) &
+                          (kernels.c.access_key == owner_access_key) &
+                          (kernels.c.role == 'master'))
+                   .order_by(sa.desc(kernels.c.created_at))
+                   .limit(1))
+        status = await conn.scalar(query)
+        if status is None:
+            raise SessionNotFound
+        if status in DEAD_KERNEL_STATUSES:
+            query = (sa.select([kernels.c.container_log])
+                       .select_from(kernels)
+                       .where((kernels.c.sess_id == session_name) &
+                              (kernels.c.access_key == owner_access_key) &
+                              (kernels.c.role == 'master'))
+                       .order_by(sa.desc(kernels.c.created_at))
+                       .limit(1))
+            logs = await conn.scalar(query)
+            if logs is not None:
+                log.debug('returning log from database record')
+                resp['result']['logs'] = logs.decode('utf-8')
+                return web.json_response(resp, status=200)
     try:
         await registry.increment_session_usage(session_name, owner_access_key)
         resp['result'] = await registry.get_logs(session_name, owner_access_key)
-        log.info('container log retrieved: {0!r}', resp)
+        log.info('returning log from agent')
     except BackendError:
-        log.exception('GET_CONTAINER_LOG: exception')
+        log.exception('GET_CONTAINER_LOG(ak:{}/{}, s:{}): unexpected error',
+                      requester_access_key, owner_access_key, session_name)
         raise
     return web.json_response(resp, status=200)
 
