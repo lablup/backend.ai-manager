@@ -1232,7 +1232,7 @@ async def get_container_logs(request: web.Request, params: Any) -> web.Response:
     try:
         await registry.increment_session_usage(session_name, owner_access_key)
         resp['result'] = await registry.get_logs(session_name, owner_access_key)
-        log.info('returning log from agent')
+        log.debug('returning log from agent')
     except BackendError:
         log.exception('GET_CONTAINER_LOG(ak:{}/{}, s:{}): unexpected error',
                       requester_access_key, owner_access_key, session_name)
