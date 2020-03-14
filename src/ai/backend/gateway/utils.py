@@ -85,16 +85,19 @@ def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None) ->
         async def wrapped(request: web.Request, *args, **kwargs) -> web.Response:
             try:
                 if request.can_read_body:
-                    params = await request.json(loads=loads or json.loads)
+                    orig_params = await request.json(loads=loads or json.loads)
                 else:
-                    params = request.query
-                params = checker.check(params)
+                    orig_params = request.query
+                # owner_access_key is a special case; we strip it for input validation.
+                stripped_params = orig_params.copy()
+                stripped_params.pop('owner_access_key', None)
+                checked_params = checker.check(stripped_params)
             except json.decoder.JSONDecodeError:
                 raise InvalidAPIParameters('Malformed body')
             except t.DataError as e:
                 raise InvalidAPIParameters(f'Input validation error',
                                            extra_data=e.as_dict())
-            return await handler(request, params, *args, **kwargs)
+            return await handler(request, checked_params, *args, **kwargs)
 
         return wrapped
 
