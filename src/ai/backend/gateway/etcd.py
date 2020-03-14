@@ -381,11 +381,20 @@ class ConfigServer:
                         labels.update(raw_labels)
 
             log.debug('checking image repository {}:{}', image, tag)
+            non_kernel_words = (
+                'common-', 'commons-', 'base-',
+                'krunner', 'builder',
+                'backendai', 'geofront',
+            )
             if 'ai.backend.kernelspec' not in labels:
                 # Skip non-Backend.AI kernel images
+                if not any((w in image) for w in non_kernel_words):
+                    log.warning('skipping image due to missing kernelspec - {}:{}', image, tag)
                 return
             if not (MIN_KERNELSPEC <= int(labels['ai.backend.kernelspec']) <= MAX_KERNELSPEC):
                 # Skip unsupported kernelspec images
+                if not any((w in image) for w in non_kernel_words):
+                    log.warning('skipping image due to unsupported kernelspec - {}:{}', image, tag)
                 return
 
             log.info('Updating metadata for {0}:{1}', image, tag)
