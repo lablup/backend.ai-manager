@@ -341,13 +341,26 @@ class ConfigServer:
                                              f'repository:{image}:pull')
             rqst_args['headers'].update(**base_hdrs)
             tags = []
-            async with sess.get(registry_url / f'v2/{image}/tags/list',
-                                **rqst_args) as resp:
-                data = json.loads(await resp.read())
-                if 'tags' in data:
-                    # sometimes there are dangling image names in the hub.
-                    tags.extend(data['tags'])
-            scheduler = await aiojobs.create_scheduler(limit=8)
+            tag_list_url = (registry_url / f'v2/{image}/tags/list').with_query(
+                {'n': '10'},
+            )
+            while tag_list_url is not None:
+                async with sess.get(tag_list_url,
+                                    **rqst_args) as resp:
+                    data = json.loads(await resp.read())
+                    if 'tags' in data:
+                        # sometimes there are dangling image names in the hub.
+                        tags.extend(data['tags'])
+                    tag_list_url = None
+                    next_page_link = resp.links.get('next')
+                    if next_page_link:
+                        next_page_url = next_page_link['url']
+                        tag_list_url = (
+                            registry_url
+                            .with_path(next_page_url.path)
+                            .with_query(next_page_url.query)
+                        )
+            scheduler = await aiojobs.create_scheduler(limit=4)
             try:
                 jobs = await asyncio.gather(*[
                     scheduler.spawn(_scan_tag(sess, rqst_args, image, tag))
@@ -381,11 +394,20 @@ class ConfigServer:
                         labels.update(raw_labels)
 
             log.debug('checking image repository {}:{}', image, tag)
+            non_kernel_words = (
+                'common-', 'commons-', 'base-',
+                'krunner', 'builder',
+                'backendai', 'geofront',
+            )
             if 'ai.backend.kernelspec' not in labels:
                 # Skip non-Backend.AI kernel images
+                if not any((w in image) for w in non_kernel_words):
+                    log.warning('skipping image due to missing kernelspec - {}:{}', image, tag)
                 return
             if not (MIN_KERNELSPEC <= int(labels['ai.backend.kernelspec']) <= MAX_KERNELSPEC):
                 # Skip unsupported kernelspec images
+                if not any((w in image) for w in non_kernel_words):
+                    log.warning('skipping image due to unsupported kernelspec - {}:{}', image, tag)
                 return
 
             log.info('Updating metadata for {0}:{1}', image, tag)
@@ -419,36 +441,52 @@ class ConfigServer:
             images = []
             if registry_url.host.endswith('.docker.io'):
                 # We need some special treatment for the Docker Hub.
-                params = {'page_size': '100'}
+                params = {'page_size': '30'}
                 username = await self.etcd.get(
                     f'config/docker/registry/{etcd_quote(registry_name)}/username')
                 hub_url = yarl.URL('https://hub.docker.com')
-                async with sess.get(hub_url / f'v2/repositories/{username}/',
-                                    params=params) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        images.extend(f"{username}/{item['name']}"
-                                      for item in data['results']
-                                      # a little optimization to ignore legacies
-                                      if not item['name'].startswith('kernel-'))
-                    else:
-                        log.error('Failed to fetch repository list from {0} '
-                                  '(status={1})',
-                                  hub_url, resp.status)
+                repo_list_url = hub_url / f'v2/repositories/{username}/'
+                while repo_list_url is not None:
+                    async with sess.get(repo_list_url, params=params) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            images.extend(f"{username}/{item['name']}"
+                                          for item in data['results']
+                                          # a little optimization to ignore legacies
+                                          if not item['name'].startswith('kernel-'))
+                            next_page_url = data.get('next', None)
+                        else:
+                            log.error('Failed to fetch repository list from {0} '
+                                      '(status={1})',
+                                      repo_list_url, resp.status)
+                            break
             elif registry_type == 'docker':
                 # In other cases, try the catalog search.
                 rqst_args = await registry_login(sess, registry_url, credentials,
                                                  'registry:catalog:*')
-                async with sess.get(registry_url / 'v2/_catalog',
-                                    **rqst_args) as resp:
-                    if resp.status == 200:
-                        data = json.loads(await resp.read())
-                        images.extend(data['repositories'])
-                        log.debug('found {} repositories', len(images))
-                    else:
-                        log.warning('Docker registry {0} does not allow/support '
-                                    'catalog search. (status={1})',
-                                    registry_url, resp.status)
+                catalog_url = (registry_url / 'v2/_catalog').with_query(
+                    {'n': '30'}
+                )
+                while catalog_url is not None:
+                    async with sess.get(catalog_url, **rqst_args) as resp:
+                        if resp.status == 200:
+                            data = json.loads(await resp.read())
+                            images.extend(data['repositories'])
+                            log.debug('found {} repositories', len(images))
+                        else:
+                            log.warning('Docker registry {0} does not allow/support '
+                                        'catalog search. (status={1})',
+                                        registry_url, resp.status)
+                            break
+                        catalog_url = None
+                        next_page_link = resp.links.get('next')
+                        if next_page_link:
+                            next_page_url = next_page_link['url']
+                            catalog_url = (
+                                registry_url
+                                .with_path(next_page_url.path)
+                                .with_query(next_page_url.query)
+                            )
             elif registry_type == 'harbor':
                 if credentials:
                     rqst_args = {
@@ -456,29 +494,51 @@ class ConfigServer:
                     }
                 else:
                     rqst_args = {}
-                async with sess.get(registry_url / 'api/projects',
-                                    params={'page_size': '100'},
-                                    **rqst_args) as resp:
-                    projects = await resp.json()
-                    project_id = None
-                    for item in projects:
-                        if item['name'] == registry_project:
-                            project_id = item['project_id']
-                            break
-                    else:
-                        log.warning('There is no given project.')
-                        return
-                async with sess.get(registry_url / 'api/repositories',
-                                    params={'project_id': project_id, 'page_size': '100'},
-                                    **rqst_args) as resp:
-                    items = await resp.json()
-                    repos = [item['name'] for item in items]
-                    images.extend(repos)
+                project_list_url = (registry_url / 'api/projects').with_query(
+                    {'page_size': '30'}
+                )
+                project_id = None
+                while project_list_url is not None:
+                    async with sess.get(project_list_url, **rqst_args) as resp:
+                        projects = await resp.json()
+                        for item in projects:
+                            if item['name'] == registry_project:
+                                project_id = item['project_id']
+                                break
+                        project_list_url = None
+                        next_page_link = resp.links.get('next')
+                        if next_page_link:
+                            next_page_url = next_page_link['url']
+                            project_list_url = (
+                                registry_url
+                                .with_path(next_page_url.path)
+                                .with_query(next_page_url.query)
+                            )
+                if project_id is None:
+                    log.warning('There is no given project.')
+                    return
+                repo_list_url = (registry_url / 'api/repositories').with_query(
+                    {'project_id': project_id, 'page_size': '30'}
+                )
+                while repo_list_url is not None:
+                    async with sess.get(repo_list_url, **rqst_args) as resp:
+                        items = await resp.json()
+                        repos = [item['name'] for item in items]
+                        images.extend(repos)
+                        repo_list_url = None
+                        next_page_link = resp.links.get('next')
+                        if next_page_link:
+                            next_page_url = next_page_link['url']
+                            repo_list_url = (
+                                registry_url
+                                .with_path(next_page_url.path)
+                                .with_query(next_page_url.query)
+                            )
             else:
                 log.error('Unsupported registry type')
                 return
 
-            scheduler = await aiojobs.create_scheduler(limit=8)
+            scheduler = await aiojobs.create_scheduler(limit=4)
             try:
                 jobs = await asyncio.gather(*[
                     scheduler.spawn(_scan_image(sess, image)) for image in images])
