@@ -454,12 +454,20 @@ class ConfigServer:
                                           for item in data['results']
                                           # a little optimization to ignore legacies
                                           if not item['name'].startswith('kernel-'))
-                            next_page_url = data.get('next', None)
                         else:
                             log.error('Failed to fetch repository list from {0} '
                                       '(status={1})',
                                       repo_list_url, resp.status)
                             break
+                    repo_list_url = None
+                    next_page_link = data.get('next', None)
+                    if next_page_link:
+                        next_page_url = yarl.URL(next_page_link)
+                        repo_list_url = (
+                            hub_url
+                            .with_path(next_page_url.path)
+                            .with_query(next_page_url.query)
+                        )
             elif registry_type == 'docker':
                 # In other cases, try the catalog search.
                 rqst_args = await registry_login(sess, registry_url, credentials,
