@@ -538,7 +538,7 @@ class ConfigServer:
                 log.error('Unsupported registry type')
                 return
 
-            scheduler = await aiojobs.create_scheduler(limit=2)
+            scheduler = await aiojobs.create_scheduler(limit=4)
             try:
                 jobs = await asyncio.gather(*[
                     scheduler.spawn(_scan_image(sess, image)) for image in images])
