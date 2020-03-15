@@ -82,6 +82,8 @@ class ModifyResourcePresetInput(graphene.InputObjectType):
 
 class CreateResourcePreset(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
         props = CreateResourcePresetInput(required=True)
@@ -109,6 +111,8 @@ class CreateResourcePreset(graphene.Mutation):
 
 class ModifyResourcePreset(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
         props = ModifyResourcePresetInput(required=True)
@@ -131,6 +135,8 @@ class ModifyResourcePreset(graphene.Mutation):
 
 
 class DeleteResourcePreset(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
         name = graphene.String(required=True)

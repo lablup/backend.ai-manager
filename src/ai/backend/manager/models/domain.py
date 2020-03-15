@@ -129,6 +129,8 @@ class ModifyDomainInput(graphene.InputObjectType):
 
 class CreateDomain(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
         props = DomainInput(required=True)
@@ -163,6 +165,8 @@ class CreateDomain(graphene.Mutation):
 
 
 class ModifyDomain(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
         name = graphene.String(required=True)
@@ -202,6 +206,8 @@ class ModifyDomain(graphene.Mutation):
 
 
 class DeleteDomain(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
         name = graphene.String(required=True)

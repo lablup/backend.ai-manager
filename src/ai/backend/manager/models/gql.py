@@ -50,8 +50,8 @@ from .vfolder import (
 )
 from ...gateway.exceptions import (
     GenericNotFound,
-    GenericForbidden,
     ImageNotFound,
+    InsufficientPrivilege,
     InvalidAPIParameters,
 )
 
@@ -358,11 +358,11 @@ class Queries(graphene.ObjectType):
             pass
         elif client_role == UserRole.ADMIN:
             if group.domain_name != client_domain:
-                raise GenericForbidden
+                raise InsufficientPrivilege
         elif client_role == UserRole.USER:
             client_groups = await Group.get_groups_for_user(info.context, client_user_id)
             if group.id not in (g.id for g in client_groups):
-                raise GenericNotFound
+                raise InsufficientPrivilege
         else:
             raise InvalidAPIParameters('Unknown client role')
         return group
@@ -376,7 +376,7 @@ class Queries(graphene.ObjectType):
             pass
         elif client_role == UserRole.ADMIN:
             if domain_name is not None and domain_name != client_domain:
-                raise GenericForbidden
+                raise InsufficientPrivilege
             domain_name = client_domain
         elif client_role == UserRole.USER:
             return await Group.get_groups_for_user(info.context, client_user_id)
@@ -447,11 +447,11 @@ class Queries(graphene.ObjectType):
             pass
         elif client_role == UserRole.ADMIN:
             if domain_name is not None and domain_name != client_domain:
-                raise GenericForbidden
+                raise InsufficientPrivilege
             domain_name = client_domain
         elif client_role == UserRole.USER:
             # Users cannot query other users.
-            raise GenericForbidden()
+            raise InsufficientPrivilege()
         else:
             raise InvalidAPIParameters('Unknown client role')
         return await User.load_all(
@@ -644,3 +644,17 @@ class Queries(graphene.ObjectType):
             access_key=access_key,
             status=status)
         return await loader.load(sess_id)
+
+
+class GQLMutationPrivilegeCheckMiddleware:
+
+    def resolve(self, next, root, info, **args):
+        if info.operation.operation == 'mutation':
+            mutation_cls = getattr(Mutations, info.path[0]).type
+            allowed_roles = getattr(mutation_cls, 'allowed_roles', [
+                # Default is to allow everyone.
+                UserRole.USER, UserRole.ADMIN, UserRole.SUPERADMIN,
+            ])
+            if info.context['user']['role'] not in allowed_roles:
+                raise InsufficientPrivilege(f"cannot execute {info.path[0]}")
+        return next(root, info, **args)

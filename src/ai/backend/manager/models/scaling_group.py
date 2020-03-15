@@ -271,6 +271,8 @@ class ModifyScalingGroupInput(graphene.InputObjectType):
 
 class CreateScalingGroup(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
         props = ScalingGroupInput(required=True)
@@ -300,6 +302,8 @@ class CreateScalingGroup(graphene.Mutation):
 
 class ModifyScalingGroup(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
         props = ModifyScalingGroupInput(required=True)
@@ -327,6 +331,8 @@ class ModifyScalingGroup(graphene.Mutation):
 
 class DeleteScalingGroup(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
 
@@ -344,6 +350,8 @@ class DeleteScalingGroup(graphene.Mutation):
 
 
 class AssociateScalingGroupWithDomain(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
         scaling_group = graphene.String(required=True)
@@ -367,6 +375,8 @@ class AssociateScalingGroupWithDomain(graphene.Mutation):
 
 class DisassociateScalingGroupWithDomain(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         scaling_group = graphene.String(required=True)
         domain = graphene.String(required=True)
@@ -389,6 +399,8 @@ class DisassociateScalingGroupWithDomain(graphene.Mutation):
 
 class DisassociateAllScalingGroupsWithDomain(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         domain = graphene.String(required=True)
 
@@ -406,6 +418,8 @@ class DisassociateAllScalingGroupsWithDomain(graphene.Mutation):
 
 
 class AssociateScalingGroupWithUserGroup(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
         scaling_group = graphene.String(required=True)
@@ -429,6 +443,8 @@ class AssociateScalingGroupWithUserGroup(graphene.Mutation):
 
 class DisassociateScalingGroupWithUserGroup(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         scaling_group = graphene.String(required=True)
         user_group = graphene.String(required=True)
@@ -451,6 +467,8 @@ class DisassociateScalingGroupWithUserGroup(graphene.Mutation):
 
 class DisassociateAllScalingGroupsWithGroup(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         user_group = graphene.String(required=True)
 
@@ -468,6 +486,8 @@ class DisassociateAllScalingGroupsWithGroup(graphene.Mutation):
 
 
 class AssociateScalingGroupWithKeyPair(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
         scaling_group = graphene.String(required=True)
@@ -490,6 +510,8 @@ class AssociateScalingGroupWithKeyPair(graphene.Mutation):
 
 
 class DisassociateScalingGroupWithKeyPair(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
         scaling_group = graphene.String(required=True)

@@ -188,6 +188,8 @@ class ModifyKeyPairResourcePolicyInput(graphene.InputObjectType):
 
 class CreateKeyPairResourcePolicy(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
         props = CreateKeyPairResourcePolicyInput(required=True)
@@ -223,6 +225,8 @@ class CreateKeyPairResourcePolicy(graphene.Mutation):
 
 class ModifyKeyPairResourcePolicy(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
         props = ModifyKeyPairResourcePolicyInput(required=True)
@@ -252,6 +256,8 @@ class ModifyKeyPairResourcePolicy(graphene.Mutation):
 
 
 class DeleteKeyPairResourcePolicy(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
         name = graphene.String(required=True)

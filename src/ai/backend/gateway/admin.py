@@ -19,11 +19,26 @@ from .exceptions import GraphQLError as BackendGQLError
 from .auth import auth_required
 from .utils import check_api_params, trim_text
 from ..manager.models.base import DataLoaderManager
-from ..manager.models.gql import Mutations, Queries
+from ..manager.models.gql import (
+    Mutations, Queries,
+    GQLMutationPrivilegeCheckMiddleware,
+)
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
 
 _rx_qname = re.compile(r'{\s*(\w+)\b')
+
+
+class GQLLoggingMiddleware:
+
+    def resolve(self, next, root, info, **args):
+        if len(info.path) == 1:
+            log.info('ADMIN.GQL (ak:{}, {}:{}, op:{})',
+                     info.context['access_key'],
+                     info.operation.operation,
+                     info.field_name,
+                     info.operation.name)
+        return next(root, info, **args)
 
 
 @atomic
@@ -39,14 +54,6 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
     schema = request.app['admin.gql_schema']
     manager_status = await request.app['config_server'].get_manager_status()
     known_slot_types = await request.app['config_server'].get_resource_slots()
-    match = _rx_qname.search(params['query'].replace('\n', ''))
-    if match:
-        qsummary = match.group(1)
-    else:
-        qsummary = trim_text(params['query'], 80)
-    log.info('ADMIN.GQL (ak:{}, query:{!r}, op:{})',
-             request['keypair']['access_key'],
-             qsummary, params['operation_name'])
     context = {
         'config': request.app['config'],
         'config_server': request.app['config_server'],
@@ -67,7 +74,11 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
             'dlmgr': dlmanager,
             **context,
         },
-        middleware=[GQLMutationUnfrozenRequiredMiddleware()],
+        middleware=[
+            GQLLoggingMiddleware(),
+            GQLMutationUnfrozenRequiredMiddleware(),
+            GQLMutationPrivilegeCheckMiddleware(),
+        ],
         return_promise=True)
     if inspect.isawaitable(result):
         result = await result

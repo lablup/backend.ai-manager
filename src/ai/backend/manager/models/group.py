@@ -207,6 +207,8 @@ class ModifyGroupInput(graphene.InputObjectType):
 
 class CreateGroup(graphene.Mutation):
 
+    allowed_roles = (UserRole.ADMIN, UserRole.SUPERADMIN)
+
     class Arguments:
         name = graphene.String(required=True)
         props = GroupInput(required=True)
@@ -253,6 +255,8 @@ class CreateGroup(graphene.Mutation):
 
 
 class ModifyGroup(graphene.Mutation):
+
+    allowed_roles = (UserRole.ADMIN, UserRole.SUPERADMIN)
 
     class Arguments:
         gid = graphene.String(required=True)
@@ -320,6 +324,8 @@ class ModifyGroup(graphene.Mutation):
 
 
 class DeleteGroup(graphene.Mutation):
+
+    allowed_roles = (UserRole.ADMIN, UserRole.SUPERADMIN)
 
     class Arguments:
         gid = graphene.String(required=True)
