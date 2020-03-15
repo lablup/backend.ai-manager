@@ -6,6 +6,14 @@ Changes
 
 * NEW: Add "forced" option to the session destruction API (#250)
 
+* IMPROVE: Support project/repository/tag pagination for rescan-images (#252)
+
+* FIX: Strip owner-access-key argument when checking API params for input validation
+  with query parameters (#251)
+
+* FIX: Potential SQL syntax error during synchronizing real-time statistics from Redis to DB caused when
+  no statistics data is available.
+
 19.09.18 (2020-03-08)
 ---------------------
 
