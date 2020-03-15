@@ -28,6 +28,7 @@ __all__: Sequence[str] = (
     'CreateKeyPair', 'ModifyKeyPair', 'DeleteKeyPair',
     'Dotfile', 'MAXIMUM_DOTFILE_SIZE',
     'query_owned_dotfiles',
+    'query_bootstrap_script',
     'verify_dotfile_name'
 )
 
@@ -58,7 +59,8 @@ keypairs = sa.Table(
               sa.ForeignKey('keypair_resource_policies.name'),
               nullable=False),
     # dotfiles column, \x90 means empty list in msgpack
-    sa.Column('dotfiles', sa.LargeBinary(length=MAXIMUM_DOTFILE_SIZE), nullable=False, default=b'\x90')
+    sa.Column('dotfiles', sa.LargeBinary(length=MAXIMUM_DOTFILE_SIZE), nullable=False, default=b'\x90'),
+    sa.Column('bootstrap_script', sa.String(length=MAXIMUM_DOTFILE_SIZE), nullable=False, default=''),
 )
 
 
@@ -359,6 +361,14 @@ async def query_owned_dotfiles(conn, access_key) -> Tuple[List[Dotfile], int]:
     packed_dotfile = await conn.scalar(query)
     rows = msgpack.unpackb(packed_dotfile)
     return rows, MAXIMUM_DOTFILE_SIZE - len(packed_dotfile)
+
+
+async def query_bootstrap_script(conn, access_key) -> Tuple[str, int]:
+    query = (sa.select([keypairs.c.bootstrap_script])
+               .select_from(keypairs)
+               .where(keypairs.c.access_key == access_key))
+    script = await conn.scalar(query)
+    return script, MAXIMUM_DOTFILE_SIZE - len(script)
 
 
 def verify_dotfile_name(dotfile: str) -> bool:

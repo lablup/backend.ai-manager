@@ -434,7 +434,7 @@ class AgentRegistry:
         creation_config: dict,
         resource_policy: dict, *,
         domain_name: str,
-        bootstrap_script=str,
+        bootstrap_script: str,
         group_id: uuid.UUID,
         user_uuid: str,
         user_role: str,
