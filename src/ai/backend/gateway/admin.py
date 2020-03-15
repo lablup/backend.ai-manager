@@ -17,7 +17,7 @@ from ai.backend.common import validators as tx
 from .manager import GQLMutationUnfrozenRequiredMiddleware
 from .exceptions import GraphQLError as BackendGQLError
 from .auth import auth_required
-from .utils import check_api_params, trim_text
+from .utils import check_api_params
 from ..manager.models.base import DataLoaderManager
 from ..manager.models.gql import (
     Mutations, Queries,
