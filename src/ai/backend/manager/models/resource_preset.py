@@ -90,10 +90,9 @@ class CreateResourcePreset(graphene.Mutation):
 
     ok = graphene.Boolean()
     msg = graphene.String()
-    resource_preset = graphene.Field(lambda: ResourcePreset)
+    resource_preset = graphene.Field(lambda: ResourcePreset, required=False)
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         data = {
             'name': name,
@@ -121,7 +120,6 @@ class ModifyResourcePreset(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         data = {}
         set_if_set(props, data, 'resource_slots',
@@ -145,7 +143,6 @@ class DeleteResourcePreset(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name):
         delete_query = (
             resource_presets.delete()

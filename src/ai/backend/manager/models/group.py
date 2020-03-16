@@ -215,7 +215,7 @@ class CreateGroup(graphene.Mutation):
 
     ok = graphene.Boolean()
     msg = graphene.String()
-    group = graphene.Field(lambda: Group)
+    group = graphene.Field(lambda: Group, required=False)
 
     @classmethod
     @privileged_mutation(
@@ -264,7 +264,7 @@ class ModifyGroup(graphene.Mutation):
 
     ok = graphene.Boolean()
     msg = graphene.String()
-    group = graphene.Field(lambda: Group)
+    group = graphene.Field(lambda: Group, required=False)
 
     @classmethod
     @privileged_mutation(

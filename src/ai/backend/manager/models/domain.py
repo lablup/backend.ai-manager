@@ -137,10 +137,9 @@ class CreateDomain(graphene.Mutation):
 
     ok = graphene.Boolean()
     msg = graphene.String()
-    domain = graphene.Field(lambda: Domain)
+    domain = graphene.Field(lambda: Domain, required=False)
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         if _rx_slug.search(name) is None:
             return cls(False, 'invalid name format. slug format required.', None)
@@ -174,10 +173,9 @@ class ModifyDomain(graphene.Mutation):
 
     ok = graphene.Boolean()
     msg = graphene.String()
-    domain = graphene.Field(lambda: Domain)
+    domain = graphene.Field(lambda: Domain, required=False)
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         data = {}
         set_if_set(props, data, 'name')  # data['name'] is new domain name
@@ -216,7 +214,6 @@ class DeleteDomain(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name):
         query = (
             domains.update()

@@ -233,10 +233,9 @@ class CreateUser(graphene.Mutation):
 
     ok = graphene.Boolean()
     msg = graphene.String()
-    user = graphene.Field(lambda: User)
+    user = graphene.Field(lambda: User, required=False)
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, email, props):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             username = props.username if props.username else email
@@ -319,7 +318,6 @@ class ModifyUser(graphene.Mutation):
     user = graphene.Field(lambda: User)
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, email, props):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
 
@@ -453,7 +451,6 @@ class DeleteUser(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, email):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             try:

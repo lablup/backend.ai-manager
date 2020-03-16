@@ -196,10 +196,9 @@ class CreateKeyPairResourcePolicy(graphene.Mutation):
 
     ok = graphene.Boolean()
     msg = graphene.String()
-    resource_policy = graphene.Field(lambda: KeyPairResourcePolicy)
+    resource_policy = graphene.Field(lambda: KeyPairResourcePolicy, required=False)
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         data = {
             'name': name,
@@ -235,7 +234,6 @@ class ModifyKeyPairResourcePolicy(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         data = {}
         set_if_set(props, data, 'default_for_unspecified',
@@ -266,7 +264,6 @@ class DeleteKeyPairResourcePolicy(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name):
         delete_query = (
             keypair_resource_policies.delete()
