@@ -225,6 +225,8 @@ class ModifyUserInput(graphene.InputObjectType):
 
 class CreateUser(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         email = graphene.String(required=True)
         props = UserInput(required=True)
@@ -305,6 +307,8 @@ class CreateUser(graphene.Mutation):
 
 
 class ModifyUser(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
         email = graphene.String(required=True)
@@ -439,6 +443,8 @@ class DeleteUser(graphene.Mutation):
 
     All related keypairs will also be inactivated.
     '''
+
+    allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
         email = graphene.String(required=True)
