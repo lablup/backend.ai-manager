@@ -44,8 +44,8 @@ from ai.backend.common.types import (
 from .exceptions import (
     InvalidAPIParameters,
     GenericNotFound,
-    GenericForbidden,
     ImageNotFound,
+    InsufficientPrivilege,
     KernelNotFound,
     KernelAlreadyExists,
     BackendError,
@@ -523,7 +523,7 @@ async def destroy(request: web.Request, params: Any) -> web.Response:
     registry = request.app['registry']
     sess_id = request.match_info['sess_id']
     if params['forced'] and request['user']['role'] not in (UserRole.ADMIN, UserRole.SUPERADMIN):
-        raise GenericForbidden('insufficient permission to force-terminate')
+        raise InsufficientPrivilege('You are not allowed to force-terminate')
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     domain_name = None
     if requester_access_key != owner_access_key and \

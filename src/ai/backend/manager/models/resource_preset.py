@@ -9,7 +9,6 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
 from .base import (
     metadata, ResourceSlotColumn,
-    privileged_mutation,
     simple_db_mutate,
     simple_db_mutate_returning_item,
     set_if_set,
@@ -82,16 +81,17 @@ class ModifyResourcePresetInput(graphene.InputObjectType):
 
 class CreateResourcePreset(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
         props = CreateResourcePresetInput(required=True)
 
     ok = graphene.Boolean()
     msg = graphene.String()
-    resource_preset = graphene.Field(lambda: ResourcePreset)
+    resource_preset = graphene.Field(lambda: ResourcePreset, required=False)
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         data = {
             'name': name,
@@ -109,6 +109,8 @@ class CreateResourcePreset(graphene.Mutation):
 
 class ModifyResourcePreset(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
         props = ModifyResourcePresetInput(required=True)
@@ -117,7 +119,6 @@ class ModifyResourcePreset(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         data = {}
         set_if_set(props, data, 'resource_slots',
@@ -132,6 +133,8 @@ class ModifyResourcePreset(graphene.Mutation):
 
 class DeleteResourcePreset(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
 
@@ -139,7 +142,6 @@ class DeleteResourcePreset(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name):
         delete_query = (
             resource_presets.delete()

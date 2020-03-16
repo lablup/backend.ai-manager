@@ -11,7 +11,6 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
 from .base import (
     metadata, BigInt, EnumType, ResourceSlotColumn,
-    privileged_mutation,
     simple_db_mutate,
     simple_db_mutate_returning_item,
     set_if_set,
@@ -188,16 +187,17 @@ class ModifyKeyPairResourcePolicyInput(graphene.InputObjectType):
 
 class CreateKeyPairResourcePolicy(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
         props = CreateKeyPairResourcePolicyInput(required=True)
 
     ok = graphene.Boolean()
     msg = graphene.String()
-    resource_policy = graphene.Field(lambda: KeyPairResourcePolicy)
+    resource_policy = graphene.Field(lambda: KeyPairResourcePolicy, required=False)
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         data = {
             'name': name,
@@ -223,6 +223,8 @@ class CreateKeyPairResourcePolicy(graphene.Mutation):
 
 class ModifyKeyPairResourcePolicy(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
         props = ModifyKeyPairResourcePolicyInput(required=True)
@@ -231,7 +233,6 @@ class ModifyKeyPairResourcePolicy(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         data = {}
         set_if_set(props, data, 'default_for_unspecified',
@@ -253,6 +254,8 @@ class ModifyKeyPairResourcePolicy(graphene.Mutation):
 
 class DeleteKeyPairResourcePolicy(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
 
@@ -260,7 +263,6 @@ class DeleteKeyPairResourcePolicy(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name):
         delete_query = (
             keypair_resource_policies.delete()
