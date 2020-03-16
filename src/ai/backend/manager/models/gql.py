@@ -651,10 +651,8 @@ class GQLMutationPrivilegeCheckMiddleware:
     def resolve(self, next, root, info, **args):
         if info.operation.operation == 'mutation':
             mutation_cls = getattr(Mutations, info.path[0]).type
-            allowed_roles = getattr(mutation_cls, 'allowed_roles', [
-                # Default is to allow everyone.
-                UserRole.USER, UserRole.ADMIN, UserRole.SUPERADMIN,
-            ])
+            # default is allow nobody.
+            allowed_roles = getattr(mutation_cls, 'allowed_roles', [])
             if info.context['user']['role'] not in allowed_roles:
                 raise InsufficientPrivilege(f"cannot execute {info.path[0]}")
         return next(root, info, **args)
