@@ -10,7 +10,6 @@ from sqlalchemy.dialects import postgresql as pgsql
 from ai.backend.common.types import ResourceSlot
 from .base import (
     metadata, ResourceSlotColumn,
-    privileged_mutation,
     simple_db_mutate,
     simple_db_mutate_returning_item,
     set_if_set,

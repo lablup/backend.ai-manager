@@ -12,7 +12,6 @@ from sqlalchemy.types import TypeDecorator, VARCHAR
 
 from .base import (
     metadata, EnumValueType, IDColumn,
-    privileged_mutation,
     set_if_set,
 )
 
