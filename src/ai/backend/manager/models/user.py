@@ -12,7 +12,6 @@ from sqlalchemy.types import TypeDecorator, VARCHAR
 
 from .base import (
     metadata, EnumValueType, IDColumn,
-    privileged_mutation,
     set_if_set,
 )
 
@@ -225,16 +224,17 @@ class ModifyUserInput(graphene.InputObjectType):
 
 class CreateUser(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         email = graphene.String(required=True)
         props = UserInput(required=True)
 
     ok = graphene.Boolean()
     msg = graphene.String()
-    user = graphene.Field(lambda: User)
+    user = graphene.Field(lambda: User, required=False)
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, email, props):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             username = props.username if props.username else email
@@ -306,6 +306,8 @@ class CreateUser(graphene.Mutation):
 
 class ModifyUser(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         email = graphene.String(required=True)
         props = ModifyUserInput(required=True)
@@ -315,7 +317,6 @@ class ModifyUser(graphene.Mutation):
     user = graphene.Field(lambda: User)
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, email, props):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
 
@@ -440,6 +441,8 @@ class DeleteUser(graphene.Mutation):
     All related keypairs will also be inactivated.
     '''
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         email = graphene.String(required=True)
 
@@ -447,7 +450,6 @@ class DeleteUser(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, email):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             try:

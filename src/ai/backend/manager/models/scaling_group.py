@@ -9,7 +9,7 @@ import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 
 from .base import (
-    metadata, privileged_mutation,
+    metadata,
     simple_db_mutate,
     simple_db_mutate_returning_item,
     set_if_set,
@@ -271,16 +271,17 @@ class ModifyScalingGroupInput(graphene.InputObjectType):
 
 class CreateScalingGroup(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
         props = ScalingGroupInput(required=True)
 
     ok = graphene.Boolean()
     msg = graphene.String()
-    scaling_group = graphene.Field(lambda: ScalingGroup)
+    scaling_group = graphene.Field(lambda: ScalingGroup, required=False)
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         data = {
             'name': name,
@@ -300,6 +301,8 @@ class CreateScalingGroup(graphene.Mutation):
 
 class ModifyScalingGroup(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
         props = ModifyScalingGroupInput(required=True)
@@ -308,7 +311,6 @@ class ModifyScalingGroup(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         data = {}
         set_if_set(props, data, 'description')
@@ -327,6 +329,8 @@ class ModifyScalingGroup(graphene.Mutation):
 
 class DeleteScalingGroup(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
 
@@ -334,7 +338,6 @@ class DeleteScalingGroup(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name):
         delete_query = (
             scaling_groups.delete()
@@ -345,6 +348,8 @@ class DeleteScalingGroup(graphene.Mutation):
 
 class AssociateScalingGroupWithDomain(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         scaling_group = graphene.String(required=True)
         domain = graphene.String(required=True)
@@ -353,7 +358,6 @@ class AssociateScalingGroupWithDomain(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, scaling_group, domain):
         insert_query = (
             sgroups_for_domains.insert()
@@ -367,6 +371,8 @@ class AssociateScalingGroupWithDomain(graphene.Mutation):
 
 class DisassociateScalingGroupWithDomain(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         scaling_group = graphene.String(required=True)
         domain = graphene.String(required=True)
@@ -375,7 +381,6 @@ class DisassociateScalingGroupWithDomain(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, scaling_group, domain):
         delete_query = (
             sgroups_for_domains.delete()
@@ -389,6 +394,8 @@ class DisassociateScalingGroupWithDomain(graphene.Mutation):
 
 class DisassociateAllScalingGroupsWithDomain(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         domain = graphene.String(required=True)
 
@@ -396,7 +403,6 @@ class DisassociateAllScalingGroupsWithDomain(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, domain):
         delete_query = (
             sgroups_for_domains.delete()
@@ -407,6 +413,8 @@ class DisassociateAllScalingGroupsWithDomain(graphene.Mutation):
 
 class AssociateScalingGroupWithUserGroup(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         scaling_group = graphene.String(required=True)
         user_group = graphene.String(required=True)
@@ -415,7 +423,6 @@ class AssociateScalingGroupWithUserGroup(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, scaling_group, user_group):
         insert_query = (
             sgroups_for_groups.insert()
@@ -429,6 +436,8 @@ class AssociateScalingGroupWithUserGroup(graphene.Mutation):
 
 class DisassociateScalingGroupWithUserGroup(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         scaling_group = graphene.String(required=True)
         user_group = graphene.String(required=True)
@@ -437,7 +446,6 @@ class DisassociateScalingGroupWithUserGroup(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, scaling_group, user_group):
         delete_query = (
             sgroups_for_groups.delete()
@@ -451,6 +459,8 @@ class DisassociateScalingGroupWithUserGroup(graphene.Mutation):
 
 class DisassociateAllScalingGroupsWithGroup(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         user_group = graphene.String(required=True)
 
@@ -458,7 +468,6 @@ class DisassociateAllScalingGroupsWithGroup(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, user_group):
         delete_query = (
             sgroups_for_groups.delete()
@@ -469,6 +478,8 @@ class DisassociateAllScalingGroupsWithGroup(graphene.Mutation):
 
 class AssociateScalingGroupWithKeyPair(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         scaling_group = graphene.String(required=True)
         access_key = graphene.String(required=True)
@@ -477,7 +488,6 @@ class AssociateScalingGroupWithKeyPair(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, scaling_group, access_key):
         insert_query = (
             sgroups_for_keypairs.insert()
@@ -491,6 +501,8 @@ class AssociateScalingGroupWithKeyPair(graphene.Mutation):
 
 class DisassociateScalingGroupWithKeyPair(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         scaling_group = graphene.String(required=True)
         access_key = graphene.String(required=True)
@@ -499,7 +511,6 @@ class DisassociateScalingGroupWithKeyPair(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, scaling_group, access_key):
         delete_query = (
             sgroups_for_keypairs.delete()

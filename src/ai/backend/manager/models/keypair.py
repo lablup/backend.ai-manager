@@ -21,6 +21,7 @@ from .base import (
     simple_db_mutate,
     set_if_set,
 )
+from .user import UserRole
 
 __all__: Sequence[str] = (
     'keypairs',
@@ -207,13 +208,15 @@ class ModifyKeyPairInput(graphene.InputObjectType):
 
 class CreateKeyPair(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         user_id = graphene.String(required=True)
         props = KeyPairInput(required=True)
 
     ok = graphene.Boolean()
     msg = graphene.String()
-    keypair = graphene.Field(lambda: KeyPair)
+    keypair = graphene.Field(lambda: KeyPair, required=False)
 
     @classmethod
     async def mutate(cls, root, info, user_id, props):
@@ -277,6 +280,8 @@ class CreateKeyPair(graphene.Mutation):
 
 class ModifyKeyPair(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         access_key = graphene.String(required=True)
         props = ModifyKeyPairInput(required=True)
@@ -300,6 +305,8 @@ class ModifyKeyPair(graphene.Mutation):
 
 
 class DeleteKeyPair(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
         access_key = graphene.String(required=True)

@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import asyncio
 from contextvars import ContextVar
+from collections import defaultdict
 import copy
 from datetime import datetime
 import logging
 import time
 from typing import (
+    Any,
     Callable, Optional,
     Container,
-    Dict, MutableMapping,
+    Dict, Mapping, MutableMapping,
     TYPE_CHECKING,
 )
 import uuid
@@ -788,39 +790,147 @@ class AgentRegistry:
                 del key_occupied[k]
             return key_occupied
 
-    async def destroy_session(self, sess_id, access_key, *,
-                              domain_name=None):
+    async def recalc_resource_usage(self) -> None:
+        concurrency_used_per_key: MutableMapping[str, int] = defaultdict(lambda: 0)
+        occupied_slots_per_agent: MutableMapping[str, ResourceSlot] = \
+            defaultdict(lambda: ResourceSlot({'cpu': 0, 'mem': 0}))
+        async with self.dbpool.acquire() as conn, conn.begin():
+            # Query running containers and calculate concurrency_used per AK and
+            # occupied_slots per agent.
+            query = (sa.select([kernels.c.access_key, kernels.c.agent, kernels.c.occupied_slots])
+                       .where(kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                       .order_by(sa.asc(kernels.c.access_key)))
+            async for row in conn.execute(query):
+                concurrency_used_per_key[row.access_key] += 1
+                occupied_slots_per_agent[row.agent] += ResourceSlot(row.occupied_slots)
+
+            if len(concurrency_used_per_key) > 0:
+                # Update concurrency_used for keypairs with running containers.
+                for ak, used in concurrency_used_per_key.items():
+                    query = (sa.update(keypairs)
+                               .values(concurrency_used=used)
+                               .where(keypairs.c.access_key == ak))
+                    await conn.execute(query)
+                # Update all other keypairs to have concurrency_used = 0.
+                query = (sa.update(keypairs)
+                           .values(concurrency_used=0)
+                           .where(keypairs.c.concurrency_used != 0)
+                           .where(sa.not_(keypairs.c.access_key.in_(concurrency_used_per_key.keys()))))
+                await conn.execute(query)
+            else:
+                query = (sa.update(keypairs)
+                           .values(concurrency_used=0)
+                           .where(keypairs.c.concurrency_used != 0))
+                await conn.execute(query)
+
+            if len(occupied_slots_per_agent) > 0:
+                # Update occupied_slots for agents with running containers.
+                for aid, slots in occupied_slots_per_agent.items():
+                    query = (sa.update(agents)
+                               .values(occupied_slots=slots)
+                               .where(agents.c.id == aid))
+                    await conn.execute(query)
+                # Update all other agents to have empty occupied_slots.
+                query = (sa.update(agents)
+                           .values(occupied_slots=ResourceSlot({}))
+                           .where(agents.c.status == AgentStatus.ALIVE)
+                           .where(sa.not_(agents.c.id.in_(occupied_slots_per_agent.keys()))))
+                await conn.execute(query)
+            else:
+                query = (sa.update(agents)
+                           .values(occupied_slots=ResourceSlot({}))
+                           .where(agents.c.status == AgentStatus.ALIVE))
+                await conn.execute(query)
+
+    async def destroy_session(
+        self,
+        sess_id: str,
+        access_key: str,
+        *,
+        forced: bool = False,
+        domain_name: str = None,
+    ) -> Mapping[str, Any]:
+
+        if forced:
+            # This is for emergency (e.g., when agents are not responding).
+            # Regardless of the container's real status, it marks the session terminated
+            # and recalculate the resource usage.
+            async with self.dbpool.acquire() as conn, conn.begin():
+                kernel = await self.get_session(
+                    sess_id, access_key,
+                    field=[kernels.c.domain_name],
+                    for_update=True,
+                    db_connection=conn,
+                )
+                if domain_name is not None and kernel.domain_name != domain_name:
+                    raise KernelNotFound
+                if kernel.status == KernelStatus.PENDING:
+                    await self.set_session_status(
+                        sess_id, access_key,
+                        KernelStatus.CANCELLED,
+                        reason='force-cancelled',
+                        db_conn=conn,
+                    )
+                    await self.event_dispatcher.produce_event(
+                        'kernel_cancelled',
+                        (str(kernel.id), 'force-terminated'),
+                    )
+                    return {'status': 'cancelled'}
+                if kernel.status not in (KernelStatus.ERROR, KernelStatus.TERMINATING):
+                    # This is allowed, but if agents are working normally,
+                    # the session will become invisible and unaccessible but STILL occupy the actual
+                    # resources until the super-admin manually kills & deletes the container.
+                    log.warning('force-terminating session in normal status! (k:{}, status:{})',
+                                kernel.id, kernel.status)
+                await self.set_session_status(
+                    sess_id, access_key,
+                    KernelStatus.TERMINATED,
+                    reason='force-terminated',
+                    db_conn=conn,
+                )
+                await self.event_dispatcher.produce_event(
+                    'kernel_terminated',
+                    (str(kernel.id), 'terminated'),
+                )
+            # We intentionally skip the agent RPC call!
+            await self.recalc_resource_usage()
+            return {'status': 'terminated'}
+
         async with self.handle_kernel_exception(
-                'destroy_session', sess_id, access_key, set_error=True):
-            try:
-                async with self.dbpool.acquire() as conn, conn.begin():
-                    kernel = await self.get_session(sess_id, access_key,
-                                                    field=[kernels.c.domain_name],
-                                                    for_update=True,
-                                                    db_connection=conn)
-                    if domain_name is not None and kernel.domain_name != domain_name:
-                        raise SessionNotFound
-                    if kernel.status == KernelStatus.PENDING:
-                        await self.set_session_status(sess_id, access_key,
-                                                      KernelStatus.CANCELLED,
-                                                      reason='user-requested',
-                                                      db_conn=conn)
-                        await self.event_dispatcher.produce_event(
-                            'kernel_cancelled',
-                            (str(kernel.id), 'user-requested'),
-                        )
-                        return {'status': 'cancelled'}
-                    else:
-                        await self.set_session_status(sess_id, access_key,
-                                                      KernelStatus.TERMINATING,
-                                                      reason='user-requested',
-                                                      db_conn=conn)
-                        await self.event_dispatcher.produce_event(
-                            'kernel_terminating',
-                            (str(kernel.id), 'user-requested'),
-                        )
-            except SessionNotFound:
-                raise
+            'destroy_session', sess_id, access_key, set_error=True,
+        ):
+            async with self.dbpool.acquire() as conn, conn.begin():
+                kernel = await self.get_session(
+                    sess_id, access_key,
+                    field=[kernels.c.domain_name],
+                    for_update=True,
+                    db_connection=conn,
+                )
+                if domain_name is not None and kernel.domain_name != domain_name:
+                    raise SessionNotFound
+                if kernel.status == KernelStatus.PENDING:
+                    await self.set_session_status(
+                        sess_id, access_key,
+                        KernelStatus.CANCELLED,
+                        reason='user-requested',
+                        db_conn=conn,
+                    )
+                    await self.event_dispatcher.produce_event(
+                        'kernel_cancelled',
+                        (str(kernel.id), 'user-requested'),
+                    )
+                    return {'status': 'cancelled'}
+                else:
+                    await self.set_session_status(
+                        sess_id, access_key,
+                        KernelStatus.TERMINATING,
+                        reason='user-requested',
+                        db_conn=conn,
+                    )
+                    await self.event_dispatcher.produce_event(
+                        'kernel_terminating',
+                        (str(kernel.id), 'user-requested'),
+                    )
             async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 last_stat = await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
                 return {
@@ -1236,35 +1346,38 @@ class AgentRegistry:
                                 db_conn: SAConnection = None,
                                 additional_updates: dict = None) -> None:
         updates = {}
+        raw_kernel_id = str(kernel_id)
+        log.debug('sync_kernel_stats(k:{})', kernel_id)
+
+        async def _get_kstats_from_redis():
+            stat_type = await self.redis_stat.type(raw_kernel_id)
+            if stat_type == 'string':
+                kern_stat = await self.redis_stat.get(raw_kernel_id, encoding=None)
+                if kern_stat is not None:
+                    updates['last_stat'] = msgpack.unpackb(kern_stat)
+            else:
+                kern_stat = await self.redis_stat.hgetall(raw_kernel_id)
+                if kern_stat is not None and 'cpu_used' in kern_stat:
+                    updates.update({
+                        'cpu_used': int(float(kern_stat['cpu_used'])),
+                        'mem_max_bytes': int(kern_stat['mem_max_bytes']),
+                        'net_rx_bytes': int(kern_stat['net_rx_bytes']),
+                        'net_tx_bytes': int(kern_stat['net_tx_bytes']),
+                        'io_read_bytes': int(kern_stat['io_read_bytes']),
+                        'io_write_bytes': int(kern_stat['io_write_bytes']),
+                        'io_max_scratch_size': int(kern_stat['io_max_scratch_size']),
+                    })
+
+        await redis.execute_with_retries(
+            lambda: _get_kstats_from_redis(),
+            max_retries=1,
+        )
+        if additional_updates is not None:
+            updates.update(additional_updates)
+        if not updates:
+            log.warning('sync_kernel_stats(k:{}): no statistics updates', kernel_id)
+            return
         async with reenter_txn(self.dbpool, db_conn) as conn:
-            raw_kernel_id = str(kernel_id)
-            log.debug('sync_kernel_stats(k:{})', kernel_id)
-
-            async def _get_kstats_from_redis():
-                stat_type = await self.redis_stat.type(raw_kernel_id)
-                if stat_type == 'string':
-                    kern_stat = await self.redis_stat.get(raw_kernel_id, encoding=None)
-                    if kern_stat is not None:
-                        updates['last_stat'] = msgpack.unpackb(kern_stat)
-                else:
-                    kern_stat = await self.redis_stat.hgetall(raw_kernel_id)
-                    if kern_stat is not None and 'cpu_used' in kern_stat:
-                        updates.update({
-                            'cpu_used': int(float(kern_stat['cpu_used'])),
-                            'mem_max_bytes': int(kern_stat['mem_max_bytes']),
-                            'net_rx_bytes': int(kern_stat['net_rx_bytes']),
-                            'net_tx_bytes': int(kern_stat['net_tx_bytes']),
-                            'io_read_bytes': int(kern_stat['io_read_bytes']),
-                            'io_write_bytes': int(kern_stat['io_write_bytes']),
-                            'io_max_scratch_size': int(kern_stat['io_max_scratch_size']),
-                        })
-
-            await redis.execute_with_retries(lambda: _get_kstats_from_redis())
-            if additional_updates is not None:
-                updates.update(additional_updates)
-            if not updates:
-                log.debug('sync_kernel_stats: Nothing to sync')
-                return
             query = (sa.update(kernels)
                        .values(updates)
                        .where(kernels.c.id == kernel_id))
