@@ -47,13 +47,21 @@ from .manager import (
 from .resource import get_watcher_info
 from .utils import check_api_params
 from ..manager.models import (
-    agents, AgentStatus, kernels, KernelStatus,
-    users, groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
-    VFolderInvitationState, VFolderPermission, VFolderPermissionValidator,
-    query_accessible_vfolders,
-    get_allowed_vfolder_hosts_by_group, get_allowed_vfolder_hosts_by_user,
+    agents,
+    kernels,
+    users, groups, keypairs,
+    vfolders, vfolder_invitations, vfolder_permissions,
+    AgentStatus,
+    KernelStatus,
+    VFolderInvitationState,
+    VFolderPermission,
+    VFolderPermissionValidator,
     UserRole,
-    verify_vfolder_name
+    query_accessible_vfolders,
+    get_allowed_vfolder_hosts_by_group,
+    get_allowed_vfolder_hosts_by_user,
+    query_owned_dotfiles,
+    verify_vfolder_name,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
@@ -255,6 +263,11 @@ async def create(request: web.Request, params: Any) -> web.Response:
         )
         if len(entries) > 0:
             raise VFolderAlreadyExists
+        if params['name'].startswith('.'):
+            dotfiles, _ = await query_owned_dotfiles(conn, access_key)
+            for dotfile in dotfiles:
+                if params['name'] == dotfile['path']:
+                    raise InvalidAPIParameters('vFolder name conflicts with your dotfile.')
 
         # Check if group exists.
         if group_id_or_name and group_id is None:

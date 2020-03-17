@@ -19,10 +19,13 @@ from .typing import CORSOptions, Iterable, WebMiddleware
 from .utils import check_api_params, get_access_key_scopes
 
 from ..manager.models import (
-    keypairs, verify_dotfile_name
-)
-from ..manager.models.keypair import (
-    query_bootstrap_script, query_owned_dotfiles, MAXIMUM_DOTFILE_SIZE
+    keypairs,
+    vfolders,
+    query_accessible_vfolders,
+    query_bootstrap_script,
+    query_owned_dotfiles,
+    verify_dotfile_name,
+    MAXIMUM_DOTFILE_SIZE,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.dotfile'))
@@ -43,7 +46,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
     log.info('CREATE (ak:{0}/{1})',
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
     dbpool = request.app['dbpool']
-
+    user_uuid = request['user']['uuid']
     async with dbpool.acquire() as conn, conn.begin():
         path: str = params['path']
         dotfiles, leftover_space = await query_owned_dotfiles(conn, owner_access_key)
@@ -52,7 +55,11 @@ async def create(request: web.Request, params: Any) -> web.Response:
         if len(dotfiles) == 100:
             raise DotfileCreationFailed('Dotfile creation limit reached')
         if not verify_dotfile_name(path):
-            raise InvalidAPIParameters(f'Dotfile {path} is reserved for internal operations.')
+            raise InvalidAPIParameters('dotfile path is reserved for internal operations.')
+        duplicate_vfolder = \
+            await query_accessible_vfolders(conn, user_uuid, extra_vf_conds=(vfolders.c.name == path))
+        if len(duplicate_vfolder) > 0:
+            raise InvalidAPIParameters('dotfile path conflicts with your dot-prefixed vFolder')
         duplicate = [x for x in dotfiles if x['path'] == path]
         if len(duplicate) > 0:
             raise DotfileAlreadyExists

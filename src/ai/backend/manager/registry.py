@@ -863,7 +863,7 @@ class AgentRegistry:
                     db_connection=conn,
                 )
                 if domain_name is not None and kernel.domain_name != domain_name:
-                    raise KernelNotFound
+                    raise SessionNotFound
                 if kernel.status == KernelStatus.PENDING:
                     await self.set_session_status(
                         sess_id, access_key,
