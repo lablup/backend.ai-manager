@@ -827,7 +827,7 @@ async def stats_monitor_update_timer(app):
 @auth_required
 @check_api_params(
     t.Dict({
-        t.Key('forced', default='false'): t.StrBool(),
+        t.Key('forced', default='false'): t.ToBool(),
     }))
 async def destroy(request: web.Request, params: Any) -> web.Response:
     registry = request.app['registry']
