@@ -42,6 +42,7 @@ from ..manager import __version__
 from ..manager.plugin.error_monitor import ErrorMonitor
 from ..manager.registry import AgentRegistry
 from ..manager.scheduler.dispatcher import SchedulerDispatcher
+from ..manager.background import BackgroundTaskManager
 from .config import load as load_config, load_shared as load_shared_config
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
 from .etcd import ConfigServer
@@ -90,6 +91,7 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 
 PUBLIC_INTERFACES: Final = [
     'pidx',
+    'background_task',
     'config',
     'config_server',
     'dbpool',
@@ -319,6 +321,13 @@ async def monitoring_ctx(app: web.Application) -> AsyncIterator[None]:
     yield
 
 
+async def background_task_ctx(app: web.Application) -> AsyncIterator[None]:
+    app['background_task'] = BackgroundTaskManager(app['event_dispatcher'])
+    _update_public_interface_objs(app)
+    yield
+    await app['background_task'].shutdown()
+
+
 async def hook_plugins_ctx(app: web.Application) -> AsyncIterator[None]:
     # Install other hook plugins inside app['plugins'].
     plugins = [
@@ -451,6 +460,7 @@ def build_root_app(pidx: int,
         app.cleanup_ctx.append(sched_dispatcher_ctx)
         app.cleanup_ctx.append(webapp_plugins_ctx)
         app.cleanup_ctx.append(hook_plugins_ctx)
+        app.cleanup_ctx.append(background_task_ctx)
     else:
         app.cleanup_ctx.extend(cleanup_contexts)
     aiojobs.aiohttp.setup(app, **app['scheduler_opts'])
