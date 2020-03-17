@@ -11,6 +11,9 @@ Changes
 * NEW: Add pre-open service ports to allow user-written applications listening on a container port and
   make such ports accessible via the stream proxy API. (#221)
 
+* NEW: Error logging API and an intrinsic plugin to store all unhandled exceptions in agents and
+  managers. (Agent exceptions are passed via the event bus.) (#235)
+
 * NEW: Now all CLI commands are accessible via ``backend.ai mgr`` (lablup/backend.ai#101)
 
 * NEW: Add vfolder large-file upload APIs using the tus.io protocol (#210)
@@ -47,6 +50,31 @@ Changes
 * NEW: more convenient etcd commands: ``quote``, ``unquote``, ``move-subtree``
 
 * IMPROVE: "--short" and "--installed" options added to ``etcd list-images`` command.
+
+19.09.19 (2020-03-16)
+---------------------
+
+* NEW: Add "forced" option to the session destruction API (#250)
+
+* NEW: Backport "etcd forget-image" manager CLI command from the master and add "forget_image" GraphQL
+  mutation for super-admins.
+
+* IMPROVE: Support project/repository/tag pagination in rescan-images for Docker registries with a large
+  number of images and tags (#252)
+
+* FIX: Strip owner-access-key argument when checking API params for input validation
+  with query parameters (#251)
+
+* FIX: Potential SQL syntax error during synchronizing real-time statistics from Redis to DB caused when
+  no statistics data is available.
+
+* FIX: Add missing privilege checks for some of GraphQL mutation APIs and improve logging for GraphQL
+  queries and mutations using graphene middleware. (#254)
+
+19.09.18 (2020-03-08)
+---------------------
+
+* MAINTENANCE: Update backend.ai-common dependency.
 
 19.09.17 (2020-02-27)
 ---------------------

@@ -2,7 +2,6 @@
 Resource preset APIs.
 '''
 
-from collections import defaultdict
 import copy
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
@@ -38,7 +37,7 @@ from .exceptions import (
 from .manager import READ_ALLOWED, server_status_required
 from ..manager.models import (
     agents, resource_presets,
-    domains, groups, kernels, keypairs, users,
+    domains, groups, kernels, users,
     AgentStatus,
     association_groups_users,
     query_allowed_sgroups,
@@ -267,44 +266,7 @@ async def recalculate_usage(request) -> web.Response:
     re-calculates the values for running containers and updates them in DB.
     '''
     log.info('RECALCULATE_USAGE ()')
-    async with request.app['dbpool'].acquire() as conn, conn.begin():
-        # Query running containers and calculate concurrency_used per AK and
-        # occupied_slots per agent.
-        query = (sa.select([kernels.c.access_key, kernels.c.agent, kernels.c.occupied_slots])
-                   .where(kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES))
-                   .order_by(sa.asc(kernels.c.access_key)))
-        concurrency_used_per_key: MutableMapping[str, int] = defaultdict(lambda: 0)
-        occupied_slots_per_agent: MutableMapping[str, ResourceSlot] = \
-            defaultdict(lambda: ResourceSlot({'cpu': 0, 'mem': 0}))
-        async for row in conn.execute(query):
-            concurrency_used_per_key[row.access_key] += 1
-            occupied_slots_per_agent[row.agent] += ResourceSlot(row.occupied_slots)
-
-        # Update concurrency_used for keypairs with running containers.
-        for ak, used in concurrency_used_per_key.items():
-            query = (sa.update(keypairs)
-                       .values(concurrency_used=used)
-                       .where(keypairs.c.access_key == ak))
-            await conn.execute(query)
-        # Update all other keypairs to have concurrency_used = 0.
-        query = (sa.update(keypairs)
-                   .values(concurrency_used=0)
-                   .where(keypairs.c.concurrency_used != 0)
-                   .where(sa.not_(keypairs.c.access_key.in_(concurrency_used_per_key.keys()))))
-        await conn.execute(query)
-
-        # Update occupied_slots for agents with running containers.
-        for aid, slots in occupied_slots_per_agent.items():
-            query = (sa.update(agents)
-                       .values(occupied_slots=slots)
-                       .where(agents.c.id == aid))
-            await conn.execute(query)
-        # Update all other agents to have empty occupied_slots.
-        query = (sa.update(agents)
-                   .values(occupied_slots=ResourceSlot({}))
-                   .where(agents.c.status == AgentStatus.ALIVE)
-                   .where(sa.not_(agents.c.id.in_(occupied_slots_per_agent.keys()))))
-        await conn.execute(query)
+    await request.app['registry'].recalc_resource_usage()
     return web.json_response({}, status=200)
 
 

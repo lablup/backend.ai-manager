@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 import stat
 from typing import (
-    Any, Union, Awaitable, Callable,
+    Any, Awaitable, Callable,
     Dict, Mapping, MutableMapping,
     Tuple,
     Set,
@@ -24,7 +24,6 @@ import aiohttp_cors
 import aiojobs
 from aiojobs.aiohttp import atomic
 import aiotools
-import janus
 import multidict
 import sqlalchemy as sa
 import psycopg2
@@ -32,7 +31,7 @@ import trafaret as t
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.utils import Fstab
+from ai.backend.common.utils import AsyncFileWriter, current_loop, Fstab
 
 from .auth import auth_required, superadmin_required
 from .config import DEFAULT_CHUNK_SIZE, DEFAULT_INFLIGHT_CHUNKS
@@ -46,21 +45,26 @@ from .manager import (
     server_status_required,
 )
 from .resource import get_watcher_info
-from .typing import Sentinel
-from .utils import check_api_params, current_loop
+from .utils import check_api_params
 from ..manager.models import (
-    agents, AgentStatus, kernels, KernelStatus,
-    users, groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
-    VFolderInvitationState, VFolderPermission, VFolderPermissionValidator,
-    query_accessible_vfolders,
-    get_allowed_vfolder_hosts_by_group, get_allowed_vfolder_hosts_by_user,
+    agents,
+    kernels,
+    users, groups, keypairs,
+    vfolders, vfolder_invitations, vfolder_permissions,
+    AgentStatus,
+    KernelStatus,
+    VFolderInvitationState,
+    VFolderPermission,
+    VFolderPermissionValidator,
     UserRole,
-    verify_vfolder_name
+    query_accessible_vfolders,
+    get_allowed_vfolder_hosts_by_group,
+    get_allowed_vfolder_hosts_by_user,
+    query_owned_dotfiles,
+    verify_vfolder_name,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
-
-eof_sentinel = Sentinel()
 
 VFolderRow = Mapping[str, Any]
 
@@ -259,6 +263,11 @@ async def create(request: web.Request, params: Any) -> web.Response:
         )
         if len(entries) > 0:
             raise VFolderAlreadyExists
+        if params['name'].startswith('.'):
+            dotfiles, _ = await query_owned_dotfiles(conn, access_key)
+            for dotfile in dotfiles:
+                if params['name'] == dotfile['path']:
+                    raise InvalidAPIParameters('vFolder name conflicts with your dotfile.')
 
         # Check if group exists.
         if group_id_or_name and group_id is None:
@@ -368,7 +377,7 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                     'user_email': row.users_email,
                     'group_name': row.groups_name,
                     'type': 'user' if row['vfolders_user'] is not None else 'group',
-                    'unmanaged_path': row.unmanaged_path
+                    'unmanaged_path': row.vfolders_unmanaged_path
                 })
         else:
             extra_vf_conds = None
@@ -595,7 +604,8 @@ async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     assert not path.is_absolute(), 'path must be relative.'
     try:
         loop = current_loop()
-        await loop.run_in_executor(None, lambda: (folder_path / path).mkdir(parents=True, exist_ok=True))
+        await loop.run_in_executor(
+            None, lambda: (folder_path / path).mkdir(parents=True, exist_ok=False))
     except FileExistsError as e:
         raise InvalidAPIParameters(
             f'"{e.filename}" already exists and is not a directory.')
@@ -638,28 +648,15 @@ async def upload(request: web.Request, row: VFolderRow) -> web.Response:
         log.info(log_fmt + ': accepted path:{}',
                  *log_args, file.filename)
 
-        q: janus.Queue[Union[bytes, Sentinel]] = janus.Queue(maxsize=DEFAULT_INFLIGHT_CHUNKS)
-
-        def _write():
-            with open(file_path, 'wb') as f:
-                while True:
-                    chunk = q.sync_q.get()
-                    if chunk is eof_sentinel:
-                        break
-                    f.write(file.decode(chunk))
-                    q.sync_q.task_done()
-
-        loop = current_loop()
-        try:
-            fut = loop.run_in_executor(None, _write)
+        async with AsyncFileWriter(
+                loop=current_loop(),
+                target_filename=file_path,
+                access_mode='wb',
+                decode=file.decode,
+                max_chunks=DEFAULT_INFLIGHT_CHUNKS) as writer:
             while not file.at_eof():
                 chunk = await file.read_chunk(size=DEFAULT_CHUNK_SIZE)
-                await q.async_q.put(chunk)
-            await q.async_q.put(eof_sentinel)
-            await fut
-        finally:
-            q.close()
-            await q.wait_closed()
+                await writer.write(chunk)
 
     return web.Response(status=201)
 
@@ -733,34 +730,21 @@ async def tus_upload_part(request):
     upload_base = folder_path / ".upload"
     target_filename = upload_base / params['session_id']
 
-    q: janus.Queue[Union[bytes, Sentinel]] = janus.Queue(maxsize=DEFAULT_INFLIGHT_CHUNKS)
-
-    def _write():
-        with open(target_filename, 'ab') as f:
-            while True:
-                chunk = q.sync_q.get()
-                if chunk is eof_sentinel:
-                    break
-                f.write(chunk)
-                q.sync_q.task_done()
-
-    loop = current_loop()
-    try:
-        fut = loop.run_in_executor(None, _write)
+    async with AsyncFileWriter(
+            loop=current_loop(),
+            target_filename=target_filename,
+            access_mode='ab',
+            max_chunks=DEFAULT_INFLIGHT_CHUNKS) as writer:
         while not request.content.at_eof():
             chunk = await request.content.read(DEFAULT_CHUNK_SIZE)
-            await q.async_q.put(chunk)
-        await q.async_q.put(eof_sentinel)
-        await fut
-    finally:
-        q.close()
-        await q.wait_closed()
+            await writer.write(chunk)
 
     fs = Path(target_filename).stat().st_size
     if fs >= params['size']:
         target_path = folder_path / params['path']
         Path(target_filename).rename(target_path)
         try:
+            loop = current_loop()
             await loop.run_in_executor(None, lambda: upload_base.rmdir())
         except OSError:
             pass

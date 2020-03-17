@@ -7,6 +7,7 @@ import base64
 from decimal import Decimal
 from datetime import datetime, timedelta
 import functools
+from io import BytesIO
 import json
 import logging
 import re
@@ -24,6 +25,7 @@ import aiohttp
 from aiohttp import web, hdrs
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
+import aioredis
 import aiotools
 from async_timeout import timeout
 from dateutil.tz import tzutc
@@ -43,11 +45,13 @@ from ai.backend.common.types import (
     AgentId, KernelId,
     SessionTypes,
 )
-
+from ai.backend.common.utils import current_loop
+from .defs import REDIS_STREAM_DB
 from .exceptions import (
     InvalidAPIParameters,
     GenericNotFound,
     ImageNotFound,
+    InsufficientPrivilege,
     SessionNotFound,
     SessionAlreadyExists,
     BackendError,
@@ -57,13 +61,13 @@ from .exceptions import (
 from .auth import auth_required
 from .typing import CORSOptions, WebMiddleware
 from .utils import (
-    current_loop, catch_unexpected, check_api_params, get_access_key_scopes, undefined
+    catch_unexpected, check_api_params, get_access_key_scopes, undefined
 )
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (
     domains,
     association_groups_users as agus, groups,
-    keypairs, kernels,
+    keypairs, kernels, query_bootstrap_script,
     keypair_resource_policies,
     users, UserRole,
     vfolders,
@@ -71,6 +75,7 @@ from ..manager.models import (
     query_accessible_vfolders,
     session_templates,
     verify_vfolder_name,
+    DEAD_KERNEL_STATUSES,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.session'))
@@ -362,6 +367,12 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             if group_id is None:
                 raise InvalidAPIParameters('Invalid group')
 
+            # Use keypair bootstrap_script if it is not delivered as a parameter
+            # (only for INTERACTIVE sessions).
+            if params['session_type'] == SessionTypes.INTERACTIVE and not params['bootstrap_script']:
+                script, _ = await query_bootstrap_script(conn, owner_access_key)
+                params['bootstrap_script'] = script
+
         kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
             params['session_name'], owner_access_key,
             requested_image_ref,
@@ -430,7 +441,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     except UnknownImageReference:
         raise InvalidAPIParameters(f"Unknown image reference: {params['image']}")
     except Exception:
-        request.app['error_monitor'].capture_exception()
+        await request.app['error_monitor'].capture_exception(user=owner_uuid)
         log.exception('GET_OR_CREATE: unexpected error!')
         raise InternalServerError
     finally:
@@ -710,6 +721,50 @@ async def handle_instance_stats(app: web.Application, agent_id: AgentId, event_n
     await app['registry'].handle_stats(agent_id, kern_stats)
 
 
+async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name: str,
+                            raw_kernel_id: str, container_id: str):
+    dbpool = app['dbpool']
+    redis_conn: aioredis.Redis = await redis.connect_with_retries(
+        app['config']['redis']['addr'].as_sockaddr(),
+        db=REDIS_STREAM_DB,
+        password=(app['config']['redis']['password']
+                  if app['config']['redis']['password'] else None),
+        encoding=None,
+    )
+    # The log data is at most 10 MiB.
+    log_buffer = BytesIO()
+    log_key = f'containerlog.{container_id}'
+    try:
+        list_size = await redis.execute_with_retries(
+            lambda: redis_conn.llen(log_key)
+        )
+        if list_size is None:
+            # The log data is expired due to a very slow event delivery.
+            # (should never happen!)
+            log.warning('tried to store console logs for cid:{}, but the data is expired',
+                        container_id)
+            return
+        for _ in range(list_size):
+            # Read chunk-by-chunk to allow interleaving with other Redis operations.
+            chunk = await redis.execute_with_retries(lambda: redis_conn.lpop(log_key))
+            log_buffer.write(chunk)
+        try:
+            async with dbpool.acquire() as conn, conn.begin():
+                query = (sa.update(kernels)
+                           .values(container_log=log_buffer.getvalue())
+                           .where(kernels.c.id == raw_kernel_id))
+                await conn.execute(query)
+        finally:
+            # Clear the log data from Redis when done.
+            await redis.execute_with_retries(
+                lambda: redis_conn.delete(log_key)
+            )
+    finally:
+        log_buffer.close()
+        redis_conn.close()
+        await redis_conn.wait_closed()
+
+
 async def stats_monitor_update(app):
     with app['stats_monitor'] as stats_monitor:
         stats_monitor.report_stats(
@@ -760,7 +815,7 @@ async def stats_monitor_update_timer(app):
         except asyncio.CancelledError:
             break
         except:
-            app['error_monitor'].capture_exception()
+            await app['error_monitor'].capture_exception()
             log.exception('stats_monitor_update unexpected error')
         try:
             await asyncio.sleep(5)
@@ -770,18 +825,27 @@ async def stats_monitor_update_timer(app):
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def destroy(request: web.Request) -> web.Response:
+@check_api_params(
+    t.Dict({
+        t.Key('forced', default='false'): t.StrBool(),
+    }))
+async def destroy(request: web.Request, params: Any) -> web.Response:
     registry = request.app['registry']
     session_name = request.match_info['session_name']
+    if params['forced'] and request['user']['role'] not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        raise InsufficientPrivilege('You are not allowed to force-terminate')
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     domain_name = None
     if requester_access_key != owner_access_key and \
             not request['is_superadmin'] and request['is_admin']:
         domain_name = request['user']['domain_name']
-    log.info('DESTROY (ak:{0}/{1}, s:{2})',
-             requester_access_key, owner_access_key, session_name)
-    last_stat = await registry.destroy_session(session_name, owner_access_key,
-                                               domain_name=domain_name)
+    log.info('DESTROY (ak:{0}/{1}, s:{2}, forced:{3})',
+             requester_access_key, owner_access_key, session_name, params['forced'])
+    last_stat = await registry.destroy_session(
+        session_name, owner_access_key,
+        forced=params['forced'],
+        domain_name=domain_name,
+    )
     resp = {
         'stats': last_stat,
     }
@@ -853,7 +917,7 @@ async def restart(request: web.Request) -> web.Response:
         log.exception('RESTART: exception')
         raise
     except:
-        request.app['error_monitor'].capture_exception()
+        await request.app['error_monitor'].capture_exception(user=request['user']['uuid'])
         log.exception('RESTART: unexpected error')
         raise web.HTTPInternalServerError
     return web.Response(status=204)
@@ -1065,7 +1129,7 @@ async def download_files(request: web.Request, params: Any) -> web.Response:
     except (ValueError, FileNotFoundError):
         raise InvalidAPIParameters('The file is not found.')
     except Exception:
-        request.app['error_monitor'].capture_exception()
+        await request.app['error_monitor'].capture_exception(user=request['user']['uuid'])
         log.exception('DOWNLOAD_FILE: unexpected error!')
         raise InternalServerError
 
@@ -1102,7 +1166,7 @@ async def download_single(request: web.Request, params: Any) -> web.Response:
     except (ValueError, FileNotFoundError):
         raise InvalidAPIParameters('The file is not found.')
     except Exception:
-        request.app['error_monitor'].capture_exception()
+        await request.app['error_monitor'].capture_exception(user=request['user']['uuid'])
         log.exception('DOWNLOAD_SINGLE: unexpected error!')
         raise InternalServerError
     return web.Response(body=result, status=200)
@@ -1136,7 +1200,7 @@ async def list_files(request: web.Request) -> web.Response:
         log.exception('LIST_FILES: exception')
         raise
     except Exception:
-        request.app['error_monitor'].capture_exception()
+        await request.app['error_monitor'].capture_exception(user=request['user']['uuid'])
         log.exception('LIST_FILES: unexpected error!')
         raise InternalServerError
     return web.json_response(resp, status=200)
@@ -1149,19 +1213,45 @@ async def list_files(request: web.Request) -> web.Response:
     t.Dict({
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }))
-async def get_logs(request: web.Request, params: Any) -> web.Response:
+async def get_container_logs(request: web.Request, params: Any) -> web.Response:
     registry = request.app['registry']
     session_name = request.match_info['session_name']
+    dbpool = request.app['dbpool']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
-    log.info('GET_LOG (ak:{}/{}, s:{})',
+    log.info('GET_CONTAINER_LOG (ak:{}/{}, s:{})',
              requester_access_key, owner_access_key, session_name)
     resp = {'result': {'logs': ''}}
+    async with dbpool.acquire() as conn, conn.begin():
+        query = (sa.select([kernels.c.status])
+                   .select_from(kernels)
+                   .where((kernels.c.sess_id == session_name) &
+                          (kernels.c.access_key == owner_access_key) &
+                          (kernels.c.role == 'master'))
+                   .order_by(sa.desc(kernels.c.created_at))
+                   .limit(1))
+        status = await conn.scalar(query)
+        if status is None:
+            raise SessionNotFound
+        if status in DEAD_KERNEL_STATUSES:
+            query = (sa.select([kernels.c.container_log])
+                       .select_from(kernels)
+                       .where((kernels.c.sess_id == session_name) &
+                              (kernels.c.access_key == owner_access_key) &
+                              (kernels.c.role == 'master'))
+                       .order_by(sa.desc(kernels.c.created_at))
+                       .limit(1))
+            logs = await conn.scalar(query)
+            if logs is not None:
+                log.debug('returning log from database record')
+                resp['result']['logs'] = logs.decode('utf-8')
+                return web.json_response(resp, status=200)
     try:
         await registry.increment_session_usage(session_name, owner_access_key)
         resp['result'] = await registry.get_logs(session_name, owner_access_key)
-        log.info('container log retrieved: {0!r}', resp)
+        log.debug('returning log from agent')
     except BackendError:
-        log.exception('GET_LOG: exception')
+        log.exception('GET_CONTAINER_LOG(ak:{}/{}, s:{}): unexpected error',
+                      requester_access_key, owner_access_key, session_name)
         raise
     return web.json_response(resp, status=200)
 
@@ -1223,6 +1313,7 @@ async def init(app: web.Application) -> None:
     event_dispatcher.consume('kernel_success', app, handle_batch_result)
     event_dispatcher.consume('kernel_failure', app, handle_batch_result)
     event_dispatcher.consume('kernel_stat_sync', app, handle_kernel_stat_sync)
+    event_dispatcher.consume('kernel_log', app, handle_kernel_log)
     event_dispatcher.consume('instance_started', app, handle_instance_lifecycle)
     event_dispatcher.consume('instance_terminated', app, handle_instance_lifecycle)
     event_dispatcher.consume('instance_heartbeat', app, handle_instance_heartbeat)
@@ -1267,7 +1358,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     task_log_resource = cors.add(app.router.add_resource(r'/_/logs'))
     cors.add(task_log_resource.add_route('HEAD', get_task_logs))
     cors.add(task_log_resource.add_route('GET',  get_task_logs))
-    cors.add(app.router.add_route('GET',  '/{session_name}/logs', get_logs))
+    cors.add(app.router.add_route('GET',  '/{session_name}/logs', get_container_logs))
     cors.add(app.router.add_route('POST', '/{session_name}/interrupt', interrupt))
     cors.add(app.router.add_route('POST', '/{session_name}/complete', complete))
     cors.add(app.router.add_route('POST', '/{session_name}/upload', upload_files))

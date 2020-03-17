@@ -13,6 +13,7 @@ __all__ = (
     'Image',
     'PreloadImage',
     'RescanImages',
+    'ForgetImage',
     'AliasImage',
     'DealiasImage',
 )
@@ -115,6 +116,8 @@ class Image(graphene.ObjectType):
 
 class PreloadImage(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         references = graphene.List(graphene.String, required=True)
         target_agents = graphene.List(graphene.String, required=True)
@@ -128,6 +131,8 @@ class PreloadImage(graphene.Mutation):
 
 
 class RescanImages(graphene.Mutation):
+
+    allowed_roles = (UserRole.ADMIN, UserRole.SUPERADMIN)
 
     class Arguments:
         registry = graphene.String()
@@ -144,7 +149,27 @@ class RescanImages(graphene.Mutation):
         return RescanImages(ok=True, msg='')
 
 
+class ForgetImage(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
+
+    class Arguments:
+        reference = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @staticmethod
+    async def mutate(root, info, reference: str):
+        log.info('forget image {0} by API request', reference)
+        config_server = info.context['config_server']
+        await config_server.forget_image(reference)
+        return ForgetImage(ok=True, msg='')
+
+
 class AliasImage(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
         alias = graphene.String(required=True)
@@ -165,6 +190,8 @@ class AliasImage(graphene.Mutation):
 
 
 class DealiasImage(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
         alias = graphene.String(required=True)
