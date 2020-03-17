@@ -43,7 +43,7 @@ from ..manager.plugin.error_monitor import ErrorMonitor
 from ..manager.registry import AgentRegistry
 from ..manager.scheduler.dispatcher import SchedulerDispatcher
 from ..manager.background import BackgroundTaskManager
-from .config import load as load_config, load_shared as load_shared_config, redis_config_iv
+from .config import load as load_config, load_shared as load_shared_config
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
 from .etcd import ConfigServer
 from .events import EventDispatcher
