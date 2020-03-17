@@ -265,22 +265,6 @@ def forget_image(cli_ctx, reference):
 
 @cli.command()
 @click.argument('reference')
-@click.pass_obj
-def forget_image(cli_ctx, reference):
-    '''
-    Forget (delete) a specific image.
-    NOTE: aliases to the given reference are NOT deleted.
-    '''
-    with cli_ctx.logger, config_ctx(cli_ctx) as (loop, config_server):
-        try:
-            loop.run_until_complete(config_server.forget_image(reference))
-            log.info('Done.')
-        except Exception:
-            log.exception('An error occurred.')
-
-
-@cli.command()
-@click.argument('reference')
 @click.argument('slot_type')
 @click.argument('range_value', type=MinMaxRange)
 @click.pass_obj
