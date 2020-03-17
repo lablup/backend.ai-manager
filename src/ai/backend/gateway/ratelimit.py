@@ -10,7 +10,6 @@ from typing import (
 )
 
 from aiohttp import web
-import aioredis
 from aiotools import apartial
 
 from ai.backend.common import redis
@@ -55,17 +54,11 @@ async def rlim_middleware(app: web.Application,
     if request['is_authorized']:
         rate_limit = request['keypair']['rate_limit']
         access_key = request['keypair']['access_key']
-        while True:
-            try:
-                ret = await redis.execute_with_retries(lambda: rr.evalsha(
-                    app['redis_rlim_script'],
-                    keys=[access_key],
-                    args=[str(now), str(_rlim_window)]))
-                break
-            except aioredis.errors.ReplyError:
-                # Redis may have been restarted.
-                app['redis_rlim_script'] = await rr.script_load(_rlim_script)
-                continue
+        ret = await redis.execute_script(
+            rr, 'ratelimit', _rlim_script,
+            [access_key],
+            [str(now), str(_rlim_window)],
+        )
         rolling_count = int(ret)
         if rolling_count > rate_limit:
             raise RateLimitExceeded

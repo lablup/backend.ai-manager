@@ -24,7 +24,7 @@ RESERVED_DOTFILES = ['.terminfo', '.jupyter', '.ssh', '.ssh/authorized_keys', '.
 RESERVED_VFOLDERS = ['.terminfo', '.jupyter', '.tmux.conf', '.ssh']
 RESERVED_VFOLDER_PATTERNS = [re.compile(x) for x in _RESERVED_VFOLDER_PATTERNS]
 
-manager_config_iv = t.Dict({
+manager_local_config_iv = t.Dict({
     t.Key('db'): t.Dict({
         t.Key('type', default='postgresql'): t.Enum('postgresql'),
         t.Key('addr'): tx.HostPortPair,
@@ -59,11 +59,6 @@ manager_config_iv = t.Dict({
         t.Key('log-scheduler-ticks', default=False): t.ToBool,
     }).allow_extra('*'),
 }).merge(config.etcd_config_iv).allow_extra('*')
-
-redis_config_iv = t.Dict({
-    t.Key('addr', default=('127.0.0.1', 6379)): tx.HostPortPair,
-    t.Key('password', default=None): t.Null | t.String,
-}).allow_extra('*')
 
 _shdefs: Mapping[str, Any] = {
     'system': {
@@ -157,7 +152,7 @@ def load(config_path: Path = None, debug: bool = False) -> Mapping[str, Any]:
     # Validate and fill configurations
     # (allow_extra will make configs to be forward-copmatible)
     try:
-        cfg = config.check(raw_cfg, manager_config_iv)
+        cfg = config.check(raw_cfg, manager_local_config_iv)
         if 'debug' in cfg and cfg['debug']['enabled']:
             print('== Manager configuration ==', file=sys.stderr)
             print(pformat(cfg), file=sys.stderr)

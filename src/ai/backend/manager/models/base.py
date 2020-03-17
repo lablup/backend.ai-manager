@@ -431,10 +431,7 @@ def privileged_mutation(required_role, target_func=None):
             # success(bool), message(str), item(object)
             if permitted:
                 return await func(cls, root, info, *args, **kwargs)
-            if info.field_name.startswith('delete_'):
-                return cls(False, 'no permission to execute the given mutation')
-            else:
-                return cls(False, 'no permission to execute the given mutation', None)
+            return cls(False, f"no permission to execute {info.path[0]}")
 
         return wrapped
 

@@ -88,6 +88,11 @@ class GenericForbidden(web.HTTPForbidden, BackendError):
     error_title = 'Forbidden operation.'
 
 
+class InsufficientPrivilege(web.HTTPForbidden, BackendError):
+    error_type  = 'https://api.backend.ai/probs/insufficient-privilege'
+    error_title = 'Insufficient privilege.'
+
+
 class MethodNotAllowed(web.HTTPMethodNotAllowed, BackendError):
     error_type  = 'https://api.backend.ai/probs/method-not-allowed'
     error_title = 'HTTP Method Not Allowed.'

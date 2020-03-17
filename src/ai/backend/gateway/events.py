@@ -22,9 +22,9 @@ from ai.backend.common.types import (
     aobject,
     AgentId,
 )
+from ai.backend.common.utils import current_loop
 from .defs import REDIS_STREAM_DB
 from .typing import CORSOptions, WebMiddleware
-from .utils import current_loop
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.events'))
 

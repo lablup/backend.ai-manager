@@ -10,7 +10,6 @@ from sqlalchemy.dialects import postgresql as pgsql
 from ai.backend.common.types import ResourceSlot
 from .base import (
     metadata, ResourceSlotColumn,
-    privileged_mutation,
     simple_db_mutate,
     simple_db_mutate_returning_item,
     set_if_set,
@@ -129,16 +128,17 @@ class ModifyDomainInput(graphene.InputObjectType):
 
 class CreateDomain(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
         props = DomainInput(required=True)
 
     ok = graphene.Boolean()
     msg = graphene.String()
-    domain = graphene.Field(lambda: Domain)
+    domain = graphene.Field(lambda: Domain, required=False)
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         if _rx_slug.search(name) is None:
             return cls(False, 'invalid name format. slug format required.', None)
@@ -164,16 +164,17 @@ class CreateDomain(graphene.Mutation):
 
 class ModifyDomain(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
         props = ModifyDomainInput(required=True)
 
     ok = graphene.Boolean()
     msg = graphene.String()
-    domain = graphene.Field(lambda: Domain)
+    domain = graphene.Field(lambda: Domain, required=False)
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         data = {}
         set_if_set(props, data, 'name')  # data['name'] is new domain name
@@ -203,6 +204,8 @@ class ModifyDomain(graphene.Mutation):
 
 class DeleteDomain(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
 
@@ -210,7 +213,6 @@ class DeleteDomain(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name):
         query = (
             domains.update()

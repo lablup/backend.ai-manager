@@ -10,6 +10,7 @@ import click
 from tabulate import tabulate
 
 from ai.backend.common.cli import EnumChoice, MinMaxRange
+from ai.backend.common.config import redis_config_iv
 from ai.backend.common.docker import ImageRef
 from ai.backend.common.etcd import (
     AsyncEtcd, ConfigScopes,
@@ -17,7 +18,6 @@ from ai.backend.common.etcd import (
     unquote as etcd_unquote,
 )
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.gateway.config import redis_config_iv
 from ai.backend.gateway.defs import REDIS_IMAGE_DB
 from ai.backend.gateway.etcd import ConfigServer
 
@@ -261,6 +261,22 @@ def forget_image(cli_ctx, reference):
                 log.exception('An error occurred.')
     with cli_ctx.logger:
         asyncio.run(_impl())
+
+
+@cli.command()
+@click.argument('reference')
+@click.pass_obj
+def forget_image(cli_ctx, reference):
+    '''
+    Forget (delete) a specific image.
+    NOTE: aliases to the given reference are NOT deleted.
+    '''
+    with cli_ctx.logger, config_ctx(cli_ctx) as (loop, config_server):
+        try:
+            loop.run_until_complete(config_server.forget_image(reference))
+            log.info('Done.')
+        except Exception:
+            log.exception('An error occurred.')
 
 
 @cli.command()
