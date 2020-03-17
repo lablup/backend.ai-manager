@@ -47,13 +47,21 @@ from .manager import (
 from .resource import get_watcher_info
 from .utils import check_api_params
 from ..manager.models import (
-    agents, AgentStatus, kernels, KernelStatus,
-    users, groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
-    VFolderInvitationState, VFolderPermission, VFolderPermissionValidator,
-    query_accessible_vfolders,
-    get_allowed_vfolder_hosts_by_group, get_allowed_vfolder_hosts_by_user,
+    agents,
+    kernels,
+    users, groups, keypairs,
+    vfolders, vfolder_invitations, vfolder_permissions,
+    AgentStatus,
+    KernelStatus,
+    VFolderInvitationState,
+    VFolderPermission,
+    VFolderPermissionValidator,
     UserRole,
-    verify_vfolder_name, query_owned_dotfiles
+    query_accessible_vfolders,
+    get_allowed_vfolder_hosts_by_group,
+    get_allowed_vfolder_hosts_by_user,
+    query_owned_dotfiles,
+    verify_vfolder_name,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
