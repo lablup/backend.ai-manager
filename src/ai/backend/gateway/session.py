@@ -67,7 +67,7 @@ from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (
     domains,
     association_groups_users as agus, groups,
-    keypairs, kernels,
+    keypairs, kernels, query_bootstrap_script,
     keypair_resource_policies,
     users, UserRole,
     vfolders,
@@ -366,6 +366,12 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
                 group_id = await qresult.scalar()
             if group_id is None:
                 raise InvalidAPIParameters('Invalid group')
+
+            # Use keypair bootstrap_script if it is not delivered as a parameter
+            # (only for INTERACTIVE sessions).
+            if params['session_type'] == SessionTypes.INTERACTIVE and not params['bootstrap_script']:
+                script, _ = await query_bootstrap_script(conn, owner_access_key)
+                params['bootstrap_script'] = script
 
         kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
             params['session_name'], owner_access_key,
