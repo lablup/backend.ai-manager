@@ -186,12 +186,12 @@ async def get_import_image_form(request: web.Request) -> web.Response:
                     {
                         'name': 'runtimeType',
                         'type': 'choice',
-                        'choices': ['python'],
+                        'choices': ['python', 'app'],
                         'default': 'python',
                         'label': 'Runtime type of the image',
                         'help': 'The runtime type of the image. '
-                                'Currently, the source image must have installed Python 2.7, 3.5, 3.6, '
-                                'or 3.7 at least to import. '
+                                'For "python", the source image must include one of the following'
+                                'Python versions: 2.7, 3.5, 3.6, 3.7 or 3.8. '
                                 'This will be used as the kernel of Jupyter service in this image.',
                     },
                     {
@@ -205,7 +205,8 @@ async def get_import_image_form(request: web.Request) -> web.Response:
                                 'image by image. (e.g., /usr/bin/python, /usr/local/bin/python, '
                                 '/opt/something/bin/python, ...) '
                                 'Please check this carefully not to get confused with OS-default ones '
-                                'and custom-installed ones.',
+                                'and custom-installed ones. '
+                                'For the runtime-type "app", this value is ignored.',
                     },
                     {
                         'name': 'CPUCountEnvs',
@@ -216,6 +217,8 @@ async def get_import_image_form(request: web.Request) -> web.Response:
                                 'cores actually allocated to the container. Required for legacy '
                                 'computation libraries.',
                     },
+                    # TODO: we need to accept a list of service-definition JSON data as input,
+                    #       instead of pre-defined ones. (v20.03)
                     {
                         'name': 'servicePorts',
                         'type': 'multichoice[template]',
