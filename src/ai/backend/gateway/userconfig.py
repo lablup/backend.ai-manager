@@ -185,7 +185,7 @@ async def update_bootstrap_script(request: web.Request, params: Any) -> web.Resp
     log.info('UPDATE_BOOTSTRAP_SCRIPT (ak:{0})', access_key)
     async with dbpool.acquire() as conn, conn.begin():
         script = params.get('script', '').strip()
-        if len(script > MAXIMUM_DOTFILE_SIZE):
+        if len(script) > MAXIMUM_DOTFILE_SIZE:
             raise DotfileCreationFailed('Maximum bootstrap script length reached')
         query = (keypairs.update()
                          .values(bootstrap_script=script)
