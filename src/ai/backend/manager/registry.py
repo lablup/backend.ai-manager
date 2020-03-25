@@ -341,7 +341,7 @@ class AgentRegistry:
         db_connection=None,
     ):
         '''
-        Retreive the session information from the session UUID or client-specified
+        Retrieve the session information from the session UUID or client-specified
         session ID paired with the given access key.
         If the session is composed of multiple containers, it returns the information
         about the master container.
