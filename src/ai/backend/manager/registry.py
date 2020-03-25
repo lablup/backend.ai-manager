@@ -341,13 +341,14 @@ class AgentRegistry:
         db_connection=None,
     ):
         '''
-        Retreive the kernel information from the session ID (client-side
-        session token).  If the kernel is composed of multiple containers, it
-        returns the address of the master container.
+        Retreive the session information from the session UUID or client-specified
+        session ID paired with the given access key.
+        If the session is composed of multiple containers, it returns the information
+        about the master container.
 
         If ``field`` is given, it extracts only the raw value of the given
         field, without wrapping it as Kernel object.  If ``allow_stale`` is
-        true, it skips checking validity of the kernel owner instance.
+        true, it does not apply the filter for "active" statuses.
         '''
 
         cols = [kernels.c.id, kernels.c.status,
@@ -374,9 +375,9 @@ class AgentRegistry:
             (kernels.c.role == 'master')
         )
         if allow_stale:
-            cond_status = ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES))
+            cond_status = true()  # any status
         else:
-            cond_status = true()
+            cond_status = ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES))
         query_by_id = (
             sa.select(cols, for_update=for_update)
             .select_from(kernels)
@@ -387,11 +388,21 @@ class AgentRegistry:
             .select_from(kernels)
             .where(cond_name & cond_status)
         )
+        if allow_stale:
+            # There may be multiple rows with the same access key and
+            # client-specified ID in terminated sessions.
+            # In this case, we choose the first record for
+            # the backward-compatible behavior.
+            query_by_name = (
+                query_by_name
+                .order_by(sa.desc(kernels.c.created_at))
+                .limit(1).offset(0)
+            )
 
         async with reenter_txn(self.dbpool, db_connection) as conn:
             for query in [query_by_id, query_by_name]:
                 result = await conn.execute(query)
-                if result.count > 2:
+                if result.count > 1:
                     raise TooManySessionMatched
                 if result.count == 0:
                     continue
