@@ -169,7 +169,7 @@ class TooManySessionMatched(web.HTTPNotFound, BackendError):
 
 
 class TaskTemplateNotFound(web.HTTPNotFound, BackendError):
-    error_type  = 'https://api.backend.ai/probs/kernel-not-found'
+    error_type  = 'https://api.backend.ai/probs/task-template-not-found'
     error_title = 'No such task template.'
 
 
@@ -179,7 +179,7 @@ class AppNotFound(web.HTTPNotFound, BackendError):
 
 
 class SessionAlreadyExists(web.HTTPBadRequest, BackendError):
-    error_type  = 'https://api.backend.ai/probs/kernel-already-exists'
+    error_type  = 'https://api.backend.ai/probs/session-already-exists'
     error_title = 'The session already exists with ' \
                   'a different runtime type (language).'
 
