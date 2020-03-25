@@ -25,6 +25,7 @@ from callosum.lower.zeromq import ZeroMQAddress, ZeroMQRPCTransport
 from dateutil.tz import tzutc
 import snappy
 import sqlalchemy as sa
+from sqlalchemy.sql.expression import true
 from yarl import URL
 import zmq.asyncio
 
@@ -45,7 +46,7 @@ from .defs import INTRINSIC_SLOTS
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
     InstanceNotFound,
-    SessionNotFound,
+    SessionNotFound, TooManySessionMatched,
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
     ScalingGroupNotFound,
@@ -332,7 +333,7 @@ class AgentRegistry:
 
     async def get_session(
         self,
-        session_name: str,
+        session_name_or_id: str,
         access_key: str, *,
         field=None,
         allow_stale=False,
@@ -362,30 +363,40 @@ class AgentRegistry:
             cols.append(field)
         elif isinstance(field, str):
             cols.append(sa.column(field))
+
+        cond_id = (
+            (kernels.c.id.like(f'{session_name_or_id}%')) &
+            (kernels.c.role == 'master')
+        )
+        cond_name = (
+            (kernels.c.sess_id.like(f'{session_name_or_id}%')) &
+            (kernels.c.access_key == access_key) &
+            (kernels.c.role == 'master')
+        )
+        if allow_stale:
+            cond_status = ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES))
+        else:
+            cond_status = true()
+        query_by_id = (
+            sa.select(cols, for_update=for_update)
+            .select_from(kernels)
+            .where(cond_id & cond_status)
+        )
+        query_by_name = (
+            sa.select(cols, for_update=for_update)
+            .select_from(kernels)
+            .where(cond_name & cond_status)
+        )
+
         async with reenter_txn(self.dbpool, db_connection) as conn:
-            if allow_stale:
-                query = (sa.select(cols, for_update=for_update)
-                           .select_from(kernels)
-                           .where((kernels.c.sess_id == session_name) &
-                                  (kernels.c.access_key == access_key) &
-                                  (kernels.c.role == 'master'))
-                           .limit(1).offset(0))
-            else:
-                query = (
-                    sa.select(cols, for_update=for_update)
-                    .select_from(kernels)
-                    .where(
-                        (kernels.c.sess_id == session_name) &
-                        (kernels.c.access_key == access_key) &
-                        (kernels.c.role == 'master') &
-                        ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES))
-                    ).limit(1).offset(0)
-                )
-            result = await conn.execute(query)
-            row = await result.first()
-            if row is None:
-                raise SessionNotFound
-            return row
+            for query in [query_by_id, query_by_name]:
+                result = await conn.execute(query)
+                if result.count > 2:
+                    raise TooManySessionMatched
+                if result.count == 0:
+                    continue
+                return await result.first()
+            raise SessionNotFound
 
     async def get_sessions(
         self,

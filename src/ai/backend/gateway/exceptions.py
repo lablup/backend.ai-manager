@@ -159,8 +159,13 @@ class ScalingGroupNotFound(web.HTTPNotFound, BackendError):
 
 
 class SessionNotFound(web.HTTPNotFound, BackendError):
-    error_type  = 'https://api.backend.ai/probs/kernel-not-found'
+    error_type  = 'https://api.backend.ai/probs/session-not-found'
     error_title = 'No such session.'
+
+
+class TooManySessionMatched(web.HTTPNotFound, BackendError):
+    error_type  = 'https://api.backend.ai/probs/too-many-session-matched'
+    error_title = 'Too many session matched.'
 
 
 class TaskTemplateNotFound(web.HTTPNotFound, BackendError):
