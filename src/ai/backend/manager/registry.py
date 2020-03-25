@@ -8,7 +8,7 @@ from datetime import datetime
 import logging
 import time
 from typing import (
-    Any,
+    Any, Union,
     Callable, Optional,
     Container,
     Dict, Mapping, MutableMapping,
@@ -282,7 +282,7 @@ class AgentRegistry:
         db_connection=None,
     ):
         '''
-        Retreive the kernel information from the given kernel ID.
+        Retrieve the kernel information from the given kernel ID.
         This ID is unique for all individual agent-spawned containers.
 
         If ``field`` is given, it extracts only the raw value of the given
@@ -314,13 +314,7 @@ class AgentRegistry:
                     .select_from(kernels.join(agents))
                     .where(
                         (kernels.c.id == kern_id) &
-                        (kernels.c.status.in_([
-                            KernelStatus.BUILDING,
-                            KernelStatus.PREPARING,
-                            KernelStatus.PULLING,
-                            KernelStatus.RUNNING,
-                            KernelStatus.TERMINATING,
-                        ])) &
+                        ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES)) &
                         (agents.c.status == AgentStatus.ALIVE) &
                         (agents.c.id == kernels.c.agent)
                     )
@@ -333,7 +327,7 @@ class AgentRegistry:
 
     async def get_session(
         self,
-        session_name_or_id: str,
+        session_name_or_id: Union[str, uuid.UUID],
         access_key: str, *,
         field=None,
         allow_stale=False,
@@ -366,7 +360,7 @@ class AgentRegistry:
             cols.append(sa.column(field))
 
         cond_id = (
-            (kernels.c.id.like(f'{session_name_or_id}%')) &
+            (sa.sql.expression.cast(kernels.c.id, sa.String).like(f'{session_name_or_id}%')) &
             (kernels.c.role == 'master')
         )
         cond_name = (
@@ -402,9 +396,9 @@ class AgentRegistry:
         async with reenter_txn(self.dbpool, db_connection) as conn:
             for query in [query_by_id, query_by_name]:
                 result = await conn.execute(query)
-                if result.count > 1:
+                if result.rowcount > 1:
                     raise TooManySessionMatched
-                if result.count == 0:
+                if result.rowcount == 0:
                     continue
                 return await result.first()
             raise SessionNotFound
@@ -1101,13 +1095,13 @@ class AgentRegistry:
                     return None
                 return await coro
 
-    async def get_logs(self, sess_id, access_key):
-        async with self.handle_kernel_exception('get_logs', sess_id, access_key):
+    async def get_logs_from_agent(self, sess_id, access_key):
+        async with self.handle_kernel_exception('get_logs_from_agent', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 coro = rpc.call.get_logs(str(kernel['id']))
                 if coro is None:
-                    log.warning('get_logs cancelled')
+                    log.warning('get_logs_from_agent cancelled')
                     return None
                 return await coro
 

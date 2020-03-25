@@ -1222,32 +1222,22 @@ async def get_container_logs(request: web.Request, params: Any) -> web.Response:
              requester_access_key, owner_access_key, session_name)
     resp = {'result': {'logs': ''}}
     async with dbpool.acquire() as conn, conn.begin():
-        query = (sa.select([kernels.c.status])
-                   .select_from(kernels)
-                   .where((kernels.c.sess_id == session_name) &
-                          (kernels.c.access_key == owner_access_key) &
-                          (kernels.c.role == 'master'))
-                   .order_by(sa.desc(kernels.c.created_at))
-                   .limit(1))
-        status = await conn.scalar(query)
-        if status is None:
-            raise SessionNotFound
-        if status in DEAD_KERNEL_STATUSES:
-            query = (sa.select([kernels.c.container_log])
-                       .select_from(kernels)
-                       .where((kernels.c.sess_id == session_name) &
-                              (kernels.c.access_key == owner_access_key) &
-                              (kernels.c.role == 'master'))
-                       .order_by(sa.desc(kernels.c.created_at))
-                       .limit(1))
-            logs = await conn.scalar(query)
-            if logs is not None:
-                log.debug('returning log from database record')
-                resp['result']['logs'] = logs.decode('utf-8')
-                return web.json_response(resp, status=200)
+        compute_session = await registry.get_session(
+            session_name, owner_access_key,
+            field=[kernels.c.container_log],
+            allow_stale=True,
+            db_connection=conn,
+        )
+        if (
+            compute_session.status in DEAD_KERNEL_STATUSES and
+            compute_session.container_log is not None
+        ):
+            log.debug('returning log from database record')
+            resp['result']['logs'] = compute_session.container_log.decode('utf-8')
+            return web.json_response(resp, status=200)
     try:
         await registry.increment_session_usage(session_name, owner_access_key)
-        resp['result'] = await registry.get_logs(session_name, owner_access_key)
+        resp['result'] = await registry.get_logs_from_agent(session_name, owner_access_key)
         log.debug('returning log from agent')
     except BackendError:
         log.exception('GET_CONTAINER_LOG(ak:{}/{}, s:{}): unexpected error',
