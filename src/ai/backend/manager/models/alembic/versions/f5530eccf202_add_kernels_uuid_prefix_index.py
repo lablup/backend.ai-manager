@@ -20,7 +20,7 @@ def upgrade():
     op.create_index(
         op.f('ix_kernels_uuid_prefix'),
         'kernels',
-        [sa.text('CAST("id" AS TEXT) COLLATE "C"')],
+        [sa.text('CAST("id" AS VARCHAR) COLLATE "C"')],
     )
 
 
