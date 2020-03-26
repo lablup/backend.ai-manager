@@ -163,9 +163,9 @@ class SessionNotFound(web.HTTPNotFound, BackendError):
     error_title = 'No such session.'
 
 
-class TooManySessionMatched(web.HTTPNotFound, BackendError):
-    error_type  = 'https://api.backend.ai/probs/too-many-session-matched'
-    error_title = 'Too many session matched.'
+class TooManySessionsMatched(web.HTTPNotFound, BackendError):
+    error_type  = 'https://api.backend.ai/probs/too-many-sessions-matched'
+    error_title = 'Too many sessions matched.'
 
 
 class TaskTemplateNotFound(web.HTTPNotFound, BackendError):

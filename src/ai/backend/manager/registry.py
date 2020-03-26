@@ -46,7 +46,7 @@ from .defs import INTRINSIC_SLOTS
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
     InstanceNotFound,
-    SessionNotFound, TooManySessionMatched,
+    SessionNotFound, TooManySessionsMatched,
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
     ScalingGroupNotFound,
@@ -234,7 +234,7 @@ class AgentRegistry:
             'upload_file': KernelExecutionFailed,
             'download_file': KernelExecutionFailed,
             'list_files': KernelExecutionFailed,
-            'get_logs': KernelExecutionFailed,
+            'get_logs_from_agent': KernelExecutionFailed,
             'refresh_session': KernelExecutionFailed,
         }
         exc_class = op_exc[op]
@@ -361,6 +361,7 @@ class AgentRegistry:
 
         cond_id = (
             (sa.sql.expression.cast(kernels.c.id, sa.String).like(f'{session_name_or_id}%')) &
+            (kernels.c.access_key == access_key) &
             (kernels.c.role == 'master')
         )
         cond_name = (
@@ -376,28 +377,32 @@ class AgentRegistry:
             sa.select(cols, for_update=for_update)
             .select_from(kernels)
             .where(cond_id & cond_status)
+            .order_by(sa.desc(kernels.c.created_at))
+            .limit(10).offset(0)
         )
         query_by_name = (
             sa.select(cols, for_update=for_update)
             .select_from(kernels)
             .where(cond_name & cond_status)
+            .order_by(sa.desc(kernels.c.created_at))
+            .limit(1).offset(0)
         )
-        if allow_stale:
-            # There may be multiple rows with the same access key and
-            # client-specified ID in terminated sessions.
-            # In this case, we choose the first record for
-            # the backward-compatible behavior.
-            query_by_name = (
-                query_by_name
-                .order_by(sa.desc(kernels.c.created_at))
-                .limit(1).offset(0)
-            )
 
         async with reenter_txn(self.dbpool, db_connection) as conn:
             for query in [query_by_id, query_by_name]:
                 result = await conn.execute(query)
                 if result.rowcount > 1:
-                    raise TooManySessionMatched
+                    matches = [
+                        {
+                            'id': str(item['id']),
+                            'name': item['sess_id'],
+                            'status': item['status'].name,
+                        }
+                        async for item in result
+                    ]
+                    raise TooManySessionsMatched(extra_data={
+                        'matches': matches,
+                    })
                 if result.rowcount == 0:
                     continue
                 return await result.first()
