@@ -858,7 +858,7 @@ async def destroy(request: web.Request, params: Any) -> web.Response:
 @auth_required
 @check_api_params(
     t.Dict({
-        t.Key('id', default='false'): t.String(),
+        t.Key('id'): t.String(),
     }))
 async def match_sessions(request: web.Request, params: Any) -> web.Response:
     """
