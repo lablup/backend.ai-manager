@@ -8,7 +8,7 @@ from datetime import datetime
 import logging
 import time
 from typing import (
-    Any,
+    Any, Union,
     Callable, Optional,
     Container,
     Dict, Mapping, MutableMapping,
@@ -25,6 +25,7 @@ from callosum.lower.zeromq import ZeroMQAddress, ZeroMQRPCTransport
 from dateutil.tz import tzutc
 import snappy
 import sqlalchemy as sa
+from sqlalchemy.sql.expression import true
 from yarl import URL
 import zmq.asyncio
 
@@ -45,7 +46,7 @@ from .defs import INTRINSIC_SLOTS
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
     InstanceNotFound,
-    SessionNotFound,
+    SessionNotFound, TooManySessionsMatched,
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
     ScalingGroupNotFound,
@@ -233,7 +234,7 @@ class AgentRegistry:
             'upload_file': KernelExecutionFailed,
             'download_file': KernelExecutionFailed,
             'list_files': KernelExecutionFailed,
-            'get_logs': KernelExecutionFailed,
+            'get_logs_from_agent': KernelExecutionFailed,
             'refresh_session': KernelExecutionFailed,
         }
         exc_class = op_exc[op]
@@ -281,7 +282,7 @@ class AgentRegistry:
         db_connection=None,
     ):
         '''
-        Retreive the kernel information from the given kernel ID.
+        Retrieve the kernel information from the given kernel ID.
         This ID is unique for all individual agent-spawned containers.
 
         If ``field`` is given, it extracts only the raw value of the given
@@ -313,13 +314,7 @@ class AgentRegistry:
                     .select_from(kernels.join(agents))
                     .where(
                         (kernels.c.id == kern_id) &
-                        (kernels.c.status.in_([
-                            KernelStatus.BUILDING,
-                            KernelStatus.PREPARING,
-                            KernelStatus.PULLING,
-                            KernelStatus.RUNNING,
-                            KernelStatus.TERMINATING,
-                        ])) &
+                        ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES)) &
                         (agents.c.status == AgentStatus.ALIVE) &
                         (agents.c.id == kernels.c.agent)
                     )
@@ -332,7 +327,7 @@ class AgentRegistry:
 
     async def get_session(
         self,
-        session_name: str,
+        session_name_or_id: Union[str, uuid.UUID],
         access_key: str, *,
         field=None,
         allow_stale=False,
@@ -340,13 +335,14 @@ class AgentRegistry:
         db_connection=None,
     ):
         '''
-        Retreive the kernel information from the session ID (client-side
-        session token).  If the kernel is composed of multiple containers, it
-        returns the address of the master container.
+        Retrieve the session information from the session UUID or client-specified
+        session ID paired with the given access key.
+        If the session is composed of multiple containers, it returns the information
+        about the master container.
 
         If ``field`` is given, it extracts only the raw value of the given
         field, without wrapping it as Kernel object.  If ``allow_stale`` is
-        true, it skips checking validity of the kernel owner instance.
+        true, it does not apply the filter for "active" statuses.
         '''
 
         cols = [kernels.c.id, kernels.c.status,
@@ -362,30 +358,59 @@ class AgentRegistry:
             cols.append(field)
         elif isinstance(field, str):
             cols.append(sa.column(field))
+
+        cond_id = (
+            (sa.sql.expression.cast(kernels.c.id, sa.String).like(f'{session_name_or_id}%')) &
+            (kernels.c.access_key == access_key) &
+            (kernels.c.role == 'master')
+        )
+        cond_name = (
+            (kernels.c.sess_id.like(f'{session_name_or_id}%')) &
+            (kernels.c.access_key == access_key) &
+            (kernels.c.role == 'master')
+        )
+        if allow_stale:
+            cond_status = true()  # any status
+        else:
+            cond_status = ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES))
+        query_by_id = (
+            sa.select(cols, for_update=for_update)
+            .select_from(kernels)
+            .where(cond_id & cond_status)
+            .order_by(sa.desc(kernels.c.created_at))
+            .limit(10).offset(0)
+        )
+        query_by_name = (
+            sa.select(cols, for_update=for_update)
+            .select_from(kernels)
+            .where(cond_name & cond_status)
+            .order_by(sa.desc(kernels.c.created_at))
+        )
+        if allow_stale:
+            query_by_name = query_by_name.limit(10).offset(0)
+        else:
+            # for backward-compatibility
+            query_by_name = query_by_name.limit(1).offset(0)
+
         async with reenter_txn(self.dbpool, db_connection) as conn:
-            if allow_stale:
-                query = (sa.select(cols, for_update=for_update)
-                           .select_from(kernels)
-                           .where((kernels.c.sess_id == session_name) &
-                                  (kernels.c.access_key == access_key) &
-                                  (kernels.c.role == 'master'))
-                           .limit(1).offset(0))
-            else:
-                query = (
-                    sa.select(cols, for_update=for_update)
-                    .select_from(kernels)
-                    .where(
-                        (kernels.c.sess_id == session_name) &
-                        (kernels.c.access_key == access_key) &
-                        (kernels.c.role == 'master') &
-                        ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES))
-                    ).limit(1).offset(0)
-                )
-            result = await conn.execute(query)
-            row = await result.first()
-            if row is None:
-                raise SessionNotFound
-            return row
+            for query in [query_by_id, query_by_name]:
+                result = await conn.execute(query)
+                if result.rowcount > 1:
+                    matches = [
+                        {
+                            'id': str(item['id']),
+                            'name': item['sess_id'],
+                            'status': item['status'].name,
+                        }
+                        async for item in result
+                    ]
+                    raise TooManySessionsMatched(extra_data={
+                        'matches': matches,
+                    })
+                if result.rowcount == 0:
+                    continue
+                return await result.first()
+            raise SessionNotFound
 
     async def get_sessions(
         self,
@@ -1079,13 +1104,13 @@ class AgentRegistry:
                     return None
                 return await coro
 
-    async def get_logs(self, sess_id, access_key):
-        async with self.handle_kernel_exception('get_logs', sess_id, access_key):
+    async def get_logs_from_agent(self, sess_id, access_key):
+        async with self.handle_kernel_exception('get_logs_from_agent', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 coro = rpc.call.get_logs(str(kernel['id']))
                 if coro is None:
-                    log.warning('get_logs cancelled')
+                    log.warning('get_logs_from_agent cancelled')
                     return None
                 return await coro
 
