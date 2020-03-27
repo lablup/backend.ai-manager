@@ -54,6 +54,7 @@ from .exceptions import (
     InsufficientPrivilege,
     SessionNotFound,
     SessionAlreadyExists,
+    TooManySessionsMatched,
     BackendError,
     InternalServerError,
     TaskTemplateNotFound
@@ -855,13 +856,44 @@ async def destroy(request: web.Request, params: Any) -> web.Response:
 @atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
+@check_api_params(
+    t.Dict({
+        t.Key('id', default='false'): t.String(),
+    }))
+async def match_sessions(request: web.Request, params: Any) -> web.Response:
+    """
+    A quick session-ID matcher API for use with auto-completion in CLI.
+    """
+    registry = request.app['registry']
+    id_or_name_prefix = params['id']
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
+    log.info('MATCH_SESSIONS(ak:{0}/{1}, prefix:{2})',
+             requester_access_key, owner_access_key, id_or_name_prefix)
+    matches = []
+    try:
+        compute_session = await registry.get_session(id_or_name_prefix, owner_access_key)
+        matches.append({
+            'id': compute_session['id'],
+            'name': compute_session['sess_id'],
+            'status': compute_session['status'].name,
+        })
+    except TooManySessionsMatched as e:
+        matches.extend(e.extra_data['matches'])
+    return web.json_response({
+        'matches': matches,
+    }, status=200)
+
+
+@atomic
+@server_status_required(READ_ALLOWED)
+@auth_required
 async def get_info(request: web.Request) -> web.Response:
     # NOTE: This API should be replaced with GraphQL version.
     resp = {}
     registry = request.app['registry']
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
-    log.info('GETINFO (ak:{0}/{1}, s:{2})',
+    log.info('GET_INFO (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, session_name)
     try:
         await registry.increment_session_usage(session_name, owner_access_key)
@@ -896,7 +928,7 @@ async def get_info(request: web.Request) -> web.Response:
 
         log.info('information retrieved: {0!r}', resp)
     except BackendError:
-        log.exception('GETINFO: exception')
+        log.exception('GET_INFO: exception')
         raise
     return web.json_response(resp, status=200)
 
@@ -1337,8 +1369,8 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app.on_shutdown.append(shutdown)
     app['api_versions'] = (1, 2, 3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
-    cors.add(app.router.add_route('POST', '/create', create_from_params))  # legacy
-    cors.add(app.router.add_route('POST', '/from-template', create_from_template))
+    cors.add(app.router.add_route('POST', '/_/create-from-template', create_from_template))
+    cors.add(app.router.add_route('GET',  '/_/match', match_sessions))
     cors.add(app.router.add_route('POST', '', create_from_params))
     session_resource = cors.add(app.router.add_resource(r'/{session_name}'))
     cors.add(session_resource.add_route('GET',    get_info))
