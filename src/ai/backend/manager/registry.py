@@ -389,6 +389,7 @@ class AgentRegistry:
         if allow_stale:
             query_by_name = query_by_name.limit(10).offset(0)
         else:
+            # for backward-compatibility
             query_by_name = query_by_name.limit(1).offset(0)
 
         async with reenter_txn(self.dbpool, db_connection) as conn:
