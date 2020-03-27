@@ -385,8 +385,11 @@ class AgentRegistry:
             .select_from(kernels)
             .where(cond_name & cond_status)
             .order_by(sa.desc(kernels.c.created_at))
-            .limit(1).offset(0)
         )
+        if allow_stale:
+            query_by_name = query_by_name.limit(10).offset(0)
+        else:
+            query_by_name = query_by_name.limit(1).offset(0)
 
         async with reenter_txn(self.dbpool, db_connection) as conn:
             for query in [query_by_id, query_by_name]:
