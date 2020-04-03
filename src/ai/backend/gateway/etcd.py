@@ -794,7 +794,9 @@ async def get_docker_registries(request) -> web.Response:
     '''
     log.info('ETCD.GET_DOCKER_REGISTRIES ()')
     etcd = request.app['registry'].config_server.etcd
-    known_registries = await get_known_registries(etcd)
+    _registries = await get_known_registries(etcd)
+    # ``yarl.URL`` is not JSON-serializable, so we need to represent it as string.
+    known_registries: Mapping[str, str] = {k: v.human_repr() for k, v in _registries.items()}
     return web.json_response(known_registries, status=200)
 
 
