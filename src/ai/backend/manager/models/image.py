@@ -124,10 +124,28 @@ class PreloadImage(graphene.Mutation):
 
     ok = graphene.Boolean()
     msg = graphene.String()
+    task_id = graphene.String()
 
     @staticmethod
     async def mutate(root, info, references, target_agents):
-        return PreloadImage(ok=False, msg='Not implemented.')
+        return PreloadImage(ok=False, msg='Not implemented.', task_id=None)
+
+
+class UnloadImage(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
+
+    class Arguments:
+        references = graphene.List(graphene.String, required=True)
+        target_agents = graphene.List(graphene.String, required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+    task_id = graphene.String()
+
+    @staticmethod
+    async def mutate(root, info, references, target_agents):
+        return UnloadImage(ok=False, msg='Not implemented.', task_id=None)
 
 
 class RescanImages(graphene.Mutation):
@@ -139,6 +157,7 @@ class RescanImages(graphene.Mutation):
 
     ok = graphene.Boolean()
     msg = graphene.String()
+    task_id = graphene.String()
 
     @staticmethod
     async def mutate(root, info, registry=None):
@@ -146,7 +165,7 @@ class RescanImages(graphene.Mutation):
                  f'({registry})' if registry else '(all)')
         config_server = info.context['config_server']
         await config_server.rescan_images(registry)
-        return RescanImages(ok=True, msg='')
+        return RescanImages(ok=True, msg='', task_id=None)
 
 
 class ForgetImage(graphene.Mutation):

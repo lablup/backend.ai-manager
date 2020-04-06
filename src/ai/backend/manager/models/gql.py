@@ -14,7 +14,10 @@ from .group import (
 )
 from .image import (
     Image,
-    RescanImages, ForgetImage, AliasImage, DealiasImage,
+    RescanImages,
+    PreloadImage, UnloadImage,
+    ForgetImage,
+    AliasImage, DealiasImage,
 )
 from .kernel import (
     ComputeSession, ComputeSessionList,
@@ -83,6 +86,8 @@ class Mutations(graphene.ObjectType):
 
     # admin only
     rescan_images = RescanImages.Field()
+    preload_image = PreloadImage.Field()
+    unload_image = UnloadImage.Field()
     forget_image = ForgetImage.Field()
     alias_image = AliasImage.Field()
     dealias_image = DealiasImage.Field()
