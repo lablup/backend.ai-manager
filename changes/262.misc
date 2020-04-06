@@ -1,0 +1,1 @@
+Now all changelogs are managed using [towncrier](https://github.com/twisted/towncrier) and migrated to Markdown syntax.
