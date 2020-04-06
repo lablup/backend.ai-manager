@@ -8,11 +8,6 @@ issue_format = "[(#{issue})](https://github.com/lablup/backend.ai-manager/issues
 underlines = ["", "", ""]
 
 [[tool.towncrier.type]]
-    directory = "deprecation"
-    name = "Deprecations"
-    showcontent = true
-
-[[tool.towncrier.type]]
     directory = "breaking"
     name = "Breaking Changes"
     showcontent = true
@@ -20,6 +15,11 @@ underlines = ["", "", ""]
 [[tool.towncrier.type]]
     directory = "feature"
     name = "Features"
+    showcontent = true
+
+[[tool.towncrier.type]]
+    directory = "deprecation"
+    name = "Deprecations"
     showcontent = true
 
 [[tool.towncrier.type]]
