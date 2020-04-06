@@ -16,8 +16,7 @@
   {{ text }}
           {%- else %}
 
-* {{ text }}
-  {{ values|join(',\n  ') }}
+* {{ text }} {{ values|join(',\n  ') }}
           {%- endif %}
 
         {%- endfor %}
