@@ -100,5 +100,10 @@ def fixture():
     '''Command set for managing fixtures.'''
 
 
+@main.group(cls=LazyGroup, import_name='ai.backend.manager.cli.gql:cli')
+def gql():
+    '''Command set for GraphQL schema.'''
+
+
 if __name__ == '__main__':
     main()
