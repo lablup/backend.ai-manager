@@ -143,7 +143,7 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
                 result_item['is_cleared'] = row['is_cleared']
             resp['logs'].append(result_item)
         resp['count'] = await conn.scalar(count_query)
-        if params['mark_read'].lower() == 'true':
+        if params['mark_read']:
             update = (sa.update(error_logs)
                         .values(is_read=True)
                         .where(error_logs.c.id.in_([x['log_id'] for x in resp['logs']])))
