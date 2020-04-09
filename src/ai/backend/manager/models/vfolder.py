@@ -19,7 +19,8 @@ __all__: Sequence[str] = (
     'vfolder_invitations',
     'vfolder_permissions',
     'VirtualFolder',
-    'VFolderType',
+    'VFolderUsageMode',
+    'VFolderOwnershipType',
     'VFolderInvitationState',
     'VFolderPermission',
     'VFolderPermissionValidator',
@@ -30,9 +31,9 @@ __all__: Sequence[str] = (
 )
 
 
-class VFolderType(str, enum.Enum):
+class VFolderUsageMode(str, enum.Enum):
     '''
-    Type of virtual folder.
+    Usage mode of virtual folder.
 
     GENERAL: normal virtual folder
     MODEL: virtual folder which provides shared models
@@ -41,6 +42,14 @@ class VFolderType(str, enum.Enum):
     GENERAL = 'general'
     MODEL = 'model'
     DATA = 'data'
+
+
+class VFolderOwnershipType(str, enum.Enum):
+    '''
+    Ownership type of virtual folder.
+    '''
+    USER = 'user'
+    GROUP = 'group'
 
 
 class VFolderPermission(str, enum.Enum):
@@ -85,8 +94,8 @@ vfolders = sa.Table(
     # host will be '' if vFolder is unmanaged
     sa.Column('host', sa.String(length=128), nullable=False),
     sa.Column('name', sa.String(length=64), nullable=False, index=True),
-    sa.Column('type', EnumValueType(VFolderType),
-              default=VFolderType.GENERAL, nullable=False, index=True),
+    sa.Column('usage_mode', EnumValueType(VFolderUsageMode),
+              default=VFolderUsageMode.GENERAL, nullable=False),
     sa.Column('permission', EnumValueType(VFolderPermission),
               default=VFolderPermission.READ_WRITE),
     sa.Column('max_files', sa.Integer(), default=1000),
@@ -100,6 +109,8 @@ vfolders = sa.Table(
     sa.Column('creator', sa.String(length=128), nullable=True),
     # For unmanaged vFolder only.
     sa.Column('unmanaged_path', sa.String(length=512), nullable=True),
+    sa.Column('ownership_type', EnumValueType(VFolderOwnershipType),
+              default=VFolderOwnershipType.USER, nullable=False),
     sa.Column('user', GUID, sa.ForeignKey('users.uuid'), nullable=True),
     sa.Column('group', GUID, sa.ForeignKey('groups.id'), nullable=True),
 )
