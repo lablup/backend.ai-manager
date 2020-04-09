@@ -279,7 +279,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
         if group_id is not None:
             if 'group' not in allowed_vfolder_types:
                 raise InvalidAPIParameters('group vfolder cannot be created in this host')
-            if not request['is_admin'] or request['is_superadmin']:
+            if not request['is_admin']:
                 # Superadmin will not manipulate group's vfolder (at least currently).
                 raise GenericForbidden('no permission')
             query = (sa.select([groups.c.id])
@@ -312,7 +312,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'creator': request['user']['email'],
             'user': user_uuid,
             'group': group_uuid,
-            'unmanaged_path': ''
+            'unmanaged_path': '',
         }
         resp = {
             'id': folder_id,
