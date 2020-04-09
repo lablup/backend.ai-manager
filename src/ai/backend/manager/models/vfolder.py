@@ -19,6 +19,7 @@ __all__: Sequence[str] = (
     'vfolder_invitations',
     'vfolder_permissions',
     'VirtualFolder',
+    'VFolderType',
     'VFolderInvitationState',
     'VFolderPermission',
     'VFolderPermissionValidator',
@@ -27,6 +28,19 @@ __all__: Sequence[str] = (
     'get_allowed_vfolder_hosts_by_user',
     'verify_vfolder_name'
 )
+
+
+class VFolderType(str, enum.Enum):
+    '''
+    Type of virtual folder.
+
+    GENERAL: normal virtual folder
+    MODEL: virtual folder which provides shared models
+    DATA: virtual folder which provides shared data
+    '''
+    GENERAL = 'general'
+    MODEL = 'model'
+    DATA = 'data'
 
 
 class VFolderPermission(str, enum.Enum):
@@ -70,7 +84,11 @@ vfolders = sa.Table(
     IDColumn('id'),
     # host will be '' if vFolder is unmanaged
     sa.Column('host', sa.String(length=128), nullable=False),
-    sa.Column('name', sa.String(length=64), nullable=False),
+    sa.Column('name', sa.String(length=64), nullable=False, index=True),
+    sa.Column('type', EnumValueType(VFolderType),
+              default=VFolderType.GENERAL, nullable=False, index=True),
+    sa.Column('permission', EnumValueType(VFolderPermission),
+              default=VFolderPermission.READ_WRITE),
     sa.Column('max_files', sa.Integer(), default=1000),
     sa.Column('max_size', sa.Integer(), default=1048576),  # in KBytes
     sa.Column('num_files', sa.Integer(), default=0),
@@ -108,8 +126,8 @@ vfolder_invitations = sa.Table(
     sa.Column('invitee', sa.String(length=256), nullable=False),  # email
     sa.Column('state', EnumValueType(VFolderInvitationState),
               default=VFolderInvitationState.PENDING),
-    sa.Column('created_at', sa.DateTime(timezone=True),
-              server_default=sa.func.now()),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
+    sa.Column('modified_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('vfolder', GUID,
               sa.ForeignKey('vfolders.id',
                             onupdate='CASCADE',
