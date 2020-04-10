@@ -113,6 +113,18 @@ vfolders = sa.Table(
               default=VFolderOwnershipType.USER, nullable=False),
     sa.Column('user', GUID, sa.ForeignKey('users.uuid'), nullable=True),
     sa.Column('group', GUID, sa.ForeignKey('groups.id'), nullable=True),
+
+    # Note: Custom constraints should be manually defined during alembic migration.
+    #       This is just for reference.
+    sa.CheckConstraint(
+        '(ownership_type = \'user\' AND "user" IS NOT NULL) OR '
+        '(ownership_type = \'group\' AND "group" IS NOT NULL)',
+        name='ck_vfolders_ownership_type_match_with_user_or_group',
+    ),
+    sa.CheckConstraint(
+        '("user" IS NULL AND "group" IS NOT NULL) OR ("user" IS NOT NULL AND "group" IS NULL)',
+        name='ck_vfolders_either_one_of_user_or_group',
+    )
 )
 
 
