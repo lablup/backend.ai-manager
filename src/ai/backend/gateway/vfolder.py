@@ -366,21 +366,21 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
             entries = []
             async for row in result:
                 is_owner = True if row.vfolders_user == user_uuid else False
-                permission = VFolderPermission.OWNER_PERM if is_owner \
-                        else VFolderPermission.READ_ONLY
                 entries.append({
                     'name': row.vfolders_name,
                     'id': row.vfolders_id,
                     'host': row.vfolders_host,
+                    'usage_mode': row.vfolders_usage_mode,
                     'created_at': row.vfolders_created_at,
                     'is_owner': is_owner,
-                    'permission': permission,
+                    'permission': row.vfolders_permission,
                     'user': str(row.vfolders_user) if row.vfolders_user else None,
                     'group': str(row.vfolders_group) if row.vfolders_group else None,
                     'creator': row.vfolders_creator,
                     'user_email': row.users_email,
                     'group_name': row.groups_name,
-                    'type': 'user' if row['vfolders_user'] is not None else 'group',
+                    'ownership_type': row.vfolders_ownership_type,
+                    'type': row.vfolders_ownership_type,  # legacy
                     'unmanaged_path': row.vfolders_unmanaged_path
                 })
         else:
@@ -400,6 +400,7 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                 'name': entry['name'],
                 'id': entry['id'].hex,
                 'host': entry['host'],
+                'usage_mode': entry['usage_mode'].value,
                 'created_at': str(entry['created_at']),
                 'is_owner': entry['is_owner'],
                 'permission': entry['permission'].value,
@@ -408,7 +409,8 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                 'creator': entry['creator'],
                 'user_email': entry['user_email'],
                 'group_name': entry['group_name'],
-                'type': 'user' if entry['user'] is not None else 'group',
+                'ownership_type': entry['ownership_type'].value,
+                'type': entry['ownership_type'].value,  # legacy
             })
     return web.json_response(resp, status=200)
 

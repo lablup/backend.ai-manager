@@ -198,10 +198,13 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                        vfolders.c.name,
                        vfolders.c.id,
                        vfolders.c.host,
+                       vfolders.c.usage_mode,
+                       vfolders.c.permission,
                        vfolders.c.created_at,
                        vfolders.c.last_used,
                        vfolders.c.max_files,
                        vfolders.c.max_size,
+                       vfolders.c.ownership_type,
                        vfolders.c.user,
                        vfolders.c.group,
                        vfolders.c.creator,
@@ -218,17 +221,19 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                 'name': row.name,
                 'id': row.id,
                 'host': row.host,
+                'usage_mode': row.usage_mode,
                 'created_at': row.created_at,
                 'last_used': row.last_used,
                 'max_size': row.max_size,
                 'max_files': row.max_files,
+                'ownership_type': row.ownership_type,
                 'user': str(row.user) if row.user else None,
                 'group': str(row.group) if row.group else None,
                 'creator': row.creator,
                 'user_email': row.email,
                 'group_name': None,
                 'is_owner': True,
-                'permission': VFolderPermission.OWNER_PERM,
+                'permission': row.permission,
                 'unmanaged_path': row.unmanaged_path,
             })
         # Scan vfolders shared with me.
@@ -246,15 +251,18 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                        vfolders.c.name,
                        vfolders.c.id,
                        vfolders.c.host,
+                       vfolders.c.usage_mode,
                        vfolders.c.created_at,
                        vfolders.c.last_used,
                        vfolders.c.max_files,
                        vfolders.c.max_size,
+                       vfolders.c.ownership_type,
                        vfolders.c.user,
                        vfolders.c.group,
                        vfolders.c.creator,
                        vfolders.c.unmanaged_path,
-                       vfolder_permissions.c.permission,
+                       # vfolders.c.permission,
+                       vfolder_permissions.c.permission,  # override vfolder perm
                        users.c.email,
                    ])
                    .select_from(j)
@@ -269,17 +277,19 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                 'name': row.name,
                 'id': row.id,
                 'host': row.host,
+                'usage_mode': row.usage_mode,
                 'created_at': row.created_at,
                 'last_used': row.last_used,
                 'max_size': row.max_size,
                 'max_files': row.max_files,
+                'ownership_type': ownership_type,
                 'user': str(row.user) if row.user else None,
                 'group': str(row.group) if row.group else None,
                 'creator': row.creator,
                 'user_email': row.email,
                 'group_name': None,
                 'is_owner': False,
-                'permission': row.permission,
+                'permission': row.permission,  # not vfolders.c.permission!
                 'unmanaged_path': row.unmanaged_path,
             })
 
@@ -305,13 +315,16 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                        vfolders.c.name,
                        vfolders.c.id,
                        vfolders.c.host,
+                       vfolders.c.usage_mode,
                        vfolders.c.created_at,
                        vfolders.c.last_used,
                        vfolders.c.max_files,
                        vfolders.c.max_size,
+                       vfolders.c.ownership_type,
                        vfolders.c.user,
                        vfolders.c.group,
                        vfolders.c.creator,
+                       vfolders.c.permission,
                        vfolders.c.unmanaged_path,
                        groups.c.name,
                    ], use_labels=True)
@@ -320,25 +333,27 @@ async def query_accessible_vfolders(conn, user_uuid, *,
         if extra_vf_conds is not None:
             query = query.where(extra_vf_conds)
         result = await conn.execute(query)
-        is_owner = (user_role == UserRole.ADMIN or user_role == 'admin')
-        perm = VFolderPermission.OWNER_PERM if is_owner else VFolderPermission.READ_WRITE
+        is_owner = ((user_role == UserRole.ADMIN or user_role == 'admin') or
+                    (user_role == UserRole.SUPERADMIN or user_role == 'superadmin'))
         async for row in result:
             entries.append({
                 'name': row.vfolders_name,
                 'id': row.vfolders_id,
                 'host': row.vfolders_host,
+                'usage_mode': row.vfolders_usage_mode,
                 'created_at': row.vfolders_created_at,
                 'last_used': row.vfolders_last_used,
                 'max_size': row.vfolders_max_size,
                 'max_files': row.vfolders_max_files,
+                'ownership_type': row.vfolders_ownership_type,
                 'user': str(row.vfolders_user) if row.vfolders_user else None,
                 'group': str(row.vfolders_group) if row.vfolders_group else None,
                 'creator': row.vfolders_creator,
                 'user_email': None,
                 'group_name': row.groups_name,
                 'is_owner': is_owner,
-                'permission': perm,
-                'unmanaged_path': row.unmanaged_path,
+                'permission': row.vfolders_permission,
+                'unmanaged_path': row.vfolders_unmanaged_path,
             })
     return entries
 
@@ -413,6 +428,9 @@ class VirtualFolder(graphene.ObjectType):
 
     host = graphene.String()
     name = graphene.String()
+    usage_mode = graphene.String()
+    permission = graphene.String()
+    ownership_type = graphene.String()
     max_files = graphene.Int()
     max_size = graphene.Int()
     created_at = GQLDateTime()
@@ -430,6 +448,9 @@ class VirtualFolder(graphene.ObjectType):
             id=row['id'],
             host=row['host'],
             name=row['name'],
+            usage_mode=row['usage_mode'],
+            permission=row['permission'],
+            ownership_type=row['ownership_type'],
             max_files=row['max_files'],
             max_size=row['max_size'],    # in KiB
             created_at=row['created_at'],
