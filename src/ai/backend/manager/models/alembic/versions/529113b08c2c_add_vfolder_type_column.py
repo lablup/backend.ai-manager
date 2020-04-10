@@ -68,11 +68,13 @@ def upgrade():
                   nullable=True)
     )
 
-    # Fill vfolders.c.usage_mode with 'general' and vfolders.c.permission with 'rw'.
-    query = textwrap.dedent('''\
-        UPDATE vfolders SET usage_mode = 'general', permission = 'rw';\
-    ''')
+    # Fill vfolders.c.usage_mode with 'general' and vfolders.c.permission.
     conn = op.get_bind()
+    query = textwrap.dedent("UPDATE vfolders SET usage_mode = 'general';")
+    conn.execute(query)
+    query = textwrap.dedent("UPDATE vfolders SET permission = 'wd' WHERE \"user\" IS NOT NULL;")
+    conn.execute(query)
+    query = textwrap.dedent("UPDATE vfolders SET permission = 'rw' WHERE \"group\" IS NOT NULL;")
     conn.execute(query)
 
     # Set vfolders.c.ownership_type field based on user and group column.
