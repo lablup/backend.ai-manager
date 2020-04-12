@@ -1359,7 +1359,9 @@ async def delete(request: web.Request) -> web.Response:
             allowed_vfolder_types=allowed_vfolder_types)
         for entry in entries:
             if entry['name'] == folder_name:
-                if not entry['is_owner']:
+                # Folder owner OR user who have DELETE permission can delete folder.
+                if not entry['is_owner'] \
+                        and entry['permission'] != VFolderPermission.RW_DELETE:
                     raise InvalidAPIParameters(
                         'Cannot delete the vfolder '
                         'that is not owned by me.')
