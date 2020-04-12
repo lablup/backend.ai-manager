@@ -829,7 +829,7 @@ async def tus_session_headers(request, params):
 
 @auth_required
 @server_status_required(READ_ALLOWED)
-@vfolder_permission_required(VFolderPermission.RW_DELETE)
+@vfolder_permission_required(VFolderPermission.READ_WRITE)
 @check_api_params(
     t.Dict({
         t.Key('files'): t.List[t.String],
