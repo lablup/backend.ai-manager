@@ -68,7 +68,8 @@ class UserGroup(graphene.ObjectType):
 
 
 class User(graphene.ObjectType):
-    uuid = graphene.UUID()
+    id = graphene.UUID()
+    uuid = graphene.UUID()  # legacy
     username = graphene.String()
     email = graphene.String()
     password = graphene.String()
@@ -91,6 +92,7 @@ class User(graphene.ObjectType):
         else:
             groups = None
         return cls(
+            id=row['uuid'],
             uuid=row['uuid'],
             username=row['username'],
             email=row['email'],
