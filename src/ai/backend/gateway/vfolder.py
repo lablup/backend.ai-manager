@@ -54,8 +54,10 @@ from ..manager.models import (
     AgentStatus,
     KernelStatus,
     VFolderInvitationState,
+    VFolderOwnershipType,
     VFolderPermission,
     VFolderPermissionValidator,
+    VFolderUsageMode,
     UserRole,
     query_accessible_vfolders,
     get_allowed_vfolder_hosts_by_group,
@@ -178,6 +180,8 @@ def get_folder_hostpath(row: VFolderRow, app):
     t.Dict({
         t.Key('name'): tx.Slug(allow_dot=True),
         t.Key('host', default=None) >> 'folder_host': t.String | t.Null,
+        t.Key('usage_mode', default='general'): t.String | t.Null,
+        t.Key('permission', default='rw'): t.String | t.Null,
         tx.AliasedKey(['unmanaged_path', 'unmanagedPath'], default=None): t.String | t.Null,
         tx.AliasedKey(['group', 'groupId', 'group_id'], default=None): tx.UUID | t.String | t.Null,
     }),
@@ -191,8 +195,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
     resource_policy = request['keypair']['resource_policy']
     domain_name = request['user']['domain_name']
     group_id_or_name = params['group']
-    log.info('VFOLDER.CREATE (ak:{}, vf:{}, vfh:{})',
-             access_key, params['name'], params['folder_host'])
+    log.info('VFOLDER.CREATE (ak:{}, vf:{}, vfh:{}, umod:{}, perm:{})',
+             access_key, params['name'], params['folder_host'],
+             params['usage_mode'], params['permission'])
     folder_host = params['folder_host']
     unmanaged_path = params['unmanaged_path']
     # Check if user is trying to created unmanaged vFolder
@@ -304,12 +309,16 @@ async def create(request: web.Request, params: Any) -> web.Response:
             raise VFolderCreationFailed
         user_uuid = str(user_uuid) if group_id is None else None
         group_uuid = str(group_id) if group_id is not None else None
+        ownership_type = 'group' if group_uuid is not None else 'user'
         insert_values = {
             'id': folder_id,
             'name': params['name'],
+            'usage_mode': VFolderUsageMode(params['usage_mode']),
+            'permission': VFolderPermission(params['permission']),
             'last_used': None,
             'host': folder_host,
             'creator': request['user']['email'],
+            'ownership_type': VFolderOwnershipType(ownership_type),
             'user': user_uuid,
             'group': group_uuid,
             'unmanaged_path': '',
@@ -318,7 +327,10 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'id': folder_id,
             'name': params['name'],
             'host': folder_host,
+            'usage_mode': params['usage_mode'],
+            'permission': params['permission'],
             'creator': request['user']['email'],
+            'ownership_type': ownership_type,
             'user': user_uuid,
             'group': group_uuid,
         }
