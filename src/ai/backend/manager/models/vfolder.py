@@ -185,7 +185,9 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                                     user_role=None, domain_name=None,
                                     allowed_vfolder_types=None,
                                     extra_vf_conds=None,
-                                    extra_vfperm_conds=None):
+                                    extra_vfperm_conds=None,
+                                    extra_vf_user_conds=None,
+                                    extra_vf_group_conds=None):
     from ai.backend.manager.models import groups, users, association_groups_users as agus
     if allowed_vfolder_types is None:
         allowed_vfolder_types = ['user']  # legacy default
@@ -215,6 +217,8 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                    .where(vfolders.c.user == user_uuid))
         if extra_vf_conds is not None:
             query = query.where(extra_vf_conds)
+        if extra_vf_user_conds is not None:
+            query = query.where(extra_vf_user_conds)
         result = await conn.execute(query)
         async for row in result:
             entries.append({
@@ -328,10 +332,13 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                        vfolders.c.unmanaged_path,
                        groups.c.name,
                    ], use_labels=True)
-                   .select_from(j)
-                   .where(vfolders.c.group.in_(group_ids)))
+                   .select_from(j))
+        if user_role != UserRole.SUPERADMIN:
+            query = query.where(vfolders.c.group.in_(group_ids))
         if extra_vf_conds is not None:
             query = query.where(extra_vf_conds)
+        if extra_vf_group_conds is not None:
+            query = query.where(extra_vf_group_conds)
         result = await conn.execute(query)
         is_owner = ((user_role == UserRole.ADMIN or user_role == 'admin') or
                     (user_role == UserRole.SUPERADMIN or user_role == 'superadmin'))

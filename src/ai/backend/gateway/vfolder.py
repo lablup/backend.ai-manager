@@ -92,34 +92,55 @@ def vfolder_permission_required(perm: VFolderPermission):
             user_uuid = request['user']['uuid']
             folder_name = request.match_info['name']
             allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
+            vf_user_cond = None
+            vf_group_cond = None
             if perm == VFolderPermission.READ_ONLY:
                 # if READ_ONLY is requested, any permission accepts.
-                perm_cond = vfolder_permissions.c.permission.in_([
+                invited_perm_cond = vfolder_permissions.c.permission.in_([
                     VFolderPermission.READ_ONLY,
                     VFolderPermission.READ_WRITE,
                     VFolderPermission.RW_DELETE,
                 ])
+                if not request['is_admin']:
+                    vf_group_cond = vfolders.c.permission.in_([
+                        VFolderPermission.READ_ONLY,
+                        VFolderPermission.READ_WRITE,
+                        VFolderPermission.RW_DELETE,
+                    ])
             elif perm == VFolderPermission.READ_WRITE:
-                # if READ_WRITE is requested, both READ_WRITE and RW_DELETE accepts.
-                perm_cond = vfolder_permissions.c.permission.in_([
+                invited_perm_cond = vfolder_permissions.c.permission.in_([
                     VFolderPermission.READ_WRITE,
                     VFolderPermission.RW_DELETE,
                 ])
+                if not request['is_admin']:
+                    vf_group_cond = vfolders.c.permission.in_([
+                        VFolderPermission.READ_WRITE,
+                        VFolderPermission.RW_DELETE,
+                    ])
             elif perm == VFolderPermission.RW_DELETE:
                 # If RW_DELETE is requested, only RW_DELETE accepts.
-                perm_cond = (
+                invited_perm_cond = (
                     vfolder_permissions.c.permission == VFolderPermission.RW_DELETE
                 )
+                if not request['is_admin']:
+                    vf_group_cond = (
+                        vfolders.c.permission == VFolderPermission.RW_DELETE
+                    )
             else:
                 # Otherwise, just compare it as-is (for future compatibility).
-                perm_cond = (vfolder_permissions.c.permission == perm)
+                invited_perm_cond = (vfolder_permissions.c.permission == perm)
+                if not request['is_admin']:
+                    vf_group_cond = (vfolders.c.permission == perm)
             async with dbpool.acquire() as conn:
                 entries = await query_accessible_vfolders(
                     conn, user_uuid,
                     user_role=user_role, domain_name=domain_name,
                     allowed_vfolder_types=allowed_vfolder_types,
                     extra_vf_conds=(vfolders.c.name == folder_name),
-                    extra_vfperm_conds=perm_cond)
+                    extra_vfperm_conds=invited_perm_cond,
+                    extra_vf_user_conds=vf_user_cond,
+                    extra_vf_group_conds=vf_group_cond,
+                )
                 if len(entries) == 0:
                     raise VFolderNotFound(
                         'Your operation may be permission denied.')
@@ -285,7 +306,6 @@ async def create(request: web.Request, params: Any) -> web.Response:
             if 'group' not in allowed_vfolder_types:
                 raise InvalidAPIParameters('group vfolder cannot be created in this host')
             if not request['is_admin']:
-                # Superadmin will not manipulate group's vfolder (at least currently).
                 raise GenericForbidden('no permission')
             query = (sa.select([groups.c.id])
                        .select_from(groups)
@@ -681,7 +701,7 @@ async def upload(request: web.Request, row: VFolderRow) -> web.Response:
 
 @auth_required
 @server_status_required(READ_ALLOWED)
-@vfolder_permission_required(VFolderPermission.RW_DELETE)
+@vfolder_permission_required(VFolderPermission.READ_WRITE)
 @check_api_params(
     t.Dict({
         t.Key('path'): t.String,
