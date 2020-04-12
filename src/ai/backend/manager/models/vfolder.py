@@ -10,7 +10,7 @@ import trafaret as t
 from ai.backend.gateway.config import RESERVED_VFOLDER_PATTERNS, RESERVED_VFOLDERS
 from .base import (
     metadata, EnumValueType, GUID, IDColumn,
-    Item, PaginatedList,
+    Item, PaginatedList, BigInt,
 )
 from .user import UserRole
 
@@ -370,15 +370,21 @@ class VirtualFolder(graphene.ObjectType):
     class Meta:
         interfaces = (Item, )
 
+    id = graphene.UUID()
     host = graphene.String()
     name = graphene.String()
+    user = graphene.UUID()       # User.id
+    group = graphene.UUID()      # Group.id
+    creator = graphene.String()  # User.email
+    unmanaged_path = graphene.String()
+
     max_files = graphene.Int()
     max_size = graphene.Int()
     created_at = GQLDateTime()
     last_used = GQLDateTime()
 
     num_files = graphene.Int()
-    cur_size = graphene.Int()
+    cur_size = BigInt()
     # num_attached = graphene.Int()
 
     @classmethod
@@ -389,6 +395,10 @@ class VirtualFolder(graphene.ObjectType):
             id=row['id'],
             host=row['host'],
             name=row['name'],
+            user=row['user'],
+            group=row['group'],
+            creator=row['creator'],
+            unmanaged_path=row['unmanaged_path'],
             max_files=row['max_files'],
             max_size=row['max_size'],    # in KiB
             created_at=row['created_at'],
