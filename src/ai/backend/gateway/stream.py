@@ -529,14 +529,11 @@ async def stream_events(defer, request: web.Request, params: Mapping[str, Any]) 
 @auth_required
 @check_api_params(t.Dict({
     tx.AliasedKey(['task_id', 'taskId']): t.String,
-    t.Key('ownerAccessKey', default=None) >> 'owner_access_key': t.Null | t.String,
 }))
 async def stream_background_task(request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
     app = request.app
     task_id = uuid.UUID(params['task_id'])
-    access_key = params['owner_access_key']
-    if access_key is None:
-        access_key = request['keypair']['access_key']
+    access_key = request['keypair']['access_key']
 
     task_update_queues = app['task_update_queues']  # type: Set[asyncio.Queue]
     my_queue = asyncio.Queue()          # type: asyncio.Queue[Tuple[str, dict, str]]
@@ -553,12 +550,11 @@ async def stream_background_task(request: web.Request, params: Mapping[str, Any]
                 if task_id != uuid.UUID(event_task_id):
                     continue
                 body = {
-                    'taskId': str(task_id),
-                    'currentProgress': evdata[2],
-                    'totalProgress':  evdata[3]
+                    'task_id': str(task_id),
+                    'current_progress': evdata[2],
+                    'total_progress':  evdata[3],
+                    'message': evdata[4],
                 }
-                if evdata[4] is not None:
-                    body['message'] = evdata[4]
                 await resp.send(json.dumps(body), event=evdata[0])
     finally:
         task_update_queues.remove(my_queue)
