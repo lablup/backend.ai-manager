@@ -1,4 +1,7 @@
 import asyncio
+from typing import (
+    Union,
+)
 
 from aiohttp import web
 import pytest
@@ -104,27 +107,23 @@ async def test_background_task(etcd_fixture, create_app_and_client):
     dispatcher = app['event_dispatcher']
     assert len(dispatcher.subscribers) == 0
     task_id = None
+    update_handler_ctx = {}
+    done_handler_ctx = {}
 
     async def update_sub(app_ctx: web.Application, agent_id: AgentId, event_name: str,
                          raw_task_id: str,
-                         current_progress=None,
-                         total_progress=None,
+                         current_progress: Union[int, float] = None,
+                         total_progress: Union[int, float] = None,
                          message: str = None) -> None:
-        assert app_ctx is app
-        assert raw_task_id == str(task_id)
-        assert event_name == 'task_update'
-        assert total_progress == 2
-        assert message in ['BGTask ex1', 'BGTask ex2']
-        if message == 'BGTask ex1':
-            assert current_progress == 1
-        else:
-            assert current_progress == 2
+        # Copy the arguments to the uppser scope
+        # since assertions inside the handler does not affect the test result
+        # because the handlers are executed inside a separate asyncio task.
+        update_handler_ctx.update(locals())
 
     async def done_sub(app_ctx: web.Application, agent_id: AgentId, event_name: str,
-                       raw_task_id: str) -> None:
-        assert app_ctx is app
-        assert raw_task_id == str(task_id)
-        assert event_name == 'task_done'
+                       raw_task_id: str,
+                       message: str = None) -> None:
+        done_handler_ctx.update(locals())
 
     async def _mock_task(reporter):
         await reporter.set_progress_total(2)
@@ -132,14 +131,30 @@ async def test_background_task(etcd_fixture, create_app_and_client):
         await reporter.update_progress(1, message='BGTask ex1')
         await asyncio.sleep(0.5)
         await reporter.update_progress(2, message='BGTask ex2')
+        return 'hooray'
 
-    dispatcher.subscribe('task_update', app, update_sub)
+    dispatcher.subscribe('task_updated', app, update_sub)
     dispatcher.subscribe('task_done', app, done_sub)
-    task_id = app['background_task'].start_background_task(_mock_task, name='MockTask1234')
+    task_id = await app['background_task'].start_background_task(_mock_task, name='MockTask1234')
     await asyncio.sleep(2)
 
-    await dispatcher.redis_producer.flushdb()
-    await dispatcher.close()
+    try:
+        assert update_handler_ctx['app_ctx'] is app
+        assert update_handler_ctx['raw_task_id'] == str(task_id)
+        assert update_handler_ctx['event_name'] == 'task_updated'
+        assert update_handler_ctx['total_progress'] == 2
+        assert update_handler_ctx['message'] in ['BGTask ex1', 'BGTask ex2']
+        if update_handler_ctx['message'] == 'BGTask ex1':
+            assert update_handler_ctx['current_progress'] == 1
+        else:
+            assert update_handler_ctx['current_progress'] == 2
+        assert done_handler_ctx['app_ctx'] is app
+        assert done_handler_ctx['raw_task_id'] == str(task_id)
+        assert done_handler_ctx['event_name'] == 'task_done'
+        assert done_handler_ctx['message'] == 'hooray'
+    finally:
+        await dispatcher.redis_producer.flushdb()
+        await dispatcher.close()
 
 
 @pytest.mark.asyncio
@@ -151,22 +166,28 @@ async def test_background_task_fail(etcd_fixture, create_app_and_client):
     dispatcher = app['event_dispatcher']
     assert len(dispatcher.subscribers) == 0
     task_id = None
+    fail_handler_ctx = {}
 
     async def fail_sub(app_ctx: web.Application, agent_id: AgentId, event_name: str,
-                       raw_task_id: str) -> None:
-        assert app_ctx is app
-        assert raw_task_id == str(task_id)
-        assert event_name == 'task_fail'
+                       raw_task_id: str,
+                       message: str = None) -> None:
+        fail_handler_ctx.update(locals())
 
     async def _mock_task(reporter):
         await reporter.set_progress_total(2)
         await asyncio.sleep(1)
         await reporter.update_progress(1, message='BGTask ex1')
-        raise Exception
+        raise ZeroDivisionError('oops')
 
-    dispatcher.subscribe('task_fail', app, fail_sub)
-    task_id = app['background_task'].start_background_task(_mock_task, name='MockTask1234')
+    dispatcher.subscribe('task_failed', app, fail_sub)
+    task_id = await app['background_task'].start_background_task(_mock_task, name='MockTask1234')
     await asyncio.sleep(2)
-
-    await dispatcher.redis_producer.flushdb()
-    await dispatcher.close()
+    try:
+        assert fail_handler_ctx['app_ctx'] is app
+        assert fail_handler_ctx['raw_task_id'] == str(task_id)
+        assert fail_handler_ctx['event_name'] == 'task_failed'
+        assert fail_handler_ctx['message'] is not None
+        assert 'ZeroDivisionError' in fail_handler_ctx['message']
+    finally:
+        await dispatcher.redis_producer.flushdb()
+        await dispatcher.close()
