@@ -56,7 +56,6 @@ class Agent(graphene.ObjectType):
     class Meta:
         interfaces = (Item, )
 
-    id = graphene.ID()
     status = graphene.String()
     status_changed = GQLDateTime()
     region = graphene.String()
@@ -82,8 +81,8 @@ class Agent(graphene.ObjectType):
     cpu_cur_pct = graphene.Float()
     mem_cur_bytes = graphene.Float()
 
-    computations = graphene.List(
-        'ai.backend.manager.models.Computation',
+    compute_containers = graphene.List(
+        'ai.backend.manager.models.ComputeContainer',
         status=graphene.String())
 
     @classmethod

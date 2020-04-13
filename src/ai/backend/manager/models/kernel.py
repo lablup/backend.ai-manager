@@ -23,7 +23,12 @@ from .user import users
 
 __all__: Sequence[str] = (
     'kernels', 'KernelStatus',
-    'ComputeSessionList', 'ComputeSession', 'ComputeWorker', 'Computation',
+    'ComputeContainer',
+    'ComputeSession',
+    'ComputeContainerList',
+    'ComputeSessionList',
+    'LegacyComputeSession',
+    'LegacyComputeSessionList',
     'RESOURCE_OCCUPYING_KERNEL_STATUSES',
     'RESOURCE_USAGE_KERNEL_STATUSES',
     'DEAD_KERNEL_STATUSES',
@@ -157,12 +162,216 @@ kernel_dependencies = sa.Table(
 )
 
 
-class SessionCommons:
+class ComputeContainer(graphene.ObjectType):
+    class Meta:
+        interfaces = (Item, )
+
+    # identity
+    role = graphene.String()
+    hostname = graphene.String()
+    session_id = graphene.UUID()  # owner session
+
+    # image
+    image = graphene.String()
+    registry = graphene.String()
+
+    # status
+    status = graphene.String()
+    status_changed = GQLDateTime()
+    status_info = graphene.String()
+    created_at = GQLDateTime()
+    terminated_at = GQLDateTime()
+
+    # resources
+    agent = graphene.String()
+    container_id = graphene.String()
+    resource_opts = graphene.JSONString()
+    occupied_slots = graphene.JSONString()
+    live_stat = graphene.JSONString()
+    last_stat = graphene.JSONString()
+
+    @classmethod
+    def parse_row(cls, context, row):
+        assert row is not None
+        from .user import UserRole
+        is_superadmin = (context['user']['role'] == UserRole.SUPERADMIN)
+        if is_superadmin:
+            hide_agents = False
+        else:
+            hide_agents = context['config']['manager']['hide-agents']
+        return {
+            # identity
+            'id': row['id'],
+            'role': row['role'],
+            'hostname': None,         # TODO: implement
+            'session_id': row['id'],  # master container's ID == session ID
+
+            # image
+            'image': row['image'],
+            'registry': row['registry'],
+
+            # status
+            'status': row['status'].name,
+            'status_changed': row['status_changed'],
+            'status_info': row['status_info'],
+            'created_at': row['created_at'],
+            'terminated_at': row['terminated_at'],
+            'occupied_slots': row['occupied_slots'].to_json(),
+            'mounts': row['mounts'],
+
+            # resources
+            'agent': row['agent'] if not hide_agents else None,
+            'container_id': row['container_id'] if not hide_agents else None,
+            'resource_opts': row['resource_opts'],
+
+            # statistics
+            # live_stat is resolved by Graphene
+            'last_stat': row['last_stat'],
+        }
+
+    @classmethod
+    def from_row(cls, context, row):
+        if row is None:
+            return None
+        props = cls.parse_row(context, row)
+        return cls(**props)
+
+    @staticmethod
+    async def resolve_live_stat():
+        raise NotImplementedError
+
+    # TODO: implement loaders
+
+
+class ComputeSession(graphene.ObjectType):
+    class Meta:
+        interfaces = (Item, )
+
+    # identity
+    tag = graphene.String()
+    session_name = graphene.String()
+    session_type = graphene.String()
+
+    # ownership
+    domain_name = graphene.String()
+    group_name = graphene.String()
+    group_id = graphene.UUID()
+    user_email = graphene.String()
+    user_id = graphene.UUID()
+    access_key = graphene.String()
+    created_user_email = graphene.String()
+    created_user_id = graphene.UUID()
+
+    # status
+    status = graphene.String()
+    status_changed = GQLDateTime()
+    status_info = graphene.String()
+    created_at = GQLDateTime()
+    terminated_at = GQLDateTime()
+    startup_command = graphene.String()
+    result = graphene.String()
+
+    # resources
+    resource_opts = graphene.JSONString()
+    scaling_group = graphene.String()
+    service_ports = graphene.JSONString()
+    # mounts = graphene.List(lambda: graphene.String)
+    occupied_slots = graphene.JSONString()
+
+    # statistics
+    num_queries = BigInt()
+
+    # owned containers (aka kernels)
+    # containers = graphene.List(lambda: ComputeContainer)
+
+    # relations
+    # depends_on = graphene.List(lambda: ComputeSession)
+
+    @classmethod
+    def parse_row(cls, context, row):
+        assert row is not None
+        return {
+            # identity
+            'id': row['id'],
+            'tag': row['tag'],
+            'name': row['sess_id'],
+            'type': row['sess_type'].name,
+
+            # ownership
+            'domain_name': row['domain_name'],
+            'group_name': row['name'],  # group.name (group is omitted since use_labels=True is not used)
+            'group_id': row['group_id'],
+            'user_email': row['email'],
+            'user_id': row['user_uuid'],
+            'access_key': row['access_key'],
+            'created_user_email': None,  # TODO: implement
+            'created_user_id': None,     # TODO: implement
+
+            # status
+            'status': row['status'].name,
+            'status_changed': row['status_changed'],
+            'status_info': row['status_info'],
+            'created_at': row['created_at'],
+            'terminated_at': row['terminated_at'],
+            'startup_command': row['startup_command'],
+            'result': row['result'].name,
+
+            # resources
+            'resource_opts': row['resource_opts'],
+            'scaling_group': row['scaling_group'],
+            'service_ports': row['service_ports'],
+            'mounts': row['mounts'],
+            'occupied_slots': row['occupied_slots'].to_json(),
+
+            # statistics
+            'num_queries': row['num_queries'],
+        }
+
+    @classmethod
+    def from_row(cls, context, row):
+        if row is None:
+            return None
+        props = cls.parse_row(context, row)
+        return cls(**props)
+
+    @staticmethod
+    async def resolve_containers():
+        raise NotImplementedError
+
+    @staticmethod
+    async def resolve_depends_on():
+        raise NotImplementedError
+
+    # TODO: implement loaders
+
+
+class ComputeContainerList(graphene.ObjectType):
+    class Meta:
+        interfaces = (PaginatedList, )
+
+    items = graphene.List(ComputeContainer, required=True)
+
+
+class ComputeSessionList(graphene.ObjectType):
+    class Meta:
+        interfaces = (PaginatedList, )
+
+    items = graphene.List(ComputeSession, required=True)
+
+
+# --------- pre-v5 legacy -----------
+class LegacyComputeSession(graphene.ObjectType):
+    """
+    Represents a master session.
+    """
+    class Meta:
+        interfaces = (Item, )
+
+    tag = graphene.String()  # Only for ComputeSession
     sess_id = graphene.String()    # legacy
     sess_type = graphene.String()  # legacy
     session_name = graphene.String()
     session_type = graphene.String()
-    id = graphene.ID()
     role = graphene.String()
     image = graphene.String()
     registry = graphene.String()
@@ -300,6 +509,7 @@ class SessionCommons:
             'session_type': row['sess_type'].name,
             'id': row['id'],                     # legacy, will be replaced with session UUID
             'role': row['role'],
+            'tag': row['tag'],
             'image': row['image'],
             'registry': row['registry'],
             'domain_name': row['domain_name'],
@@ -352,31 +562,6 @@ class SessionCommons:
             return None
         props = cls.parse_row(context, row)
         return cls(**props)
-
-
-class ComputeSession(SessionCommons, graphene.ObjectType):
-    '''
-    Represents a master session.
-    '''
-    class Meta:
-        interfaces = (Item, )
-
-    tag = graphene.String()  # Only for ComputeSession
-
-    workers = graphene.List(
-        lambda: ComputeWorker,
-        status=graphene.String(),
-    )
-
-    async def resolve_workers(self, info, status=None):
-        '''
-        Retrieves all children worker sessions.
-        '''
-        manager = info.context['dlmgr']
-        if status is not None:
-            status = KernelStatus[status]
-        loader = manager.get_loader('ComputeWorker', status=status)
-        return await loader.load(self.sess_id)
 
     @staticmethod
     async def load_count(context, *,
@@ -447,7 +632,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 query = query.where(kernels.c.status.in_(status_list))
             result = await conn.execute(query)
             rows = await result.fetchall()
-            return [ComputeSession.from_row(context, r) for r in rows]
+            return [LegacyComputeSession.from_row(context, r) for r in rows]
 
     @staticmethod
     async def load_all(context, *,
@@ -482,7 +667,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 query = query.where(kernels.c.access_key == access_key)
             result = await conn.execute(query)
             rows = await result.fetchall()
-            return [ComputeSession.from_row(context, r) for r in rows]
+            return [LegacyComputeSession.from_row(context, r) for r in rows]
 
     @staticmethod
     async def batch_load(context, access_keys, *,
@@ -516,7 +701,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             for k in access_keys:
                 objs_per_key[k] = list()
             async for row in conn.execute(query):
-                o = ComputeSession.from_row(context, row)
+                o = LegacyComputeSession.from_row(context, row)
                 objs_per_key[row.access_key].append(o)
         return [*objs_per_key.values()]
 
@@ -545,7 +730,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 query = query.where(kernels.c.status.in_(status_list))
             sess_info = []
             async for row in conn.execute(query):
-                o = ComputeSession.from_row(context, row)
+                o = LegacyComputeSession.from_row(context, row)
                 sess_info.append(o)
         if len(sess_info) != 0:
             return tuple(sess_info)
@@ -554,76 +739,13 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
             for s in sess_ids:
                 sess_info[s] = list()
             async for row in conn.execute(query):
-                o = ComputeSession.from_row(context, row)
+                o = LegacyComputeSession.from_row(context, row)
                 sess_info[row.sess_id].append(o)
             return [*sess_info.values()]
 
-    @classmethod
-    def parse_row(cls, context, row):
-        common_props = super().parse_row(context, row)
-        return {**common_props, 'tag': row['tag']}
 
-
-class ComputeSessionList(graphene.ObjectType):
+class LegacyComputeSessionList(graphene.ObjectType):
     class Meta:
         interfaces = (PaginatedList, )
 
-    items = graphene.List(ComputeSession, required=True)
-
-
-class ComputeWorker(SessionCommons, graphene.ObjectType):
-    '''
-    Represents a worker session that belongs to a master session.
-    '''
-
-    @staticmethod
-    async def batch_load(context, sess_ids, *,
-                         domain_name=None, access_key=None,
-                         status=None):
-        async with context['dbpool'].acquire() as conn:
-            query = (sa.select([kernels])
-                       .select_from(kernels)
-                       .where((kernels.c.sess_id.in_(sess_ids)) &
-                              (kernels.c.role == 'worker'))
-                       .order_by(sa.desc(kernels.c.created_at)))
-            if domain_name is not None:
-                query = query.where(kernels.c.domain_name == domain_name)
-            if access_key is not None:
-                query = query.where(kernels.c.access_key == access_key)
-            if status is not None:
-                query = query.where(kernels.c.status == status)
-            objs_per_key = OrderedDict()
-            for k in sess_ids:
-                objs_per_key[k] = list()
-            async for row in conn.execute(query):
-                o = ComputeWorker.from_row(context, row)
-                objs_per_key[row.sess_id].append(o)
-        return [*objs_per_key.values()]
-
-
-class Computation(SessionCommons, graphene.ObjectType):
-    '''
-    Any kind of computation: either a session master or a worker.
-    '''
-
-    @staticmethod
-    async def batch_load_by_agent_id(context, agent_ids, *,
-                                     domain_name=None,
-                                     status=None):
-        async with context['dbpool'].acquire() as conn:
-            query = (sa.select([kernels])
-                       .select_from(kernels)
-                       .where(kernels.c.agent.in_(agent_ids))
-                       .order_by(sa.desc(kernels.c.created_at)))
-            if domain_name is not None:
-                query = query.where(kernels.c.domain_name == domain_name)
-            if status is not None:
-                status = KernelStatus[status]
-                query = query.where(kernels.c.status == status)
-            objs_per_key = OrderedDict()
-            for k in agent_ids:
-                objs_per_key[k] = list()
-            async for row in conn.execute(query):
-                o = Computation.from_row(context, row)
-                objs_per_key[row.agent].append(o)
-        return [*objs_per_key.values()]
+    items = graphene.List(LegacyComputeSession, required=True)

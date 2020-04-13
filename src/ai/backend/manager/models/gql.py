@@ -21,7 +21,8 @@ from .image import (
 )
 from .kernel import (
     ComputeSession, ComputeSessionList,
-    ComputeWorker,
+    ComputeContainer, ComputeContainerList,
+    LegacyComputeSession, LegacyComputeSessionList,
 )
 from .keypair import (
     KeyPair,
@@ -263,6 +264,16 @@ class Queries(graphene.ObjectType):
         group_id=graphene.String(),
         access_key=graphene.String())  # must be empty for user requests
 
+    compute_session = graphene.Field(
+        ComputeSession,
+        id=graphene.UUID(required=True),
+    )
+
+    compute_container = graphene.Field(
+        ComputeContainer,
+        id=graphene.UUID(required=True),
+    )
+
     compute_session_list = graphene.Field(
         ComputeSessionList,
         limit=graphene.Int(required=True),
@@ -277,27 +288,37 @@ class Queries(graphene.ObjectType):
         status=graphene.String(),
     )
 
-    compute_sessions = graphene.List(  # legacy non-paginated list
-        ComputeSession,
+    compute_container_list = graphene.Field(
+        ComputeContainerList,
+        limit=graphene.Int(required=True),
+        offset=graphene.Int(required=True),
+        # ordering customization
+        order_key=graphene.String(),
+        order_asc=graphene.Boolean(),
+        # filters
+        session_id=graphene.ID(required=True),
+        role=graphene.String(),
+    )
+
+    legacy_compute_session_list = graphene.Field(
+        LegacyComputeSessionList,
+        limit=graphene.Int(required=True),
+        offset=graphene.Int(required=True),
+        # ordering customization
+        order_key=graphene.String(),
+        order_asc=graphene.Boolean(),
+        # filters
         domain_name=graphene.String(),
         group_id=graphene.String(),
         access_key=graphene.String(),
         status=graphene.String(),
     )
 
-    compute_session = graphene.Field(
-        ComputeSession,
+    legacy_compute_session = graphene.Field(
+        LegacyComputeSession,
         sess_id=graphene.String(required=True),
         domain_name=graphene.String(),
         access_key=graphene.String(),
-    )
-
-    compute_workers = graphene.List(  # legacy non-paginated list
-        ComputeWorker,
-        sess_id=graphene.String(required=True),
-        domain_name=graphene.String(),
-        access_key=graphene.String(),
-        status=graphene.String(),
     )
 
     @staticmethod
@@ -588,10 +609,55 @@ class Queries(graphene.ObjectType):
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='access_key')
-    async def resolve_compute_session_list(executor, info, limit, offset, *,
-                                           domain_name=None, group_id=None, access_key=None,
-                                           status=None,
-                                           order_key=None, order_asc=None):
+    async def resolve_compute_container_list(
+        executor, info, limit, offset, *,
+        domain_name=None, group_id=None, access_key=None,
+        status=None,
+        order_key=None, order_asc=None,
+    ):
+        total_count = await ComputeContainer.load_count(
+            info.context,
+            domain_name=domain_name,
+            group_id=group_id,
+            access_key=access_key,
+            status=status)
+        items = await ComputeContainer.load_slice(
+            info.context, limit, offset,
+            domain_name=domain_name,
+            group_id=group_id,
+            access_key=access_key,
+            status=status,
+            order_key=order_key,
+            order_asc=order_asc)
+        return ComputeContainerList(items, total_count)
+
+    @staticmethod
+    @scoped_query(autofill_user=False, user_key='access_key')
+    async def resolve_compute_container(
+        executor, info, sess_id, *,
+        domain_name=None, access_key=None,
+        status=None,
+    ):
+        # We need to check the group membership of the designated kernel,
+        # but practically a user cannot guess the IDs of kernels launched
+        # by other users and in other groups.
+        # Let's just protect the domain/user boundary here.
+        manager = info.context['dlmgr']
+        loader = manager.get_loader(
+            'ComputeContainer.detail',
+            domain_name=domain_name,
+            access_key=access_key,
+            status=status)
+        return await loader.load(sess_id)
+
+    @staticmethod
+    @scoped_query(autofill_user=False, user_key='access_key')
+    async def resolve_compute_session_list(
+        executor, info, limit, offset, *,
+        domain_name=None, group_id=None, access_key=None,
+        status=None,
+        order_key=None, order_asc=None,
+    ):
         total_count = await ComputeSession.load_count(
             info.context,
             domain_name=domain_name,
@@ -610,21 +676,11 @@ class Queries(graphene.ObjectType):
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='access_key')
-    async def resolve_compute_sessions(executor, info, *,
-                                       domain_name=None, group_id=None, access_key=None,
-                                       status=None):
-        return await ComputeSession.load_all(
-            info.context,
-            domain_name=domain_name,
-            group_id=group_id,
-            access_key=access_key,
-            status=status)
-
-    @staticmethod
-    @scoped_query(autofill_user=False, user_key='access_key')
-    async def resolve_compute_session(executor, info, sess_id, *,
-                                      domain_name=None, access_key=None,
-                                      status=None):
+    async def resolve_compute_session(
+        executor, info, sess_id, *,
+        domain_name=None, access_key=None,
+        status=None,
+    ):
         # We need to check the group membership of the designated kernel,
         # but practically a user cannot guess the IDs of kernels launched
         # by other users and in other groups.
@@ -639,12 +695,42 @@ class Queries(graphene.ObjectType):
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='access_key')
-    async def resolve_compute_workers(executor, info, sess_id, *,
-                                      domain_name=None, access_key=None,
-                                      status=None):
+    async def resolve_legacy_compute_session_list(
+        executor, info, limit, offset, *,
+        domain_name=None, group_id=None, access_key=None,
+        status=None,
+        order_key=None, order_asc=None,
+    ):
+        total_count = await LegacyComputeSession.load_count(
+            info.context,
+            domain_name=domain_name,
+            group_id=group_id,
+            access_key=access_key,
+            status=status)
+        items = await LegacyComputeSession.load_slice(
+            info.context, limit, offset,
+            domain_name=domain_name,
+            group_id=group_id,
+            access_key=access_key,
+            status=status,
+            order_key=order_key,
+            order_asc=order_asc)
+        return LegacyComputeSessionList(items, total_count)
+
+    @staticmethod
+    @scoped_query(autofill_user=False, user_key='access_key')
+    async def resolve_legacy_compute_session(
+        executor, info, sess_id, *,
+        domain_name=None, access_key=None,
+        status=None,
+    ):
+        # We need to check the group membership of the designated kernel,
+        # but practically a user cannot guess the IDs of kernels launched
+        # by other users and in other groups.
+        # Let's just protect the domain/user boundary here.
         manager = info.context['dlmgr']
         loader = manager.get_loader(
-            'ComputeWorker',
+            'LegacyComputeSession.detail',
             domain_name=domain_name,
             access_key=access_key,
             status=status)
