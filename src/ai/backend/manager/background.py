@@ -85,7 +85,7 @@ class BackgroundTaskManager:
         self.ongoing_tasks.remove(task)
 
     async def shutdown(self):
-        log.info('Clenaing up remaining tasks...')
+        log.info('Cleaning up remaining tasks...')
         for task in self.ongoing_tasks:
             task.cancel()
             await task

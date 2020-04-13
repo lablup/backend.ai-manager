@@ -238,7 +238,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                 'group_name': None,
                 'is_owner': True,
                 'permission': row.permission,
-                'unmanaged_path': row.unmanaged_path,
+                'unmanaged_path': row.get('unmanaged_path'),
             })
         # Scan vfolders shared with me.
         j = (
@@ -294,7 +294,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                 'group_name': None,
                 'is_owner': False,
                 'permission': row.permission,  # not vfolders.c.permission!
-                'unmanaged_path': row.unmanaged_path,
+                'unmanaged_path': row.get('unmanaged_path'),
             })
 
     if 'group' in allowed_vfolder_types:
@@ -360,7 +360,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                 'group_name': row.groups_name,
                 'is_owner': is_owner,
                 'permission': row.vfolders_permission,
-                'unmanaged_path': row.vfolders_unmanaged_path,
+                'unmanaged_path': row.get('unmanaged_path'),
             })
     return entries
 
