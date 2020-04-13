@@ -534,11 +534,32 @@ async def stream_background_task(request: web.Request, params: Mapping[str, Any]
     app = request.app
     task_id = uuid.UUID(params['task_id'])
     access_key = request['keypair']['access_key']
-
-    task_update_queues = app['task_update_queues']  # type: Set[asyncio.Queue]
-    my_queue = asyncio.Queue()          # type: asyncio.Queue[Tuple[str, dict, str]]
     log.info('STREAM_BACKGROUND_TASK (ak:{}, t:{})', access_key, task_id)
 
+    tracker_key = f'bgtask.{task_id}'
+    task_info = await app['redis'].hgetall(tracker_key)
+    if task_info is None:
+        # The task ID is invalid or represents a task completed more than 24 hours ago.
+        raise GenericNotFound('No such background task.')
+
+    if task_info['status'] != 'started':
+        # It is an already finished task!
+        # Close the SSE stream after sending the stored result immediately.
+        try:
+            async with sse_response(request) as resp:
+                body = {
+                    'task_id': str(task_id),
+                    'current_progress': task_info['current'],
+                    'total_progress': task_info['total'],
+                    'message': task_info['msg'],
+                }
+                await resp.send(json.dumps(body), event=f"task_{task_info['status']}")
+        finally:
+            return resp
+
+    # It is an ongoing task.
+    task_update_queues = app['task_update_queues']  # type: Set[asyncio.Queue]
+    my_queue = asyncio.Queue()  # type: asyncio.Queue[Tuple[str, dict, str]]
     task_update_queues.add(my_queue)
     try:
         async with sse_response(request) as resp:
@@ -684,10 +705,10 @@ async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
     event_dispatcher.subscribe('kernel_cancelled', app, enqueue_status_update)
     event_dispatcher.subscribe('kernel_success', app, enqueue_result_update)
     event_dispatcher.subscribe('kernel_failure', app, enqueue_result_update)
-    event_dispatcher.subscribe('task_update', app, enqueue_task_status_update)
+    event_dispatcher.subscribe('task_updated', app, enqueue_task_status_update)
     event_dispatcher.subscribe('task_done', app, enqueue_task_status_update)
-    event_dispatcher.subscribe('task_cancel', app, enqueue_task_status_update)
-    event_dispatcher.subscribe('task_fail', app, enqueue_task_status_update)
+    event_dispatcher.subscribe('task_cancelled', app, enqueue_task_status_update)
+    event_dispatcher.subscribe('task_failed', app, enqueue_task_status_update)
 
     yield
 
