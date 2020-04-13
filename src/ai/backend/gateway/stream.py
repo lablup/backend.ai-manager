@@ -41,7 +41,7 @@ from ai.backend.common.types import (
 
 from .auth import auth_required
 from .exceptions import (
-    AppNotFound, GroupNotFound, SessionNotFound,
+    AppNotFound, GroupNotFound, SessionNotFound, GenericNotFound,
     BackendError,
     InvalidAPIParameters, GenericForbidden,
     InternalServerError,
