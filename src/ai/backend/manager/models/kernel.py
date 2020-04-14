@@ -217,7 +217,6 @@ class ComputeContainer(graphene.ObjectType):
             'created_at': row['created_at'],
             'terminated_at': row['terminated_at'],
             'occupied_slots': row['occupied_slots'].to_json(),
-            'mounts': row['mounts'],
 
             # resources
             'agent': row['agent'] if not hide_agents else None,
@@ -236,11 +235,168 @@ class ComputeContainer(graphene.ObjectType):
         props = cls.parse_row(context, row)
         return cls(**props)
 
-    @staticmethod
-    async def resolve_live_stat():
-        raise NotImplementedError
+    async def resolve_live_stat(self, info: graphene.ResolveInfo):
+        if not hasattr(self, 'status'):
+            return None
+        rs = info.context['redis_stat']
+        if self.status in LIVE_STATUS:
+            raw_live_stat = await redis.execute_with_retries(
+                lambda: rs.get(str(self.id), encoding=None))
+            if raw_live_stat is not None:
+                live_stat = msgpack.unpackb(raw_live_stat)
+                return live_stat
+            return None
+        else:
+            return self.last_stat
 
-    # TODO: implement loaders
+    @classmethod
+    async def load_count(cls, context, session_id, *,
+                         role=None,
+                         domain_name=None, group_id=None, access_key=None):
+        async with context['dbpool'].acquire() as conn:
+            query = (
+                sa.select([sa.func.count(kernels.c.id)])
+                .select_from(kernels)
+                # TODO: use "owner session ID" when we implement multi-container session
+                .where(kernels.c.id == session_id)
+                .as_scalar()
+            )
+            if role is not None:
+                query = query.where(kernels.c.role == role)
+            if domain_name is not None:
+                query = query.where(kernels.c.domain_name == domain_name)
+            if group_id is not None:
+                query = query.where(kernels.c.group_id == group_id)
+            if access_key is not None:
+                query = query.where(kernels.c.access_key == access_key)
+            result = await conn.execute(query)
+            count = await result.fetchone()
+            return count[0]
+
+    @classmethod
+    async def load_slice(cls, context, limit, offset, session_id, *,
+                         role=None,
+                         domain_name=None, group_id=None, access_key=None,
+                         order_key=None, order_asc=None):
+        async with context['dbpool'].acquire() as conn:
+            if order_key is None:
+                _ordering = [
+                    sa.desc(sa.func.greatest(
+                        kernels.c.created_at,
+                        kernels.c.terminated_at,
+                        kernels.c.status_changed,
+                    ))
+                ]
+            else:
+                _order_func = sa.asc if order_asc else sa.desc
+                _ordering = [_order_func(getattr(kernels.c, order_key))]
+            # TODO: optimization for pagination using subquery, join
+            j = (
+                kernels
+                .join(groups, groups.c.id == kernels.c.group_id)
+                .join(users, users.c.uuid == kernels.c.user_uuid)
+            )
+            query = (
+                sa.select([kernels, groups.c.name, users.c.email])
+                .select_from(j)
+                # TODO: use "owner session ID" when we implement multi-container session
+                .where(kernels.c.id == session_id)
+                .order_by(*_ordering)
+                .limit(limit)
+                .offset(offset)
+            )
+            if role is not None:
+                query = query.where(kernels.c.role == role)
+            if domain_name is not None:
+                query = query.where(kernels.c.domain_name == domain_name)
+            if group_id is not None:
+                query = query.where(kernels.c.group_id == group_id)
+            if access_key is not None:
+                query = query.where(kernels.c.access_key == access_key)
+            result = await conn.execute(query)
+            rows = await result.fetchall()
+            return [cls.from_row(context, r) for r in rows]
+
+    @classmethod
+    async def batch_load(cls, context, access_keys, *,
+                         domain_name=None, group_id=None,
+                         status=None):
+        async with context['dbpool'].acquire() as conn:
+            j = (
+                kernels
+                .join(groups, groups.c.id == kernels.c.group_id)
+                .join(users, users.c.uuid == kernels.c.user_uuid)
+            )
+            query = (
+                sa.select([kernels, groups.c.name, users.c.email])
+                .select_from(j)
+                .where(
+                    (kernels.c.access_key.in_(access_keys))
+                )
+                .order_by(
+                    sa.desc(sa.func.greatest(
+                        kernels.c.created_at,
+                        kernels.c.terminated_at,
+                        kernels.c.status_changed,
+                    ))
+                )
+                .limit(100))
+            if domain_name is not None:
+                query = query.where(kernels.c.domain_name == domain_name)
+            if group_id is not None:
+                query = query.where(kernels.c.group_id == group_id)
+            if status is not None:
+                query = query.where(kernels.c.status == status)
+            objs_per_key = OrderedDict()
+            for k in access_keys:
+                objs_per_key[k] = list()
+            async for row in conn.execute(query):
+                o = cls.from_row(context, row)
+                objs_per_key[row['access_key']].append(o)
+        return [*objs_per_key.values()]
+
+    @classmethod
+    async def batch_load_detail(cls, context, container_ids, *,
+                                domain_name=None, access_key=None,
+                                status=None):
+        async with context['dbpool'].acquire() as conn:
+            if isinstance(status, str):
+                status_list = [KernelStatus[s] for s in status.split(',')]
+            elif isinstance(status, KernelStatus):
+                status_list = [status]
+            elif status is None:
+                status_list = [KernelStatus['RUNNING']]
+            j = (
+                kernels
+                .join(groups, groups.c.id == kernels.c.group_id)
+                .join(users, users.c.uuid == kernels.c.user_uuid)
+            )
+            query = (
+                sa.select([kernels, groups.c.name, users.c.email])
+                .select_from(j)
+                .where(
+                    (kernels.c.id.in_(container_ids))
+                ))
+            if domain_name is not None:
+                query = query.where(kernels.c.domain_name == domain_name)
+            if access_key is not None:
+                query = query.where(kernels.c.access_key == access_key)
+            if status is not None:
+                query = query.where(kernels.c.status.in_(status_list))
+            container_info = []
+            async for row in conn.execute(query):
+                o = cls.from_row(context, row)
+                container_info.append(o)
+        if len(container_info) != 0:
+            return tuple(container_info)
+        else:
+            container_info = OrderedDict()
+            for s in container_ids:
+                container_info[s] = list()
+            async for row in conn.execute(query):
+                o = cls.from_row(context, row)
+                container_info[row['id']].append(o)
+            return [*container_info.values()]
 
 
 class ComputeSession(graphene.ObjectType):
@@ -249,8 +405,13 @@ class ComputeSession(graphene.ObjectType):
 
     # identity
     tag = graphene.String()
-    session_name = graphene.String()
-    session_type = graphene.String()
+    name = graphene.String()
+    type = graphene.String()
+
+    # image
+    image = graphene.String()     # image for the master
+    registry = graphene.String()  # image registry for the master
+    cluster_template = graphene.String()
 
     # ownership
     domain_name = graphene.String()
@@ -275,17 +436,17 @@ class ComputeSession(graphene.ObjectType):
     resource_opts = graphene.JSONString()
     scaling_group = graphene.String()
     service_ports = graphene.JSONString()
-    # mounts = graphene.List(lambda: graphene.String)
+    mounts = graphene.List(lambda: graphene.String)
     occupied_slots = graphene.JSONString()
 
     # statistics
     num_queries = BigInt()
 
     # owned containers (aka kernels)
-    # containers = graphene.List(lambda: ComputeContainer)
+    containers = graphene.List(lambda: ComputeContainer)
 
     # relations
-    # depends_on = graphene.List(lambda: ComputeSession)
+    depends_on = graphene.List(lambda: ComputeSession)
 
     @classmethod
     def parse_row(cls, context, row):
@@ -296,6 +457,11 @@ class ComputeSession(graphene.ObjectType):
             'tag': row['tag'],
             'name': row['sess_id'],
             'type': row['sess_type'].name,
+
+            # image
+            'image': row['image'],
+            'registry': row['registry'],
+            'cluster_template': None,  # TODO: implement
 
             # ownership
             'domain_name': row['domain_name'],
@@ -321,7 +487,7 @@ class ComputeSession(graphene.ObjectType):
             'scaling_group': row['scaling_group'],
             'service_ports': row['service_ports'],
             'mounts': row['mounts'],
-            'occupied_slots': row['occupied_slots'].to_json(),
+            'occupied_slots': row['occupied_slots'].to_json(),  # TODO: sum of owned containers
 
             # statistics
             'num_queries': row['num_queries'],
@@ -334,15 +500,129 @@ class ComputeSession(graphene.ObjectType):
         props = cls.parse_row(context, row)
         return cls(**props)
 
-    @staticmethod
-    async def resolve_containers():
+    async def resolve_containers(self, info: graphene.ResolveInfo):
         raise NotImplementedError
 
-    @staticmethod
-    async def resolve_depends_on():
+    async def resolve_depends_on(self, info: graphene.ResolveInfo):
         raise NotImplementedError
 
-    # TODO: implement loaders
+    @classmethod
+    async def load_count(cls, context, *,
+                         domain_name=None, group_id=None, access_key=None,
+                         status=None):
+        if isinstance(status, str):
+            status_list = [KernelStatus[s] for s in status.split(',')]
+        elif isinstance(status, KernelStatus):
+            status_list = [status]
+        async with context['dbpool'].acquire() as conn:
+            query = (
+                sa.select([sa.func.count(kernels.c.id)])
+                .select_from(kernels)
+                .where(kernels.c.role == 'master')
+                .as_scalar()
+            )
+            if domain_name is not None:
+                query = query.where(kernels.c.domain_name == domain_name)
+            if group_id is not None:
+                query = query.where(kernels.c.group_id == group_id)
+            if access_key is not None:
+                query = query.where(kernels.c.access_key == access_key)
+            if status is not None:
+                query = query.where(kernels.c.status.in_(status_list))
+            result = await conn.execute(query)
+            count = await result.fetchone()
+            return count[0]
+
+    @classmethod
+    async def load_slice(cls, context, limit, offset, *,
+                         domain_name=None, group_id=None, access_key=None,
+                         status=None,
+                         order_key=None, order_asc=None):
+        if isinstance(status, str):
+            status_list = [KernelStatus[s] for s in status.split(',')]
+        elif isinstance(status, KernelStatus):
+            status_list = [status]
+        async with context['dbpool'].acquire() as conn:
+            if order_key is None:
+                _ordering = [
+                    sa.desc(sa.func.greatest(
+                        kernels.c.created_at,
+                        kernels.c.terminated_at,
+                        kernels.c.status_changed,
+                    ))
+                ]
+            else:
+                _order_func = sa.asc if order_asc else sa.desc
+                _ordering = [_order_func(getattr(kernels.c, order_key))]
+            # TODO: optimization for pagination using subquery, join
+            j = (
+                kernels
+                .join(groups, groups.c.id == kernels.c.group_id)
+                .join(users, users.c.uuid == kernels.c.user_uuid)
+            )
+            query = (
+                sa.select([kernels, groups.c.name, users.c.email])
+                .select_from(j)
+                .where(kernels.c.role == 'master')
+                .order_by(*_ordering)
+                .limit(limit)
+                .offset(offset)
+            )
+            if domain_name is not None:
+                query = query.where(kernels.c.domain_name == domain_name)
+            if group_id is not None:
+                query = query.where(kernels.c.group_id == group_id)
+            if access_key is not None:
+                query = query.where(kernels.c.access_key == access_key)
+            if status is not None:
+                query = query.where(kernels.c.status.in_(status_list))
+            result = await conn.execute(query)
+            rows = await result.fetchall()
+            return [cls.from_row(context, r) for r in rows]
+
+    @classmethod
+    async def batch_load_detail(cls, context, session_ids, *,
+                                domain_name=None, access_key=None,
+                                status=None):
+        async with context['dbpool'].acquire() as conn:
+            if isinstance(status, str):
+                status_list = [KernelStatus[s] for s in status.split(',')]
+            elif isinstance(status, KernelStatus):
+                status_list = [status]
+            elif status is None:
+                status_list = [KernelStatus['RUNNING']]
+            j = (
+                kernels
+                .join(groups, groups.c.id == kernels.c.group_id)
+                .join(users, users.c.uuid == kernels.c.user_uuid)
+            )
+            query = (
+                sa.select([kernels, groups.c.name, users.c.email])
+                .select_from(j)
+                .where(
+                    (kernels.c.role == 'master') &
+                    (kernels.c.id.in_(session_ids))
+                ))
+            if domain_name is not None:
+                query = query.where(kernels.c.domain_name == domain_name)
+            if access_key is not None:
+                query = query.where(kernels.c.access_key == access_key)
+            if status is not None:
+                query = query.where(kernels.c.status.in_(status_list))
+            session_info = []
+            async for row in conn.execute(query):
+                o = cls.from_row(context, row)
+                session_info.append(o)
+        if len(session_info) != 0:
+            return tuple(session_info)
+        else:
+            session_info = OrderedDict()
+            for sid in session_ids:
+                session_info[sid] = list()
+            async for row in conn.execute(query):
+                o = cls.from_row(context, row)
+                session_info[row['id']].append(o)
+            return [*session_info.values()]
 
 
 class ComputeContainerList(graphene.ObjectType):
@@ -432,11 +712,19 @@ class LegacyComputeSession(graphene.ObjectType):
             cstat = msgpack.unpackb(cstat)
         return cstat
 
-    async def resolve_live_stat(self, info):
+    async def resolve_live_stat(self, info: graphene.ResolveInfo):
+        if not hasattr(self, 'status'):
+            return None
         rs = info.context['redis_stat']
-        return await type(self)._resolve_live_stat(rs, str(self.id))
+        if self.status not in LIVE_STATUS:
+            return self.last_stat
+        else:
+            return await type(self)._resolve_live_stat(rs, str(self.id))
 
-    async def _resolve_legacy_metric(self, info, metric_key, metric_field, convert_type):
+    async def _resolve_legacy_metric(
+        self, info: graphene.ResolveInfo,
+        metric_key, metric_field, convert_type,
+    ):
         if not hasattr(self, 'status'):
             return None
         rs = info.context['redis_stat']
@@ -462,34 +750,34 @@ class LegacyComputeSession(graphene.ObjectType):
                 return convert_type(0)
             return convert_type(value)
 
-    async def resolve_cpu_used(self, info):
+    async def resolve_cpu_used(self, info: graphene.ResolveInfo):
         return await self._resolve_legacy_metric(info, 'cpu_used', 'current', float)
 
-    async def resolve_cpu_using(self, info):
+    async def resolve_cpu_using(self, info: graphene.ResolveInfo):
         return await self._resolve_legacy_metric(info, 'cpu_util', 'pct', float)
 
-    async def resolve_mem_max_bytes(self, info):
+    async def resolve_mem_max_bytes(self, info: graphene.ResolveInfo):
         return await self._resolve_legacy_metric(info, 'mem', 'stats.max', int)
 
-    async def resolve_mem_cur_bytes(self, info):
+    async def resolve_mem_cur_bytes(self, info: graphene.ResolveInfo):
         return await self._resolve_legacy_metric(info, 'mem', 'current', int)
 
-    async def resolve_net_rx_bytes(self, info):
+    async def resolve_net_rx_bytes(self, info: graphene.ResolveInfo):
         return await self._resolve_legacy_metric(info, 'net_rx', 'stats.rate', int)
 
-    async def resolve_net_tx_bytes(self, info):
+    async def resolve_net_tx_bytes(self, info: graphene.ResolveInfo):
         return await self._resolve_legacy_metric(info, 'net_tx', 'stats.rate', int)
 
-    async def resolve_io_read_bytes(self, info):
+    async def resolve_io_read_bytes(self, info: graphene.ResolveInfo):
         return await self._resolve_legacy_metric(info, 'io_read', 'current', int)
 
-    async def resolve_io_write_bytes(self, info):
+    async def resolve_io_write_bytes(self, info: graphene.ResolveInfo):
         return await self._resolve_legacy_metric(info, 'io_write', 'current', int)
 
-    async def resolve_io_max_scratch_size(self, info):
+    async def resolve_io_max_scratch_size(self, info: graphene.ResolveInfo):
         return await self._resolve_legacy_metric(info, 'io_scratch_size', 'stats.max', int)
 
-    async def resolve_io_cur_scratch_size(self, info):
+    async def resolve_io_cur_scratch_size(self, info: graphene.ResolveInfo):
         return await self._resolve_legacy_metric(info, 'io_scratch_size', 'current', int)
 
     @classmethod
@@ -563,8 +851,8 @@ class LegacyComputeSession(graphene.ObjectType):
         props = cls.parse_row(context, row)
         return cls(**props)
 
-    @staticmethod
-    async def load_count(context, *,
+    @classmethod
+    async def load_count(cls, context, *,
                          domain_name=None, group_id=None, access_key=None,
                          status=None):
         if isinstance(status, str):
@@ -590,8 +878,8 @@ class LegacyComputeSession(graphene.ObjectType):
             count = await result.fetchone()
             return count[0]
 
-    @staticmethod
-    async def load_slice(context, limit, offset, *,
+    @classmethod
+    async def load_slice(cls, context, limit, offset, *,
                          domain_name=None, group_id=None, access_key=None,
                          status=None,
                          order_key=None, order_asc=None):
@@ -632,45 +920,10 @@ class LegacyComputeSession(graphene.ObjectType):
                 query = query.where(kernels.c.status.in_(status_list))
             result = await conn.execute(query)
             rows = await result.fetchall()
-            return [LegacyComputeSession.from_row(context, r) for r in rows]
+            return [cls.from_row(context, r) for r in rows]
 
-    @staticmethod
-    async def load_all(context, *,
-                       domain_name=None, group_id=None, access_key=None,
-                       status=None):
-        if isinstance(status, str):
-            status_list = [KernelStatus[s] for s in status.split(',')]
-        elif isinstance(status, KernelStatus):
-            status_list = [status]
-        async with context['dbpool'].acquire() as conn:
-            j = (kernels.join(groups, groups.c.id == kernels.c.group_id)
-                        .join(users, users.c.uuid == kernels.c.user_uuid))
-            query = (
-                sa.select([kernels, groups.c.name, users.c.email])
-                .select_from(j)
-                .where(kernels.c.role == 'master')
-                .order_by(
-                    sa.desc(sa.func.greatest(
-                        kernels.c.created_at,
-                        kernels.c.terminated_at,
-                        kernels.c.status_changed,
-                    ))
-                )
-                .limit(100))
-            if status is not None:
-                query = query.where(kernels.c.status.in_(status_list))
-            if domain_name is not None:
-                query = query.where(kernels.c.domain_name == domain_name)
-            if group_id is not None:
-                query = query.where(kernels.c.group_id == group_id)
-            if access_key is not None:
-                query = query.where(kernels.c.access_key == access_key)
-            result = await conn.execute(query)
-            rows = await result.fetchall()
-            return [LegacyComputeSession.from_row(context, r) for r in rows]
-
-    @staticmethod
-    async def batch_load(context, access_keys, *,
+    @classmethod
+    async def batch_load(cls, context, access_keys, *,
                          domain_name=None, group_id=None,
                          status=None):
         async with context['dbpool'].acquire() as conn:
@@ -701,12 +954,12 @@ class LegacyComputeSession(graphene.ObjectType):
             for k in access_keys:
                 objs_per_key[k] = list()
             async for row in conn.execute(query):
-                o = LegacyComputeSession.from_row(context, row)
+                o = cls.from_row(context, row)
                 objs_per_key[row.access_key].append(o)
         return [*objs_per_key.values()]
 
-    @staticmethod
-    async def batch_load_detail(context, sess_ids, *,
+    @classmethod
+    async def batch_load_detail(cls, context, sess_ids, *,
                                 domain_name=None, access_key=None,
                                 status=None):
         async with context['dbpool'].acquire() as conn:
@@ -730,7 +983,7 @@ class LegacyComputeSession(graphene.ObjectType):
                 query = query.where(kernels.c.status.in_(status_list))
             sess_info = []
             async for row in conn.execute(query):
-                o = LegacyComputeSession.from_row(context, row)
+                o = cls.from_row(context, row)
                 sess_info.append(o)
         if len(sess_info) != 0:
             return tuple(sess_info)
@@ -739,7 +992,7 @@ class LegacyComputeSession(graphene.ObjectType):
             for s in sess_ids:
                 sess_info[s] = list()
             async for row in conn.execute(query):
-                o = LegacyComputeSession.from_row(context, row)
+                o = cls.from_row(context, row)
                 sess_info[row.sess_id].append(o)
             return [*sess_info.values()]
 

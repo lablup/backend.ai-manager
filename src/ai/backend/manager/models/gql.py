@@ -585,70 +585,61 @@ class Queries(graphene.ObjectType):
                                    order_key=None, order_asc=None):
         total_count = await VirtualFolder.load_count(
             info.context,
-            domain_name=domain_name,
-            group_id=group_id,
-            user_id=user_id)
+            domain_name=domain_name,  # scope
+            group_id=group_id,        # scope
+            user_id=user_id,          # scope
+        )
         items = await VirtualFolder.load_slice(
             info.context, limit, offset,
-            domain_name=domain_name,
-            group_id=group_id,
-            user_id=user_id,
-            order_key=order_key,
-            order_asc=order_asc)
+            domain_name=domain_name,  # scope
+            group_id=group_id,        # scope
+            user_id=user_id,          # scope
+            order_key=order_key,      # order
+            order_asc=order_asc,      # order
+        )
         return VirtualFolderList(items, total_count)
-
-    @staticmethod
-    @scoped_query(autofill_user=False, user_key='user_id')
-    async def resolve_vfolders(executor, info, *,
-                               domain_name=None, group_id=None, user_id=None):
-        return await VirtualFolder.load_all(
-            info.context,
-            domain_name=domain_name,
-            group_id=group_id,
-            user_id=user_id)
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='access_key')
     async def resolve_compute_container_list(
         executor, info, limit, offset, *,
+        session_id=None, role=None,
         domain_name=None, group_id=None, access_key=None,
-        status=None,
         order_key=None, order_asc=None,
     ):
         total_count = await ComputeContainer.load_count(
             info.context,
-            domain_name=domain_name,
-            group_id=group_id,
-            access_key=access_key,
-            status=status)
+            session_id,               # filter (mandatory)
+            role=role,                # filter
+            domain_name=domain_name,  # scope
+            group_id=group_id,        # scope
+            access_key=access_key,    # scope
+        )
         items = await ComputeContainer.load_slice(
-            info.context, limit, offset,
-            domain_name=domain_name,
-            group_id=group_id,
-            access_key=access_key,
-            status=status,
-            order_key=order_key,
-            order_asc=order_asc)
+            info.context,
+            limit, offset,            # slice
+            session_id,               # filter (mandatory)
+            role=role,                # filter
+            domain_name=domain_name,  # scope
+            group_id=group_id,        # scope
+            access_key=access_key,    # scope
+            order_key=order_key,      # order
+            order_asc=order_asc,      # order
+        )
         return ComputeContainerList(items, total_count)
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='access_key')
     async def resolve_compute_container(
-        executor, info, sess_id, *,
-        domain_name=None, access_key=None,
-        status=None,
+        executor, info, container_id,
     ):
         # We need to check the group membership of the designated kernel,
         # but practically a user cannot guess the IDs of kernels launched
         # by other users and in other groups.
         # Let's just protect the domain/user boundary here.
         manager = info.context['dlmgr']
-        loader = manager.get_loader(
-            'ComputeContainer.detail',
-            domain_name=domain_name,
-            access_key=access_key,
-            status=status)
-        return await loader.load(sess_id)
+        loader = manager.get_loader('ComputeContainer.detail')
+        return await loader.load(container_id)
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='access_key')
@@ -660,24 +651,27 @@ class Queries(graphene.ObjectType):
     ):
         total_count = await ComputeSession.load_count(
             info.context,
-            domain_name=domain_name,
-            group_id=group_id,
-            access_key=access_key,
-            status=status)
+            status=status,            # filter
+            domain_name=domain_name,  # scope
+            group_id=group_id,        # scope
+            access_key=access_key,    # scope
+        )
         items = await ComputeSession.load_slice(
-            info.context, limit, offset,
-            domain_name=domain_name,
-            group_id=group_id,
-            access_key=access_key,
-            status=status,
-            order_key=order_key,
-            order_asc=order_asc)
+            info.context,
+            limit, offset,            # slice
+            status=status,            # filter
+            domain_name=domain_name,  # scope
+            group_id=group_id,        # scope
+            access_key=access_key,    # scope
+            order_key=order_key,      # order
+            order_asc=order_asc,      # order
+        )
         return ComputeSessionList(items, total_count)
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='access_key')
     async def resolve_compute_session(
-        executor, info, sess_id, *,
+        executor, info, id, *,
         domain_name=None, access_key=None,
         status=None,
     ):
@@ -691,7 +685,7 @@ class Queries(graphene.ObjectType):
             domain_name=domain_name,
             access_key=access_key,
             status=status)
-        return await loader.load(sess_id)
+        return await loader.load(id)
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='access_key')

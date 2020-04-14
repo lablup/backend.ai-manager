@@ -465,29 +465,6 @@ class VirtualFolder(graphene.ObjectType):
             return [VirtualFolder.from_row(context, r) for r in rows]
 
     @staticmethod
-    async def load_all(context, *,
-                       domain_name=None, group_id=None, user_id=None):
-        from .user import users
-        async with context['dbpool'].acquire() as conn:
-            j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
-            query = (
-                sa.select([vfolders])
-                .select_from(j)
-                .order_by(sa.desc(vfolders.c.created_at))
-            )
-            if domain_name is not None:
-                query = query.where(users.c.domain_name == domain_name)
-            if group_id is not None:
-                query = query.where(vfolders.c.group == group_id)
-            if user_id is not None:
-                query = query.where(vfolders.c.user == user_id)
-            objs = []
-            async for row in conn.execute(query):
-                o = VirtualFolder.from_row(row)
-                objs.append(o)
-        return objs
-
-    @staticmethod
     async def batch_load_by_user(context, user_uuids, *,
                                  domain_name=None, group_id=None):
         from .user import users

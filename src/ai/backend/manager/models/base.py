@@ -322,7 +322,7 @@ def scoped_query(*,
     def wrap(resolve_func):
 
         @functools.wraps(resolve_func)
-        async def wrapped(executor, info, *args, **kwargs):
+        async def wrapped(executor, info: graphene.ResolveInfo, *args, **kwargs):
             from .user import UserRole
             client_role = info.context['user']['role']
             if user_key == 'access_key':
