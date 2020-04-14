@@ -1,7 +1,12 @@
+from __future__ import annotations
 from collections import OrderedDict
 import enum
-from typing import Sequence
+from typing import (
+    Any, Iterable, Optional,
+    Mapping, Sequence,
+)
 
+from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
@@ -17,6 +22,7 @@ from .base import (
     BigInt, GUID, IDColumn, EnumType,
     ResourceSlotColumn,
     Item, PaginatedList,
+    batch_result,
 )
 from .group import groups
 from .user import users
@@ -161,6 +167,14 @@ kernel_dependencies = sa.Table(
     sa.PrimaryKeyConstraint('kernel_id', 'depends_on'),
 )
 
+DEFAULT_SESSION_ORDERING = [
+    sa.desc(sa.func.greatest(
+        kernels.c.created_at,
+        kernels.c.terminated_at,
+        kernels.c.status_changed,
+    ))
+]
+
 
 class ComputeContainer(graphene.ObjectType):
     class Meta:
@@ -280,13 +294,7 @@ class ComputeContainer(graphene.ObjectType):
                          order_key=None, order_asc=None):
         async with context['dbpool'].acquire() as conn:
             if order_key is None:
-                _ordering = [
-                    sa.desc(sa.func.greatest(
-                        kernels.c.created_at,
-                        kernels.c.terminated_at,
-                        kernels.c.status_changed,
-                    ))
-                ]
+                _ordering = DEFAULT_SESSION_ORDERING
             else:
                 _order_func = sa.asc if order_asc else sa.desc
                 _ordering = [_order_func(getattr(kernels.c, order_key))]
@@ -312,60 +320,21 @@ class ComputeContainer(graphene.ObjectType):
                 query = query.where(kernels.c.group_id == group_id)
             if access_key is not None:
                 query = query.where(kernels.c.access_key == access_key)
-            result = await conn.execute(query)
-            rows = await result.fetchall()
-            return [cls.from_row(context, r) for r in rows]
+            return [cls.from_row(context, r) async for r in conn.execute(query)]
 
     @classmethod
-    async def load_all_by_session(cls, context, session_id):
+    async def batch_load_by_session(cls, context, session_ids):
         async with context['dbpool'].acquire() as conn:
             query = (
-                sa.select([sa.func.count(kernels.c.id)])
+                sa.select([kernels])
                 .select_from(kernels)
                 # TODO: use "owner session ID" when we implement multi-container session
-                .where(kernels.c.id == session_id)
+                .where(kernels.c.id.in_(session_ids))
             )
-            result = await conn.execute(query)
-            rows = await result.fetchall()
-            return [cls.from_row(context, r) for r in rows]
-
-    @classmethod
-    async def batch_load(cls, context, access_keys, *,
-                         domain_name=None, group_id=None,
-                         status=None):
-        async with context['dbpool'].acquire() as conn:
-            j = (
-                kernels
-                .join(groups, groups.c.id == kernels.c.group_id)
-                .join(users, users.c.uuid == kernels.c.user_uuid)
+            return await batch_result(
+                context, conn, query, cls,
+                session_ids, lambda row: row['id'],
             )
-            query = (
-                sa.select([kernels, groups.c.name, users.c.email])
-                .select_from(j)
-                .where(
-                    (kernels.c.access_key.in_(access_keys))
-                )
-                .order_by(
-                    sa.desc(sa.func.greatest(
-                        kernels.c.created_at,
-                        kernels.c.terminated_at,
-                        kernels.c.status_changed,
-                    ))
-                )
-                .limit(100))
-            if domain_name is not None:
-                query = query.where(kernels.c.domain_name == domain_name)
-            if group_id is not None:
-                query = query.where(kernels.c.group_id == group_id)
-            if status is not None:
-                query = query.where(kernels.c.status == status)
-            objs_per_key = OrderedDict()
-            for k in access_keys:
-                objs_per_key[k] = list()
-            async for row in conn.execute(query):
-                o = cls.from_row(context, row)
-                objs_per_key[row['access_key']].append(o)
-        return [*objs_per_key.values()]
 
     @classmethod
     async def batch_load_detail(cls, context, container_ids, *,
@@ -395,20 +364,10 @@ class ComputeContainer(graphene.ObjectType):
                 query = query.where(kernels.c.access_key == access_key)
             if status is not None:
                 query = query.where(kernels.c.status.in_(status_list))
-            container_info = []
-            async for row in conn.execute(query):
-                o = cls.from_row(context, row)
-                container_info.append(o)
-        if len(container_info) != 0:
-            return tuple(container_info)
-        else:
-            container_info = OrderedDict()
-            for s in container_ids:
-                container_info[s] = list()
-            async for row in conn.execute(query):
-                o = cls.from_row(context, row)
-                container_info[row['id']].append(o)
-            return [*container_info.values()]
+            return await batch_result(
+                context, conn, query, cls,
+                container_ids, lambda row: row['id'],
+            )
 
 
 class ComputeSession(graphene.ObjectType):
@@ -458,7 +417,7 @@ class ComputeSession(graphene.ObjectType):
     containers = graphene.List(lambda: ComputeContainer)
 
     # relations
-    depends_on = graphene.List(lambda: ComputeSession)
+    dependenceis = graphene.List(lambda: ComputeSession)
 
     @classmethod
     def parse_row(cls, context, row):
@@ -506,17 +465,23 @@ class ComputeSession(graphene.ObjectType):
         }
 
     @classmethod
-    def from_row(cls, context, row):
+    def from_row(cls, context: Mapping[str, Any], row: RowProxy) -> Optional[ComputeSession]:
         if row is None:
             return None
         props = cls.parse_row(context, row)
         return cls(**props)
 
-    async def resolve_containers(self, info: graphene.ResolveInfo):
-        return await ComputeContainer.load_all_by_session(info.context, self.id)
+    async def resolve_containers(self, info: graphene.ResolveInfo) -> Iterable[ComputeContainer]:
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('ComputeContainer.by_session')
+        containers = await loader.load(self.id)
+        return containers
 
-    async def resolve_depends_on(self, info: graphene.ResolveInfo):
-        raise NotImplementedError
+    async def resolve_dependencies(self, info: graphene.ResolveInfo) -> Iterable[ComputeSession]:
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('ComputeSession.by_dependency')
+        dependencies = await loader.load(self.id)
+        return dependencies
 
     @classmethod
     async def load_count(cls, context, *,
@@ -556,13 +521,7 @@ class ComputeSession(graphene.ObjectType):
             status_list = [status]
         async with context['dbpool'].acquire() as conn:
             if order_key is None:
-                _ordering = [
-                    sa.desc(sa.func.greatest(
-                        kernels.c.created_at,
-                        kernels.c.terminated_at,
-                        kernels.c.status_changed,
-                    ))
-                ]
+                _ordering = DEFAULT_SESSION_ORDERING
             else:
                 _order_func = sa.asc if order_asc else sa.desc
                 _ordering = [_order_func(getattr(kernels.c, order_key))]
@@ -587,9 +546,27 @@ class ComputeSession(graphene.ObjectType):
                 query = query.where(kernels.c.access_key == access_key)
             if status is not None:
                 query = query.where(kernels.c.status.in_(status_list))
-            result = await conn.execute(query)
-            rows = await result.fetchall()
-            return [cls.from_row(context, r) for r in rows]
+            return [cls.from_row(context, r) async for r in conn.execute(query)]
+
+    @classmethod
+    async def batch_load_by_dependency(cls, context, session_ids):
+        async with context['dbpool'].acquire() as conn:
+            j = sa.join(
+                kernels, kernel_dependencies,
+                kernels.c.id == kernel_dependencies.c.depends_on,
+            )
+            query = (
+                sa.select([kernels])
+                .select_from(j)
+                .where(
+                    (kernels.c.role == 'master') &
+                    (kernel_dependencies.c.kernel_id.in_(session_ids))
+                )
+            )
+            return await batch_result(
+                context, conn, query, cls,
+                session_ids, lambda row: row['id'],
+            )
 
     @classmethod
     async def batch_load_detail(cls, context, session_ids, *,
@@ -620,20 +597,10 @@ class ComputeSession(graphene.ObjectType):
                 query = query.where(kernels.c.access_key == access_key)
             if status is not None:
                 query = query.where(kernels.c.status.in_(status_list))
-            session_info = []
-            async for row in conn.execute(query):
-                o = cls.from_row(context, row)
-                session_info.append(o)
-        if len(session_info) != 0:
-            return tuple(session_info)
-        else:
-            session_info = OrderedDict()
-            for sid in session_ids:
-                session_info[sid] = list()
-            async for row in conn.execute(query):
-                o = cls.from_row(context, row)
-                session_info[row['id']].append(o)
-            return [*session_info.values()]
+            return await batch_result(
+                context, conn, query, cls,
+                session_ids, lambda row: row['id'],
+            )
 
 
 class ComputeContainerList(graphene.ObjectType):
@@ -900,17 +867,10 @@ class LegacyComputeSession(graphene.ObjectType):
             status_list = [status]
         async with context['dbpool'].acquire() as conn:
             if order_key is None:
-                _ordering = [
-                    sa.desc(sa.func.greatest(
-                        kernels.c.created_at,
-                        kernels.c.terminated_at,
-                        kernels.c.status_changed,
-                    ))
-                ]
+                _ordering = DEFAULT_SESSION_ORDERING
             else:
                 _order_func = sa.asc if order_asc else sa.desc
                 _ordering = [_order_func(getattr(kernels.c, order_key))]
-            # TODO: optimization for pagination using subquery, join
             j = (kernels.join(groups, groups.c.id == kernels.c.group_id)
                         .join(users, users.c.uuid == kernels.c.user_uuid))
             query = (
@@ -929,9 +889,7 @@ class LegacyComputeSession(graphene.ObjectType):
                 query = query.where(kernels.c.access_key == access_key)
             if status is not None:
                 query = query.where(kernels.c.status.in_(status_list))
-            result = await conn.execute(query)
-            rows = await result.fetchall()
-            return [cls.from_row(context, r) for r in rows]
+            return [cls.from_row(context, r) async for r in conn.execute(query)]
 
     @classmethod
     async def batch_load(cls, context, access_keys, *,
@@ -961,13 +919,10 @@ class LegacyComputeSession(graphene.ObjectType):
                 query = query.where(kernels.c.group_id == group_id)
             if status is not None:
                 query = query.where(kernels.c.status == status)
-            objs_per_key = OrderedDict()
-            for k in access_keys:
-                objs_per_key[k] = list()
-            async for row in conn.execute(query):
-                o = cls.from_row(context, row)
-                objs_per_key[row.access_key].append(o)
-        return [*objs_per_key.values()]
+            return await batch_result(
+                context, conn, query, cls,
+                access_keys, lambda row: row['access_key'],
+            )
 
     @classmethod
     async def batch_load_detail(cls, context, sess_ids, *,
@@ -992,20 +947,10 @@ class LegacyComputeSession(graphene.ObjectType):
                 query = query.where(kernels.c.access_key == access_key)
             if status is not None:
                 query = query.where(kernels.c.status.in_(status_list))
-            sess_info = []
-            async for row in conn.execute(query):
-                o = cls.from_row(context, row)
-                sess_info.append(o)
-        if len(sess_info) != 0:
-            return tuple(sess_info)
-        else:
-            sess_info = OrderedDict()
-            for s in sess_ids:
-                sess_info[s] = list()
-            async for row in conn.execute(query):
-                o = cls.from_row(context, row)
-                sess_info[row.sess_id].append(o)
-            return [*sess_info.values()]
+            return await batch_result(
+                context, conn, query, cls,
+                sess_ids, lambda row: row['sess_id'],
+            )
 
 
 class LegacyComputeSessionList(graphene.ObjectType):

@@ -1,16 +1,24 @@
+from __future__ import annotations
+from abc import abstractmethod, ABCMeta
 import asyncio
+import collections
 import enum
 import functools
 import logging
 from typing import (
-    Union,
-    Dict, Mapping
+    TypeVar, Protocol,
+    Any, Callable, Optional, Union,
+    Iterable,
+    Sequence, List,
+    Mapping, Dict,
 )
 import sys
 import uuid
 
 from aiodataloader import DataLoader
 from aiotools import apartial
+from aiopg.sa.connection import SAConnection
+from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types import Scalar
 from graphql.language import ast
@@ -287,6 +295,35 @@ class Item(graphene.Interface):
 class PaginatedList(graphene.Interface):
     items = graphene.List(Item, required=True)
     total_count = graphene.Int(required=True)
+
+
+class _SQLBasedGQLObject(Protocol):
+    @classmethod
+    def from_row(
+        cls,
+        context: Mapping[str, Any],
+        row: RowProxy,
+    ) -> _SQLBasedGQLObject: ...
+
+
+_Key = TypeVar('_Key')
+
+
+async def batch_result(
+    context: Mapping[str, Any],
+    conn: SAConnection,
+    query: sa.sql.Select,
+    obj_type: _SQLBasedGQLObject,
+    key_list: Iterable[_Key],
+    key_getter: Callable[[RowProxy], _Key],
+) -> Sequence[Sequence[Optional[_SQLBasedGQLObject]]]:
+    objs_per_key: Dict[_Key, List[Optional[_SQLBasedGQLObject]]]
+    objs_per_key = collections.OrderedDict()
+    for key in key_list:
+        objs_per_key[key] = list()
+    async for row in conn.execute(query):
+        objs_per_key[key_getter(row)].append(obj_type.from_row(context, row))
+    return [*objs_per_key.values()]
 
 
 def privileged_query(required_role):
