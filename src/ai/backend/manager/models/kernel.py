@@ -416,7 +416,7 @@ class ComputeSession(graphene.ObjectType):
     containers = graphene.List(lambda: ComputeContainer)
 
     # relations
-    dependenceis = graphene.List(lambda: ComputeSession)
+    dependencies = graphene.List(lambda: ComputeSession)
 
     @classmethod
     def parse_row(cls, context, row):
