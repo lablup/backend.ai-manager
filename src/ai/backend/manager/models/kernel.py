@@ -290,7 +290,6 @@ class ComputeContainer(graphene.ObjectType):
             else:
                 _order_func = sa.asc if order_asc else sa.desc
                 _ordering = [_order_func(getattr(kernels.c, order_key))]
-            # TODO: optimization for pagination using subquery, join
             j = (
                 kernels
                 .join(groups, groups.c.id == kernels.c.group_id)
@@ -313,6 +312,19 @@ class ComputeContainer(graphene.ObjectType):
                 query = query.where(kernels.c.group_id == group_id)
             if access_key is not None:
                 query = query.where(kernels.c.access_key == access_key)
+            result = await conn.execute(query)
+            rows = await result.fetchall()
+            return [cls.from_row(context, r) for r in rows]
+
+    @classmethod
+    async def load_all_by_session(cls, context, session_id):
+        async with context['dbpool'].acquire() as conn:
+            query = (
+                sa.select([sa.func.count(kernels.c.id)])
+                .select_from(kernels)
+                # TODO: use "owner session ID" when we implement multi-container session
+                .where(kernels.c.id == session_id)
+            )
             result = await conn.execute(query)
             rows = await result.fetchall()
             return [cls.from_row(context, r) for r in rows]
@@ -501,7 +513,7 @@ class ComputeSession(graphene.ObjectType):
         return cls(**props)
 
     async def resolve_containers(self, info: graphene.ResolveInfo):
-        raise NotImplementedError
+        return await ComputeContainer.load_all_by_session(info.context, self.id)
 
     async def resolve_depends_on(self, info: graphene.ResolveInfo):
         raise NotImplementedError
@@ -554,7 +566,6 @@ class ComputeSession(graphene.ObjectType):
             else:
                 _order_func = sa.asc if order_asc else sa.desc
                 _ordering = [_order_func(getattr(kernels.c, order_key))]
-            # TODO: optimization for pagination using subquery, join
             j = (
                 kernels
                 .join(groups, groups.c.id == kernels.c.group_id)
