@@ -1,5 +1,4 @@
 from __future__ import annotations
-from abc import abstractmethod, ABCMeta
 import asyncio
 import collections
 import enum
@@ -303,7 +302,8 @@ class _SQLBasedGQLObject(Protocol):
         cls,
         context: Mapping[str, Any],
         row: RowProxy,
-    ) -> _SQLBasedGQLObject: ...
+    ) -> _SQLBasedGQLObject:
+        ...
 
 
 _Key = TypeVar('_Key')
