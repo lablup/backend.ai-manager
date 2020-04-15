@@ -188,7 +188,7 @@ from .auth import superadmin_required
 from ..manager.defs import INTRINSIC_SLOTS
 from .exceptions import InvalidAPIParameters, ServerMisconfiguredError
 from .manager import ManagerStatus
-from .typing import CORSOptions, WebMiddleware
+from .types import CORSOptions, WebMiddleware
 from .utils import chunked, check_api_params
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))

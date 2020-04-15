@@ -44,12 +44,12 @@ from ..manager.registry import AgentRegistry
 from ..manager.scheduler.dispatcher import SchedulerDispatcher
 from ..manager.background import BackgroundTaskManager
 from .config import load as load_config, load_shared as load_shared_config
-from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
+from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB, REDIS_STREAM_DB
 from .etcd import ConfigServer
 from .events import EventDispatcher
 from .exceptions import (BackendError, MethodNotAllowed, GenericNotFound,
                          GenericBadRequest, InternalServerError)
-from .typing import (
+from .types import (
     AppCreator, PluginAppCreator,
     WebRequestHandler, WebMiddleware,
     CleanupContext,
@@ -99,6 +99,7 @@ PUBLIC_INTERFACES: Final = [
     'redis_live',
     'redis_stat',
     'redis_image',
+    'redis_stream',
     'event_dispatcher',
     'stats_monitor',
     'error_monitor',
@@ -109,9 +110,9 @@ public_interface_objs: MutableMapping[str, Any] = {}
 
 
 async def hello(request: web.Request) -> web.Response:
-    '''
+    """
     Returns the API version number.
-    '''
+    """
     return web.json_response({
         'version': LATEST_API_VERSION,
         'manager': __version__,
@@ -257,6 +258,13 @@ async def redis_ctx(app: web.Application) -> AsyncIterator[None]:
         timeout=3.0,
         encoding='utf8',
         db=REDIS_IMAGE_DB)
+    app['redis_stream'] = await redis.connect_with_retries(
+        app['config']['redis']['addr'].as_sockaddr(),
+        password=(app['config']['redis']['password']
+                  if app['config']['redis']['password'] else None),
+        timeout=3.0,
+        encoding='utf8',
+        db=REDIS_STREAM_DB)
     _update_public_interface_objs(app)
     yield
     app['redis_image'].close()
@@ -265,6 +273,8 @@ async def redis_ctx(app: web.Application) -> AsyncIterator[None]:
     await app['redis_stat'].wait_closed()
     app['redis_live'].close()
     await app['redis_live'].wait_closed()
+    app['redis_stream'].close()
+    await app['redis_stream'].wait_closed()
 
 
 async def database_ctx(app: web.Application) -> AsyncIterator[None]:

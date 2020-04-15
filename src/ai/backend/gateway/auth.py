@@ -33,7 +33,7 @@ from ..manager.models import (
 from ..manager.models.user import UserRole, check_credential
 from ..manager.models.keypair import generate_keypair as _gen_keypair, generate_ssh_keypair
 from ..manager.models.group import association_groups_users, groups
-from .typing import CORSOptions, WebMiddleware
+from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params, set_handler_attr, get_handler_attr
 
 log: Final = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.auth'))

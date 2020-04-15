@@ -27,7 +27,7 @@ from ai.backend.gateway.etcd import ConfigServer
 from ai.backend.gateway.server import (
     build_root_app,
 )
-from ai.backend.gateway.typing import (
+from ai.backend.gateway.types import (
     CleanupContext,
 )
 from ai.backend.manager.models.base import populate_fixture

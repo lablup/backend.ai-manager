@@ -44,7 +44,7 @@ from ..manager.models import (
     RESOURCE_OCCUPYING_KERNEL_STATUSES,
     RESOURCE_USAGE_KERNEL_STATUSES,
 )
-from .typing import CORSOptions, WebMiddleware
+from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.kernel'))

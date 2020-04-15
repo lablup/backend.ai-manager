@@ -16,7 +16,7 @@ from .auth import auth_required
 from .manager import (
     READ_ALLOWED,
     server_status_required)
-from .typing import CORSOptions, WebMiddleware
+from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params
 from ..manager.models import (
     query_allowed_sgroups,

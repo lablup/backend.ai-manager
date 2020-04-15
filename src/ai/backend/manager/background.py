@@ -11,13 +11,15 @@ from typing import (
 import uuid
 
 from aiojobs import Scheduler
+import attr
 
 from ai.backend.common import redis
 from ai.backend.common.logging import BraceStyleAdapter
 
 from ..gateway.events import EventDispatcher
+from .types import BackgroundTaskEventArgs
 
-log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.stream'))
+log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.background'))
 
 MAX_BGTASK_ARCHIVE_PERIOD = 86400  # 24  hours
 
@@ -55,8 +57,14 @@ class ProgressReporter:
 
         await redis.execute_with_retries(_pipe_builder, max_retries=2)
         await self.event_dispatcher.produce_event(
-            'task_updated',
-            (str(self.task_id), current, self.total_progress, message, )
+            'task_updated', (
+                attr.asdict(BackgroundTaskEventArgs(
+                    str(self.task_id),
+                    message=message,
+                    current_progress=current,
+                    total_progress=self.total_progress,
+                )),
+            )
         )
 
 
@@ -73,7 +81,7 @@ class BackgroundTaskManager:
 
     async def start_background_task(
         self,
-        coro: BackgroundTask,
+        func: BackgroundTask,
         name: str = None,
         sched: Scheduler = None,
     ) -> uuid.UUID:
@@ -101,14 +109,14 @@ class BackgroundTaskManager:
             # aiojobs' Scheduler doesn't support add_done_callback yet
             raise NotImplementedError
         else:
-            task = asyncio.create_task(self._wrapper_task(coro, task_id, name))
+            task = asyncio.create_task(self._wrapper_task(func, task_id, name))
             self.ongoing_tasks.add(task)
             task.add_done_callback(self.ongoing_tasks.remove)
         return task_id
 
     async def _wrapper_task(
         self,
-        coro: BackgroundTask,
+        func: BackgroundTask,
         task_id: uuid.UUID,
         task_name: Optional[str],
     ) -> None:
@@ -116,7 +124,7 @@ class BackgroundTaskManager:
         reporter = ProgressReporter(self.event_dispatcher, task_id)
         message = ''
         try:
-            message = await coro(reporter) or ''
+            message = await func(reporter) or ''
             task_result = 'task_done'
         except asyncio.CancelledError:
             task_result = 'task_cancelled'
@@ -139,13 +147,17 @@ class BackgroundTaskManager:
 
             await redis.execute_with_retries(_pipe_builder, max_retries=2)
             await self.event_dispatcher.produce_event(
-                task_result,
-                (str(task_id), message, )
+                task_result, (
+                    attr.asdict(BackgroundTaskEventArgs(
+                        str(task_id),
+                        message=message,
+                    )),
+                )
             )
-            log.info('{} ({}): {}', task_id, task_name or '', task_result)
+            log.info('Task {} ({}): {}', task_id, task_name or '', task_result)
 
     async def shutdown(self) -> None:
-        log.info('Clenaing up remaining tasks...')
-        for task in self.ongoing_tasks:
+        log.info('Cancelling remaining background tasks...')
+        for task in self.ongoing_tasks.copy():
             task.cancel()
             await task
