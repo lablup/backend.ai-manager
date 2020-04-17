@@ -1,7 +1,4 @@
 import asyncio
-from typing import (
-    Union,
-)
 
 from aiohttp import web
 import pytest
