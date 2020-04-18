@@ -118,16 +118,16 @@ async def test_background_task(etcd_fixture, create_app_and_client):
         done_handler_ctx.update(**args)
 
     async def _mock_task(reporter):
-        await reporter.set_progress_total(2)
+        reporter.total_progress = 2
         await asyncio.sleep(1)
-        await reporter.update_progress(1, message='BGTask ex1')
+        await reporter.update(1, message='BGTask ex1')
         await asyncio.sleep(0.5)
-        await reporter.update_progress(2, message='BGTask ex2')
+        await reporter.update(1, message='BGTask ex2')
         return 'hooray'
 
     dispatcher.subscribe('task_updated', app, update_sub)
     dispatcher.subscribe('task_done', app, done_sub)
-    task_id = await app['background_task'].start_background_task(_mock_task, name='MockTask1234')
+    task_id = await app['background_task_manager'].start(_mock_task, name='MockTask1234')
     await asyncio.sleep(2)
 
     try:
@@ -162,13 +162,13 @@ async def test_background_task_fail(etcd_fixture, create_app_and_client):
         fail_handler_ctx.update(**args)
 
     async def _mock_task(reporter):
-        await reporter.set_progress_total(2)
+        reporter.total_progress = 2
         await asyncio.sleep(1)
-        await reporter.update_progress(1, message='BGTask ex1')
+        await reporter.update(1, message='BGTask ex1')
         raise ZeroDivisionError('oops')
 
     dispatcher.subscribe('task_failed', app, fail_sub)
-    task_id = await app['background_task'].start_background_task(_mock_task, name='MockTask1234')
+    task_id = await app['background_task_manager'].start(_mock_task, name='MockTask1234')
     await asyncio.sleep(2)
     try:
         assert fail_handler_ctx['task_id'] == str(task_id)

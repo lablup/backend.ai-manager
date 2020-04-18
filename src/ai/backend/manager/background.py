@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 from typing import (
-    Awaitable, Callable, Optional,
+    Awaitable, Callable, Final, Optional,
     Literal, Union,
     Set,
 )
@@ -27,20 +27,28 @@ TaskResult = Literal['task_done', 'task_cancelled', 'task_failed']
 
 
 class ProgressReporter:
-    event_dispatcher: EventDispatcher
+    event_dispatcher: Final[EventDispatcher]
+    task_id: Final[uuid.UUID]
     total_progress: Union[int, float]
     current_progress: Union[int, float]
-    task_id: uuid.UUID
 
-    def __init__(self, event_dispatcher: EventDispatcher, task_id: uuid.UUID) -> None:
+    def __init__(
+        self,
+        event_dispatcher: EventDispatcher,
+        task_id: uuid.UUID,
+        current_progress: int = 0,
+        total_progress: int = 0,
+    ) -> None:
         self.event_dispatcher = event_dispatcher
         self.task_id = task_id
+        self.current_progress = current_progress
+        self.total_progress = total_progress
 
-    async def set_progress_total(self, value: Union[int, float]):
-        self.total_progress = value
-
-    async def update_progress(self, current: Union[int, float], message: str = None):
-        self.current_progress = current
+    async def update(self, increment: Union[int, float] = 0, message: str = None):
+        self.current_progress += increment
+        # keep the state as local variables because they might be changed
+        # due to interleaving at await statements below.
+        current, total = self.current_progress, self.total_progress
         redis_producer = self.event_dispatcher.redis_producer
 
         def _pipe_builder():
@@ -48,7 +56,7 @@ class ProgressReporter:
             tracker_key = f'bgtask.{self.task_id}'
             pipe.hmset_dict(tracker_key, {
                 'current': str(current),
-                'total': str(self.total_progress),
+                'total': str(total),
                 'msg': message or '',
                 'last_update': str(time.time()),
             })
@@ -62,7 +70,7 @@ class ProgressReporter:
                     str(self.task_id),
                     message=message,
                     current_progress=current,
-                    total_progress=self.total_progress,
+                    total_progress=total,
                 )),
             )
         )
@@ -79,10 +87,11 @@ class BackgroundTaskManager:
         self.event_dispatcher = event_dispatcher
         self.ongoing_tasks = set()
 
-    async def start_background_task(
+    async def start(
         self,
         func: BackgroundTask,
         name: str = None,
+        *,
         sched: Scheduler = None,
     ) -> uuid.UUID:
         task_id = uuid.uuid4()
@@ -131,6 +140,7 @@ class BackgroundTaskManager:
         except Exception as e:
             task_result = 'task_failed'
             message = repr(e)
+            log.exception("Task {} ({}): unhandled error", task_id, task_name)
         finally:
             redis_producer = self.event_dispatcher.redis_producer
 

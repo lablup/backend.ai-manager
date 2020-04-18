@@ -352,31 +352,29 @@ async def push_background_task_events(
     defer(lambda: task_update_queues.remove(my_queue))
     try:
         async with sse_response(request) as resp:
-            event_name = 'task_updated'
-            try:
-                while True:
-                    event_args = await my_queue.get()
-                    try:
-                        if event_args is sentinel:
-                            break
-                        event_name = event_args[0]
-                        event_data = BackgroundTaskEventArgs(**event_args[1])
-                        if task_id != uuid.UUID(event_data.task_id):
-                            continue
-                        body = {
-                            'task_id': str(task_id),
-                            'message': event_data.message,
-                        }
-                        if event_data.current_progress is not None:
-                            body['current_progress'] = event_data.current_progress
-                        if event_data.total_progress is not None:
-                            body['total_progress'] = event_data.total_progress
-                        await resp.send(json.dumps(body), event=event_name, retry=5)
-                    finally:
-                        my_queue.task_done()
-            finally:
-                if event_name in ('task_done', 'task_failed', 'task_cancelled'):
-                    await resp.send('{}', event="server_close")
+            while True:
+                event_args = await my_queue.get()
+                try:
+                    if event_args is sentinel:
+                        break
+                    event_name = event_args[0]
+                    event_data = BackgroundTaskEventArgs(**event_args[1])
+                    if task_id != uuid.UUID(event_data.task_id):
+                        continue
+                    body = {
+                        'task_id': str(task_id),
+                        'message': event_data.message,
+                    }
+                    if event_data.current_progress is not None:
+                        body['current_progress'] = event_data.current_progress
+                    if event_data.total_progress is not None:
+                        body['total_progress'] = event_data.total_progress
+                    await resp.send(json.dumps(body), event=event_name, retry=5)
+                    if event_name in ('task_done', 'task_failed', 'task_cancelled'):
+                        await resp.send('{}', event="server_close")
+                        break
+                finally:
+                    my_queue.task_done()
     finally:
         return resp
 

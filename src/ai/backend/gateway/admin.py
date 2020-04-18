@@ -69,6 +69,7 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
         'redis_stat': request.app['redis_stat'],
         'manager_status': manager_status,
         'known_slot_types': known_slot_types,
+        'background_task_manager': request.app['background_task_manager'],
     }
     dlmanager = DataLoaderManager(context)
     result = schema.execute(

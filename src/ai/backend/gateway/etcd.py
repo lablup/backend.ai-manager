@@ -185,6 +185,7 @@ from ai.backend.common.docker import (
     login as registry_login,
 )
 from .auth import superadmin_required
+from ..manager.background import ProgressReporter
 from ..manager.defs import INTRINSIC_SLOTS
 from .exceptions import InvalidAPIParameters, ServerMisconfiguredError
 from .manager import ManagerStatus
@@ -367,7 +368,12 @@ class ConfigServer:
         if value_range[1] is not None:
             await self.etcd.put(f'{ref.tag_path}/resource/{slot_type}/max', str(value_range[1]))
 
-    async def _rescan_images(self, registry_name, registry_info):
+    async def _rescan_images_single_registry(
+        self,
+        registry_name: str,
+        registry_info: Mapping[str, str],
+        reporter: ProgressReporter = None,
+    ) -> None:
         all_updates = {}
         base_hdrs = {
             'Accept': 'application/vnd.docker.distribution.manifest.v2+json',
@@ -409,6 +415,8 @@ class ConfigServer:
                         )
             scheduler = await aiojobs.create_scheduler(limit=4)
             try:
+                if reporter:
+                    reporter.total_progress += len(tags)
                 jobs = await asyncio.gather(*[
                     scheduler.spawn(_scan_tag(sess, rqst_args, image, tag))
                     for tag in tags])
@@ -446,38 +454,49 @@ class ConfigServer:
                 'krunner', 'builder',
                 'backendai', 'geofront',
             )
-            if 'ai.backend.kernelspec' not in labels:
-                # Skip non-Backend.AI kernel images
-                if not any((w in image) for w in non_kernel_words):
-                    log.warning('skipping image due to missing kernelspec - {}:{}', image, tag)
-                return
-            if not (MIN_KERNELSPEC <= int(labels['ai.backend.kernelspec']) <= MAX_KERNELSPEC):
-                # Skip unsupported kernelspec images
-                if not any((w in image) for w in non_kernel_words):
-                    log.warning('skipping image due to unsupported kernelspec - {}:{}', image, tag)
-                return
+            skipped = False
+            try:
+                if 'ai.backend.kernelspec' not in labels:
+                    # Skip non-Backend.AI kernel images
+                    if not any((w in image) for w in non_kernel_words):
+                        log.warning('skipping image due to missing kernelspec - {}:{}', image, tag)
+                    skipped = True
+                    return
+                if not (MIN_KERNELSPEC <= int(labels['ai.backend.kernelspec']) <= MAX_KERNELSPEC):
+                    # Skip unsupported kernelspec images
+                    if not any((w in image) for w in non_kernel_words):
+                        log.warning('skipping image due to unsupported kernelspec - {}:{}', image, tag)
+                    skipped = True
+                    return
 
-            log.info('Updating metadata for {0}:{1}', image, tag)
-            updates = {}
-            updates[f'images/{etcd_quote(registry_name)}/'
-                    f'{etcd_quote(image)}'] = '1'
-            tag_prefix = f'images/{etcd_quote(registry_name)}/' \
-                         f'{etcd_quote(image)}/{tag}'
-            updates[tag_prefix] = config_digest
-            updates[f'{tag_prefix}/size_bytes'] = size_bytes
-            for k, v in labels.items():
-                updates[f'{tag_prefix}/labels/{k}'] = v
+                log.info('Updating metadata for {0}:{1}', image, tag)
+                updates = {}
+                updates[f'images/{etcd_quote(registry_name)}/'
+                        f'{etcd_quote(image)}'] = '1'
+                tag_prefix = f'images/{etcd_quote(registry_name)}/' \
+                             f'{etcd_quote(image)}/{tag}'
+                updates[tag_prefix] = config_digest
+                updates[f'{tag_prefix}/size_bytes'] = size_bytes
+                for k, v in labels.items():
+                    updates[f'{tag_prefix}/labels/{k}'] = v
 
-            accels = labels.get('ai.backend.accelerators')
-            if accels:
-                updates[f'{tag_prefix}/accels'] = accels
+                accels = labels.get('ai.backend.accelerators')
+                if accels:
+                    updates[f'{tag_prefix}/accels'] = accels
 
-            res_prefix = 'ai.backend.resource.min.'
-            for k, v in filter(lambda pair: pair[0].startswith(res_prefix),
-                               labels.items()):
-                res_key = k[len(res_prefix):]
-                updates[f'{tag_prefix}/resource/{res_key}/min'] = v
-            all_updates.update(updates)
+                res_prefix = 'ai.backend.resource.min.'
+                for k, v in filter(lambda pair: pair[0].startswith(res_prefix),
+                                   labels.items()):
+                    res_key = k[len(res_prefix):]
+                    updates[f'{tag_prefix}/resource/{res_key}/min'] = v
+                all_updates.update(updates)
+            finally:
+                if reporter:
+                    if skipped:
+                        progress_msg = f"Skipped {image}:{tag}"
+                    else:
+                        progress_msg = f"Updated {image}:{tag}"
+                    await reporter.update(1, message=progress_msg)
 
         ssl_ctx = None  # default
         app_config = self.context.get('config')
@@ -485,13 +504,14 @@ class ConfigServer:
             ssl_ctx = False
         connector = aiohttp.TCPConnector(ssl=ssl_ctx)
         async with aiohttp.ClientSession(connector=connector) as sess:
-            images = []
-            if registry_url.host.endswith('.docker.io'):
+            images: List[str] = []
+            if registry_url.host is not None and registry_url.host.endswith('.docker.io'):
                 # We need some special treatment for the Docker Hub.
                 params = {'page_size': '30'}
                 username = await self.etcd.get(
                     f'config/docker/registry/{etcd_quote(registry_name)}/username')
                 hub_url = yarl.URL('https://hub.docker.com')
+                repo_list_url: Optional[yarl.URL]
                 repo_list_url = hub_url / f'v2/repositories/{username}/'
                 while repo_list_url is not None:
                     async with sess.get(repo_list_url, params=params) as resp:
@@ -519,6 +539,7 @@ class ConfigServer:
                 # In other cases, try the catalog search.
                 rqst_args = await registry_login(sess, registry_url, credentials,
                                                  'registry:catalog:*')
+                catalog_url: Optional[yarl.URL]
                 catalog_url = (registry_url / 'v2/_catalog').with_query(
                     {'n': '30'}
                 )
@@ -549,6 +570,7 @@ class ConfigServer:
                     }
                 else:
                     rqst_args = {}
+                project_list_url: Optional[yarl.URL]
                 project_list_url = (registry_url / 'api/projects').with_query(
                     {'page_size': '30'}
                 )
@@ -607,7 +629,8 @@ class ConfigServer:
         for kvlist in chunked(sorted(all_updates.items()), 16):
             await self.etcd.put_dict(dict(kvlist))
 
-    async def rescan_images(self, registry: str = None) -> None:
+    async def rescan_images(self, registry: str = None, *,
+                            reporter: ProgressReporter = None) -> None:
         if registry is None:
             registries = []
             data = await self.etcd.get_prefix('config/docker/registry')
@@ -623,7 +646,7 @@ class ConfigServer:
             if not registry_info:
                 log.error('Unknown registry: "{0}"', registry)
                 continue
-            coros.append(self._rescan_images(registry, registry_info))
+            coros.append(self._rescan_images_single_registry(registry, registry_info, reporter))
         await asyncio.gather(*coros)
         # TODO: delete images removed from registry?
 
