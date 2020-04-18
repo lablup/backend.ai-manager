@@ -814,11 +814,11 @@ async def rename_file(request: web.Request, params: Any, row: VFolderRow) -> web
         new_path = target_path.parent / params['new_name']
         # Ensure new file is in the same directory.
         if len(params['new_name'].split('/')) > 1:
-            raise InvalidAPIParameters('New name should not be a path')
+            raise InvalidAPIParameters('New name should not be a path: ' + params['new_name'])
         if new_path.exists():
-            raise InvalidAPIParameters('File already exists:', params['new_name'])
+            raise InvalidAPIParameters('File already exists: ' + params['new_name'])
     except FileNotFoundError:
-        raise InvalidAPIParameters('No such target file')
+        raise InvalidAPIParameters('No such target file: ' + params['target_path'])
     except ValueError:
         raise InvalidAPIParameters('The requested path is out of the folder')
     ops.append(functools.partial(target_path.rename, new_path))
