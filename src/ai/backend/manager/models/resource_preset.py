@@ -43,14 +43,11 @@ class ResourcePreset(graphene.ObjectType):
     def from_row(cls, row):
         if row is None:
             return None
-        if row['shared_memory'] is not None:
-            shared_memory = str(row['shared_memory'])
-        else:
-            shared_memory = None
+        shared_memory = str(row['shared_memory']) if row['shared_memory'] else  None
         return cls(
             name=row['name'],
             resource_slots=row['resource_slots'].to_json(),
-            shared_memory=row['shared_memory'],
+            shared_memory=shared_memory,
         )
 
     @classmethod
