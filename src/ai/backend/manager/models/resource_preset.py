@@ -77,12 +77,12 @@ class ResourcePreset(graphene.ObjectType):
 
 class CreateResourcePresetInput(graphene.InputObjectType):
     resource_slots = graphene.JSONString(required=True)
-    shared_memory = BigInt(required=False)
+    shared_memory = graphene.String(required=False)
 
 
 class ModifyResourcePresetInput(graphene.InputObjectType):
     resource_slots = graphene.JSONString(required=False)
-    shared_memory = BigInt(required=False)
+    shared_memory = graphene.String(required=False)
 
 
 class CreateResourcePreset(graphene.Mutation):
@@ -131,7 +131,7 @@ class ModifyResourcePreset(graphene.Mutation):
         set_if_set(props, data, 'resource_slots',
                    clean_func=lambda v: ResourceSlot.from_user_input(v, None))
         set_if_set(props, data, 'shared_memory',
-                   clean_func=lambda v: BinarySize.from_str(v, None) if v else None)
+                   clean_func=lambda v: BinarySize.from_str(v) if v else None)
         update_query = (
             resource_presets.update()
             .values(data)
