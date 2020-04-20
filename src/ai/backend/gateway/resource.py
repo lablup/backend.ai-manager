@@ -44,7 +44,6 @@ from ..manager.models import (
     RESOURCE_OCCUPYING_KERNEL_STATUSES,
     RESOURCE_USAGE_KERNEL_STATUSES,
 )
-from ..manager.models.base import BinarySize
 from .typing import CORSOptions, WebMiddleware
 from .utils import check_api_params
 
