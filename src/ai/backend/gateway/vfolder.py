@@ -795,7 +795,8 @@ async def rename_file(request: web.Request, params: Any, row: VFolderRow) -> web
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.RENAME_FILE (ak:{}, vf:{}, target_path:{}, new_name:{})',
              access_key, folder_name, params['target_path'], params['new_name'])
-    folder_path = get_folder_hostpath(row, request.app)
+    folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
+                   request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
     ops = []
     try:
         target_path = (folder_path / params['target_path']).resolve(strict=True)
