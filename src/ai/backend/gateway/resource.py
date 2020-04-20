@@ -44,6 +44,7 @@ from ..manager.models import (
     RESOURCE_OCCUPYING_KERNEL_STATUSES,
     RESOURCE_USAGE_KERNEL_STATUSES,
 )
+from ..manager.models.base import BinarySize
 from .typing import CORSOptions, WebMiddleware
 from .utils import check_api_params
 
@@ -233,6 +234,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             resp['presets'].append({
                 'name': row['name'],
                 'resource_slots': preset_slots.to_json(),
+                'shared_memory': str(row['shared_memory']) if row['shared_memory'] is not None else None,
                 'allocatable': allocatable,
             })
 

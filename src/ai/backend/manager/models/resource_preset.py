@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
 from .base import (
-    metadata, ResourceSlotColumn,
+    metadata, BigInt, BinarySize, ResourceSlotColumn,
     simple_db_mutate,
     simple_db_mutate_returning_item,
     set_if_set,
@@ -30,20 +30,27 @@ resource_presets = sa.Table(
     'resource_presets', metadata,
     sa.Column('name', sa.String(length=256), primary_key=True),
     sa.Column('resource_slots', ResourceSlotColumn(), nullable=False),
+    sa.Column('shared_memory', sa.BigInteger(), nullable=True),
 )
 
 
 class ResourcePreset(graphene.ObjectType):
     name = graphene.String()
     resource_slots = graphene.JSONString()
+    shared_memory = BigInt()
 
     @classmethod
     def from_row(cls, row):
         if row is None:
             return None
+        if row['shared_memory'] is not None:
+            shared_memory = str(row['shared_memory'])
+        else:
+            shared_memory = None
         return cls(
             name=row['name'],
             resource_slots=row['resource_slots'].to_json(),
+            shared_memory=row['shared_memory'],
         )
 
     @classmethod
@@ -73,10 +80,12 @@ class ResourcePreset(graphene.ObjectType):
 
 class CreateResourcePresetInput(graphene.InputObjectType):
     resource_slots = graphene.JSONString(required=True)
+    shared_memory = BigInt(required=False)
 
 
 class ModifyResourcePresetInput(graphene.InputObjectType):
     resource_slots = graphene.JSONString(required=False)
+    shared_memory = BigInt(required=False)
 
 
 class CreateResourcePreset(graphene.Mutation):
@@ -97,6 +106,7 @@ class CreateResourcePreset(graphene.Mutation):
             'name': name,
             'resource_slots': ResourceSlot.from_user_input(
                 props.resource_slots, None),
+            'shared_memory': BinarySize.from_str(props.shared_memory) if props.shared_memory else None,
         }
         insert_query = (resource_presets.insert().values(data))
         item_query = (
@@ -123,6 +133,8 @@ class ModifyResourcePreset(graphene.Mutation):
         data = {}
         set_if_set(props, data, 'resource_slots',
                    clean_func=lambda v: ResourceSlot.from_user_input(v, None))
+        set_if_set(props, data, 'shared_memory',
+                   clean_func=lambda v: BinarySize.from_str(v, None) if v else None)
         update_query = (
             resource_presets.update()
             .values(data)
