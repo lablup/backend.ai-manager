@@ -370,7 +370,6 @@ class VirtualFolder(graphene.ObjectType):
     class Meta:
         interfaces = (Item, )
 
-    id = graphene.UUID()
     host = graphene.String()
     name = graphene.String()
     user = graphene.UUID()       # User.id
