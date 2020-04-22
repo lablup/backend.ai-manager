@@ -176,7 +176,7 @@ async def delete(request: web.Request, params: Any) -> web.Response:
 @auth_required
 @check_api_params(t.Dict(
     {
-        t.Key('script'): t.String(max_length=MAXIMUM_DOTFILE_SIZE),
+        t.Key('script'): t.String(allow_blank=True, max_length=MAXIMUM_DOTFILE_SIZE),
     }
 ))
 async def update_bootstrap_script(request: web.Request, params: Any) -> web.Response:
