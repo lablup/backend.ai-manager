@@ -50,7 +50,8 @@ def upgrade():
     vfolderusagemode.create(op.get_bind())
     vfolderownershiptype.create(op.get_bind())
     op.add_column('vfolder_invitations',
-                  sa.Column('modified_at', sa.DateTime(timezone=True), nullable=True))
+                  sa.Column('modified_at', sa.DateTime(timezone=True), nullable=True,
+                            onupdate=sa.func.current_timestamp()))
     op.add_column(
         'vfolders',
         sa.Column('usage_mode', sa.Enum(*vfusagemode_choices, name='vfolderusagemode'), nullable=True)

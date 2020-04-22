@@ -1138,6 +1138,7 @@ async def list_sent_invitations(request: web.Request) -> web.Response:
             'perm': inv.permission,
             'state': inv.state.value,
             'created_at': str(inv.created_at),
+            'modified_at': str(inv.modified_at),
             'vfolder_id': str(inv.vfolder),
             'vfolder_name': inv.name,
         })
@@ -1281,6 +1282,7 @@ async def invitations(request: web.Request) -> web.Response:
             'perm': inv.permission,
             'state': inv.state,
             'created_at': str(inv.created_at),
+            'modified_at': str(inv.modified_at),
             'vfolder_id': str(inv.vfolder),
             'vfolder_name': inv.name,
         })
