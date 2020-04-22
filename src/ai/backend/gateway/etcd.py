@@ -45,7 +45,8 @@ Alias keys are also URL-quoted in the same way.
      + api
        - allow-origins: "*"
        + resources
-         - group_resource_visibility: ""  # return group resource status in check-presets
+         - group_resource_visibility: "true"  # return group resource status in check-presets
+                                              # (default: false)
      + docker
        + image
          - auto_pull: "digest" (default) | "tag" | "none"
