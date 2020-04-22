@@ -30,8 +30,8 @@
         "mem": "4294967296",
         "cuda.device": "1",
         "cuda.shares": "1.0"
-      }
-      "shared_memory": "536870912",
+      },
+      "shared_memory": "536870912"
     },
     {
       "name": "large",
@@ -39,7 +39,7 @@
         "cpu": "4",
         "mem": "8589934592"
       },
-      "shared_memory": "1073741824",
+      "shared_memory": "1073741824"
     },
     {
       "name": "large-gpu",
@@ -49,7 +49,7 @@
         "cuda.device": "2",
         "cuda.shares": "2.0"
       },
-      "shared_memory": "1073741824",
+      "shared_memory": "1073741824"
     }
   ]
 }
