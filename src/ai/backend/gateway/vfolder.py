@@ -832,6 +832,46 @@ async def tus_session_headers(request, params):
 @vfolder_permission_required(VFolderPermission.READ_WRITE)
 @check_api_params(
     t.Dict({
+        t.Key('target_path'): t.String,
+        t.Key('new_name'): t.String,
+    }))
+async def rename_file(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
+    folder_name = request.match_info['name']
+    access_key = request['keypair']['access_key']
+    log.info('VFOLDER.RENAME_FILE (ak:{}, vf:{}, target_path:{}, new_name:{})',
+             access_key, folder_name, params['target_path'], params['new_name'])
+    folder_path = get_folder_hostpath(row, request.app)
+    ops = []
+    try:
+        target_path = (folder_path / params['target_path']).resolve(strict=True)
+        target_path.relative_to(folder_path)
+        new_path = target_path.parent / params['new_name']
+        # Ensure new file is in the same directory.
+        if len(params['new_name'].split('/')) > 1:
+            raise InvalidAPIParameters('New name should not be a path: ' + params['new_name'])
+        if new_path.exists():
+            raise InvalidAPIParameters('File already exists: ' + params['new_name'])
+    except FileNotFoundError:
+        raise InvalidAPIParameters('No such target file: ' + params['target_path'])
+    except ValueError:
+        raise InvalidAPIParameters('The requested path is out of the folder')
+    ops.append(functools.partial(target_path.rename, new_path))
+
+    def _do_ops():
+        for op in ops:
+            op()
+
+    loop = current_loop()
+    await loop.run_in_executor(None, _do_ops)
+    resp: Dict[str, Any] = {}
+    return web.json_response(resp, status=200)
+
+
+@auth_required
+@server_status_required(READ_ALLOWED)
+@vfolder_permission_required(VFolderPermission.READ_WRITE)
+@check_api_params(
+    t.Dict({
         t.Key('files'): t.List[t.String],
         t.Key('recursive', default=False): t.ToBool,
     }))
@@ -1920,6 +1960,7 @@ def create_app(default_cors_options):
     cors.add(add_route('POST',   r'/{name}/mkdir', mkdir))
     cors.add(add_route('POST',   r'/{name}/upload', upload))
     cors.add(add_route('POST',   r'/{name}/create_upload_session', create_tus_upload_session))
+    cors.add(add_route('POST',   r'/{name}/rename_file', rename_file))
     cors.add(add_route('DELETE', r'/{name}/delete_files', delete_files))
     cors.add(add_route('GET',    r'/{name}/download', download))
     cors.add(add_route('GET',    r'/{name}/download_single', download_single))
