@@ -201,8 +201,8 @@ def get_folder_hostpath(row: VFolderRow, app):
     t.Dict({
         t.Key('name'): tx.Slug(allow_dot=True),
         t.Key('host', default=None) >> 'folder_host': t.String | t.Null,
-        t.Key('usage_mode', default='general'): t.String | t.Null,
-        t.Key('permission', default='rw'): t.String | t.Null,
+        t.Key('usage_mode', default='general'): tx.Enum(VFolderUsageMode) | t.Null,
+        t.Key('permission', default='rw'): tx.Enum(VFolderPermission) | t.Null,
         tx.AliasedKey(['unmanaged_path', 'unmanagedPath'], default=None): t.String | t.Null,
         tx.AliasedKey(['group', 'groupId', 'group_id'], default=None): tx.UUID | t.String | t.Null,
     }),
@@ -218,7 +218,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
     group_id_or_name = params['group']
     log.info('VFOLDER.CREATE (ak:{}, vf:{}, vfh:{}, umod:{}, perm:{})',
              access_key, params['name'], params['folder_host'],
-             params['usage_mode'], params['permission'])
+             params['usage_mode'].value, params['permission'].value)
     folder_host = params['folder_host']
     unmanaged_path = params['unmanaged_path']
     # Check if user is trying to created unmanaged vFolder
@@ -333,8 +333,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
         insert_values = {
             'id': folder_id,
             'name': params['name'],
-            'usage_mode': VFolderUsageMode(params['usage_mode']),
-            'permission': VFolderPermission(params['permission']),
+            'usage_mode': params['usage_mode'],
+            'permission': params['permission'],
             'last_used': None,
             'host': folder_host,
             'creator': request['user']['email'],
@@ -347,8 +347,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'id': folder_id,
             'name': params['name'],
             'host': folder_host,
-            'usage_mode': params['usage_mode'],
-            'permission': params['permission'],
+            'usage_mode': params['usage_mode'].value,
+            'permission': params['permission'].value,
             'creator': request['user']['email'],
             'ownership_type': ownership_type,
             'user': user_uuid,
@@ -436,8 +436,8 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                 'created_at': str(entry['created_at']),
                 'is_owner': entry['is_owner'],
                 'permission': entry['permission'].value,
-                'user': str(entry['user']),
-                'group': str(entry['group']),
+                'user': str(entry['user']) if entry['user'] else None,
+                'group': str(entry['group']) if entry['group'] else None,
                 'creator': entry['creator'],
                 'user_email': entry['user_email'],
                 'group_name': entry['group_name'],
