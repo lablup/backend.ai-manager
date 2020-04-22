@@ -1,7 +1,7 @@
 """add_vfolder_type_column
 
 Revision ID: 529113b08c2c
-Revises: f5530eccf202
+Revises: c481d3dc6c7d
 Create Date: 2020-04-09 16:37:35.460936
 
 """
@@ -16,7 +16,7 @@ from ai.backend.manager.models.base import convention, EnumValueType, IDColumn, 
 
 # revision identifiers, used by Alembic.
 revision = '529113b08c2c'
-down_revision = 'f5530eccf202'
+down_revision = 'c481d3dc6c7d'
 branch_labels = None
 depends_on = None
 
