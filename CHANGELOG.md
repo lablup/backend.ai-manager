@@ -16,6 +16,20 @@ Changes
 
 .. towncrier release notes start
 
+19.09.20 (2020-04-23)
+---------------------
+
+### Features
+* Add API to rename a file/directory inside a virtual folder. ([#266](https://github.com/lablup/backend.ai-manager/issues/266))
+* Exclude TERMINATING sessions from user resource accounting to allow spawning new sessions when there are stuck-in-TERMINATING sessions ([#269](https://github.com/lablup/backend.ai-manager/issues/269))
+
+### Fixes
+* Prevent destruction of kernels in PREPARING/PULLING statuses ([#270](https://github.com/lablup/backend.ai-manager/issues/270))
+
+### Miscellaneous
+* Adopt towncrier for changelog management (for 19.09 series) ([#271](https://github.com/lablup/backend.ai-manager/issues/271))
+
+
 19.09.19 (2020-03-16)
 ---------------------
 
