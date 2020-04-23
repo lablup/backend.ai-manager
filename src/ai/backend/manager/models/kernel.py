@@ -24,7 +24,8 @@ from .user import users
 __all__: Sequence[str] = (
     'kernels', 'KernelStatus',
     'ComputeSessionList', 'ComputeSession', 'ComputeWorker', 'Computation',
-    'RESOURCE_OCCUPYING_KERNEL_STATUSES',
+    'AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES',
+    'USER_RESOURCE_OCCUPYING_KERNEL_STATUSES',
     'RESOURCE_USAGE_KERNEL_STATUSES',
     'DEAD_KERNEL_STATUSES',
     'LIVE_STATUS',
@@ -52,9 +53,19 @@ class KernelStatus(enum.Enum):
 
 
 # statuses to consider when calculating current resource usage
-RESOURCE_OCCUPYING_KERNEL_STATUSES = tuple(
+AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES = tuple(
     e for e in KernelStatus
     if e not in (
+        KernelStatus.TERMINATED,
+        KernelStatus.PENDING,
+        KernelStatus.CANCELLED,
+    )
+)
+
+USER_RESOURCE_OCCUPYING_KERNEL_STATUSES = tuple(
+    e for e in KernelStatus
+    if e not in (
+        KernelStatus.TERMINATING,
         KernelStatus.TERMINATED,
         KernelStatus.PENDING,
         KernelStatus.CANCELLED,

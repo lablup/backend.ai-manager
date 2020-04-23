@@ -48,7 +48,8 @@ from .models import (
     keypair_resource_policies,
     AgentStatus, KernelStatus,
     query_accessible_vfolders, query_allowed_sgroups,
-    RESOURCE_OCCUPYING_KERNEL_STATUSES,
+    AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
+    USER_RESOURCE_OCCUPYING_KERNEL_STATUSES,
     DEAD_KERNEL_STATUSES,
 )
 if TYPE_CHECKING:
@@ -665,7 +666,7 @@ class AgentRegistry:
                 sa.select([kernels.c.occupied_slots])
                 .where(
                     (kernels.c.access_key == access_key) &
-                    (kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                    (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES))
                 )
             )
             zero = ResourceSlot()
@@ -686,7 +687,7 @@ class AgentRegistry:
                 sa.select([kernels.c.occupied_slots])
                 .where(
                     (kernels.c.domain_name == domain_name) &
-                    (kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                    (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES))
                 )
             )
             zero = ResourceSlot()
@@ -705,7 +706,7 @@ class AgentRegistry:
                 sa.select([kernels.c.occupied_slots])
                 .where(
                     (kernels.c.group_id == group_id) &
-                    (kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                    (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES))
                 )
             )
             zero = ResourceSlot()
@@ -724,11 +725,15 @@ class AgentRegistry:
             # Query running containers and calculate concurrency_used per AK and
             # occupied_slots per agent.
             query = (sa.select([kernels.c.access_key, kernels.c.agent, kernels.c.occupied_slots])
-                       .where(kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                       .where(kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))
                        .order_by(sa.asc(kernels.c.access_key)))
             async for row in conn.execute(query):
-                concurrency_used_per_key[row.access_key] += 1
                 occupied_slots_per_agent[row.agent] += ResourceSlot(row.occupied_slots)
+            query = (sa.select([kernels.c.access_key, kernels.c.agent, kernels.c.occupied_slots])
+                     .where(kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                     .order_by(sa.asc(kernels.c.access_key)))
+            async for row in conn.execute(query):
+                concurrency_used_per_key[row.access_key] += 1
 
             if len(concurrency_used_per_key) > 0:
                 # Update concurrency_used for keypairs with running containers.
