@@ -51,7 +51,9 @@ from ..gateway.exceptions import (
     KernelExecutionFailed, KernelRestartFailed,
     ScalingGroupNotFound,
     VFolderNotFound,
-    AgentError)
+    AgentError,
+    GenericForbidden,
+)
 from .models import (
     agents, kernels, keypairs, vfolders,
     keypair_resource_policies,
@@ -906,6 +908,8 @@ class AgentRegistry:
                         (str(kernel.id), 'force-terminated'),
                     )
                     return {'status': 'cancelled'}
+                elif kernel.status in (KernelStatus.PREPARING, KernelStatus.PULLING):
+                    raise GenericForbidden('Cannot destory kernels in preparing/pulling status')
                 if kernel.status not in (KernelStatus.ERROR, KernelStatus.TERMINATING):
                     # This is allowed, but if agents are working normally,
                     # the session will become invisible and unaccessible but STILL occupy the actual
@@ -950,6 +954,8 @@ class AgentRegistry:
                         (str(kernel.id), 'user-requested'),
                     )
                     return {'status': 'cancelled'}
+                elif kernel.status in (KernelStatus.PREPARING, KernelStatus.PULLING):
+                    raise GenericForbidden('Cannot destory kernels in preparing/pulling status')
                 else:
                     if kernel.role == 'master':
                         # The master session is terminated; decrement the user's concurrency counter
