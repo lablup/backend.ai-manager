@@ -500,7 +500,8 @@ Changes prior to 19.09
 
 ### NOTICE
 - Requires alembic database migration for upgrading.
-**API CHANGES**
+
+### API CHANGES
 - The semantic for client session token changes. (#56, #58)
   Clients may reuse the same session token across different sessions if only a single
   session is running at a time.
@@ -522,7 +523,8 @@ Changes prior to 19.09
   All API responses now include its corresponding run ID regardless of whether it is
   given by the client or assigned by the server, which eases client-side
   demultiplexing of concurrent executions.
-**OTHER IMPROVEMENTS**
+
+### OTHER IMPROVEMENTS
 - Fix atomicity of rate-limiting calculation in multi-core setups. (#55)
 - Remove simplejson from dependencies in favor of the standard library.
   The stdlib has been updated to support all required features and use
@@ -604,6 +606,7 @@ Changes prior to 19.09
   C/C++/Java/Rust.
 - Add support for the file upload API for use with the batch-mode API.
   (up to 20 files per request and 1 MiB per each file)
+
 ### IMPROVEMENTS
 - Upgrade aiohttp to v2.2.0.
 
@@ -660,6 +663,7 @@ Changes prior to 19.09
 
 ### FIXES
 - Prevent potential CPU-hogging infinite loop during Datadog stats updates.
+
 ### IMPROVEMENTS
 - Add statistics reporting via Datadog. (optional feature)
 - Improve exception handling and reporting, particularly for agent-sid errors.
@@ -758,6 +762,7 @@ we skip the version 0.6.0 in all sub-projects.
 - Implemented most of the REST API except streaming terminals and events.
 - Added database schema for user/keypair information management.
   It can be initialized using `python -m sorna.gateway.models` command.
+
 ### FIXES
 - Fixed duplicate kernel count decrementing when destroying kernels in legacy manager.
 
