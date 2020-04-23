@@ -39,7 +39,7 @@ from ..manager.models import (
     AgentStatus,
     association_groups_users,
     query_allowed_sgroups,
-    RESOURCE_OCCUPYING_KERNEL_STATUSES,
+    AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
     RESOURCE_USAGE_KERNEL_STATUSES,
 )
 from .utils import check_api_params
@@ -181,7 +181,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             .select_from(kernels)
             .where(
                 (kernels.c.user_uuid == request['user']['uuid']) &
-                (kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
+                (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
                 (kernels.c.scaling_group.in_(sgroup_names))))
         async for row in conn.execute(query):
             per_sgroup[row.scaling_group]['using'] += row.occupied_slots
