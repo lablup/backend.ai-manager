@@ -119,11 +119,11 @@ vfolders = sa.Table(
     sa.CheckConstraint(
         '(ownership_type = \'user\' AND "user" IS NOT NULL) OR '
         '(ownership_type = \'group\' AND "group" IS NOT NULL)',
-        name='ck_vfolders_ownership_type_match_with_user_or_group',
+        name='ownership_type_match_with_user_or_group',
     ),
     sa.CheckConstraint(
         '("user" IS NULL AND "group" IS NOT NULL) OR ("user" IS NOT NULL AND "group" IS NULL)',
-        name='ck_vfolders_either_one_of_user_or_group',
+        name='either_one_of_user_or_group',
     )
 )
 
