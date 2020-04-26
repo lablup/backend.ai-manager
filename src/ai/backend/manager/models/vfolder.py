@@ -114,8 +114,6 @@ vfolders = sa.Table(
     sa.Column('user', GUID, sa.ForeignKey('users.uuid'), nullable=True),
     sa.Column('group', GUID, sa.ForeignKey('groups.id'), nullable=True),
 
-    # Note: Custom constraints should be manually defined during alembic migration.
-    #       This is just for reference.
     sa.CheckConstraint(
         '(ownership_type = \'user\' AND "user" IS NOT NULL) OR '
         '(ownership_type = \'group\' AND "group" IS NOT NULL)',
