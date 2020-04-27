@@ -1,7 +1,7 @@
 """add_shared_memory_to_resource_presets
 
 Revision ID: c481d3dc6c7d
-Revises: f5530eccf202
+Revises: 1e8531583e20
 Create Date: 2020-04-20 14:10:35.591063
 
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = 'c481d3dc6c7d'
-down_revision = 'f5530eccf202'
+down_revision = '1e8531583e20'
 branch_labels = None
 depends_on = None
 
