@@ -16,6 +16,12 @@ Changes
 
 .. towncrier release notes start
 
+19.09.21 (2020-04-30)
+---------------------
+
+### Features
+* Add shared memory column to resource preset ([#267](https://github.com/lablup/backend.ai-manager/issues/267))
+
 19.09.20 (2020-04-23)
 ---------------------
 
