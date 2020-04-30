@@ -1,0 +1,1 @@
+Missing concurrency update for self-terminated sessions (regression of [#269](https://github.com/lablup/backend.ai-manager/issues/269))
