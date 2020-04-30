@@ -1371,6 +1371,12 @@ class AgentRegistry:
             }
             await self.sync_kernel_stats(kernel_id, db_conn=conn, additional_updates=updates)
 
+            if reason == 'self-terminated' and kernel['status'] != KernelStatus.TERMINATING:
+                query = (sa.update(keypairs)
+                           .values(concurrency_used=keypairs.c.concurrency_used - 1)
+                           .where(keypairs.c.access_key == kernel.access_key))
+                await conn.execute(query)
+
             # Release agent resource slots.
             query = (
                 sa.select([
