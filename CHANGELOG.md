@@ -16,6 +16,12 @@ Changes
 
 .. towncrier release notes start
 
+19.09.22 (2020-04-30)
+---------------------
+
+### Fixes
+* Missing concurrency update for self-terminated sessions (regression of [#269](https://github.com/lablup/backend.ai-manager/issues/269)) ([#274](https://github.com/lablup/backend.ai-manager/issues/274))
+
 19.09.21 (2020-04-30)
 ---------------------
 
