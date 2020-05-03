@@ -1,0 +1,1 @@
+Remove unwanted empty key while setting etcd config with nested dict.
