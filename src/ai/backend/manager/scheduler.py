@@ -615,8 +615,8 @@ class SessionScheduler(aobject):
         async for row in sched_ctx.db_conn.execute(query):
             capacity_slots = row['available_slots']
             occupied_slots = row['occupied_slots']
-            log.debug('{} capacity: {!r}', row['id'], capacity_slots)
-            log.debug('{} occupied: {!r}', row['id'], occupied_slots)
+            log.debug('{} ({}) capacity: {!r}', row['id'], row['scaling_group'], capacity_slots)
+            log.debug('{} ({}) occupied: {!r}', row['id'], row['scaling_group'], occupied_slots)
             try:
                 remaining_slots = capacity_slots - occupied_slots
 
@@ -653,12 +653,15 @@ class SessionScheduler(aobject):
         await sched_ctx.db_conn.execute(query)
 
         # Get the agent address for later RPC calls
-        query = (sa.select([agents.c.addr])
+        query = (sa.select([agents.c.addr, agents.c.scaling_group])
                    .where(agents.c.id == agent_id))
-        agent_addr = await sched_ctx.db_conn.scalar(query)
+        result = await sched_ctx.db_conn.execute(query)
+        row = await result.first()
+        agent_addr = row['addr']
+        agent_sgroup = row['scaling_group']
         assert agent_addr is not None
 
-        return AgentAllocationContext(agent_id, agent_addr, row['scaling_group'])
+        return AgentAllocationContext(agent_id, agent_addr, agent_sgroup)
 
     async def _unreserve_agent_slots(self,
                                      sess_ctx: SessionContext,
