@@ -45,7 +45,8 @@ Alias keys are also URL-quoted in the same way.
      + api
        - allow-origins: "*"
        + resources
-         - allow-group-total: ""  # return total group resource limits in check-presets
+         - group_resource_visibility: "true"  # return group resource status in check-presets
+                                              # (default: false)
      + docker
        + image
          - auto_pull: "digest" (default) | "tag" | "none"
@@ -862,7 +863,8 @@ async def set_config(request: web.Request, params: Any) -> web.Response:
                 inner_prefix = prefix if k == '' else f'{prefix}/{k}'
                 if isinstance(v, Mapping):
                     flatten(inner_prefix, v)
-                updates[inner_prefix] = v
+                else:
+                    updates[inner_prefix] = v
 
         flatten(params['key'], params['value'])
         # TODO: chunk support if there are too many keys

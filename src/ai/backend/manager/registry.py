@@ -51,13 +51,16 @@ from ..gateway.exceptions import (
     KernelExecutionFailed, KernelRestartFailed,
     ScalingGroupNotFound,
     VFolderNotFound,
-    AgentError)
+    AgentError,
+    GenericForbidden,
+)
 from .models import (
     agents, kernels, keypairs, vfolders,
     keypair_resource_policies,
     AgentStatus, KernelStatus,
     query_accessible_vfolders, query_allowed_sgroups,
-    RESOURCE_OCCUPYING_KERNEL_STATUSES,
+    AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
+    USER_RESOURCE_OCCUPYING_KERNEL_STATUSES,
     DEAD_KERNEL_STATUSES,
 )
 if TYPE_CHECKING:
@@ -764,7 +767,7 @@ class AgentRegistry:
                 sa.select([kernels.c.occupied_slots])
                 .where(
                     (kernels.c.access_key == access_key) &
-                    (kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                    (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES))
                 )
             )
             zero = ResourceSlot()
@@ -785,7 +788,7 @@ class AgentRegistry:
                 sa.select([kernels.c.occupied_slots])
                 .where(
                     (kernels.c.domain_name == domain_name) &
-                    (kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                    (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES))
                 )
             )
             zero = ResourceSlot()
@@ -804,7 +807,7 @@ class AgentRegistry:
                 sa.select([kernels.c.occupied_slots])
                 .where(
                     (kernels.c.group_id == group_id) &
-                    (kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                    (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES))
                 )
             )
             zero = ResourceSlot()
@@ -823,11 +826,15 @@ class AgentRegistry:
             # Query running containers and calculate concurrency_used per AK and
             # occupied_slots per agent.
             query = (sa.select([kernels.c.access_key, kernels.c.agent, kernels.c.occupied_slots])
-                       .where(kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                       .where(kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))
                        .order_by(sa.asc(kernels.c.access_key)))
             async for row in conn.execute(query):
-                concurrency_used_per_key[row.access_key] += 1
                 occupied_slots_per_agent[row.agent] += ResourceSlot(row.occupied_slots)
+            query = (sa.select([kernels.c.access_key, kernels.c.agent, kernels.c.occupied_slots])
+                     .where(kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                     .order_by(sa.asc(kernels.c.access_key)))
+            async for row in conn.execute(query):
+                concurrency_used_per_key[row.access_key] += 1
 
             if len(concurrency_used_per_key) > 0:
                 # Update concurrency_used for keypairs with running containers.
@@ -901,6 +908,8 @@ class AgentRegistry:
                         (str(kernel.id), 'force-terminated'),
                     )
                     return {'status': 'cancelled'}
+                elif kernel.status in (KernelStatus.PREPARING, KernelStatus.PULLING):
+                    raise GenericForbidden('Cannot destory kernels in preparing/pulling status')
                 if kernel.status not in (KernelStatus.ERROR, KernelStatus.TERMINATING):
                     # This is allowed, but if agents are working normally,
                     # the session will become invisible and unaccessible but STILL occupy the actual
@@ -927,7 +936,7 @@ class AgentRegistry:
             async with self.dbpool.acquire() as conn, conn.begin():
                 kernel = await self.get_session(
                     sess_id, access_key,
-                    field=[kernels.c.domain_name],
+                    field=[kernels.c.domain_name, kernels.c.role],
                     for_update=True,
                     db_connection=conn,
                 )
@@ -945,7 +954,15 @@ class AgentRegistry:
                         (str(kernel.id), 'user-requested'),
                     )
                     return {'status': 'cancelled'}
+                elif kernel.status in (KernelStatus.PREPARING, KernelStatus.PULLING):
+                    raise GenericForbidden('Cannot destory kernels in preparing/pulling status')
                 else:
+                    if kernel.role == 'master':
+                        # The master session is terminated; decrement the user's concurrency counter
+                        query = (sa.update(keypairs)
+                                   .values(concurrency_used=keypairs.c.concurrency_used - 1)
+                                   .where(keypairs.c.access_key == kernel.access_key))
+                        await conn.execute(query)
                     await self.set_session_status(
                         sess_id, access_key,
                         KernelStatus.TERMINATING,
@@ -1417,23 +1434,28 @@ class AgentRegistry:
         '''
         async with self.dbpool.acquire() as conn, conn.begin():
             # Check the current status.
-            query = (sa.select([kernels.c.access_key, kernels.c.role, kernels.c.status], for_update=True)
-                       .select_from(kernels)
-                       .where(kernels.c.id == kernel_id))
+            query = (
+                sa.select([
+                    kernels.c.access_key,
+                    kernels.c.agent,
+                    kernels.c.status,
+                    kernels.c.occupied_slots
+                ], for_update=True)
+                .select_from(kernels)
+                .where(kernels.c.id == kernel_id)
+            )
             result = await conn.execute(query)
-            row = await result.first()
-            if (row is None or
-                row['status'] in (KernelStatus.CANCELLED,
-                                  KernelStatus.TERMINATED,
-                                  KernelStatus.RESTARTING)):
+            kernel = await result.first()
+            if (
+                kernel is None
+                or kernel['status'] in (
+                    KernelStatus.CANCELLED,
+                    KernelStatus.TERMINATED,
+                    KernelStatus.RESTARTING,
+                )
+            ):
                 # Skip if non-existent, already terminated, or restarting.
                 return
-            if row['role'] == 'master':
-                # The master session is terminated; decrement the user's concurrency counter
-                query = (sa.update(keypairs)
-                           .values(concurrency_used=keypairs.c.concurrency_used - 1)
-                           .where(keypairs.c.access_key == row['access_key']))
-                await conn.execute(query)
 
             # Change the status to TERMINATED.
             # (we don't delete the row for later logging and billing)
@@ -1446,28 +1468,31 @@ class AgentRegistry:
             }
             await self.sync_kernel_stats(kernel_id, db_conn=conn, additional_updates=updates)
 
-            # Release resource slots.
-            query = (sa.select([kernels.c.agent, kernels.c.occupied_slots])
-                       .select_from(kernels)
-                       .where(kernels.c.id == kernel_id))
-            result = await conn.execute(query)
-            kernel = await result.first()
-            if kernel is None:
-                return
-            query = (sa.select([agents.c.occupied_slots],
-                               for_update=True)
-                       .select_from(agents)
-                       .where(agents.c.id == kernel['agent']))
+            if reason == 'self-terminated' and kernel['status'] != KernelStatus.TERMINATING:
+                query = (sa.update(keypairs)
+                           .values(concurrency_used=keypairs.c.concurrency_used - 1)
+                           .where(keypairs.c.access_key == kernel.access_key))
+                await conn.execute(query)
+
+            # Release agent resource slots.
+            query = (
+                sa.select([
+                    agents.c.occupied_slots,
+                ], for_update=True)
+                .select_from(agents)
+                .where(agents.c.id == kernel['agent'])
+            )
             result = await conn.execute(query)
             agent = await result.first()
             if agent is None:
                 return
-            # units: absolute
             updated_occupied_slots = \
                 agent['occupied_slots'] - kernel['occupied_slots']
-            query = (sa.update(agents)
-                       .values({
-                           'occupied_slots': updated_occupied_slots,
-                       })
-                       .where(agents.c.id == kernel['agent']))
+            query = (
+                sa.update(agents)
+                .values({
+                    'occupied_slots': updated_occupied_slots,
+                })
+                .where(agents.c.id == kernel['agent'])
+            )
             await conn.execute(query)

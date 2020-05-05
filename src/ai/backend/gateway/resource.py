@@ -41,7 +41,7 @@ from ..manager.models import (
     AgentStatus,
     association_groups_users,
     query_allowed_sgroups,
-    RESOURCE_OCCUPYING_KERNEL_STATUSES,
+    AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
     RESOURCE_USAGE_KERNEL_STATUSES,
 )
 from .types import CORSOptions, WebMiddleware
@@ -184,7 +184,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             .select_from(kernels)
             .where(
                 (kernels.c.user_uuid == request['user']['uuid']) &
-                (kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
+                (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
                 (kernels.c.scaling_group.in_(sgroup_names))))
         async for row in conn.execute(query):
             per_sgroup[row.scaling_group]['using'] += row.occupied_slots
@@ -237,13 +237,14 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
                 'allocatable': allocatable,
             })
 
-        # Return group stats with zeros if not allowed.
-        allow_group_total = \
-            await request.app['registry'].config_server.get('config/api/resources/allow-group-total')
-        if allow_group_total != '':
-            group_limits = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
-            group_occupied = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
-            group_remaining = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
+        # Return group resource status as NaN if not allowed.
+        group_resource_visibility = await request.app['registry'].config_server.get(
+                'config/api/resources/group_resource_visibility')
+        group_resource_visibility = t.ToBool().check(group_resource_visibility)
+        if not group_resource_visibility:
+            group_limits = ResourceSlot({k: Decimal('NaN') for k in known_slot_types.keys()})
+            group_occupied = ResourceSlot({k: Decimal('NaN') for k in known_slot_types.keys()})
+            group_remaining = ResourceSlot({k: Decimal('NaN') for k in known_slot_types.keys()})
 
         resp['keypair_limits'] = keypair_limits.to_json()
         resp['keypair_using'] = keypair_occupied.to_json()

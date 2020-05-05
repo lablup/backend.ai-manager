@@ -34,7 +34,7 @@ from ..registry import AgentRegistry
 from ..models import (
     agents, kernels, keypairs, scaling_groups,
     AgentStatus, KernelStatus,
-    RESOURCE_OCCUPYING_KERNEL_STATUSES,
+    AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
 )
 from . import (
     PredicateResult,
@@ -459,7 +459,7 @@ class SchedulerDispatcher(aobject):
                 keypairs.c.access_key == kernels.c.access_key
             ))
             .where(
-                (kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
+                (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
                 (kernels.c.scaling_group == sgroup)
             )
             .order_by(kernels.c.created_at)

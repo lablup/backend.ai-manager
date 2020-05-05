@@ -1,0 +1,1 @@
+Return NaN when group-level resource status is not allowed to the client.
