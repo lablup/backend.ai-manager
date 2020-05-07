@@ -316,7 +316,30 @@ async def batch_result(
     obj_type: _SQLBasedGQLObject,
     key_list: Iterable[_Key],
     key_getter: Callable[[RowProxy], _Key],
+) -> Sequence[Optional[_SQLBasedGQLObject]]:
+    """
+    A batched query adaptor for (key -> item) resolving patterns.
+    """
+    objs_per_key: Dict[_Key, Optional[_SQLBasedGQLObject]]
+    objs_per_key = collections.OrderedDict()
+    for key in key_list:
+        objs_per_key[key] = None
+    async for row in conn.execute(query):
+        objs_per_key[key_getter(row)] = obj_type.from_row(context, row)
+    return [*objs_per_key.values()]
+
+
+async def batch_multiresult(
+    context: Mapping[str, Any],
+    conn: SAConnection,
+    query: sa.sql.Select,
+    obj_type: _SQLBasedGQLObject,
+    key_list: Iterable[_Key],
+    key_getter: Callable[[RowProxy], _Key],
 ) -> Sequence[Sequence[Optional[_SQLBasedGQLObject]]]:
+    """
+    A batched query adaptor for (key -> [item]) resolving patterns.
+    """
     objs_per_key: Dict[_Key, List[Optional[_SQLBasedGQLObject]]]
     objs_per_key = collections.OrderedDict()
     for key in key_list:

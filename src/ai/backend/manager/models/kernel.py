@@ -22,6 +22,7 @@ from .base import (
     ResourceSlotColumn,
     Item, PaginatedList,
     batch_result,
+    batch_multiresult,
 )
 from .group import groups
 from .user import users
@@ -341,22 +342,15 @@ class ComputeContainer(graphene.ObjectType):
                 # TODO: use "owner session ID" when we implement multi-container session
                 .where(kernels.c.id.in_(session_ids))
             )
-            return await batch_result(
+            return await batch_multiresult(
                 context, conn, query, cls,
                 session_ids, lambda row: row['id'],
             )
 
     @classmethod
     async def batch_load_detail(cls, context, container_ids, *,
-                                domain_name=None, access_key=None,
-                                status=None):
+                                domain_name=None, access_key=None):
         async with context['dbpool'].acquire() as conn:
-            if isinstance(status, str):
-                status_list = [KernelStatus[s] for s in status.split(',')]
-            elif isinstance(status, KernelStatus):
-                status_list = [status]
-            elif status is None:
-                status_list = [KernelStatus['RUNNING']]
             j = (
                 kernels
                 .join(groups, groups.c.id == kernels.c.group_id)
@@ -372,8 +366,6 @@ class ComputeContainer(graphene.ObjectType):
                 query = query.where(kernels.c.domain_name == domain_name)
             if access_key is not None:
                 query = query.where(kernels.c.access_key == access_key)
-            if status is not None:
-                query = query.where(kernels.c.status.in_(status_list))
             return await batch_result(
                 context, conn, query, cls,
                 container_ids, lambda row: row['id'],
@@ -481,17 +473,23 @@ class ComputeSession(graphene.ObjectType):
         props = cls.parse_row(context, row)
         return cls(**props)
 
-    async def resolve_containers(self, info: graphene.ResolveInfo) -> Iterable[ComputeContainer]:
+    @staticmethod
+    async def resolve_containers(
+        session: ComputeSession,
+        info: graphene.ResolveInfo,
+    ) -> Iterable[ComputeContainer]:
         manager = info.context['dlmgr']
         loader = manager.get_loader('ComputeContainer.by_session')
-        containers = await loader.load(self.id)
-        return containers
+        return await loader.load(session.id)
 
-    async def resolve_dependencies(self, info: graphene.ResolveInfo) -> Iterable[ComputeSession]:
+    @staticmethod
+    async def resolve_dependencies(
+        session: ComputeSession,
+        info: graphene.ResolveInfo,
+    ) -> Iterable[ComputeSession]:
         manager = info.context['dlmgr']
         loader = manager.get_loader('ComputeSession.by_dependency')
-        dependencies = await loader.load(self.id)
-        return dependencies
+        return await loader.load(session.id)
 
     @classmethod
     async def load_count(cls, context, *,
@@ -573,22 +571,15 @@ class ComputeSession(graphene.ObjectType):
                     (kernel_dependencies.c.kernel_id.in_(session_ids))
                 )
             )
-            return await batch_result(
+            return await batch_multiresult(
                 context, conn, query, cls,
                 session_ids, lambda row: row['id'],
             )
 
     @classmethod
     async def batch_load_detail(cls, context, session_ids, *,
-                                domain_name=None, access_key=None,
-                                status=None):
+                                domain_name=None, access_key=None):
         async with context['dbpool'].acquire() as conn:
-            if isinstance(status, str):
-                status_list = [KernelStatus[s] for s in status.split(',')]
-            elif isinstance(status, KernelStatus):
-                status_list = [status]
-            elif status is None:
-                status_list = [KernelStatus['RUNNING']]
             j = (
                 kernels
                 .join(groups, groups.c.id == kernels.c.group_id)
@@ -605,8 +596,6 @@ class ComputeSession(graphene.ObjectType):
                 query = query.where(kernels.c.domain_name == domain_name)
             if access_key is not None:
                 query = query.where(kernels.c.access_key == access_key)
-            if status is not None:
-                query = query.where(kernels.c.status.in_(status_list))
             return await batch_result(
                 context, conn, query, cls,
                 session_ids, lambda row: row['id'],

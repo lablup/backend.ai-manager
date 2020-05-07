@@ -673,7 +673,6 @@ class Queries(graphene.ObjectType):
     async def resolve_compute_session(
         executor, info, id, *,
         domain_name=None, access_key=None,
-        status=None,
     ):
         # We need to check the group membership of the designated kernel,
         # but practically a user cannot guess the IDs of kernels launched
@@ -683,8 +682,7 @@ class Queries(graphene.ObjectType):
         loader = manager.get_loader(
             'ComputeSession.detail',
             domain_name=domain_name,
-            access_key=access_key,
-            status=status)
+            access_key=access_key)
         return await loader.load(id)
 
     @staticmethod
