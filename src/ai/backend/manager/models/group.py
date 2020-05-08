@@ -239,7 +239,7 @@ class CreateGroup(graphene.Mutation):
                     checkq = groups.select().where((groups.c.name == name) &
                                                    (groups.c.domain_name == props.domain_name))
                     result = await conn.execute(checkq)
-                    o = Group.from_row(await result.first())
+                    o = Group.from_row(info.context, await result.first())
                     return cls(ok=True, msg='success', group=o)
                 else:
                     return cls(ok=False, msg='failed to create group', group=None)
@@ -307,7 +307,7 @@ class ModifyGroup(graphene.Mutation):
                     if result.rowcount > 0:
                         checkq = groups.select().where(groups.c.id == gid)
                         result = await conn.execute(checkq)
-                        o = Group.from_row(await result.first())
+                        o = Group.from_row(info.context, await result.first())
                         return cls(ok=True, msg='success', group=o)
                     return cls(ok=False, msg='no such group', group=None)
                 else:  # updated association_groups_users table

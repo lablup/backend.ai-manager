@@ -473,23 +473,21 @@ class ComputeSession(graphene.ObjectType):
         props = cls.parse_row(context, row)
         return cls(**props)
 
-    @staticmethod
     async def resolve_containers(
-        session: ComputeSession,
+        self,
         info: graphene.ResolveInfo,
     ) -> Iterable[ComputeContainer]:
         manager = info.context['dlmgr']
         loader = manager.get_loader('ComputeContainer.by_session')
-        return await loader.load(session.id)
+        return await loader.load(self.id)
 
-    @staticmethod
     async def resolve_dependencies(
-        session: ComputeSession,
+        self,
         info: graphene.ResolveInfo,
     ) -> Iterable[ComputeSession]:
         manager = info.context['dlmgr']
         loader = manager.get_loader('ComputeSession.by_dependency')
-        return await loader.load(session.id)
+        return await loader.load(self.id)
 
     @classmethod
     async def load_count(cls, context, *,

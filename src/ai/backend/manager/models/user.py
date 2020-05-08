@@ -1,6 +1,12 @@
+from __future__ import annotations
+
 import asyncio
 import enum
-from typing import Any, Sequence
+from typing import (
+    Any,
+    Iterable,
+    Sequence,
+)
 
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -13,12 +19,13 @@ from .base import (
     metadata, EnumValueType, IDColumn,
     set_if_set,
     batch_result,
+    batch_multiresult,
 )
 
 
 __all__: Sequence[str] = (
     'users',
-    'User', 'UserInput', 'ModifyUserInput', 'UserRole',
+    'User', 'UserGroup', 'UserInput', 'ModifyUserInput', 'UserRole',
     'CreateUser', 'ModifyUser', 'DeleteUser',
 )
 
@@ -66,6 +73,30 @@ class UserGroup(graphene.ObjectType):
     id = graphene.UUID()
     name = graphene.String()
 
+    @classmethod
+    def from_row(cls, context, row):
+        if row is None:
+            return None
+        return cls(
+            id=row['id'],
+            name=row['name'],
+        )
+
+    @classmethod
+    async def batch_load_by_user_id(cls, context, user_ids):
+        async with context['dbpool'].acquire() as conn:
+            from .group import groups, association_groups_users as agus
+            j = agus.join(groups, agus.c.group_id == groups.c.id)
+            query = (
+                sa.select([agus.c.user_id, groups.c.name, groups.c.id])
+                .select_from(j)
+                .where(agus.c.user_id.in_(user_ids))
+            )
+            return await batch_multiresult(
+                context, conn, query, cls,
+                user_ids, lambda row: row['user_id'],
+            )
+
 
 class User(graphene.ObjectType):
     id = graphene.UUID()
@@ -80,17 +111,21 @@ class User(graphene.ObjectType):
     created_at = GQLDateTime()
     domain_name = graphene.String()
     role = graphene.String()
-    # Dynamic fields
+
     groups = graphene.List(lambda: UserGroup)
+
+    async def resolve_groups(
+        self,
+        info: graphene.ResolveInfo,
+    ) -> Iterable[UserGroup]:
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('UserGroup.by_user_id')
+        return await loader.load(self.id)
 
     @classmethod
     def from_row(cls, context, row):
         if row is None:
             return None
-        if 'id' in row and row.id is not None and 'name' in row and row.name is not None:
-            groups = [UserGroup(id=row['id'], name=row['name'])]
-        else:
-            groups = None
         return cls(
             id=row['uuid'],
             uuid=row['uuid'],
@@ -103,8 +138,6 @@ class User(graphene.ObjectType):
             created_at=row['created_at'],
             domain_name=row['domain_name'],
             role=row['role'],
-            # Dynamic fields
-            groups=groups,  # group information
         )
 
     @classmethod
@@ -115,16 +148,22 @@ class User(graphene.ObjectType):
         Load user's information. Group names associated with the user are also returned.
         '''
         async with context['dbpool'].acquire() as conn:
-            from .group import groups, association_groups_users as agus
-            j = (users.join(agus, agus.c.user_id == users.c.uuid, isouter=True)
-                      .join(groups, agus.c.group_id == groups.c.id, isouter=True))
-            query = sa.select([users, groups.c.name, groups.c.id]).select_from(j)
+            if group_id is not None:
+                from .group import association_groups_users as agus
+                j = (users.join(agus, agus.c.user_id == users.c.uuid))
+                query = (
+                    sa.select([users]).select_from(j)
+                    .where(agus.c.group_id == group_id)
+                )
+            else:
+                query = (
+                    sa.select([users])
+                    .select_from(users)
+                )
             if context['user']['role'] != UserRole.SUPERADMIN:
                 query = query.where(users.c.domain_name == context['user']['domain_name'])
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
-            if group_id is not None:
-                query = query.where(groups.c.id == group_id)
             if is_active is not None:
                 query = query.where(users.c.is_active == is_active)
             return [cls.from_row(context, row) async for row in conn.execute(query)]
@@ -134,12 +173,9 @@ class User(graphene.ObjectType):
                                   domain_name=None,
                                   is_active=None):
         async with context['dbpool'].acquire() as conn:
-            from .group import groups, association_groups_users as agus
-            j = (users.join(agus, agus.c.user_id == users.c.uuid, isouter=True)
-                      .join(groups, agus.c.group_id == groups.c.id, isouter=True))
             query = (
-                sa.select([users, groups.c.name, groups.c.id])
-                .select_from(j)
+                sa.select([users])
+                .select_from(users)
                 .where(users.c.email.in_(emails))
             )
             if domain_name is not None:
@@ -154,12 +190,9 @@ class User(graphene.ObjectType):
                                  domain_name=None,
                                  is_active=None):
         async with context['dbpool'].acquire() as conn:
-            from .group import groups, association_groups_users as agus
-            j = (users.join(agus, agus.c.user_id == users.c.uuid, isouter=True)
-                      .join(groups, agus.c.group_id == groups.c.id, isouter=True))
             query = (
-                sa.select([users, groups.c.name, groups.c.id])
-                .select_from(j)
+                sa.select([users])
+                .select_from(users)
                 .where(users.c.uuid.in_(user_ids))
             )
             if domain_name is not None:

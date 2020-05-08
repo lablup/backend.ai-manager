@@ -187,7 +187,7 @@ class Queries(graphene.ObjectType):
     users = graphene.List(
         User,
         domain_name=graphene.String(),
-        group_id=graphene.String(),
+        group_id=graphene.UUID(),
         is_active=graphene.Boolean())
 
     keypair = graphene.Field(
