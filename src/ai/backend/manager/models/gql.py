@@ -157,7 +157,7 @@ class Queries(graphene.ObjectType):
 
     group = graphene.Field(
         Group,
-        id=graphene.String(required=True))
+        id=graphene.UUID(required=True))
 
     groups = graphene.List(
         Group,
