@@ -11,6 +11,7 @@ from ai.backend.gateway.config import RESERVED_VFOLDER_PATTERNS, RESERVED_VFOLDE
 from .base import (
     metadata, EnumValueType, GUID, IDColumn,
     Item, PaginatedList, BigInt,
+    batch_multiresult,
 )
 from .user import UserRole
 
@@ -480,8 +481,8 @@ class VirtualFolder(graphene.ObjectType):
         # TODO: measure on-the-fly
         return 0
 
-    @staticmethod
-    async def load_count(context, *,
+    @classmethod
+    async def load_count(cls, context, *,
                          domain_name=None, group_id=None, user_id=None):
         from .user import users
         async with context['dbpool'].acquire() as conn:
@@ -501,8 +502,8 @@ class VirtualFolder(graphene.ObjectType):
             count = await result.fetchone()
             return count[0]
 
-    @staticmethod
-    async def load_slice(context, limit, offset, *,
+    @classmethod
+    async def load_slice(cls, context, limit, offset, *,
                          domain_name=None, group_id=None, user_id=None,
                          order_key=None, order_asc=None):
         from .user import users
@@ -526,12 +527,10 @@ class VirtualFolder(graphene.ObjectType):
                 query = query.where(vfolders.c.group == group_id)
             if user_id is not None:
                 query = query.where(vfolders.c.user == user_id)
-            result = await conn.execute(query)
-            rows = await result.fetchall()
-            return [VirtualFolder.from_row(context, r) for r in rows]
+            return [cls.from_row(context, r) async for r in conn.execute(query)]
 
-    @staticmethod
-    async def batch_load_by_user(context, user_uuids, *,
+    @classmethod
+    async def batch_load_by_user(cls, context, user_uuids, *,
                                  domain_name=None, group_id=None):
         from .user import users
         async with context['dbpool'].acquire() as conn:
@@ -547,13 +546,10 @@ class VirtualFolder(graphene.ObjectType):
                 query = query.where(users.c.domain_name == domain_name)
             if group_id is not None:
                 query = query.where(vfolders.c.group == group_id)
-            objs_per_key = OrderedDict()
-            for u in user_uuids:
-                objs_per_key[u] = list()
-            async for row in conn.execute(query):
-                o = VirtualFolder.from_row(row)
-                objs_per_key[row.user].append(o)
-        return tuple(objs_per_key.values())
+            return await batch_multiresult(
+                context, conn, query, cls,
+                user_uuids, lambda row: row['user']
+            )
 
 
 class VirtualFolderList(graphene.ObjectType):

@@ -20,6 +20,7 @@ from .base import (
     metadata, ForeignKeyIDColumn,
     simple_db_mutate,
     set_if_set,
+    batch_result, batch_multiresult,
 )
 from .user import UserRole
 
@@ -93,7 +94,7 @@ class KeyPair(graphene.ObjectType):
                            'max_concurrent_sessions field.')
 
     @classmethod
-    def from_row(cls, row):
+    def from_row(cls, context, row):
         if row is None:
             return None
         return cls(
@@ -126,8 +127,8 @@ class KeyPair(graphene.ObjectType):
         loader = manager.get_loader('ComputeSession', status=status)
         return await loader.load(self.access_key)
 
-    @staticmethod
-    async def load_all(context, *,
+    @classmethod
+    async def load_all(cls, context, *,
                        domain_name=None, is_active=None):
         from .user import users
         async with context['dbpool'].acquire() as conn:
@@ -137,14 +138,12 @@ class KeyPair(graphene.ObjectType):
                 query = query.where(users.c.domain_name == domain_name)
             if is_active is not None:
                 query = query.where(keypairs.c.is_active == is_active)
-            objs = []
-            async for row in conn.execute(query):
-                o = KeyPair.from_row(row)
-                objs.append(o)
-        return objs
+            return [
+                cls.from_row(context, row) async for row in conn.execute(query)
+            ]
 
-    @staticmethod
-    async def batch_load_by_email(context, user_ids, *,
+    @classmethod
+    async def batch_load_by_email(cls, context, user_ids, *,
                                   domain_name=None, is_active=None):
         from .user import users
         async with context['dbpool'].acquire() as conn:
@@ -156,16 +155,14 @@ class KeyPair(graphene.ObjectType):
                 query = query.where(users.c.domain_name == domain_name)
             if is_active is not None:
                 query = query.where(keypairs.c.is_active == is_active)
-            objs_per_key = OrderedDict()
-            for k in user_ids:
-                objs_per_key[k] = list()
-            async for row in conn.execute(query):
-                o = KeyPair.from_row(row)
-                objs_per_key[row.user_id].append(o)
-        return tuple(objs_per_key.values())
+            return await batch_multiresult(
+                context, conn, query, cls,
+                user_ids, lambda row: row['user_id'],
+            )
 
-    @staticmethod
-    async def batch_load_by_ak(context, access_keys, *, domain_name=None):
+    @classmethod
+    async def batch_load_by_ak(cls, context, access_keys, *,
+                               domain_name=None):
         async with context['dbpool'].acquire() as conn:
             from .user import users
             j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
@@ -178,15 +175,10 @@ class KeyPair(graphene.ObjectType):
             )
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
-            objs_per_key = OrderedDict()
-            # For each access key, there is only one keypair.
-            # So we don't build lists in objs_per_key variable.
-            for k in access_keys:
-                objs_per_key[k] = None
-            async for row in conn.execute(query):
-                o = KeyPair.from_row(row)
-                objs_per_key[row.access_key] = o
-        return tuple(objs_per_key.values())
+            return await batch_result(
+                context, conn, query, cls,
+                access_keys, lambda row: row['access_key'],
+            )
 
 
 class KeyPairInput(graphene.InputObjectType):
@@ -265,7 +257,7 @@ class CreateKeyPair(graphene.Mutation):
                     # Read the created key data from DB.
                     checkq = keypairs.select().where(keypairs.c.access_key == ak)
                     result = await conn.execute(checkq)
-                    o = KeyPair.from_row(await result.first())
+                    o = KeyPair.from_row(info.context, await result.first())
                     return cls(ok=True, msg='success', keypair=o)
                 else:
                     return cls(ok=False, msg='failed to create keypair',

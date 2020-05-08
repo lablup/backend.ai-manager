@@ -1,5 +1,4 @@
 import asyncio
-from collections import OrderedDict
 import enum
 from typing import Any, Sequence
 
@@ -13,6 +12,7 @@ from sqlalchemy.types import TypeDecorator, VARCHAR
 from .base import (
     metadata, EnumValueType, IDColumn,
     set_if_set,
+    batch_result,
 )
 
 
@@ -84,7 +84,7 @@ class User(graphene.ObjectType):
     groups = graphene.List(lambda: UserGroup)
 
     @classmethod
-    def from_row(cls, row):
+    def from_row(cls, context, row):
         if row is None:
             return None
         if 'id' in row and row.id is not None and 'name' in row and row.name is not None:
@@ -107,8 +107,8 @@ class User(graphene.ObjectType):
             groups=groups,  # group information
         )
 
-    @staticmethod
-    async def load_all(context, *,
+    @classmethod
+    async def load_all(cls, context, *,
                        domain_name=None, group_id=None,
                        is_active=None):
         '''
@@ -127,19 +127,10 @@ class User(graphene.ObjectType):
                 query = query.where(groups.c.id == group_id)
             if is_active is not None:
                 query = query.where(users.c.is_active == is_active)
-            objs_per_key = OrderedDict()
-            async for row in conn.execute(query):
-                if row.email in objs_per_key:
-                    # If same user is already saved, just append group information.
-                    objs_per_key[row.email].groups.append(UserGroup(id=row.id, name=row.name))
-                    continue
-                o = User.from_row(row)
-                objs_per_key[row.email] = o
-            objs = list(objs_per_key.values())
-        return objs
+            return [cls.from_row(context, row) async for row in conn.execute(query)]
 
-    @staticmethod
-    async def batch_load_by_email(context, emails=None, *,
+    @classmethod
+    async def batch_load_by_email(cls, context, emails=None, *,
                                   domain_name=None,
                                   is_active=None):
         async with context['dbpool'].acquire() as conn:
@@ -153,22 +144,13 @@ class User(graphene.ObjectType):
             )
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
-            objs_per_key = OrderedDict()
-            # For each email, there is only one user.
-            # So we don't build lists in objs_per_key variable.
-            for k in emails:
-                objs_per_key[k] = None
-            async for row in conn.execute(query):
-                key = row.email
-                if objs_per_key[key] is not None:
-                    objs_per_key[key].groups.append(UserGroup(id=row.id, name=row.name))
-                    continue
-                o = User.from_row(row)
-                objs_per_key[key] = o
-        return tuple(objs_per_key.values())
+            return await batch_result(
+                context, conn, query, cls,
+                emails, lambda row: row['email'],
+            )
 
-    @staticmethod
-    async def batch_load_by_uuid(context, user_ids=None, *,
+    @classmethod
+    async def batch_load_by_uuid(cls, context, user_ids=None, *,
                                  domain_name=None,
                                  is_active=None):
         async with context['dbpool'].acquire() as conn:
@@ -182,19 +164,10 @@ class User(graphene.ObjectType):
             )
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
-            objs_per_key = OrderedDict()
-            # For each uuid, there is only one user.
-            # So we don't build lists in objs_per_key variable.
-            for k in user_ids:
-                objs_per_key[k] = None
-            async for row in conn.execute(query):
-                key = str(row.uuid)
-                if objs_per_key[key] is not None:
-                    objs_per_key[key].groups.append(UserGroup(id=row.id, name=row.name))
-                    continue
-                o = User.from_row(row)
-                objs_per_key[key] = o
-        return tuple(objs_per_key.values())
+            return await batch_result(
+                context, conn, query, cls,
+                user_ids, lambda row: row['uuid'],
+            )
 
 
 class UserInput(graphene.InputObjectType):
@@ -258,7 +231,7 @@ class CreateUser(graphene.Mutation):
                     # Read the created user data from DB.
                     checkq = users.select().where(users.c.email == email)
                     result = await conn.execute(checkq)
-                    o = User.from_row(await result.first())
+                    o = User.from_row(info.context, await result.first())
 
                     # Create user's first access_key and secret_key.
                     from .keypair import generate_keypair, generate_ssh_keypair, keypairs
@@ -353,7 +326,7 @@ class ModifyUser(graphene.Mutation):
                 if result.rowcount > 0:
                     checkq = users.select().where(users.c.email == email)
                     result = await conn.execute(checkq)
-                    o = User.from_row(await result.first())
+                    o = User.from_row(info.context, await result.first())
                 else:
                     return cls(ok=False, msg='no such user', user=None)
 

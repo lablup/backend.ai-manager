@@ -1,4 +1,3 @@
-from collections import OrderedDict
 import enum
 from typing import Sequence
 
@@ -11,6 +10,7 @@ from ai.backend.common import msgpack, redis
 from ai.backend.common.types import BinarySize
 from .base import (
     metadata,
+    batch_result,
     EnumType, Item, PaginatedList,
     ResourceSlotColumn,
 )
@@ -174,8 +174,8 @@ class Agent(graphene.ObjectType):
             count = await result.fetchone()
             return count[0]
 
-    @staticmethod
-    async def load_slice(context, limit, offset, *,
+    @classmethod
+    async def load_slice(cls, context, limit, offset, *,
                          scaling_group=None,
                          status=None,
                          order_key=None, order_asc=True):
@@ -198,16 +198,12 @@ class Agent(graphene.ObjectType):
             if status is not None:
                 status = AgentStatus[status]
                 query = query.where(agents.c.status == status)
-            result = await conn.execute(query)
-            rows = await result.fetchall()
-            _agents = []
-            for r in rows:
-                _agent = Agent.from_row(context, r)
-                _agents.append(_agent)
-            return _agents
+            return [
+                cls.from_row(context, row) async for row in conn.execute(query)
+            ]
 
-    @staticmethod
-    async def load_all(context, *,
+    @classmethod
+    async def load_all(cls, context, *,
                        scaling_group=None, status=None):
         async with context['dbpool'].acquire() as conn:
             query = (
@@ -219,16 +215,13 @@ class Agent(graphene.ObjectType):
             if status is not None:
                 status = AgentStatus[status]
                 query = query.where(agents.c.status == status)
-            result = await conn.execute(query)
-            rows = await result.fetchall()
-            _agents = []
-            for r in rows:
-                _agent = Agent.from_row(context, r)
-                _agents.append(_agent)
-            return _agents
+            return [
+                cls.from_row(context, row) async for row in conn.execute(query)
+            ]
 
-    @staticmethod
-    async def batch_load(context, agent_ids, *, status=None):
+    @classmethod
+    async def batch_load(cls, context, agent_ids, *,
+                         status=None):
         async with context['dbpool'].acquire() as conn:
             query = (sa.select([agents])
                        .select_from(agents)
@@ -237,13 +230,10 @@ class Agent(graphene.ObjectType):
             if status is not None:
                 status = AgentStatus[status]
                 query = query.where(agents.c.status == status)
-            objs_per_key = OrderedDict()
-            for k in agent_ids:
-                objs_per_key[k] = None
-            async for row in conn.execute(query):
-                o = Agent.from_row(context, row)
-                objs_per_key[row.id] = o
-        return tuple(objs_per_key.values())
+            return await batch_result(
+                context, conn, query, cls,
+                agent_ids, lambda row: row['id'],
+            )
 
 
 class AgentList(graphene.ObjectType):

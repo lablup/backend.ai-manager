@@ -1,4 +1,3 @@
-from collections import OrderedDict
 import logging
 from typing import Sequence
 
@@ -14,6 +13,7 @@ from .base import (
     simple_db_mutate,
     simple_db_mutate_returning_item,
     set_if_set,
+    batch_result,
 )
 from .keypair import keypairs
 from .user import UserRole
@@ -64,7 +64,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
     allowed_vfolder_hosts = graphene.List(lambda: graphene.String)
 
     @classmethod
-    def from_row(cls, row):
+    def from_row(cls, context, row):
         if row is None:
             return None
         return cls(
@@ -85,9 +85,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
         async with context['dbpool'].acquire() as conn:
             query = (sa.select([keypair_resource_policies])
                        .select_from(keypair_resource_policies))
-            result = await conn.execute(query)
-            rows = await result.fetchall()
-            return [cls.from_row(r) for r in rows]
+            return [cls.from_row(context, r) async for r in conn.execute(query)]
 
     @classmethod
     async def load_all_user(cls, context, access_key):
@@ -105,9 +103,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
             query = (sa.select([keypair_resource_policies])
                        .select_from(j)
                        .where((keypairs.c.user_id == user_id)))
-            result = await conn.execute(query)
-            rows = await result.fetchall()
-            return [cls.from_row(r) for r in rows]
+            return [cls.from_row(context, r) async for r in conn.execute(query)]
 
     @classmethod
     async def batch_load_by_name(cls, context, names):
@@ -116,13 +112,10 @@ class KeyPairResourcePolicy(graphene.ObjectType):
                        .select_from(keypair_resource_policies)
                        .where(keypair_resource_policies.c.name.in_(names))
                        .order_by(keypair_resource_policies.c.name))
-            objs_per_key = OrderedDict()
-            for k in names:
-                objs_per_key[k] = None
-            async for row in conn.execute(query):
-                o = cls.from_row(row)
-                objs_per_key[row.name] = o
-        return tuple(objs_per_key.values())
+            return await batch_result(
+                context, conn, query, cls,
+                names, lambda row: row['name'],
+            )
 
     @classmethod
     async def batch_load_by_name_user(cls, context, names):
@@ -137,13 +130,10 @@ class KeyPairResourcePolicy(graphene.ObjectType):
                        .where((keypair_resource_policies.c.name.in_(names)) &
                               (keypairs.c.access_key == access_key))
                        .order_by(keypair_resource_policies.c.name))
-            objs_per_key = OrderedDict()
-            for k in names:
-                objs_per_key[k] = None
-            async for row in conn.execute(query):
-                o = cls.from_row(row)
-                objs_per_key[row.name] = o
-        return tuple(objs_per_key.values())
+            return await batch_result(
+                context, conn, query, cls,
+                names, lambda row: row['name'],
+            )
 
     @classmethod
     async def batch_load_by_ak(cls, context, access_keys):
@@ -156,11 +146,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
                        .select_from(j)
                        .where((keypairs.c.access_key.in_(access_keys)))
                        .order_by(keypair_resource_policies.c.name))
-            objs_per_key = OrderedDict()
-            async for row in conn.execute(query):
-                o = cls.from_row(row)
-                objs_per_key[row.name] = o
-        return tuple(objs_per_key.values())
+            return [cls.from_row(context, r) async for r in conn.execute(query)]
 
 
 class CreateKeyPairResourcePolicyInput(graphene.InputObjectType):

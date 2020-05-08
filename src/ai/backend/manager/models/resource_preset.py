@@ -1,4 +1,3 @@
-from collections import OrderedDict
 import logging
 from typing import Sequence
 
@@ -12,6 +11,7 @@ from .base import (
     simple_db_mutate,
     simple_db_mutate_returning_item,
     set_if_set,
+    batch_result,
 )
 from .user import UserRole
 
@@ -40,7 +40,7 @@ class ResourcePreset(graphene.ObjectType):
     shared_memory = BigInt()
 
     @classmethod
-    def from_row(cls, row):
+    def from_row(cls, context, row):
         if row is None:
             return None
         shared_memory = str(row['shared_memory']) if row['shared_memory'] else None
@@ -55,9 +55,7 @@ class ResourcePreset(graphene.ObjectType):
         async with context['dbpool'].acquire() as conn:
             query = (sa.select([resource_presets])
                        .select_from(resource_presets))
-            result = await conn.execute(query)
-            rows = await result.fetchall()
-            return [cls.from_row(r) for r in rows]
+            return [cls.from_row(context, r) async for r in conn.execute(query)]
 
     @classmethod
     async def batch_load_by_name(cls, context, names):
@@ -66,13 +64,10 @@ class ResourcePreset(graphene.ObjectType):
                        .select_from(resource_presets)
                        .where(resource_presets.c.name.in_(names))
                        .order_by(resource_presets.c.name))
-            objs_per_key = OrderedDict()
-            for k in names:
-                objs_per_key[k] = None
-            async for row in conn.execute(query):
-                o = cls.from_row(row)
-                objs_per_key[row.name] = o
-        return tuple(objs_per_key.values())
+            return await batch_result(
+                context, conn, query, cls,
+                names, lambda row: row['name'],
+            )
 
 
 class CreateResourcePresetInput(graphene.InputObjectType):

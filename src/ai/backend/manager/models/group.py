@@ -133,8 +133,8 @@ class Group(graphene.ObjectType):
         sgroups = await ScalingGroup.load_by_group(info.context, self.id)
         return [sg.name for sg in sgroups]
 
-    @staticmethod
-    async def load_all(context, *,
+    @classmethod
+    async def load_all(cls, context, *,
                        domain_name=None,
                        is_active=None):
         async with context['dbpool'].acquire() as conn:
@@ -146,11 +146,9 @@ class Group(graphene.ObjectType):
                 query = query.where(groups.c.domain_name == domain_name)
             if is_active is not None:
                 query = query.where(groups.c.is_active == is_active)
-            objs = []
-            async for row in conn.execute(query):
-                o = Group.from_row(context, row)
-                objs.append(o)
-        return objs
+            return [
+                cls.from_row(context, row) async for row in conn.execute(query)
+            ]
 
     @classmethod
     async def batch_load_by_id(cls, context, group_ids, *,
@@ -168,8 +166,8 @@ class Group(graphene.ObjectType):
                 group_ids, lambda row: row['id'],
             )
 
-    @staticmethod
-    async def get_groups_for_user(context, user_id):
+    @classmethod
+    async def get_groups_for_user(cls, context, user_id):
         async with context['dbpool'].acquire() as conn:
             j = sa.join(groups, association_groups_users,
                         groups.c.id == association_groups_users.c.group_id)
@@ -178,11 +176,9 @@ class Group(graphene.ObjectType):
                 .select_from(j)
                 .where(association_groups_users.c.user_id == user_id)
             )
-            objs = []
-            async for row in conn.execute(query):
-                o = Group.from_row(context, row)
-                objs.append(o)
-            return objs
+            return [
+                cls.from_row(context, row) async for row in conn.execute(query)
+            ]
 
 
 class GroupInput(graphene.InputObjectType):
