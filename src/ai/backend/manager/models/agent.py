@@ -1,6 +1,14 @@
-import enum
-from typing import Sequence
+from __future__ import annotations
 
+import enum
+from typing import (
+    Any,
+    Optional,
+    Mapping,
+    Sequence,
+)
+
+from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
@@ -86,9 +94,11 @@ class Agent(graphene.ObjectType):
         status=graphene.String())
 
     @classmethod
-    def from_row(cls, context, row):
-        if row is None:
-            return None
+    def from_row(
+        cls,
+        context: Mapping[str, Any],
+        row: RowProxy,
+    ) -> Agent:
         mega = 2 ** 20
         return cls(
             id=row['id'],
@@ -156,9 +166,11 @@ class Agent(graphene.ObjectType):
         return await loader.load(self.id)
 
     @staticmethod
-    async def load_count(context, *,
-                         scaling_group=None,
-                         status=None):
+    async def load_count(
+        context, *,
+        scaling_group=None,
+        status=None,
+    ) -> int:
         async with context['dbpool'].acquire() as conn:
             query = (
                 sa.select([sa.func.count(agents.c.id)])
@@ -175,10 +187,13 @@ class Agent(graphene.ObjectType):
             return count[0]
 
     @classmethod
-    async def load_slice(cls, context, limit, offset, *,
-                         scaling_group=None,
-                         status=None,
-                         order_key=None, order_asc=True):
+    async def load_slice(
+        cls, context, limit, offset, *,
+        scaling_group=None,
+        status=None,
+        order_key=None,
+        order_asc=True,
+    ) -> Sequence[Agent]:
         async with context['dbpool'].acquire() as conn:
             # TODO: optimization for pagination using subquery, join
             if order_key is None:
@@ -203,8 +218,11 @@ class Agent(graphene.ObjectType):
             ]
 
     @classmethod
-    async def load_all(cls, context, *,
-                       scaling_group=None, status=None):
+    async def load_all(
+        cls, context, *,
+        scaling_group=None,
+        status=None,
+    ) -> Sequence[Agent]:
         async with context['dbpool'].acquire() as conn:
             query = (
                 sa.select([agents])
@@ -220,8 +238,10 @@ class Agent(graphene.ObjectType):
             ]
 
     @classmethod
-    async def batch_load(cls, context, agent_ids, *,
-                         status=None):
+    async def batch_load(
+        cls, context, agent_ids, *,
+        status=None,
+    ) -> Sequence[Optional[Agent]]:
         async with context['dbpool'].acquire() as conn:
             query = (sa.select([agents])
                        .select_from(agents)

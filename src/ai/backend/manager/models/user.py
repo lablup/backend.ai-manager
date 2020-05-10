@@ -5,9 +5,12 @@ import enum
 from typing import (
     Any,
     Iterable,
+    Mapping,
+    Optional,
     Sequence,
 )
 
+from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 from passlib.hash import bcrypt
@@ -16,7 +19,11 @@ import sqlalchemy as sa
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
 from .base import (
-    metadata, EnumValueType, IDColumn,
+    EnumValueType,
+    IDColumn,
+    Item,
+    PaginatedList,
+    metadata,
     set_if_set,
     batch_result,
     batch_multiresult,
@@ -25,7 +32,9 @@ from .base import (
 
 __all__: Sequence[str] = (
     'users',
-    'User', 'UserGroup', 'UserInput', 'ModifyUserInput', 'UserRole',
+    'User', 'UserList',
+    'UserGroup', 'UserRole',
+    'UserInput', 'ModifyUserInput',
     'CreateUser', 'ModifyUser', 'DeleteUser',
 )
 
@@ -99,7 +108,10 @@ class UserGroup(graphene.ObjectType):
 
 
 class User(graphene.ObjectType):
-    id = graphene.UUID()
+
+    class Meta:
+        interfaces = (Item, )
+
     uuid = graphene.UUID()  # legacy
     username = graphene.String()
     email = graphene.String()
@@ -123,9 +135,11 @@ class User(graphene.ObjectType):
         return await loader.load(self.id)
 
     @classmethod
-    def from_row(cls, context, row):
-        if row is None:
-            return None
+    def from_row(
+        cls,
+        context: Mapping[str, Any],
+        row: RowProxy,
+    ) -> User:
         return cls(
             id=row['uuid'],
             uuid=row['uuid'],
@@ -141,9 +155,13 @@ class User(graphene.ObjectType):
         )
 
     @classmethod
-    async def load_all(cls, context, *,
-                       domain_name=None, group_id=None,
-                       is_active=None):
+    async def load_all(
+        cls, context, *,
+        domain_name=None,
+        group_id=None,
+        is_active=None,
+        limit=None,
+    ) -> Sequence[User]:
         '''
         Load user's information. Group names associated with the user are also returned.
         '''
@@ -152,7 +170,8 @@ class User(graphene.ObjectType):
                 from .group import association_groups_users as agus
                 j = (users.join(agus, agus.c.user_id == users.c.uuid))
                 query = (
-                    sa.select([users]).select_from(j)
+                    sa.select([users])
+                    .select_from(j)
                     .where(agus.c.group_id == group_id)
                 )
             else:
@@ -166,12 +185,89 @@ class User(graphene.ObjectType):
                 query = query.where(users.c.domain_name == domain_name)
             if is_active is not None:
                 query = query.where(users.c.is_active == is_active)
+            if limit is not None:
+                query = query.limit(limit)
             return [cls.from_row(context, row) async for row in conn.execute(query)]
 
+    @staticmethod
+    async def load_count(
+        context, *,
+        domain_name=None,
+        group_id=None,
+        is_active=None,
+    ) -> int:
+        async with context['dbpool'].acquire() as conn:
+            if group_id is not None:
+                from .group import association_groups_users as agus
+                j = (users.join(agus, agus.c.user_id == users.c.uuid))
+                query = (
+                    sa.select([sa.func.count(users.c.uuid)])
+                    .select_from(j)
+                    .where(agus.c.group_id == group_id)
+                    .as_scalar()
+                )
+            else:
+                query = (
+                    sa.select([sa.func.count(users.c.uuid)])
+                    .select_from(users)
+                    .as_scalar()
+                )
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
+            if is_active is not None:
+                query = query.where(users.c.is_active == is_active)
+            result = await conn.execute(query)
+            count = await result.fetchone()
+            return count[0]
+
     @classmethod
-    async def batch_load_by_email(cls, context, emails=None, *,
-                                  domain_name=None,
-                                  is_active=None):
+    async def load_slice(
+        cls, context, limit, offset, *,
+        domain_name=None,
+        group_id=None,
+        is_active=None,
+        order_key=None,
+        order_asc=True,
+    ) -> Sequence[User]:
+        async with context['dbpool'].acquire() as conn:
+            if order_key is None:
+                _ordering = sa.desc(users.c.created_at)
+            else:
+                _order_func = sa.asc if order_asc else sa.desc
+                _ordering = _order_func(getattr(users.c, order_key))
+            if group_id is not None:
+                from .group import association_groups_users as agus
+                j = (users.join(agus, agus.c.user_id == users.c.uuid))
+                query = (
+                    sa.select([users])
+                    .select_from(j)
+                    .where(agus.c.group_id == group_id)
+                    .order_by(_ordering)
+                    .limit(limit)
+                    .offset(offset)
+                )
+            else:
+                query = (
+                    sa.select([users])
+                    .select_from(users)
+                    .order_by(_ordering)
+                    .limit(limit)
+                    .offset(offset)
+                )
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
+            if is_active is not None:
+                query = query.where(users.c.is_active == is_active)
+            return [
+                cls.from_row(context, row) async for row in conn.execute(query)
+            ]
+
+    @classmethod
+    async def batch_load_by_email(
+        cls, context, emails=None, *,
+        domain_name=None,
+        is_active=None,
+    ) -> Sequence[Optional[User]]:
         async with context['dbpool'].acquire() as conn:
             query = (
                 sa.select([users])
@@ -186,9 +282,11 @@ class User(graphene.ObjectType):
             )
 
     @classmethod
-    async def batch_load_by_uuid(cls, context, user_ids=None, *,
-                                 domain_name=None,
-                                 is_active=None):
+    async def batch_load_by_uuid(
+        cls, context, user_ids=None, *,
+        domain_name=None,
+        is_active=None,
+    ) -> Sequence[Optional[User]]:
         async with context['dbpool'].acquire() as conn:
             query = (
                 sa.select([users])
@@ -201,6 +299,13 @@ class User(graphene.ObjectType):
                 context, conn, query, cls,
                 user_ids, lambda row: row['uuid'],
             )
+
+
+class UserList(graphene.ObjectType):
+    class Meta:
+        interfaces = (PaginatedList, )
+
+    items = graphene.List(User, required=True)
 
 
 class UserInput(graphene.InputObjectType):

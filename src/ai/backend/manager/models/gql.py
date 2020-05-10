@@ -25,7 +25,7 @@ from .kernel import (
     LegacyComputeSession, LegacyComputeSessionList,
 )
 from .keypair import (
-    KeyPair,
+    KeyPair, KeyPairList,
     CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
 )
 from .resource_policy import (
@@ -46,8 +46,9 @@ from .scaling_group import (
     AssociateScalingGroupWithKeyPair,   DisassociateScalingGroupWithKeyPair,
 )
 from .user import (
-    User, UserRole,
+    User, UserList,
     CreateUser, ModifyUser, DeleteUser,
+    UserRole,
 )
 from .vfolder import (
     VirtualFolder, VirtualFolderList,
@@ -184,8 +185,20 @@ class Queries(graphene.ObjectType):
         domain_name=graphene.String(),
         user_id=graphene.String())
 
-    users = graphene.List(
+    users = graphene.List(  # legacy non-paginated list
         User,
+        domain_name=graphene.String(),
+        group_id=graphene.UUID(),
+        is_active=graphene.Boolean())
+
+    user_list = graphene.Field(
+        UserList,
+        limit=graphene.Int(required=True),
+        offset=graphene.Int(required=True),
+        # ordering customization
+        order_key=graphene.String(),
+        order_asc=graphene.Boolean(),
+        # filters
         domain_name=graphene.String(),
         group_id=graphene.UUID(),
         is_active=graphene.Boolean())
@@ -195,8 +208,20 @@ class Queries(graphene.ObjectType):
         domain_name=graphene.String(),
         access_key=graphene.String())
 
-    keypairs = graphene.List(
+    keypairs = graphene.List(  # legacy non-paginated list
         KeyPair,
+        domain_name=graphene.String(),
+        email=graphene.String(),
+        is_active=graphene.Boolean())
+
+    keypair_list = graphene.Field(
+        KeyPairList,
+        limit=graphene.Int(required=True),
+        offset=graphene.Int(required=True),
+        # ordering customization
+        order_key=graphene.String(),
+        order_asc=graphene.Boolean(),
+        # filters
         domain_name=graphene.String(),
         email=graphene.String(),
         is_active=graphene.Boolean())
@@ -340,20 +365,24 @@ class Queries(graphene.ObjectType):
 
     @staticmethod
     @privileged_query(UserRole.SUPERADMIN)
-    async def resolve_agent_list(executor, info, limit, offset, *,
-                                 scaling_group=None,
-                                 status=None,
-                                 order_key=None, order_asc=None):
+    async def resolve_agent_list(
+        executor, info, limit, offset, *,
+        scaling_group=None,
+        status=None,
+        order_key=None, order_asc=None,
+    ):
         total_count = await Agent.load_count(
             info.context,
             scaling_group=scaling_group,
-            status=status)
+            status=status,
+        )
         agent_list = await Agent.load_slice(
             info.context, limit, offset,
             scaling_group=scaling_group,
             status=status,
             order_key=order_key,
-            order_asc=order_asc)
+            order_asc=order_asc,
+        )
         return AgentList(agent_list, total_count)
 
     @staticmethod
@@ -484,7 +513,45 @@ class Queries(graphene.ObjectType):
             info.context,
             domain_name=domain_name,
             group_id=group_id,
-            is_active=is_active)
+            is_active=is_active,
+            limit=100)
+
+    @staticmethod
+    async def resolve_user_list(
+        executor, info, limit, offset, *,
+        domain_name=None, group_id=None,
+        is_active=None,
+        order_key=None, order_asc=None,
+    ):
+        from .user import UserRole
+        client_role = info.context['user']['role']
+        client_domain = info.context['user']['domain_name']
+        if client_role == UserRole.SUPERADMIN:
+            pass
+        elif client_role == UserRole.ADMIN:
+            if domain_name is not None and domain_name != client_domain:
+                raise InsufficientPrivilege
+            domain_name = client_domain
+        elif client_role == UserRole.USER:
+            # Users cannot query other users.
+            raise InsufficientPrivilege()
+        else:
+            raise InvalidAPIParameters('Unknown client role')
+        total_count = await User.load_count(
+            info.context,
+            domain_name=domain_name,
+            group_id=group_id,
+            is_active=is_active,
+        )
+        user_list = await User.load_slice(
+            info.context, limit, offset,
+            domain_name=domain_name,
+            group_id=group_id,
+            is_active=is_active,
+            order_key=order_key,
+            order_asc=order_asc,
+        )
+        return UserList(user_list, total_count)
 
     @staticmethod
     @scoped_query(autofill_user=True, user_key='access_key')
@@ -499,19 +566,42 @@ class Queries(graphene.ObjectType):
     async def resolve_keypairs(executor, info, *,
                                domain_name=None, email=None,
                                is_active=None):
-        # Here, user_id corresponds to user email.
-        # fetch keypairs from each user_id
         if email is None:
             return await KeyPair.load_all(
                 info.context,
                 domain_name=domain_name,
-                is_active=is_active)
+                is_active=is_active,
+                limit=100)
         else:
             manager = info.context['dlmgr']
             loader = manager.get_loader('KeyPair.by_email',
                                         domain_name=domain_name,
                                         is_active=is_active)
             return await loader.load(email)
+
+    @staticmethod
+    @scoped_query(autofill_user=False, user_key='email')
+    async def resolve_keypair_list(
+        executor, info, limit, offset, *,
+        domain_name=None, email=None,
+        is_active=None,
+        order_key=None, order_asc=None,
+    ):
+        total_count = await KeyPair.load_count(
+            info.context,
+            domain_name=domain_name,
+            email=email,
+            is_active=is_active,
+        )
+        keypair_list = await KeyPair.load_slice(
+            info.context, limit, offset,
+            domain_name=domain_name,
+            email=email,
+            is_active=is_active,
+            order_key=order_key,
+            order_asc=order_asc,
+        )
+        return KeyPairList(keypair_list, total_count)
 
     @staticmethod
     async def resolve_keypair_resource_policy(executor, info, name=None):

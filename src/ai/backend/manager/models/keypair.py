@@ -1,8 +1,19 @@
+from __future__ import annotations
+
 import asyncio
 import base64
 import secrets
-from typing import Sequence, List, TypedDict, Tuple
+from typing import (
+    Any,
+    Optional,
+    Mapping,
+    Sequence,
+    List,
+    Tuple,
+    TypedDict,
+)
 
+from aiopg.sa.result import RowProxy
 from cryptography.hazmat.primitives import serialization as crypto_serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend as crypto_default_backend
@@ -16,16 +27,21 @@ from ai.backend.gateway.config import RESERVED_DOTFILES
 from ai.backend.common import msgpack
 
 from .base import (
-    metadata, ForeignKeyIDColumn,
-    simple_db_mutate,
+    ForeignKeyIDColumn,
+    Item,
+    PaginatedList,
+    metadata,
+    batch_result,
+    batch_multiresult,
     set_if_set,
-    batch_result, batch_multiresult,
+    simple_db_mutate,
 )
 from .user import UserRole
 
 __all__: Sequence[str] = (
     'keypairs',
-    'KeyPair', 'KeyPairInput',
+    'KeyPair', 'KeyPairList',
+    'KeyPairInput',
     'CreateKeyPair', 'ModifyKeyPair', 'DeleteKeyPair',
     'Dotfile', 'MAXIMUM_DOTFILE_SIZE',
     'query_owned_dotfiles',
@@ -66,6 +82,10 @@ keypairs = sa.Table(
 
 
 class KeyPair(graphene.ObjectType):
+
+    class Meta:
+        interfaces = (Item, )
+
     user_id = graphene.String()
     access_key = graphene.String()
     secret_key = graphene.String()
@@ -93,10 +113,13 @@ class KeyPair(graphene.ObjectType):
                            'max_concurrent_sessions field.')
 
     @classmethod
-    def from_row(cls, context, row):
-        if row is None:
-            return None
+    def from_row(
+        cls,
+        context: Mapping[str, Any],
+        row: RowProxy,
+    ) -> KeyPair:
         return cls(
+            id=row['access_key'],
             user_id=row['user_id'],
             access_key=row['access_key'],
             secret_key=row['secret_key'],
@@ -127,14 +150,82 @@ class KeyPair(graphene.ObjectType):
         return await loader.load(self.access_key)
 
     @classmethod
-    async def load_all(cls, context, *,
-                       domain_name=None, is_active=None):
+    async def load_all(
+        cls, context, *,
+        domain_name=None,
+        is_active=None,
+        limit=None,
+    ) -> Sequence[KeyPair]:
         from .user import users
         async with context['dbpool'].acquire() as conn:
             j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
-            query = sa.select([keypairs]).select_from(j)
+            query = (
+                sa.select([keypairs])
+                .select_from(j)
+            )
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
+            if is_active is not None:
+                query = query.where(keypairs.c.is_active == is_active)
+            if limit is not None:
+                query = query.limit(limit)
+            return [
+                cls.from_row(context, row) async for row in conn.execute(query)
+            ]
+
+    @staticmethod
+    async def load_count(
+        context, *,
+        domain_name=None,
+        email=None,
+        is_active=None,
+    ) -> int:
+        from .user import users
+        async with context['dbpool'].acquire() as conn:
+            j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
+            query = (
+                sa.select([sa.func.count(keypairs.c.access_key)])
+                .select_from(j)
+                .as_scalar()
+            )
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
+            if email is not None:
+                query = query.where(keypairs.c.user_id == email)
+            if is_active is not None:
+                query = query.where(keypairs.c.is_active == is_active)
+            result = await conn.execute(query)
+            count = await result.fetchone()
+            return count[0]
+
+    @classmethod
+    async def load_slice(
+        cls, context, limit, offset, *,
+        domain_name=None,
+        email=None,
+        is_active=None,
+        order_key=None,
+        order_asc=True,
+    ) -> Sequence[KeyPair]:
+        from .user import users
+        async with context['dbpool'].acquire() as conn:
+            if order_key is None:
+                _ordering = sa.desc(keypairs.c.created_at)
+            else:
+                _order_func = sa.asc if order_asc else sa.desc
+                _ordering = _order_func(getattr(keypairs.c, order_key))
+            j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
+            query = (
+                sa.select([keypairs])
+                .select_from(j)
+                .order_by(_ordering)
+                .limit(limit)
+                .offset(offset)
+            )
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
+            if email is not None:
+                query = query.where(keypairs.c.user_id == email)
             if is_active is not None:
                 query = query.where(keypairs.c.is_active == is_active)
             return [
@@ -142,8 +233,10 @@ class KeyPair(graphene.ObjectType):
             ]
 
     @classmethod
-    async def batch_load_by_email(cls, context, user_ids, *,
-                                  domain_name=None, is_active=None):
+    async def batch_load_by_email(
+        cls, context, user_ids, *,
+        domain_name=None, is_active=None,
+    ) -> Sequence[Sequence[Optional[KeyPair]]]:
         from .user import users
         async with context['dbpool'].acquire() as conn:
             j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
@@ -160,8 +253,10 @@ class KeyPair(graphene.ObjectType):
             )
 
     @classmethod
-    async def batch_load_by_ak(cls, context, access_keys, *,
-                               domain_name=None):
+    async def batch_load_by_ak(
+        cls, context, access_keys, *,
+        domain_name=None,
+    ) -> Sequence[Optional[KeyPair]]:
         async with context['dbpool'].acquire() as conn:
             from .user import users
             j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
@@ -178,6 +273,13 @@ class KeyPair(graphene.ObjectType):
                 context, conn, query, cls,
                 access_keys, lambda row: row['access_key'],
             )
+
+
+class KeyPairList(graphene.ObjectType):
+    class Meta:
+        interfaces = (PaginatedList, )
+
+    items = graphene.List(KeyPair, required=True)
 
 
 class KeyPairInput(graphene.InputObjectType):

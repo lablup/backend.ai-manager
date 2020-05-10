@@ -5,11 +5,11 @@ import enum
 import functools
 import logging
 from typing import (
-    TypeVar, Protocol,
     Any, Callable, Optional, Union,
     Iterable,
-    Sequence, List,
     Mapping, Dict,
+    Sequence, List,
+    Type, TypeVar, Protocol,
 )
 import sys
 import uuid
@@ -296,31 +296,34 @@ class PaginatedList(graphene.Interface):
     total_count = graphene.Int(required=True)
 
 
+# ref: https://github.com/python/mypy/issues/1212
+_GenericSQLBasedGQLObject = TypeVar('_GenericSQLBasedGQLObject',
+                                    bound='_SQLBasedGQLObject')
+_Key = TypeVar('_Key')
+
+
 class _SQLBasedGQLObject(Protocol):
     @classmethod
     def from_row(
-        cls,
+        cls: Type[_GenericSQLBasedGQLObject],
         context: Mapping[str, Any],
         row: RowProxy,
-    ) -> _SQLBasedGQLObject:
+    ) -> _GenericSQLBasedGQLObject:
         ...
-
-
-_Key = TypeVar('_Key')
 
 
 async def batch_result(
     context: Mapping[str, Any],
     conn: SAConnection,
     query: sa.sql.Select,
-    obj_type: _SQLBasedGQLObject,
+    obj_type: Type[_GenericSQLBasedGQLObject],
     key_list: Iterable[_Key],
     key_getter: Callable[[RowProxy], _Key],
-) -> Sequence[Optional[_SQLBasedGQLObject]]:
+) -> Sequence[Optional[_GenericSQLBasedGQLObject]]:
     """
     A batched query adaptor for (key -> item) resolving patterns.
     """
-    objs_per_key: Dict[_Key, Optional[_SQLBasedGQLObject]]
+    objs_per_key: Dict[_Key, Optional[_GenericSQLBasedGQLObject]]
     objs_per_key = collections.OrderedDict()
     for key in key_list:
         objs_per_key[key] = None
@@ -333,19 +336,21 @@ async def batch_multiresult(
     context: Mapping[str, Any],
     conn: SAConnection,
     query: sa.sql.Select,
-    obj_type: _SQLBasedGQLObject,
+    obj_type: Type[_GenericSQLBasedGQLObject],
     key_list: Iterable[_Key],
     key_getter: Callable[[RowProxy], _Key],
-) -> Sequence[Sequence[Optional[_SQLBasedGQLObject]]]:
+) -> Sequence[Sequence[_GenericSQLBasedGQLObject]]:
     """
     A batched query adaptor for (key -> [item]) resolving patterns.
     """
-    objs_per_key: Dict[_Key, List[Optional[_SQLBasedGQLObject]]]
+    objs_per_key: Dict[_Key, List[_GenericSQLBasedGQLObject]]
     objs_per_key = collections.OrderedDict()
     for key in key_list:
         objs_per_key[key] = list()
     async for row in conn.execute(query):
-        objs_per_key[key_getter(row)].append(obj_type.from_row(context, row))
+        objs_per_key[key_getter(row)].append(
+            obj_type.from_row(context, row)
+        )
     return [*objs_per_key.values()]
 
 
