@@ -28,6 +28,7 @@ import multidict
 import sqlalchemy as sa
 import psycopg2
 import trafaret as t
+import zipstream
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
@@ -910,6 +911,32 @@ async def delete_files(request: web.Request, params: Any, row: VFolderRow) -> we
     return web.json_response(resp, status=200)
 
 
+async def download_directory_as_archive(request, file_path, zip_filename=None, relative_to=None):
+    if zip_filename is None:
+        zip_filename = file_path.name + '.zip'
+    # zf = zipstream.ZipFile(compression=zipstream.ZIP_DEFLATED)
+    zf = zipstream.ZipFile()
+    for root, dirs, files in os.walk(file_path):
+        for file in files:
+            zf.write(Path(root) / file, Path(root).relative_to(file_path) / file)
+        if len(dirs) == 0 and len(files) == 0:
+            zf.write(root, Path(root).relative_to(file_path))  # include an empty directory in the archive as well
+    ascii_filename = zip_filename.encode('ascii', errors='ignore').decode('ascii').replace('"', r'\"')
+    encoded_filename = urllib.parse.quote(zip_filename, encoding='utf-8')
+    response = web.StreamResponse(headers={
+        hdrs.CONTENT_TYPE: 'application/zip',
+        hdrs.CONTENT_DISPOSITION: " ".join([
+            "attachment;"
+            f"filename=\"{ascii_filename}\";",
+            f"filename*=UTF-8''{encoded_filename}",
+        ])
+    })
+    await response.prepare(request)
+    for chunk in zf:
+        await response.write(chunk)
+    return response
+
+
 @auth_required
 @server_status_required(READ_ALLOWED)
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
@@ -958,7 +985,7 @@ async def download_single(request: web.Request, params: Any, row: VFolderRow) ->
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     fn = params['file']
-    log.info('VFOLDER.DOWNLOAD (ak:{}, vf:{}, path:{})', access_key, folder_name, fn)
+    log.info('VFOLDER.DOWNLOAD_SINGLE (ak:{}, vf:{}, path:{})', access_key, folder_name, fn)
     folder_path = get_folder_hostpath(row, request.app)
     try:
         file_path = (folder_path / fn).resolve()
@@ -1049,6 +1076,7 @@ async def download_with_token(request) -> web.StreamResponse:
         raise InvalidAPIParameters('The file is not found.')
     if not file_path.is_file():
         raise InvalidAPIParameters('The file is not a regular file.')
+        return await download_directory_as_archive(request, file_path)
     if request.method == 'HEAD':
         return web.Response(status=200, headers={
             hdrs.ACCEPT_RANGES: 'bytes',
