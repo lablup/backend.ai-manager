@@ -592,8 +592,9 @@ async def signup(request: web.Request, params: Any) -> web.Response:
                             return web.json_response({'title': reason}, status=403)
 
     if isinstance(checked_user, dict) and not checked_user['success']:
-        log.info(log_fmt + ': signup not allowed', *log_args)
-        return web.json_response({'error_msg': 'signup not allowed'}, status=403)
+        reason = checked_user.get('reason', 'signup check failed')
+        log.info(log_fmt + ': ' + reason, *log_args)
+        return web.json_response({'title': reason}, status=403)
 
     async with dbpool.acquire() as conn:
         # Check if email already exists.
