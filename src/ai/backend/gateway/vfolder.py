@@ -963,7 +963,8 @@ async def download_directory_as_archive(request: web.Request,
         for file in files:
             zf.write(Path(root) / file, Path(root).relative_to(file_path) / file)
         if len(dirs) == 0 and len(files) == 0:
-            zf.write(root, Path(root).relative_to(file_path))  # include an empty directory in the archive as well
+            # Include an empty directory in the archive as well.
+            zf.write(root, Path(root).relative_to(file_path))
     ascii_filename = zip_filename.encode('ascii', errors='ignore').decode('ascii').replace('"', r'\"')
     encoded_filename = urllib.parse.quote(zip_filename, encoding='utf-8')
     response = web.StreamResponse(headers={
