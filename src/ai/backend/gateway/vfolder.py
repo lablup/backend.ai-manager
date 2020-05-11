@@ -25,6 +25,7 @@ import aiohttp_cors
 import aiojobs
 from aiojobs.aiohttp import atomic
 import aiotools
+import janus
 import multidict
 import sqlalchemy as sa
 import psycopg2
@@ -914,8 +915,13 @@ async def delete_files(request: web.Request, params: Any, row: VFolderRow) -> we
 
 async def download_directory_as_archive(request: web.Request,
                                         file_path: Path,
-                                        zip_filename: str=None) -> web.Response:
+                                        zip_filename: str = None) -> web.StreamResponse:
     """Serve a directory as a zip archive on the fly."""
+    class _Sentinel:
+        pass
+
+    _sentinel = _Sentinel()
+
     def _iter2aiter(iter):
         """Iterable to async iterable"""
         def _consume(loop, iter, q):
@@ -927,7 +933,7 @@ async def download_directory_as_archive(request: web.Request,
                     time.sleep(0.01)
             while True:
                 if not q.full():
-                    q.put(eof_sentinel)
+                    q.put(_sentinel)
                     break
                 time.sleep(0.01)
 
@@ -938,7 +944,7 @@ async def download_directory_as_archive(request: web.Request,
                 fut = loop.run_in_executor(None, lambda: _consume(loop, iter, q.sync_q))
                 while True:
                     item = await q.async_q.get()
-                    if item is eof_sentinel:
+                    if item is _sentinel:
                         break
                     yield item
                     q.async_q.task_done()
@@ -951,8 +957,8 @@ async def download_directory_as_archive(request: web.Request,
 
     if zip_filename is None:
         zip_filename = file_path.name + '.zip'
-    # zf = zipstream.ZipFile(compression=zipstream.ZIP_DEFLATED)
-    zf = zipstream.ZipFile()
+    zf = zipstream.ZipFile(compression=zipstream.ZIP_DEFLATED)
+    # zf = zipstream.ZipFile()
     async for root, dirs, files in _iter2aiter(os.walk(file_path)):
         for file in files:
             zf.write(Path(root) / file, Path(root).relative_to(file_path) / file)
