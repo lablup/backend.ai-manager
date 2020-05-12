@@ -1,1 +1,2 @@
-APIv5 support with complete rewriting session-related GraphQL schema and updates for background task event streaming API
+API v5 support
+- All session-related GraphQL schema is rewritten to reflect multi-container sessions and kernel -> session parameter and API renamings.
