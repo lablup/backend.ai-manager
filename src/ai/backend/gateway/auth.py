@@ -574,14 +574,15 @@ async def signup(request: web.Request, params: Any) -> web.Response:
         extra_params.pop('email')
         checked_user = await _handler(params['email'], **extra_params)
         if not checked_user['success']:
-            reason = checked_user.get('reason', 'too simple password')
-            log.info(log_fmt + ': ' + reason, *log_args)
-            return web.json_response({'error_msg': 'signup not allowed'}, status=403)
+            reason = checked_user.get('reason', 'signup not allowed')
+            log.warning(reason)
+            return web.json_response({'title': reason}, status=403)
     for _handler in get_plugin_handlers_by_type(request.app['plugins'], 'CHECK_PASSWORD'):
         # Execute all CHECK_PASSWORD plugin handlers, which checks the password validity.
         result = await _handler(params['password'])
         if not result['success']:
             reason = result.get('reason', 'invalid password')
+            log.warning(reason)
             return web.json_response({'title': reason}, status=403)
 
     async with dbpool.acquire() as conn:
@@ -652,12 +653,22 @@ async def signup(request: web.Request, params: Any) -> web.Response:
                 await conn.execute(query)
         else:
             raise InternalServerError('Error creating user account')
-    return web.json_response({
-        'data': {
-            'access_key': ak,
-            'secret_key': sk,
-        },
-    })
+
+    resp_data = {
+        'access_key': ak,
+        'secret_key': sk,
+    }
+    secret = request.app['config']['manager']['secret']
+    for _handler in get_plugin_handlers_by_type(request.app['plugins'], 'POST_SIGNUP'):
+        try:
+            result = await _handler(params['email'], user_id=str(user.uuid), secret=secret)
+            if result.pop('success', False):
+                resp_data.update(result)
+        except (BaseException, Exception) as e:
+            log.warning('plugin handler exception: ' + repr(e))
+            pass  # ignore exceptions during post_signup hook since user is created anyway
+
+    return web.json_response(resp_data, status=201)
 
 
 @atomic
