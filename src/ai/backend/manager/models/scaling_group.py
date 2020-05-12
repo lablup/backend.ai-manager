@@ -1,4 +1,3 @@
-from collections import OrderedDict
 from typing import Union, Sequence, Set
 import uuid
 
@@ -13,6 +12,7 @@ from .base import (
     simple_db_mutate,
     simple_db_mutate_returning_item,
     set_if_set,
+    batch_result,
 )
 from .group import resolve_group_name_or_id
 from .user import UserRole
@@ -153,7 +153,7 @@ class ScalingGroup(graphene.ObjectType):
     scheduler_opts = graphene.JSONString()
 
     @classmethod
-    def from_row(cls, row):
+    def from_row(cls, context, row):
         if row is None:
             return None
         return cls(
@@ -167,20 +167,16 @@ class ScalingGroup(graphene.ObjectType):
             scheduler_opts=row['scheduler_opts'],
         )
 
-    @staticmethod
-    async def load_all(context, *, is_active=None):
+    @classmethod
+    async def load_all(cls, context, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
             query = sa.select([scaling_groups]).select_from(scaling_groups)
             if is_active is not None:
                 query = query.where(scaling_groups.c.is_active == is_active)
-            objs = []
-            async for row in conn.execute(query):
-                o = ScalingGroup.from_row(row)
-                objs.append(o)
-        return objs
+            return [cls.from_row(context, row) async for row in conn.execute(query)]
 
-    @staticmethod
-    async def load_by_domain(context, domain, *, is_active=None):
+    @classmethod
+    async def load_by_domain(cls, context, domain, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
             j = sa.join(
                 scaling_groups, sgroups_for_domains,
@@ -192,14 +188,10 @@ class ScalingGroup(graphene.ObjectType):
             )
             if is_active is not None:
                 query = query.where(scaling_groups.c.is_active == is_active)
-            objs = []
-            async for row in conn.execute(query):
-                o = ScalingGroup.from_row(row)
-                objs.append(o)
-        return objs
+            return [cls.from_row(context, row) async for row in conn.execute(query)]
 
-    @staticmethod
-    async def load_by_group(context, group, *, is_active=None):
+    @classmethod
+    async def load_by_group(cls, context, group, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
             j = sa.join(
                 scaling_groups, sgroups_for_groups,
@@ -211,14 +203,10 @@ class ScalingGroup(graphene.ObjectType):
             )
             if is_active is not None:
                 query = query.where(scaling_groups.c.is_active == is_active)
-            objs = []
-            async for row in conn.execute(query):
-                o = ScalingGroup.from_row(row)
-                objs.append(o)
-        return objs
+            return [cls.from_row(context, row) async for row in conn.execute(query)]
 
-    @staticmethod
-    async def load_by_keypair(context, access_key, *, is_active=None):
+    @classmethod
+    async def load_by_keypair(cls, context, access_key, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
             j = sa.join(
                 scaling_groups, sgroups_for_keypairs,
@@ -230,25 +218,18 @@ class ScalingGroup(graphene.ObjectType):
             )
             if is_active is not None:
                 query = query.where(scaling_groups.c.is_active == is_active)
-            objs = []
-            async for row in conn.execute(query):
-                o = ScalingGroup.from_row(row)
-                objs.append(o)
-        return objs
+            return [cls.from_row(context, row) async for row in conn.execute(query)]
 
-    @staticmethod
-    async def batch_load_by_name(context, names):
+    @classmethod
+    async def batch_load_by_name(cls, context, names):
         async with context['dbpool'].acquire() as conn:
             query = (sa.select([scaling_groups])
                        .select_from(scaling_groups)
                        .where(scaling_groups.c.name.in_(names)))
-            objs_per_key = OrderedDict()
-            for k in names:
-                objs_per_key[k] = None
-            async for row in conn.execute(query):
-                o = ScalingGroup.from_row(row)
-                objs_per_key[row.name] = o
-        return tuple(objs_per_key.values())
+            return await batch_result(
+                context, conn, query, cls,
+                names, lambda row: row['name'],
+            )
 
 
 class ScalingGroupInput(graphene.InputObjectType):

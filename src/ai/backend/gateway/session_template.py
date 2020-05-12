@@ -16,7 +16,7 @@ from ai.backend.common.types import SessionTypes
 from .auth import auth_required
 from .exceptions import InvalidAPIParameters, TaskTemplateNotFound
 from .manager import READ_ALLOWED, server_status_required
-from .typing import CORSOptions, Iterable, WebMiddleware
+from .types import CORSOptions, Iterable, WebMiddleware
 from .utils import check_api_params, get_access_key_scopes
 
 from ..manager.models import (

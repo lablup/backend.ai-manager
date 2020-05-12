@@ -1,13 +1,16 @@
+from __future__ import annotations
+
 import asyncio
-from collections import OrderedDict
 import re
 from typing import (
-    Optional, Union,
+    Any, Optional, Union,
+    Mapping,
     Sequence,
 )
 import uuid
 
 from aiopg.sa.connection import SAConnection
+from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import psycopg2 as pg
@@ -19,6 +22,7 @@ from .base import (
     metadata, GUID, IDColumn, ResourceSlotColumn,
     privileged_mutation,
     set_if_set,
+    batch_result,
 )
 from .user import UserRole
 
@@ -108,7 +112,7 @@ class Group(graphene.ObjectType):
     scaling_groups = graphene.List(lambda: graphene.String)
 
     @classmethod
-    def from_row(cls, row):
+    def from_row(cls, context: Mapping[str, Any], row: RowProxy) -> Optional[Group]:
         if row is None:
             return None
         return cls(
@@ -129,8 +133,8 @@ class Group(graphene.ObjectType):
         sgroups = await ScalingGroup.load_by_group(info.context, self.id)
         return [sg.name for sg in sgroups]
 
-    @staticmethod
-    async def load_all(context, *,
+    @classmethod
+    async def load_all(cls, context, *,
                        domain_name=None,
                        is_active=None):
         async with context['dbpool'].acquire() as conn:
@@ -142,33 +146,28 @@ class Group(graphene.ObjectType):
                 query = query.where(groups.c.domain_name == domain_name)
             if is_active is not None:
                 query = query.where(groups.c.is_active == is_active)
-            objs = []
-            async for row in conn.execute(query):
-                o = Group.from_row(row)
-                objs.append(o)
-        return objs
+            return [
+                cls.from_row(context, row) async for row in conn.execute(query)
+            ]
 
-    @staticmethod
-    async def batch_load_by_id(context, ids, *,
+    @classmethod
+    async def batch_load_by_id(cls, context, group_ids, *,
                                domain_name=None):
         async with context['dbpool'].acquire() as conn:
             query = (
                 sa.select([groups])
                 .select_from(groups)
-                .where(groups.c.id.in_(ids))
+                .where(groups.c.id.in_(group_ids))
             )
             if domain_name is not None:
                 query = query.where(groups.c.domain_name == domain_name)
-            objs_per_key = OrderedDict()
-            for k in ids:
-                objs_per_key[k] = None
-            async for row in conn.execute(query):
-                o = Group.from_row(row)
-                objs_per_key[str(row.id)] = o
-        return [*objs_per_key.values()]
+            return await batch_result(
+                context, conn, query, cls,
+                group_ids, lambda row: row['id'],
+            )
 
-    @staticmethod
-    async def get_groups_for_user(context, user_id):
+    @classmethod
+    async def get_groups_for_user(cls, context, user_id):
         async with context['dbpool'].acquire() as conn:
             j = sa.join(groups, association_groups_users,
                         groups.c.id == association_groups_users.c.group_id)
@@ -177,11 +176,9 @@ class Group(graphene.ObjectType):
                 .select_from(j)
                 .where(association_groups_users.c.user_id == user_id)
             )
-            objs = []
-            async for row in conn.execute(query):
-                o = Group.from_row(row)
-                objs.append(o)
-            return objs
+            return [
+                cls.from_row(context, row) async for row in conn.execute(query)
+            ]
 
 
 class GroupInput(graphene.InputObjectType):
@@ -242,7 +239,7 @@ class CreateGroup(graphene.Mutation):
                     checkq = groups.select().where((groups.c.name == name) &
                                                    (groups.c.domain_name == props.domain_name))
                     result = await conn.execute(checkq)
-                    o = Group.from_row(await result.first())
+                    o = Group.from_row(info.context, await result.first())
                     return cls(ok=True, msg='success', group=o)
                 else:
                     return cls(ok=False, msg='failed to create group', group=None)
@@ -259,7 +256,7 @@ class ModifyGroup(graphene.Mutation):
     allowed_roles = (UserRole.ADMIN, UserRole.SUPERADMIN)
 
     class Arguments:
-        gid = graphene.String(required=True)
+        gid = graphene.UUID(required=True)
         props = ModifyGroupInput(required=True)
 
     ok = graphene.Boolean()
@@ -310,7 +307,7 @@ class ModifyGroup(graphene.Mutation):
                     if result.rowcount > 0:
                         checkq = groups.select().where(groups.c.id == gid)
                         result = await conn.execute(checkq)
-                        o = Group.from_row(await result.first())
+                        o = Group.from_row(info.context, await result.first())
                         return cls(ok=True, msg='success', group=o)
                     return cls(ok=False, msg='no such group', group=None)
                 else:  # updated association_groups_users table
@@ -328,7 +325,7 @@ class DeleteGroup(graphene.Mutation):
     allowed_roles = (UserRole.ADMIN, UserRole.SUPERADMIN)
 
     class Arguments:
-        gid = graphene.String(required=True)
+        gid = graphene.UUID(required=True)
 
     ok = graphene.Boolean()
     msg = graphene.String()

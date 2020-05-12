@@ -6,6 +6,7 @@ import pytest
 from ai.backend.gateway.server import (
     config_server_ctx, event_dispatcher_ctx, background_task_ctx,
 )
+from ai.backend.manager.types import BackgroundTaskEventArgs
 from ai.backend.common.types import (
     AgentId,
 )
@@ -18,7 +19,6 @@ async def test_dispatch(etcd_fixture, create_app_and_client):
         ['.events'],
     )
     dispatcher = app['event_dispatcher']
-    assert len(dispatcher.subscribers) == 0
 
     records = {'test-var': set()}
     event_name = 'test-event-01'
@@ -64,7 +64,6 @@ async def test_error_on_dispatch(etcd_fixture, create_app_and_client, event_loop
     dispatcher = app['event_dispatcher']
     old_handler = event_loop.get_exception_handler()
     event_loop.set_exception_handler(handle_exception)
-    assert len(dispatcher.subscribers) == 0
 
     exception_log = []
     event_name = 'test-event-02'
@@ -102,44 +101,50 @@ async def test_background_task(etcd_fixture, create_app_and_client):
         ['.events'],
     )
     dispatcher = app['event_dispatcher']
-    assert len(dispatcher.subscribers) == 0
-    task_id = None
+    update_handler_ctx = {}
+    done_handler_ctx = {}
 
     async def update_sub(app_ctx: web.Application, agent_id: AgentId, event_name: str,
-                         raw_task_id: str,
-                         current_progress=None,
-                         total_progress=None,
-                         message: str = None) -> None:
-        assert app_ctx is app
-        assert raw_task_id == str(task_id)
-        assert event_name == 'task_update'
-        assert total_progress == 2
-        assert message in ['BGTask ex1', 'BGTask ex2']
-        if message == 'BGTask ex1':
-            assert current_progress == 1
-        else:
-            assert current_progress == 2
+                         args: BackgroundTaskEventArgs) -> None:
+        # Copy the arguments to the uppser scope
+        # since assertions inside the handler does not affect the test result
+        # because the handlers are executed inside a separate asyncio task.
+        update_handler_ctx['event_name'] = event_name
+        update_handler_ctx.update(**args)
 
     async def done_sub(app_ctx: web.Application, agent_id: AgentId, event_name: str,
-                       raw_task_id: str) -> None:
-        assert app_ctx is app
-        assert raw_task_id == str(task_id)
-        assert event_name == 'task_done'
+                       args: BackgroundTaskEventArgs) -> None:
+        done_handler_ctx['event_name'] = event_name
+        done_handler_ctx.update(**args)
 
     async def _mock_task(reporter):
-        await reporter.set_progress_total(2)
+        reporter.total_progress = 2
         await asyncio.sleep(1)
-        await reporter.update_progress(1, message='BGTask ex1')
+        await reporter.update(1, message='BGTask ex1')
         await asyncio.sleep(0.5)
-        await reporter.update_progress(2, message='BGTask ex2')
+        await reporter.update(1, message='BGTask ex2')
+        return 'hooray'
 
-    dispatcher.subscribe('task_update', app, update_sub)
+    dispatcher.subscribe('task_updated', app, update_sub)
     dispatcher.subscribe('task_done', app, done_sub)
-    task_id = app['background_task'].start_background_task(_mock_task, name='MockTask1234')
+    task_id = await app['background_task_manager'].start(_mock_task, name='MockTask1234')
     await asyncio.sleep(2)
 
-    await dispatcher.redis_producer.flushdb()
-    await dispatcher.close()
+    try:
+        assert update_handler_ctx['task_id'] == str(task_id)
+        assert update_handler_ctx['event_name'] == 'task_updated'
+        assert update_handler_ctx['total_progress'] == 2
+        assert update_handler_ctx['message'] in ['BGTask ex1', 'BGTask ex2']
+        if update_handler_ctx['message'] == 'BGTask ex1':
+            assert update_handler_ctx['current_progress'] == 1
+        else:
+            assert update_handler_ctx['current_progress'] == 2
+        assert done_handler_ctx['task_id'] == str(task_id)
+        assert done_handler_ctx['event_name'] == 'task_done'
+        assert done_handler_ctx['message'] == 'hooray'
+    finally:
+        await dispatcher.redis_producer.flushdb()
+        await dispatcher.close()
 
 
 @pytest.mark.asyncio
@@ -149,24 +154,27 @@ async def test_background_task_fail(etcd_fixture, create_app_and_client):
         ['.events'],
     )
     dispatcher = app['event_dispatcher']
-    assert len(dispatcher.subscribers) == 0
-    task_id = None
+    fail_handler_ctx = {}
 
     async def fail_sub(app_ctx: web.Application, agent_id: AgentId, event_name: str,
-                       raw_task_id: str) -> None:
-        assert app_ctx is app
-        assert raw_task_id == str(task_id)
-        assert event_name == 'task_fail'
+                       args: BackgroundTaskEventArgs) -> None:
+        fail_handler_ctx['event_name'] = event_name
+        fail_handler_ctx.update(**args)
 
     async def _mock_task(reporter):
-        await reporter.set_progress_total(2)
+        reporter.total_progress = 2
         await asyncio.sleep(1)
-        await reporter.update_progress(1, message='BGTask ex1')
-        raise Exception
+        await reporter.update(1, message='BGTask ex1')
+        raise ZeroDivisionError('oops')
 
-    dispatcher.subscribe('task_fail', app, fail_sub)
-    task_id = app['background_task'].start_background_task(_mock_task, name='MockTask1234')
+    dispatcher.subscribe('task_failed', app, fail_sub)
+    task_id = await app['background_task_manager'].start(_mock_task, name='MockTask1234')
     await asyncio.sleep(2)
-
-    await dispatcher.redis_producer.flushdb()
-    await dispatcher.close()
+    try:
+        assert fail_handler_ctx['task_id'] == str(task_id)
+        assert fail_handler_ctx['event_name'] == 'task_failed'
+        assert fail_handler_ctx['message'] is not None
+        assert 'ZeroDivisionError' in fail_handler_ctx['message']
+    finally:
+        await dispatcher.redis_producer.flushdb()
+        await dispatcher.close()

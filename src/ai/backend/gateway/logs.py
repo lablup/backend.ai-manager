@@ -18,7 +18,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 from .auth import auth_required
 from .defs import REDIS_LIVE_DB
 from .manager import READ_ALLOWED, server_status_required
-from .typing import CORSOptions, Iterable, WebMiddleware
+from .types import CORSOptions, Iterable, WebMiddleware
 from .utils import check_api_params, get_access_key_scopes
 
 from ..manager.models import (

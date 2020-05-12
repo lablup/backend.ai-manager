@@ -1,0 +1,1 @@
+Refactor `batch_result()` and `batch_multiresult()` used for optimizing SQL-based GraphQL queries

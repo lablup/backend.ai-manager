@@ -44,12 +44,12 @@ from ..manager.registry import AgentRegistry
 from ..manager.scheduler.dispatcher import SchedulerDispatcher
 from ..manager.background import BackgroundTaskManager
 from .config import load as load_config, load_shared as load_shared_config
-from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB
+from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB, REDIS_STREAM_DB
 from .etcd import ConfigServer
 from .events import EventDispatcher
 from .exceptions import (BackendError, MethodNotAllowed, GenericNotFound,
                          GenericBadRequest, InternalServerError)
-from .typing import (
+from .types import (
     AppCreator, PluginAppCreator,
     WebRequestHandler, WebMiddleware,
     CleanupContext,
@@ -91,7 +91,7 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 
 PUBLIC_INTERFACES: Final = [
     'pidx',
-    'background_task',
+    'background_task_manager',
     'config',
     'config_server',
     'dbpool',
@@ -99,6 +99,7 @@ PUBLIC_INTERFACES: Final = [
     'redis_live',
     'redis_stat',
     'redis_image',
+    'redis_stream',
     'event_dispatcher',
     'stats_monitor',
     'error_monitor',
@@ -109,9 +110,9 @@ public_interface_objs: MutableMapping[str, Any] = {}
 
 
 async def hello(request: web.Request) -> web.Response:
-    '''
+    """
     Returns the API version number.
-    '''
+    """
     return web.json_response({
         'version': LATEST_API_VERSION,
         'manager': __version__,
@@ -257,6 +258,13 @@ async def redis_ctx(app: web.Application) -> AsyncIterator[None]:
         timeout=3.0,
         encoding='utf8',
         db=REDIS_IMAGE_DB)
+    app['redis_stream'] = await redis.connect_with_retries(
+        app['config']['redis']['addr'].as_sockaddr(),
+        password=(app['config']['redis']['password']
+                  if app['config']['redis']['password'] else None),
+        timeout=3.0,
+        encoding='utf8',
+        db=REDIS_STREAM_DB)
     _update_public_interface_objs(app)
     yield
     app['redis_image'].close()
@@ -265,6 +273,8 @@ async def redis_ctx(app: web.Application) -> AsyncIterator[None]:
     await app['redis_stat'].wait_closed()
     app['redis_live'].close()
     await app['redis_live'].wait_closed()
+    app['redis_stream'].close()
+    await app['redis_stream'].wait_closed()
 
 
 async def database_ctx(app: web.Application) -> AsyncIterator[None]:
@@ -322,10 +332,17 @@ async def monitoring_ctx(app: web.Application) -> AsyncIterator[None]:
 
 
 async def background_task_ctx(app: web.Application) -> AsyncIterator[None]:
-    app['background_task'] = BackgroundTaskManager(app['event_dispatcher'])
+    app['background_task_manager'] = BackgroundTaskManager(app['event_dispatcher'])
     _update_public_interface_objs(app)
     yield
-    await app['background_task'].shutdown()
+
+
+async def background_task_ctx_shutdown(app: web.Application) -> None:
+    if 'background_task_manager' in app:
+        await app['background_task_manager'].shutdown()
+
+
+setattr(background_task_ctx, 'shutdown', background_task_ctx_shutdown)
 
 
 async def hook_plugins_ctx(app: web.Application) -> AsyncIterator[None]:
@@ -418,11 +435,13 @@ def _update_public_interface_objs(root_app: web.Application) -> None:
             public_interface_objs[key] = root_app[key]
 
 
-def build_root_app(pidx: int,
-                   config: Mapping[str, Any], *,
-                   cleanup_contexts: Sequence[CleanupContext] = None,
-                   subapp_pkgs: Sequence[str] = None,
-                   scheduler_opts: Mapping[str, Any] = None) -> web.Application:
+def build_root_app(
+    pidx: int,
+    config: Mapping[str, Any], *,
+    cleanup_contexts: Sequence[CleanupContext] = None,
+    subapp_pkgs: Sequence[str] = None,
+    scheduler_opts: Mapping[str, Any] = None,
+) -> web.Application:
     public_interface_objs.clear()
     app = web.Application(middlewares=[
         exception_middleware,
@@ -449,20 +468,25 @@ def build_root_app(pidx: int,
     app['pidx'] = pidx
     _update_public_interface_objs(app)
     app.on_response_prepare.append(on_prepare)
+
     if cleanup_contexts is None:
-        app.cleanup_ctx.append(config_server_ctx)
-        app.cleanup_ctx.append(manager_status_ctx)
-        app.cleanup_ctx.append(redis_ctx)
-        app.cleanup_ctx.append(database_ctx)
-        app.cleanup_ctx.append(event_dispatcher_ctx)
-        app.cleanup_ctx.append(monitoring_ctx)
-        app.cleanup_ctx.append(agent_registry_ctx)
-        app.cleanup_ctx.append(sched_dispatcher_ctx)
-        app.cleanup_ctx.append(webapp_plugins_ctx)
-        app.cleanup_ctx.append(hook_plugins_ctx)
-        app.cleanup_ctx.append(background_task_ctx)
-    else:
-        app.cleanup_ctx.extend(cleanup_contexts)
+        cleanup_contexts = [
+            config_server_ctx,
+            manager_status_ctx,
+            redis_ctx,
+            database_ctx,
+            event_dispatcher_ctx,
+            monitoring_ctx,
+            agent_registry_ctx,
+            sched_dispatcher_ctx,
+            webapp_plugins_ctx,
+            hook_plugins_ctx,
+            background_task_ctx,
+        ]
+    for cleanup_ctx in cleanup_contexts:
+        if shutdown_cb := getattr(cleanup_ctx, 'shutdown', None):
+            app.on_shutdown.append(shutdown_cb)
+    app.cleanup_ctx.extend(cleanup_contexts)
     aiojobs.aiohttp.setup(app, **app['scheduler_opts'])
     cors = aiohttp_cors.setup(app, defaults=app['cors_opts'])
     # should be done in create_app() in other modules.

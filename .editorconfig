@@ -5,8 +5,9 @@ end_of_line = lf
 insert_final_newline = true
 trim_trailing_whitespace = true
 charset = utf-8
+max_line_length = 0
 
-[*.{py,md,rst}]
+[*.{py,pyi,pyx,md,rst}]
 max_line_length = 105
 indent_style = space
 indent_size = 4
