@@ -1,1 +1,0 @@
-Fix regression of the docker registry list fetch API (`/config/docker-registries`)

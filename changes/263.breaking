@@ -1,2 +1,0 @@
-API v5 support
-- All session-related GraphQL schema is rewritten to reflect multi-container sessions and kernel -> session parameter and API renamings.
