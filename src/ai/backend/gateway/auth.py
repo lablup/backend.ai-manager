@@ -33,6 +33,7 @@ from ..manager.models import (
 from ..manager.models.user import UserRole, check_credential
 from ..manager.models.keypair import generate_keypair as _gen_keypair, generate_ssh_keypair
 from ..manager.models.group import association_groups_users, groups
+from ..manager.plugin import get_plugin_handlers_by_type
 from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params, set_handler_attr, get_handler_attr
 
@@ -565,35 +566,23 @@ async def signup(request: web.Request, params: Any) -> web.Response:
     log_args = (params['domain'], params['email'])
     log.info(log_fmt, *log_args)
     dbpool = request.app['dbpool']
-    # Ensure user exists if CHECK_USER handler is in plugin hook.
-    # TODO: Eaiser way to use plugin hooks in general? Why is it so difficult to use...
     checked_user = None
-    for plugin in request.app['plugins'].values():
-        hook_event_types = plugin.get_hook_event_types()
-        hook_event_handlers = plugin.get_handlers()
-        for ev_types in hook_event_types:
-            if 'CHECK_USER' not in ev_types._member_names_ and \
-                    'CHECK_PASSWORD' not in ev_types._member_names_:
-                continue
-            for ev_handlers in hook_event_handlers:
-                for ev_handler in ev_handlers:
-                    if 'CHECK_USER' in ev_types._member_names_ and \
-                            ev_types.CHECK_USER == ev_handler[0]:
-                        check_user = ev_handler[1]
-                        extra_params = copy.deepcopy(params)
-                        extra_params.pop('email')
-                        checked_user = await check_user(params['email'], **extra_params)
-                    if 'CHECK_PASSWORD' in ev_types._member_names_ and \
-                            ev_types.CHECK_PASSWORD == ev_handler[0]:
-                        check_password = ev_handler[1]
-                        result = await check_password(params['password'])
-                        if not result['success']:
-                            reason = result.get('reason', 'too simple password')
-                            return web.json_response({'title': reason}, status=403)
-
-    if isinstance(checked_user, dict) and not checked_user['success']:
-        log.info(log_fmt + ': signup not allowed', *log_args)
-        return web.json_response({'error_msg': 'signup not allowed'}, status=403)
+    for _handler in get_plugin_handlers_by_type(request.app['plugins'], 'CHECK_USER'):
+        # Execute all CHECK_USER plugin handlers,
+        # which determine the user should be allowed to sign up or not per plugin bases.
+        extra_params = copy.deepcopy(params)
+        extra_params.pop('email')
+        checked_user = await _handler(params['email'], **extra_params)
+        if not checked_user['success']:
+            reason = checked_user.get('reason', 'too simple password')
+            log.info(log_fmt + ': ' + reason, *log_args)
+            return web.json_response({'error_msg': 'signup not allowed'}, status=403)
+    for _handler in get_plugin_handlers_by_type(request.app['plugins'], 'CHECK_PASSWORD'):
+        # Execute all CHECK_PASSWORD plugin handlers, which checks the password validity.
+        result = await _handler(params['password'])
+        if not result['success']:
+            reason = result.get('reason', 'invalid password')
+            return web.json_response({'title': reason}, status=403)
 
     async with dbpool.acquire() as conn:
         # Check if email already exists.
@@ -619,7 +608,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
             'integration_id': None,
         }
         if checked_user:
-            # Prevent sql compile exception from unconsumed colume names.
+            # Override fields specified in check_user plugins.
             for key, val in checked_user.items():
                 if key in data:
                     data[key] = val
@@ -637,7 +626,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
                 'user_id': params['email'],
                 'access_key': ak,
                 'secret_key': sk,
-                'is_active': True,
+                'is_active': data['is_active'] if 'is_active' in data else True,
                 'is_admin': False,
                 'resource_policy': resource_policy,
                 'concurrency_used': 0,
