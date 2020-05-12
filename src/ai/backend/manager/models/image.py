@@ -1,11 +1,20 @@
+from __future__ import annotations
 import logging
+from typing import (
+    Sequence,
+    TYPE_CHECKING,
+)
 
 import graphene
 import sqlalchemy as sa
+from graphql.execution.executors.asyncio import AsyncioExecutor
 
 from ai.backend.common.logging import BraceStyleAdapter
 from .user import UserRole
 from .base import BigInt, KVPair, ResourceLimit
+
+if TYPE_CHECKING:
+    from ..background import ProgressReporter
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
 
@@ -124,10 +133,38 @@ class PreloadImage(graphene.Mutation):
 
     ok = graphene.Boolean()
     msg = graphene.String()
+    task_id = graphene.String()
 
     @staticmethod
-    async def mutate(root, info, references, target_agents):
-        return PreloadImage(ok=False, msg='Not implemented.')
+    async def mutate(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        references: Sequence[str],
+        target_agents: Sequence[str],
+    ) -> PreloadImage:
+        return PreloadImage(ok=False, msg='Not implemented.', task_id=None)
+
+
+class UnloadImage(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
+
+    class Arguments:
+        references = graphene.List(graphene.String, required=True)
+        target_agents = graphene.List(graphene.String, required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+    task_id = graphene.String()
+
+    @staticmethod
+    async def mutate(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        references: Sequence[str],
+        target_agents: Sequence[str],
+    ) -> UnloadImage:
+        return UnloadImage(ok=False, msg='Not implemented.', task_id=None)
 
 
 class RescanImages(graphene.Mutation):
@@ -139,14 +176,23 @@ class RescanImages(graphene.Mutation):
 
     ok = graphene.Boolean()
     msg = graphene.String()
+    task_id = graphene.UUID()
 
     @staticmethod
-    async def mutate(root, info, registry=None):
+    async def mutate(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        registry: str = None,
+    ) -> RescanImages:
         log.info('rescanning docker registry {0} by API request',
                  f'({registry})' if registry else '(all)')
         config_server = info.context['config_server']
-        await config_server.rescan_images(registry)
-        return RescanImages(ok=True, msg='')
+
+        async def _rescan_task(reporter: ProgressReporter) -> None:
+            await config_server.rescan_images(registry, reporter=reporter)
+
+        task_id = await info.context['background_task_manager'].start(_rescan_task)
+        return RescanImages(ok=True, msg='', task_id=task_id)
 
 
 class ForgetImage(graphene.Mutation):
@@ -160,7 +206,11 @@ class ForgetImage(graphene.Mutation):
     msg = graphene.String()
 
     @staticmethod
-    async def mutate(root, info, reference: str):
+    async def mutate(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        reference: str,
+    ) -> ForgetImage:
         log.info('forget image {0} by API request', reference)
         config_server = info.context['config_server']
         await config_server.forget_image(reference)
@@ -179,7 +229,12 @@ class AliasImage(graphene.Mutation):
     msg = graphene.String()
 
     @staticmethod
-    async def mutate(root, info, alias, target):
+    async def mutate(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        alias: str,
+        target: str,
+    ) -> AliasImage:
         log.info('alias image {0} -> {1} by API request', alias, target)
         config_server = info.context['config_server']
         try:
@@ -200,7 +255,11 @@ class DealiasImage(graphene.Mutation):
     msg = graphene.String()
 
     @staticmethod
-    async def mutate(root, info, alias):
+    async def mutate(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        alias: str,
+    ) -> DealiasImage:
         log.info('dealias image {0} by API request', alias)
         config_server = info.context['config_server']
         await config_server.dealias(alias)

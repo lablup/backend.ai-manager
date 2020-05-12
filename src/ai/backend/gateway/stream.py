@@ -16,19 +16,15 @@ from typing import (
     Mapping,
     MutableMapping,
     List, Tuple,
-    Set, Union,
-    Sequence
+    Union,
 )
-import uuid
 from urllib.parse import urlparse
 import weakref
 
 import aiohttp
 from aiohttp import web
 import aiohttp_cors
-from aiohttp_sse import sse_response
 from aiotools import apartial, adefer
-import sqlalchemy as sa
 import trafaret as t
 import zmq, zmq.asyncio
 
@@ -41,20 +37,18 @@ from ai.backend.common.types import (
 
 from .auth import auth_required
 from .exceptions import (
-    AppNotFound, GroupNotFound, SessionNotFound,
+    AppNotFound, SessionNotFound,
     BackendError,
-    InvalidAPIParameters, GenericForbidden,
+    InvalidAPIParameters,
     InternalServerError,
 )
 from .manager import READ_ALLOWED, server_status_required
-from .typing import CORSOptions, WebMiddleware
+from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params, call_non_bursty
 from .wsproxy import TCPProxy
-from ..manager.models import kernels, groups, UserRole
+from ..manager.models import kernels
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.stream'))
-
-sentinel = object()
 
 
 @server_status_required(READ_ALLOWED)
@@ -459,112 +453,6 @@ async def get_stream_apps(request: web.Request) -> web.Response:
     return web.json_response(resp)
 
 
-@server_status_required(READ_ALLOWED)
-@auth_required
-@check_api_params(
-    t.Dict({
-        tx.AliasedKey(['name', 'sessionName'], default='*') >> 'session_name': t.String,
-        t.Key('ownerAccessKey', default=None) >> 'owner_access_key': t.Null | t.String,
-        tx.AliasedKey(['group', 'groupName'], default='*') >> 'group_name': t.String,
-    }))
-@adefer
-async def stream_events(defer, request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
-    app = request.app
-    session_name = params['session_name']
-    user_role = request['user']['role']
-    user_uuid = request['user']['uuid']
-    access_key = params['owner_access_key']
-    if access_key is None:
-        access_key = request['keypair']['access_key']
-    if user_role == UserRole.USER:
-        if access_key != request['keypair']['access_key']:
-            raise GenericForbidden
-    group_name = params['group_name']
-    event_queues = app['event_queues']  # type: Set[asyncio.Queue]
-    my_queue = asyncio.Queue()          # type: asyncio.Queue[Tuple[str, dict, str]]
-    log.info('STREAM_EVENTS (ak:{}, s:{}, g:{})', access_key, session_name, group_name)
-    if group_name == '*':
-        group_id = '*'
-    else:
-        async with app['dbpool'].acquire() as conn, conn.begin():
-            query = (
-                sa.select([groups.c.id]).select_from(groups)
-                .where(groups.c.name == group_name)
-            )
-            row = await conn.first(query)
-            if row is None:
-                raise GroupNotFound
-            group_id = row['id']
-    event_queues.add(my_queue)
-    defer(lambda: event_queues.remove(my_queue))
-    try:
-        async with sse_response(request) as resp:
-            while True:
-                evdata = await my_queue.get()
-                if evdata is sentinel:
-                    break
-                event_name, row, reason = evdata
-                if user_role in (UserRole.USER, UserRole.ADMIN):
-                    if row['domain_name'] != request['user']['domain_name']:
-                        continue
-                if user_role == UserRole.USER:
-                    if row['user_uuid'] != user_uuid:
-                        continue
-                if group_id != '*' and row['group_id'] != group_id:
-                    continue
-                if session_name != '*' and not (
-                        (row['sess_id'] == session_name) and
-                        (row['access_key'] == access_key)):
-                    continue
-                await resp.send(json.dumps({
-                    'sessionName': str(row['sess_id']),
-                    'ownerAccessKey': row['access_key'],
-                    'reason': reason,
-                }), event=event_name)
-    finally:
-        return resp
-
-
-@server_status_required(READ_ALLOWED)
-@auth_required
-@check_api_params(t.Dict({
-    tx.AliasedKey(['task_id', 'taskId']): t.String,
-    t.Key('ownerAccessKey', default=None) >> 'owner_access_key': t.Null | t.String,
-}))
-async def stream_background_task(request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
-    app = request.app
-    task_id = uuid.UUID(params['task_id'])
-    access_key = params['owner_access_key']
-    if access_key is None:
-        access_key = request['keypair']['access_key']
-
-    task_update_queues = app['task_update_queues']  # type: Set[asyncio.Queue]
-    my_queue = asyncio.Queue()          # type: asyncio.Queue[Tuple[str, dict, str]]
-    log.info('STREAM_BACKGROUND_TASK (ak:{}, t:{})', access_key, task_id)
-
-    task_update_queues.add(my_queue)
-    try:
-        async with sse_response(request) as resp:
-            while True:
-                evdata: Sequence = await my_queue.get()
-                if evdata is sentinel:
-                    break
-                event_task_id: str = evdata[1]
-                if task_id != uuid.UUID(event_task_id):
-                    continue
-                body = {
-                    'taskId': str(task_id),
-                    'currentProgress': evdata[2],
-                    'totalProgress':  evdata[3]
-                }
-                if evdata[4] is not None:
-                    body['message'] = evdata[4]
-                await resp.send(json.dumps(body), event=evdata[0])
-    finally:
-        task_update_queues.remove(my_queue)
-        return resp
-
-
 async def kernel_terminated(app: web.Application, agent_id: AgentId, event_name: str,
                             kernel_id: KernelId, reason: str,
                             exit_code: int = None) -> None:
@@ -592,106 +480,15 @@ async def kernel_terminated(app: web.Application, agent_id: AgentId, event_name:
         # TODO: reconnect if restarting?
 
 
-async def enqueue_status_update(app: web.Application, agent_id: AgentId, event_name: str,
-                                raw_kernel_id: str,
-                                reason: str = None,
-                                exit_code: int = None) -> None:
-    if raw_kernel_id is None:
-        return
-    kernel_id = uuid.UUID(raw_kernel_id)
-    # TODO: when event_name == 'kernel_started', read the service port data.
-    async with app['dbpool'].acquire() as conn, conn.begin():
-        query = (
-            sa.select([
-                kernels.c.role,
-                kernels.c.sess_id,
-                kernels.c.access_key,
-                kernels.c.domain_name,
-                kernels.c.group_id,
-                kernels.c.user_uuid,
-            ])
-            .select_from(kernels)
-            .where(
-                (kernels.c.id == kernel_id)
-            )
-        )
-        result = await conn.execute(query)
-        row = await result.first()
-        if row is None:
-            return
-        if row['role'] != 'master':
-            return
-    for q in app['event_queues']:
-        q.put_nowait((event_name, row, reason))
-
-
-async def enqueue_result_update(app: web.Application, agent_id: AgentId, event_name: str,
-                                raw_kernel_id: str,
-                                exit_code: int = None) -> None:
-    kernel_id = uuid.UUID(raw_kernel_id)
-    # TODO: when event_name == 'kernel_started', read the service port data.
-    async with app['dbpool'].acquire() as conn, conn.begin():
-        query = (
-            sa.select([
-                kernels.c.role,
-                kernels.c.sess_id,
-                kernels.c.access_key,
-                kernels.c.domain_name,
-                kernels.c.group_id,
-                kernels.c.user_uuid,
-            ])
-            .select_from(kernels)
-            .where(
-                (kernels.c.id == kernel_id)
-            )
-        )
-        result = await conn.execute(query)
-        row = await result.first()
-        if row is None:
-            return
-        if row['role'] != 'master':
-            return
-    if event_name == 'kernel_success':
-        reason = 'task-success'
-    else:
-        reason = 'task-failure'
-    for q in app['event_queues']:
-        q.put_nowait((event_name, row, reason))
-
-
-async def enqueue_task_status_update(app: web.Application, agent_id: AgentId, event_name: str,
-                                     raw_task_id: str,
-                                     current_progress: Union[int, float] = None,
-                                     total_progress: Union[int, float] = None,
-                                     message: str = None):
-    for q in app['task_update_queues']:
-        q.put_nowait((event_name, raw_task_id, current_progress, total_progress, message, ))
-
-
 async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
     app['stream_pty_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_execute_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_proxy_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_stdin_socks'] = defaultdict(weakref.WeakSet)
     app['zctx'] = zmq.asyncio.Context()
-    app['event_queues'] = set()
-    app['task_update_queues'] = set()
+
     event_dispatcher = app['event_dispatcher']
     event_dispatcher.subscribe('kernel_terminated', app, kernel_terminated)
-    event_dispatcher.subscribe('kernel_enqueued', app, enqueue_status_update)
-    event_dispatcher.subscribe('kernel_preparing', app, enqueue_status_update)
-    event_dispatcher.subscribe('kernel_pulling', app, enqueue_status_update)
-    event_dispatcher.subscribe('kernel_creating', app, enqueue_status_update)
-    event_dispatcher.subscribe('kernel_started', app, enqueue_status_update)
-    event_dispatcher.subscribe('kernel_terminating', app, enqueue_status_update)
-    event_dispatcher.subscribe('kernel_terminated', app, enqueue_status_update)
-    event_dispatcher.subscribe('kernel_cancelled', app, enqueue_status_update)
-    event_dispatcher.subscribe('kernel_success', app, enqueue_result_update)
-    event_dispatcher.subscribe('kernel_failure', app, enqueue_result_update)
-    event_dispatcher.subscribe('task_update', app, enqueue_task_status_update)
-    event_dispatcher.subscribe('task_done', app, enqueue_task_status_update)
-    event_dispatcher.subscribe('task_cancel', app, enqueue_task_status_update)
-    event_dispatcher.subscribe('task_fail', app, enqueue_task_status_update)
 
     yield
 
@@ -711,10 +508,6 @@ async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
             if not handler.done():
                 handler.cancel()
                 cancelled_tasks.append(handler)
-    for q in app['event_queues']:
-        q.put_nowait(sentinel)
-    for q in app['task_update_queues']:
-        q.put_nowait(sentinel)
     await asyncio.gather(*cancelled_tasks, return_exceptions=True)
     app['zctx'].term()
 
@@ -726,8 +519,6 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app['api_versions'] = (2, 3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     add_route = app.router.add_route
-    cors.add(add_route('GET', r'/background-task', stream_background_task))
-    cors.add(add_route('GET', r'/session/_/events', stream_events))
     cors.add(add_route('GET', r'/session/{session_name}/pty', stream_pty))
     cors.add(add_route('GET', r'/session/{session_name}/execute', stream_execute))
     cors.add(add_route('GET', r'/session/{session_name}/apps', get_stream_apps))

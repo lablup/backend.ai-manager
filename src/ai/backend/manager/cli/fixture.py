@@ -14,7 +14,7 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
 
 @click.group()
 def cli():
-    '''Manages database fixtures for testing.'''
+    pass
 
 
 @cli.command()

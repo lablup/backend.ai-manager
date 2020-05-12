@@ -26,8 +26,6 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
 
 @click.group()
 def cli():
-    '''Provides commands to manage etcd-based Backend.AI cluster configs
-    and a simple etcd client functionality'''
     pass
 
 

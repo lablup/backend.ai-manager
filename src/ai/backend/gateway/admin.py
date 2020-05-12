@@ -21,7 +21,7 @@ from ai.backend.common import validators as tx
 from .manager import GQLMutationUnfrozenRequiredMiddleware
 from .exceptions import GraphQLError as BackendGQLError
 from .auth import auth_required
-from .typing import CORSOptions, WebMiddleware
+from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params
 from ..manager.models.base import DataLoaderManager
 from ..manager.models.gql import (
@@ -69,6 +69,7 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
         'redis_stat': request.app['redis_stat'],
         'manager_status': manager_status,
         'known_slot_types': known_slot_types,
+        'background_task_manager': request.app['background_task_manager'],
     }
     dlmanager = DataLoaderManager(context)
     result = schema.execute(

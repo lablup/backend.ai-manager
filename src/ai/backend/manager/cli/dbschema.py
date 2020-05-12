@@ -16,7 +16,7 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
 
 @click.group()
 def cli(args):
-    '''Manages database schemas.'''
+    pass
 
 
 @cli.command()

@@ -60,7 +60,7 @@ from .exceptions import (
     TaskTemplateNotFound
 )
 from .auth import auth_required
-from .typing import CORSOptions, WebMiddleware
+from .types import CORSOptions, WebMiddleware
 from .utils import (
     catch_unexpected, check_api_params, get_access_key_scopes, undefined
 )

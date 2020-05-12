@@ -17,7 +17,7 @@ from ai.backend.common.logging import BraceStyleAdapter
 
 from .defs import REDIS_RLIM_DB
 from .exceptions import RateLimitExceeded
-from .typing import CORSOptions, WebRequestHandler, WebMiddleware
+from .types import CORSOptions, WebRequestHandler, WebMiddleware
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.ratelimit'))
 
