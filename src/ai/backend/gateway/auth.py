@@ -572,6 +572,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
         # which determine the user should be allowed to sign up or not per plugin bases.
         extra_params = copy.deepcopy(params)
         extra_params.pop('email')
+        extra_params['config_server'] = request.app['config_server']
         checked_user = await _handler(params['email'], **extra_params)
         if not checked_user['success']:
             reason = checked_user.get('reason', 'signup not allowed')
