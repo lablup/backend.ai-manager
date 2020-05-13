@@ -6,7 +6,11 @@ import logging
 import sys
 from typing import (
     Any,
-    Mapping, MutableMapping,
+    Dict,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
     TYPE_CHECKING,
 )
 import uuid
@@ -876,15 +880,17 @@ class AgentRegistry:
                     )
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
+                last_stat: Optional[Dict[str, Any]]
+                last_stat = None
                 try:
                     raw_last_stat = await redis.execute_with_retries(
                         lambda: self.redis_stat.get(str(kernel['id']), encoding=None),
                         max_retries=3)
                     if raw_last_stat is not None:
                         last_stat = msgpack.unpackb(raw_last_stat)
-                    last_stat['version'] = 2
+                        last_stat['version'] = 2
                 except asyncio.TimeoutError:
-                    last_stat = None
+                    pass
                 return {
                     **(last_stat if last_stat is not None else {}),
                     'status': 'terminated',
@@ -1296,46 +1302,52 @@ class AgentRegistry:
             )
             await conn.execute(query)
 
-    async def sync_kernel_stats(self, kernel_id: KernelId, *,
-                                db_conn: SAConnection = None,
-                                additional_updates: dict = None) -> None:
-        updates = {}
-        raw_kernel_id = str(kernel_id)
-        log.debug('sync_kernel_stats(k:{})', kernel_id)
+    async def sync_kernel_stats(
+        self, kernel_ids: Sequence[KernelId], *,
+        db_conn: SAConnection = None,
+    ) -> None:
+        per_kernel_updates = {}
 
-        async def _get_kstats_from_redis():
-            stat_type = await self.redis_stat.type(raw_kernel_id)
-            if stat_type == 'string':
-                kern_stat = await self.redis_stat.get(raw_kernel_id, encoding=None)
-                if kern_stat is not None:
-                    updates['last_stat'] = msgpack.unpackb(kern_stat)
-            else:
-                kern_stat = await self.redis_stat.hgetall(raw_kernel_id)
-                if kern_stat is not None and 'cpu_used' in kern_stat:
-                    updates.update({
-                        'cpu_used': int(float(kern_stat['cpu_used'])),
-                        'mem_max_bytes': int(kern_stat['mem_max_bytes']),
-                        'net_rx_bytes': int(kern_stat['net_rx_bytes']),
-                        'net_tx_bytes': int(kern_stat['net_tx_bytes']),
-                        'io_read_bytes': int(kern_stat['io_read_bytes']),
-                        'io_write_bytes': int(kern_stat['io_write_bytes']),
-                        'io_max_scratch_size': int(kern_stat['io_max_scratch_size']),
-                    })
+        for kernel_id in kernel_ids:
+            raw_kernel_id = str(kernel_id)
+            log.debug('sync_kernel_stats(k:{})', kernel_id)
+            updates = {}
 
-        await redis.execute_with_retries(
-            lambda: _get_kstats_from_redis(),
-            max_retries=1,
-        )
-        if additional_updates is not None:
-            updates.update(additional_updates)
-        if not updates:
-            log.warning('sync_kernel_stats(k:{}): no statistics updates', kernel_id)
-            return
+            async def _get_kstats_from_redis():
+                stat_type = await self.redis_stat.type(raw_kernel_id)
+                if stat_type == 'string':
+                    kern_stat = await self.redis_stat.get(raw_kernel_id, encoding=None)
+                    if kern_stat is not None:
+                        updates['last_stat'] = msgpack.unpackb(kern_stat)
+                else:
+                    kern_stat = await self.redis_stat.hgetall(raw_kernel_id)
+                    if kern_stat is not None and 'cpu_used' in kern_stat:
+                        updates.update({
+                            'cpu_used': int(float(kern_stat['cpu_used'])),
+                            'mem_max_bytes': int(kern_stat['mem_max_bytes']),
+                            'net_rx_bytes': int(kern_stat['net_rx_bytes']),
+                            'net_tx_bytes': int(kern_stat['net_tx_bytes']),
+                            'io_read_bytes': int(kern_stat['io_read_bytes']),
+                            'io_write_bytes': int(kern_stat['io_write_bytes']),
+                            'io_max_scratch_size': int(kern_stat['io_max_scratch_size']),
+                        })
+
+            await redis.execute_with_retries(
+                lambda: _get_kstats_from_redis(),
+                max_retries=1,
+            )
+            if not updates:
+                log.warning('sync_kernel_stats(k:{}): no statistics updates', kernel_id)
+                continue
+            per_kernel_updates[kernel_id] = updates
+
         async with reenter_txn(self.dbpool, db_conn) as conn:
-            query = (sa.update(kernels)
-                       .values(updates)
-                       .where(kernels.c.id == kernel_id))
-            await conn.execute(query)
+            # TODO: update to use execute_batch() if aiopg supports it.
+            for kernel_id, updates in per_kernel_updates.items():
+                query = (sa.update(kernels)
+                           .values(updates)
+                           .where(kernels.c.id == kernel_id))
+                await conn.execute(query)
 
     async def mark_kernel_terminated(self, kernel_id: KernelId,
                                      reason: str,
@@ -1372,18 +1384,23 @@ class AgentRegistry:
             # Change the status to TERMINATED.
             # (we don't delete the row for later logging and billing)
             now = datetime.now(tzutc())
-            updates = {
-                'status': KernelStatus.TERMINATED,
-                'status_info': reason,
-                'status_changed': now,
-                'terminated_at': now,
-            }
-            await self.sync_kernel_stats(kernel_id, db_conn=conn, additional_updates=updates)
+            query = (
+                sa.update(kernels)
+                .values({
+                    'status': KernelStatus.TERMINATED,
+                    'status_info': reason,
+                    'status_changed': now,
+                    'terminated_at': now,
+                })
+                .where(kernels.c.id == kernel_id)
+            )
+            await conn.execute(query)
 
             if reason == 'self-terminated' and kernel['status'] != KernelStatus.TERMINATING:
-                query = (sa.update(keypairs)
-                           .values(concurrency_used=keypairs.c.concurrency_used - 1)
-                           .where(keypairs.c.access_key == kernel.access_key))
+                query = (
+                    sa.update(keypairs)
+                    .values(concurrency_used=keypairs.c.concurrency_used - 1)
+                    .where(keypairs.c.access_key == kernel['access_key']))
                 await conn.execute(query)
 
             # Release agent resource slots.
@@ -1408,3 +1425,8 @@ class AgentRegistry:
                 .where(agents.c.id == kernel['agent'])
             )
             await conn.execute(query)
+
+        # Perform statistics sync in a separate transaction block, since
+        # it may take a while to fetch stats from Redis.
+        async with self.dbpool.acquire() as conn, conn.begin():
+            await self.sync_kernel_stats([kernel_id], db_conn=conn)
