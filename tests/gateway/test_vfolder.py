@@ -1247,7 +1247,7 @@ class TestInvitation:
             }))
             await conn.execute(query)
 
-        url = f'/v3/folders/invitations/list'
+        url = '/v3/folders/invitations/list'
         req_bytes = json.dumps({}).encode()
         headers = get_headers('GET', url, req_bytes, keypair=user_keypair)
         ret = await client.get(url, data=req_bytes, headers=headers)
@@ -1269,7 +1269,7 @@ class TestInvitation:
             inviter=inviter, invitee=invitee,
             vfolder=folder_info['id'])
 
-        url = f'/v3/folders/invitations/list_sent'
+        url = '/v3/folders/invitations/list_sent'
         req_bytes = json.dumps({}).encode()
         headers = get_headers('GET', url, req_bytes)
         ret = await client.get(url, data=req_bytes, headers=headers)
@@ -1294,7 +1294,7 @@ class TestInvitation:
             permission=VFolderPermission('ro'),
             vfolder=folder_info['id'])
 
-        url = f'/v3/folders/invitations/update/{vfinv["id"]}'
+        url = '/v3/folders/invitations/update/{vfinv["id"]}'
         req_bytes = json.dumps({'perm': 'rw'}).encode()
         headers = get_headers('POST', url, req_bytes)
         ret = await client.post(url, data=req_bytes, headers=headers)
@@ -1316,7 +1316,7 @@ class TestInvitation:
             inviter=inviter, invitee=invitee,
             vfolder=folder_info['id'])
 
-        url = f'/v3/folders/invitations/list'
+        url = '/v3/folders/invitations/list'
         req_bytes = json.dumps({}).encode()
         headers = get_headers('GET', url, req_bytes, keypair=user_keypair)
         ret = await client.get(url, data=req_bytes, headers=headers)
@@ -1348,7 +1348,7 @@ class TestInvitation:
             }))
             await conn.execute(query)
 
-        url = f'/v3/folders/invitations/list'
+        url = '/v3/folders/invitations/list'
         req_bytes = json.dumps({}).encode()
         headers = get_headers('GET', url, req_bytes, keypair=user_keypair)
         ret = await client.get(url, data=req_bytes, headers=headers)
@@ -1376,7 +1376,7 @@ class TestInvitation:
             }))
             await conn.execute(query)
 
-        url = f'/v3/folders/invitations/accept'
+        url = '/v3/folders/invitations/accept'
         req_bytes = json.dumps({'inv_id': inv_id}).encode()
         headers = get_headers('POST', url, req_bytes, keypair=user_keypair)
         ret = await client.post(url, data=req_bytes, headers=headers)
@@ -1437,7 +1437,7 @@ class TestInvitation:
             }))
             await conn.execute(query)
 
-        url = f'/v3/folders/invitations/accept'
+        url = '/v3/folders/invitations/accept'
         req_bytes = json.dumps({'inv_id': inv_id}).encode()
         headers = get_headers('POST', url, req_bytes, keypair=user_keypair)
         ret = await client.post(url, data=req_bytes, headers=headers)
@@ -1482,7 +1482,7 @@ class TestInvitation:
             }))
             await conn.execute(query)
 
-        url = f'/v3/folders/invitations/delete'
+        url = '/v3/folders/invitations/delete'
         req_bytes = json.dumps({'inv_id': inv_id}).encode()
         headers = get_headers('DELETE', url, req_bytes, keypair=user_keypair)
         ret = await client.delete(url, data=req_bytes, headers=headers)
@@ -1518,7 +1518,7 @@ class TestInvitation:
             vfolder=folder_info['id'], user=shared_to['uuid'],
             permission=VFolderPermission('rw'))
 
-        url = f'/v3/folders/_/shared'
+        url = '/v3/folders/_/shared'
         req_bytes = json.dumps({}).encode()
         headers = get_headers('GET', url, req_bytes)
         ret = await client.get(url, data=req_bytes, headers=headers)
@@ -1532,7 +1532,7 @@ class TestInvitation:
         assert rsp_json['shared'][0]['perm'] == 'rw'
 
         # Request with target vfolder_id.
-        url = f'/v3/folders/_/shared'
+        url = '/v3/folders/_/shared'
         req_bytes = json.dumps({'vfolder_id': folder_info['id']}).encode()
         headers = get_headers('GET', url, req_bytes)
         ret = await client.get(url, data=req_bytes, headers=headers)
@@ -1546,7 +1546,7 @@ class TestInvitation:
         assert rsp_json['shared'][0]['perm'] == 'rw'
 
         # Request with invalid target vfolder_id.
-        url = f'/v3/folders/_/shared'
+        url = '/v3/folders/_/shared'
         req_bytes = json.dumps({'vfolder_id': str(uuid.uuid4())}).encode()
         headers = get_headers('GET', url, req_bytes)
         ret = await client.get(url, data=req_bytes, headers=headers)
@@ -1565,7 +1565,7 @@ class TestInvitation:
             vfolder=folder_info['id'], user=shared_to['uuid'],
             permission=VFolderPermission('ro'))
 
-        url = f'/v3/folders/_/shared'
+        url = '/v3/folders/_/shared'
         req_bytes = json.dumps({
             'vfolder': folder_info['id'],
             'user': str(shared_to['uuid']),

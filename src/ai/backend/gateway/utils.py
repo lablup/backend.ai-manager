@@ -95,7 +95,7 @@ def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None) ->
             except json.decoder.JSONDecodeError:
                 raise InvalidAPIParameters('Malformed body')
             except t.DataError as e:
-                raise InvalidAPIParameters(f'Input validation error',
+                raise InvalidAPIParameters('Input validation error',
                                            extra_data=e.as_dict())
             return await handler(request, checked_params, *args, **kwargs)
 

@@ -112,7 +112,7 @@ class TestConfigServer:
         assert (f'images/{name}/mem', '1.00') in img_data
         assert (f'images/{name}/gpu', '0.00') in img_data
         assert (f'images/{name}/tags/3.6-debian', 'ca7b9f52b6c2') in img_data
-        alias_data = list(await config_server.etcd.get_prefix(f'images/_aliases'))
+        alias_data = list(await config_server.etcd.get_prefix('images/_aliases'))
         assert (f'images/_aliases/{name}:latest', f'{name}:3.6-debian') in alias_data
 
     @pytest.mark.asyncio
