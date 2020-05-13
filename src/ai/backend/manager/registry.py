@@ -6,7 +6,10 @@ import logging
 import sys
 from typing import (
     Any,
-    Mapping, MutableMapping,
+    Dict,
+    Mapping,
+    MutableMapping,
+    Optional,
     Sequence,
     TYPE_CHECKING,
 )
@@ -877,15 +880,17 @@ class AgentRegistry:
                     )
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
                 await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
+                last_stat: Optional[Dict[str, Any]]
+                last_stat = None
                 try:
                     raw_last_stat = await redis.execute_with_retries(
                         lambda: self.redis_stat.get(str(kernel['id']), encoding=None),
                         max_retries=3)
                     if raw_last_stat is not None:
                         last_stat = msgpack.unpackb(raw_last_stat)
-                    last_stat['version'] = 2
+                        last_stat['version'] = 2
                 except asyncio.TimeoutError:
-                    last_stat = None
+                    pass
                 return {
                     **(last_stat if last_stat is not None else {}),
                     'status': 'terminated',
@@ -1387,7 +1392,7 @@ class AgentRegistry:
                     'status_changed': now,
                     'terminated_at': now,
                 })
-                .where(kernels.c.id == kernel['id'])
+                .where(kernels.c.id == kernel_id)
             )
             await conn.execute(query)
 
