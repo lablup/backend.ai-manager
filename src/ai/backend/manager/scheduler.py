@@ -379,8 +379,8 @@ class SessionScheduler(aobject):
 
     async def schedule(self, ctx: object, agent_id: AgentId, event_name: str,
                        *args, **kwargs) -> None:
-        lock = await self.lock_manager.lock('manager.scheduler')
         try:
+            lock = await self.lock_manager.lock('manager.scheduler')
             async with lock:
                 await asyncio.sleep(0.5)
                 await self.schedule_impl()
