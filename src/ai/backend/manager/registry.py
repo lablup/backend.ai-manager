@@ -875,7 +875,16 @@ class AgentRegistry:
                         (str(kernel.id), 'user-requested'),
                     )
             async with RPCContext(kernel['agent_addr'], 30) as rpc:
-                last_stat = await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
+                await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
+                try:
+                    raw_last_stat = await redis.execute_with_retries(
+                        lambda: self.redis_stat.get(str(kernel['id']), encoding=None),
+                        max_retries=3)
+                    if raw_last_stat is not None:
+                        last_stat = msgpack.unpackb(raw_last_stat)
+                    last_stat['version'] = 2
+                except asyncio.TimeoutError:
+                    last_stat = None
                 return {
                     **(last_stat if last_stat is not None else {}),
                     'status': 'terminated',
