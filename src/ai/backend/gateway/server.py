@@ -205,7 +205,7 @@ async def exception_middleware(request: web.Request,
         return resp
 
 
-async def config_server_ctx(app: web.Application) -> AsyncIterator[None]:
+async def config_server_register(app: web.Application) -> None:
     # populate public interfaces
     app['config_server'] = ConfigServer(
         app, app['config']['etcd']['addr'],
@@ -219,7 +219,6 @@ async def config_server_ctx(app: web.Application) -> AsyncIterator[None]:
         await app['config_server'].etcd.get_prefix('config/redis')
     )
     _update_public_interface_objs(app)
-    yield
     # await app['config_server'].close()
 
 
@@ -361,7 +360,7 @@ async def hook_plugins_ctx(app: web.Application) -> AsyncIterator[None]:
     yield
 
 
-async def webapp_plugins_ctx(app: web.Application) -> AsyncIterator[None]:
+async def webapp_plugins_register(app: web.Application) -> None:
 
     def init_extapp(pkg_name: str, root_app: web.Application, create_subapp: PluginAppCreator) -> None:
         subapp, global_middlewares = create_subapp(app['config']['plugins'], app['cors_opts'])
@@ -369,6 +368,7 @@ async def webapp_plugins_ctx(app: web.Application) -> AsyncIterator[None]:
 
     plugins = [
         'hanati_webapp',
+        'cloud_beta_webapp',
     ]
     for plugin_info in discover_entrypoints(
         plugins, disable_plugins=app['config']['manager']['disabled-plugins']
@@ -378,7 +378,6 @@ async def webapp_plugins_ctx(app: web.Application) -> AsyncIterator[None]:
             log.info('Loading app plugin: {0}', entrypoint.module_name)
         plugin = entrypoint.load()
         init_extapp(entrypoint.module_name, app, getattr(plugin, 'create_app'))
-    yield
 
 
 def handle_loop_error(
@@ -471,7 +470,7 @@ def build_root_app(
 
     if cleanup_contexts is None:
         cleanup_contexts = [
-            config_server_ctx,
+            # config_server_ctx,
             manager_status_ctx,
             redis_ctx,
             database_ctx,
@@ -479,7 +478,7 @@ def build_root_app(
             monitoring_ctx,
             agent_registry_ctx,
             sched_dispatcher_ctx,
-            webapp_plugins_ctx,
+            # webapp_plugins_ctx,
             hook_plugins_ctx,
             background_task_ctx,
         ]
@@ -521,6 +520,11 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         '.logs',
     ]
     app = build_root_app(pidx, _args[0], subapp_pkgs=subapp_pkgs)
+
+    # Plugin webapps should be loaded before runner.setup(),
+    # which freezes on_startup event.
+    await config_server_register(app)
+    await webapp_plugins_register(app)
 
     ssl_ctx = None
     if app['config']['manager']['ssl-enabled']:
