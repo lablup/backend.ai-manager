@@ -1448,7 +1448,7 @@ async def update_shared_vfolder(request: web.Request, params: Any) -> web.Respon
                    .where(vfolder_permissions.c.vfolder == vfolder_id)
                    .where(vfolder_permissions.c.user == user_uuid))
         await conn.execute(query)
-    resp = {'msg': f'shared vfolder permission updated'}
+    resp = {'msg': 'shared vfolder permission updated'}
     return web.json_response(resp, status=200)
 
 
