@@ -384,8 +384,8 @@ class SessionScheduler(aobject):
             async with lock:
                 await asyncio.sleep(0.5)
                 await self.schedule_impl()
-        except aioredlock.LockError as e:
-            log.debug('schedule(): temporary locking failure', exc_info=e)
+        except aioredlock.LockError:
+            log.debug('schedule(): temporary locking failure; retrying at the next time')
 
     async def schedule_impl(self) -> None:
         log.debug('schedule(): triggered')
@@ -444,6 +444,8 @@ class SessionScheduler(aobject):
         # We allow a long database transaction here
         # because this scheduling handler will be executed by only one process.
         # (It's a globally unique singleton.)
+        start_task_args = []
+
         async with self.dbpool.acquire() as db_conn, db_conn.begin():
             sched_ctx = SchedulingContext(
                 registry=self.registry,
@@ -513,34 +515,41 @@ class SessionScheduler(aobject):
                     'status_changed': datetime.now(tzutc()),
                 }).where(kernels.c.id == sess_ctx.kernel_id)
                 await db_conn.execute(query)
+                start_task_args.append(
+                    (log_args, sched_ctx, sess_ctx, agent_ctx, check_results),
+                )
 
+            # Perform session-start trials after finishing the DB transaction.
+            async def _cb(fut_exception, log_args, sess_ctx, agent_ctx, check_results):
+                if fut_exception is not None:
+                    log.error(log_fmt + 'failed-starting',
+                              *log_args, exc_info=fut_exception)
+                    await self._unreserve_agent_slots(sess_ctx, agent_ctx)
+                    await _invoke_failure_callbacks(check_results, use_new_txn=True)
+                    async with self.dbpool.acquire() as conn, conn.begin():
+                        query = kernels.update().values({
+                            'status': KernelStatus.CANCELLED,
+                            'status_info': 'failed-to-start',
+                            'status_changed': datetime.now(tzutc()),
+                        }).where(kernels.c.id == sess_ctx.kernel_id)
+                        await conn.execute(query)
+                    await self.registry.event_dispatcher.produce_event(
+                        'kernel_cancelled',
+                        (str(sess_ctx.kernel_id), 'failed-to-start'),
+                    )
+
+                else:
+                    log.info(log_fmt + 'started', *log_args)
+                    await _invoke_success_callbacks(check_results, use_new_txn=True)
+
+            for log_args, sched_ctx, sess_ctx, agent_ctx, check_results in start_task_args:
                 log.debug(log_fmt + 'try-starting', *log_args)
-                loop = current_loop()
-                task = loop.create_task(self.registry.start_session(sched_ctx, sess_ctx, agent_ctx))
-
-                async def _cb(fut):
-                    if fut.exception():
-                        log.error(log_fmt + 'failed-starting',
-                                  *log_args, exc_info=fut.exception())
-                        await self._unreserve_agent_slots(sess_ctx, agent_ctx)
-                        await _invoke_failure_callbacks(check_results, use_new_txn=True)
-                        async with self.dbpool.acquire() as conn, conn.begin():
-                            query = kernels.update().values({
-                                'status': KernelStatus.CANCELLED,
-                                'status_info': 'failed-to-start',
-                                'status_changed': datetime.now(tzutc()),
-                            }).where(kernels.c.id == sess_ctx.kernel_id)
-                            await conn.execute(query)
-                        await self.registry.event_dispatcher.produce_event(
-                            'kernel_cancelled',
-                            (str(sess_ctx.kernel_id), 'failed-to-start'),
-                        )
-
-                    else:
-                        log.info(log_fmt + 'started', *log_args)
-                        await _invoke_success_callbacks(check_results, use_new_txn=True)
-
-                task.add_done_callback(lambda fut: loop.create_task(_cb(fut)))
+                try:
+                    await self.registry.start_session(sched_ctx, sess_ctx, agent_ctx)
+                except Exception as e:
+                    await _cb(e, log_args, sess_ctx, agent_ctx, check_results)
+                else:
+                    await _cb(None, log_args, sess_ctx, agent_ctx, check_results)
 
     async def _list_pending_sessions(self, db_conn) -> Sequence[SessionContext]:
         query = (
