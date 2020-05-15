@@ -926,6 +926,7 @@ class LegacyComputeSession(graphene.ObjectType):
                                 domain_name=None, access_key=None,
                                 status=None):
         async with context['dbpool'].acquire() as conn:
+            status_list = []
             if isinstance(status, str):
                 status_list = [KernelStatus[s] for s in status.split(',')]
             elif isinstance(status, KernelStatus):
@@ -942,9 +943,9 @@ class LegacyComputeSession(graphene.ObjectType):
                 query = query.where(kernels.c.domain_name == domain_name)
             if access_key is not None:
                 query = query.where(kernels.c.access_key == access_key)
-            if status is not None:
+            if status_list:
                 query = query.where(kernels.c.status.in_(status_list))
-            return await batch_result(
+            return await batch_multiresult(
                 context, conn, query, cls,
                 sess_ids, lambda row: row['sess_id'],
             )
