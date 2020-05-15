@@ -16,6 +16,14 @@ Changes
 
 .. towncrier release notes start
 
+19.09.24 (2020-05-15)
+---------------------
+
+### Fixes
+* Add fallback if any keys under last_stat have None value during statistics calculation. ([#282](https://github.com/lablup/backend.ai-manager/issues/282))
+* Fix the responses for `compute_session` GQL query when there are no or multiple matching sessions ([#283](https://github.com/lablup/backend.ai-manager/issues/283))
+
+
 19.09.23 (2020-05-15)
 ---------------------
 
@@ -33,11 +41,13 @@ Changes
 ### Fixes
 * Missing concurrency update for self-terminated sessions (regression of [#269](https://github.com/lablup/backend.ai-manager/issues/269)) ([#274](https://github.com/lablup/backend.ai-manager/issues/274))
 
+
 19.09.21 (2020-04-30)
 ---------------------
 
 ### Features
 * Add shared memory column to resource preset ([#267](https://github.com/lablup/backend.ai-manager/issues/267))
+
 
 19.09.20 (2020-04-23)
 ---------------------
