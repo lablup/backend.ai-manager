@@ -1,1 +1,0 @@
-Reduce potential DB transaction deadlocks during scheduling of many (~hundreds) pending sessions

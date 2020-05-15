@@ -16,6 +16,17 @@ Changes
 
 .. towncrier release notes start
 
+19.09.23 (2020-05-15)
+---------------------
+
+### Fixes
+* Remove unwanted empty key while setting etcd config with nested dict. ([#275](https://github.com/lablup/backend.ai-manager/issues/275))
+* Set correct scaling group name during session scheduling. ([#276](https://github.com/lablup/backend.ai-manager/issues/276))
+* Destroying sessions now returns periodically collected statistics instead of last-moment statistics ([#279](https://github.com/lablup/backend.ai-manager/issues/279))
+* Apply batching to statistics synchroniztion to minimize time used inside DB transactions by batching and splitting transaction blocks ([#280](https://github.com/lablup/backend.ai-manager/issues/280))
+* Reduce potential DB transaction deadlocks during scheduling of many (~hundreds) pending sessions ([#281](https://github.com/lablup/backend.ai-manager/issues/281))
+
+
 19.09.22 (2020-04-30)
 ---------------------
 
