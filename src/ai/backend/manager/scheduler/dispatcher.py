@@ -177,6 +177,9 @@ class SchedulerDispatcher(aobject):
         log.debug('schedule(): triggered')
         known_slot_types = await self.config_server.get_resource_slots()
 
+        log_fmt = 'schedule(k:{}, s:{}, ak:{}): '
+        start_task_args = []
+
         async def _invoke_success_callbacks(
                 sess_ctx: PendingSession,
                 results: List[Union[Exception, PredicateResult]], *,
@@ -265,7 +268,6 @@ class SchedulerDispatcher(aobject):
                     raise RuntimeError('should not reach here')
                 sess_ctx = pending_sessions.pop(picked_idx)
 
-                log_fmt = 'schedule(k:{}, s:{}, ak:{}): '
                 log_args = (sess_ctx.kernel_id, sess_ctx.session_name, sess_ctx.access_key)
                 log.debug(log_fmt + 'try-scheduling', *log_args)
 
@@ -323,38 +325,14 @@ class SchedulerDispatcher(aobject):
                     'status_changed': datetime.now(tzutc()),
                 }).where(kernels.c.id == sess_ctx.kernel_id)
                 await db_conn.execute(query)
-
-                log.debug(log_fmt + 'try-starting', *log_args)
-                task = asyncio.create_task(
-                    self.registry.start_session(sched_ctx, sess_ctx, agent_alloc_ctx))
-
-                async def _cb(fut):
-                    if fut.exception():
-                        log.error(log_fmt + 'failed-starting',
-                                  *log_args, exc_info=fut.exception())
-                        await self._unreserve_agent_slots(sess_ctx, agent_alloc_ctx)
-                        await _invoke_failure_callbacks(sess_ctx, check_results, use_new_txn=True)
-                        async with self.dbpool.acquire() as conn, conn.begin():
-                            query = kernels.update().values({
-                                'status': KernelStatus.CANCELLED,
-                                'status_info': 'failed-to-start',
-                                'status_changed': datetime.now(tzutc()),
-                            }).where(kernels.c.id == sess_ctx.kernel_id)
-                            await conn.execute(query)
-                        await self.registry.event_dispatcher.produce_event(
-                            'kernel_cancelled',
-                            (str(sess_ctx.kernel_id), 'failed-to-start'),
-                        )
-
-                    else:
-                        log.info(log_fmt + 'started', *log_args)
-                        await _invoke_success_callbacks(sess_ctx, check_results, use_new_txn=True)
-
-                task.add_done_callback(lambda fut: asyncio.create_task(_cb(fut)))
+                start_task_args.append(
+                    (log_args, sched_ctx, sess_ctx, agent_alloc_ctx, check_results),
+                )
 
         # We allow a long database transaction here
         # because this scheduling handler will be executed by only one process.
         # It is executed under a globally exclusive context using aioredlock.
+
         async with self.dbpool.acquire() as db_conn:
             sched_ctx = SchedulingContext(
                 registry=self.registry,
@@ -367,7 +345,34 @@ class SchedulerDispatcher(aobject):
                 async with db_conn.begin():
                     await _schedule_in_sgroup(db_conn, sgroup_name)
 
-    async def _list_pending_sessions(self, db_conn, sgroup_name) -> List[PendingSession]:
+        for log_args, sched_ctx, sess_ctx, agent_alloc_ctx, check_results in start_task_args:
+            log.debug(log_fmt + 'try-starting', *log_args)
+            try:
+                await self.registry.start_session(sched_ctx, sess_ctx, agent_alloc_ctx)
+            except Exception as e:
+                log.error(log_fmt + 'failed-starting', *log_args, exc_info=e)
+                await self._unreserve_agent_slots(sess_ctx, agent_alloc_ctx)
+                await _invoke_failure_callbacks(sess_ctx, check_results, use_new_txn=True)
+                async with self.dbpool.acquire() as conn, conn.begin():
+                    query = kernels.update().values({
+                        'status': KernelStatus.CANCELLED,
+                        'status_info': 'failed-to-start',
+                        'status_changed': datetime.now(tzutc()),
+                    }).where(kernels.c.id == sess_ctx.kernel_id)
+                    await conn.execute(query)
+                await self.registry.event_dispatcher.produce_event(
+                    'kernel_cancelled',
+                    (str(sess_ctx.kernel_id), 'failed-to-start'),
+                )
+            else:
+                log.info(log_fmt + 'started', *log_args)
+                await _invoke_success_callbacks(sess_ctx, check_results, use_new_txn=True)
+
+    async def _list_pending_sessions(
+        self,
+        db_conn: SAConnection,
+        sgroup_name: str,
+    ) -> List[PendingSession]:
         query = (
             sa.select([
                 kernels.c.id,
@@ -432,7 +437,11 @@ class SchedulerDispatcher(aobject):
             ))
         return items
 
-    async def _list_existing_sessions(self, db_conn, sgroup) -> List[ExistingSession]:
+    async def _list_existing_sessions(
+        self,
+        db_conn: SAConnection,
+        sgroup: str,
+    ) -> List[ExistingSession]:
         query = (
             sa.select([
                 kernels.c.id,
@@ -479,8 +488,10 @@ class SchedulerDispatcher(aobject):
             ))
         return items
 
-    async def _list_agents_by_sgroups(self, db_conn: SAConnection) \
-            -> Mapping[str, Sequence[AgentContext]]:
+    async def _list_agents_by_sgroups(
+        self,
+        db_conn: SAConnection,
+    ) -> Mapping[str, Sequence[AgentContext]]:
         query = (
             sa.select([
                 agents.c.id,
@@ -506,11 +517,12 @@ class SchedulerDispatcher(aobject):
             items_by_sgroup[row['scaling_group']].append(item)
         return dict(items_by_sgroup)
 
-    async def _reserve_agent(self, sched_ctx: SchedulingContext,
-                             scaling_group: str,
-                             agent_id: AgentId,
-                             requested_slots: ResourceSlot) \
-                             -> AgentAllocationContext:
+    async def _reserve_agent(
+        self, sched_ctx: SchedulingContext,
+        scaling_group: str,
+        agent_id: AgentId,
+        requested_slots: ResourceSlot,
+    ) -> AgentAllocationContext:
         query = (
             sa.select([agents.c.occupied_slots], for_update=True)
             .select_from(agents)
@@ -531,9 +543,11 @@ class SchedulerDispatcher(aobject):
 
         return AgentAllocationContext(agent_id, agent_addr, scaling_group)
 
-    async def _unreserve_agent_slots(self,
-                                     sess_ctx: PendingSession,
-                                     agent_ctx: AgentAllocationContext):
+    async def _unreserve_agent_slots(
+        self,
+        sess_ctx: PendingSession,
+        agent_ctx: AgentAllocationContext,
+    ) -> None:
         # Un-reserve agent slots, using a separate db txn.
         async with self.dbpool.acquire() as conn, conn.begin():
             query = (
