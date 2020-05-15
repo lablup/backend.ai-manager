@@ -27,6 +27,7 @@ import yarl
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.utils import nmget
 from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
 from .auth import auth_required, superadmin_required
 from .exceptions import (
@@ -311,10 +312,6 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
                     device_type.add(dev_info['model_name'])
                 smp += dev_info.get('smp', 0)
                 gpu_mem_allocated += dev_info.get('mem', 0)
-        if row.resource_opts:
-            shared_memory = int(row.resource_opts.get('shmem', 0))
-        else:
-            shared_memory = 0
         gpu_allocated = 0
         if 'cuda.devices' in row.occupied_slots:
             gpu_allocated = row.occupied_slots['cuda.devices']
@@ -326,16 +323,15 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'access_key': row['access_key'],
             'email': row['email'],
             'agent': row['agent'],
-            'cpu_allocated': float(row.occupied_slots['cpu']) if 'cpu' in row.occupied_slots else 0,
-            'cpu_used': float(last_stat['cpu_used']['current']) if last_stat else 0,
-            'mem_allocated': int(row.occupied_slots['mem']) if 'mem' in row.occupied_slots else 0,
-            'mem_used': int(last_stat['mem']['capacity']) if last_stat else 0,
-            'shared_memory': shared_memory,
+            'cpu_allocated': float(row.occupied_slots.get('cpu', 0)),
+            'cpu_used': float(nmget(last_stat, 'cpu_used.current', 0)),
+            'mem_allocated': int(row.occupied_slots.get('mem', 0)),
+            'mem_used': int(nmget(last_stat, 'mem.capacity', 0)),
+            'shared_memory': int(nmget(row.resource_opts, 'shmem', 0)),
             'disk_allocated': 0,  # TODO: disk quota limit
-            'disk_used': (int(last_stat['io_scratch_size']['stats.max'])
-                          if last_stat else 0),
-            'io_read': int(last_stat['io_read']['current']) if last_stat else 0,
-            'io_write': int(last_stat['io_write']['current']) if last_stat else 0,
+            'disk_used': (int(nmget(last_stat, 'io_scratch_size/stats.max', 0, '/'))),
+            'io_read': int(nmget(last_stat, 'io_read.current', 0)),
+            'io_write': int(nmget(last_stat, 'io_write.current', 0)),
             'used_time': used_time,
             'used_days': used_days,
             'device_type': list(device_type),
@@ -521,16 +517,16 @@ async def get_time_binned_monthly_stats(request, user_uuid=None):
             # Accumulate stats for overlapping containers in this time window.
             row = rows[idx]
             num_sessions += 1
-            cpu_allocated += float(row.occupied_slots['cpu'])
-            mem_allocated += float(row.occupied_slots['mem'])
+            cpu_allocated += float(row.occupied_slots.get('cpu', 0))
+            mem_allocated += float(row.occupied_slots.get('mem', 0))
             if 'cuda.devices' in row.occupied_slots:
                 gpu_allocated += float(row.occupied_slots['cuda.devices'])
             if 'cuda.shares' in row.occupied_slots:
                 gpu_allocated += float(row.occupied_slots['cuda.shares'])
             if row.last_stat:
-                io_read_bytes += int(row.last_stat['io_read']['current'])
-                io_write_bytes += int(row.last_stat['io_write']['current'])
-                disk_used += int(row.last_stat['io_scratch_size']['stats.max'])
+                io_read_bytes += int(nmget(row.last_stat, 'io_read.current', 0))
+                io_write_bytes += int(nmget(row.last_stat, 'io_write.current', 0))
+                disk_used += int(nmget(row.last_stat, 'io_scratch_size/stats.max', {}, '/'))
             idx += 1
         stat = {
             "date": ts,
