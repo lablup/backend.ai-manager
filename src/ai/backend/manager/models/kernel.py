@@ -529,6 +529,7 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                                 domain_name=None, access_key=None,
                                 status=None):
         async with context['dbpool'].acquire() as conn:
+            status_list = []
             if isinstance(status, str):
                 status_list = [KernelStatus[s] for s in status.split(',')]
             elif isinstance(status, KernelStatus):
@@ -545,22 +546,15 @@ class ComputeSession(SessionCommons, graphene.ObjectType):
                 query = query.where(kernels.c.domain_name == domain_name)
             if access_key is not None:
                 query = query.where(kernels.c.access_key == access_key)
-            if status is not None:
+            if status_list:
                 query = query.where(kernels.c.status.in_(status_list))
-            sess_info = []
-            async for row in conn.execute(query):
-                o = ComputeSession.from_row(context, row)
-                sess_info.append(o)
-        if len(sess_info) != 0:
-            return tuple(sess_info)
-        else:
-            sess_info = OrderedDict()
+            sessions = OrderedDict()
             for s in sess_ids:
-                sess_info[s] = list()
+                sessions[s] = list()
             async for row in conn.execute(query):
                 o = ComputeSession.from_row(context, row)
-                sess_info[row.sess_id].append(o)
-            return [*sess_info.values()]
+                sessions[row.sess_id].append(o)
+            return [*sessions.values()]
 
     @classmethod
     def parse_row(cls, context, row):

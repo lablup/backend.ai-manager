@@ -53,6 +53,7 @@ from ...gateway.exceptions import (
     ImageNotFound,
     InsufficientPrivilege,
     InvalidAPIParameters,
+    TooManyKernelsFound,
 )
 
 
@@ -630,7 +631,13 @@ class Queries(graphene.ObjectType):
             domain_name=domain_name,
             access_key=access_key,
             status=status)
-        return await loader.load(sess_id)
+        matches = await loader.load(sess_id)
+        if len(matches) == 0:
+            return None
+        elif len(matches) == 1:
+            return matches[0]
+        else:
+            raise TooManyKernelsFound
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='access_key')
