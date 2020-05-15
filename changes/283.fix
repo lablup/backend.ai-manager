@@ -1,1 +1,1 @@
-Fix the responses for `compute_session` GQL query
+Fix the responses for `compute_session` GQL query when there are no or multiple matching sessions
