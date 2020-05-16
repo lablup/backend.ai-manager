@@ -1,9 +1,8 @@
 '''
 This module defines a series of Backend.AI-specific errors based on HTTP Error
 classes from aiohttp.
-Raising a BackendError automatically is automatically mapped to a corresponding
-HTTP error response with RFC7807-style JSON-encoded description in its response
-body.
+Raising a BackendError is automatically mapped to a corresponding HTTP error
+response with RFC7807-style JSON-encoded description in its response body.
 
 In the client side, you should use "type" field in the body to distinguish
 canonical error types beacuse "title" field may change due to localization and
