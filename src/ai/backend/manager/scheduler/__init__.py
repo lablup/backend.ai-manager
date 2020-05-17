@@ -54,7 +54,6 @@ class SchedulingContext:
     Context for each scheduling decision.
     '''
     registry: AgentRegistry
-    db_conn: SAConnection
     known_slot_types: Mapping[str, str]
 
 
@@ -98,10 +97,12 @@ class PendingSession:
 
 
 class PredicateCallback(Protocol):
-    async def __call__(self,
-                       sched_ctx: SchedulingContext,
-                       sess_ctx: PendingSession,
-                       db_conn: SAConnection = None) -> None:
+    async def __call__(
+        self,
+        db_conn: SAConnection,
+        sched_ctx: SchedulingContext,
+        sess_ctx: PendingSession,
+    ) -> None:
         ...
 
 
@@ -114,10 +115,12 @@ class PredicateResult:
 
 
 class SchedulingPredicate(Protocol):
-    async def __call__(self,
-                       sched_ctx: SchedulingContext,
-                       sess_ctx: PendingSession) \
-                       -> PredicateResult:
+    async def __call__(
+        self,
+        db_conn: SAConnection,
+        sched_ctx: SchedulingContext,
+        sess_ctx: PendingSession,
+    ) -> PredicateResult:
         ...
 
 
@@ -135,17 +138,17 @@ class AbstractScheduler(metaclass=ABCMeta):
 
     @abstractmethod
     def pick_session(
-            self,
-            total_capacity: ResourceSlot,
-            pending_sessions: Sequence[PendingSession],
-            existing_sessions: Sequence[ExistingSession],
+        self,
+        total_capacity: ResourceSlot,
+        pending_sessions: Sequence[PendingSession],
+        existing_sessions: Sequence[ExistingSession],
     ) -> Optional[KernelId]:
         return None
 
     @abstractmethod
     def assign_agent(
-            self,
-            possible_agents: Sequence[AgentContext],
-            pending_session: PendingSession,
+        self,
+        possible_agents: Sequence[AgentContext],
+        pending_session: PendingSession,
     ) -> Optional[AgentId]:
         return None
