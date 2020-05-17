@@ -446,7 +446,7 @@ class SessionScheduler(aobject):
         # (It's a globally unique singleton.)
         start_task_args = []
 
-        async with self.dbpool.acquire() as db_conn, db_conn.begin():
+        async with self.dbpool.acquire() as db_conn:
             sched_ctx = SchedulingContext(
                 registry=self.registry,
                 db_conn=db_conn,
@@ -457,67 +457,70 @@ class SessionScheduler(aobject):
             # For each pending session, check the followings:
             # - all dependent jobs has finished (status=TERMINATED, result=SUCCESS).
             # - target scaling group's resource capacity is sufficient to run the session.
-            for sess_ctx in (await self._list_pending_sessions(db_conn)):
+            async with db_conn.begin():
+                sess_ctxs = await self._list_pending_sessions(db_conn)
+            for sess_ctx in sess_ctxs:
                 log_fmt = 'schedule(k:{}, s:{}, ak:{}): '
                 log_args = (sess_ctx.kernel_id, sess_ctx.sess_id, sess_ctx.access_key)
                 log.debug(log_fmt + 'try-scheduling', *log_args)
 
-                predicates: Sequence[Awaitable[PredicateResult]] = [
-                    check_concurrency(sched_ctx, sess_ctx),
-                    check_dependencies(sched_ctx, sess_ctx),
-                    check_keypair_resource_limit(sched_ctx, sess_ctx),
-                    check_group_resource_limit(sched_ctx, sess_ctx),
-                    check_domain_resource_limit(sched_ctx, sess_ctx),
-                    check_scaling_group(sched_ctx, sess_ctx),
-                ]
-                check_results: List[Union[Exception, PredicateResult]] = []
-                for check in predicates:
-                    try:
-                        check_results.append(await check)
-                    except Exception as e:
-                        log.exception(log_fmt + 'predicate-error', *log_args)
-                        check_results.append(e)
-                has_failure = False
-                for result in check_results:
-                    if isinstance(result, Exception):
-                        has_failure = True
+                async with db_conn.begin():
+                    predicates: Sequence[Awaitable[PredicateResult]] = [
+                        check_concurrency(sched_ctx, sess_ctx),
+                        check_dependencies(sched_ctx, sess_ctx),
+                        check_keypair_resource_limit(sched_ctx, sess_ctx),
+                        check_group_resource_limit(sched_ctx, sess_ctx),
+                        check_domain_resource_limit(sched_ctx, sess_ctx),
+                        check_scaling_group(sched_ctx, sess_ctx),
+                    ]
+                    check_results: List[Union[Exception, PredicateResult]] = []
+                    for check in predicates:
+                        try:
+                            check_results.append(await check)
+                        except Exception as e:
+                            log.exception(log_fmt + 'predicate-error', *log_args)
+                            check_results.append(e)
+                    has_failure = False
+                    for result in check_results:
+                        if isinstance(result, Exception):
+                            has_failure = True
+                            continue
+                        if not result.passed:
+                            has_failure = True
+                    if has_failure:
+                        log.debug(log_fmt + 'predicate-checks-failed', *log_args)
+                        await _invoke_failure_callbacks(check_results)
+                        # Predicate failures are *NOT* permanent errors.
+                        # We need to retry the scheduling afterwards.
                         continue
-                    if not result.passed:
-                        has_failure = True
-                if has_failure:
-                    log.debug(log_fmt + 'predicate-checks-failed', *log_args)
-                    await _invoke_failure_callbacks(check_results)
-                    # Predicate failures are *NOT* permanent errors.
-                    # We need to retry the scheduling afterwards.
-                    continue
 
-                # TODO: allow prioritization of ready-to-start sessions
-                #       using custom algorithms (e.g., DRF)
+                    # TODO: allow prioritization of ready-to-start sessions
+                    #       using custom algorithms (e.g., DRF)
 
-                try:
-                    agent_ctx = await self._find_and_reserve_agent(sched_ctx, sess_ctx)
-                except InstanceNotAvailable:
-                    log.debug(log_fmt + 'no-available-instances', *log_args)
-                    await _invoke_failure_callbacks(check_results)
-                    continue
-                except Exception:
-                    log.exception(log_fmt + 'unexpected-error, during agent allocation',
-                                  *log_args)
-                    await _invoke_failure_callbacks(check_results)
-                    continue
+                    try:
+                        agent_ctx = await self._find_and_reserve_agent(sched_ctx, sess_ctx)
+                    except InstanceNotAvailable:
+                        log.debug(log_fmt + 'no-available-instances', *log_args)
+                        await _invoke_failure_callbacks(check_results)
+                        continue
+                    except Exception:
+                        log.exception(log_fmt + 'unexpected-error, during agent allocation',
+                                      *log_args)
+                        await _invoke_failure_callbacks(check_results)
+                        continue
 
-                query = kernels.update().values({
-                    'agent': agent_ctx.agent_id,
-                    'agent_addr': agent_ctx.agent_addr,
-                    'scaling_group': agent_ctx.scaling_group,
-                    'status': KernelStatus.PREPARING,
-                    'status_info': 'scheduled',
-                    'status_changed': datetime.now(tzutc()),
-                }).where(kernels.c.id == sess_ctx.kernel_id)
-                await db_conn.execute(query)
-                start_task_args.append(
-                    (log_args, sched_ctx, sess_ctx, agent_ctx, check_results),
-                )
+                    query = kernels.update().values({
+                        'agent': agent_ctx.agent_id,
+                        'agent_addr': agent_ctx.agent_addr,
+                        'scaling_group': agent_ctx.scaling_group,
+                        'status': KernelStatus.PREPARING,
+                        'status_info': 'scheduled',
+                        'status_changed': datetime.now(tzutc()),
+                    }).where(kernels.c.id == sess_ctx.kernel_id)
+                    await db_conn.execute(query)
+                    start_task_args.append(
+                        (log_args, sched_ctx, sess_ctx, agent_ctx, check_results),
+                    )
 
         # Perform session-start trials after finishing the DB transaction.
         async def _cb(fut_exception, log_args, sess_ctx, agent_ctx, check_results) -> None:
@@ -571,7 +574,7 @@ class SessionScheduler(aobject):
                 kernels.c.startup_command,
                 kernels.c.internal_data,
                 keypairs.c.resource_policy,
-            ], for_update=True)
+            ])
             .select_from(sa.join(
                 kernels, keypairs,
                 keypairs.c.access_key == kernels.c.access_key
