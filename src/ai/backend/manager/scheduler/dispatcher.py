@@ -81,10 +81,16 @@ class SchedulerDispatcher(aobject):
     local sync_time = tonumber(redis.call('GET', key_last_sync))
     local current_time = tonumber(redis.call('TIME')[1])
     if sync_time == nil then
+      redis.log(redis.LOG_NOTICE, "backend.ai scheduler - init sync_time")
       sync_time = current_time
       redis.call('SET', key_last_sync, sync_time)
     elseif current_time >= sync_time + sync_interval then
+      redis.log(redis.LOG_NOTICE, "backend.ai scheduler - update sync_time")
       sync_time = sync_time + sync_interval
+      if current_time - sync_time > sync_interval then
+        redis.log(redis.LOG_NOTICE, "backend.ai scheduler - detected too old sync_time; resyncing")
+        sync_time = current_time + sync_interval
+      end
       redis.call('SET', key_last_sync, sync_time)
     end
     redis.call('SADD', key_schedulers, member_id)
@@ -93,7 +99,8 @@ class SchedulerDispatcher(aobject):
     table.sort(members)
     for i, member in ipairs(members) do
       if member == member_id then
-        return {i * (sync_interval / (member_count + 1)), sync_time}
+        local member_delay = i * (sync_interval / (member_count + 1))
+        return {member_delay, sync_time}
       end
     end
     return {0, sync_time}
@@ -145,16 +152,17 @@ class SchedulerDispatcher(aobject):
         scheduler_id = f"{instance_id}.{self.pidx}"
         base_time = await redis.execute_with_retries(lambda: self.registry.redis_live.time())
         base_mono = time.monotonic()
+        epoch_length = 60
         last_sync_time = base_time
         try:
             while True:
+                await asyncio.sleep(2)
                 now = base_time + (time.monotonic() - base_mono)
                 local_sync_delay, next_sync_time = await redis.execute_script(
                     self.registry.redis_live, 'scheduler_tick', self.tick_script,
                     ['_last_scheduler_sync', '_schedulers'],
-                    [scheduler_id, str(60)],
+                    [scheduler_id, str(epoch_length)],
                 )
-                await asyncio.sleep(2)
                 if now > next_sync_time + local_sync_delay and last_sync_time != next_sync_time:
                     last_sync_time = next_sync_time
                     await self.registry.event_dispatcher.produce_event('kernel_enqueued', [None])
