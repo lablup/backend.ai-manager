@@ -920,7 +920,7 @@ class AgentRegistry:
             image_ref = ImageRef(kernel['image'], [kernel['registry']])
             image_info = await self.config_server.inspect_image(image_ref)
 
-            async with RPCContext(kernel['agent_addr'], 30) as rpc:
+            async with RPCContext(kernel['agent_addr'], None) as rpc:
                 environ = {
                      k: v for k, v in
                      map(lambda s: s.split('=', 1), kernel['environ'])
