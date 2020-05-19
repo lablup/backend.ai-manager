@@ -878,7 +878,7 @@ class AgentRegistry:
                         'kernel_terminating',
                         (str(kernel.id), 'user-requested'),
                     )
-            async with RPCContext(kernel['agent_addr'], 30) as rpc:
+            async with RPCContext(kernel['agent_addr'], None) as rpc:
                 await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
                 last_stat: Optional[Dict[str, Any]]
                 last_stat = None
@@ -1077,7 +1077,7 @@ class AgentRegistry:
             await conn.execute(query)
 
     async def kill_all_sessions_in_agent(self, agent_addr):
-        async with RPCContext(agent_addr, 30) as rpc:
+        async with RPCContext(agent_addr, None) as rpc:
             coro = rpc.call.clean_all_kernels('manager-freeze-force-kill')
             if coro is None:
                 log.warning('kill_all_sessions_in_agent cancelled')
