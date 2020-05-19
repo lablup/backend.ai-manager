@@ -4,6 +4,7 @@ from collections import OrderedDict
 import secrets
 from typing import Sequence, List, Tuple
 
+from aiopg.sa.connection import SAConnection
 from cryptography.hazmat.primitives import serialization as crypto_serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend as crypto_default_backend
@@ -15,6 +16,7 @@ import psycopg2 as pg
 
 from ai.backend.gateway.config import RESERVED_DOTFILES
 from ai.backend.common import msgpack
+from ai.backend.common.types import AccessKey
 
 from .base import (
     metadata, ForeignKeyIDColumn,
@@ -353,7 +355,7 @@ def generate_ssh_keypair():
     return (public_key, private_key)
 
 
-async def query_owned_dotfiles(conn, access_key) -> Tuple[List[dict], int]:
+async def query_owned_dotfiles(conn: SAConnection, access_key: AccessKey) -> Tuple[List[dict], int]:
     query = (sa.select([keypairs.c.dotfiles])
                .select_from(keypairs)
                .where(keypairs.c.access_key == access_key))

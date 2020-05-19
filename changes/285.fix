@@ -1,0 +1,4 @@
+Improve stability under heavily loaded scenarios
+- Further split DB transactions in the scheduler to eliminate daedlock timeout errors
+- Always recalculate `keypairs.concurrency_used` upon termination of kernels to avoid chasing historical kernel status transitions
+- Remove an internal 30 seconds timeout for the `destroy_kernel` agent RPC call

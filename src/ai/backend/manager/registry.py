@@ -54,6 +54,7 @@ from .models import (
     keypair_resource_policies,
     AgentStatus, KernelStatus,
     query_accessible_vfolders, query_allowed_sgroups,
+    recalc_concurrency_used,
     AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
     USER_RESOURCE_OCCUPYING_KERNEL_STATUSES,
     DEAD_KERNEL_STATUSES,
@@ -878,7 +879,7 @@ class AgentRegistry:
                         'kernel_terminating',
                         (str(kernel.id), 'user-requested'),
                     )
-            async with RPCContext(kernel['agent_addr'], 30) as rpc:
+            async with RPCContext(kernel['agent_addr'], None) as rpc:
                 await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
                 last_stat: Optional[Dict[str, Any]]
                 last_stat = None
@@ -920,7 +921,7 @@ class AgentRegistry:
             image_ref = ImageRef(kernel['image'], [kernel['registry']])
             image_info = await self.config_server.inspect_image(image_ref)
 
-            async with RPCContext(kernel['agent_addr'], 30) as rpc:
+            async with RPCContext(kernel['agent_addr'], None) as rpc:
                 environ = {
                      k: v for k, v in
                      map(lambda s: s.split('=', 1), kernel['environ'])
@@ -1077,7 +1078,7 @@ class AgentRegistry:
             await conn.execute(query)
 
     async def kill_all_sessions_in_agent(self, agent_addr):
-        async with RPCContext(agent_addr, 30) as rpc:
+        async with RPCContext(agent_addr, None) as rpc:
             coro = rpc.call.clean_all_kernels('manager-freeze-force-kill')
             if coro is None:
                 log.warning('kill_all_sessions_in_agent cancelled')
@@ -1395,13 +1396,7 @@ class AgentRegistry:
                 .where(kernels.c.id == kernel_id)
             )
             await conn.execute(query)
-
-            if reason == 'self-terminated' and kernel['status'] != KernelStatus.TERMINATING:
-                query = (
-                    sa.update(keypairs)
-                    .values(concurrency_used=keypairs.c.concurrency_used - 1)
-                    .where(keypairs.c.access_key == kernel['access_key']))
-                await conn.execute(query)
+            await recalc_concurrency_used(conn, kernel['access_key'])
 
             # Release agent resource slots.
             query = (

@@ -2,6 +2,7 @@ from collections import OrderedDict
 import enum
 from typing import Sequence
 
+from aiopg.sa.connection import SAConnection
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
@@ -9,8 +10,10 @@ from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common import msgpack, redis
 from ai.backend.common.types import (
+    AccessKey,
     BinarySize,
-    SessionTypes, SessionResult,
+    SessionResult,
+    SessionTypes,
 )
 from .base import (
     metadata,
@@ -20,10 +23,12 @@ from .base import (
 )
 from .group import groups
 from .user import users
+from .keypair import keypairs
 
 __all__: Sequence[str] = (
     'kernels', 'KernelStatus',
     'ComputeSessionList', 'ComputeSession', 'ComputeWorker', 'Computation',
+    'recalc_concurrency_used',
     'AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES',
     'USER_RESOURCE_OCCUPYING_KERNEL_STATUSES',
     'RESOURCE_USAGE_KERNEL_STATUSES',
@@ -625,3 +630,22 @@ class Computation(SessionCommons, graphene.ObjectType):
                 o = Computation.from_row(context, row)
                 objs_per_key[row.agent].append(o)
         return [*objs_per_key.values()]
+
+
+async def recalc_concurrency_used(db_conn: SAConnection, access_key: AccessKey) -> None:
+    query = (
+        sa.update(keypairs)
+        .values(
+            concurrency_used=(
+                sa.select([sa.func.count(kernels.c.id)])
+                .select_from(kernels)
+                .where(
+                    (kernels.c.access_key == access_key) &
+                    (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                )
+                .as_scalar()
+            ),
+        )
+        .where(keypairs.c.access_key == access_key)
+    )
+    await db_conn.execute(query)
