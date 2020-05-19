@@ -54,6 +54,7 @@ from .models import (
     keypair_resource_policies,
     AgentStatus, KernelStatus,
     query_accessible_vfolders, query_allowed_sgroups,
+    recalc_concurrency_used,
     AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
     USER_RESOURCE_OCCUPYING_KERNEL_STATUSES,
     DEAD_KERNEL_STATUSES,
@@ -1395,13 +1396,7 @@ class AgentRegistry:
                 .where(kernels.c.id == kernel_id)
             )
             await conn.execute(query)
-
-            if reason == 'self-terminated' and kernel['status'] != KernelStatus.TERMINATING:
-                query = (
-                    sa.update(keypairs)
-                    .values(concurrency_used=keypairs.c.concurrency_used - 1)
-                    .where(keypairs.c.access_key == kernel['access_key']))
-                await conn.execute(query)
+            await recalc_concurrency_used(conn, kernel['access_key'])
 
             # Release agent resource slots.
             query = (
