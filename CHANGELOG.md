@@ -16,6 +16,16 @@ Changes
 
 .. towncrier release notes start
 
+19.09.25 (2020-05-20)
+---------------------
+
+### Fixes
+* Improve stability under heavily loaded scenarios ([#285](https://github.com/lablup/backend.ai-manager/issues/285))
+  - Further split DB transactions in the scheduler to eliminate daedlock timeout errors
+  - Always recalculate `keypairs.concurrency_used` upon termination of kernels to avoid chasing historical kernel status transitions
+  - Remove an internal 30 seconds timeout for the `destroy_kernel` agent RPC call
+
+
 19.09.24 (2020-05-15)
 ---------------------
 
