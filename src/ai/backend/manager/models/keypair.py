@@ -13,6 +13,7 @@ from typing import (
     TypedDict,
 )
 
+from aiopg.sa.connection import SAConnection
 from aiopg.sa.result import RowProxy
 from cryptography.hazmat.primitives import serialization as crypto_serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -25,6 +26,10 @@ import psycopg2 as pg
 
 from ai.backend.gateway.config import RESERVED_DOTFILES
 from ai.backend.common import msgpack
+from ai.backend.common.types import (
+    AccessKey,
+    SecretKey,
+)
 
 from .base import (
     ForeignKeyIDColumn,
@@ -424,16 +429,16 @@ class Dotfile(TypedDict):
     perm: str
 
 
-def generate_keypair():
+def generate_keypair() -> Tuple[AccessKey, SecretKey]:
     '''
     AWS-like access key and secret key generation.
     '''
     ak = 'AKIA' + base64.b32encode(secrets.token_bytes(10)).decode('ascii')
     sk = secrets.token_urlsafe(30)
-    return ak, sk
+    return AccessKey(ak), SecretKey(sk)
 
 
-def generate_ssh_keypair():
+def generate_ssh_keypair() -> Tuple[str, str]:
     '''
     Generate RSA keypair for SSH/SFTP connection.
     '''
@@ -454,7 +459,10 @@ def generate_ssh_keypair():
     return (public_key, private_key)
 
 
-async def query_owned_dotfiles(conn, access_key) -> Tuple[List[Dotfile], int]:
+async def query_owned_dotfiles(
+    conn: SAConnection,
+    access_key: AccessKey,
+) -> Tuple[List[Dotfile], int]:
     query = (sa.select([keypairs.c.dotfiles])
                .select_from(keypairs)
                .where(keypairs.c.access_key == access_key))
@@ -463,7 +471,10 @@ async def query_owned_dotfiles(conn, access_key) -> Tuple[List[Dotfile], int]:
     return rows, MAXIMUM_DOTFILE_SIZE - len(packed_dotfile)
 
 
-async def query_bootstrap_script(conn, access_key) -> Tuple[str, int]:
+async def query_bootstrap_script(
+    conn: SAConnection,
+    access_key: AccessKey,
+) -> Tuple[str, int]:
     query = (sa.select([keypairs.c.bootstrap_script])
                .select_from(keypairs)
                .where(keypairs.c.access_key == access_key))
