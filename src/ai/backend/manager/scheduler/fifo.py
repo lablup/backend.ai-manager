@@ -57,7 +57,8 @@ class FIFOSlotScheduler(AbstractScheduler):
                      ) -> Optional[AgentId]:
         possible_agents = []
         for agent in agents:
-            if agent.available_slots >= pending_session.requested_slots:
+            remaining_slots = agent.available_slots - agent.occupied_slots
+            if remaining_slots >= pending_session.requested_slots:
                 possible_agents.append(agent)
         if possible_agents:
             chosen_agent = \
@@ -87,7 +88,8 @@ class LIFOSlotScheduler(AbstractScheduler):
                      ) -> Optional[AgentId]:
         possible_agents = []
         for agent in agents:
-            if agent.available_slots >= pending_session.requested_slots:
+            remaining_slots = agent.available_slots - agent.occupied_slots
+            if remaining_slots >= pending_session.requested_slots:
                 possible_agents.append(agent)
         if possible_agents:
             chosen_agent = \
