@@ -656,9 +656,9 @@ async def handle_kernel_lifecycle(app: web.Application, agent_id: AgentId, event
 
 
 async def handle_kernel_stat_sync(app: web.Application, agent_id: AgentId, event_name: str,
-                                  raw_kernel_id: str) -> None:
-    kernel_id = uuid.UUID(raw_kernel_id)
-    await app['registry'].sync_kernel_stats(kernel_id)
+                                  raw_kernel_ids: str) -> None:
+    kernel_ids = [*map(uuid.UUID, raw_kernel_ids.split(','))]
+    await app['registry'].sync_kernel_stats(kernel_ids)
 
 
 async def handle_batch_result(app: web.Application, agent_id: AgentId, event_name: str,
