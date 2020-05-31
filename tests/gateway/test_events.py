@@ -4,7 +4,7 @@ from aiohttp import web
 import pytest
 
 from ai.backend.gateway.server import (
-    config_server_ctx, event_dispatcher_ctx, background_task_ctx,
+    config_server_register, event_dispatcher_ctx, background_task_ctx,
 )
 from ai.backend.manager.types import BackgroundTaskEventArgs
 from ai.backend.common.types import (
@@ -15,7 +15,7 @@ from ai.backend.common.types import (
 @pytest.mark.asyncio
 async def test_dispatch(etcd_fixture, create_app_and_client):
     app, client = await create_app_and_client(
-        [config_server_ctx, event_dispatcher_ctx],
+        [config_server_register, event_dispatcher_ctx],
         ['.events'],
     )
     dispatcher = app['event_dispatcher']
@@ -57,7 +57,7 @@ async def test_error_on_dispatch(etcd_fixture, create_app_and_client, event_loop
         exception_log.append(type(exc).__name__)
 
     app, client = await create_app_and_client(
-        [config_server_ctx, event_dispatcher_ctx],
+        [config_server_register, event_dispatcher_ctx],
         ['.events'],
         scheduler_opts={'exception_handler': handle_exception},
     )
@@ -97,7 +97,7 @@ async def test_error_on_dispatch(etcd_fixture, create_app_and_client, event_loop
 @pytest.mark.asyncio
 async def test_background_task(etcd_fixture, create_app_and_client):
     app, client = await create_app_and_client(
-        [config_server_ctx, event_dispatcher_ctx, background_task_ctx],
+        [config_server_register, event_dispatcher_ctx, background_task_ctx],
         ['.events'],
     )
     dispatcher = app['event_dispatcher']
@@ -150,7 +150,7 @@ async def test_background_task(etcd_fixture, create_app_and_client):
 @pytest.mark.asyncio
 async def test_background_task_fail(etcd_fixture, create_app_and_client):
     app, client = await create_app_and_client(
-        [config_server_ctx, event_dispatcher_ctx, background_task_ctx],
+        [config_server_register, event_dispatcher_ctx, background_task_ctx],
         ['.events'],
     )
     dispatcher = app['event_dispatcher']
