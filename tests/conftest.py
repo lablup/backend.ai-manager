@@ -314,17 +314,18 @@ async def create_app_and_client(test_config, event_loop):
             scheduler_opts = {}
         _non_ctx_registers = []
         _cleanup_ctxs = []
-        for ctx in cleanup_contexts:
-            if ctx.__name__ in ['config_server_register', 'webapp_plugins_register']:
-                _non_ctx_registers.append(ctx)
-            else:
-                _cleanup_ctxs.append(ctx)
+        if cleanup_contexts is not None:
+            for ctx in cleanup_contexts:
+                if ctx.__name__ in ['config_server_register', 'webapp_plugins_register']:
+                    _non_ctx_registers.append(ctx)
+                else:
+                    _cleanup_ctxs.append(ctx)
         app = build_root_app(0, test_config,
                              cleanup_contexts=_cleanup_ctxs,
                              subapp_pkgs=subapp_pkgs,
                              scheduler_opts={'close_timeout': 10, **scheduler_opts})
         for register in _non_ctx_registers:
-            await register(app)
+            await register(app)  # type: ignore
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(
