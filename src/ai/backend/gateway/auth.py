@@ -427,7 +427,12 @@ async def signup(request: web.Request, params: Any) -> web.Response:
     secret = request.app['config']['manager']['secret']
     for _handler in get_plugin_handlers_by_type(request.app['plugins'], 'POST_SIGNUP'):
         try:
-            result = await _handler(params['email'], user_id=str(user.uuid), secret=secret)
+            result = await _handler(
+                params['email'],
+                user_id=str(user.uuid),
+                secret=secret,
+                accept_language=request.headers.get('Accept-Language'),
+            )
             if result.pop('success', False):
                 resp_data.update(result)
         except (BaseException, Exception) as e:
