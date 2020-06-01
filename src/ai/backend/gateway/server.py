@@ -417,6 +417,7 @@ async def server_main(loop, pidx, _args):
 
     plugins = [
         'hanati_webapp',
+        'cloud_beta_webapp',
     ]
     for plugin_info in discover_entrypoints(
             plugins, disable_plugins=app['config']['manager']['disabled-plugins']):
