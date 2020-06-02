@@ -236,7 +236,7 @@ async def check_scaling_group(
             sess_ctx: PendingSession,
         ) -> None:
             query = (sa.update(kernels)
-                       .values(status_info='out-of-resource (no available resource in scaling groups)')
+                       .values(status_info='out-of-resource (no scaling groups available)')
                        .where(kernels.c.id == sess_ctx.kernel_id))
             await db_conn.execute(query)
 
