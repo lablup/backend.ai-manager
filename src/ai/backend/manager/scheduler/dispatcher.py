@@ -191,6 +191,10 @@ class SchedulerDispatcher(aobject):
     async def schedule_impl(self) -> None:
         log.debug('schedule(): triggered')
         known_slot_types = await self.config_server.get_resource_slots()
+        sched_ctx = SchedulingContext(
+            registry=self.registry,
+            known_slot_types=known_slot_types,
+        )
 
         log_fmt = 'schedule(k:{}, s:{}, ak:{}): '
         start_task_args: List[Tuple[
@@ -205,16 +209,17 @@ class SchedulerDispatcher(aobject):
         async def _schedule_in_sgroup(db_conn: SAConnection, sgroup_name: str) -> None:
             async with db_conn.begin():
                 scheduler = await self._load_scheduler(db_conn, sgroup_name)
-                candidate_agents = await _list_agents_by_sgroup(db_conn, sgroup_name)
                 pending_sessions = await _list_pending_sessions(db_conn, sgroup_name)
                 existing_sessions = await _list_existing_sessions(db_conn, sgroup_name)
             log.debug('running scheduler (sgroup:{}, pending:{}, existing:{})',
                       sgroup_name, len(pending_sessions), len(existing_sessions))
             zero = ResourceSlot()
-            total_capacity = sum(
-                (ag.available_slots for ag in candidate_agents),
-                zero)
             while len(pending_sessions) > 0:
+
+                async with db_conn.begin():
+                    candidate_agents = await _list_agents_by_sgroup(db_conn, sgroup_name)
+                    total_capacity = sum((ag.available_slots for ag in candidate_agents), zero)
+
                 picked_kernel_id = scheduler.pick_session(
                     total_capacity,
                     pending_sessions,
@@ -260,7 +265,9 @@ class SchedulerDispatcher(aobject):
                             has_failure = True
                     if has_failure:
                         log.debug(log_fmt + 'predicate-checks-failed', *log_args)
-                        await _invoke_failure_callbacks(db_conn, sched_ctx, sess_ctx, check_results)
+                        await _invoke_failure_callbacks(
+                            db_conn, sched_ctx, sess_ctx, check_results,
+                        )
                         # Predicate failures are *NOT* permanent errors.
                         # We need to retry the scheduling afterwards.
                         continue
@@ -296,17 +303,18 @@ class SchedulerDispatcher(aobject):
                     }).where(kernels.c.id == sess_ctx.kernel_id)
                     await db_conn.execute(query)
                     start_task_args.append(
-                        (log_args, sched_ctx, sess_ctx, agent_alloc_ctx, check_results),
+                        (
+                            log_args, sched_ctx,
+                            sess_ctx,
+                            agent_alloc_ctx,
+                            check_results,
+                        )
                     )
 
         # We use short transaction blocks to prevent deadlock timeouts under heavy loads
         # because this scheduling handler will be executed by only one process.
         # It is executed under a globally exclusive context using aioredlock.
         async with self.dbpool.acquire() as db_conn:
-            sched_ctx = SchedulingContext(
-                registry=self.registry,
-                known_slot_types=known_slot_types,
-            )
             query = (
                 sa.select([agents.c.scaling_group])
                 .select_from(agents)
@@ -319,29 +327,36 @@ class SchedulerDispatcher(aobject):
             for sgroup_name in schedulable_scaling_groups:
                 await _schedule_in_sgroup(db_conn, sgroup_name)
 
-            for log_args, sched_ctx, sess_ctx, agent_alloc_ctx, check_results in start_task_args:
-                log.debug(log_fmt + 'try-starting', *log_args)
-                try:
-                    await self.registry.start_session(sched_ctx, sess_ctx, agent_alloc_ctx)
-                except Exception as e:
-                    log.error(log_fmt + 'failed-starting', *log_args, exc_info=e)
-                    async with db_conn.begin():
-                        await _unreserve_agent_slots(db_conn, sess_ctx, agent_alloc_ctx)
-                        await _invoke_failure_callbacks(db_conn, sched_ctx, sess_ctx, check_results)
-                        query = kernels.update().values({
-                            'status': KernelStatus.CANCELLED,
-                            'status_info': 'failed-to-start',
-                            'status_changed': datetime.now(tzutc()),
-                        }).where(kernels.c.id == sess_ctx.kernel_id)
-                        await db_conn.execute(query)
-                    await self.registry.event_dispatcher.produce_event(
-                        'kernel_cancelled',
-                        (str(sess_ctx.kernel_id), 'failed-to-start'),
-                    )
-                else:
-                    log.info(log_fmt + 'started', *log_args)
-                    async with db_conn.begin():
-                        await _invoke_success_callbacks(db_conn, sched_ctx, sess_ctx, check_results)
+        async def start_session(log_args, sched_ctx, sess_ctx, agent_alloc_ctx, check_results):
+            log.debug(log_fmt + 'try-starting', *log_args)
+            try:
+                await self.registry.start_session(sched_ctx, sess_ctx, agent_alloc_ctx)
+            except Exception as e:
+                log.error(log_fmt + 'failed-starting', *log_args, exc_info=e)
+                async with self.dbpool.acquire(), db_conn.begin():
+                    await _unreserve_agent_slots(db_conn, sess_ctx, agent_alloc_ctx)
+                    await _invoke_failure_callbacks(db_conn, sched_ctx, sess_ctx, check_results)
+                    query = kernels.update().values({
+                        'status': KernelStatus.CANCELLED,
+                        'status_info': 'failed-to-start',
+                        'status_changed': datetime.now(tzutc()),
+                    }).where(kernels.c.id == sess_ctx.kernel_id)
+                    await db_conn.execute(query)
+                await self.registry.event_dispatcher.produce_event(
+                    'kernel_cancelled',
+                    (str(sess_ctx.kernel_id), 'failed-to-start'),
+                )
+            else:
+                log.info(log_fmt + 'started', *log_args)
+                async with self.dbpool.acquire(), db_conn.begin():
+                    await _invoke_success_callbacks(db_conn, sched_ctx, sess_ctx, check_results)
+
+        start_coros = []
+        for log_args, sched_ctx, sess_ctx, agent_alloc_ctx, check_results in start_task_args:
+            start_coros.append(
+                start_session(log_args, sched_ctx, sess_ctx, agent_alloc_ctx, check_results)
+            )
+        await asyncio.gather(*start_coros, return_exceptions=True)
 
     async def _load_scheduler(
         self,

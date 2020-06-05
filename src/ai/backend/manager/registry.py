@@ -132,30 +132,15 @@ async def RPCContext(addr, timeout=None, *, order_key: str = None):
         agent_peers[addr] = peer
     try:
         with _timeout(timeout):
-            peer.call.order_key.set(order_key)
-            yield peer
+            okey_token = peer.call.order_key.set('')
+            try:
+                yield peer
+            finally:
+                peer.call.order_key.reset(okey_token)
     except RPCUserError as orig_exc:
         raise AgentError(orig_exc.name, orig_exc.args)
     except Exception:
         raise
-
-
-async def scrub_agent_peers():
-    '''
-    TODO: apply timer
-    Periodically clean up agent connections if they are unused for a long time.
-    '''
-    global agent_peers
-    closing_tasks = []
-    now = time.monotonic()
-    removed_addrs = []
-    for addr, peer in agent_peers.items():
-        if peer.last_used + 30.0 > now:
-            removed_addrs.append(addr)
-            closing_tasks.append(peer.__aexit__(None, None, None))
-    for addr in removed_addrs:
-        del agent_peers[addr]
-    await asyncio.gather(*closing_tasks, return_exceptions=True)
 
 
 async def cleanup_agent_peers():
