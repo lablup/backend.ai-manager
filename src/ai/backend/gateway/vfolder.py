@@ -1448,9 +1448,9 @@ async def update_shared_vfolder(request: web.Request, params: Any) -> web.Respon
         if perm is not None:
             query = (
                 sa.update(vfolder_permissions)
-                  .values(permission=VFolderPermission(perm))
-                  .where(vfolder_permissions.c.vfolder == vfolder_id)
-                  .where(vfolder_permissions.c.user == user_uuid)
+                .values(permission=VFolderPermission(perm))
+                .where(vfolder_permissions.c.vfolder == vfolder_id)
+                .where(vfolder_permissions.c.user == user_uuid)
             )
         else:
             query = (
