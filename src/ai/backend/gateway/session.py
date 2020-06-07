@@ -393,7 +393,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
         resp['created'] = True
 
         if not params['enqueue_only']:
-            request.app['pending_waits'].add(asyncio.Task.current_task())
+            request.app['pending_waits'].add(asyncio.current_task())
             max_wait = params['max_wait_seconds']
             try:
                 if max_wait > 0:
@@ -446,7 +446,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
         log.exception('GET_OR_CREATE: unexpected error!')
         raise InternalServerError
     finally:
-        request.app['pending_waits'].discard(asyncio.Task.current_task())
+        request.app['pending_waits'].discard(asyncio.current_task())
         request.app['event_dispatcher'].unsubscribe('kernel_cancelled', cancel_handler)
         request.app['event_dispatcher'].unsubscribe('kernel_terminated', term_handler)
         request.app['event_dispatcher'].unsubscribe('kernel_started', start_handler)
@@ -1361,6 +1361,10 @@ async def shutdown(app: web.Application) -> None:
 
     for task in app['pending_waits']:
         task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:

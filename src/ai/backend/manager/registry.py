@@ -64,6 +64,7 @@ from .models import (
     keypair_resource_policies,
     AgentStatus, KernelStatus,
     query_accessible_vfolders, query_allowed_sgroups,
+    recalc_concurrency_used,
     AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
     USER_RESOURCE_OCCUPYING_KERNEL_STATUSES,
     DEAD_KERNEL_STATUSES,
@@ -131,30 +132,15 @@ async def RPCContext(addr, timeout=None, *, order_key: str = None):
         agent_peers[addr] = peer
     try:
         with _timeout(timeout):
-            peer.call.order_key.set(order_key)
-            yield peer
+            okey_token = peer.call.order_key.set('')
+            try:
+                yield peer
+            finally:
+                peer.call.order_key.reset(okey_token)
     except RPCUserError as orig_exc:
         raise AgentError(orig_exc.name, orig_exc.args)
     except Exception:
         raise
-
-
-async def scrub_agent_peers():
-    '''
-    TODO: apply timer
-    Periodically clean up agent connections if they are unused for a long time.
-    '''
-    global agent_peers
-    closing_tasks = []
-    now = time.monotonic()
-    removed_addrs = []
-    for addr, peer in agent_peers.items():
-        if peer.last_used + 30.0 > now:
-            removed_addrs.append(addr)
-            closing_tasks.append(peer.__aexit__(None, None, None))
-    for addr in removed_addrs:
-        del agent_peers[addr]
-    await asyncio.gather(*closing_tasks, return_exceptions=True)
 
 
 async def cleanup_agent_peers():
@@ -978,7 +964,7 @@ class AgentRegistry:
                         'kernel_terminating',
                         (str(kernel.id), 'user-requested'),
                     )
-            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
+            async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
                 await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
                 last_stat: Optional[Dict[str, Any]]
                 last_stat = None
@@ -1020,7 +1006,7 @@ class AgentRegistry:
             image_ref = ImageRef(kernel['image'], [kernel['registry']])
             image_info = await self.config_server.inspect_image(image_ref)
 
-            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
+            async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
                 environ = {
                      k: v for k, v in
                      map(lambda s: s.split('=', 1), kernel['environ'])
@@ -1177,7 +1163,7 @@ class AgentRegistry:
             await conn.execute(query)
 
     async def kill_all_sessions_in_agent(self, agent_addr):
-        async with RPCContext(agent_addr, 30) as rpc:
+        async with RPCContext(agent_addr, None) as rpc:
             coro = rpc.call.clean_all_kernels('manager-freeze-force-kill')
             if coro is None:
                 log.warning('kill_all_sessions_in_agent cancelled')
@@ -1493,13 +1479,7 @@ class AgentRegistry:
                 .where(kernels.c.id == kernel_id)
             )
             await conn.execute(query)
-
-            if reason == 'self-terminated' and kernel['status'] != KernelStatus.TERMINATING:
-                query = (
-                    sa.update(keypairs)
-                    .values(concurrency_used=keypairs.c.concurrency_used - 1)
-                    .where(keypairs.c.access_key == kernel['access_key']))
-                await conn.execute(query)
+            await recalc_concurrency_used(conn, kernel['access_key'])
 
             # Release agent resource slots.
             query = (
