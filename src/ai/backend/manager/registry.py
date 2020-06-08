@@ -6,6 +6,7 @@ from collections import defaultdict
 import copy
 from datetime import datetime
 import logging
+from pathlib import Path
 import time
 from typing import (
     Any,
@@ -36,6 +37,7 @@ import zmq.asyncio
 
 from ai.backend.common import msgpack, redis
 from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
+from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     BinarySize,
     KernelId,
@@ -46,7 +48,7 @@ from ai.backend.common.types import (
     SlotName,
     SlotTypes,
 )
-from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.utils import current_loop
 from .defs import INTRINSIC_SLOTS
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
@@ -457,7 +459,7 @@ class AgentRegistry:
         domain_name: str,
         bootstrap_script: str,
         group_id: uuid.UUID,
-        user_uuid: str,
+        user_uuid: uuid.UUID,
         user_role: str,
         startup_command: str = None,
         session_tag: str = None,
@@ -499,19 +501,38 @@ class AgentRegistry:
                 user_role=user_role, domain_name=domain_name,
                 allowed_vfolder_types=allowed_vfolder_types,
                 extra_vf_conds=extra_vf_conds)
+
             for item in matched_vfolders:
+                log.debug('Matched vFolder: {}, {}, {}', item['name'], item['group'], item['user'])
                 if item['group'] is not None and item['group'] != str(group_id):
                     # User's accessible group vfolders should not be mounted
                     # if not belong to the execution kernel.
                     continue
-                matched_mounts.add(item['name'])
-                determined_mounts.append((
-                    item['name'],
-                    item['host'],
-                    item['id'].hex,
-                    item['permission'].value,
-                    item['unmanaged_path'] if item['unmanaged_path'] else ''
-                ))
+                if item['name'] == '.local' and item['group'] is not None:
+                    mount_prefix = await self.config_server.get('volumes/_mount')
+                    fs_prefix = await self.config_server.get('volumes/_fsprefix')
+                    folder_path = (Path(mount_prefix) / item['host'] /
+                                   fs_prefix.lstrip('/') / item['id'].hex / user_uuid.hex)
+                    loop = current_loop()
+                    mkdir_lambda = lambda: folder_path.mkdir(parents=True, exist_ok=True)
+                    await loop.run_in_executor(None, mkdir_lambda)
+                    matched_mounts.add(item['name'])
+                    determined_mounts.append((
+                        item['name'],
+                        item['host'],
+                        f'{item["id"].hex}/{user_uuid.hex}',
+                        item['permission'].value,
+                        ''
+                    ))
+                else:
+                    matched_mounts.add(item['name'])
+                    determined_mounts.append((
+                        item['name'],
+                        item['host'],
+                        item['id'].hex,
+                        item['permission'].value,
+                        item['unmanaged_path'] if item['unmanaged_path'] else '',
+                    ))
             if mounts and set(mounts) > matched_mounts:
                 raise VFolderNotFound
             creation_config['mounts'] = determined_mounts

@@ -244,7 +244,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
 
     if not verify_vfolder_name(params['name']):
         raise InvalidAPIParameters(f'{params["name"]} is reserved for internal operations.')
-    if params['name'].startswith('.'):
+    if params['name'].startswith('.') and params['name'] != '.local':
         if params['group'] is not None:
             raise InvalidAPIParameters('dot-prefixed vfolders cannot be a group folder.')
 
@@ -616,7 +616,7 @@ async def rename(request: web.Request, params: Any, row: VFolderRow) -> web.Resp
                 if not entry['is_owner']:
                     raise InvalidAPIParameters(
                         'Cannot change the name of a vfolder '
-                        'that is not owned by me.')
+                        'that is not owned by myself.')
                 query = (
                     vfolders.update()
                     .values(name=new_name)
@@ -1426,7 +1426,7 @@ async def delete(request: web.Request) -> web.Response:
                         and entry['permission'] != VFolderPermission.RW_DELETE:
                     raise InvalidAPIParameters(
                         'Cannot delete the vfolder '
-                        'that is not owned by me.')
+                        'that is not owned by myself.')
                 break
         else:
             raise InvalidAPIParameters('No such vfolder.')
