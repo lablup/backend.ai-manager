@@ -1,5 +1,3 @@
-# Type annotation helpers
-
 from __future__ import annotations
 
 from typing import (
@@ -34,7 +32,3 @@ PluginAppCreator = Callable[
 ]
 
 CleanupContext = Callable[[web.Application], AsyncIterator[None]]
-
-
-class Sentinel(object):
-    pass

@@ -1,8 +1,16 @@
-import asyncio
-from collections import OrderedDict
-import enum
-from typing import Any, Sequence
+from __future__ import annotations
 
+import asyncio
+import enum
+from typing import (
+    Any,
+    Iterable,
+    Mapping,
+    Optional,
+    Sequence,
+)
+
+from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 from passlib.hash import bcrypt
@@ -11,15 +19,22 @@ import sqlalchemy as sa
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
 from .base import (
-    metadata, EnumValueType, IDColumn,
-    privileged_mutation,
+    EnumValueType,
+    IDColumn,
+    Item,
+    PaginatedList,
+    metadata,
     set_if_set,
+    batch_result,
+    batch_multiresult,
 )
 
 
 __all__: Sequence[str] = (
     'users',
-    'User', 'UserInput', 'ModifyUserInput', 'UserRole',
+    'User', 'UserList',
+    'UserGroup', 'UserRole',
+    'UserInput', 'ModifyUserInput',
     'CreateUser', 'ModifyUser', 'DeleteUser',
 )
 
@@ -67,9 +82,37 @@ class UserGroup(graphene.ObjectType):
     id = graphene.UUID()
     name = graphene.String()
 
+    @classmethod
+    def from_row(cls, context, row):
+        if row is None:
+            return None
+        return cls(
+            id=row['id'],
+            name=row['name'],
+        )
+
+    @classmethod
+    async def batch_load_by_user_id(cls, context, user_ids):
+        async with context['dbpool'].acquire() as conn:
+            from .group import groups, association_groups_users as agus
+            j = agus.join(groups, agus.c.group_id == groups.c.id)
+            query = (
+                sa.select([agus.c.user_id, groups.c.name, groups.c.id])
+                .select_from(j)
+                .where(agus.c.user_id.in_(user_ids))
+            )
+            return await batch_multiresult(
+                context, conn, query, cls,
+                user_ids, lambda row: row['user_id'],
+            )
+
 
 class User(graphene.ObjectType):
-    uuid = graphene.UUID()
+
+    class Meta:
+        interfaces = (Item, )
+
+    uuid = graphene.UUID()  # legacy
     username = graphene.String()
     email = graphene.String()
     password = graphene.String()
@@ -80,18 +123,25 @@ class User(graphene.ObjectType):
     created_at = GQLDateTime()
     domain_name = graphene.String()
     role = graphene.String()
-    # Dynamic fields
+
     groups = graphene.List(lambda: UserGroup)
 
+    async def resolve_groups(
+        self,
+        info: graphene.ResolveInfo,
+    ) -> Iterable[UserGroup]:
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('UserGroup.by_user_id')
+        return await loader.load(self.id)
+
     @classmethod
-    def from_row(cls, row):
-        if row is None:
-            return None
-        if 'id' in row and row.id is not None and 'name' in row and row.name is not None:
-            groups = [UserGroup(id=row['id'], name=row['name'])]
-        else:
-            groups = None
+    def from_row(
+        cls,
+        context: Mapping[str, Any],
+        row: RowProxy,
+    ) -> User:
         return cls(
+            id=row['uuid'],
             uuid=row['uuid'],
             username=row['username'],
             email=row['email'],
@@ -102,98 +152,160 @@ class User(graphene.ObjectType):
             created_at=row['created_at'],
             domain_name=row['domain_name'],
             role=row['role'],
-            # Dynamic fields
-            groups=groups,  # group information
         )
 
-    @staticmethod
-    async def load_all(context, *,
-                       domain_name=None, group_id=None,
-                       is_active=None):
+    @classmethod
+    async def load_all(
+        cls, context, *,
+        domain_name=None,
+        group_id=None,
+        is_active=None,
+        limit=None,
+    ) -> Sequence[User]:
         '''
         Load user's information. Group names associated with the user are also returned.
         '''
         async with context['dbpool'].acquire() as conn:
-            from .group import groups, association_groups_users as agus
-            j = (users.join(agus, agus.c.user_id == users.c.uuid, isouter=True)
-                      .join(groups, agus.c.group_id == groups.c.id, isouter=True))
-            query = sa.select([users, groups.c.name, groups.c.id]).select_from(j)
+            if group_id is not None:
+                from .group import association_groups_users as agus
+                j = (users.join(agus, agus.c.user_id == users.c.uuid))
+                query = (
+                    sa.select([users])
+                    .select_from(j)
+                    .where(agus.c.group_id == group_id)
+                )
+            else:
+                query = (
+                    sa.select([users])
+                    .select_from(users)
+                )
             if context['user']['role'] != UserRole.SUPERADMIN:
                 query = query.where(users.c.domain_name == context['user']['domain_name'])
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
-            if group_id is not None:
-                query = query.where(groups.c.id == group_id)
             if is_active is not None:
                 query = query.where(users.c.is_active == is_active)
-            objs_per_key = OrderedDict()
-            async for row in conn.execute(query):
-                if row.email in objs_per_key:
-                    # If same user is already saved, just append group information.
-                    objs_per_key[row.email].groups.append(UserGroup(id=row.id, name=row.name))
-                    continue
-                o = User.from_row(row)
-                objs_per_key[row.email] = o
-            objs = list(objs_per_key.values())
-        return objs
+            if limit is not None:
+                query = query.limit(limit)
+            return [cls.from_row(context, row) async for row in conn.execute(query)]
 
     @staticmethod
-    async def batch_load_by_email(context, emails=None, *,
-                                  domain_name=None,
-                                  is_active=None):
+    async def load_count(
+        context, *,
+        domain_name=None,
+        group_id=None,
+        is_active=None,
+    ) -> int:
         async with context['dbpool'].acquire() as conn:
-            from .group import groups, association_groups_users as agus
-            j = (users.join(agus, agus.c.user_id == users.c.uuid, isouter=True)
-                      .join(groups, agus.c.group_id == groups.c.id, isouter=True))
+            if group_id is not None:
+                from .group import association_groups_users as agus
+                j = (users.join(agus, agus.c.user_id == users.c.uuid))
+                query = (
+                    sa.select([sa.func.count(users.c.uuid)])
+                    .select_from(j)
+                    .where(agus.c.group_id == group_id)
+                    .as_scalar()
+                )
+            else:
+                query = (
+                    sa.select([sa.func.count(users.c.uuid)])
+                    .select_from(users)
+                    .as_scalar()
+                )
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
+            if is_active is not None:
+                query = query.where(users.c.is_active == is_active)
+            result = await conn.execute(query)
+            count = await result.fetchone()
+            return count[0]
+
+    @classmethod
+    async def load_slice(
+        cls, context, limit, offset, *,
+        domain_name=None,
+        group_id=None,
+        is_active=None,
+        order_key=None,
+        order_asc=True,
+    ) -> Sequence[User]:
+        async with context['dbpool'].acquire() as conn:
+            if order_key is None:
+                _ordering = sa.desc(users.c.created_at)
+            else:
+                _order_func = sa.asc if order_asc else sa.desc
+                _ordering = _order_func(getattr(users.c, order_key))
+            if group_id is not None:
+                from .group import association_groups_users as agus
+                j = (users.join(agus, agus.c.user_id == users.c.uuid))
+                query = (
+                    sa.select([users])
+                    .select_from(j)
+                    .where(agus.c.group_id == group_id)
+                    .order_by(_ordering)
+                    .limit(limit)
+                    .offset(offset)
+                )
+            else:
+                query = (
+                    sa.select([users])
+                    .select_from(users)
+                    .order_by(_ordering)
+                    .limit(limit)
+                    .offset(offset)
+                )
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
+            if is_active is not None:
+                query = query.where(users.c.is_active == is_active)
+            return [
+                cls.from_row(context, row) async for row in conn.execute(query)
+            ]
+
+    @classmethod
+    async def batch_load_by_email(
+        cls, context, emails=None, *,
+        domain_name=None,
+        is_active=None,
+    ) -> Sequence[Optional[User]]:
+        async with context['dbpool'].acquire() as conn:
             query = (
-                sa.select([users, groups.c.name, groups.c.id])
-                .select_from(j)
+                sa.select([users])
+                .select_from(users)
                 .where(users.c.email.in_(emails))
             )
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
-            objs_per_key = OrderedDict()
-            # For each email, there is only one user.
-            # So we don't build lists in objs_per_key variable.
-            for k in emails:
-                objs_per_key[k] = None
-            async for row in conn.execute(query):
-                key = row.email
-                if objs_per_key[key] is not None:
-                    objs_per_key[key].groups.append(UserGroup(id=row.id, name=row.name))
-                    continue
-                o = User.from_row(row)
-                objs_per_key[key] = o
-        return tuple(objs_per_key.values())
+            return await batch_result(
+                context, conn, query, cls,
+                emails, lambda row: row['email'],
+            )
 
-    @staticmethod
-    async def batch_load_by_uuid(context, user_ids=None, *,
-                                 domain_name=None,
-                                 is_active=None):
+    @classmethod
+    async def batch_load_by_uuid(
+        cls, context, user_ids=None, *,
+        domain_name=None,
+        is_active=None,
+    ) -> Sequence[Optional[User]]:
         async with context['dbpool'].acquire() as conn:
-            from .group import groups, association_groups_users as agus
-            j = (users.join(agus, agus.c.user_id == users.c.uuid, isouter=True)
-                      .join(groups, agus.c.group_id == groups.c.id, isouter=True))
             query = (
-                sa.select([users, groups.c.name, groups.c.id])
-                .select_from(j)
+                sa.select([users])
+                .select_from(users)
                 .where(users.c.uuid.in_(user_ids))
             )
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
-            objs_per_key = OrderedDict()
-            # For each uuid, there is only one user.
-            # So we don't build lists in objs_per_key variable.
-            for k in user_ids:
-                objs_per_key[k] = None
-            async for row in conn.execute(query):
-                key = str(row.uuid)
-                if objs_per_key[key] is not None:
-                    objs_per_key[key].groups.append(UserGroup(id=row.id, name=row.name))
-                    continue
-                o = User.from_row(row)
-                objs_per_key[key] = o
-        return tuple(objs_per_key.values())
+            return await batch_result(
+                context, conn, query, cls,
+                user_ids, lambda row: row['uuid'],
+            )
+
+
+class UserList(graphene.ObjectType):
+    class Meta:
+        interfaces = (PaginatedList, )
+
+    items = graphene.List(User, required=True)
 
 
 class UserInput(graphene.InputObjectType):
@@ -225,16 +337,17 @@ class ModifyUserInput(graphene.InputObjectType):
 
 class CreateUser(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         email = graphene.String(required=True)
         props = UserInput(required=True)
 
     ok = graphene.Boolean()
     msg = graphene.String()
-    user = graphene.Field(lambda: User)
+    user = graphene.Field(lambda: User, required=False)
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, email, props):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             username = props.username if props.username else email
@@ -256,7 +369,7 @@ class CreateUser(graphene.Mutation):
                     # Read the created user data from DB.
                     checkq = users.select().where(users.c.email == email)
                     result = await conn.execute(checkq)
-                    o = User.from_row(await result.first())
+                    o = User.from_row(info.context, await result.first())
 
                     # Create user's first access_key and secret_key.
                     from .keypair import generate_keypair, generate_ssh_keypair, keypairs
@@ -306,6 +419,8 @@ class CreateUser(graphene.Mutation):
 
 class ModifyUser(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         email = graphene.String(required=True)
         props = ModifyUserInput(required=True)
@@ -315,7 +430,6 @@ class ModifyUser(graphene.Mutation):
     user = graphene.Field(lambda: User)
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, email, props):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
 
@@ -350,7 +464,7 @@ class ModifyUser(graphene.Mutation):
                 if result.rowcount > 0:
                     checkq = users.select().where(users.c.email == email)
                     result = await conn.execute(checkq)
-                    o = User.from_row(await result.first())
+                    o = User.from_row(info.context, await result.first())
                 else:
                     return cls(ok=False, msg='no such user', user=None)
 
@@ -440,6 +554,8 @@ class DeleteUser(graphene.Mutation):
     All related keypairs will also be inactivated.
     '''
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         email = graphene.String(required=True)
 
@@ -447,7 +563,6 @@ class DeleteUser(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, email):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             try:

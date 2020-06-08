@@ -10,6 +10,7 @@ import click
 from tabulate import tabulate
 
 from ai.backend.common.cli import EnumChoice, MinMaxRange
+from ai.backend.common.config import redis_config_iv
 from ai.backend.common.docker import ImageRef
 from ai.backend.common.etcd import (
     AsyncEtcd, ConfigScopes,
@@ -17,7 +18,6 @@ from ai.backend.common.etcd import (
     unquote as etcd_unquote,
 )
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.gateway.config import redis_config_iv
 from ai.backend.gateway.defs import REDIS_IMAGE_DB
 from ai.backend.gateway.etcd import ConfigServer
 
@@ -26,8 +26,6 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
 
 @click.group()
 def cli():
-    '''Provides commands to manage etcd-based Backend.AI cluster configs
-    and a simple etcd client functionality'''
     pass
 
 

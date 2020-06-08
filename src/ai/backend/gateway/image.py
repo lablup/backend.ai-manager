@@ -28,7 +28,7 @@ from ..manager.models import (
     domains, groups, query_allowed_sgroups,
     association_groups_users as agus,
 )
-from .typing import CORSOptions, WebMiddleware
+from .types import CORSOptions, WebMiddleware
 from .utils import (
     check_api_params,
 )

@@ -14,14 +14,18 @@ from .group import (
 )
 from .image import (
     Image,
-    RescanImages, AliasImage, DealiasImage,
+    RescanImages,
+    PreloadImage, UnloadImage,
+    ForgetImage,
+    AliasImage, DealiasImage,
 )
 from .kernel import (
     ComputeSession, ComputeSessionList,
-    ComputeWorker,
+    ComputeContainer, ComputeContainerList,
+    LegacyComputeSession, LegacyComputeSessionList,
 )
 from .keypair import (
-    KeyPair,
+    KeyPair, KeyPairList,
     CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
 )
 from .resource_policy import (
@@ -42,17 +46,19 @@ from .scaling_group import (
     AssociateScalingGroupWithKeyPair,   DisassociateScalingGroupWithKeyPair,
 )
 from .user import (
-    User, UserRole,
+    User, UserList,
     CreateUser, ModifyUser, DeleteUser,
+    UserRole,
 )
 from .vfolder import (
     VirtualFolder, VirtualFolderList,
 )
 from ...gateway.exceptions import (
     GenericNotFound,
-    GenericForbidden,
     ImageNotFound,
+    InsufficientPrivilege,
     InvalidAPIParameters,
+    TooManyKernelsFound,
 )
 
 
@@ -83,6 +89,9 @@ class Mutations(graphene.ObjectType):
 
     # admin only
     rescan_images = RescanImages.Field()
+    preload_image = PreloadImage.Field()
+    unload_image = UnloadImage.Field()
+    forget_image = ForgetImage.Field()
     alias_image = AliasImage.Field()
     dealias_image = DealiasImage.Field()
 
@@ -150,7 +159,7 @@ class Queries(graphene.ObjectType):
 
     group = graphene.Field(
         Group,
-        id=graphene.String(required=True))
+        id=graphene.UUID(required=True))
 
     groups = graphene.List(
         Group,
@@ -177,10 +186,22 @@ class Queries(graphene.ObjectType):
         domain_name=graphene.String(),
         user_id=graphene.String())
 
-    users = graphene.List(
+    users = graphene.List(  # legacy non-paginated list
         User,
         domain_name=graphene.String(),
-        group_id=graphene.String(),
+        group_id=graphene.UUID(),
+        is_active=graphene.Boolean())
+
+    user_list = graphene.Field(
+        UserList,
+        limit=graphene.Int(required=True),
+        offset=graphene.Int(required=True),
+        # ordering customization
+        order_key=graphene.String(),
+        order_asc=graphene.Boolean(),
+        # filters
+        domain_name=graphene.String(),
+        group_id=graphene.UUID(),
         is_active=graphene.Boolean())
 
     keypair = graphene.Field(
@@ -188,8 +209,20 @@ class Queries(graphene.ObjectType):
         domain_name=graphene.String(),
         access_key=graphene.String())
 
-    keypairs = graphene.List(
+    keypairs = graphene.List(  # legacy non-paginated list
         KeyPair,
+        domain_name=graphene.String(),
+        email=graphene.String(),
+        is_active=graphene.Boolean())
+
+    keypair_list = graphene.Field(
+        KeyPairList,
+        limit=graphene.Int(required=True),
+        offset=graphene.Int(required=True),
+        # ordering customization
+        order_key=graphene.String(),
+        order_asc=graphene.Boolean(),
+        # filters
         domain_name=graphene.String(),
         email=graphene.String(),
         is_active=graphene.Boolean())
@@ -257,6 +290,16 @@ class Queries(graphene.ObjectType):
         group_id=graphene.String(),
         access_key=graphene.String())  # must be empty for user requests
 
+    compute_session = graphene.Field(
+        ComputeSession,
+        id=graphene.UUID(required=True),
+    )
+
+    compute_container = graphene.Field(
+        ComputeContainer,
+        id=graphene.UUID(required=True),
+    )
+
     compute_session_list = graphene.Field(
         ComputeSessionList,
         limit=graphene.Int(required=True),
@@ -271,27 +314,37 @@ class Queries(graphene.ObjectType):
         status=graphene.String(),
     )
 
-    compute_sessions = graphene.List(  # legacy non-paginated list
-        ComputeSession,
+    compute_container_list = graphene.Field(
+        ComputeContainerList,
+        limit=graphene.Int(required=True),
+        offset=graphene.Int(required=True),
+        # ordering customization
+        order_key=graphene.String(),
+        order_asc=graphene.Boolean(),
+        # filters
+        session_id=graphene.ID(required=True),
+        role=graphene.String(),
+    )
+
+    legacy_compute_session_list = graphene.Field(
+        LegacyComputeSessionList,
+        limit=graphene.Int(required=True),
+        offset=graphene.Int(required=True),
+        # ordering customization
+        order_key=graphene.String(),
+        order_asc=graphene.Boolean(),
+        # filters
         domain_name=graphene.String(),
         group_id=graphene.String(),
         access_key=graphene.String(),
         status=graphene.String(),
     )
 
-    compute_session = graphene.Field(
-        ComputeSession,
+    legacy_compute_session = graphene.Field(
+        LegacyComputeSession,
         sess_id=graphene.String(required=True),
         domain_name=graphene.String(),
         access_key=graphene.String(),
-    )
-
-    compute_workers = graphene.List(  # legacy non-paginated list
-        ComputeWorker,
-        sess_id=graphene.String(required=True),
-        domain_name=graphene.String(),
-        access_key=graphene.String(),
-        status=graphene.String(),
     )
 
     @staticmethod
@@ -313,20 +366,24 @@ class Queries(graphene.ObjectType):
 
     @staticmethod
     @privileged_query(UserRole.SUPERADMIN)
-    async def resolve_agent_list(executor, info, limit, offset, *,
-                                 scaling_group=None,
-                                 status=None,
-                                 order_key=None, order_asc=None):
+    async def resolve_agent_list(
+        executor, info, limit, offset, *,
+        scaling_group=None,
+        status=None,
+        order_key=None, order_asc=None,
+    ):
         total_count = await Agent.load_count(
             info.context,
             scaling_group=scaling_group,
-            status=status)
+            status=status,
+        )
         agent_list = await Agent.load_slice(
             info.context, limit, offset,
             scaling_group=scaling_group,
             status=status,
             order_key=order_key,
-            order_asc=order_asc)
+            order_asc=order_asc,
+        )
         return AgentList(agent_list, total_count)
 
     @staticmethod
@@ -357,11 +414,11 @@ class Queries(graphene.ObjectType):
             pass
         elif client_role == UserRole.ADMIN:
             if group.domain_name != client_domain:
-                raise GenericForbidden
+                raise InsufficientPrivilege
         elif client_role == UserRole.USER:
             client_groups = await Group.get_groups_for_user(info.context, client_user_id)
             if group.id not in (g.id for g in client_groups):
-                raise GenericNotFound
+                raise InsufficientPrivilege
         else:
             raise InvalidAPIParameters('Unknown client role')
         return group
@@ -375,7 +432,7 @@ class Queries(graphene.ObjectType):
             pass
         elif client_role == UserRole.ADMIN:
             if domain_name is not None and domain_name != client_domain:
-                raise GenericForbidden
+                raise InsufficientPrivilege
             domain_name = client_domain
         elif client_role == UserRole.USER:
             return await Group.get_groups_for_user(info.context, client_user_id)
@@ -446,18 +503,56 @@ class Queries(graphene.ObjectType):
             pass
         elif client_role == UserRole.ADMIN:
             if domain_name is not None and domain_name != client_domain:
-                raise GenericForbidden
+                raise InsufficientPrivilege
             domain_name = client_domain
         elif client_role == UserRole.USER:
             # Users cannot query other users.
-            raise GenericForbidden()
+            raise InsufficientPrivilege()
         else:
             raise InvalidAPIParameters('Unknown client role')
         return await User.load_all(
             info.context,
             domain_name=domain_name,
             group_id=group_id,
-            is_active=is_active)
+            is_active=is_active,
+            limit=100)
+
+    @staticmethod
+    async def resolve_user_list(
+        executor, info, limit, offset, *,
+        domain_name=None, group_id=None,
+        is_active=None,
+        order_key=None, order_asc=None,
+    ):
+        from .user import UserRole
+        client_role = info.context['user']['role']
+        client_domain = info.context['user']['domain_name']
+        if client_role == UserRole.SUPERADMIN:
+            pass
+        elif client_role == UserRole.ADMIN:
+            if domain_name is not None and domain_name != client_domain:
+                raise InsufficientPrivilege
+            domain_name = client_domain
+        elif client_role == UserRole.USER:
+            # Users cannot query other users.
+            raise InsufficientPrivilege()
+        else:
+            raise InvalidAPIParameters('Unknown client role')
+        total_count = await User.load_count(
+            info.context,
+            domain_name=domain_name,
+            group_id=group_id,
+            is_active=is_active,
+        )
+        user_list = await User.load_slice(
+            info.context, limit, offset,
+            domain_name=domain_name,
+            group_id=group_id,
+            is_active=is_active,
+            order_key=order_key,
+            order_asc=order_asc,
+        )
+        return UserList(user_list, total_count)
 
     @staticmethod
     @scoped_query(autofill_user=True, user_key='access_key')
@@ -472,19 +567,42 @@ class Queries(graphene.ObjectType):
     async def resolve_keypairs(executor, info, *,
                                domain_name=None, email=None,
                                is_active=None):
-        # Here, user_id corresponds to user email.
-        # fetch keypairs from each user_id
         if email is None:
             return await KeyPair.load_all(
                 info.context,
                 domain_name=domain_name,
-                is_active=is_active)
+                is_active=is_active,
+                limit=100)
         else:
             manager = info.context['dlmgr']
             loader = manager.get_loader('KeyPair.by_email',
                                         domain_name=domain_name,
                                         is_active=is_active)
             return await loader.load(email)
+
+    @staticmethod
+    @scoped_query(autofill_user=False, user_key='email')
+    async def resolve_keypair_list(
+        executor, info, limit, offset, *,
+        domain_name=None, email=None,
+        is_active=None,
+        order_key=None, order_asc=None,
+    ):
+        total_count = await KeyPair.load_count(
+            info.context,
+            domain_name=domain_name,
+            email=email,
+            is_active=is_active,
+        )
+        keypair_list = await KeyPair.load_slice(
+            info.context, limit, offset,
+            domain_name=domain_name,
+            email=email,
+            is_active=is_active,
+            order_key=order_key,
+            order_asc=order_asc,
+        )
+        return KeyPairList(keypair_list, total_count)
 
     @staticmethod
     async def resolve_keypair_resource_policy(executor, info, name=None):
@@ -558,67 +676,95 @@ class Queries(graphene.ObjectType):
                                    order_key=None, order_asc=None):
         total_count = await VirtualFolder.load_count(
             info.context,
-            domain_name=domain_name,
-            group_id=group_id,
-            user_id=user_id)
+            domain_name=domain_name,  # scope
+            group_id=group_id,        # scope
+            user_id=user_id,          # scope
+        )
         items = await VirtualFolder.load_slice(
             info.context, limit, offset,
-            domain_name=domain_name,
-            group_id=group_id,
-            user_id=user_id,
-            order_key=order_key,
-            order_asc=order_asc)
+            domain_name=domain_name,  # scope
+            group_id=group_id,        # scope
+            user_id=user_id,          # scope
+            order_key=order_key,      # order
+            order_asc=order_asc,      # order
+        )
         return VirtualFolderList(items, total_count)
 
     @staticmethod
-    @scoped_query(autofill_user=False, user_key='user_id')
-    async def resolve_vfolders(executor, info, *,
-                               domain_name=None, group_id=None, user_id=None):
-        return await VirtualFolder.load_all(
+    @scoped_query(autofill_user=False, user_key='access_key')
+    async def resolve_compute_container_list(
+        executor, info, limit, offset, *,
+        session_id=None, role=None,
+        domain_name=None, group_id=None, access_key=None,
+        order_key=None, order_asc=None,
+    ):
+        total_count = await ComputeContainer.load_count(
             info.context,
-            domain_name=domain_name,
-            group_id=group_id,
-            user_id=user_id)
+            session_id,               # filter (mandatory)
+            role=role,                # filter
+            domain_name=domain_name,  # scope
+            group_id=group_id,        # scope
+            access_key=access_key,    # scope
+        )
+        items = await ComputeContainer.load_slice(
+            info.context,
+            limit, offset,            # slice
+            session_id,               # filter (mandatory)
+            role=role,                # filter
+            domain_name=domain_name,  # scope
+            group_id=group_id,        # scope
+            access_key=access_key,    # scope
+            order_key=order_key,      # order
+            order_asc=order_asc,      # order
+        )
+        return ComputeContainerList(items, total_count)
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='access_key')
-    async def resolve_compute_session_list(executor, info, limit, offset, *,
-                                           domain_name=None, group_id=None, access_key=None,
-                                           status=None,
-                                           order_key=None, order_asc=None):
+    async def resolve_compute_container(
+        executor, info, container_id,
+    ):
+        # We need to check the group membership of the designated kernel,
+        # but practically a user cannot guess the IDs of kernels launched
+        # by other users and in other groups.
+        # Let's just protect the domain/user boundary here.
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('ComputeContainer.detail')
+        return await loader.load(container_id)
+
+    @staticmethod
+    @scoped_query(autofill_user=False, user_key='access_key')
+    async def resolve_compute_session_list(
+        executor, info, limit, offset, *,
+        domain_name=None, group_id=None, access_key=None,
+        status=None,
+        order_key=None, order_asc=None,
+    ):
         total_count = await ComputeSession.load_count(
             info.context,
-            domain_name=domain_name,
-            group_id=group_id,
-            access_key=access_key,
-            status=status)
+            status=status,            # filter
+            domain_name=domain_name,  # scope
+            group_id=group_id,        # scope
+            access_key=access_key,    # scope
+        )
         items = await ComputeSession.load_slice(
-            info.context, limit, offset,
-            domain_name=domain_name,
-            group_id=group_id,
-            access_key=access_key,
-            status=status,
-            order_key=order_key,
-            order_asc=order_asc)
+            info.context,
+            limit, offset,            # slice
+            status=status,            # filter
+            domain_name=domain_name,  # scope
+            group_id=group_id,        # scope
+            access_key=access_key,    # scope
+            order_key=order_key,      # order
+            order_asc=order_asc,      # order
+        )
         return ComputeSessionList(items, total_count)
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='access_key')
-    async def resolve_compute_sessions(executor, info, *,
-                                       domain_name=None, group_id=None, access_key=None,
-                                       status=None):
-        return await ComputeSession.load_all(
-            info.context,
-            domain_name=domain_name,
-            group_id=group_id,
-            access_key=access_key,
-            status=status)
-
-    @staticmethod
-    @scoped_query(autofill_user=False, user_key='access_key')
-    async def resolve_compute_session(executor, info, sess_id, *,
-                                      domain_name=None, access_key=None,
-                                      status=None):
+    async def resolve_compute_session(
+        executor, info, id, *,
+        domain_name=None, access_key=None,
+    ):
         # We need to check the group membership of the designated kernel,
         # but practically a user cannot guess the IDs of kernels launched
         # by other users and in other groups.
@@ -627,19 +773,72 @@ class Queries(graphene.ObjectType):
         loader = manager.get_loader(
             'ComputeSession.detail',
             domain_name=domain_name,
-            access_key=access_key,
-            status=status)
-        return await loader.load(sess_id)
+            access_key=access_key)
+        matches = await loader.load(id)
+        if len(matches) == 0:
+            return None
+        elif len(matches) == 1:
+            return matches[0]
+        else:
+            raise TooManyKernelsFound
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='access_key')
-    async def resolve_compute_workers(executor, info, sess_id, *,
-                                      domain_name=None, access_key=None,
-                                      status=None):
+    async def resolve_legacy_compute_session_list(
+        executor, info, limit, offset, *,
+        domain_name=None, group_id=None, access_key=None,
+        status=None,
+        order_key=None, order_asc=None,
+    ):
+        total_count = await LegacyComputeSession.load_count(
+            info.context,
+            domain_name=domain_name,
+            group_id=group_id,
+            access_key=access_key,
+            status=status)
+        items = await LegacyComputeSession.load_slice(
+            info.context, limit, offset,
+            domain_name=domain_name,
+            group_id=group_id,
+            access_key=access_key,
+            status=status,
+            order_key=order_key,
+            order_asc=order_asc)
+        return LegacyComputeSessionList(items, total_count)
+
+    @staticmethod
+    @scoped_query(autofill_user=False, user_key='access_key')
+    async def resolve_legacy_compute_session(
+        executor, info, sess_id, *,
+        domain_name=None, access_key=None,
+        status=None,
+    ):
+        # We need to check the group membership of the designated kernel,
+        # but practically a user cannot guess the IDs of kernels launched
+        # by other users and in other groups.
+        # Let's just protect the domain/user boundary here.
         manager = info.context['dlmgr']
         loader = manager.get_loader(
-            'ComputeWorker',
+            'LegacyComputeSession.detail',
             domain_name=domain_name,
             access_key=access_key,
             status=status)
-        return await loader.load(sess_id)
+        matches = await loader.load(sess_id)
+        if len(matches) == 0:
+            return None
+        elif len(matches) == 1:
+            return matches[0]
+        else:
+            raise TooManyKernelsFound
+
+
+class GQLMutationPrivilegeCheckMiddleware:
+
+    def resolve(self, next, root, info, **args):
+        if info.operation.operation == 'mutation' and len(info.path) == 1:
+            mutation_cls = getattr(Mutations, info.path[0]).type
+            # default is allow nobody.
+            allowed_roles = getattr(mutation_cls, 'allowed_roles', [])
+            if info.context['user']['role'] not in allowed_roles:
+                return mutation_cls(False, f"no permission to execute {info.path[0]}")
+        return next(root, info, **args)

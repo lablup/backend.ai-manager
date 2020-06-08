@@ -1,9 +1,20 @@
+from __future__ import annotations
+
 import asyncio
 import base64
-from collections import OrderedDict
 import secrets
-from typing import Sequence, List, TypedDict, Tuple
+from typing import (
+    Any,
+    Optional,
+    Mapping,
+    Sequence,
+    List,
+    Tuple,
+    TypedDict,
+)
 
+from aiopg.sa.connection import SAConnection
+from aiopg.sa.result import RowProxy
 from cryptography.hazmat.primitives import serialization as crypto_serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend as crypto_default_backend
@@ -15,19 +26,31 @@ import psycopg2 as pg
 
 from ai.backend.gateway.config import RESERVED_DOTFILES
 from ai.backend.common import msgpack
+from ai.backend.common.types import (
+    AccessKey,
+    SecretKey,
+)
 
 from .base import (
-    metadata, ForeignKeyIDColumn,
-    simple_db_mutate,
+    ForeignKeyIDColumn,
+    Item,
+    PaginatedList,
+    metadata,
+    batch_result,
+    batch_multiresult,
     set_if_set,
+    simple_db_mutate,
 )
+from .user import UserRole
 
 __all__: Sequence[str] = (
     'keypairs',
-    'KeyPair', 'KeyPairInput',
+    'KeyPair', 'KeyPairList',
+    'KeyPairInput',
     'CreateKeyPair', 'ModifyKeyPair', 'DeleteKeyPair',
     'Dotfile', 'MAXIMUM_DOTFILE_SIZE',
     'query_owned_dotfiles',
+    'query_bootstrap_script',
     'verify_dotfile_name'
 )
 
@@ -58,11 +81,16 @@ keypairs = sa.Table(
               sa.ForeignKey('keypair_resource_policies.name'),
               nullable=False),
     # dotfiles column, \x90 means empty list in msgpack
-    sa.Column('dotfiles', sa.LargeBinary(length=MAXIMUM_DOTFILE_SIZE), nullable=False, default=b'\x90')
+    sa.Column('dotfiles', sa.LargeBinary(length=MAXIMUM_DOTFILE_SIZE), nullable=False, default=b'\x90'),
+    sa.Column('bootstrap_script', sa.String(length=MAXIMUM_DOTFILE_SIZE), nullable=False, default=''),
 )
 
 
 class KeyPair(graphene.ObjectType):
+
+    class Meta:
+        interfaces = (Item, )
+
     user_id = graphene.String()
     access_key = graphene.String()
     secret_key = graphene.String()
@@ -90,10 +118,13 @@ class KeyPair(graphene.ObjectType):
                            'max_concurrent_sessions field.')
 
     @classmethod
-    def from_row(cls, row):
-        if row is None:
-            return None
+    def from_row(
+        cls,
+        context: Mapping[str, Any],
+        row: RowProxy,
+    ) -> KeyPair:
         return cls(
+            id=row['access_key'],
             user_id=row['user_id'],
             access_key=row['access_key'],
             secret_key=row['secret_key'],
@@ -123,26 +154,94 @@ class KeyPair(graphene.ObjectType):
         loader = manager.get_loader('ComputeSession', status=status)
         return await loader.load(self.access_key)
 
-    @staticmethod
-    async def load_all(context, *,
-                       domain_name=None, is_active=None):
+    @classmethod
+    async def load_all(
+        cls, context, *,
+        domain_name=None,
+        is_active=None,
+        limit=None,
+    ) -> Sequence[KeyPair]:
         from .user import users
         async with context['dbpool'].acquire() as conn:
             j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
-            query = sa.select([keypairs]).select_from(j)
+            query = (
+                sa.select([keypairs])
+                .select_from(j)
+            )
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
             if is_active is not None:
                 query = query.where(keypairs.c.is_active == is_active)
-            objs = []
-            async for row in conn.execute(query):
-                o = KeyPair.from_row(row)
-                objs.append(o)
-        return objs
+            if limit is not None:
+                query = query.limit(limit)
+            return [
+                cls.from_row(context, row) async for row in conn.execute(query)
+            ]
 
     @staticmethod
-    async def batch_load_by_email(context, user_ids, *,
-                                  domain_name=None, is_active=None):
+    async def load_count(
+        context, *,
+        domain_name=None,
+        email=None,
+        is_active=None,
+    ) -> int:
+        from .user import users
+        async with context['dbpool'].acquire() as conn:
+            j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
+            query = (
+                sa.select([sa.func.count(keypairs.c.access_key)])
+                .select_from(j)
+                .as_scalar()
+            )
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
+            if email is not None:
+                query = query.where(keypairs.c.user_id == email)
+            if is_active is not None:
+                query = query.where(keypairs.c.is_active == is_active)
+            result = await conn.execute(query)
+            count = await result.fetchone()
+            return count[0]
+
+    @classmethod
+    async def load_slice(
+        cls, context, limit, offset, *,
+        domain_name=None,
+        email=None,
+        is_active=None,
+        order_key=None,
+        order_asc=True,
+    ) -> Sequence[KeyPair]:
+        from .user import users
+        async with context['dbpool'].acquire() as conn:
+            if order_key is None:
+                _ordering = sa.desc(keypairs.c.created_at)
+            else:
+                _order_func = sa.asc if order_asc else sa.desc
+                _ordering = _order_func(getattr(keypairs.c, order_key))
+            j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
+            query = (
+                sa.select([keypairs])
+                .select_from(j)
+                .order_by(_ordering)
+                .limit(limit)
+                .offset(offset)
+            )
+            if domain_name is not None:
+                query = query.where(users.c.domain_name == domain_name)
+            if email is not None:
+                query = query.where(keypairs.c.user_id == email)
+            if is_active is not None:
+                query = query.where(keypairs.c.is_active == is_active)
+            return [
+                cls.from_row(context, row) async for row in conn.execute(query)
+            ]
+
+    @classmethod
+    async def batch_load_by_email(
+        cls, context, user_ids, *,
+        domain_name=None, is_active=None,
+    ) -> Sequence[Sequence[Optional[KeyPair]]]:
         from .user import users
         async with context['dbpool'].acquire() as conn:
             j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
@@ -153,16 +252,16 @@ class KeyPair(graphene.ObjectType):
                 query = query.where(users.c.domain_name == domain_name)
             if is_active is not None:
                 query = query.where(keypairs.c.is_active == is_active)
-            objs_per_key = OrderedDict()
-            for k in user_ids:
-                objs_per_key[k] = list()
-            async for row in conn.execute(query):
-                o = KeyPair.from_row(row)
-                objs_per_key[row.user_id].append(o)
-        return tuple(objs_per_key.values())
+            return await batch_multiresult(
+                context, conn, query, cls,
+                user_ids, lambda row: row['user_id'],
+            )
 
-    @staticmethod
-    async def batch_load_by_ak(context, access_keys, *, domain_name=None):
+    @classmethod
+    async def batch_load_by_ak(
+        cls, context, access_keys, *,
+        domain_name=None,
+    ) -> Sequence[Optional[KeyPair]]:
         async with context['dbpool'].acquire() as conn:
             from .user import users
             j = sa.join(keypairs, users, keypairs.c.user == users.c.uuid)
@@ -175,15 +274,17 @@ class KeyPair(graphene.ObjectType):
             )
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
-            objs_per_key = OrderedDict()
-            # For each access key, there is only one keypair.
-            # So we don't build lists in objs_per_key variable.
-            for k in access_keys:
-                objs_per_key[k] = None
-            async for row in conn.execute(query):
-                o = KeyPair.from_row(row)
-                objs_per_key[row.access_key] = o
-        return tuple(objs_per_key.values())
+            return await batch_result(
+                context, conn, query, cls,
+                access_keys, lambda row: row['access_key'],
+            )
+
+
+class KeyPairList(graphene.ObjectType):
+    class Meta:
+        interfaces = (PaginatedList, )
+
+    items = graphene.List(KeyPair, required=True)
 
 
 class KeyPairInput(graphene.InputObjectType):
@@ -207,13 +308,15 @@ class ModifyKeyPairInput(graphene.InputObjectType):
 
 class CreateKeyPair(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         user_id = graphene.String(required=True)
         props = KeyPairInput(required=True)
 
     ok = graphene.Boolean()
     msg = graphene.String()
-    keypair = graphene.Field(lambda: KeyPair)
+    keypair = graphene.Field(lambda: KeyPair, required=False)
 
     @classmethod
     async def mutate(cls, root, info, user_id, props):
@@ -260,7 +363,7 @@ class CreateKeyPair(graphene.Mutation):
                     # Read the created key data from DB.
                     checkq = keypairs.select().where(keypairs.c.access_key == ak)
                     result = await conn.execute(checkq)
-                    o = KeyPair.from_row(await result.first())
+                    o = KeyPair.from_row(info.context, await result.first())
                     return cls(ok=True, msg='success', keypair=o)
                 else:
                     return cls(ok=False, msg='failed to create keypair',
@@ -276,6 +379,8 @@ class CreateKeyPair(graphene.Mutation):
 
 
 class ModifyKeyPair(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
         access_key = graphene.String(required=True)
@@ -301,6 +406,8 @@ class ModifyKeyPair(graphene.Mutation):
 
 class DeleteKeyPair(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         access_key = graphene.String(required=True)
 
@@ -322,16 +429,16 @@ class Dotfile(TypedDict):
     perm: str
 
 
-def generate_keypair():
+def generate_keypair() -> Tuple[AccessKey, SecretKey]:
     '''
     AWS-like access key and secret key generation.
     '''
     ak = 'AKIA' + base64.b32encode(secrets.token_bytes(10)).decode('ascii')
     sk = secrets.token_urlsafe(30)
-    return ak, sk
+    return AccessKey(ak), SecretKey(sk)
 
 
-def generate_ssh_keypair():
+def generate_ssh_keypair() -> Tuple[str, str]:
     '''
     Generate RSA keypair for SSH/SFTP connection.
     '''
@@ -352,13 +459,27 @@ def generate_ssh_keypair():
     return (public_key, private_key)
 
 
-async def query_owned_dotfiles(conn, access_key) -> Tuple[List[Dotfile], int]:
+async def query_owned_dotfiles(
+    conn: SAConnection,
+    access_key: AccessKey,
+) -> Tuple[List[Dotfile], int]:
     query = (sa.select([keypairs.c.dotfiles])
                .select_from(keypairs)
                .where(keypairs.c.access_key == access_key))
     packed_dotfile = await conn.scalar(query)
     rows = msgpack.unpackb(packed_dotfile)
     return rows, MAXIMUM_DOTFILE_SIZE - len(packed_dotfile)
+
+
+async def query_bootstrap_script(
+    conn: SAConnection,
+    access_key: AccessKey,
+) -> Tuple[str, int]:
+    query = (sa.select([keypairs.c.bootstrap_script])
+               .select_from(keypairs)
+               .where(keypairs.c.access_key == access_key))
+    script = await conn.scalar(query)
+    return script, MAXIMUM_DOTFILE_SIZE - len(script)
 
 
 def verify_dotfile_name(dotfile: str) -> bool:

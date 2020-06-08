@@ -1,4 +1,3 @@
-from collections import OrderedDict
 from typing import Union, Sequence, Set
 import uuid
 
@@ -9,10 +8,11 @@ import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 
 from .base import (
-    metadata, privileged_mutation,
+    metadata,
     simple_db_mutate,
     simple_db_mutate_returning_item,
     set_if_set,
+    batch_result,
 )
 from .group import resolve_group_name_or_id
 from .user import UserRole
@@ -153,7 +153,7 @@ class ScalingGroup(graphene.ObjectType):
     scheduler_opts = graphene.JSONString()
 
     @classmethod
-    def from_row(cls, row):
+    def from_row(cls, context, row):
         if row is None:
             return None
         return cls(
@@ -167,20 +167,16 @@ class ScalingGroup(graphene.ObjectType):
             scheduler_opts=row['scheduler_opts'],
         )
 
-    @staticmethod
-    async def load_all(context, *, is_active=None):
+    @classmethod
+    async def load_all(cls, context, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
             query = sa.select([scaling_groups]).select_from(scaling_groups)
             if is_active is not None:
                 query = query.where(scaling_groups.c.is_active == is_active)
-            objs = []
-            async for row in conn.execute(query):
-                o = ScalingGroup.from_row(row)
-                objs.append(o)
-        return objs
+            return [cls.from_row(context, row) async for row in conn.execute(query)]
 
-    @staticmethod
-    async def load_by_domain(context, domain, *, is_active=None):
+    @classmethod
+    async def load_by_domain(cls, context, domain, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
             j = sa.join(
                 scaling_groups, sgroups_for_domains,
@@ -192,14 +188,10 @@ class ScalingGroup(graphene.ObjectType):
             )
             if is_active is not None:
                 query = query.where(scaling_groups.c.is_active == is_active)
-            objs = []
-            async for row in conn.execute(query):
-                o = ScalingGroup.from_row(row)
-                objs.append(o)
-        return objs
+            return [cls.from_row(context, row) async for row in conn.execute(query)]
 
-    @staticmethod
-    async def load_by_group(context, group, *, is_active=None):
+    @classmethod
+    async def load_by_group(cls, context, group, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
             j = sa.join(
                 scaling_groups, sgroups_for_groups,
@@ -211,14 +203,10 @@ class ScalingGroup(graphene.ObjectType):
             )
             if is_active is not None:
                 query = query.where(scaling_groups.c.is_active == is_active)
-            objs = []
-            async for row in conn.execute(query):
-                o = ScalingGroup.from_row(row)
-                objs.append(o)
-        return objs
+            return [cls.from_row(context, row) async for row in conn.execute(query)]
 
-    @staticmethod
-    async def load_by_keypair(context, access_key, *, is_active=None):
+    @classmethod
+    async def load_by_keypair(cls, context, access_key, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
             j = sa.join(
                 scaling_groups, sgroups_for_keypairs,
@@ -230,25 +218,18 @@ class ScalingGroup(graphene.ObjectType):
             )
             if is_active is not None:
                 query = query.where(scaling_groups.c.is_active == is_active)
-            objs = []
-            async for row in conn.execute(query):
-                o = ScalingGroup.from_row(row)
-                objs.append(o)
-        return objs
+            return [cls.from_row(context, row) async for row in conn.execute(query)]
 
-    @staticmethod
-    async def batch_load_by_name(context, names):
+    @classmethod
+    async def batch_load_by_name(cls, context, names):
         async with context['dbpool'].acquire() as conn:
             query = (sa.select([scaling_groups])
                        .select_from(scaling_groups)
                        .where(scaling_groups.c.name.in_(names)))
-            objs_per_key = OrderedDict()
-            for k in names:
-                objs_per_key[k] = None
-            async for row in conn.execute(query):
-                o = ScalingGroup.from_row(row)
-                objs_per_key[row.name] = o
-        return tuple(objs_per_key.values())
+            return await batch_result(
+                context, conn, query, cls,
+                names, lambda row: row['name'],
+            )
 
 
 class ScalingGroupInput(graphene.InputObjectType):
@@ -271,16 +252,17 @@ class ModifyScalingGroupInput(graphene.InputObjectType):
 
 class CreateScalingGroup(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
         props = ScalingGroupInput(required=True)
 
     ok = graphene.Boolean()
     msg = graphene.String()
-    scaling_group = graphene.Field(lambda: ScalingGroup)
+    scaling_group = graphene.Field(lambda: ScalingGroup, required=False)
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         data = {
             'name': name,
@@ -300,6 +282,8 @@ class CreateScalingGroup(graphene.Mutation):
 
 class ModifyScalingGroup(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
         props = ModifyScalingGroupInput(required=True)
@@ -308,7 +292,6 @@ class ModifyScalingGroup(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         data = {}
         set_if_set(props, data, 'description')
@@ -327,6 +310,8 @@ class ModifyScalingGroup(graphene.Mutation):
 
 class DeleteScalingGroup(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
 
@@ -334,7 +319,6 @@ class DeleteScalingGroup(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name):
         delete_query = (
             scaling_groups.delete()
@@ -345,6 +329,8 @@ class DeleteScalingGroup(graphene.Mutation):
 
 class AssociateScalingGroupWithDomain(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         scaling_group = graphene.String(required=True)
         domain = graphene.String(required=True)
@@ -353,7 +339,6 @@ class AssociateScalingGroupWithDomain(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, scaling_group, domain):
         insert_query = (
             sgroups_for_domains.insert()
@@ -367,6 +352,8 @@ class AssociateScalingGroupWithDomain(graphene.Mutation):
 
 class DisassociateScalingGroupWithDomain(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         scaling_group = graphene.String(required=True)
         domain = graphene.String(required=True)
@@ -375,7 +362,6 @@ class DisassociateScalingGroupWithDomain(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, scaling_group, domain):
         delete_query = (
             sgroups_for_domains.delete()
@@ -389,6 +375,8 @@ class DisassociateScalingGroupWithDomain(graphene.Mutation):
 
 class DisassociateAllScalingGroupsWithDomain(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         domain = graphene.String(required=True)
 
@@ -396,7 +384,6 @@ class DisassociateAllScalingGroupsWithDomain(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, domain):
         delete_query = (
             sgroups_for_domains.delete()
@@ -407,6 +394,8 @@ class DisassociateAllScalingGroupsWithDomain(graphene.Mutation):
 
 class AssociateScalingGroupWithUserGroup(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         scaling_group = graphene.String(required=True)
         user_group = graphene.String(required=True)
@@ -415,7 +404,6 @@ class AssociateScalingGroupWithUserGroup(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, scaling_group, user_group):
         insert_query = (
             sgroups_for_groups.insert()
@@ -429,6 +417,8 @@ class AssociateScalingGroupWithUserGroup(graphene.Mutation):
 
 class DisassociateScalingGroupWithUserGroup(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         scaling_group = graphene.String(required=True)
         user_group = graphene.String(required=True)
@@ -437,7 +427,6 @@ class DisassociateScalingGroupWithUserGroup(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, scaling_group, user_group):
         delete_query = (
             sgroups_for_groups.delete()
@@ -451,6 +440,8 @@ class DisassociateScalingGroupWithUserGroup(graphene.Mutation):
 
 class DisassociateAllScalingGroupsWithGroup(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         user_group = graphene.String(required=True)
 
@@ -458,7 +449,6 @@ class DisassociateAllScalingGroupsWithGroup(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, user_group):
         delete_query = (
             sgroups_for_groups.delete()
@@ -469,6 +459,8 @@ class DisassociateAllScalingGroupsWithGroup(graphene.Mutation):
 
 class AssociateScalingGroupWithKeyPair(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         scaling_group = graphene.String(required=True)
         access_key = graphene.String(required=True)
@@ -477,7 +469,6 @@ class AssociateScalingGroupWithKeyPair(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, scaling_group, access_key):
         insert_query = (
             sgroups_for_keypairs.insert()
@@ -491,6 +482,8 @@ class AssociateScalingGroupWithKeyPair(graphene.Mutation):
 
 class DisassociateScalingGroupWithKeyPair(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         scaling_group = graphene.String(required=True)
         access_key = graphene.String(required=True)
@@ -499,7 +492,6 @@ class DisassociateScalingGroupWithKeyPair(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, scaling_group, access_key):
         delete_query = (
             sgroups_for_keypairs.delete()

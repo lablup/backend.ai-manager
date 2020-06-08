@@ -10,7 +10,6 @@ import subprocess
 import tempfile
 from typing import (
     Any, Optional,
-    AsyncGenerator,
     Sequence,
     Mapping,
     Tuple,
@@ -23,10 +22,13 @@ import sqlalchemy as sa
 import psycopg2 as pg
 import pytest
 
-from ai.backend.gateway.config import load as load_config, redis_config_iv
+from ai.backend.gateway.config import load as load_config
 from ai.backend.gateway.etcd import ConfigServer
 from ai.backend.gateway.server import (
     build_root_app,
+)
+from ai.backend.gateway.types import (
+    CleanupContext,
 )
 from ai.backend.manager.models.base import populate_fixture
 from ai.backend.manager.models import (
@@ -34,6 +36,7 @@ from ai.backend.manager.models import (
     agents,
     kernels, keypairs, vfolders,
 )
+from ai.backend.common.config import redis_config_iv
 from ai.backend.common.types import HostPortPair
 
 here = Path(__file__).parent
@@ -285,7 +288,7 @@ class Client:
 
 
 @pytest.fixture
-async def app(test_config):
+async def app(test_config, event_loop):
     '''
     Create an empty application with the test configuration.
     '''
@@ -295,13 +298,13 @@ async def app(test_config):
 
 
 @pytest.fixture
-async def create_app_and_client(test_config):
+async def create_app_and_client(test_config, event_loop):
     client: Optional[Client] = None
     client_session: Optional[aiohttp.ClientSession] = None
     runner: Optional[web.BaseRunner] = None
 
     async def app_builder(
-        cleanup_contexts: Sequence[AsyncGenerator[None, None]] = None,
+        cleanup_contexts: Sequence[CleanupContext] = None,
         subapp_pkgs: Sequence[str] = None,
         scheduler_opts: Mapping[str, Any] = None,
     ) -> Tuple[web.Application, Client]:
@@ -309,10 +312,20 @@ async def create_app_and_client(test_config):
 
         if scheduler_opts is None:
             scheduler_opts = {}
+        _non_ctx_registers = []
+        _cleanup_ctxs = []
+        if cleanup_contexts is not None:
+            for ctx in cleanup_contexts:
+                if ctx.__name__ in ['config_server_register', 'webapp_plugins_register']:
+                    _non_ctx_registers.append(ctx)
+                else:
+                    _cleanup_ctxs.append(ctx)
         app = build_root_app(0, test_config,
-                             cleanup_contexts=cleanup_contexts,
+                             cleanup_contexts=_cleanup_ctxs,
                              subapp_pkgs=subapp_pkgs,
                              scheduler_opts={'close_timeout': 10, **scheduler_opts})
+        for register in _non_ctx_registers:
+            await register(app)  # type: ignore
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(

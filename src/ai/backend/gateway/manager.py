@@ -22,7 +22,7 @@ from ai.backend.common import validators as tx
 from . import ManagerStatus
 from .auth import superadmin_required
 from .exceptions import InvalidAPIParameters, ServerFrozen, ServiceUnavailable
-from .typing import CORSOptions, WebMiddleware
+from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params
 from ..manager.models import kernels, KernelStatus
 

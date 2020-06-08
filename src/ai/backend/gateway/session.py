@@ -7,6 +7,7 @@ import base64
 from decimal import Decimal
 from datetime import datetime, timedelta
 import functools
+from io import BytesIO
 import json
 import logging
 import re
@@ -24,6 +25,7 @@ import aiohttp
 from aiohttp import web, hdrs
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
+import aioredis
 import aiotools
 from async_timeout import timeout
 from dateutil.tz import tzutc
@@ -43,27 +45,30 @@ from ai.backend.common.types import (
     AgentId, KernelId,
     SessionTypes,
 )
-
+from ai.backend.common.utils import current_loop
+from .defs import REDIS_STREAM_DB
 from .exceptions import (
     InvalidAPIParameters,
     GenericNotFound,
     ImageNotFound,
+    InsufficientPrivilege,
     SessionNotFound,
     SessionAlreadyExists,
+    TooManySessionsMatched,
     BackendError,
     InternalServerError,
     TaskTemplateNotFound
 )
 from .auth import auth_required
-from .typing import CORSOptions, WebMiddleware
+from .types import CORSOptions, WebMiddleware
 from .utils import (
-    current_loop, catch_unexpected, check_api_params, get_access_key_scopes, undefined
+    catch_unexpected, check_api_params, get_access_key_scopes, undefined
 )
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.models import (
     domains,
     association_groups_users as agus, groups,
-    keypairs, kernels,
+    keypairs, kernels, query_bootstrap_script,
     keypair_resource_policies,
     users, UserRole,
     vfolders,
@@ -71,6 +76,7 @@ from ..manager.models import (
     query_accessible_vfolders,
     session_templates,
     verify_vfolder_name,
+    DEAD_KERNEL_STATUSES,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.session'))
@@ -362,6 +368,12 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             if group_id is None:
                 raise InvalidAPIParameters('Invalid group')
 
+            # Use keypair bootstrap_script if it is not delivered as a parameter
+            # (only for INTERACTIVE sessions).
+            if params['session_type'] == SessionTypes.INTERACTIVE and not params['bootstrap_script']:
+                script, _ = await query_bootstrap_script(conn, owner_access_key)
+                params['bootstrap_script'] = script
+
         kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
             params['session_name'], owner_access_key,
             requested_image_ref,
@@ -381,7 +393,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
         resp['created'] = True
 
         if not params['enqueue_only']:
-            request.app['pending_waits'].add(asyncio.Task.current_task())
+            request.app['pending_waits'].add(asyncio.current_task())
             max_wait = params['max_wait_seconds']
             try:
                 if max_wait > 0:
@@ -430,11 +442,11 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     except UnknownImageReference:
         raise InvalidAPIParameters(f"Unknown image reference: {params['image']}")
     except Exception:
-        request.app['error_monitor'].capture_exception()
+        await request.app['error_monitor'].capture_exception(user=owner_uuid)
         log.exception('GET_OR_CREATE: unexpected error!')
         raise InternalServerError
     finally:
-        request.app['pending_waits'].discard(asyncio.Task.current_task())
+        request.app['pending_waits'].discard(asyncio.current_task())
         request.app['event_dispatcher'].unsubscribe('kernel_cancelled', cancel_handler)
         request.app['event_dispatcher'].unsubscribe('kernel_terminated', term_handler)
         request.app['event_dispatcher'].unsubscribe('kernel_started', start_handler)
@@ -644,9 +656,9 @@ async def handle_kernel_lifecycle(app: web.Application, agent_id: AgentId, event
 
 
 async def handle_kernel_stat_sync(app: web.Application, agent_id: AgentId, event_name: str,
-                                  raw_kernel_id: str) -> None:
-    kernel_id = uuid.UUID(raw_kernel_id)
-    await app['registry'].sync_kernel_stats(kernel_id)
+                                  raw_kernel_ids: str) -> None:
+    kernel_ids = [*map(uuid.UUID, raw_kernel_ids.split(','))]
+    await app['registry'].sync_kernel_stats(kernel_ids)
 
 
 async def handle_batch_result(app: web.Application, agent_id: AgentId, event_name: str,
@@ -710,6 +722,50 @@ async def handle_instance_stats(app: web.Application, agent_id: AgentId, event_n
     await app['registry'].handle_stats(agent_id, kern_stats)
 
 
+async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name: str,
+                            raw_kernel_id: str, container_id: str):
+    dbpool = app['dbpool']
+    redis_conn: aioredis.Redis = await redis.connect_with_retries(
+        app['config']['redis']['addr'].as_sockaddr(),
+        db=REDIS_STREAM_DB,
+        password=(app['config']['redis']['password']
+                  if app['config']['redis']['password'] else None),
+        encoding=None,
+    )
+    # The log data is at most 10 MiB.
+    log_buffer = BytesIO()
+    log_key = f'containerlog.{container_id}'
+    try:
+        list_size = await redis.execute_with_retries(
+            lambda: redis_conn.llen(log_key)
+        )
+        if list_size is None:
+            # The log data is expired due to a very slow event delivery.
+            # (should never happen!)
+            log.warning('tried to store console logs for cid:{}, but the data is expired',
+                        container_id)
+            return
+        for _ in range(list_size):
+            # Read chunk-by-chunk to allow interleaving with other Redis operations.
+            chunk = await redis.execute_with_retries(lambda: redis_conn.lpop(log_key))
+            log_buffer.write(chunk)
+        try:
+            async with dbpool.acquire() as conn, conn.begin():
+                query = (sa.update(kernels)
+                           .values(container_log=log_buffer.getvalue())
+                           .where(kernels.c.id == raw_kernel_id))
+                await conn.execute(query)
+        finally:
+            # Clear the log data from Redis when done.
+            await redis.execute_with_retries(
+                lambda: redis_conn.delete(log_key)
+            )
+    finally:
+        log_buffer.close()
+        redis_conn.close()
+        await redis_conn.wait_closed()
+
+
 async def stats_monitor_update(app):
     with app['stats_monitor'] as stats_monitor:
         stats_monitor.report_stats(
@@ -760,7 +816,7 @@ async def stats_monitor_update_timer(app):
         except asyncio.CancelledError:
             break
         except:
-            app['error_monitor'].capture_exception()
+            await app['error_monitor'].capture_exception()
             log.exception('stats_monitor_update unexpected error')
         try:
             await asyncio.sleep(5)
@@ -770,22 +826,62 @@ async def stats_monitor_update_timer(app):
 
 @server_status_required(READ_ALLOWED)
 @auth_required
-async def destroy(request: web.Request) -> web.Response:
+@check_api_params(
+    t.Dict({
+        t.Key('forced', default='false'): t.ToBool(),
+    }))
+async def destroy(request: web.Request, params: Any) -> web.Response:
     registry = request.app['registry']
     session_name = request.match_info['session_name']
+    if params['forced'] and request['user']['role'] not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        raise InsufficientPrivilege('You are not allowed to force-terminate')
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     domain_name = None
     if requester_access_key != owner_access_key and \
             not request['is_superadmin'] and request['is_admin']:
         domain_name = request['user']['domain_name']
-    log.info('DESTROY (ak:{0}/{1}, s:{2})',
-             requester_access_key, owner_access_key, session_name)
-    last_stat = await registry.destroy_session(session_name, owner_access_key,
-                                               domain_name=domain_name)
+    log.info('DESTROY (ak:{0}/{1}, s:{2}, forced:{3})',
+             requester_access_key, owner_access_key, session_name, params['forced'])
+    last_stat = await registry.destroy_session(
+        session_name, owner_access_key,
+        forced=params['forced'],
+        domain_name=domain_name,
+    )
     resp = {
         'stats': last_stat,
     }
     return web.json_response(resp, status=200)
+
+
+@atomic
+@server_status_required(READ_ALLOWED)
+@auth_required
+@check_api_params(
+    t.Dict({
+        t.Key('id'): t.String(),
+    }))
+async def match_sessions(request: web.Request, params: Any) -> web.Response:
+    """
+    A quick session-ID matcher API for use with auto-completion in CLI.
+    """
+    registry = request.app['registry']
+    id_or_name_prefix = params['id']
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
+    log.info('MATCH_SESSIONS(ak:{0}/{1}, prefix:{2})',
+             requester_access_key, owner_access_key, id_or_name_prefix)
+    matches = []
+    try:
+        compute_session = await registry.get_session(id_or_name_prefix, owner_access_key)
+        matches.append({
+            'id': compute_session['id'],
+            'name': compute_session['sess_id'],
+            'status': compute_session['status'].name,
+        })
+    except TooManySessionsMatched as e:
+        matches.extend(e.extra_data['matches'])
+    return web.json_response({
+        'matches': matches,
+    }, status=200)
 
 
 @atomic
@@ -797,7 +893,7 @@ async def get_info(request: web.Request) -> web.Response:
     registry = request.app['registry']
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
-    log.info('GETINFO (ak:{0}/{1}, s:{2})',
+    log.info('GET_INFO (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, session_name)
     try:
         await registry.increment_session_usage(session_name, owner_access_key)
@@ -832,7 +928,7 @@ async def get_info(request: web.Request) -> web.Response:
 
         log.info('information retrieved: {0!r}', resp)
     except BackendError:
-        log.exception('GETINFO: exception')
+        log.exception('GET_INFO: exception')
         raise
     return web.json_response(resp, status=200)
 
@@ -853,7 +949,7 @@ async def restart(request: web.Request) -> web.Response:
         log.exception('RESTART: exception')
         raise
     except:
-        request.app['error_monitor'].capture_exception()
+        await request.app['error_monitor'].capture_exception(user=request['user']['uuid'])
         log.exception('RESTART: unexpected error')
         raise web.HTTPInternalServerError
     return web.Response(status=204)
@@ -1065,7 +1161,7 @@ async def download_files(request: web.Request, params: Any) -> web.Response:
     except (ValueError, FileNotFoundError):
         raise InvalidAPIParameters('The file is not found.')
     except Exception:
-        request.app['error_monitor'].capture_exception()
+        await request.app['error_monitor'].capture_exception(user=request['user']['uuid'])
         log.exception('DOWNLOAD_FILE: unexpected error!')
         raise InternalServerError
 
@@ -1102,7 +1198,7 @@ async def download_single(request: web.Request, params: Any) -> web.Response:
     except (ValueError, FileNotFoundError):
         raise InvalidAPIParameters('The file is not found.')
     except Exception:
-        request.app['error_monitor'].capture_exception()
+        await request.app['error_monitor'].capture_exception(user=request['user']['uuid'])
         log.exception('DOWNLOAD_SINGLE: unexpected error!')
         raise InternalServerError
     return web.Response(body=result, status=200)
@@ -1136,7 +1232,7 @@ async def list_files(request: web.Request) -> web.Response:
         log.exception('LIST_FILES: exception')
         raise
     except Exception:
-        request.app['error_monitor'].capture_exception()
+        await request.app['error_monitor'].capture_exception(user=request['user']['uuid'])
         log.exception('LIST_FILES: unexpected error!')
         raise InternalServerError
     return web.json_response(resp, status=200)
@@ -1149,19 +1245,35 @@ async def list_files(request: web.Request) -> web.Response:
     t.Dict({
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }))
-async def get_logs(request: web.Request, params: Any) -> web.Response:
+async def get_container_logs(request: web.Request, params: Any) -> web.Response:
     registry = request.app['registry']
     session_name = request.match_info['session_name']
+    dbpool = request.app['dbpool']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
-    log.info('GET_LOG (ak:{}/{}, s:{})',
+    log.info('GET_CONTAINER_LOG (ak:{}/{}, s:{})',
              requester_access_key, owner_access_key, session_name)
     resp = {'result': {'logs': ''}}
+    async with dbpool.acquire() as conn, conn.begin():
+        compute_session = await registry.get_session(
+            session_name, owner_access_key,
+            field=[kernels.c.container_log],
+            allow_stale=True,
+            db_connection=conn,
+        )
+        if (
+            compute_session.status in DEAD_KERNEL_STATUSES and
+            compute_session.container_log is not None
+        ):
+            log.debug('returning log from database record')
+            resp['result']['logs'] = compute_session.container_log.decode('utf-8')
+            return web.json_response(resp, status=200)
     try:
         await registry.increment_session_usage(session_name, owner_access_key)
-        resp['result'] = await registry.get_logs(session_name, owner_access_key)
-        log.info('container log retrieved: {0!r}', resp)
+        resp['result'] = await registry.get_logs_from_agent(session_name, owner_access_key)
+        log.debug('returning log from agent')
     except BackendError:
-        log.exception('GET_LOG: exception')
+        log.exception('GET_CONTAINER_LOG(ak:{}/{}, s:{}): unexpected error',
+                      requester_access_key, owner_access_key, session_name)
         raise
     return web.json_response(resp, status=200)
 
@@ -1223,6 +1335,7 @@ async def init(app: web.Application) -> None:
     event_dispatcher.consume('kernel_success', app, handle_batch_result)
     event_dispatcher.consume('kernel_failure', app, handle_batch_result)
     event_dispatcher.consume('kernel_stat_sync', app, handle_kernel_stat_sync)
+    event_dispatcher.consume('kernel_log', app, handle_kernel_log)
     event_dispatcher.consume('instance_started', app, handle_instance_lifecycle)
     event_dispatcher.consume('instance_terminated', app, handle_instance_lifecycle)
     event_dispatcher.consume('instance_heartbeat', app, handle_instance_heartbeat)
@@ -1248,6 +1361,10 @@ async def shutdown(app: web.Application) -> None:
 
     for task in app['pending_waits']:
         task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
@@ -1256,8 +1373,8 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app.on_shutdown.append(shutdown)
     app['api_versions'] = (1, 2, 3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
-    cors.add(app.router.add_route('POST', '/create', create_from_params))  # legacy
-    cors.add(app.router.add_route('POST', '/from-template', create_from_template))
+    cors.add(app.router.add_route('POST', '/_/create-from-template', create_from_template))
+    cors.add(app.router.add_route('GET',  '/_/match', match_sessions))
     cors.add(app.router.add_route('POST', '', create_from_params))
     session_resource = cors.add(app.router.add_resource(r'/{session_name}'))
     cors.add(session_resource.add_route('GET',    get_info))
@@ -1267,7 +1384,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     task_log_resource = cors.add(app.router.add_resource(r'/_/logs'))
     cors.add(task_log_resource.add_route('HEAD', get_task_logs))
     cors.add(task_log_resource.add_route('GET',  get_task_logs))
-    cors.add(app.router.add_route('GET',  '/{session_name}/logs', get_logs))
+    cors.add(app.router.add_route('GET',  '/{session_name}/logs', get_container_logs))
     cors.add(app.router.add_route('POST', '/{session_name}/interrupt', interrupt))
     cors.add(app.router.add_route('POST', '/{session_name}/complete', complete))
     cors.add(app.router.add_route('POST', '/{session_name}/upload', upload_files))

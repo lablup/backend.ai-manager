@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 import stat
 from typing import (
-    Any, Union, Awaitable, Callable,
+    Any, Awaitable, Callable,
     Dict, Mapping, MutableMapping,
     Tuple,
     Set,
@@ -24,7 +24,6 @@ import aiohttp_cors
 import aiojobs
 from aiojobs.aiohttp import atomic
 import aiotools
-import janus
 import multidict
 import sqlalchemy as sa
 import psycopg2
@@ -32,7 +31,7 @@ import trafaret as t
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.utils import Fstab
+from ai.backend.common.utils import AsyncFileWriter, current_loop, Fstab
 
 from .auth import auth_required, superadmin_required
 from .config import DEFAULT_CHUNK_SIZE, DEFAULT_INFLIGHT_CHUNKS
@@ -46,21 +45,28 @@ from .manager import (
     server_status_required,
 )
 from .resource import get_watcher_info
-from .typing import Sentinel
-from .utils import check_api_params, current_loop
+from .utils import check_api_params
 from ..manager.models import (
-    agents, AgentStatus, kernels, KernelStatus,
-    users, groups, keypairs, vfolders, vfolder_invitations, vfolder_permissions,
-    VFolderInvitationState, VFolderPermission, VFolderPermissionValidator,
-    query_accessible_vfolders,
-    get_allowed_vfolder_hosts_by_group, get_allowed_vfolder_hosts_by_user,
+    agents,
+    kernels,
+    users, groups, keypairs,
+    vfolders, vfolder_invitations, vfolder_permissions,
+    AgentStatus,
+    KernelStatus,
+    VFolderInvitationState,
+    VFolderOwnershipType,
+    VFolderPermission,
+    VFolderPermissionValidator,
+    VFolderUsageMode,
     UserRole,
-    verify_vfolder_name
+    query_accessible_vfolders,
+    get_allowed_vfolder_hosts_by_group,
+    get_allowed_vfolder_hosts_by_user,
+    query_owned_dotfiles,
+    verify_vfolder_name,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
-
-eof_sentinel = Sentinel()
 
 VFolderRow = Mapping[str, Any]
 
@@ -86,34 +92,55 @@ def vfolder_permission_required(perm: VFolderPermission):
             user_uuid = request['user']['uuid']
             folder_name = request.match_info['name']
             allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
+            vf_user_cond = None
+            vf_group_cond = None
             if perm == VFolderPermission.READ_ONLY:
                 # if READ_ONLY is requested, any permission accepts.
-                perm_cond = vfolder_permissions.c.permission.in_([
+                invited_perm_cond = vfolder_permissions.c.permission.in_([
                     VFolderPermission.READ_ONLY,
                     VFolderPermission.READ_WRITE,
                     VFolderPermission.RW_DELETE,
                 ])
+                if not request['is_admin']:
+                    vf_group_cond = vfolders.c.permission.in_([
+                        VFolderPermission.READ_ONLY,
+                        VFolderPermission.READ_WRITE,
+                        VFolderPermission.RW_DELETE,
+                    ])
             elif perm == VFolderPermission.READ_WRITE:
-                # if READ_WRITE is requested, both READ_WRITE and RW_DELETE accepts.
-                perm_cond = vfolder_permissions.c.permission.in_([
+                invited_perm_cond = vfolder_permissions.c.permission.in_([
                     VFolderPermission.READ_WRITE,
                     VFolderPermission.RW_DELETE,
                 ])
+                if not request['is_admin']:
+                    vf_group_cond = vfolders.c.permission.in_([
+                        VFolderPermission.READ_WRITE,
+                        VFolderPermission.RW_DELETE,
+                    ])
             elif perm == VFolderPermission.RW_DELETE:
                 # If RW_DELETE is requested, only RW_DELETE accepts.
-                perm_cond = (
+                invited_perm_cond = (
                     vfolder_permissions.c.permission == VFolderPermission.RW_DELETE
                 )
+                if not request['is_admin']:
+                    vf_group_cond = (
+                        vfolders.c.permission == VFolderPermission.RW_DELETE
+                    )
             else:
                 # Otherwise, just compare it as-is (for future compatibility).
-                perm_cond = (vfolder_permissions.c.permission == perm)
+                invited_perm_cond = (vfolder_permissions.c.permission == perm)
+                if not request['is_admin']:
+                    vf_group_cond = (vfolders.c.permission == perm)
             async with dbpool.acquire() as conn:
                 entries = await query_accessible_vfolders(
                     conn, user_uuid,
                     user_role=user_role, domain_name=domain_name,
                     allowed_vfolder_types=allowed_vfolder_types,
                     extra_vf_conds=(vfolders.c.name == folder_name),
-                    extra_vfperm_conds=perm_cond)
+                    extra_vfperm_conds=invited_perm_cond,
+                    extra_vf_user_conds=vf_user_cond,
+                    extra_vf_group_conds=vf_group_cond,
+                )
                 if len(entries) == 0:
                     raise VFolderNotFound(
                         'Your operation may be permission denied.')
@@ -174,6 +201,8 @@ def get_folder_hostpath(row: VFolderRow, app):
     t.Dict({
         t.Key('name'): tx.Slug(allow_dot=True),
         t.Key('host', default=None) >> 'folder_host': t.String | t.Null,
+        t.Key('usage_mode', default='general'): tx.Enum(VFolderUsageMode) | t.Null,
+        t.Key('permission', default='rw'): tx.Enum(VFolderPermission) | t.Null,
         tx.AliasedKey(['unmanaged_path', 'unmanagedPath'], default=None): t.String | t.Null,
         tx.AliasedKey(['group', 'groupId', 'group_id'], default=None): tx.UUID | t.String | t.Null,
     }),
@@ -187,8 +216,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
     resource_policy = request['keypair']['resource_policy']
     domain_name = request['user']['domain_name']
     group_id_or_name = params['group']
-    log.info('VFOLDER.CREATE (ak:{}, vf:{}, vfh:{})',
-             access_key, params['name'], params['folder_host'])
+    log.info('VFOLDER.CREATE (ak:{}, vf:{}, vfh:{}, umod:{}, perm:{})',
+             access_key, params['name'], params['folder_host'],
+             params['usage_mode'].value, params['permission'].value)
     folder_host = params['folder_host']
     unmanaged_path = params['unmanaged_path']
     # Check if user is trying to created unmanaged vFolder
@@ -230,8 +260,12 @@ async def create(request: web.Request, params: Any) -> web.Response:
             group_id = group_id_or_name
         if not unmanaged_path:
             # Check resource policy's allowed_vfolder_hosts
-            allowed_hosts = await get_allowed_vfolder_hosts_by_group(conn, resource_policy,
-                                                                     domain_name, group_id)
+            if group_id is not None:
+                allowed_hosts = await get_allowed_vfolder_hosts_by_group(conn, resource_policy,
+                                                                         domain_name, group_id)
+            else:
+                allowed_hosts = await get_allowed_vfolder_hosts_by_user(conn, resource_policy,
+                                                                        domain_name, user_uuid)
             if folder_host not in allowed_hosts:
                 raise InvalidAPIParameters('You are not allowed to use this vfolder host.')
             vfroot = (request.app['VFOLDER_MOUNT'] / folder_host /
@@ -259,6 +293,11 @@ async def create(request: web.Request, params: Any) -> web.Response:
         )
         if len(entries) > 0:
             raise VFolderAlreadyExists
+        if params['name'].startswith('.'):
+            dotfiles, _ = await query_owned_dotfiles(conn, access_key)
+            for dotfile in dotfiles:
+                if params['name'] == dotfile['path']:
+                    raise InvalidAPIParameters('vFolder name conflicts with your dotfile.')
 
         # Check if group exists.
         if group_id_or_name and group_id is None:
@@ -266,8 +305,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
         if group_id is not None:
             if 'group' not in allowed_vfolder_types:
                 raise InvalidAPIParameters('group vfolder cannot be created in this host')
-            if not request['is_admin'] or request['is_superadmin']:
-                # Superadmin will not manipulate group's vfolder (at least currently).
+            if not request['is_admin']:
                 raise GenericForbidden('no permission')
             query = (sa.select([groups.c.id])
                        .select_from(groups)
@@ -291,21 +329,28 @@ async def create(request: web.Request, params: Any) -> web.Response:
             raise VFolderCreationFailed
         user_uuid = str(user_uuid) if group_id is None else None
         group_uuid = str(group_id) if group_id is not None else None
+        ownership_type = 'group' if group_uuid is not None else 'user'
         insert_values = {
             'id': folder_id,
             'name': params['name'],
+            'usage_mode': params['usage_mode'],
+            'permission': params['permission'],
             'last_used': None,
             'host': folder_host,
             'creator': request['user']['email'],
+            'ownership_type': VFolderOwnershipType(ownership_type),
             'user': user_uuid,
             'group': group_uuid,
-            'unmanaged_path': ''
+            'unmanaged_path': '',
         }
         resp = {
             'id': folder_id,
             'name': params['name'],
             'host': folder_host,
+            'usage_mode': params['usage_mode'].value,
+            'permission': params['permission'].value,
             'creator': request['user']['email'],
+            'ownership_type': ownership_type,
             'user': user_uuid,
             'group': group_uuid,
         }
@@ -353,22 +398,22 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
             entries = []
             async for row in result:
                 is_owner = True if row.vfolders_user == user_uuid else False
-                permission = VFolderPermission.OWNER_PERM if is_owner \
-                        else VFolderPermission.READ_ONLY
                 entries.append({
                     'name': row.vfolders_name,
                     'id': row.vfolders_id,
                     'host': row.vfolders_host,
+                    'usage_mode': row.vfolders_usage_mode,
                     'created_at': row.vfolders_created_at,
                     'is_owner': is_owner,
-                    'permission': permission,
+                    'permission': row.vfolders_permission,
                     'user': str(row.vfolders_user) if row.vfolders_user else None,
                     'group': str(row.vfolders_group) if row.vfolders_group else None,
                     'creator': row.vfolders_creator,
                     'user_email': row.users_email,
                     'group_name': row.groups_name,
-                    'type': 'user' if row['vfolders_user'] is not None else 'group',
-                    'unmanaged_path': row.unmanaged_path
+                    'ownership_type': row.vfolders_ownership_type,
+                    'type': row.vfolders_ownership_type,  # legacy
+                    'unmanaged_path': row.vfolders_unmanaged_path
                 })
         else:
             extra_vf_conds = None
@@ -387,15 +432,17 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                 'name': entry['name'],
                 'id': entry['id'].hex,
                 'host': entry['host'],
+                'usage_mode': entry['usage_mode'].value,
                 'created_at': str(entry['created_at']),
                 'is_owner': entry['is_owner'],
                 'permission': entry['permission'].value,
-                'user': str(entry['user']),
-                'group': str(entry['group']),
+                'user': str(entry['user']) if entry['user'] else None,
+                'group': str(entry['group']) if entry['group'] else None,
                 'creator': entry['creator'],
                 'user_email': entry['user_email'],
                 'group_name': entry['group_name'],
-                'type': 'user' if entry['user'] is not None else 'group',
+                'ownership_type': entry['ownership_type'].value,
+                'type': entry['ownership_type'].value,  # legacy
             })
     return web.json_response(resp, status=200)
 
@@ -595,7 +642,8 @@ async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     assert not path.is_absolute(), 'path must be relative.'
     try:
         loop = current_loop()
-        await loop.run_in_executor(None, lambda: (folder_path / path).mkdir(parents=True, exist_ok=True))
+        await loop.run_in_executor(
+            None, lambda: (folder_path / path).mkdir(parents=True, exist_ok=False))
     except FileExistsError as e:
         raise InvalidAPIParameters(
             f'"{e.filename}" already exists and is not a directory.')
@@ -638,35 +686,22 @@ async def upload(request: web.Request, row: VFolderRow) -> web.Response:
         log.info(log_fmt + ': accepted path:{}',
                  *log_args, file.filename)
 
-        q: janus.Queue[Union[bytes, Sentinel]] = janus.Queue(maxsize=DEFAULT_INFLIGHT_CHUNKS)
-
-        def _write():
-            with open(file_path, 'wb') as f:
-                while True:
-                    chunk = q.sync_q.get()
-                    if chunk is eof_sentinel:
-                        break
-                    f.write(file.decode(chunk))
-                    q.sync_q.task_done()
-
-        loop = current_loop()
-        try:
-            fut = loop.run_in_executor(None, _write)
+        async with AsyncFileWriter(
+                loop=current_loop(),
+                target_filename=file_path,
+                access_mode='wb',
+                decode=file.decode,
+                max_chunks=DEFAULT_INFLIGHT_CHUNKS) as writer:
             while not file.at_eof():
                 chunk = await file.read_chunk(size=DEFAULT_CHUNK_SIZE)
-                await q.async_q.put(chunk)
-            await q.async_q.put(eof_sentinel)
-            await fut
-        finally:
-            q.close()
-            await q.wait_closed()
+                await writer.write(chunk)
 
     return web.Response(status=201)
 
 
 @auth_required
 @server_status_required(READ_ALLOWED)
-@vfolder_permission_required(VFolderPermission.RW_DELETE)
+@vfolder_permission_required(VFolderPermission.READ_WRITE)
 @check_api_params(
     t.Dict({
         t.Key('path'): t.String,
@@ -733,34 +768,21 @@ async def tus_upload_part(request):
     upload_base = folder_path / ".upload"
     target_filename = upload_base / params['session_id']
 
-    q: janus.Queue[Union[bytes, Sentinel]] = janus.Queue(maxsize=DEFAULT_INFLIGHT_CHUNKS)
-
-    def _write():
-        with open(target_filename, 'ab') as f:
-            while True:
-                chunk = q.sync_q.get()
-                if chunk is eof_sentinel:
-                    break
-                f.write(chunk)
-                q.sync_q.task_done()
-
-    loop = current_loop()
-    try:
-        fut = loop.run_in_executor(None, _write)
+    async with AsyncFileWriter(
+            loop=current_loop(),
+            target_filename=target_filename,
+            access_mode='ab',
+            max_chunks=DEFAULT_INFLIGHT_CHUNKS) as writer:
         while not request.content.at_eof():
             chunk = await request.content.read(DEFAULT_CHUNK_SIZE)
-            await q.async_q.put(chunk)
-        await q.async_q.put(eof_sentinel)
-        await fut
-    finally:
-        q.close()
-        await q.wait_closed()
+            await writer.write(chunk)
 
     fs = Path(target_filename).stat().st_size
     if fs >= params['size']:
         target_path = folder_path / params['path']
         Path(target_filename).rename(target_path)
         try:
+            loop = current_loop()
             await loop.run_in_executor(None, lambda: upload_base.rmdir())
         except OSError:
             pass
@@ -807,7 +829,47 @@ async def tus_session_headers(request, params):
 
 @auth_required
 @server_status_required(READ_ALLOWED)
-@vfolder_permission_required(VFolderPermission.RW_DELETE)
+@vfolder_permission_required(VFolderPermission.READ_WRITE)
+@check_api_params(
+    t.Dict({
+        t.Key('target_path'): t.String,
+        t.Key('new_name'): t.String,
+    }))
+async def rename_file(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
+    folder_name = request.match_info['name']
+    access_key = request['keypair']['access_key']
+    log.info('VFOLDER.RENAME_FILE (ak:{}, vf:{}, target_path:{}, new_name:{})',
+             access_key, folder_name, params['target_path'], params['new_name'])
+    folder_path = get_folder_hostpath(row, request.app)
+    ops = []
+    try:
+        target_path = (folder_path / params['target_path']).resolve(strict=True)
+        target_path.relative_to(folder_path)
+        new_path = target_path.parent / params['new_name']
+        # Ensure new file is in the same directory.
+        if len(params['new_name'].split('/')) > 1:
+            raise InvalidAPIParameters('New name should not be a path: ' + params['new_name'])
+        if new_path.exists():
+            raise InvalidAPIParameters('File already exists: ' + params['new_name'])
+    except FileNotFoundError:
+        raise InvalidAPIParameters('No such target file: ' + params['target_path'])
+    except ValueError:
+        raise InvalidAPIParameters('The requested path is out of the folder')
+    ops.append(functools.partial(target_path.rename, new_path))
+
+    def _do_ops():
+        for op in ops:
+            op()
+
+    loop = current_loop()
+    await loop.run_in_executor(None, _do_ops)
+    resp: Dict[str, Any] = {}
+    return web.json_response(resp, status=200)
+
+
+@auth_required
+@server_status_required(READ_ALLOWED)
+@vfolder_permission_required(VFolderPermission.READ_WRITE)
 @check_api_params(
     t.Dict({
         t.Key('files'): t.List[t.String],
@@ -1076,6 +1138,7 @@ async def list_sent_invitations(request: web.Request) -> web.Response:
             'perm': inv.permission,
             'state': inv.state.value,
             'created_at': str(inv.created_at),
+            'modified_at': str(inv.modified_at),
             'vfolder_id': str(inv.vfolder),
             'vfolder_name': inv.name,
         })
@@ -1219,6 +1282,7 @@ async def invitations(request: web.Request) -> web.Response:
             'perm': inv.permission,
             'state': inv.state,
             'created_at': str(inv.created_at),
+            'modified_at': str(inv.modified_at),
             'vfolder_id': str(inv.vfolder),
             'vfolder_name': inv.name,
         })
@@ -1357,7 +1421,9 @@ async def delete(request: web.Request) -> web.Response:
             allowed_vfolder_types=allowed_vfolder_types)
         for entry in entries:
             if entry['name'] == folder_name:
-                if not entry['is_owner']:
+                # Folder owner OR user who have DELETE permission can delete folder.
+                if not entry['is_owner'] \
+                        and entry['permission'] != VFolderPermission.RW_DELETE:
                     raise InvalidAPIParameters(
                         'Cannot delete the vfolder '
                         'that is not owned by myself.')
@@ -1896,6 +1962,7 @@ def create_app(default_cors_options):
     cors.add(add_route('POST',   r'/{name}/mkdir', mkdir))
     cors.add(add_route('POST',   r'/{name}/upload', upload))
     cors.add(add_route('POST',   r'/{name}/create_upload_session', create_tus_upload_session))
+    cors.add(add_route('POST',   r'/{name}/rename_file', rename_file))
     cors.add(add_route('DELETE', r'/{name}/delete_files', delete_files))
     cors.add(add_route('GET',    r'/{name}/download', download))
     cors.add(add_route('GET',    r'/{name}/download_single', download_single))

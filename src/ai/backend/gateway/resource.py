@@ -2,7 +2,6 @@
 Resource preset APIs.
 '''
 
-from collections import defaultdict
 import copy
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
@@ -30,6 +29,7 @@ import yarl
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.utils import nmget
 from ai.backend.common.types import DefaultForUnspecified, ResourceSlot
 from .auth import auth_required, superadmin_required
 from .exceptions import (
@@ -38,14 +38,14 @@ from .exceptions import (
 from .manager import READ_ALLOWED, server_status_required
 from ..manager.models import (
     agents, resource_presets,
-    domains, groups, kernels, keypairs, users,
+    domains, groups, kernels, users,
     AgentStatus,
     association_groups_users,
     query_allowed_sgroups,
-    RESOURCE_OCCUPYING_KERNEL_STATUSES,
+    AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
     RESOURCE_USAGE_KERNEL_STATUSES,
 )
-from .typing import CORSOptions, WebMiddleware
+from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.kernel'))
@@ -185,7 +185,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             .select_from(kernels)
             .where(
                 (kernels.c.user_uuid == request['user']['uuid']) &
-                (kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
+                (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
                 (kernels.c.scaling_group.in_(sgroup_names))))
         async for row in conn.execute(query):
             per_sgroup[row.scaling_group]['using'] += row.occupied_slots
@@ -234,16 +234,18 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             resp['presets'].append({
                 'name': row['name'],
                 'resource_slots': preset_slots.to_json(),
+                'shared_memory': str(row['shared_memory']) if row['shared_memory'] is not None else None,
                 'allocatable': allocatable,
             })
 
-        # Return group stats with zeros if not allowed.
-        allow_group_total = \
-            await request.app['registry'].config_server.get('config/api/resources/allow-group-total')
-        if allow_group_total != '':
-            group_limits = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
-            group_occupied = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
-            group_remaining = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
+        # Return group resource status as NaN if not allowed.
+        group_resource_visibility = await request.app['registry'].config_server.get(
+                'config/api/resources/group_resource_visibility')
+        group_resource_visibility = t.ToBool().check(group_resource_visibility)
+        if not group_resource_visibility:
+            group_limits = ResourceSlot({k: Decimal('NaN') for k in known_slot_types.keys()})
+            group_occupied = ResourceSlot({k: Decimal('NaN') for k in known_slot_types.keys()})
+            group_remaining = ResourceSlot({k: Decimal('NaN') for k in known_slot_types.keys()})
 
         resp['keypair_limits'] = keypair_limits.to_json()
         resp['keypair_using'] = keypair_occupied.to_json()
@@ -267,44 +269,7 @@ async def recalculate_usage(request) -> web.Response:
     re-calculates the values for running containers and updates them in DB.
     '''
     log.info('RECALCULATE_USAGE ()')
-    async with request.app['dbpool'].acquire() as conn, conn.begin():
-        # Query running containers and calculate concurrency_used per AK and
-        # occupied_slots per agent.
-        query = (sa.select([kernels.c.access_key, kernels.c.agent, kernels.c.occupied_slots])
-                   .where(kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES))
-                   .order_by(sa.asc(kernels.c.access_key)))
-        concurrency_used_per_key: MutableMapping[str, int] = defaultdict(lambda: 0)
-        occupied_slots_per_agent: MutableMapping[str, ResourceSlot] = \
-            defaultdict(lambda: ResourceSlot({'cpu': 0, 'mem': 0}))
-        async for row in conn.execute(query):
-            concurrency_used_per_key[row.access_key] += 1
-            occupied_slots_per_agent[row.agent] += ResourceSlot(row.occupied_slots)
-
-        # Update concurrency_used for keypairs with running containers.
-        for ak, used in concurrency_used_per_key.items():
-            query = (sa.update(keypairs)
-                       .values(concurrency_used=used)
-                       .where(keypairs.c.access_key == ak))
-            await conn.execute(query)
-        # Update all other keypairs to have concurrency_used = 0.
-        query = (sa.update(keypairs)
-                   .values(concurrency_used=0)
-                   .where(keypairs.c.concurrency_used != 0)
-                   .where(sa.not_(keypairs.c.access_key.in_(concurrency_used_per_key.keys()))))
-        await conn.execute(query)
-
-        # Update occupied_slots for agents with running containers.
-        for aid, slots in occupied_slots_per_agent.items():
-            query = (sa.update(agents)
-                       .values(occupied_slots=slots)
-                       .where(agents.c.id == aid))
-            await conn.execute(query)
-        # Update all other agents to have empty occupied_slots.
-        query = (sa.update(agents)
-                   .values(occupied_slots=ResourceSlot({}))
-                   .where(agents.c.status == AgentStatus.ALIVE)
-                   .where(sa.not_(agents.c.id.in_(occupied_slots_per_agent.keys()))))
-        await conn.execute(query)
+    await request.app['registry'].recalc_resource_usage()
     return web.json_response({}, status=200)
 
 
@@ -350,10 +315,6 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
                     device_type.add(dev_info['model_name'])
                 smp += dev_info.get('smp', 0)
                 gpu_mem_allocated += dev_info.get('mem', 0)
-        if row.resource_opts:
-            shared_memory = int(row.resource_opts.get('shmem', 0))
-        else:
-            shared_memory = 0
         gpu_allocated = 0
         if 'cuda.devices' in row.occupied_slots:
             gpu_allocated = row.occupied_slots['cuda.devices']
@@ -365,16 +326,15 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'access_key': row['access_key'],
             'email': row['email'],
             'agent': row['agent'],
-            'cpu_allocated': float(row.occupied_slots['cpu']) if 'cpu' in row.occupied_slots else 0,
-            'cpu_used': float(last_stat['cpu_used']['current']) if last_stat else 0,
-            'mem_allocated': int(row.occupied_slots['mem']) if 'mem' in row.occupied_slots else 0,
-            'mem_used': int(last_stat['mem']['capacity']) if last_stat else 0,
-            'shared_memory': shared_memory,
+            'cpu_allocated': float(row.occupied_slots.get('cpu', 0)),
+            'cpu_used': float(nmget(last_stat, 'cpu_used.current', 0)),
+            'mem_allocated': int(row.occupied_slots.get('mem', 0)),
+            'mem_used': int(nmget(last_stat, 'mem.capacity', 0)),
+            'shared_memory': int(nmget(row.resource_opts, 'shmem', 0)),
             'disk_allocated': 0,  # TODO: disk quota limit
-            'disk_used': (int(last_stat['io_scratch_size']['stats.max'])
-                          if last_stat else 0),
-            'io_read': int(_stat['current']) if (_stat := last_stat.get('io_read')) else 0,  # noqa
-            'io_write': int(_stat['current']) if (_stat := last_stat.get('io_write')) else 0,  # noqa
+            'disk_used': (int(nmget(last_stat, 'io_scratch_size/stats.max', 0, '/'))),
+            'io_read': int(nmget(last_stat, 'io_read.current', 0)),
+            'io_write': int(nmget(last_stat, 'io_write.current', 0)),
             'used_time': used_time,
             'used_days': used_days,
             'device_type': list(device_type),
@@ -560,17 +520,16 @@ async def get_time_binned_monthly_stats(request, user_uuid=None):
             # Accumulate stats for overlapping containers in this time window.
             row = rows[idx]
             num_sessions += 1
-            cpu_allocated += float(row.occupied_slots['cpu'])
-            mem_allocated += float(row.occupied_slots['mem'])
+            cpu_allocated += float(row.occupied_slots.get('cpu', 0))
+            mem_allocated += float(row.occupied_slots.get('mem', 0))
             if 'cuda.devices' in row.occupied_slots:
                 gpu_allocated += float(row.occupied_slots['cuda.devices'])
             if 'cuda.shares' in row.occupied_slots:
                 gpu_allocated += float(row.occupied_slots['cuda.shares'])
             if row.last_stat:
-                io_read_bytes += int(_stat['current']) if (_stat := row.last_stat.get('io_read')) else 0  # noqa
-                io_write_bytes += int(_stat['current']) if (_stat := row.last_stat.get('io_write')) else 0  # noqa
-                disk_used += int(_stat['stats.max']) \
-                    if (_stat := row.last_stat.get('io_scratch_size')) else 0  # noqa
+                io_read_bytes += int(nmget(row.last_stat, 'io_read.current', 0))
+                io_write_bytes += int(nmget(row.last_stat, 'io_write.current', 0))
+                disk_used += int(nmget(row.last_stat, 'io_scratch_size/stats.max', {}, '/'))
             idx += 1
         stat = {
             "date": ts,

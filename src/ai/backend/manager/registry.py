@@ -2,16 +2,23 @@ from __future__ import annotations
 
 import asyncio
 from contextvars import ContextVar
+from collections import defaultdict
 import copy
 from datetime import datetime
 import logging
 from pathlib import Path
 import time
 from typing import (
-    Callable, Optional,
+    Any,
+    Callable,
     Container,
-    Dict, MutableMapping,
+    Dict,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
     TYPE_CHECKING,
+    Union,
 )
 import uuid
 
@@ -24,6 +31,7 @@ from callosum.lower.zeromq import ZeroMQAddress, ZeroMQRPCTransport
 from dateutil.tz import tzutc
 import snappy
 import sqlalchemy as sa
+from sqlalchemy.sql.expression import true
 from yarl import URL
 import zmq.asyncio
 
@@ -44,19 +52,23 @@ from .defs import INTRINSIC_SLOTS
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
     InstanceNotFound,
-    SessionNotFound,
+    SessionNotFound, TooManySessionsMatched,
     KernelCreationFailed, KernelDestructionFailed,
     KernelExecutionFailed, KernelRestartFailed,
     ScalingGroupNotFound,
     VFolderNotFound,
-    AgentError)
+    AgentError,
+    GenericForbidden,
+)
 from ..gateway.utils import current_loop
 from .models import (
     agents, kernels, keypairs, vfolders,
     keypair_resource_policies,
     AgentStatus, KernelStatus,
     query_accessible_vfolders, query_allowed_sgroups,
-    RESOURCE_OCCUPYING_KERNEL_STATUSES,
+    recalc_concurrency_used,
+    AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
+    USER_RESOURCE_OCCUPYING_KERNEL_STATUSES,
     DEAD_KERNEL_STATUSES,
 )
 if TYPE_CHECKING:
@@ -122,30 +134,15 @@ async def RPCContext(addr, timeout=None, *, order_key: str = None):
         agent_peers[addr] = peer
     try:
         with _timeout(timeout):
-            peer.call.order_key.set(order_key)
-            yield peer
+            okey_token = peer.call.order_key.set('')
+            try:
+                yield peer
+            finally:
+                peer.call.order_key.reset(okey_token)
     except RPCUserError as orig_exc:
         raise AgentError(orig_exc.name, orig_exc.args)
     except Exception:
         raise
-
-
-async def scrub_agent_peers():
-    '''
-    TODO: apply timer
-    Periodically clean up agent connections if they are unused for a long time.
-    '''
-    global agent_peers
-    closing_tasks = []
-    now = time.monotonic()
-    removed_addrs = []
-    for addr, peer in agent_peers.items():
-        if peer.last_used + 30.0 > now:
-            removed_addrs.append(addr)
-            closing_tasks.append(peer.__aexit__(None, None, None))
-    for addr in removed_addrs:
-        del agent_peers[addr]
-    await asyncio.gather(*closing_tasks, return_exceptions=True)
 
 
 async def cleanup_agent_peers():
@@ -233,7 +230,7 @@ class AgentRegistry:
             'upload_file': KernelExecutionFailed,
             'download_file': KernelExecutionFailed,
             'list_files': KernelExecutionFailed,
-            'get_logs': KernelExecutionFailed,
+            'get_logs_from_agent': KernelExecutionFailed,
             'refresh_session': KernelExecutionFailed,
         }
         exc_class = op_exc[op]
@@ -281,7 +278,7 @@ class AgentRegistry:
         db_connection=None,
     ):
         '''
-        Retreive the kernel information from the given kernel ID.
+        Retrieve the kernel information from the given kernel ID.
         This ID is unique for all individual agent-spawned containers.
 
         If ``field`` is given, it extracts only the raw value of the given
@@ -313,13 +310,7 @@ class AgentRegistry:
                     .select_from(kernels.join(agents))
                     .where(
                         (kernels.c.id == kern_id) &
-                        (kernels.c.status.in_([
-                            KernelStatus.BUILDING,
-                            KernelStatus.PREPARING,
-                            KernelStatus.PULLING,
-                            KernelStatus.RUNNING,
-                            KernelStatus.TERMINATING,
-                        ])) &
+                        ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES)) &
                         (agents.c.status == AgentStatus.ALIVE) &
                         (agents.c.id == kernels.c.agent)
                     )
@@ -332,7 +323,7 @@ class AgentRegistry:
 
     async def get_session(
         self,
-        session_name: str,
+        session_name_or_id: Union[str, uuid.UUID],
         access_key: str, *,
         field=None,
         allow_stale=False,
@@ -340,13 +331,14 @@ class AgentRegistry:
         db_connection=None,
     ):
         '''
-        Retreive the kernel information from the session ID (client-side
-        session token).  If the kernel is composed of multiple containers, it
-        returns the address of the master container.
+        Retrieve the session information from the session UUID or client-specified
+        session ID paired with the given access key.
+        If the session is composed of multiple containers, it returns the information
+        about the master container.
 
         If ``field`` is given, it extracts only the raw value of the given
         field, without wrapping it as Kernel object.  If ``allow_stale`` is
-        true, it skips checking validity of the kernel owner instance.
+        true, it does not apply the filter for "active" statuses.
         '''
 
         cols = [kernels.c.id, kernels.c.status,
@@ -362,30 +354,59 @@ class AgentRegistry:
             cols.append(field)
         elif isinstance(field, str):
             cols.append(sa.column(field))
+
+        cond_id = (
+            (sa.sql.expression.cast(kernels.c.id, sa.String).like(f'{session_name_or_id}%')) &
+            (kernels.c.access_key == access_key) &
+            (kernels.c.role == 'master')
+        )
+        cond_name = (
+            (kernels.c.sess_id.like(f'{session_name_or_id}%')) &
+            (kernels.c.access_key == access_key) &
+            (kernels.c.role == 'master')
+        )
+        if allow_stale:
+            cond_status = true()  # any status
+        else:
+            cond_status = ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES))
+        query_by_id = (
+            sa.select(cols, for_update=for_update)
+            .select_from(kernels)
+            .where(cond_id & cond_status)
+            .order_by(sa.desc(kernels.c.created_at))
+            .limit(10).offset(0)
+        )
+        query_by_name = (
+            sa.select(cols, for_update=for_update)
+            .select_from(kernels)
+            .where(cond_name & cond_status)
+            .order_by(sa.desc(kernels.c.created_at))
+        )
+        if allow_stale:
+            query_by_name = query_by_name.limit(10).offset(0)
+        else:
+            # for backward-compatibility
+            query_by_name = query_by_name.limit(1).offset(0)
+
         async with reenter_txn(self.dbpool, db_connection) as conn:
-            if allow_stale:
-                query = (sa.select(cols, for_update=for_update)
-                           .select_from(kernels)
-                           .where((kernels.c.sess_id == session_name) &
-                                  (kernels.c.access_key == access_key) &
-                                  (kernels.c.role == 'master'))
-                           .limit(1).offset(0))
-            else:
-                query = (
-                    sa.select(cols, for_update=for_update)
-                    .select_from(kernels)
-                    .where(
-                        (kernels.c.sess_id == session_name) &
-                        (kernels.c.access_key == access_key) &
-                        (kernels.c.role == 'master') &
-                        ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES))
-                    ).limit(1).offset(0)
-                )
-            result = await conn.execute(query)
-            row = await result.first()
-            if row is None:
-                raise SessionNotFound
-            return row
+            for query in [query_by_id, query_by_name]:
+                result = await conn.execute(query)
+                if result.rowcount > 1:
+                    matches = [
+                        {
+                            'id': str(item['id']),
+                            'name': item['sess_id'],
+                            'status': item['status'].name,
+                        }
+                        async for item in result
+                    ]
+                    raise TooManySessionsMatched(extra_data={
+                        'matches': matches,
+                    })
+                if result.rowcount == 0:
+                    continue
+                return await result.first()
+            raise SessionNotFound
 
     async def get_sessions(
         self,
@@ -436,7 +457,7 @@ class AgentRegistry:
         creation_config: dict,
         resource_policy: dict, *,
         domain_name: str,
-        bootstrap_script=str,
+        bootstrap_script: str,
         group_id: uuid.UUID,
         user_uuid: uuid.UUID,
         user_role: str,
@@ -758,7 +779,7 @@ class AgentRegistry:
                 sa.select([kernels.c.occupied_slots])
                 .where(
                     (kernels.c.access_key == access_key) &
-                    (kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                    (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES))
                 )
             )
             zero = ResourceSlot()
@@ -779,7 +800,7 @@ class AgentRegistry:
                 sa.select([kernels.c.occupied_slots])
                 .where(
                     (kernels.c.domain_name == domain_name) &
-                    (kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                    (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES))
                 )
             )
             zero = ResourceSlot()
@@ -798,7 +819,7 @@ class AgentRegistry:
                 sa.select([kernels.c.occupied_slots])
                 .where(
                     (kernels.c.group_id == group_id) &
-                    (kernels.c.status.in_(RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                    (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES))
                 )
             )
             zero = ResourceSlot()
@@ -809,41 +830,174 @@ class AgentRegistry:
                 del key_occupied[k]
             return key_occupied
 
-    async def destroy_session(self, sess_id, access_key, *,
-                              domain_name=None):
+    async def recalc_resource_usage(self) -> None:
+        concurrency_used_per_key: MutableMapping[str, int] = defaultdict(lambda: 0)
+        occupied_slots_per_agent: MutableMapping[str, ResourceSlot] = \
+            defaultdict(lambda: ResourceSlot({'cpu': 0, 'mem': 0}))
+        async with self.dbpool.acquire() as conn, conn.begin():
+            # Query running containers and calculate concurrency_used per AK and
+            # occupied_slots per agent.
+            query = (sa.select([kernels.c.access_key, kernels.c.agent, kernels.c.occupied_slots])
+                       .where(kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                       .order_by(sa.asc(kernels.c.access_key)))
+            async for row in conn.execute(query):
+                occupied_slots_per_agent[row.agent] += ResourceSlot(row.occupied_slots)
+            query = (sa.select([kernels.c.access_key, kernels.c.agent, kernels.c.occupied_slots])
+                     .where(kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                     .order_by(sa.asc(kernels.c.access_key)))
+            async for row in conn.execute(query):
+                concurrency_used_per_key[row.access_key] += 1
+
+            if len(concurrency_used_per_key) > 0:
+                # Update concurrency_used for keypairs with running containers.
+                for ak, used in concurrency_used_per_key.items():
+                    query = (sa.update(keypairs)
+                               .values(concurrency_used=used)
+                               .where(keypairs.c.access_key == ak))
+                    await conn.execute(query)
+                # Update all other keypairs to have concurrency_used = 0.
+                query = (sa.update(keypairs)
+                           .values(concurrency_used=0)
+                           .where(keypairs.c.concurrency_used != 0)
+                           .where(sa.not_(keypairs.c.access_key.in_(concurrency_used_per_key.keys()))))
+                await conn.execute(query)
+            else:
+                query = (sa.update(keypairs)
+                           .values(concurrency_used=0)
+                           .where(keypairs.c.concurrency_used != 0))
+                await conn.execute(query)
+
+            if len(occupied_slots_per_agent) > 0:
+                # Update occupied_slots for agents with running containers.
+                for aid, slots in occupied_slots_per_agent.items():
+                    query = (sa.update(agents)
+                               .values(occupied_slots=slots)
+                               .where(agents.c.id == aid))
+                    await conn.execute(query)
+                # Update all other agents to have empty occupied_slots.
+                query = (sa.update(agents)
+                           .values(occupied_slots=ResourceSlot({}))
+                           .where(agents.c.status == AgentStatus.ALIVE)
+                           .where(sa.not_(agents.c.id.in_(occupied_slots_per_agent.keys()))))
+                await conn.execute(query)
+            else:
+                query = (sa.update(agents)
+                           .values(occupied_slots=ResourceSlot({}))
+                           .where(agents.c.status == AgentStatus.ALIVE))
+                await conn.execute(query)
+
+    async def destroy_session(
+        self,
+        sess_id: str,
+        access_key: str,
+        *,
+        forced: bool = False,
+        domain_name: str = None,
+    ) -> Mapping[str, Any]:
+
+        if forced:
+            # This is for emergency (e.g., when agents are not responding).
+            # Regardless of the container's real status, it marks the session terminated
+            # and recalculate the resource usage.
+            async with self.dbpool.acquire() as conn, conn.begin():
+                kernel = await self.get_session(
+                    sess_id, access_key,
+                    field=[kernels.c.domain_name],
+                    for_update=True,
+                    db_connection=conn,
+                )
+                if domain_name is not None and kernel.domain_name != domain_name:
+                    raise SessionNotFound
+                if kernel.status == KernelStatus.PENDING:
+                    await self.set_session_status(
+                        sess_id, access_key,
+                        KernelStatus.CANCELLED,
+                        reason='force-cancelled',
+                        db_conn=conn,
+                    )
+                    await self.event_dispatcher.produce_event(
+                        'kernel_cancelled',
+                        (str(kernel.id), 'force-terminated'),
+                    )
+                    return {'status': 'cancelled'}
+                elif kernel.status in (KernelStatus.PREPARING, KernelStatus.PULLING):
+                    raise GenericForbidden('Cannot destory kernels in preparing/pulling status')
+                if kernel.status not in (KernelStatus.ERROR, KernelStatus.TERMINATING):
+                    # This is allowed, but if agents are working normally,
+                    # the session will become invisible and unaccessible but STILL occupy the actual
+                    # resources until the super-admin manually kills & deletes the container.
+                    log.warning('force-terminating session in normal status! (k:{}, status:{})',
+                                kernel.id, kernel.status)
+                await self.set_session_status(
+                    sess_id, access_key,
+                    KernelStatus.TERMINATED,
+                    reason='force-terminated',
+                    db_conn=conn,
+                )
+                await self.event_dispatcher.produce_event(
+                    'kernel_terminated',
+                    (str(kernel.id), 'terminated'),
+                )
+            # We intentionally skip the agent RPC call!
+            await self.recalc_resource_usage()
+            return {'status': 'terminated'}
+
         async with self.handle_kernel_exception(
-                'destroy_session', sess_id, access_key, set_error=True):
-            try:
-                async with self.dbpool.acquire() as conn, conn.begin():
-                    kernel = await self.get_session(sess_id, access_key,
-                                                    field=[kernels.c.domain_name],
-                                                    for_update=True,
-                                                    db_connection=conn)
-                    if domain_name is not None and kernel.domain_name != domain_name:
-                        raise SessionNotFound
-                    if kernel.status == KernelStatus.PENDING:
-                        await self.set_session_status(sess_id, access_key,
-                                                      KernelStatus.CANCELLED,
-                                                      reason='user-requested',
-                                                      db_conn=conn)
-                        await self.event_dispatcher.produce_event(
-                            'kernel_cancelled',
-                            (str(kernel.id), 'user-requested'),
-                        )
-                        return {'status': 'cancelled'}
-                    else:
-                        await self.set_session_status(sess_id, access_key,
-                                                      KernelStatus.TERMINATING,
-                                                      reason='user-requested',
-                                                      db_conn=conn)
-                        await self.event_dispatcher.produce_event(
-                            'kernel_terminating',
-                            (str(kernel.id), 'user-requested'),
-                        )
-            except SessionNotFound:
-                raise
-            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
-                last_stat = await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
+            'destroy_session', sess_id, access_key, set_error=True,
+        ):
+            async with self.dbpool.acquire() as conn, conn.begin():
+                kernel = await self.get_session(
+                    sess_id, access_key,
+                    field=[kernels.c.domain_name, kernels.c.role],
+                    for_update=True,
+                    db_connection=conn,
+                )
+                if domain_name is not None and kernel.domain_name != domain_name:
+                    raise SessionNotFound
+                if kernel.status == KernelStatus.PENDING:
+                    await self.set_session_status(
+                        sess_id, access_key,
+                        KernelStatus.CANCELLED,
+                        reason='user-requested',
+                        db_conn=conn,
+                    )
+                    await self.event_dispatcher.produce_event(
+                        'kernel_cancelled',
+                        (str(kernel.id), 'user-requested'),
+                    )
+                    return {'status': 'cancelled'}
+                elif kernel.status in (KernelStatus.PREPARING, KernelStatus.PULLING):
+                    raise GenericForbidden('Cannot destory kernels in preparing/pulling status')
+                else:
+                    if kernel.role == 'master':
+                        # The master session is terminated; decrement the user's concurrency counter
+                        query = (sa.update(keypairs)
+                                   .values(concurrency_used=keypairs.c.concurrency_used - 1)
+                                   .where(keypairs.c.access_key == kernel.access_key))
+                        await conn.execute(query)
+                    await self.set_session_status(
+                        sess_id, access_key,
+                        KernelStatus.TERMINATING,
+                        reason='user-requested',
+                        db_conn=conn,
+                    )
+                    await self.event_dispatcher.produce_event(
+                        'kernel_terminating',
+                        (str(kernel.id), 'user-requested'),
+                    )
+            async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
+                await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
+                last_stat: Optional[Dict[str, Any]]
+                last_stat = None
+                try:
+                    raw_last_stat = await redis.execute_with_retries(
+                        lambda: self.redis_stat.get(str(kernel['id']), encoding=None),
+                        max_retries=3)
+                    if raw_last_stat is not None:
+                        last_stat = msgpack.unpackb(raw_last_stat)
+                        last_stat['version'] = 2
+                except asyncio.TimeoutError:
+                    pass
                 return {
                     **(last_stat if last_stat is not None else {}),
                     'status': 'terminated',
@@ -873,7 +1027,7 @@ class AgentRegistry:
             image_ref = ImageRef(kernel['image'], [kernel['registry']])
             image_info = await self.config_server.inspect_image(image_ref)
 
-            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
+            async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
                 environ = {
                      k: v for k, v in
                      map(lambda s: s.split('=', 1), kernel['environ'])
@@ -990,13 +1144,13 @@ class AgentRegistry:
                     return None
                 return await coro
 
-    async def get_logs(self, sess_id, access_key):
-        async with self.handle_kernel_exception('get_logs', sess_id, access_key):
+    async def get_logs_from_agent(self, sess_id, access_key):
+        async with self.handle_kernel_exception('get_logs_from_agent', sess_id, access_key):
             kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 coro = rpc.call.get_logs(str(kernel['id']))
                 if coro is None:
-                    log.warning('get_logs cancelled')
+                    log.warning('get_logs_from_agent cancelled')
                     return None
                 return await coro
 
@@ -1030,7 +1184,7 @@ class AgentRegistry:
             await conn.execute(query)
 
     async def kill_all_sessions_in_agent(self, agent_addr):
-        async with RPCContext(agent_addr, 30) as rpc:
+        async with RPCContext(agent_addr, None) as rpc:
             coro = rpc.call.clean_all_kernels('manager-freeze-force-kill')
             if coro is None:
                 log.warning('kill_all_sessions_in_agent cancelled')
@@ -1253,13 +1407,16 @@ class AgentRegistry:
             )
             await conn.execute(query)
 
-    async def sync_kernel_stats(self, kernel_id: KernelId, *,
-                                db_conn: SAConnection = None,
-                                additional_updates: dict = None) -> None:
-        updates = {}
-        async with reenter_txn(self.dbpool, db_conn) as conn:
+    async def sync_kernel_stats(
+        self, kernel_ids: Sequence[KernelId], *,
+        db_conn: SAConnection = None,
+    ) -> None:
+        per_kernel_updates = {}
+
+        for kernel_id in kernel_ids:
             raw_kernel_id = str(kernel_id)
             log.debug('sync_kernel_stats(k:{})', kernel_id)
+            updates = {}
 
             async def _get_kstats_from_redis():
                 stat_type = await self.redis_stat.type(raw_kernel_id)
@@ -1280,16 +1437,22 @@ class AgentRegistry:
                             'io_max_scratch_size': int(kern_stat['io_max_scratch_size']),
                         })
 
-            await redis.execute_with_retries(lambda: _get_kstats_from_redis())
-            if additional_updates is not None:
-                updates.update(additional_updates)
+            await redis.execute_with_retries(
+                lambda: _get_kstats_from_redis(),
+                max_retries=1,
+            )
             if not updates:
-                log.debug('sync_kernel_stats: Nothing to sync')
-                return
-            query = (sa.update(kernels)
-                       .values(updates)
-                       .where(kernels.c.id == kernel_id))
-            await conn.execute(query)
+                log.warning('sync_kernel_stats(k:{}): no statistics updates', kernel_id)
+                continue
+            per_kernel_updates[kernel_id] = updates
+
+        async with reenter_txn(self.dbpool, db_conn) as conn:
+            # TODO: update to use execute_batch() if aiopg supports it.
+            for kernel_id, updates in per_kernel_updates.items():
+                query = (sa.update(kernels)
+                           .values(updates)
+                           .where(kernels.c.id == kernel_id))
+                await conn.execute(query)
 
     async def mark_kernel_terminated(self, kernel_id: KernelId,
                                      reason: str,
@@ -1300,57 +1463,69 @@ class AgentRegistry:
         '''
         async with self.dbpool.acquire() as conn, conn.begin():
             # Check the current status.
-            query = (sa.select([kernels.c.access_key, kernels.c.role, kernels.c.status], for_update=True)
-                       .select_from(kernels)
-                       .where(kernels.c.id == kernel_id))
+            query = (
+                sa.select([
+                    kernels.c.access_key,
+                    kernels.c.agent,
+                    kernels.c.status,
+                    kernels.c.occupied_slots
+                ], for_update=True)
+                .select_from(kernels)
+                .where(kernels.c.id == kernel_id)
+            )
             result = await conn.execute(query)
-            row = await result.first()
-            if (row is None or
-                row['status'] in (KernelStatus.CANCELLED,
-                                  KernelStatus.TERMINATED,
-                                  KernelStatus.RESTARTING)):
+            kernel = await result.first()
+            if (
+                kernel is None
+                or kernel['status'] in (
+                    KernelStatus.CANCELLED,
+                    KernelStatus.TERMINATED,
+                    KernelStatus.RESTARTING,
+                )
+            ):
                 # Skip if non-existent, already terminated, or restarting.
                 return
-            if row['role'] == 'master':
-                # The master session is terminated; decrement the user's concurrency counter
-                query = (sa.update(keypairs)
-                           .values(concurrency_used=keypairs.c.concurrency_used - 1)
-                           .where(keypairs.c.access_key == row['access_key']))
-                await conn.execute(query)
 
             # Change the status to TERMINATED.
             # (we don't delete the row for later logging and billing)
             now = datetime.now(tzutc())
-            updates = {
-                'status': KernelStatus.TERMINATED,
-                'status_info': reason,
-                'status_changed': now,
-                'terminated_at': now,
-            }
-            await self.sync_kernel_stats(kernel_id, db_conn=conn, additional_updates=updates)
+            query = (
+                sa.update(kernels)
+                .values({
+                    'status': KernelStatus.TERMINATED,
+                    'status_info': reason,
+                    'status_changed': now,
+                    'terminated_at': now,
+                })
+                .where(kernels.c.id == kernel_id)
+            )
+            await conn.execute(query)
+            await recalc_concurrency_used(conn, kernel['access_key'])
 
-            # Release resource slots.
-            query = (sa.select([kernels.c.agent, kernels.c.occupied_slots])
-                       .select_from(kernels)
-                       .where(kernels.c.id == kernel_id))
-            result = await conn.execute(query)
-            kernel = await result.first()
-            if kernel is None:
-                return
-            query = (sa.select([agents.c.occupied_slots],
-                               for_update=True)
-                       .select_from(agents)
-                       .where(agents.c.id == kernel['agent']))
+            # Release agent resource slots.
+            query = (
+                sa.select([
+                    agents.c.occupied_slots,
+                ], for_update=True)
+                .select_from(agents)
+                .where(agents.c.id == kernel['agent'])
+            )
             result = await conn.execute(query)
             agent = await result.first()
             if agent is None:
                 return
-            # units: absolute
             updated_occupied_slots = \
                 agent['occupied_slots'] - kernel['occupied_slots']
-            query = (sa.update(agents)
-                       .values({
-                           'occupied_slots': updated_occupied_slots,
-                       })
-                       .where(agents.c.id == kernel['agent']))
+            query = (
+                sa.update(agents)
+                .values({
+                    'occupied_slots': updated_occupied_slots,
+                })
+                .where(agents.c.id == kernel['agent'])
+            )
             await conn.execute(query)
+
+        # Perform statistics sync in a separate transaction block, since
+        # it may take a while to fetch stats from Redis.
+        async with self.dbpool.acquire() as conn, conn.begin():
+            await self.sync_kernel_stats([kernel_id], db_conn=conn)

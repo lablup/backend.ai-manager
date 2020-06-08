@@ -1,0 +1,2 @@
+- Fix too many scheduler invocation with stale periodic scheduling ticks after manager restarts/maintenance
+- Split DB transactions for schedulers as fine-grained, small-sized transactions to cope with a large number of pending sessions
