@@ -37,6 +37,7 @@ import zmq.asyncio
 
 from ai.backend.common import msgpack, redis
 from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
+from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     BinarySize,
     KernelId,
@@ -47,7 +48,7 @@ from ai.backend.common.types import (
     SlotName,
     SlotTypes,
 )
-from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.utils import current_loop
 from .defs import INTRINSIC_SLOTS
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
@@ -60,7 +61,6 @@ from ..gateway.exceptions import (
     AgentError,
     GenericForbidden,
 )
-from ..gateway.utils import current_loop
 from .models import (
     agents, kernels, keypairs, vfolders,
     keypair_resource_policies,
