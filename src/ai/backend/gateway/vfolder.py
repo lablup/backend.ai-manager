@@ -6,9 +6,8 @@ import os
 from pathlib import Path
 import shutil
 import stat
-import time
 from typing import (
-    Any, Awaitable, Callable,
+    Any, Awaitable, Callable, Final,
     Dict, Mapping, MutableMapping,
     Tuple,
     Set,
@@ -68,6 +67,7 @@ from ..manager.models import (
     query_owned_dotfiles,
     verify_vfolder_name,
 )
+from ..manager.types import Sentinel
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
 
@@ -917,25 +917,14 @@ async def download_directory_as_archive(request: web.Request,
                                         file_path: Path,
                                         zip_filename: str = None) -> web.StreamResponse:
     """Serve a directory as a zip archive on the fly."""
-    class _Sentinel:
-        pass
-
-    _sentinel = _Sentinel()
+    _sentinel: Final = Sentinel.token
 
     def _iter2aiter(iter):
         """Iterable to async iterable"""
         def _consume(loop, iter, q):
             for item in iter:
-                while True:
-                    if not q.full():
-                        q.put(item)
-                        break
-                    time.sleep(0.01)
-            while True:
-                if not q.full():
-                    q.put(_sentinel)
-                    break
-                time.sleep(0.01)
+                q.put(item)
+            q.put(_sentinel)
 
         async def _aiter():
             loop = current_loop()
@@ -958,7 +947,6 @@ async def download_directory_as_archive(request: web.Request,
     if zip_filename is None:
         zip_filename = file_path.name + '.zip'
     zf = zipstream.ZipFile(compression=zipstream.ZIP_DEFLATED)
-    # zf = zipstream.ZipFile()
     async for root, dirs, files in _iter2aiter(os.walk(file_path)):
         for file in files:
             zf.write(Path(root) / file, Path(root).relative_to(file_path) / file)
@@ -1024,6 +1012,7 @@ async def download(request: web.Request, params: Any, row: VFolderRow) -> web.Re
 @check_api_params(
     t.Dict({
         t.Key('file'): t.String,
+        t.Key('archive', default=False): t.Bool | t.Null,
     }))
 async def download_single(request: web.Request, params: Any, row: VFolderRow) -> web.StreamResponse:
     folder_name = request.match_info['name']
@@ -1039,7 +1028,11 @@ async def download_single(request: web.Request, params: Any, row: VFolderRow) ->
     except (ValueError, FileNotFoundError):
         raise GenericNotFound('The file is not found.')
     if not file_path.is_file():
-        return await download_directory_as_archive(request, file_path)
+        if params['archive']:
+            # Download directory as an archive when archive param is set.
+            return await download_directory_as_archive(request, file_path)
+        else:
+            raise InvalidAPIParameters('The file is not a regular file.')
     if request.method == 'HEAD':
         return web.Response(status=200, headers={
             hdrs.ACCEPT_RANGES: 'bytes',
@@ -1064,6 +1057,7 @@ async def download_single(request: web.Request, params: Any, row: VFolderRow) ->
 @check_api_params(
     t.Dict({
         t.Key('file'): t.String,
+        t.Key('archive', default=False): t.Bool | t.Null,
     }))
 async def request_download(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     secret = request.app['config']['manager']['secret']
@@ -1071,6 +1065,7 @@ async def request_download(request: web.Request, params: Any, row: VFolderRow) -
     p['file'] = params['file']
     p['host'] = row['host']
     p['id'] = row['id'].hex
+    p['archive'] = params['archive']
     p['exp'] = datetime.utcnow() + timedelta(minutes=2)  # TODO: make it configurable
     token = jwt.encode(p, secret, algorithm='HS256').decode('UTF-8')
     resp = {
@@ -1095,6 +1090,7 @@ async def download_with_token(request) -> web.StreamResponse:
         t.Key('host'): t.String,
         t.Key('id'): t.String,
         t.Key('exp'): t.Int,
+        t.Key('archive', default=False): t.Bool | t.Null,
     })
     params = iv.check(params)
     fn = params['file']
@@ -1119,7 +1115,11 @@ async def download_with_token(request) -> web.StreamResponse:
     except (ValueError, FileNotFoundError):
         raise InvalidAPIParameters('The file is not found.')
     if not file_path.is_file():
-        return await download_directory_as_archive(request, file_path)
+        if params['archive']:
+            # Download directory as an archive when archive param is set.
+            return await download_directory_as_archive(request, file_path)
+        else:
+            raise InvalidAPIParameters('The file is not a regular file.')
     if request.method == 'HEAD':
         return web.Response(status=200, headers={
             hdrs.ACCEPT_RANGES: 'bytes',
