@@ -393,7 +393,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
         resp['created'] = True
 
         if not params['enqueue_only']:
-            request.app['pending_waits'].add(asyncio.Task.current_task())
+            request.app['pending_waits'].add(asyncio.current_task())
             max_wait = params['max_wait_seconds']
             try:
                 if max_wait > 0:
@@ -446,7 +446,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
         log.exception('GET_OR_CREATE: unexpected error!')
         raise InternalServerError
     finally:
-        request.app['pending_waits'].discard(asyncio.Task.current_task())
+        request.app['pending_waits'].discard(asyncio.current_task())
         request.app['event_dispatcher'].unsubscribe('kernel_cancelled', cancel_handler)
         request.app['event_dispatcher'].unsubscribe('kernel_terminated', term_handler)
         request.app['event_dispatcher'].unsubscribe('kernel_started', start_handler)
@@ -656,9 +656,9 @@ async def handle_kernel_lifecycle(app: web.Application, agent_id: AgentId, event
 
 
 async def handle_kernel_stat_sync(app: web.Application, agent_id: AgentId, event_name: str,
-                                  raw_kernel_id: str) -> None:
-    kernel_id = uuid.UUID(raw_kernel_id)
-    await app['registry'].sync_kernel_stats(kernel_id)
+                                  raw_kernel_ids: str) -> None:
+    kernel_ids = [*map(uuid.UUID, raw_kernel_ids.split(','))]
+    await app['registry'].sync_kernel_stats(kernel_ids)
 
 
 async def handle_batch_result(app: web.Application, agent_id: AgentId, event_name: str,
@@ -1361,6 +1361,10 @@ async def shutdown(app: web.Application) -> None:
 
     for task in app['pending_waits']:
         task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:

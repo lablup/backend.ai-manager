@@ -39,10 +39,10 @@ class MOFScheduler(AbstractScheduler):
                      pending_session: PendingSession,
                      ) -> Optional[AgentId]:
         # return min occupied slot agent or None
-        return next(
-            (one_agent.agent_id for one_agent in (
-                sorted(
-                    (agent for agent in agents
-                     if agent.available_slots >= pending_session.requested_slots),
-                    key=lambda a: a.occupied_slots)
-            )), None)
+        return next((one_agent.agent_id for one_agent in (sorted(
+            (agent for agent in agents if (
+                (agent.available_slots - agent.occupied_slots)
+                >= pending_session.requested_slots
+            )),
+            key=lambda a: a.occupied_slots)
+        )), None)

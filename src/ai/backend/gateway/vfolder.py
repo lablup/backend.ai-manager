@@ -247,7 +247,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
 
     if not verify_vfolder_name(params['name']):
         raise InvalidAPIParameters(f'{params["name"]} is reserved for internal operations.')
-    if params['name'].startswith('.'):
+    if params['name'].startswith('.') and params['name'] != '.local':
         if params['group'] is not None:
             raise InvalidAPIParameters('dot-prefixed vfolders cannot be a group folder.')
 
@@ -619,7 +619,7 @@ async def rename(request: web.Request, params: Any, row: VFolderRow) -> web.Resp
                 if not entry['is_owner']:
                     raise InvalidAPIParameters(
                         'Cannot change the name of a vfolder '
-                        'that is not owned by me.')
+                        'that is not owned by myself.')
                 query = (
                     vfolders.update()
                     .values(name=new_name)
@@ -1497,7 +1497,7 @@ async def delete(request: web.Request) -> web.Response:
                         and entry['permission'] != VFolderPermission.RW_DELETE:
                     raise InvalidAPIParameters(
                         'Cannot delete the vfolder '
-                        'that is not owned by me.')
+                        'that is not owned by myself.')
                 break
         else:
             raise InvalidAPIParameters('No such vfolder.')
@@ -1570,12 +1570,14 @@ async def list_shared_vfolders(request: web.Request, params: Any) -> web.Respons
     t.Dict({
         t.Key('vfolder'): tx.UUID,
         t.Key('user'): tx.UUID,
-        tx.AliasedKey(['perm', 'permission']): VFolderPermissionValidator,
+        tx.AliasedKey(['perm', 'permission']): VFolderPermissionValidator | t.Null,
     })
 )
 async def update_shared_vfolder(request: web.Request, params: Any) -> web.Response:
     '''
     Update permission for shared vfolders.
+
+    If params['perm'] is None, remove user's permission for the vfolder.
     '''
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
@@ -1585,10 +1587,20 @@ async def update_shared_vfolder(request: web.Request, params: Any) -> web.Respon
     log.info('VFOLDER.UPDATE_SHARED_VFOLDER(ak:{}, vfid:{}, uid:{}, perm:{})',
              access_key, vfolder_id, user_uuid, perm)
     async with dbpool.acquire() as conn:
-        query = (sa.update(vfolder_permissions)
-                   .values(permission=perm)
-                   .where(vfolder_permissions.c.vfolder == vfolder_id)
-                   .where(vfolder_permissions.c.user == user_uuid))
+        if perm is not None:
+            query = (
+                sa.update(vfolder_permissions)
+                .values(permission=perm)
+                .where(vfolder_permissions.c.vfolder == vfolder_id)
+                .where(vfolder_permissions.c.user == user_uuid)
+            )
+        else:
+            query = (
+                vfolder_permissions
+                .delete()
+                .where(vfolder_permissions.c.vfolder == vfolder_id)
+                .where(vfolder_permissions.c.user == user_uuid)
+            )
         await conn.execute(query)
     resp = {'msg': 'shared vfolder permission updated'}
     return web.json_response(resp, status=200)

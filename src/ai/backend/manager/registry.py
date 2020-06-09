@@ -6,13 +6,19 @@ from collections import defaultdict
 import copy
 from datetime import datetime
 import logging
+from pathlib import Path
 import time
 from typing import (
-    Any, Union,
-    Callable, Optional,
+    Any,
+    Callable,
     Container,
-    Dict, Mapping, MutableMapping,
+    Dict,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
     TYPE_CHECKING,
+    Union,
 )
 import uuid
 
@@ -31,6 +37,7 @@ import zmq.asyncio
 
 from ai.backend.common import msgpack, redis
 from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
+from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     BinarySize,
     KernelId,
@@ -41,7 +48,7 @@ from ai.backend.common.types import (
     SlotName,
     SlotTypes,
 )
-from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.utils import current_loop
 from .defs import INTRINSIC_SLOTS
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
@@ -59,6 +66,7 @@ from .models import (
     keypair_resource_policies,
     AgentStatus, KernelStatus,
     query_accessible_vfolders, query_allowed_sgroups,
+    recalc_concurrency_used,
     AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
     USER_RESOURCE_OCCUPYING_KERNEL_STATUSES,
     DEAD_KERNEL_STATUSES,
@@ -126,30 +134,15 @@ async def RPCContext(addr, timeout=None, *, order_key: str = None):
         agent_peers[addr] = peer
     try:
         with _timeout(timeout):
-            peer.call.order_key.set(order_key)
-            yield peer
+            okey_token = peer.call.order_key.set('')
+            try:
+                yield peer
+            finally:
+                peer.call.order_key.reset(okey_token)
     except RPCUserError as orig_exc:
         raise AgentError(orig_exc.name, orig_exc.args)
     except Exception:
         raise
-
-
-async def scrub_agent_peers():
-    '''
-    TODO: apply timer
-    Periodically clean up agent connections if they are unused for a long time.
-    '''
-    global agent_peers
-    closing_tasks = []
-    now = time.monotonic()
-    removed_addrs = []
-    for addr, peer in agent_peers.items():
-        if peer.last_used + 30.0 > now:
-            removed_addrs.append(addr)
-            closing_tasks.append(peer.__aexit__(None, None, None))
-    for addr in removed_addrs:
-        del agent_peers[addr]
-    await asyncio.gather(*closing_tasks, return_exceptions=True)
 
 
 async def cleanup_agent_peers():
@@ -466,7 +459,7 @@ class AgentRegistry:
         domain_name: str,
         bootstrap_script: str,
         group_id: uuid.UUID,
-        user_uuid: str,
+        user_uuid: uuid.UUID,
         user_role: str,
         startup_command: str = None,
         session_tag: str = None,
@@ -508,19 +501,38 @@ class AgentRegistry:
                 user_role=user_role, domain_name=domain_name,
                 allowed_vfolder_types=allowed_vfolder_types,
                 extra_vf_conds=extra_vf_conds)
+
             for item in matched_vfolders:
+                log.debug('Matched vFolder: {}, {}, {}', item['name'], item['group'], item['user'])
                 if item['group'] is not None and item['group'] != str(group_id):
                     # User's accessible group vfolders should not be mounted
                     # if not belong to the execution kernel.
                     continue
-                matched_mounts.add(item['name'])
-                determined_mounts.append((
-                    item['name'],
-                    item['host'],
-                    item['id'].hex,
-                    item['permission'].value,
-                    item['unmanaged_path'] if item['unmanaged_path'] else ''
-                ))
+                if item['name'] == '.local' and item['group'] is not None:
+                    mount_prefix = await self.config_server.get('volumes/_mount')
+                    fs_prefix = await self.config_server.get('volumes/_fsprefix')
+                    folder_path = (Path(mount_prefix) / item['host'] /
+                                   fs_prefix.lstrip('/') / item['id'].hex / user_uuid.hex)
+                    loop = current_loop()
+                    mkdir_lambda = lambda: folder_path.mkdir(parents=True, exist_ok=True)
+                    await loop.run_in_executor(None, mkdir_lambda)
+                    matched_mounts.add(item['name'])
+                    determined_mounts.append((
+                        item['name'],
+                        item['host'],
+                        f'{item["id"].hex}/{user_uuid.hex}',
+                        item['permission'].value,
+                        ''
+                    ))
+                else:
+                    matched_mounts.add(item['name'])
+                    determined_mounts.append((
+                        item['name'],
+                        item['host'],
+                        item['id'].hex,
+                        item['permission'].value,
+                        item['unmanaged_path'] if item['unmanaged_path'] else '',
+                    ))
             if mounts and set(mounts) > matched_mounts:
                 raise VFolderNotFound
             creation_config['mounts'] = determined_mounts
@@ -973,8 +985,19 @@ class AgentRegistry:
                         'kernel_terminating',
                         (str(kernel.id), 'user-requested'),
                     )
-            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
-                last_stat = await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
+            async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
+                await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
+                last_stat: Optional[Dict[str, Any]]
+                last_stat = None
+                try:
+                    raw_last_stat = await redis.execute_with_retries(
+                        lambda: self.redis_stat.get(str(kernel['id']), encoding=None),
+                        max_retries=3)
+                    if raw_last_stat is not None:
+                        last_stat = msgpack.unpackb(raw_last_stat)
+                        last_stat['version'] = 2
+                except asyncio.TimeoutError:
+                    pass
                 return {
                     **(last_stat if last_stat is not None else {}),
                     'status': 'terminated',
@@ -1004,7 +1027,7 @@ class AgentRegistry:
             image_ref = ImageRef(kernel['image'], [kernel['registry']])
             image_info = await self.config_server.inspect_image(image_ref)
 
-            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
+            async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
                 environ = {
                      k: v for k, v in
                      map(lambda s: s.split('=', 1), kernel['environ'])
@@ -1161,7 +1184,7 @@ class AgentRegistry:
             await conn.execute(query)
 
     async def kill_all_sessions_in_agent(self, agent_addr):
-        async with RPCContext(agent_addr, 30) as rpc:
+        async with RPCContext(agent_addr, None) as rpc:
             coro = rpc.call.clean_all_kernels('manager-freeze-force-kill')
             if coro is None:
                 log.warning('kill_all_sessions_in_agent cancelled')
@@ -1384,46 +1407,52 @@ class AgentRegistry:
             )
             await conn.execute(query)
 
-    async def sync_kernel_stats(self, kernel_id: KernelId, *,
-                                db_conn: SAConnection = None,
-                                additional_updates: dict = None) -> None:
-        updates = {}
-        raw_kernel_id = str(kernel_id)
-        log.debug('sync_kernel_stats(k:{})', kernel_id)
+    async def sync_kernel_stats(
+        self, kernel_ids: Sequence[KernelId], *,
+        db_conn: SAConnection = None,
+    ) -> None:
+        per_kernel_updates = {}
 
-        async def _get_kstats_from_redis():
-            stat_type = await self.redis_stat.type(raw_kernel_id)
-            if stat_type == 'string':
-                kern_stat = await self.redis_stat.get(raw_kernel_id, encoding=None)
-                if kern_stat is not None:
-                    updates['last_stat'] = msgpack.unpackb(kern_stat)
-            else:
-                kern_stat = await self.redis_stat.hgetall(raw_kernel_id)
-                if kern_stat is not None and 'cpu_used' in kern_stat:
-                    updates.update({
-                        'cpu_used': int(float(kern_stat['cpu_used'])),
-                        'mem_max_bytes': int(kern_stat['mem_max_bytes']),
-                        'net_rx_bytes': int(kern_stat['net_rx_bytes']),
-                        'net_tx_bytes': int(kern_stat['net_tx_bytes']),
-                        'io_read_bytes': int(kern_stat['io_read_bytes']),
-                        'io_write_bytes': int(kern_stat['io_write_bytes']),
-                        'io_max_scratch_size': int(kern_stat['io_max_scratch_size']),
-                    })
+        for kernel_id in kernel_ids:
+            raw_kernel_id = str(kernel_id)
+            log.debug('sync_kernel_stats(k:{})', kernel_id)
+            updates = {}
 
-        await redis.execute_with_retries(
-            lambda: _get_kstats_from_redis(),
-            max_retries=1,
-        )
-        if additional_updates is not None:
-            updates.update(additional_updates)
-        if not updates:
-            log.warning('sync_kernel_stats(k:{}): no statistics updates', kernel_id)
-            return
+            async def _get_kstats_from_redis():
+                stat_type = await self.redis_stat.type(raw_kernel_id)
+                if stat_type == 'string':
+                    kern_stat = await self.redis_stat.get(raw_kernel_id, encoding=None)
+                    if kern_stat is not None:
+                        updates['last_stat'] = msgpack.unpackb(kern_stat)
+                else:
+                    kern_stat = await self.redis_stat.hgetall(raw_kernel_id)
+                    if kern_stat is not None and 'cpu_used' in kern_stat:
+                        updates.update({
+                            'cpu_used': int(float(kern_stat['cpu_used'])),
+                            'mem_max_bytes': int(kern_stat['mem_max_bytes']),
+                            'net_rx_bytes': int(kern_stat['net_rx_bytes']),
+                            'net_tx_bytes': int(kern_stat['net_tx_bytes']),
+                            'io_read_bytes': int(kern_stat['io_read_bytes']),
+                            'io_write_bytes': int(kern_stat['io_write_bytes']),
+                            'io_max_scratch_size': int(kern_stat['io_max_scratch_size']),
+                        })
+
+            await redis.execute_with_retries(
+                lambda: _get_kstats_from_redis(),
+                max_retries=1,
+            )
+            if not updates:
+                log.warning('sync_kernel_stats(k:{}): no statistics updates', kernel_id)
+                continue
+            per_kernel_updates[kernel_id] = updates
+
         async with reenter_txn(self.dbpool, db_conn) as conn:
-            query = (sa.update(kernels)
-                       .values(updates)
-                       .where(kernels.c.id == kernel_id))
-            await conn.execute(query)
+            # TODO: update to use execute_batch() if aiopg supports it.
+            for kernel_id, updates in per_kernel_updates.items():
+                query = (sa.update(kernels)
+                           .values(updates)
+                           .where(kernels.c.id == kernel_id))
+                await conn.execute(query)
 
     async def mark_kernel_terminated(self, kernel_id: KernelId,
                                      reason: str,
@@ -1460,19 +1489,18 @@ class AgentRegistry:
             # Change the status to TERMINATED.
             # (we don't delete the row for later logging and billing)
             now = datetime.now(tzutc())
-            updates = {
-                'status': KernelStatus.TERMINATED,
-                'status_info': reason,
-                'status_changed': now,
-                'terminated_at': now,
-            }
-            await self.sync_kernel_stats(kernel_id, db_conn=conn, additional_updates=updates)
-
-            if reason == 'self-terminated' and kernel['status'] != KernelStatus.TERMINATING:
-                query = (sa.update(keypairs)
-                           .values(concurrency_used=keypairs.c.concurrency_used - 1)
-                           .where(keypairs.c.access_key == kernel.access_key))
-                await conn.execute(query)
+            query = (
+                sa.update(kernels)
+                .values({
+                    'status': KernelStatus.TERMINATED,
+                    'status_info': reason,
+                    'status_changed': now,
+                    'terminated_at': now,
+                })
+                .where(kernels.c.id == kernel_id)
+            )
+            await conn.execute(query)
+            await recalc_concurrency_used(conn, kernel['access_key'])
 
             # Release agent resource slots.
             query = (
@@ -1496,3 +1524,8 @@ class AgentRegistry:
                 .where(agents.c.id == kernel['agent'])
             )
             await conn.execute(query)
+
+        # Perform statistics sync in a separate transaction block, since
+        # it may take a while to fetch stats from Redis.
+        async with self.dbpool.acquire() as conn, conn.begin():
+            await self.sync_kernel_stats([kernel_id], db_conn=conn)
