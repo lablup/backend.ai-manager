@@ -153,6 +153,8 @@ async def get_announcement(request: web.Request) -> web.Response:
     }))
 async def update_announcement(request: web.Request, params: Any) -> web.Response:
     if params['enabled']:
+        if not params['message']:
+            raise InvalidAPIParameters(extra_msg='Empty message not allowed to enable announcement')
         await request.app['config_server'].etcd.put('manager/announcement', params['message'])
     else:
         await request.app['config_server'].etcd.delete('manager/announcement')
