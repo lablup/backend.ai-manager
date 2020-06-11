@@ -136,7 +136,7 @@ async def update_manager_status(request: web.Request, params: Any) -> web.Respon
 
 @atomic
 async def get_announcement(request: web.Request) -> web.Response:
-    data = await request.app['config_server'].get('manager/announcement')
+    data = await request.app['config_server'].etcd.get('manager/announcement')
     if data is None:
         ret = {'enabled': False, 'message': ''}
     else:
@@ -153,9 +153,9 @@ async def get_announcement(request: web.Request) -> web.Response:
     }))
 async def update_announcement(request: web.Request, params: Any) -> web.Response:
     if params['enabled']:
-        await request.app['config_server'].put('manager/announcement', params['message'])
+        await request.app['config_server'].etcd.put('manager/announcement', params['message'])
     else:
-        await request.app['config_server'].delete('manager/announcement')
+        await request.app['config_server'].etcd.delete('manager/announcement')
     return web.Response(status=204)
 
 
