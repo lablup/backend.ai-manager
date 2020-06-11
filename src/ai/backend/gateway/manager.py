@@ -134,6 +134,33 @@ async def update_manager_status(request: web.Request, params: Any) -> web.Respon
     return web.Response(status=204)
 
 
+@atomic
+async def get_announcement(request: web.Request) -> web.Response:
+    data = await request.app['config_server'].etcd.get('manager/announcement')
+    if data is None:
+        ret = {'enabled': False, 'message': ''}
+    else:
+        ret = {'enabled': True, 'message': data}
+    return web.json_response(ret)
+
+
+@atomic
+@superadmin_required
+@check_api_params(
+    t.Dict({
+        t.Key('enabled', default='false'): t.StrBool,
+        t.Key('message', default=None): t.Null | t.String,
+    }))
+async def update_announcement(request: web.Request, params: Any) -> web.Response:
+    if params['enabled']:
+        if not params['message']:
+            raise InvalidAPIParameters(extra_msg='Empty message not allowed to enable announcement')
+        await request.app['config_server'].etcd.put('manager/announcement', params['message'])
+    else:
+        await request.app['config_server'].etcd.delete('manager/announcement')
+    return web.Response(status=204)
+
+
 async def init(app: web.Application) -> None:
     loop = asyncio.get_event_loop()
     app['status_watch_task'] = loop.create_task(detect_status_update(app))
@@ -152,6 +179,9 @@ def create_app(default_cors_options):
     status_resource = cors.add(app.router.add_resource(r'/status'))
     cors.add(status_resource.add_route('GET', fetch_manager_status))
     cors.add(status_resource.add_route('PUT', update_manager_status))
+    status_resource = cors.add(app.router.add_resource(r'/announcement'))
+    cors.add(status_resource.add_route('GET', get_announcement))
+    cors.add(status_resource.add_route('POST', update_announcement))
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     return app, []
