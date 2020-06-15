@@ -16,6 +16,16 @@ Changes
 
 .. towncrier release notes start
 
+19.09.26 (2020-06-15)
+---------------------
+
+### Features
+* Execute POST_SIGNUP hook after sign up. ([#286](https://github.com/lablup/backend.ai-manager/issues/286))
+* Pass Accept-Language header to post-signup hook. ([#287](https://github.com/lablup/backend.ai-manager/issues/287))
+* Add a feature to kick off user who is shared virtual folder. ([#288](https://github.com/lablup/backend.ai-manager/issues/288))
+* Add a global announcement get/set API which stores an arbitrary string in the "manager/announcement" etcd key. ([#289](https://github.com/lablup/backend.ai-manager/issues/289))
+
+
 19.09.25 (2020-05-20)
 ---------------------
 
