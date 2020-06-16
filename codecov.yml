@@ -5,6 +5,8 @@ coverage:
     project:
       default:
         threshold: 5%
+        paths: src
     patch:
       default:
         threshold: 5%
+        paths: src
