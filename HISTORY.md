@@ -1,6 +1,45 @@
 Changes prior to 20.03
 ======================
 
+19.09.26 (2020-06-15)
+---------------------
+
+### Features
+* Execute POST_SIGNUP hook after sign up. ([#286](https://github.com/lablup/backend.ai-manager/issues/286))
+* Pass Accept-Language header to post-signup hook. ([#287](https://github.com/lablup/backend.ai-manager/issues/287))
+* Add a feature to kick off user who is shared virtual folder. ([#288](https://github.com/lablup/backend.ai-manager/issues/288))
+* Add a global announcement get/set API which stores an arbitrary string in the "manager/announcement" etcd key. ([#289](https://github.com/lablup/backend.ai-manager/issues/289))
+
+
+19.09.25 (2020-05-20)
+---------------------
+
+### Fixes
+* Improve stability under heavily loaded scenarios ([#285](https://github.com/lablup/backend.ai-manager/issues/285))
+  - Further split DB transactions in the scheduler to eliminate daedlock timeout errors
+  - Always recalculate `keypairs.concurrency_used` upon termination of kernels to avoid chasing historical kernel status transitions
+  - Remove an internal 30 seconds timeout for the `destroy_kernel` agent RPC call
+
+
+19.09.24 (2020-05-15)
+---------------------
+
+### Fixes
+* Add fallback if any keys under last_stat have None value during statistics calculation. ([#282](https://github.com/lablup/backend.ai-manager/issues/282))
+* Fix the responses for `compute_session` GQL query when there are no or multiple matching sessions ([#283](https://github.com/lablup/backend.ai-manager/issues/283))
+
+
+19.09.23 (2020-05-15)
+---------------------
+
+### Fixes
+* Remove unwanted empty key while setting etcd config with nested dict. ([#275](https://github.com/lablup/backend.ai-manager/issues/275))
+* Set correct scaling group name during session scheduling. ([#276](https://github.com/lablup/backend.ai-manager/issues/276))
+* Destroying sessions now returns periodically collected statistics instead of last-moment statistics ([#279](https://github.com/lablup/backend.ai-manager/issues/279))
+* Apply batching to statistics synchroniztion to minimize time used inside DB transactions by batching and splitting transaction blocks ([#280](https://github.com/lablup/backend.ai-manager/issues/280))
+* Reduce potential DB transaction deadlocks during scheduling of many (~hundreds) pending sessions ([#281](https://github.com/lablup/backend.ai-manager/issues/281))
+
+
 19.09.22 (2020-04-30)
 ---------------------
 
