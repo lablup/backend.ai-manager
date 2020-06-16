@@ -151,7 +151,7 @@ async def get_announcement(request: web.Request) -> web.Response:
 @superadmin_required
 @check_api_params(
     t.Dict({
-        t.Key('enabled', default='false'): t.StrBool,
+        t.Key('enabled', default='false'): t.ToBool,
         t.Key('message', default=None): t.Null | t.String,
     }))
 async def update_announcement(request: web.Request, params: Any) -> web.Response:
