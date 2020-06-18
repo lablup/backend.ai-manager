@@ -28,6 +28,7 @@ from aiojobs.aiohttp import atomic
 import aioredis
 import aiotools
 from async_timeout import timeout
+from dateutil.parser import isoparse
 from dateutil.tz import tzutc
 import multidict
 import sqlalchemy as sa
@@ -264,6 +265,13 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
 
     if params['session_type'] == SessionTypes.BATCH and not params['startup_command']:
         raise InvalidAPIParameters('Batch sessions must have a non-empty startup command.')
+    if params['session_type'] != SessionTypes.BATCH and params['reserve']:
+        raise InvalidAPIParameters('Parameter reserve should be used only for batch sessions')
+    if params['reserve']:
+        # TODO: Allow user-friendly strings such as 30m, 1h30min, etc.
+        reserved_at = isoparse(params['reserve'])
+    else:
+        reserved_at = None
 
     try:
         start_event = asyncio.Event()
@@ -386,7 +394,9 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             user_uuid=owner_uuid,
             user_role=request['user']['role'],
             startup_command=params['startup_command'],
-            session_tag=params['tag']))
+            session_tag=params['tag'],
+            reserved_at=reserved_at,
+        ))
         resp['sessionId'] = str(params['session_name'])  # legacy naming
         resp['status'] = 'PENDING'
         resp['servicePorts'] = []
@@ -469,6 +479,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
         t.Key('tag', default=undefined): UndefChecker | t.Null | t.String,
         t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
         t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
+        t.Key('reserve', default=None): t.Null | t.String,
         t.Key('reuseIfExists', default=True) >> 'reuse': t.ToBool,
         t.Key('startupCommand', default=undefined) >> 'startup_command':
             UndefChecker | t.Null | t.String,
@@ -607,6 +618,7 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         t.Key('tag', default=None): t.Null | t.String,
         t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
         t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
+        t.Key('reserve', default=None): t.Null | t.String,
         t.Key('reuseIfExists', default=True) >> 'reuse': t.ToBool,
         t.Key('startupCommand', default=None) >> 'startup_command': t.Null | t.String,
         t.Key('owner_access_key', default=None): t.Null | t.String,

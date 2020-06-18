@@ -43,7 +43,7 @@ async def check_reserved_batch_session(
             .where(kernels.c.id == sess_ctx.kernel_id)
         )
         reserved_at = await db_conn.scalar(query)
-        if reserved_at is not None and datetime.now() < reserved_at:
+        if reserved_at is not None and datetime.now(tzutc()) < reserved_at:
             return PredicateResult(
                 False,
                 'Before reservation time'
