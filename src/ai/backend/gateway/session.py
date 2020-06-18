@@ -18,6 +18,7 @@ from typing import (
     Iterable,
     Tuple,
     Mapping, MutableMapping,
+    Union,
 )
 import uuid
 
@@ -267,11 +268,10 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
         raise InvalidAPIParameters('Batch sessions must have a non-empty startup command.')
     if params['session_type'] != SessionTypes.BATCH and params['reserve']:
         raise InvalidAPIParameters('Parameter reserve should be used only for batch sessions')
+    reserved_at: Union[datetime, None] = None
     if params['reserve']:
         # TODO: Allow user-friendly strings such as 30m, 1h30min, etc.
         reserved_at = isoparse(params['reserve'])
-    else:
-        reserved_at = None
 
     try:
         start_event = asyncio.Event()
