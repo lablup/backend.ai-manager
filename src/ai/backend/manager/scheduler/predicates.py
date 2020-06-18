@@ -1,14 +1,16 @@
+from datetime import datetime, timedelta
 import logging
 from typing import (
     List,
 )
 
-import sqlalchemy as sa
 from aiopg.sa.connection import SAConnection
+from dateutil.tz import tzutc
+import sqlalchemy as sa
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
-    ResourceSlot,
+    ResourceSlot, SessionTypes,
 )
 
 from ..models import (
@@ -24,6 +26,29 @@ from . import (
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.scheduler'))
+
+
+async def check_reserved_batch_session(
+    db_conn: SAConnection,
+    sched_ctx: SchedulingContext,
+    sess_ctx: PendingSession,
+) -> PredicateResult:
+    """
+    Check if a batch-type session should not be started for a certain amount of time.
+    """
+    if sess_ctx.session_type == SessionTypes.BATCH:
+        query = (
+            sa.select([kernels.c.reserved_at])
+            .select_from(kernels)
+            .where(kernels.c.id == sess_ctx.kernel_id)
+        )
+        reserved_at = await db_conn.scalar(query)
+        if reserved_at is not None and datetime.now() < reserved_at:
+            return PredicateResult(
+                False,
+                'Before reservation time'
+            )
+    return PredicateResult(True)
 
 
 async def check_concurrency(
