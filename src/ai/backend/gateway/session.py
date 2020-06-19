@@ -43,6 +43,7 @@ from ai.backend.common.exception import (
     AliasResolutionFailed,
 )
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.utils import str_to_timedelta
 from ai.backend.common.types import (
     AgentId, KernelId,
     SessionTypes,
@@ -270,8 +271,11 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
         raise InvalidAPIParameters('Parameter reserve should be used only for batch sessions')
     reserved_at: Union[datetime, None] = None
     if params['reserve']:
-        # TODO: Allow user-friendly strings such as 30m, 1h30min, etc.
-        reserved_at = isoparse(params['reserve'])
+        try:
+            reserved_at = isoparse(params['reserve'])
+        except ValueError:
+            _td = str_to_timedelta(params['reserve'])
+            reserved_at = datetime.now(tzutc()) + _td
 
     try:
         start_event = asyncio.Event()
