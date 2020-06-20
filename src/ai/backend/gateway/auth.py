@@ -1,4 +1,4 @@
-import copy
+from collections import ChainMap
 from datetime import datetime, timedelta
 import functools
 import hashlib, hmac
@@ -19,13 +19,21 @@ from dateutil.parser import parse as dtparse
 import sqlalchemy as sa
 import trafaret as t
 
-from ai.backend.common.logging import Logger, BraceStyleAdapter
 from ai.backend.common import validators as tx
+from ai.backend.common.logging import Logger, BraceStyleAdapter
+from ai.backend.common.plugin.hook import (
+    ALL_COMPLETED,
+    PASSED,
+)
 from .exceptions import (
-    GenericBadRequest, GenericForbidden, GenericNotFound,
-    InvalidAuthParameters, AuthorizationFailed,
-    InvalidAPIParameters,
+    AuthorizationFailed,
+    GenericBadRequest,
+    GenericForbidden,
+    GenericNotFound,
     InternalServerError,
+    InvalidAuthParameters,
+    InvalidAPIParameters,
+    RejectedByHook,
 )
 from ..manager.models import (
     keypairs, keypair_resource_policies, users,
@@ -33,7 +41,6 @@ from ..manager.models import (
 from ..manager.models.user import UserRole, check_credential
 from ..manager.models.keypair import generate_keypair as _gen_keypair, generate_ssh_keypair
 from ..manager.models.group import association_groups_users, groups
-from ..manager.plugin import get_plugin_handlers_by_type
 from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params, set_handler_attr, get_handler_attr
 
@@ -566,25 +573,23 @@ async def signup(request: web.Request, params: Any) -> web.Response:
     log_args = (params['domain'], params['email'])
     log.info(log_fmt, *log_args)
     dbpool = request.app['dbpool']
-    checked_user = None
-    for _handler in get_plugin_handlers_by_type(request.app['plugins'], 'CHECK_USER'):
-        # Execute all CHECK_USER plugin handlers,
-        # which determine the user should be allowed to sign up or not per plugin bases.
-        extra_params = copy.deepcopy(params)
-        extra_params.pop('email')
-        extra_params['config_server'] = request.app['config_server']
-        checked_user = await _handler(params['email'], **extra_params)
-        if not checked_user['success']:
-            reason = checked_user.get('reason', 'signup not allowed')
-            log.warning(reason)
-            return web.json_response({'title': reason}, status=403)
-    for _handler in get_plugin_handlers_by_type(request.app['plugins'], 'CHECK_PASSWORD'):
-        # Execute all CHECK_PASSWORD plugin handlers, which checks the password validity.
-        result = await _handler(params['password'])
-        if not result['success']:
-            reason = result.get('reason', 'invalid password')
-            log.warning(reason)
-            return web.json_response({'title': reason}, status=403)
+
+    # [Hooking point for PRE_SIGNUP with the ALL_COMPLETED requirement]
+    # The hook handlers should accept the whole ``params`` dict.
+    # They should return a dict to override the user information,
+    # where the keys must be a valid field name of the users table,
+    # with two exceptions: "resource_policy" (name) and "group" (name).
+    # A plugin may return an empty dict if it has nothing to override.
+    _hook_result = await request.app['hook_plugin_ctx'].dispatch(
+        'PRE_SIGNUP',
+        (params, ),
+        return_when=ALL_COMPLETED,
+    )
+    if _hook_result.status != PASSED:
+        reason = _hook_result.reason
+        raise RejectedByHook(extra_msg=reason)
+    else:
+        user_data_overriden = ChainMap(_hook_result.result)
 
     async with dbpool.acquire() as conn:
         # Check if email already exists.
@@ -609,10 +614,9 @@ async def signup(request: web.Request, params: Any) -> web.Response:
             'role': UserRole.USER,
             'integration_id': None,
         }
-        if checked_user:
-            # Override fields specified in check_user plugins.
-            for key, val in checked_user.items():
-                if key in data:
+        if user_data_overriden:
+            for key, val in user_data_overriden.items():
+                if key in data:  # take only valid fields
                     data[key] = val
         query = (users.insert().values(data))
         result = await conn.execute(query)
@@ -622,8 +626,9 @@ async def signup(request: web.Request, params: Any) -> web.Response:
             user = await result.first()
             # Create user's first access_key and secret_key.
             ak, sk = _gen_keypair()
-            resource_policy = checked_user.get('resource_policy', 'default') \
-                                  if checked_user is not None else 'default'
+            resource_policy = (
+                user_data_overriden.get('resource_policy', 'default')
+            )
             kp_data = {
                 'user_id': params['email'],
                 'access_key': ak,
@@ -640,8 +645,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
             await conn.execute(query)
 
             # Add user to the default group.
-            group_name = checked_user.get('group', 'default') \
-                             if checked_user is not None else 'default'
+            group_name = user_data_overriden.get('group', 'default')
             query = (sa.select([groups.c.id])
                        .select_from(groups)
                        .where(groups.c.domain_name == params['domain'])
@@ -659,21 +663,17 @@ async def signup(request: web.Request, params: Any) -> web.Response:
         'access_key': ak,
         'secret_key': sk,
     }
-    secret = request.app['config']['manager']['secret']
-    for _handler in get_plugin_handlers_by_type(request.app['plugins'], 'POST_SIGNUP'):
-        try:
-            result = await _handler(
-                params['email'],
-                user_id=str(user.uuid),
-                secret=secret,
-                accept_language=request.headers.get('Accept-Language'),
-            )
-            if result.pop('success', False):
-                resp_data.update(result)
-        except (BaseException, Exception) as e:
-            log.warning('plugin handler exception: ' + repr(e))
-            pass  # ignore exceptions during post_signup hook since user is created anyway
 
+    # [Hooking point for POST_SIGNUP as one-way notification]
+    # The hook handlers should accept a tuple of the user email,
+    # the new user's UUID, and a dict with initial user's preferences.
+    initial_user_prefs = {
+        'lang': request.headers.get('Accept-Language', 'en-us').split(',')[0].lower(),
+    }
+    await request.app['hook_plugin_ctx'].notify(
+        'POST_SIGNUP',
+        (params['email'], user.uuid, initial_user_prefs)
+    )
     return web.json_response(resp_data, status=201)
 
 

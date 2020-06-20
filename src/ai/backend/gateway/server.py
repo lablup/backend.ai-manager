@@ -14,11 +14,15 @@ import ssl
 import sys
 import traceback
 from typing import (
-    cast,
-    Any, Final,
+    Any,
     AsyncIterator,
-    Iterable, List, Sequence,
-    Mapping, MutableMapping,
+    Final,
+    Iterable,
+    List,
+    Mapping,
+    MutableMapping,
+    Sequence,
+    cast,
 )
 
 from aiohttp import web
@@ -35,11 +39,11 @@ from ai.backend.common.cli import LazyGroup
 from ai.backend.common.config import redis_config_iv
 from ai.backend.common.utils import env_info, current_loop
 from ai.backend.common.logging import Logger, BraceStyleAdapter
-from ai.backend.common.plugin import (
-    discover_entrypoints, install_plugins
-)
+from ai.backend.common.plugin import discover_plugins
+from ai.backend.common.plugin.hook import HookPluginContext
+# from ai.backend.common.plugin.error_monitor import ErrorMonitor
 from ..manager import __version__
-from ..manager.plugin.error_monitor import ErrorMonitor
+from ..manager.plugin.webapp import WebappPlugin
 from ..manager.registry import AgentRegistry
 from ..manager.scheduler.dispatcher import SchedulerDispatcher
 from ..manager.background import BackgroundTaskManager
@@ -298,6 +302,16 @@ async def event_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
     await app['event_dispatcher'].close()
 
 
+async def hook_plugin_ctx(app: web.Application) -> AsyncIterator[None]:
+    # Install other hook plugins inside app['plugins'].
+    hook_plugin_ctx = HookPluginContext(app['config_server'], app['config'])
+    app['hook_plugin_ctx'] = hook_plugin_ctx
+    _update_public_interface_objs(app)
+    await hook_plugin_ctx.init()
+    yield
+    await hook_plugin_ctx.cleanup()
+
+
 async def agent_registry_ctx(app: web.Application) -> AsyncIterator[None]:
     app['registry'] = AgentRegistry(
         app['config_server'],
@@ -305,7 +319,8 @@ async def agent_registry_ctx(app: web.Application) -> AsyncIterator[None]:
         app['redis_stat'],
         app['redis_live'],
         app['redis_image'],
-        app['event_dispatcher'])
+        app['event_dispatcher'],
+        app['hook_plugin_ctx'])
     await app['registry'].init()
     _update_public_interface_objs(app)
     yield
@@ -321,11 +336,10 @@ async def sched_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
 
 async def monitoring_ctx(app: web.Application) -> AsyncIterator[None]:
     # Install stats hook plugins.
-    app['error_monitor'] = ErrorMonitor(app)
-    plugins = [
-        'stats_monitor',
-    ]
-    install_plugins(plugins, app, 'dict', app['config'])
+    # TODO: rewrite discovery
+    # app['error_monitor'] = ErrorMonitor(app)
+    # error_monitor_plugins = discover_plugins('error_monitor')
+    # stats_monitor_plugins = discover_plugins('stats_monitor')
     _update_public_interface_objs(app)
     yield
 
@@ -344,40 +358,20 @@ async def background_task_ctx_shutdown(app: web.Application) -> None:
 setattr(background_task_ctx, 'shutdown', background_task_ctx_shutdown)
 
 
-async def hook_plugins_ctx(app: web.Application) -> AsyncIterator[None]:
-    # Install other hook plugins inside app['plugins'].
-    plugins = [
-        'hanati_hook',
-        'cloud_beta_hook',
-    ]
-    app['plugins'] = {}
-    install_plugins(plugins, app['plugins'], 'dict', app['config'])
-    for plugin_name, plugin_registry in app['plugins'].items():
-        if app['pidx'] == 0:
-            log.info('Loading hook plugin: {0}', plugin_name)
-        await plugin_registry.init()
-    _update_public_interface_objs(app)
-    yield
-
-
 async def webapp_plugins_register(app: web.Application) -> None:
 
     def init_extapp(pkg_name: str, root_app: web.Application, create_subapp: PluginAppCreator) -> None:
         subapp, global_middlewares = create_subapp(app['config']['plugins'], app['cors_opts'])
         _init_subapp(pkg_name, root_app, subapp, global_middlewares)
 
-    plugins = [
-        'hanati_webapp',
-        'cloud_beta_webapp',
-    ]
-    for plugin_info in discover_entrypoints(
-        plugins, disable_plugins=app['config']['manager']['disabled-plugins']
+    for plugin_name, plugin_cls in discover_plugins(
+        'backendai_webapp_v10',
+        blocklist=app['config']['manager']['disabled-plugins']
     ):
-        plugin_group, plugin_name, entrypoint = plugin_info
         if app['pidx'] == 0:
-            log.info('Loading app plugin: {0}', entrypoint.module_name)
-        plugin = entrypoint.load()
-        init_extapp(entrypoint.module_name, app, getattr(plugin, 'create_app'))
+            log.info('Loading webapp plugin: {0}', plugin_name)
+        webapp_instance = cast(WebappPlugin, plugin_cls)({})
+        init_extapp(plugin_name, app, webapp_instance.create_app)
 
 
 def handle_loop_error(
@@ -475,11 +469,10 @@ def build_root_app(
             redis_ctx,
             database_ctx,
             event_dispatcher_ctx,
+            plugin_ctx,
             monitoring_ctx,
             agent_registry_ctx,
             sched_dispatcher_ctx,
-            # webapp_plugins_ctx,
-            hook_plugins_ctx,
             background_task_ctx,
         ]
     for cleanup_ctx in cleanup_contexts:
