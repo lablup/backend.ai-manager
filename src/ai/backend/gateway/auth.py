@@ -580,16 +580,16 @@ async def signup(request: web.Request, params: Any) -> web.Response:
     # where the keys must be a valid field name of the users table,
     # with two exceptions: "resource_policy" (name) and "group" (name).
     # A plugin may return an empty dict if it has nothing to override.
-    _hook_result = await request.app['hook_plugin_ctx'].dispatch(
+    hook_result = await request.app['hook_plugin_ctx'].dispatch(
         'PRE_SIGNUP',
         (params, ),
         return_when=ALL_COMPLETED,
     )
-    if _hook_result.status != PASSED:
-        reason = _hook_result.reason
+    if hook_result.status != PASSED:
+        reason = hook_result.reason
         raise RejectedByHook(extra_msg=reason)
     else:
-        user_data_overriden = ChainMap(_hook_result.result)
+        user_data_overriden = ChainMap(hook_result.result)
 
     async with dbpool.acquire() as conn:
         # Check if email already exists.
@@ -733,22 +733,19 @@ async def update_password(request: web.Request, params: Any) -> web.Response:
         log.info(log_fmt + ': new password mismtach', *log_args)
         return web.json_response({'error_msg': 'new password mismitch'}, status=400)
 
-    # Check password validaty if one of plugins provide CHECK_PASSWORD handler.
-    for plugin in request.app['plugins'].values():
-        hook_event_types = plugin.get_hook_event_types()
-        hook_event_handlers = plugin.get_handlers()
-        for ev_types in hook_event_types:
-            if 'CHECK_PASSWORD' not in ev_types._member_names_:
-                continue
-            for ev_handlers in hook_event_handlers:
-                for ev_handler in ev_handlers:
-                    if 'CHECK_PASSWORD' in ev_types._member_names_ and \
-                            ev_types.CHECK_PASSWORD == ev_handler[0]:
-                        check_password = ev_handler[1]
-                        result = await check_password(params['new_password'])
-                        if not result['success']:
-                            reason = result.get('reason', 'too simple password')
-                            return web.json_response({'title': reason}, status=403)
+    # [Hooking point for VERIFY_PASSWORD_FORMAT with the ALL_COMPLETED requirement]
+    # The hook handlers should accept the old password and the new password and implement their
+    # own password validation rules.
+    # They should return None if the validation is successful and raise the Reject error
+    # otherwise.
+    hook_result = await request.app['hook_plugin_ctx'].dispatch(
+        'VERIFY_PASSWORD_FORMAT',
+        (params['old_password'], params['new_password']),
+        return_when=ALL_COMPLETED,
+    )
+    if hook_result.status != PASSED:
+        reason = hook_result.reason or 'invalid password format'
+        raise RejectedByHook(reason=reason)
 
     async with dbpool.acquire() as conn:
         # Update user password.
@@ -757,7 +754,7 @@ async def update_password(request: web.Request, params: Any) -> web.Response:
             'need_password_change': False,
         }
         query = (users.update().values(data).where(users.c.email == email))
-        result = await conn.execute(query)
+        await conn.execute(query)
     return web.json_response({}, status=200)
 
 

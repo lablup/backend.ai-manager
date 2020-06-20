@@ -469,7 +469,7 @@ def build_root_app(
             redis_ctx,
             database_ctx,
             event_dispatcher_ctx,
-            plugin_ctx,
+            hook_plugin_ctx,
             monitoring_ctx,
             agent_registry_ctx,
             sched_dispatcher_ctx,

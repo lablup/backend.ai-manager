@@ -40,7 +40,8 @@ from ai.backend.common.docker import get_registry_info, get_known_registries, Im
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.plugin.hook import (
     HookPluginContext,
-    HookResultStatus,
+    ALL_COMPLETED,
+    PASSED,
 )
 from ai.backend.common.types import (
     BinarySize,
@@ -56,7 +57,7 @@ from ai.backend.common.utils import current_loop
 from .defs import INTRINSIC_SLOTS
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
-    DeniedByHook,
+    RejectedByHook,
     InstanceNotFound,
     SessionNotFound, TooManySessionsMatched,
     KernelCreationFailed, KernelDestructionFailed,
@@ -646,12 +647,13 @@ class AgentRegistry:
                 )))
 
         kernel_id = uuid.uuid4()
-        _hook_result = await self.hook_plugin_ctx.dispatch_cancellable_event(
+        hook_result = await self.hook_plugin_ctx.dispatch(
             'PRE_ENQUEUE_SESSION',
             (KernelId(kernel_id), session_name, user_uuid),
+            return_when=ALL_COMPLETED,
         )
-        if _hook_result.status == HookResultStatus.DENIED:
-            raise DeniedByHook(_hook_result.src_plugin, _hook_result.reason)
+        if hook_result.status != PASSED:
+            raise RejectedByHook(hook_result.src_plugin, hook_result.reason)
 
         # Create kernel object in PENDING state.
         async with self.dbpool.acquire() as conn, conn.begin():
@@ -703,7 +705,7 @@ class AgentRegistry:
             })
             await conn.execute(query)
 
-        await self.hook_plugin_ctx.dispatch_notification_event(
+        await self.hook_plugin_ctx.notify(
             'POST_ENQUEUE_SESSION',
             (KernelId(kernel_id), session_name, user_uuid),
         )
@@ -730,12 +732,13 @@ class AgentRegistry:
             result = await conn.execute(query)
             resource_policy = await result.first()
 
-        _hook_result = await self.hook_plugin_ctx.dispatch_cancellable_event(
+        hook_result = await self.hook_plugin_ctx.dispatch(
             'PRE_START_SESSION',
-            (sess_ctx.kernel_id, sess_ctx.name, sess_ctx.user_uuid),
+            (sess_ctx.kernel_id, sess_ctx.session_name, sess_ctx.access_key),
+            return_when=ALL_COMPLETED,
         )
-        if _hook_result.status == HookResultStatus.DENIED:
-            raise DeniedByHook(_hook_result.src_plugin, _hook_result.reason)
+        if hook_result.status != PASSED:
+            raise RejectedByHook(hook_result.src_plugin, hook_result.reason)
 
         # Create the kernel by invoking the agent
         async with self.handle_kernel_exception(
@@ -777,9 +780,9 @@ class AgentRegistry:
                   agent_ctx.agent_id, created_info)
         assert str(sess_ctx.kernel_id) == created_info['id']
 
-        await self.hook_plugin_ctx.dispatch_notification_event(
+        await self.hook_plugin_ctx.notify(
             'POST_START_SESSION',
-            (sess_ctx.kernel_id, sess_ctx.name, sess_ctx.user_uuid),
+            (sess_ctx.kernel_id, sess_ctx.session_name, sess_ctx.access_key),
         )
 
         async with self.dbpool.acquire() as conn, conn.begin():
@@ -981,12 +984,13 @@ class AgentRegistry:
         #       resolve kernel ID first and
         #       update DB based on it
         #       during the whole termination process
-        _hook_result = await self.hook_plugin_ctx.dispatch_cancellable_event(
+        hook_result = await self.hook_plugin_ctx.dispatch(
             'PRE_DESTROY_SESSION',
             (None, sess_id, None),
+            return_when=ALL_COMPLETED,
         )
-        if _hook_result.status == HookResultStatus.DENIED:
-            raise DeniedByHook(_hook_result.src_plugin, _hook_result.reason)
+        if hook_result.status != PASSED:
+            raise RejectedByHook(hook_result.src_plugin, hook_result.reason)
 
         async with self.handle_kernel_exception(
             'destroy_session', sess_id, access_key, set_error=True,
@@ -1045,8 +1049,8 @@ class AgentRegistry:
                 except asyncio.TimeoutError:
                     pass
 
-        await self.hook_plugin_ctx.dispatch_notification_event(
-            'POST_DESTROY_SESSION'
+        await self.hook_plugin_ctx.notify(
+            'POST_DESTROY_SESSION',
             (None, sess_id, None),
         )
         return {
@@ -1353,8 +1357,10 @@ class AgentRegistry:
                 return pipe
             await redis.execute_with_retries(_pipe_builder)
 
-        for _handler in self.hook_plugin_ctx.get_handlers('POST_AGENT_HEARTBEAT'):
-            pass
+        await self.hook_plugin_ctx.notify(
+            'POST_AGENT_HEARTBEAT',
+            (agent_id, sgroup, available_slots),
+        )
 
     async def mark_agent_terminated(self, agent_id, status, conn=None):
         global agent_peers
