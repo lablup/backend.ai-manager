@@ -64,7 +64,8 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
     api_version = request['api_version']
     try:
         compute_session = await asyncio.shield(
-            registry.get_session_master(session_name, access_key, field=extra_fields))
+            registry.get_session(session_name, access_key, field=extra_fields)
+        )
     except SessionNotFound:
         raise
     log.info('STREAM_PTY(ak:{0}, s:{1})', access_key, session_name)
@@ -116,8 +117,9 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
                             # when socks[0] is closed, re-initiate the connection.
                             app['stream_stdin_socks'][stream_key].discard(socks[0])
                             socks[1].close()
-                            kernel = await asyncio.shield(registry.get_session_master(
-                                session_name, access_key, field=extra_fields))
+                            kernel = await asyncio.shield(
+                                registry.get_session(session_name, access_key, field=extra_fields)
+                            )
                             stdin_sock, stdout_sock = await connect_streams(kernel)
                             socks[0] = stdin_sock
                             socks[1] = stdout_sock
@@ -230,7 +232,9 @@ async def stream_execute(defer, request: web.Request) -> web.StreamResponse:
     api_version = request['api_version']
     log.info('STREAM_EXECUTE(ak:{0}, s:{1})', access_key, session_name)
     try:
-        _ = await asyncio.shield(registry.get_session_master(session_name, access_key))  # noqa
+        _ = await asyncio.shield(
+            registry.get_session(session_name, access_key)  # noqa
+        )
     except SessionNotFound:
         raise
 
@@ -347,7 +351,7 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
     defer(lambda: request.app['stream_proxy_handlers'][stream_key].discard(myself))
 
     try:
-        kernel = await asyncio.shield(registry.get_session_master(session_name, access_key))
+        kernel = await asyncio.shield(registry.get_session(session_name, access_key))
     except SessionNotFound:
         raise
     if kernel.kernel_host is None:

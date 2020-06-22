@@ -288,7 +288,6 @@ class AgentRegistry:
         If ``allow_stale`` is true, it skips checking validity of the kernel
         owner instance.
         '''
-
         cols = [kernels.c.id, kernels.c.session_id,
                 kernels.c.agent_addr, kernels.c.kernel_host, kernels.c.access_key]
         if field == '*':
@@ -323,7 +322,7 @@ class AgentRegistry:
                 raise SessionNotFound
             return row
 
-    async def get_session(
+    async def get_kernels(
         self,
         session_name_or_id: Union[str, uuid.UUID],
         access_key: str, *,
@@ -334,22 +333,29 @@ class AgentRegistry:
         role=None,
     ):
         '''
-        Retrieve the session information from the session UUID or client-specified
-        session ID paired with the given access key.
-        If the session is composed of multiple containers, it returns the information
-        about the master container.
+        Retrieve the kernel information by kernel's ID, kernel's session UUID
+        (session_uuid), or kernel's name (session_id) paired with access_key.
+        If the session is composed of multiple containers, this will return
+        every container information, unless field and role is specified by the caller.
 
-        If ``field`` is given, it extracts only the raw value of the given
-        field, without wrapping it as Kernel object.  If ``allow_stale`` is
-        true, it does not apply the filter for "active" statuses.
+        :param session_name_or_id: kernel's id, session_id (session name), or session_uuid.
+        :param access_key: Access key used to create kernels.
+        :param field: If given, it extracts only the raw value of the given field, without
+                      wrapping it as Kernel object.
+        :param allow_stale: If True, filter "inactive" kernels as well as "active" ones.
+                            If False, filter "active" kernels only.
+        :param for_update: Apply for_update during select query.
+        :param db_connection: Database connection for reuse.
+        :param role: Filter kernels by role. "master", "worker", or None (all).
         '''
-
-        cols = [kernels.c.id, kernels.c.status,
-                kernels.c.session_id, kernels.c.access_key,
-                kernels.c.role,
-                kernels.c.agent_addr, kernels.c.kernel_host,
-                kernels.c.image, kernels.c.registry,
-                kernels.c.service_ports]
+        cols = [
+            kernels.c.id, kernels.c.status,
+            kernels.c.session_id, kernels.c.access_key,
+            kernels.c.role,
+            kernels.c.agent_addr, kernels.c.kernel_host,
+            kernels.c.image, kernels.c.registry,
+            kernels.c.service_ports,
+        ]
         if field == '*':
             cols = [sa.text('*')]
         elif isinstance(field, (tuple, list)):
@@ -361,14 +367,20 @@ class AgentRegistry:
 
         cond_id = (
             (sa.sql.expression.cast(kernels.c.id, sa.String).like(f'{session_name_or_id}%')) &
-            (kernels.c.access_key == access_key) &
-            (kernels.c.role == 'master')
+            (kernels.c.access_key == access_key)
         )
         cond_name = (
             (kernels.c.session_id.like(f'{session_name_or_id}%')) &
-            (kernels.c.access_key == access_key) &
-            (kernels.c.role == 'master')
+            (kernels.c.access_key == access_key)
         )
+        cond_session_uuid = (
+            (sa.sql.expression.cast(kernels.c.session_uuid, sa.String).like(f'{session_name_or_id}%')) &
+            (kernels.c.access_key == access_key)
+        )
+        if role is not None:
+            cond_id = cond_id & (kernels.c.role == role)
+            cond_name = cond_name & (kernels.c.role == role)
+            cond_session_uuid = cond_session_uuid & (kernels.c.role == role)
         if allow_stale:
             cond_status = true()  # any status
         else:
@@ -386,9 +398,13 @@ class AgentRegistry:
             .where(cond_name & cond_status)
             .order_by(sa.desc(kernels.c.created_at))
         )
-        if role is not None and isinstance(role, str):
-            query_by_id = query_by_id.where(kernels.c.role == role)
-            query_by_name = query_by_name.where(kernels.c.role == role)
+        query_by_session_uuid = (
+            sa.select(cols, for_update=for_update)
+            .select_from(kernels)
+            .where(cond_session_uuid & cond_status)
+            .order_by(sa.desc(kernels.c.created_at))
+            .limit(10).offset(0)
+        )
         if allow_stale:
             query_by_name = query_by_name.limit(10).offset(0)
         else:
@@ -396,75 +412,89 @@ class AgentRegistry:
             query_by_name = query_by_name.limit(1).offset(0)
 
         async with reenter_txn(self.dbpool, db_connection) as conn:
-            for query in [query_by_id, query_by_name]:
+            for query in [query_by_id, query_by_session_uuid, query_by_name]:
                 result = await conn.execute(query)
-                if result.rowcount > 1:
-                    matches = [
-                        {
-                            'id': str(item['id']),
-                            'name': item['sess_id'],
-                            'status': item['status'].name,
-                        }
-                        async for item in result
-                    ]
-                    raise TooManySessionsMatched(extra_data={
-                        'matches': matches,
-                    })
                 if result.rowcount == 0:
                     continue
-                return await result.first()
+                return await result.fetchall()
             raise SessionNotFound
 
-    async def get_session_master(self, sess_id: str, access_key: str, *,
-                                 field=None,
-                                 for_update=False,
-                                 db_connection=None):
-        return (await self.get_session(sess_id, access_key,
-                                       field=field, for_update=for_update,
-                                       db_connection=db_connection, role='master')
-                )[0]
+    async def get_session(
+        self,
+        session_name_or_id: Union[str, uuid.UUID],
+        access_key: str, *,
+        field=None,
+        allow_stale=False,
+        for_update=False,
+        db_connection=None,
+    ):
+        """
+        Retrieve the session information by kernel's ID, kernel's session UUID
+        (session_uuid), or kernel's name (session_id) paired with access_key.
+        If the session is composed of multiple containers, this will return
+        the information of master kernel.
 
-    async def get_session_by_uuid(self, sess_uuid: str, access_key: str, *,
-                                  field=None,
-                                  for_update=False,
-                                  db_connection=None):
-        '''
-        Retreive the kernel information from the session UUID.
-        If the kernel is composed of multiple containers, it
-        returns the address of the master container.
+        :param session_name_or_id: kernel's id, session_id (session name), or session_uuid.
+        :param access_key: Access key used to create kernels.
+        :param field: If given, it extracts only the raw value of the given field, without
+                      wrapping it as Kernel object.
+        :param allow_stale: If True, filter "inactive" kernels as well as "active" ones.
+                            If False, filter "active" kernels only.
+        :param for_update: Apply for_update during select query.
+        :param db_connection: Database connection for reuse.
+        :param role: Filter kernels by role. "master", "worker", or None (all).
+        """
+        kernels = await self.get_kernels(
+            session_name_or_id, access_key,
+            field=field, for_update=for_update,
+            db_connection=db_connection,
+            role='master',
+        )
+        if len(kernels) > 1:
+            matches = [
+                {
+                    'id': str(item['id']),
+                    'name': item['sess_id'],
+                    'status': item['status'].name,
+                }
+                for item in kernels
+            ]
+            raise TooManySessionsMatched(extra_data={
+                'matches': matches,
+            })
+        return kernels[0]
 
-        If ``field`` is given, it extracts only the raw value of the given
-        field, without wrapping it as Kernel object.  If ``allow_stale`` is
-        true, it skips checking validity of the kernel owner instance.
+    async def get_session_kernels(
+        self,
+        session_uuid: str,
+        access_key: str, *,
+        field=None,
+        allow_stale=False,
+        for_update=False,
+        db_connection=None,
+        role=None,
+    ):
         '''
-        cols = [kernels.c.id, kernels.c.status,
-                kernels.c.session_id, kernels.c.session_uuid,
-                kernels.c.access_key,
-                kernels.c.agent_addr, kernels.c.kernel_host,
-                kernels.c.image, kernels.c.registry,
-                kernels.c.service_ports]
-        if field == '*':
-            cols = [sa.text('*')]
-        elif isinstance(field, (tuple, list)):
-            cols.extend(field)
-        elif isinstance(field, (sa.Column, sa.sql.elements.ColumnClause)):
-            cols.append(field)
-        elif isinstance(field, str):
-            cols.append(sa.column(field))
-        async with reenter_txn(self.dbpool, db_connection) as conn:
-            query = (
-                sa.select(cols, for_update=for_update)
-                .select_from(kernels)
-                .where(
-                    (kernels.c.session_uuid == sess_uuid) &
-                    (kernels.c.access_key == access_key)
-                )
-            )
-            result = await conn.execute(query)
-            rows = await result.fetchall()
-            if rows is None or len(rows) == 0:
-                raise SessionNotFound
-            return rows
+        Retrieve the kernel information of a session by session UUID.
+        If the session is bundled with multiple containers,
+        this will return every information of them.
+
+        :param session_uuid: Session's UUID.
+        :param access_key: Access key used to create the session.
+        :param field: If given, it extracts only the raw value of the given field, without
+                      wrapping it as Kernel object.
+        :param allow_stale: If True, filter "inactive" kernels as well as "active" ones.
+                            If False, filter "active" kernels only.
+        :param for_update: Apply for_update during select query.
+        :param db_connection: Database connection for reuse.
+        :param role: Filter kernels by role. "master", "worker", or None (all).
+        '''
+        return await self.get_kernels(
+            session_uuid, access_key,
+            field=field, for_update=for_update,
+            db_connection=db_connection,
+            role=role,
+        )
 
     async def get_sessions(
         self,
@@ -1036,11 +1066,11 @@ class AgentRegistry:
         ):
             try:
                 async with self.dbpool.acquire() as conn, conn.begin():
-                    kernel_list = await self.get_session(
+                    kernel_list = await self.get_session_kernels(
                         sess_id, access_key,
                         field=[kernels.c.domain_name, kernels.c.session_uuid],
                         for_update=True,
-                        db_connection=conn
+                        db_connection=conn,
                     )
             except SessionNotFound:
                 raise
@@ -1177,7 +1207,7 @@ class AgentRegistry:
                       api_version, run_id, mode, code, opts, *,
                       flush_timeout=None):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
-            kernel = await self.get_session_master(sess_id, access_key)
+            kernel = await self.get_session(sess_id, access_key)
             # The agent aggregates at most 2 seconds of outputs
             # if the kernel runs for a long time.
             major_api_version = api_version[0]
@@ -1195,7 +1225,7 @@ class AgentRegistry:
 
     async def interrupt_session(self, sess_id, access_key):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
-            kernel = await self.get_session_master(sess_id, access_key)
+            kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 coro = rpc.call.interrupt_kernel(str(kernel['id']))
                 if coro is None:
@@ -1205,7 +1235,7 @@ class AgentRegistry:
 
     async def get_completions(self, sess_id, access_key, mode, text, opts):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
-            kernel = await self.get_session_master(sess_id, access_key)
+            kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], 10, order_key=sess_id) as rpc:
                 coro = rpc.call.get_completions(str(kernel['id']), mode, text, opts)
                 if coro is None:
@@ -1215,7 +1245,7 @@ class AgentRegistry:
 
     async def start_service(self, sess_id, access_key, service, opts):
         async with self.handle_kernel_exception('execute', sess_id, access_key):
-            kernel = await self.get_session_master(sess_id, access_key)
+            kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
                 coro = rpc.call.start_service(str(kernel['id']), service, opts)
                 if coro is None:
@@ -1225,7 +1255,7 @@ class AgentRegistry:
 
     async def upload_file(self, sess_id, access_key, filename, payload):
         async with self.handle_kernel_exception('upload_file', sess_id, access_key):
-            kernel = await self.get_session_master(sess_id, access_key)
+            kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
                 coro = rpc.call.upload_file(str(kernel['id']), filename, payload)
                 if coro is None:
@@ -1236,7 +1266,7 @@ class AgentRegistry:
     async def download_file(self, sess_id, access_key, filepath):
         async with self.handle_kernel_exception('download_file', sess_id,
                                                 access_key):
-            kernel = await self.get_session_master(sess_id, access_key)
+            kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
                 coro = rpc.call.download_file(str(kernel['id']), filepath)
                 if coro is None:
@@ -1246,7 +1276,7 @@ class AgentRegistry:
 
     async def list_files(self, sess_id, access_key, path):
         async with self.handle_kernel_exception('list_files', sess_id, access_key):
-            kernel = await self.get_session_master(sess_id, access_key)
+            kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 coro = rpc.call.list_files(str(kernel['id']), path)
                 if coro is None:
@@ -1256,7 +1286,7 @@ class AgentRegistry:
 
     async def get_logs_from_agent(self, sess_id, access_key):
         async with self.handle_kernel_exception('get_logs_from_agent', sess_id, access_key):
-            kernel = await self.get_session_master(sess_id, access_key)
+            kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 coro = rpc.call.get_logs(str(kernel['id']))
                 if coro is None:
@@ -1267,7 +1297,7 @@ class AgentRegistry:
     async def refresh_session(self, sess_id, access_key):
         async with self.handle_kernel_exception('refresh_session',
                                                 sess_id, access_key):
-            kernel = await self.get_session_master(sess_id, access_key)
+            kernel = await self.get_session(sess_id, access_key)
             async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
                 coro = rpc.call.refresh_idle(str(kernel['id']))
                 if coro is None:
