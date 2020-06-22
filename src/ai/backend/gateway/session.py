@@ -45,6 +45,7 @@ from ai.backend.common.types import (
     AgentId, KernelId,
     SessionTypes,
 )
+from ai.backend.common.plugin.monitor import GAUGE
 from ai.backend.common.utils import current_loop
 from .defs import REDIS_STREAM_DB
 from .exceptions import (
@@ -766,58 +767,56 @@ async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name:
         await redis_conn.wait_closed()
 
 
-async def stats_monitor_update(app):
-    with app['stats_monitor'] as stats_monitor:
-        stats_monitor.report_stats(
-            'gauge', 'ai.backend.gateway.coroutines', len(asyncio.Task.all_tasks()))
+async def report_stats(app: web.Application) -> None:
+    stats_monitor = app['stats_monitor']
+    await stats_monitor.report_metric(
+        GAUGE, 'ai.backend.gateway.coroutines', len(asyncio.Task.all_tasks()))
 
-        all_inst_ids = [
-            inst_id async for inst_id
-            in app['registry'].enumerate_instances()]
-        stats_monitor.report_stats(
-            'gauge', 'ai.backend.gateway.agent_instances', len(all_inst_ids))
+    all_inst_ids = [
+        inst_id async for inst_id
+        in app['registry'].enumerate_instances()]
+    await stats_monitor.report_metric(
+        GAUGE, 'ai.backend.gateway.agent_instances', len(all_inst_ids))
 
-        async with app['dbpool'].acquire() as conn, conn.begin():
-            query = (sa.select([sa.func.sum(keypairs.c.concurrency_used)])
-                       .select_from(keypairs))
-            n = await conn.scalar(query)
-            stats_monitor.report_stats(
-                'gauge', 'ai.backend.gateway.active_kernels', n)
+    async with app['dbpool'].acquire() as conn, conn.begin():
+        query = (sa.select([sa.func.sum(keypairs.c.concurrency_used)])
+                   .select_from(keypairs))
+        n = await conn.scalar(query)
+        await stats_monitor.report_metric(
+            GAUGE, 'ai.backend.gateway.active_kernels', n)
 
-            subquery = (sa.select([sa.func.count()])
-                          .select_from(keypairs)
-                          .where(keypairs.c.is_active == true())
-                          .group_by(keypairs.c.user_id))
-            query = sa.select([sa.func.count()]).select_from(subquery.alias())
-            n = await conn.scalar(query)
-            stats_monitor.report_stats(
-                'gauge', 'ai.backend.users.has_active_key', n)
+        subquery = (sa.select([sa.func.count()])
+                      .select_from(keypairs)
+                      .where(keypairs.c.is_active == true())
+                      .group_by(keypairs.c.user_id))
+        query = sa.select([sa.func.count()]).select_from(subquery.alias())
+        n = await conn.scalar(query)
+        await stats_monitor.report_metric(
+            GAUGE, 'ai.backend.users.has_active_key', n)
 
-            subquery = subquery.where(keypairs.c.last_used != null())
-            query = sa.select([sa.func.count()]).select_from(subquery.alias())
-            n = await conn.scalar(query)
-            stats_monitor.report_stats(
-                'gauge', 'ai.backend.users.has_used_key', n)
+        subquery = subquery.where(keypairs.c.last_used != null())
+        query = sa.select([sa.func.count()]).select_from(subquery.alias())
+        n = await conn.scalar(query)
+        await stats_monitor.report_metric(
+            GAUGE, 'ai.backend.users.has_used_key', n)
 
-            '''
-            query = sa.select([sa.func.count()]).select_from(usage)
-            n = await conn.scalar(query)
-            stats_monitor.report_stats(
-                'gauge', 'ai.backend.gateway.accum_kernels', n)
-            '''
+        '''
+        query = sa.select([sa.func.count()]).select_from(usage)
+        n = await conn.scalar(query)
+        await stats_monitor.report_metric(
+            GAUGE, 'ai.backend.gateway.accum_kernels', n)
+        '''
 
 
-async def stats_monitor_update_timer(app):
-    if app['stats_monitor'] is None:
-        return
+async def stats_report_timer(app):
     while True:
         try:
-            await stats_monitor_update(app)
+            await report_stats(app)
         except asyncio.CancelledError:
             break
-        except:
+        except Exception:
             await app['error_monitor'].capture_exception()
-            log.exception('stats_monitor_update unexpected error')
+            log.exception('stats_report_timer: unexpected error')
         try:
             await asyncio.sleep(5)
         except asyncio.CancelledError:

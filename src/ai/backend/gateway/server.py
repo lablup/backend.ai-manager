@@ -40,7 +40,11 @@ from ai.backend.common.config import redis_config_iv
 from ai.backend.common.utils import env_info, current_loop
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from ai.backend.common.plugin.hook import HookPluginContext
-# from ai.backend.common.plugin.error_monitor import ErrorMonitor
+from ai.backend.common.plugin.monitor import (
+    ErrorPluginContext,
+    StatsPluginContext,
+    INCREMENT,
+)
 from ..manager import __version__
 from ..manager.plugin.webapp import WebappPluginContext
 from ..manager.registry import AgentRegistry
@@ -164,24 +168,22 @@ async def api_middleware(request: web.Request,
 async def exception_middleware(request: web.Request,
                                handler: WebRequestHandler) -> web.StreamResponse:
     app = request.app
+    error_monitor = app['error_monitor']
+    stats_monitor = app['stats_monitor']
     try:
-        if (stats_monitor := app.get('stats_monitor', None)) is not None:
-            stats_monitor.report_stats('increment', 'ai.backend.gateway.api.requests')
+        await stats_monitor.report_metric(INCREMENT, 'ai.backend.gateway.api.requests')
         resp = (await handler(request))
     except BackendError as ex:
         if ex.status_code == 500:
             log.exception('Internal server error raised inside handlers')
             raise
-        if (error_monitor := app.get('error_monitor', None)) is not None:
-            await error_monitor.capture_exception()
-        if (stats_monitor := app.get('stats_monitor', None)) is not None:
-            stats_monitor.report_stats('increment', 'ai.backend.gateway.api.failures')
-            stats_monitor.report_stats('increment', f'ai.backend.gateway.api.status.{ex.status_code}')
+        await error_monitor.capture_exception()
+        await stats_monitor.report_metric(INCREMENT, 'ai.backend.gateway.api.failures')
+        await stats_monitor.report_metric(INCREMENT, f'ai.backend.gateway.api.status.{ex.status_code}')
         raise
     except web.HTTPException as ex:
-        if (stats_monitor := app.get('stats_monitor', None)) is not None:
-            stats_monitor.report_stats('increment', 'ai.backend.gateway.api.failures')
-            stats_monitor.report_stats('increment', f'ai.backend.gateway.api.status.{ex.status_code}')
+        await stats_monitor.report_metric(INCREMENT, 'ai.backend.gateway.api.failures')
+        await stats_monitor.report_metric(INCREMENT, f'ai.backend.gateway.api.status.{ex.status_code}')
         if ex.status_code == 404:
             raise GenericNotFound
         if ex.status_code == 405:
@@ -195,16 +197,14 @@ async def exception_middleware(request: web.Request,
         log.debug('Request cancelled ({0} {1})', request.method, request.rel_url)
         raise e
     except Exception as e:
-        if (error_monitor := app.get('error_monitor', None)) is not None:
-            await error_monitor.capture_exception()
+        await error_monitor.capture_exception()
         log.exception('Uncaught exception in HTTP request handlers {0!r}', e)
         if app['config']['debug']['enabled']:
             raise InternalServerError(traceback.format_exc())
         else:
             raise InternalServerError()
     else:
-        if (stats_monitor := app.get('stats_monitor', None)) is not None:
-            stats_monitor.report_stats('increment', f'ai.backend.gateway.api.status.{resp.status}')
+        await stats_monitor.report_metric(INCREMENT, f'ai.backend.gateway.api.status.{resp.status}')
         return resp
 
 
@@ -350,13 +350,16 @@ async def sched_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
 
 
 async def monitoring_ctx(app: web.Application) -> AsyncIterator[None]:
-    # Install stats hook plugins.
-    # TODO: rewrite discovery
-    # app['error_monitor'] = ErrorMonitor(app)
-    # error_monitor_plugins = discover_plugins('error_monitor')
-    # stats_monitor_plugins = discover_plugins('stats_monitor')
+    ectx = ErrorPluginContext(app['config_server'].etcd, app['config'])
+    sctx = StatsPluginContext(app['config_server'].etcd, app['config'])
+    await ectx.init()
+    await sctx.init()
+    app['error_monitor'] = ectx
+    app['stats_monitor'] = sctx
     _update_public_interface_objs(app)
     yield
+    await sctx.cleanup()
+    await ectx.cleanup()
 
 
 async def background_task_ctx(app: web.Application) -> AsyncIterator[None]:
@@ -385,13 +388,11 @@ def handle_loop_error(
     if exception is not None:
         if sys.exc_info()[0] is not None:
             log.exception('Error inside event loop: {0}', msg)
-            if error_monitor := root_app.get('error_monitor', None):
-                loop.create_task(error_monitor.capture_exception())
+            loop.create_task(root_app['error_monitor'].capture_exception())
         else:
             exc_info = (type(exception), exception, exception.__traceback__)
             log.error('Error inside event loop: {0}', msg, exc_info=exc_info)
-            if error_monitor := root_app.get('error_monitor', None):
-                loop.create_task(error_monitor.capture_exception(exception))
+            loop.create_task(root_app['error_monitor'].capture_exception(exception))
 
 
 def _init_subapp(pkg_name: str,
