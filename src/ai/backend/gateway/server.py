@@ -304,7 +304,7 @@ async def event_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
 
 async def hook_plugin_ctx(app: web.Application) -> AsyncIterator[None]:
     # Install other hook plugins inside app['plugins'].
-    hook_plugin_ctx = HookPluginContext(app['config_server'], app['config'])
+    hook_plugin_ctx = HookPluginContext(app['config_server'].etcd, app['config'])
     app['hook_plugin_ctx'] = hook_plugin_ctx
     _update_public_interface_objs(app)
     await hook_plugin_ctx.init()
@@ -358,20 +358,17 @@ async def background_task_ctx_shutdown(app: web.Application) -> None:
 setattr(background_task_ctx, 'shutdown', background_task_ctx_shutdown)
 
 
-async def webapp_plugins_register(app: web.Application) -> None:
-
-    def init_extapp(pkg_name: str, root_app: web.Application, create_subapp: PluginAppCreator) -> None:
-        subapp, global_middlewares = create_subapp(app['config']['plugins'], app['cors_opts'])
-        _init_subapp(pkg_name, root_app, subapp, global_middlewares)
-
+async def webapp_plugins_register(root_app: web.Application) -> None:
     for plugin_name, plugin_cls in discover_plugins(
-        'backendai_webapp_v10',
-        blocklist=app['config']['manager']['disabled-plugins']
+        'backendai_webapp_v20',
+        blocklist=root_app['config']['manager']['disabled-plugins']
     ):
-        if app['pidx'] == 0:
+        if root_app['pidx'] == 0:
             log.info('Loading webapp plugin: {0}', plugin_name)
-        webapp_instance = cast(WebappPlugin, plugin_cls)({})
-        init_extapp(plugin_name, app, webapp_instance.create_app)
+        plugin_config = await root_app['config_server'].etcd.get_prefix(f'config/plugins/{plugin_name}')
+        webapp_instance = cast(WebappPlugin, plugin_cls)(plugin_config, root_app['config'])
+        subapp, global_middlewares = await webapp_instance.create_app(root_app['cors_opts'])
+        _init_subapp(plugin_name, root_app, subapp, global_middlewares)
 
 
 def handle_loop_error(
