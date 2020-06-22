@@ -22,6 +22,7 @@ from . import (
     AgentContext,
     PendingSession,
     ExistingSession,
+    get_master_id,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.scheduler'))
@@ -74,7 +75,7 @@ class DRFScheduler(AbstractScheduler):
         # who has the lowest dominant share.
         for pending_sess in pending_sessions:
             if pending_sess.access_key == least_dominant_share_user:
-                return self.get_master_id(pending_sess.kernels)
+                return get_master_id(pending_sess.kernels)
 
         return None
 

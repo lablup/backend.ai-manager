@@ -48,6 +48,8 @@ from . import (
     AgentContext,
     AgentAllocationContext,
     AbstractScheduler,
+    KernelInfo,
+    get_master_id,
 )
 from .predicates import (
     check_concurrency,
@@ -239,16 +241,17 @@ class SchedulerDispatcher(aobject):
                     # continue to next sgroup.
                     return
                 for picked_idx, sess_ctx in enumerate(pending_sessions):
-                    if sess_ctx.sess_id == picked_kernel_id:
+                    master_id = get_master_id(sess_ctx.kernels)
+                    if master_id == picked_kernel_id:
                         break
                 else:
                     # no matching entry for picked session?
                     raise RuntimeError('should not reach here')
                 sess_ctx = pending_sessions.pop(picked_idx)
 
-                log_args = (sess_ctx.kernel_id, sess_ctx.session_name, sess_ctx.access_key)
+                log_args = (master_id, sess_ctx.session_name, sess_ctx.access_key)
                 log.debug(log_fmt + 'try-scheduling', *log_args)
-                loaded = []
+                loaded: List[Any] = []
 
                 async with db_conn.begin():
                     predicates: Sequence[Awaitable[PredicateResult]] = [
@@ -317,8 +320,8 @@ class SchedulerDispatcher(aobject):
                         }).where(kernels.c.id == kernel.kernel_id)
                         await db_conn.execute(query)
 
-                    log.debug(log_fmt + 'try-starting', *log_args)
-                    loaded.append([kernel, agent_alloc_ctx])
+                        log.debug(log_fmt + 'try-starting', *log_args)
+                        loaded.append([kernel, agent_alloc_ctx])
 
                     if len(sess_ctx.kernels) == len(loaded):
                         task = asyncio.create_task(
@@ -329,8 +332,8 @@ class SchedulerDispatcher(aobject):
                                 log.error(log_fmt + 'failed-starting',
                                             *log_args, exc_info=fut.exception())
                                 for loaded_kernel in loaded:
-                                    await self._unreserve_agent_slots(sess_ctx, loaded_kernel[0],
-                                                                      loaded_kernel[1])
+                                    await _unreserve_agent_slots(
+                                        db_conn, sess_ctx, loaded_kernel[1])
                                 await _invoke_failure_callbacks(
                                     sess_ctx, check_results, use_new_txn=True)
                                 async with self.dbpool.acquire() as conn, conn.begin():
@@ -353,14 +356,15 @@ class SchedulerDispatcher(aobject):
                         task.add_done_callback(lambda fut: asyncio.create_task(_cb(fut)))
                     else:
                         for loaded_kernel in loaded:
-                            await self._unreserve_agent_slots(sess_ctx, loaded_kernel[0],
-                                                              loaded_kernel[1])
+                            master_id = get_master_id(sess_ctx.kernels)
+                            await _unreserve_agent_slots(
+                                db_conn, sess_ctx, loaded_kernel[1])
                             async with self.dbpool.acquire() as conn, conn.begin():
                                 query = kernels.update().values({
                                     'status': KernelStatus.CANCELLED,
                                     'status_info': 'failed-to-start',
                                     'status_changed': datetime.now(tzutc()),
-                                }).where(kernels.c.session_id == sess_ctx.sess_id)
+                                }).where(kernels.c.session_id == master_id)
                                 await conn.execute(query)
                     start_task_args.append(
                         (
@@ -568,9 +572,9 @@ async def _list_existing_sessions(
             session = ExistingSession(
                     kernels=[],
                     access_key=row['access_key'],
-                    sess_type=row['session_type'],
-                    sess_id=row['session_id'],
-                    sess_uuid=row['session_uuid'],
+                    session_type=row['session_type'],
+                    session_name=row['session_id'],
+                    session_uuid=row['session_uuid'],
                     domain_name=row['domain_name'],
                     group_id=row['group_id'],
                     scaling_group=row['scaling_group'],

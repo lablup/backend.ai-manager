@@ -16,7 +16,8 @@ from . import (
     AbstractScheduler,
     PendingSession,
     ExistingSession,
-    AgentContext
+    AgentContext,
+    get_master_id,
 )
 
 
@@ -32,7 +33,7 @@ class MOFScheduler(AbstractScheduler):
                      existing_sessions: Sequence[ExistingSession],
                      ) -> Optional[KernelId]:
         # Just pick the first pending session.
-        return self.get_master_id(pending_sessions[0].kernels)
+        return get_master_id(pending_sessions[0].kernels)
 
     def assign_agent(self,
                      agents: Sequence[AgentContext],

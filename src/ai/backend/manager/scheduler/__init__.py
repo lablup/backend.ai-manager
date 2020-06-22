@@ -67,7 +67,6 @@ class ExistingSession:
     domain_name: str
     group_id: uuid.UUID
     scaling_group: str
-    image_ref: ImageRef
     occupying_slots: ResourceSlot
 
 
@@ -165,11 +164,6 @@ class AbstractScheduler(metaclass=ABCMeta):
     def __init__(self, config: Mapping[str, Any]) -> None:
         self.config = config
 
-    def get_master_id(self, kernels: List[KernelInfo]) -> KernelId:
-        for k in kernels:
-            if k.role == 'master':
-                return k.kernel_id
-
     @abstractmethod
     def pick_session(
         self,
@@ -186,3 +180,10 @@ class AbstractScheduler(metaclass=ABCMeta):
         pending_session: PendingSession,
     ) -> Optional[AgentId]:
         return None
+
+
+def get_master_id(kernels: List[KernelInfo]) -> KernelId:
+    for k in kernels:
+        if k.role == 'master':
+            return k.kernel_id
+    raise RuntimeError('Unable to get master kernel ID')

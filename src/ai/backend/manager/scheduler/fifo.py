@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import (
     Any, Optional,
-    List, Sequence,
+    Sequence,
     Mapping,
     Tuple,
 )
@@ -18,6 +18,7 @@ from . import (
     AgentContext,
     PendingSession,
     ExistingSession,
+    get_master_id,
 )
 
 
@@ -50,7 +51,7 @@ class FIFOSlotScheduler(AbstractScheduler):
                      existing_sessions: Sequence[ExistingSession],
                      ) -> Optional[KernelId]:
         # Just pick the first pending session.
-        return self.get_master_id(pending_sessions[0].kernels)
+        return get_master_id(pending_sessions[0].kernels)
 
     def assign_agent(self,
                      agents: Sequence[AgentContext],
@@ -81,7 +82,7 @@ class LIFOSlotScheduler(AbstractScheduler):
                      existing_sessions: Sequence[ExistingSession],
                      ) -> Optional[KernelId]:
         # Just pick the last pending session.
-        return self.get_master_id(pending_sessions[-1].kernels)
+        return get_master_id(pending_sessions[-1].kernels)
 
     def assign_agent(self,
                      agents: Sequence[AgentContext],
