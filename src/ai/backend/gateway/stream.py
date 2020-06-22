@@ -466,7 +466,7 @@ async def kernel_terminated(app: web.Application, agent_id: AgentId, event_name:
     except SessionNotFound:
         return
     if kernel.role == 'master':
-        session_name = kernel['sess_id']
+        session_name = kernel['session_id']
         stream_key = (session_name, kernel['access_key'])
         cancelled_tasks = []
         for sock in app['stream_stdin_socks'][session_name]:

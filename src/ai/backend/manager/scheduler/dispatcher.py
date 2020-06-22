@@ -212,7 +212,7 @@ class SchedulerDispatcher(aobject):
             Sequence[Any],
             SchedulingContext,
             PendingSession,
-            AgentAllocationContext,
+            List[List[Union[KernelInfo, AgentAllocationContext]]],
             List[Union[Exception, PredicateResult]],
         ]]
         start_task_args = []
@@ -249,7 +249,7 @@ class SchedulerDispatcher(aobject):
 
                 log_args = (sess_ctx.session_uuid, sess_ctx.session_name, sess_ctx.access_key)
                 log.debug(log_fmt + 'try-scheduling', *log_args)
-                loaded: List[Any] = []
+                alloc_ctxs: List[List[Union[KernelInfo, AgentAllocationContext]]] = []
 
                 async with db_conn.begin():
                     predicates: Sequence[Awaitable[PredicateResult]] = [
@@ -300,14 +300,16 @@ class SchedulerDispatcher(aobject):
                             await _invoke_failure_callbacks(
                                 db_conn, sched_ctx, sess_ctx, check_results,
                             )
-                            continue
+                            # continue
+                            raise
                         except Exception:
                             log.exception(log_fmt + 'unexpected-error, during agent allocation',
                                           *log_args)
                             await _invoke_failure_callbacks(
                                 db_conn, sched_ctx, sess_ctx, check_results,
                             )
-                            continue
+                            # continue
+                            raise
                         query = kernels.update().values({
                             'agent': agent_alloc_ctx.agent_id,
                             'agent_addr': agent_alloc_ctx.agent_addr,
@@ -317,57 +319,12 @@ class SchedulerDispatcher(aobject):
                             'status_changed': datetime.now(tzutc()),
                         }).where(kernels.c.id == kernel.kernel_id)
                         await db_conn.execute(query)
-
-                        log.debug(log_fmt + 'try-starting', *log_args)
-                        loaded.append([kernel, agent_alloc_ctx])
-
-                    if len(sess_ctx.kernels) == len(loaded):
-                        task = asyncio.create_task(
-                            self.registry.start_session(sched_ctx, sess_ctx, loaded))
-
-                        async def _cb(fut):
-                            if fut.exception():
-                                log.error(log_fmt + 'failed-starting',
-                                            *log_args, exc_info=fut.exception())
-                                for loaded_kernel in loaded:
-                                    await _unreserve_agent_slots(
-                                        db_conn, sess_ctx, loaded_kernel[1])
-                                await _invoke_failure_callbacks(
-                                    sess_ctx, check_results, use_new_txn=True)
-                                async with self.dbpool.acquire() as conn, conn.begin():
-                                    query = kernels.update().values({
-                                        'status': KernelStatus.CANCELLED,
-                                        'status_info': 'failed-to-start',
-                                        'status_changed': datetime.now(tzutc()),
-                                    }).where(kernels.c.session_id == sess_ctx.session_id)
-                                    await conn.execute(query)
-                                await self.registry.event_dispatcher.produce_event(
-                                    'kernel_cancelled',
-                                    (str(sess_ctx.session_id), 'failed-to-start'),
-                                )
-
-                            else:
-                                log.info(log_fmt + 'started', *log_args)
-                                await _invoke_success_callbacks(
-                                    sess_ctx, check_results, use_new_txn=True)
-
-                        task.add_done_callback(lambda fut: asyncio.create_task(_cb(fut)))
-                    else:
-                        for loaded_kernel in loaded:
-                            await _unreserve_agent_slots(
-                                db_conn, sess_ctx, loaded_kernel[1])
-                            async with self.dbpool.acquire() as conn, conn.begin():
-                                query = kernels.update().values({
-                                    'status': KernelStatus.CANCELLED,
-                                    'status_info': 'failed-to-start',
-                                    'status_changed': datetime.now(tzutc()),
-                                }).where(kernels.c.session_uuid == sess_ctx.session_uuid)
-                                await conn.execute(query)
+                        alloc_ctxs.append([kernel, agent_alloc_ctx])
                     start_task_args.append(
                         (
                             log_args, sched_ctx,
                             sess_ctx,
-                            agent_alloc_ctx,
+                            alloc_ctxs,
                             check_results,
                         )
                     )
@@ -388,24 +345,26 @@ class SchedulerDispatcher(aobject):
             for sgroup_name in schedulable_scaling_groups:
                 await _schedule_in_sgroup(db_conn, sgroup_name)
 
-        async def start_session(log_args, sched_ctx, sess_ctx, agent_alloc_ctx, check_results):
+        async def start_session(log_args, sched_ctx, sess_ctx, alloc_ctxs, check_results):
             log.debug(log_fmt + 'try-starting', *log_args)
             try:
-                await self.registry.start_session(sched_ctx, sess_ctx, agent_alloc_ctx)
+                assert len(sess_ctx.kernels) == len(alloc_ctxs)
+                await self.registry.start_session(sched_ctx, sess_ctx, alloc_ctxs)
             except Exception as e:
                 log.error(log_fmt + 'failed-starting', *log_args, exc_info=e)
                 async with self.dbpool.acquire(), db_conn.begin():
-                    await _unreserve_agent_slots(db_conn, sess_ctx, agent_alloc_ctx)
+                    for kernel, agent_alloc_ctx in alloc_ctxs:
+                        await _unreserve_agent_slots(db_conn, sess_ctx, agent_alloc_ctx)
                     await _invoke_failure_callbacks(db_conn, sched_ctx, sess_ctx, check_results)
                     query = kernels.update().values({
                         'status': KernelStatus.CANCELLED,
                         'status_info': 'failed-to-start',
                         'status_changed': datetime.now(tzutc()),
-                    }).where(kernels.c.id == sess_ctx.kernel_id)
+                    }).where(kernels.c.session_uuid == sess_ctx.session_uuid)
                     await db_conn.execute(query)
                 await self.registry.event_dispatcher.produce_event(
                     'kernel_cancelled',
-                    (str(sess_ctx.kernel_id), 'failed-to-start'),
+                    (str(sess_ctx.session_uuid), 'failed-to-start'),
                 )
             else:
                 log.info(log_fmt + 'started', *log_args)
@@ -413,9 +372,9 @@ class SchedulerDispatcher(aobject):
                     await _invoke_success_callbacks(db_conn, sched_ctx, sess_ctx, check_results)
 
         start_coros = []
-        for log_args, sched_ctx, sess_ctx, agent_alloc_ctx, check_results in start_task_args:
+        for log_args, sched_ctx, sess_ctx, alloc_ctxs, check_results in start_task_args:
             start_coros.append(
-                start_session(log_args, sched_ctx, sess_ctx, agent_alloc_ctx, check_results)
+                start_session(log_args, sched_ctx, sess_ctx, alloc_ctxs, check_results)
             )
         await asyncio.gather(*start_coros, return_exceptions=True)
 
