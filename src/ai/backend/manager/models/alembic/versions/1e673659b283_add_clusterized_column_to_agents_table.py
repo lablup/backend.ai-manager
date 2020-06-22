@@ -1,7 +1,7 @@
 """Add clusterized column to agents table
 
 Revision ID: 1e673659b283
-Revises: 1f328acc29d8
+Revises: d5cc54fd36b5
 Create Date: 2020-01-07 17:52:51.771357
 
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = '1e673659b283'
-down_revision = '1f328acc29d8'
+down_revision = 'd5cc54fd36b5'
 branch_labels = None
 depends_on = None
 
