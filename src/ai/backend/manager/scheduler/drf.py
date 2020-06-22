@@ -14,6 +14,7 @@ from typing import (
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     AccessKey, AgentId,
+    KernelId,
     ResourceSlot,
 )
 from . import (
@@ -39,7 +40,7 @@ class DRFScheduler(AbstractScheduler):
                      total_capacity: ResourceSlot,
                      pending_sessions: Sequence[PendingSession],
                      existing_sessions: Sequence[ExistingSession],
-                     ) -> Optional[str]:
+                     ) -> Optional[KernelId]:
         self.total_capacity = total_capacity
 
         # Calculate the initial dominant shares of all users.
@@ -73,7 +74,7 @@ class DRFScheduler(AbstractScheduler):
         # who has the lowest dominant share.
         for pending_sess in pending_sessions:
             if pending_sess.access_key == least_dominant_share_user:
-                return pending_sess.sess_id
+                return self.get_master_id(pending_sess.kernels)
 
         return None
 

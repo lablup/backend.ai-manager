@@ -476,33 +476,51 @@ async def _list_pending_sessions(
         )
         .order_by(kernels.c.created_at)
     )
-    items = []
+    items: MutableMapping[str, PendingSession] = {}
     async for row in db_conn.execute(query):
-        items.append(PendingSession(
+        if _session := items.get(row['session_id']):
+            session = _session
+        else:
+            session = PendingSession(
+                kernels=[],
+                access_key=row['access_key'],
+                session_type=row['session_type'],
+                session_name=row['session_id'],
+                session_uuid=row['session_uuid'],
+                domain_name=row['domain_name'],
+                group_id=row['group_id'],
+                scaling_group=row['scaling_group'],
+                resource_policy=row['resource_policy'],
+                resource_opts={},
+                requested_slots=ResourceSlot(),
+                internal_data=row['internal_data'],
+                target_sgroup_names=[],
+                environ={
+                    k: v for k, v
+                    in map(lambda s: s.split('=', maxsplit=1), row['environ'])
+                },
+                mounts=row['mounts'],
+                mount_map=row['mount_map'],
+                bootstrap_script=row['bootstrap_script'],
+                startup_command=row['startup_command'],
+                preopen_ports=row['preopen_ports'],
+            )
+            items[row['session_id']] = session
+        # TODO: Remove `type: ignore` when mypy supports type inference for walrus operator
+        # Check https://github.com/python/mypy/issues/7316
+        session.kernels.append(KernelInfo(  # type: ignore
             kernel_id=row['id'],
-            access_key=row['access_key'],
-            session_type=row['sess_type'],
-            session_name=row['sess_id'],
-            domain_name=row['domain_name'],
-            group_id=row['group_id'],
-            scaling_group=row['scaling_group'],
+            role=row['role'],
+            idx=row['idx'],
             image_ref=ImageRef(row['image'], [row['registry']]),
-            resource_policy=row['resource_policy'],
-            resource_opts=row['resource_opts'],
-            requested_slots=row['occupied_slots'],
-            internal_data=row['internal_data'],
-            target_sgroup_names=[],
-            environ={
-                k: v for k, v
-                in map(lambda s: s.split('=', maxsplit=1), row['environ'])
-            },
-            mounts=row['mounts'],
-            mount_map=row['mount_map'],
             bootstrap_script=row['bootstrap_script'],
             startup_command=row['startup_command'],
-            preopen_ports=row['preopen_ports'],
+            resource_opts=row['resource_opts'],
+            requested_slots=row['occupied_slots'],
         ))
-    return items
+        session.requested_slots += row['occupied_slots']  # type: ignore
+        merge_resource(session.resource_opts, row['resource_opts'])  # type: ignore
+    return list(items.values())
 
 
 async def _list_existing_sessions(
@@ -542,20 +560,35 @@ async def _list_existing_sessions(
         )
         .order_by(kernels.c.created_at)
     )
-    items = []
+    items: MutableMapping[str, ExistingSession] = {}
     async for row in db_conn.execute(query):
-        items.append(ExistingSession(
+        if _session := items.get(row['session_id']):
+            session = _session
+        else:
+            session = ExistingSession(
+                    kernels=[],
+                    access_key=row['access_key'],
+                    sess_type=row['session_type'],
+                    sess_id=row['session_id'],
+                    sess_uuid=row['session_uuid'],
+                    domain_name=row['domain_name'],
+                    group_id=row['group_id'],
+                    scaling_group=row['scaling_group'],
+                    occupying_slots=row['occupied_slots'],
+            )
+            items[row['session_id']] = session
+        session.kernels.append(KernelInfo(  # type: ignore
             kernel_id=row['id'],
-            access_key=row['access_key'],
-            session_type=row['sess_type'],
-            session_name=row['sess_id'],
-            domain_name=row['domain_name'],
-            group_id=row['group_id'],
-            scaling_group=row['scaling_group'],
+            role=row['role'],
+            idx=row['idx'],
             image_ref=ImageRef(row['image'], [row['registry']]),
-            occupying_slots=row['occupied_slots'],
+            resource_opts={},
+            requested_slots=ResourceSlot(),
+            bootstrap_script='',
+            startup_command=''
         ))
-    return items
+
+    return list(items.values())
 
 
 async def _list_agents_by_sgroup(

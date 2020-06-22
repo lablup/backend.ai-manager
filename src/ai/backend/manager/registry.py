@@ -767,10 +767,10 @@ class AgentRegistry:
             kernel: KernelInfo = kernel_with_agent[0]
             agent_ctx: AgentAllocationContext = kernel_with_agent[1]
             auto_pull = await self.config_server.get('config/docker/image/auto_pull')
-            image_info = await self.config_server.inspect_image(sess_ctx.image_ref)
+            image_info = await self.config_server.inspect_image(kernel.image_ref)
             registry_url, registry_creds = \
                 await get_registry_info(self.config_server.etcd,
-                                        sess_ctx.image_ref.registry)
+                                        kernel.image_ref.registry)
             async with self.dbpool.acquire() as conn, conn.begin():
                 query = (
                     sa.select([keypair_resource_policies])
@@ -782,7 +782,7 @@ class AgentRegistry:
 
             # Create the kernel by invoking the agent
             async with self.handle_kernel_exception(
-                    'create_session', sess_ctx.sess_id, sess_ctx.access_key):
+                    'create_session', sess_ctx.session_name, sess_ctx.access_key):
                 async with RPCContext(agent_ctx.agent_addr, None) as rpc:
                     config: KernelCreationConfig = {
                         'image': {
@@ -832,7 +832,7 @@ class AgentRegistry:
                         master_info = created_info
 
             log.debug('start_session(s:{}, ak:{}, k:{}) -> created on ag:{}\n{!r}',
-                      sess_ctx.sess_id, sess_ctx.access_key, kernel.kernel_id,
+                      sess_ctx.session_name, sess_ctx.access_key, kernel.kernel_id,
                       agent_ctx.agent_id, created_info)
             assert str(kernel.kernel_id) == created_info['id']
 
@@ -1081,7 +1081,7 @@ class AgentRegistry:
                         (str(kernel.id), 'user-requested'),
                     )
                 if kernel['agent_addr'] is None:
-                    await self.mark_kernel_terminated(str(kernel.id), 'Unknown error while allocating')
+                    await self.mark_kernel_terminated(kernel.id, 'Unknown error while allocating')
                     if kernel.role == 'master':
                         master_stat = {'status': 'terminated'}
                 else:

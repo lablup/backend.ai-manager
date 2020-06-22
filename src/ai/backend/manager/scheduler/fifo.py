@@ -3,13 +3,14 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import (
     Any, Optional,
-    Sequence,
+    List, Sequence,
     Mapping,
     Tuple,
 )
 
 from ai.backend.common.types import (
     AgentId,
+    KernelId,
     ResourceSlot,
 )
 from . import (
@@ -47,9 +48,9 @@ class FIFOSlotScheduler(AbstractScheduler):
                      total_capacity: ResourceSlot,
                      pending_sessions: Sequence[PendingSession],
                      existing_sessions: Sequence[ExistingSession],
-                     ) -> Optional[str]:
+                     ) -> Optional[KernelId]:
         # Just pick the first pending session.
-        return pending_sessions[0].sess_id
+        return self.get_master_id(pending_sessions[0].kernels)
 
     def assign_agent(self,
                      agents: Sequence[AgentContext],
@@ -78,9 +79,9 @@ class LIFOSlotScheduler(AbstractScheduler):
                      total_capacity: ResourceSlot,
                      pending_sessions: Sequence[PendingSession],
                      existing_sessions: Sequence[ExistingSession],
-                     ) -> Optional[str]:
+                     ) -> Optional[KernelId]:
         # Just pick the last pending session.
-        return pending_sessions[-1].sess_id
+        return self.get_master_id(pending_sessions[-1].kernels)
 
     def assign_agent(self,
                      agents: Sequence[AgentContext],
