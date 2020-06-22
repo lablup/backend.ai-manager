@@ -8,7 +8,6 @@ import time
 from typing import (
     Any,
     Awaitable,
-    Dict,
     List,
     Mapping,
     MutableMapping,
@@ -49,8 +48,6 @@ from . import (
     AgentContext,
     AgentAllocationContext,
     AbstractScheduler,
-    KernelInfo,
-    KernelAgentBinding
 )
 from .predicates import (
     check_concurrency,
@@ -237,12 +234,12 @@ class SchedulerDispatcher(aobject):
                     pending_sessions,
                     existing_sessions,
                 )
-                if picked_sess_id is None:
+                if picked_kernel_id is None:
                     # no session is picked.
                     # continue to next sgroup.
                     return
                 for picked_idx, sess_ctx in enumerate(pending_sessions):
-                    if sess_ctx.sess_id == picked_sess_id:
+                    if sess_ctx.sess_id == picked_kernel_id:
                         break
                 else:
                     # no matching entry for picked session?
@@ -334,7 +331,8 @@ class SchedulerDispatcher(aobject):
                                 for loaded_kernel in loaded:
                                     await self._unreserve_agent_slots(sess_ctx, loaded_kernel[0],
                                                                       loaded_kernel[1])
-                                await _invoke_failure_callbacks(sess_ctx, check_results, use_new_txn=True)
+                                await _invoke_failure_callbacks(
+                                    sess_ctx, check_results, use_new_txn=True)
                                 async with self.dbpool.acquire() as conn, conn.begin():
                                     query = kernels.update().values({
                                         'status': KernelStatus.CANCELLED,
@@ -349,7 +347,8 @@ class SchedulerDispatcher(aobject):
 
                             else:
                                 log.info(log_fmt + 'started', *log_args)
-                                await _invoke_success_callbacks(sess_ctx, check_results, use_new_txn=True)
+                                await _invoke_success_callbacks(
+                                    sess_ctx, check_results, use_new_txn=True)
 
                         task.add_done_callback(lambda fut: asyncio.create_task(_cb(fut)))
                     else:
@@ -686,4 +685,3 @@ async def _invoke_failure_callbacks(
             callbacks.append(result.failure_cb(db_conn, sched_ctx, sess_ctx))
     for cb in reversed(callbacks):
         await cb
->>>>>>> master

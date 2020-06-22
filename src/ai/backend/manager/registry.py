@@ -425,9 +425,9 @@ class AgentRegistry:
                 )[0]
 
     async def get_session_by_uuid(self, sess_uuid: str, access_key: str, *,
-                                 field=None,
-                                 for_update=False,
-                                 db_connection=None):
+                                  field=None,
+                                  for_update=False,
+                                  db_connection=None):
         '''
         Retreive the kernel information from the session UUID.
         If the kernel is composed of multiple containers, it
@@ -463,7 +463,7 @@ class AgentRegistry:
             result = await conn.execute(query)
             rows = await result.fetchall()
             if rows is None or len(rows) == 0:
-                raise KernelNotFound
+                raise SessionNotFound
             return rows
 
     async def get_sessions(
@@ -662,11 +662,11 @@ class AgentRegistry:
                 gpu = creation_config.get('instanceGPUs')
                 if gpu is not None:
                     raise InvalidAPIParameters('Client upgrade required '
-                                            'to use GPUs (v19.03+).')
+                                               'to use GPUs (v19.03+).')
                 tpu = creation_config.get('instanceTPUs')
                 if tpu is not None:
                     raise InvalidAPIParameters('Client upgrade required '
-                                            'to use TPUs (v19.03+).')
+                                               'to use TPUs (v19.03+).')
 
             # Check the image resource slots.
             log.debug('requested_slots: {}', requested_slots)
@@ -819,7 +819,9 @@ class AgentRegistry:
                         if do_create_network:
                             error = await rpc.call.create_network(network_name)
                             if error is not None:
-                                raise KernelCreationFailed(f'Error while creating overlay network: {error}')
+                                raise KernelCreationFailed(
+                                    f'Error while creating overlay network: {error}'
+                                )
                             do_create_network = False
 
                     created_info = await rpc.call.create_kernel(str(kernel.kernel_id),
@@ -1062,7 +1064,6 @@ class AgentRegistry:
                 elif kernel.status in (KernelStatus.PREPARING, KernelStatus.PULLING):
                     raise GenericForbidden('Cannot destory kernels in preparing/pulling status')
                 else:
-                else:
                     if kernel.role == 'master':
                         # The master session is terminated; decrement the user's concurrency counter
                         query = (sa.update(keypairs)
@@ -1121,9 +1122,9 @@ class AgentRegistry:
             )
             async with self.dbpool.acquire() as conn, conn.begin():
                 session = await self.get_session(sess_id, access_key,
-                                                field=extra_cols,
-                                                for_update=True,
-                                                db_connection=conn)
+                                                 field=extra_cols,
+                                                 for_update=True,
+                                                 db_connection=conn)
                 await self.set_session_status(sess_id, access_key,
                                               KernelStatus.RESTARTING,
                                               db_conn=conn)
@@ -1646,60 +1647,64 @@ class AgentRegistry:
 
     async def sess_id_to_kernel_id(self, sess_id: str, access_key: str) -> KernelId:
         async with self.dbpool.acquire() as conn, conn.begin():
-            query = (sa.select([kernels.c.id])
-                    .select_from(kernels)
-                    .where((kernels.c.session_id == sess_id) &
-                            (kernels.c.access_key == access_key) &
-                            ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES)))
-                    .limit(1).offset(0)
-                    )
+            query = (
+                sa.select([kernels.c.id])
+                .select_from(kernels)
+                .where((kernels.c.session_id == sess_id) &
+                        (kernels.c.access_key == access_key) &
+                        ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES)))
+                .limit(1).offset(0)
+            )
             result = await conn.execute(query)
             kernel_id = await result.scalar()
             if kernel_id is None:
-                raise KernelNotFound
+                raise SessionNotFound
         return KernelId(kernel_id)
 
     async def kernel_id_to_sess_id(self, kernel_id: str, access_key: str) -> str:
         async with self.dbpool.acquire() as conn, conn.begin():
-            query = (sa.select([kernels.c.session_id])
-                    .select_from(kernels)
-                    .where((kernels.c.id == kernel_id) &
-                            (kernels.c.access_key == access_key) &
-                            ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES)))
-                    .limit(1).offset(0)
-                    )
+            query = (
+                sa.select([kernels.c.session_id])
+                .select_from(kernels)
+                .where((kernels.c.id == kernel_id) &
+                        (kernels.c.access_key == access_key) &
+                        ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES)))
+                .limit(1).offset(0)
+            )
             result = await conn.execute(query)
             sess_id = await result.scalar()
             if sess_id is None:
-                raise KernelNotFound
+                raise SessionNotFound
         return sess_id
 
     async def sess_uuid_to_kernel_id(self, sess_uuid: str, access_key: str) -> KernelId:
         async with self.dbpool.acquire() as conn, conn.begin():
-            query = (sa.select([kernels.c.id])
-                    .select_from(kernels)
-                    .where((kernels.c.session_uuid == sess_uuid) &
-                            (kernels.c.access_key == access_key) &
-                            ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES)))
-                    .limit(1).offset(0)
-                    )
+            query = (
+                sa.select([kernels.c.id])
+                .select_from(kernels)
+                .where((kernels.c.session_uuid == sess_uuid) &
+                        (kernels.c.access_key == access_key) &
+                        ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES)))
+                .limit(1).offset(0)
+            )
             result = await conn.execute(query)
             kernel_id = await result.scalar()
             if kernel_id is None:
-                raise KernelNotFound
+                raise SessionNotFound
         return KernelId(kernel_id)
 
     async def kernel_id_to_sess_uuid(self, kernel_id: str, access_key: str) -> str:
         async with self.dbpool.acquire() as conn, conn.begin():
-            query = (sa.select([kernels.c.session_uuid])
-                    .select_from(kernels)
-                    .where((kernels.c.id == kernel_id) &
-                            (kernels.c.access_key == access_key) &
-                            ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES)))
-                    .limit(1).offset(0)
-                    )
+            query = (
+                sa.select([kernels.c.session_uuid])
+                .select_from(kernels)
+                .where((kernels.c.id == kernel_id) &
+                        (kernels.c.access_key == access_key) &
+                        ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES)))
+                .limit(1).offset(0)
+            )
             result = await conn.execute(query)
             sess_uuid = await result.scalar()
             if sess_uuid is None:
-                raise KernelNotFound
+                raise SessionNotFound
         return sess_uuid

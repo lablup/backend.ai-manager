@@ -44,7 +44,6 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     AgentId, KernelId,
     SessionTypes,
-    KernelEnqueueingConfig,
 )
 from ai.backend.common.utils import current_loop
 from .defs import REDIS_STREAM_DB
@@ -695,9 +694,9 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
     try:
         # NOTE: We can reuse the session IDs of TERMINATED sessions only.
         # NOTE: Reusing a session in the PENDING status returns an empty value in service_ports.
-        kern = await registry.get_session(params['sess_id'], owner_access_key)
-        raise KernelAlreadyExists
-    except KernelNotFound:
+        await registry.get_session(params['sess_id'], owner_access_key)
+        raise SessionAlreadyExists
+    except SessionNotFound:
         pass
 
     async with dbpool.acquire() as conn, conn.begin():
@@ -797,11 +796,12 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
             # Resolve the image reference.
             try:
                 requested_image_ref = \
-                    await ImageRef.resolve_alias(kernel_config['image_ref'], request.app['config_server'].etcd)
+                    await ImageRef.resolve_alias(kernel_config['image_ref'],
+                                                 request.app['config_server'].etcd)
                 async with dbpool.acquire() as conn, conn.begin():
                     query = (sa.select([domains.c.allowed_docker_registries])
-                            .select_from(domains)
-                            .where(domains.c.name == params['domain']))
+                             .select_from(domains)
+                             .where(domains.c.name == params['domain']))
                     allowed_registries = await conn.scalar(query)
                     if requested_image_ref.registry not in allowed_registries:
                         raise AliasResolutionFailed
@@ -810,7 +810,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                 raise ImageNotFound
 
             for i in range(node['replicas']):
-                body = {'idx': i+1}
+                body = {'idx': i + 1}
                 body.update(kernel_config)
                 kernel_configs.append(body)
 

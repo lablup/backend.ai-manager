@@ -9,7 +9,7 @@ from typing import (
 )
 
 from ai.backend.common.types import (
-    AgentId, KernelId,
+    AgentId,
     ResourceSlot,
 )
 from . import (

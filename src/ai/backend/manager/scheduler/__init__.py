@@ -6,7 +6,7 @@ from typing import (
     Any, List, Optional,
     Protocol,
     Mapping,
-    Sequence, MutableSequence, List,
+    Sequence, MutableSequence,
 )
 import uuid
 

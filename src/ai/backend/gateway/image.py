@@ -400,8 +400,9 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
                     'SRC_IMAGE': source_image.canonical,
                     'TARGET_IMAGE': target_image.canonical,
                     'RUNTIME_PATH': params['runtimePath'],
-                    'BUILD_SCRIPT': (base64.b64encode(dockerfile_content.encode('utf8'))
-                                    .decode('ascii')),
+                    'BUILD_SCRIPT': (
+                        base64.b64encode(dockerfile_content.encode('utf8')).decode('ascii')
+                    ),
                 }
             },
             'startup_command': '/root/build-image.sh',

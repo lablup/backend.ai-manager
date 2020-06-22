@@ -162,7 +162,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 raise InvalidAPIParameters('Only one master node can be created per cluster')
             defined_roles.append(node['role'])
 
-        if not 'master' in defined_roles:
+        if 'master' not in defined_roles:
             raise InvalidAPIParameters('master node is required for a cluster')
         template_id = uuid.uuid4().hex
         resp = {
@@ -327,7 +327,7 @@ async def put(request: web.Request, params: Any) -> web.Response:
                 raise InvalidAPIParameters('Only one master node can be created per cluster')
             defined_roles.append(node['role'])
 
-        if not 'master' in defined_roles:
+        if 'master' not in defined_roles:
             raise InvalidAPIParameters('master node is required for a cluster')
         query = (sa.update(session_templates)
                    .values(template=body, name=body['metadata']['name'])

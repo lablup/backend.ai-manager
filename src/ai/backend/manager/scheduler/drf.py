@@ -13,7 +13,7 @@ from typing import (
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
-    AccessKey, AgentId, KernelId,
+    AccessKey, AgentId,
     ResourceSlot,
 )
 from . import (
