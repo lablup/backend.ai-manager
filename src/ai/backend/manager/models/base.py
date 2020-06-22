@@ -1,16 +1,23 @@
+from __future__ import annotations
 import asyncio
+import collections
 import enum
 import functools
 import logging
 from typing import (
-    Union,
-    Dict, Mapping
+    Any, Callable, Optional, Union,
+    Iterable,
+    Mapping, Dict,
+    Sequence, List,
+    Type, TypeVar, Protocol,
 )
 import sys
 import uuid
 
 from aiodataloader import DataLoader
 from aiotools import apartial
+from aiopg.sa.connection import SAConnection
+from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types import Scalar
 from graphql.language import ast
@@ -289,6 +296,64 @@ class PaginatedList(graphene.Interface):
     total_count = graphene.Int(required=True)
 
 
+# ref: https://github.com/python/mypy/issues/1212
+_GenericSQLBasedGQLObject = TypeVar('_GenericSQLBasedGQLObject',
+                                    bound='_SQLBasedGQLObject')
+_Key = TypeVar('_Key')
+
+
+class _SQLBasedGQLObject(Protocol):
+    @classmethod
+    def from_row(
+        cls: Type[_GenericSQLBasedGQLObject],
+        context: Mapping[str, Any],
+        row: RowProxy,
+    ) -> _GenericSQLBasedGQLObject:
+        ...
+
+
+async def batch_result(
+    context: Mapping[str, Any],
+    conn: SAConnection,
+    query: sa.sql.Select,
+    obj_type: Type[_GenericSQLBasedGQLObject],
+    key_list: Iterable[_Key],
+    key_getter: Callable[[RowProxy], _Key],
+) -> Sequence[Optional[_GenericSQLBasedGQLObject]]:
+    """
+    A batched query adaptor for (key -> item) resolving patterns.
+    """
+    objs_per_key: Dict[_Key, Optional[_GenericSQLBasedGQLObject]]
+    objs_per_key = collections.OrderedDict()
+    for key in key_list:
+        objs_per_key[key] = None
+    async for row in conn.execute(query):
+        objs_per_key[key_getter(row)] = obj_type.from_row(context, row)
+    return [*objs_per_key.values()]
+
+
+async def batch_multiresult(
+    context: Mapping[str, Any],
+    conn: SAConnection,
+    query: sa.sql.Select,
+    obj_type: Type[_GenericSQLBasedGQLObject],
+    key_list: Iterable[_Key],
+    key_getter: Callable[[RowProxy], _Key],
+) -> Sequence[Sequence[_GenericSQLBasedGQLObject]]:
+    """
+    A batched query adaptor for (key -> [item]) resolving patterns.
+    """
+    objs_per_key: Dict[_Key, List[_GenericSQLBasedGQLObject]]
+    objs_per_key = collections.OrderedDict()
+    for key in key_list:
+        objs_per_key[key] = list()
+    async for row in conn.execute(query):
+        objs_per_key[key_getter(row)].append(
+            obj_type.from_row(context, row)
+        )
+    return [*objs_per_key.values()]
+
+
 def privileged_query(required_role):
 
     def wrap(func):
@@ -322,7 +387,7 @@ def scoped_query(*,
     def wrap(resolve_func):
 
         @functools.wraps(resolve_func)
-        async def wrapped(executor, info, *args, **kwargs):
+        async def wrapped(executor, info: graphene.ResolveInfo, *args, **kwargs):
             from .user import UserRole
             client_role = info.context['user']['role']
             if user_key == 'access_key':
@@ -431,10 +496,7 @@ def privileged_mutation(required_role, target_func=None):
             # success(bool), message(str), item(object)
             if permitted:
                 return await func(cls, root, info, *args, **kwargs)
-            if info.field_name.startswith('delete_'):
-                return cls(False, 'no permission to execute the given mutation')
-            else:
-                return cls(False, 'no permission to execute the given mutation', None)
+            return cls(False, f"no permission to execute {info.path[0]}")
 
         return wrapped
 
@@ -486,7 +548,8 @@ def set_if_set(src, target, name, *, clean_func=None):
             target[name] = v
 
 
-def populate_fixture(db_connection, fixture_data):
+def populate_fixture(db_connection, fixture_data, *,
+                     ignore_unique_violation: bool = False):
 
     def insert(table, row):
         # convert enumtype to native values
@@ -504,7 +567,12 @@ def populate_fixture(db_connection, fixture_data):
             if len(pk_cols) == 0:
                 # some tables may not have primary keys.
                 # (e.g., m2m relationship)
-                insert(table, row)
+                try:
+                    insert(table, row)
+                except sa.exc.IntegrityError as e:
+                    if ignore_unique_violation and isinstance(e.orig, pg.errors.UniqueViolation):
+                        continue
+                    raise
                 continue
             # compose pk match where clause
             pk_match = functools.reduce(lambda x, y: x & y, [

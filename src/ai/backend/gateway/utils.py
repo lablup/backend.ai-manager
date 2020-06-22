@@ -84,29 +84,31 @@ def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None,
 
         @functools.wraps(handler)
         async def wrapped(request: web.Request, *args, **kwargs) -> web.Response:
-            params: Any = {}
+            orig_params: Any
             body: str = ''
             try:
                 body_exists = request.can_read_body
                 if body_exists:
                     body = await request.text()
                     if request.content_type == 'text/yaml':
-                        params = yaml.load(body, Loader=yaml.BaseLoader)
+                        orig_params = yaml.load(body, Loader=yaml.BaseLoader)
                     else:
-                        params = (loads or json.loads)(body)
+                        orig_params = (loads or json.loads)(body)
                 else:
-                    params = request.query
-                params = checker.check(params)
+                    orig_params = dict(request.query)
+                stripped_params = orig_params.copy()
+                stripped_params.pop('owner_access_key', None)
+                log.debug('stripped raw params: {}', stripped_params)
+                checked_params = checker.check(stripped_params)
                 if body_exists and query_param_checker:
                     query_params = query_param_checker.check(request.query)
                     kwargs['query'] = query_params
-            except (json.decoder.JSONDecodeError, yaml.YAMLError, yaml.MarkedYAMLError) as e:
-                log.exception(e)
+            except (json.decoder.JSONDecodeError, yaml.YAMLError, yaml.MarkedYAMLError):
                 raise InvalidAPIParameters('Malformed body')
             except t.DataError as e:
                 raise InvalidAPIParameters('Input validation error',
                                            extra_data=e.as_dict())
-            return await handler(request, params, *args, **kwargs)
+            return await handler(request, checked_params, *args, **kwargs)
 
         return wrapped
 
@@ -266,13 +268,6 @@ async def call_non_bursty(key: Hashable, coro: Callable[[], Any], *,
             return await coro()
         else:
             return coro()
-
-
-current_loop: Callable[[], asyncio.AbstractEventLoop]
-if hasattr(asyncio, 'get_running_loop'):  # Python 3.7+
-    current_loop = asyncio.get_running_loop
-else:
-    current_loop = asyncio.get_event_loop
 
 
 class Singleton(type):

@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import io
 import json
 import logging
 from pprint import pprint
@@ -11,6 +10,7 @@ import click
 from tabulate import tabulate
 
 from ai.backend.common.cli import EnumChoice, MinMaxRange
+from ai.backend.common.config import redis_config_iv
 from ai.backend.common.docker import ImageRef
 from ai.backend.common.etcd import (
     AsyncEtcd, ConfigScopes,
@@ -18,7 +18,6 @@ from ai.backend.common.etcd import (
     unquote as etcd_unquote,
 )
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.gateway.config import redis_config_iv
 from ai.backend.gateway.defs import REDIS_IMAGE_DB
 from ai.backend.gateway.etcd import ConfigServer
 
@@ -27,8 +26,6 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
 
 @click.group()
 def cli():
-    '''Provides commands to manage etcd-based Backend.AI cluster configs
-    and a simple etcd client functionality'''
     pass
 
 
@@ -47,7 +44,10 @@ async def etcd_ctx(cli_ctx):
     }
     etcd = AsyncEtcd(config['etcd']['addr'], config['etcd']['namespace'],
                      scope_prefix_map, credentials=creds)
-    yield etcd
+    try:
+        yield etcd
+    finally:
+        await etcd.close()
 
 
 @contextlib.asynccontextmanager
@@ -73,6 +73,7 @@ async def config_ctx(cli_ctx):
     finally:
         ctx['redis_image'].close()
         await ctx['redis_image'].wait_closed()
+        await config_server.close()
 
 
 @cli.command()
@@ -108,15 +109,8 @@ def put_json(cli_ctx, key, file, scope):
     async def _impl():
         async with etcd_ctx(cli_ctx) as etcd:
             try:
-                with contextlib.closing(io.BytesIO()) as buf:
-                    while True:
-                        part = file.read(65536)
-                        if not part:
-                            break
-                        buf.write(part)
-                    value = json.loads(buf.getvalue())
-                    value = {f'{key}/{k}': v for k, v in value.items()}
-                    await etcd.put_dict(value, scope=scope)
+                value = json.load(file)
+                await etcd.put_prefix(key, value, scope=scope)
             except Exception:
                 log.exception('An error occurred.')
     with cli_ctx.logger:

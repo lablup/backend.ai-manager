@@ -6,7 +6,7 @@ from typing import (
     Any, List, Optional,
     Protocol,
     Mapping,
-    Sequence, MutableSequence,
+    Sequence, MutableSequence, List,
 )
 import uuid
 
@@ -54,7 +54,6 @@ class SchedulingContext:
     Context for each scheduling decision.
     '''
     registry: AgentRegistry
-    db_conn: SAConnection
     known_slot_types: Mapping[str, str]
 
 
@@ -62,12 +61,13 @@ class SchedulingContext:
 class ExistingSession:
     kernels: List[KernelInfo]
     access_key: AccessKey
-    sess_id: str
-    sess_uuid: uuid.UUID
-    sess_type: SessionTypes
+    session_name: str
+    session_uuid: uuid.UUID
+    session_type: SessionTypes
     domain_name: str
     group_id: uuid.UUID
     scaling_group: str
+    image_ref: ImageRef
     occupying_slots: ResourceSlot
 
 
@@ -80,9 +80,9 @@ class PendingSession:
     '''
     kernels: List[KernelInfo]
     access_key: AccessKey
-    sess_id: str
-    sess_uuid: uuid.UUID
-    sess_type: SessionTypes
+    session_name: str
+    session_uuid: uuid.UUID
+    session_type: SessionTypes
     domain_name: str
     group_id: uuid.UUID
     scaling_group: str
@@ -93,7 +93,10 @@ class PendingSession:
     environ: Mapping[str, str]
     mounts: Sequence[str]
     mount_map: Mapping[str, str]
+    bootstrap_script: Optional[str]
+    startup_command: Optional[str]
     internal_data: Optional[Mapping[str, Any]]
+    preopen_ports: List[int]
 
 
 @attr.s(auto_attribs=True, slots=True)
@@ -123,10 +126,12 @@ class KernelAgentBinding:
 
 
 class PredicateCallback(Protocol):
-    async def __call__(self,
-                       sched_ctx: SchedulingContext,
-                       sess_ctx: PendingSession,
-                       db_conn: SAConnection = None) -> None:
+    async def __call__(
+        self,
+        db_conn: SAConnection,
+        sched_ctx: SchedulingContext,
+        sess_ctx: PendingSession,
+    ) -> None:
         ...
 
 
@@ -139,10 +144,12 @@ class PredicateResult:
 
 
 class SchedulingPredicate(Protocol):
-    async def __call__(self,
-                       sched_ctx: SchedulingContext,
-                       sess_ctx: PendingSession) \
-                       -> PredicateResult:
+    async def __call__(
+        self,
+        db_conn: SAConnection,
+        sched_ctx: SchedulingContext,
+        sess_ctx: PendingSession,
+    ) -> PredicateResult:
         ...
 
 
@@ -160,17 +167,17 @@ class AbstractScheduler(metaclass=ABCMeta):
 
     @abstractmethod
     def pick_session(
-            self,
-            total_capacity: ResourceSlot,
-            pending_sessions: Sequence[PendingSession],
-            existing_sessions: Sequence[ExistingSession],
-    ) -> Optional[str]:
+        self,
+        total_capacity: ResourceSlot,
+        pending_sessions: Sequence[PendingSession],
+        existing_sessions: Sequence[ExistingSession],
+    ) -> Optional[KernelId]:
         return None
 
     @abstractmethod
     def assign_agent(
-            self,
-            possible_agents: Sequence[AgentContext],
-            pending_session: PendingSession,
+        self,
+        possible_agents: Sequence[AgentContext],
+        pending_session: PendingSession,
     ) -> Optional[AgentId]:
         return None

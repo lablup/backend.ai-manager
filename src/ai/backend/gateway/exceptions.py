@@ -1,9 +1,8 @@
 '''
 This module defines a series of Backend.AI-specific errors based on HTTP Error
 classes from aiohttp.
-Raising a BackendError automatically is automatically mapped to a corresponding
-HTTP error response with RFC7807-style JSON-encoded description in its response
-body.
+Raising a BackendError is automatically mapped to a corresponding HTTP error
+response with RFC7807-style JSON-encoded description in its response body.
 
 In the client side, you should use "type" field in the body to distinguish
 canonical error types beacuse "title" field may change due to localization and
@@ -50,14 +49,24 @@ class BackendError(web.HTTPError):
         self.body = json.dumps(body).encode()
 
     def __str__(self):
+        lines = []
         if self.extra_msg:
-            return f'{self.error_title} ({self.extra_msg})'
-        return self.error_title
+            lines.append(f'{self.error_title} ({self.extra_msg})')
+        else:
+            lines.append(self.error_title)
+        if self.extra_data:
+            lines.append(' -> extra_data: ' + repr(self.extra_data))
+        return '\n'.join(lines)
 
     def __repr__(self):
+        lines = []
         if self.extra_msg:
-            return f'<{type(self).__name__}: {self.error_title} ({self.extra_msg})>'
-        return f'<{type(self).__name__}: {self.error_title}>'
+            lines.append(f'<{type(self).__name__}: {self.error_title} ({self.extra_msg})>')
+        else:
+            lines.append(f'<{type(self).__name__}: {self.error_title}>')
+        if self.extra_data:
+            lines.append(' -> extra_data: ' + repr(self.extra_data))
+        return '\n'.join(lines)
 
     def __reduce__(self):
         return (type(self), (self.extra_msg, self.extra_data))
@@ -76,6 +85,11 @@ class GenericBadRequest(web.HTTPBadRequest, BackendError):
 class GenericForbidden(web.HTTPForbidden, BackendError):
     error_type  = 'https://api.backend.ai/probs/generic-forbidden'
     error_title = 'Forbidden operation.'
+
+
+class InsufficientPrivilege(web.HTTPForbidden, BackendError):
+    error_type  = 'https://api.backend.ai/probs/insufficient-privilege'
+    error_title = 'Insufficient privilege.'
 
 
 class MethodNotAllowed(web.HTTPMethodNotAllowed, BackendError):
@@ -143,14 +157,24 @@ class ScalingGroupNotFound(web.HTTPNotFound, BackendError):
     error_title = 'No such scaling group.'
 
 
-class KernelNotFound(web.HTTPNotFound, BackendError):
-    error_type  = 'https://api.backend.ai/probs/kernel-not-found'
-    error_title = 'No such kernel.'
+class SessionNotFound(web.HTTPNotFound, BackendError):
+    error_type  = 'https://api.backend.ai/probs/session-not-found'
+    error_title = 'No such session.'
+
+
+class TooManySessionsMatched(web.HTTPNotFound, BackendError):
+    error_type  = 'https://api.backend.ai/probs/too-many-sessions-matched'
+    error_title = 'Too many sessions matched.'
 
 
 class TaskTemplateNotFound(web.HTTPNotFound, BackendError):
-    error_type  = 'https://api.backend.ai/probs/kernel-not-found'
+    error_type  = 'https://api.backend.ai/probs/task-template-not-found'
     error_title = 'No such task template.'
+
+
+class TooManyKernelsFound(web.HTTPNotFound, BackendError):
+    error_type  = 'https://api.backend.ai/probs/too-many-kernels'
+    error_title = 'There are two or more matching kernels.'
 
 
 class AppNotFound(web.HTTPNotFound, BackendError):
@@ -158,9 +182,9 @@ class AppNotFound(web.HTTPNotFound, BackendError):
     error_title = 'No such app service provided by the session.'
 
 
-class KernelAlreadyExists(web.HTTPBadRequest, BackendError):
-    error_type  = 'https://api.backend.ai/probs/kernel-already-exists'
-    error_title = 'The kernel already exists with ' \
+class SessionAlreadyExists(web.HTTPBadRequest, BackendError):
+    error_type  = 'https://api.backend.ai/probs/session-already-exists'
+    error_title = 'The session already exists with ' \
                   'a different runtime type (language).'
 
 
@@ -177,6 +201,21 @@ class VFolderNotFound(web.HTTPNotFound, BackendError):
 class VFolderAlreadyExists(web.HTTPBadRequest, BackendError):
     error_type  = 'https://api.backend.ai/probs/vfolder-already-exists'
     error_title = 'The virtual folder already exists with the same name.'
+
+
+class DotfileCreationFailed(web.HTTPBadRequest, BackendError):
+    error_type  = 'https://api.backend.ai/probs/generic-bad-request'
+    error_title = 'Dotfile creation has failed.'
+
+
+class DotfileAlreadyExists(web.HTTPBadRequest, BackendError):
+    error_type  = 'https://api.backend.ai/probs/generic-bad-request'
+    error_title = 'Dotfile already exists.'
+
+
+class DotfileNotFound(web.HTTPNotFound, BackendError):
+    error_type  = 'https://api.backend.ai/probs/generic-not-found'
+    error_title = 'Requested Dotfile not found.'
 
 
 class QuotaExceeded(web.HTTPPreconditionFailed, BackendError):
@@ -202,9 +241,9 @@ class ServerFrozen(web.HTTPServiceUnavailable, BackendError):
 class AgentError(RuntimeError):
     '''
     A dummy exception class to distinguish agent-side errors passed via
-    aiozmq.rpc calls.
+    agent rpc calls.
 
-    It carrise two args tuple: the exception type and exception arguments from
+    It carries two args tuple: the exception type and exception arguments from
     the agent.
     '''
 

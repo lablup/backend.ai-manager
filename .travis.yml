@@ -32,15 +32,9 @@ install:
     export BRANCH=$(if [ "$TRAVIS_PULL_REQUEST" == "false" ]; then echo $TRAVIS_BRANCH; else echo $TRAVIS_PULL_REQUEST_BRANCH; fi)
     git ls-remote --heads 'https://github.com/lablup/backend.ai-common' | grep -q "refs/heads/${BRANCH}"
     if [ $? -eq 0 ]; then
-      sed -i "s%\(backend.ai-common\)@master%\1@${BRANCH}%" requirements-ci.txt
+      sed -i "s%\(backend.ai-common\)@master%\1@${BRANCH}%" requirements/test.txt
     fi
-  - pip install -U -r requirements-ci.txt
-  - |
-    # temporary monkey-patch for aiozmq in Python 3.8
-    _AIOZMQ_PATCH_FILE="/home/travis/virtualenv/python3.8.0/lib/python3.8/site-packages/aiozmq/rpc/base.py"
-    if [ -f "${_AIOZMQ_PATCH_FILE}" ]; then
-      sed -i 's/asyncio.async(\([^,]\+\), loop=[^,]\+)/asyncio.create_task(\1)/g' "${_AIOZMQ_PATCH_FILE}"
-    fi
+  - pip install -U -r requirements/test.txt
   - mkdir -p ~/.config/backend.ai
   - cp config/ci.toml ~/.config/backend.ai/manager.toml
   - mkdir -p /tmp/scratches
@@ -69,9 +63,6 @@ before_script:
   # pull minimal kernel images
   - docker pull lablup/lua:5.3-alpine3.8
 script:
-  #- python -m flake8 src tests
-  - python -m flake8 src  # temporarily skip "tests" dir
-  - python -m mypy src/ai/backend
   - python -m pytest -m 'not integration' -v --cov=src
 after_script:
   - codecov
@@ -80,7 +71,7 @@ after_script:
 jobs:
   include:
     - stage: test
-      python: "3.8"
+      # if there is only one case in the build matrix, we should include the test stage explicitly.
     - stage: deploy
       python: "3.8"
       install: skip

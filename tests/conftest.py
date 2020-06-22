@@ -1,37 +1,43 @@
-import asyncio
 from datetime import datetime
 import hashlib, hmac
-from importlib import import_module
 import json
 import os
 from pathlib import Path
 import re
 import secrets
 import shutil
-import signal
 import subprocess
 import tempfile
+from typing import (
+    Any, Optional,
+    Sequence,
+    Mapping,
+    Tuple,
+)
 
 import aiohttp
 from aiohttp import web
-import aiohttp_cors
-import aiojobs.aiohttp
-from async_timeout import timeout
 from dateutil.tz import tzutc
 import sqlalchemy as sa
 import psycopg2 as pg
 import pytest
 
-from ai.backend.common.argparse import host_port_pair
-from ai.backend.gateway.config import load as load_config, redis_config_iv
+from ai.backend.gateway.config import load as load_config
 from ai.backend.gateway.etcd import ConfigServer
 from ai.backend.gateway.server import (
-    gw_init, gw_shutdown,
-    exception_middleware, api_middleware,
-    _get_legacy_handler,
-    PUBLIC_INTERFACES)
+    build_root_app,
+)
+from ai.backend.gateway.types import (
+    CleanupContext,
+)
 from ai.backend.manager.models.base import populate_fixture
-from ai.backend.manager.models import agents, kernels, keypairs, vfolders
+from ai.backend.manager.models import (
+    scaling_groups,
+    agents,
+    kernels, keypairs, vfolders,
+)
+from ai.backend.common.config import redis_config_iv
+from ai.backend.common.types import HostPortPair
 
 here = Path(__file__).parent
 
@@ -76,6 +82,8 @@ def vfolder_host():
 def test_config(test_id, test_db):
     cfg = load_config()
     cfg['db']['name'] = test_db
+    cfg['manager']['num-proc'] = 1
+    cfg['manager']['service-addr'] = HostPortPair('localhost', 29100)
     # In normal setups, this is read from etcd.
     cfg['redis'] = redis_config_iv.check({
         'addr': {'host': '127.0.0.1', 'port': '6379'},
@@ -138,10 +146,15 @@ async def config_server(app, etcd_fixture):
 
 @pytest.fixture(scope='session')
 def database(request, test_config, test_db):
-    # Create database using low-level psycopg2 API.
+    '''
+    Create a new database for the current test session
+    and install the table schema using alembic.
+    '''
     db_addr = test_config['db']['addr']
     db_user = test_config['db']['user']
     db_pass = test_config['db']['password']
+
+    # Create database using low-level psycopg2 API.
     # Temporarily use "testing" dbname until we create our own db.
     if db_pass:
         # TODO: escape/urlquote db_pass
@@ -182,7 +195,18 @@ def database(request, test_config, test_db):
         subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'schema', 'oneshot',
                          '-f', alembic_cfg.name])
 
-    # Populate example_keypair fixture
+
+@pytest.fixture()
+def database_fixture(test_config, test_db, database):
+    '''
+    Populate the example data as fixtures to the database
+    and delete them after use.
+    '''
+    db_addr = test_config['db']['addr']
+    db_user = test_config['db']['user']
+    db_pass = test_config['db']['password']
+    alembic_url = f'postgresql://{db_user}:{db_pass}@{db_addr}/{test_db}'
+
     fixtures = {}
     fixtures.update(json.loads(
         (Path(__file__).parent.parent /
@@ -192,9 +216,25 @@ def database(request, test_config, test_db):
          'sample-configs' / 'example-resource-presets.json').read_text()))
     engine = sa.create_engine(alembic_url)
     conn = engine.connect()
-    populate_fixture(conn, fixtures)
-    conn.close()
-    engine.dispose()
+    try:
+        populate_fixture(conn, fixtures, ignore_unique_violation=True)
+    finally:
+        conn.close()
+        engine.dispose()
+
+    yield
+
+    engine = sa.create_engine(alembic_url)
+    conn = engine.connect()
+    try:
+        conn.execute((vfolders.delete()))
+        conn.execute((kernels.delete()))
+        conn.execute((agents.delete()))
+        conn.execute((keypairs.delete()))
+        conn.execute((scaling_groups.delete()))
+    finally:
+        conn.close()
+        engine.dispose()
 
 
 class Client:
@@ -203,9 +243,6 @@ class Client:
         if not url.endswith('/'):
             url += '/'
         self._url = url
-
-    async def close(self):
-        await self._session.close()
 
     def request(self, method, path, **kwargs):
         while path.startswith('/'):
@@ -251,39 +288,67 @@ class Client:
 
 
 @pytest.fixture
-async def app(event_loop, test_config, unused_tcp_port_factory):
-    app = web.Application(middlewares=[
-        exception_middleware,
-        api_middleware,
-    ])
-    app['config'] = test_config
-    app['pidx'] = 0
-    return app
+async def app(test_config, event_loop):
+    '''
+    Create an empty application with the test configuration.
+    '''
+    return build_root_app(0, test_config,
+                          cleanup_contexts=[],
+                          subapp_pkgs=[])
 
 
 @pytest.fixture
-async def default_keypair(event_loop, app):
-    """Global admin keypair"""
-    # access_key = 'AKIAIOSFODNN7EXAMPLE'
-    # config = app['config']
-    # pool = await create_engine(
-    #     host=config.db_addr[0], port=config.db_addr[1],
-    #     user=config.db_user, password=config.db_password,
-    #     dbname=config.db_name, minsize=1, maxsize=4
-    # )
-    # async with pool.acquire() as conn:
-    #     query = (sa.select([keypairs.c.access_key, keypairs.c.secret_key])
-    #                .select_from(keypairs)
-    #                .where(keypairs.c.access_key == access_key))
-    #     result = await conn.execute(query)
-    #     row = await result.first()
-    #     keypair = {
-    #         'access_key': access_key,
-    #         'secret_key': row.secret_key,
-    #     }
-    # pool.close()
-    # await pool.wait_closed()
-    # return keypair
+async def create_app_and_client(test_config, event_loop):
+    client: Optional[Client] = None
+    client_session: Optional[aiohttp.ClientSession] = None
+    runner: Optional[web.BaseRunner] = None
+
+    async def app_builder(
+        cleanup_contexts: Sequence[CleanupContext] = None,
+        subapp_pkgs: Sequence[str] = None,
+        scheduler_opts: Mapping[str, Any] = None,
+    ) -> Tuple[web.Application, Client]:
+        nonlocal client, client_session, runner
+
+        if scheduler_opts is None:
+            scheduler_opts = {}
+        _non_ctx_registers = []
+        _cleanup_ctxs = []
+        if cleanup_contexts is not None:
+            for ctx in cleanup_contexts:
+                if ctx.__name__ in ['config_server_register', 'webapp_plugins_register']:
+                    _non_ctx_registers.append(ctx)
+                else:
+                    _cleanup_ctxs.append(ctx)
+        app = build_root_app(0, test_config,
+                             cleanup_contexts=_cleanup_ctxs,
+                             subapp_pkgs=subapp_pkgs,
+                             scheduler_opts={'close_timeout': 10, **scheduler_opts})
+        for register in _non_ctx_registers:
+            await register(app)  # type: ignore
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(
+            runner,
+            str(app['config']['manager']['service-addr'].host),
+            app['config']['manager']['service-addr'].port,
+        )
+        await site.start()
+        port = app['config']['manager']['service-addr'].port
+        client_session = aiohttp.ClientSession()
+        client = Client(client_session, f'http://localhost:{port}')
+        return app, client
+
+    yield app_builder
+
+    if client_session:
+        await client_session.close()
+    if runner:
+        await runner.cleanup()
+
+
+@pytest.fixture
+def default_keypair():
     return {
         'access_key': 'AKIAIOSFODNN7EXAMPLE',
         'secret_key': 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
@@ -291,7 +356,7 @@ async def default_keypair(event_loop, app):
 
 
 @pytest.fixture
-async def default_domain_keypair(event_loop, app):
+def default_domain_keypair():
     """Default domain admin keypair"""
     return {
         'access_key': 'AKIAHUKCHDEZGEXAMPLE',
@@ -300,7 +365,7 @@ async def default_domain_keypair(event_loop, app):
 
 
 @pytest.fixture
-async def user_keypair(event_loop, app):
+def user_keypair():
     return {
         'access_key': 'AKIANABBDUSEREXAMPLE',
         'secret_key': 'C8qnIo29EZvXkPK_MXcuAakYTy4NYrxwmCEyNPlf',
@@ -308,7 +373,7 @@ async def user_keypair(event_loop, app):
 
 
 @pytest.fixture
-async def monitor_keypair(event_loop, app):
+def monitor_keypair():
     return {
         'access_key': 'AKIANAMONITOREXAMPLE',
         'secret_key': '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',
@@ -318,7 +383,7 @@ async def monitor_keypair(event_loop, app):
 @pytest.fixture
 def get_headers(app, default_keypair):
     def create_header(method, url, req_bytes, ctype='application/json',
-                      hash_type='sha256', api_version='v4.20181215',
+                      hash_type='sha256', api_version='v5.20191215',
                       keypair=default_keypair):
         now = datetime.now(tzutc())
         hostname = f"localhost:{app['config']['manager']['service-addr'].port}"
@@ -355,148 +420,6 @@ def get_headers(app, default_keypair):
             + f'credential={keypair["access_key"]}:{signature}'
         return headers
     return create_header
-
-
-@pytest.fixture
-async def create_app_and_client(request, test_id, test_ns,
-                                event_loop, app, database,
-                                default_keypair, user_keypair):
-    client = None
-    runner = None
-    extra_proc = None
-
-    async def maker(modules=None, spawn_agent=False):
-        nonlocal client, runner, extra_proc
-
-        if modules is None:
-            modules = []
-        scheduler_opts = {
-            'close_timeout': 10,
-        }
-        cors_opts = {
-            '*': aiohttp_cors.ResourceOptions(
-                allow_credentials=False,
-                expose_headers="*", allow_headers="*"),
-        }
-        aiojobs.aiohttp.setup(app, **scheduler_opts)
-        await gw_init(app, cors_opts)
-        for mod in modules:
-            target_module = import_module(f'.{mod}', 'ai.backend.gateway')
-            subapp, mw = getattr(target_module, 'create_app', None)(cors_opts)
-            assert isinstance(subapp, web.Application)
-            for key in PUBLIC_INTERFACES:
-                subapp[key] = app[key]
-            prefix = subapp.get('prefix', mod.replace('_', '-'))
-            aiojobs.aiohttp.setup(subapp, **scheduler_opts)
-            app.add_subapp('/' + prefix, subapp)
-            app.middlewares.extend(mw)
-
-            # TODO: refactor to avoid duplicates with gateway.server
-
-            # Add legacy version-prefixed routes to the root app with some hacks
-            for r in subapp.router.routes():
-                for version in subapp['api_versions']:
-                    subpath = r.resource.canonical
-                    if subpath == f'/{prefix}':
-                        subpath += '/'
-                    legacy_path = f'/v{version}{subpath}'
-                    handler = _get_legacy_handler(r.handler, subapp, version)
-                    app.router.add_route(r.method, legacy_path, handler)
-
-        server_params = {}
-        client_params = {}
-
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(
-            runner,
-            str(app['config']['manager']['service-addr'].host),
-            app['config']['manager']['service-addr'].port,
-            ssl_context=app.get('sslctx'),
-            **server_params,
-        )
-        await site.start()
-
-        # Launch an agent daemon
-        if spawn_agent:
-            etcd_addr = host_port_pair(os.environ['BACKEND_ETCD_ADDR'])
-            os.makedirs(f'/tmp/backend.ai/scratches-{test_id}', exist_ok=True)
-            agent_proc = subprocess.Popen([
-                'python', '-m', 'ai.backend.agent.server',
-                '--etcd-addr', str(etcd_addr),
-                '--namespace', test_ns,
-                '--scratch-root', f'/tmp/backend.ai/scratches-{test_id}',
-                '--idle-timeout', '30',
-            ])
-
-            def finalize_agent():
-                agent_proc.terminate()
-                try:
-                    agent_proc.wait(timeout=5.0)
-                except subprocess.TimeoutExpired:
-                    agent_proc.kill()
-                shutil.rmtree(f'/tmp/backend.ai/scratches-{test_id}')
-
-            request.addfinalizer(finalize_agent)
-
-            async def wait_for_agent():
-                while True:
-                    all_ids = [inst_id async for inst_id in
-                               app['registry'].enumerate_instances()]
-                    if len(all_ids) > 0:
-                        break
-                    await asyncio.sleep(0.2)
-            task = event_loop.create_task(wait_for_agent())
-            with timeout(10.0):
-                await task
-
-        port = app['config']['manager']['service-addr'].port
-        if app.get('sslctx'):
-            url = f'https://localhost:{port}'
-            client_params['connector'] = aiohttp.TCPConnector(verify_ssl=False)
-        else:
-            url = f'http://localhost:{port}'
-        http_session = aiohttp.ClientSession(
-            loop=event_loop, **client_params)
-        client = Client(http_session, url)
-        return app, client
-
-    yield maker
-
-    dbpool = app.get('dbpool')
-    if dbpool is not None:
-        # Clean DB tables for subsequent tests.
-        async with dbpool.acquire() as conn, conn.begin():
-            await conn.execute((vfolders.delete()))
-            await conn.execute((kernels.delete()))
-            await conn.execute((agents.delete()))
-            access_key = default_keypair['access_key']
-            query = (sa.update(keypairs)
-                       .values({
-                           'concurrency_used': 0,
-                           'num_queries': 0,
-                       })
-                       .where(keypairs.c.access_key == access_key))
-            await conn.execute(query)
-            access_key = user_keypair['access_key']
-            query = (sa.update(keypairs)
-                       .values({
-                           'concurrency_used': 0,
-                           'num_queries': 0,
-                       })
-                       .where(keypairs.c.access_key == access_key))
-            await conn.execute(query)
-
-    # Terminate client and servers
-    if client:
-        await client.close()
-    if runner:
-        await runner.cleanup()
-    await gw_shutdown(app)
-
-    if extra_proc:
-        os.kill(extra_proc.pid, signal.SIGINT)
-        extra_proc.join()
 
 
 @pytest.fixture

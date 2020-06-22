@@ -78,7 +78,7 @@ $ cd manager
 $ pyenv virtualenv venv-manager
 $ pyenv local venv-manager
 $ pip install -U pip setuptools
-$ pip install -U -r requirements-dev.txt
+$ pip install -U -r requirements/dev.txt
 ```
 
 From now on, let's assume all shell commands are executed inside the virtualenv.

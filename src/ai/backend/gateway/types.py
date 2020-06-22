@@ -1,10 +1,9 @@
-# Type annotation helpers
-
 from __future__ import annotations
 
 from typing import (
     Any,
     Awaitable, Callable, Iterable,
+    AsyncIterator,
     Tuple,
     Mapping,
 )
@@ -31,3 +30,5 @@ PluginAppCreator = Callable[
     [Mapping[str, Any], CORSOptions],
     Tuple[web.Application, Iterable[WebMiddleware]]
 ]
+
+CleanupContext = Callable[[web.Application], AsyncIterator[None]]

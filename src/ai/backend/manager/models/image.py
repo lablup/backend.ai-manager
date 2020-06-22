@@ -1,10 +1,20 @@
+from __future__ import annotations
 import logging
+from typing import (
+    Sequence,
+    TYPE_CHECKING,
+)
 
 import graphene
 import sqlalchemy as sa
+from graphql.execution.executors.asyncio import AsyncioExecutor
 
 from ai.backend.common.logging import BraceStyleAdapter
+from .user import UserRole
 from .base import BigInt, KVPair, ResourceLimit
+
+if TYPE_CHECKING:
+    from ..background import ProgressReporter
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
 
@@ -12,6 +22,7 @@ __all__ = (
     'Image',
     'PreloadImage',
     'RescanImages',
+    'ForgetImage',
     'AliasImage',
     'DealiasImage',
 )
@@ -29,11 +40,14 @@ class Image(graphene.ObjectType):
     resource_limits = graphene.List(ResourceLimit)
     supported_accelerators = graphene.List(graphene.String)
     installed = graphene.Boolean()
+    installed_agents = graphene.List(graphene.String)
     # legacy field
     hash = graphene.String()
 
     @classmethod
-    def _convert_from_dict(cls, data):
+    def _convert_from_dict(cls, context, data):
+        is_superadmin = (context['user']['role'] == UserRole.SUPERADMIN)
+        hide_agents = False if is_superadmin else context['config']['manager']['hide-agents']
         return cls(
             name=data['name'],
             humanized_name=data['humanized_name'],
@@ -50,6 +64,7 @@ class Image(graphene.ObjectType):
                 for v in data['resource_limits']],
             supported_accelerators=data['supported_accelerators'],
             installed=data['installed'],
+            installed_agents=data.get('installed_agents', []) if not hide_agents else None,
             # legacy
             hash=data['digest'],
         )
@@ -57,7 +72,7 @@ class Image(graphene.ObjectType):
     @classmethod
     async def load_item(cls, context, reference):
         r = await context['config_server'].inspect_image(reference)
-        return cls._convert_from_dict(r)
+        return cls._convert_from_dict(context, r)
 
     @classmethod
     async def load_all(cls, context, is_installed=None, is_operation=None):
@@ -65,7 +80,7 @@ class Image(graphene.ObjectType):
         items = []
         # Convert to GQL objects
         for r in raw_items:
-            item = cls._convert_from_dict(r)
+            item = cls._convert_from_dict(context, r)
             items.append(item)
         if is_installed is not None:
             items = [*filter(lambda item: item.installed == is_installed, items)]
@@ -110,36 +125,101 @@ class Image(graphene.ObjectType):
 
 class PreloadImage(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         references = graphene.List(graphene.String, required=True)
         target_agents = graphene.List(graphene.String, required=True)
 
     ok = graphene.Boolean()
     msg = graphene.String()
+    task_id = graphene.String()
 
     @staticmethod
-    async def mutate(root, info, references, target_agents):
-        return PreloadImage(ok=False, msg='Not implemented.')
+    async def mutate(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        references: Sequence[str],
+        target_agents: Sequence[str],
+    ) -> PreloadImage:
+        return PreloadImage(ok=False, msg='Not implemented.', task_id=None)
+
+
+class UnloadImage(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
+
+    class Arguments:
+        references = graphene.List(graphene.String, required=True)
+        target_agents = graphene.List(graphene.String, required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+    task_id = graphene.String()
+
+    @staticmethod
+    async def mutate(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        references: Sequence[str],
+        target_agents: Sequence[str],
+    ) -> UnloadImage:
+        return UnloadImage(ok=False, msg='Not implemented.', task_id=None)
 
 
 class RescanImages(graphene.Mutation):
+
+    allowed_roles = (UserRole.ADMIN, UserRole.SUPERADMIN)
 
     class Arguments:
         registry = graphene.String()
 
     ok = graphene.Boolean()
     msg = graphene.String()
+    task_id = graphene.UUID()
 
     @staticmethod
-    async def mutate(root, info, registry=None):
+    async def mutate(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        registry: str = None,
+    ) -> RescanImages:
         log.info('rescanning docker registry {0} by API request',
                  f'({registry})' if registry else '(all)')
         config_server = info.context['config_server']
-        await config_server.rescan_images(registry)
-        return RescanImages(ok=True, msg='')
+
+        async def _rescan_task(reporter: ProgressReporter) -> None:
+            await config_server.rescan_images(registry, reporter=reporter)
+
+        task_id = await info.context['background_task_manager'].start(_rescan_task)
+        return RescanImages(ok=True, msg='', task_id=task_id)
+
+
+class ForgetImage(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
+
+    class Arguments:
+        reference = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @staticmethod
+    async def mutate(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        reference: str,
+    ) -> ForgetImage:
+        log.info('forget image {0} by API request', reference)
+        config_server = info.context['config_server']
+        await config_server.forget_image(reference)
+        return ForgetImage(ok=True, msg='')
 
 
 class AliasImage(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
         alias = graphene.String(required=True)
@@ -149,7 +229,12 @@ class AliasImage(graphene.Mutation):
     msg = graphene.String()
 
     @staticmethod
-    async def mutate(root, info, alias, target):
+    async def mutate(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        alias: str,
+        target: str,
+    ) -> AliasImage:
         log.info('alias image {0} -> {1} by API request', alias, target)
         config_server = info.context['config_server']
         try:
@@ -161,6 +246,8 @@ class AliasImage(graphene.Mutation):
 
 class DealiasImage(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         alias = graphene.String(required=True)
 
@@ -168,7 +255,11 @@ class DealiasImage(graphene.Mutation):
     msg = graphene.String()
 
     @staticmethod
-    async def mutate(root, info, alias):
+    async def mutate(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        alias: str,
+    ) -> DealiasImage:
         log.info('dealias image {0} by API request', alias)
         config_server = info.context['config_server']
         await config_server.dealias(alias)

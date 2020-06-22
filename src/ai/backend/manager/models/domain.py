@@ -1,4 +1,3 @@
-from collections import OrderedDict
 import re
 from typing import Sequence
 
@@ -10,10 +9,10 @@ from sqlalchemy.dialects import postgresql as pgsql
 from ai.backend.common.types import ResourceSlot
 from .base import (
     metadata, ResourceSlotColumn,
-    privileged_mutation,
     simple_db_mutate,
     simple_db_mutate_returning_item,
     set_if_set,
+    batch_result,
 )
 from .scaling_group import ScalingGroup
 from .user import UserRole
@@ -63,7 +62,7 @@ class Domain(graphene.ObjectType):
         return [sg.name for sg in sgroups]
 
     @classmethod
-    def from_row(cls, row):
+    def from_row(cls, context, row):
         if row is None:
             return None
         return cls(
@@ -78,34 +77,27 @@ class Domain(graphene.ObjectType):
             integration_id=row['integration_id'],
         )
 
-    @staticmethod
-    async def load_all(context, *, is_active=None):
+    @classmethod
+    async def load_all(cls, context, *, is_active=None):
         async with context['dbpool'].acquire() as conn:
             query = sa.select([domains]).select_from(domains)
             if is_active is not None:
                 query = query.where(domains.c.is_active == is_active)
-            objs_per_key = OrderedDict()
-            async for row in conn.execute(query):
-                o = Domain.from_row(row)
-                objs_per_key[row.name] = o
-            objs = list(objs_per_key.values())
-        return objs
+            return [
+                cls.from_row(context, row) async for row in conn.execute(query)
+            ]
 
-    @staticmethod
-    async def batch_load_by_name(context, names=None, *, is_active=None):
+    @classmethod
+    async def batch_load_by_name(cls, context, names=None, *,
+                                 is_active=None):
         async with context['dbpool'].acquire() as conn:
             query = (sa.select([domains])
                        .select_from(domains)
                        .where(domains.c.name.in_(names)))
-            objs_per_key = OrderedDict()
-            # For each name, there is only one domain.
-            # So we don't build lists in objs_per_key variable.
-            for k in names:
-                objs_per_key[k] = None
-            async for row in conn.execute(query):
-                o = Domain.from_row(row)
-                objs_per_key[row.name] = o
-        return tuple(objs_per_key.values())
+            return await batch_result(
+                context, conn, query, cls,
+                names, lambda row: row['name'],
+            )
 
 
 class DomainInput(graphene.InputObjectType):
@@ -129,16 +121,17 @@ class ModifyDomainInput(graphene.InputObjectType):
 
 class CreateDomain(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
         props = DomainInput(required=True)
 
     ok = graphene.Boolean()
     msg = graphene.String()
-    domain = graphene.Field(lambda: Domain)
+    domain = graphene.Field(lambda: Domain, required=False)
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         if _rx_slug.search(name) is None:
             return cls(False, 'invalid name format. slug format required.', None)
@@ -164,16 +157,17 @@ class CreateDomain(graphene.Mutation):
 
 class ModifyDomain(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
         props = ModifyDomainInput(required=True)
 
     ok = graphene.Boolean()
     msg = graphene.String()
-    domain = graphene.Field(lambda: Domain)
+    domain = graphene.Field(lambda: Domain, required=False)
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name, props):
         data = {}
         set_if_set(props, data, 'name')  # data['name'] is new domain name
@@ -203,6 +197,8 @@ class ModifyDomain(graphene.Mutation):
 
 class DeleteDomain(graphene.Mutation):
 
+    allowed_roles = (UserRole.SUPERADMIN,)
+
     class Arguments:
         name = graphene.String(required=True)
 
@@ -210,7 +206,6 @@ class DeleteDomain(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    @privileged_mutation(UserRole.SUPERADMIN)
     async def mutate(cls, root, info, name):
         query = (
             domains.update()

@@ -45,7 +45,8 @@ Alias keys are also URL-quoted in the same way.
      + api
        - allow-origins: "*"
        + resources
-         - allow-group-total: ""  # return total group resource limits in check-presets
+         - group_resource_visibility: "true"  # return group resource status in check-presets
+                                              # (default: false)
      + docker
        + image
          - auto_pull: "digest" (default) | "tag" | "none"
@@ -117,14 +118,16 @@ Alias keys are also URL-quoted in the same way.
      ...
    ...
  + nodes
-   + manager: {instance-id}
-     - status: {one-of-ManagerStatus-value}
+   + manager
+     - {instance-id}: "up"
+     ...
    + redis: {"tcp://redis:6379"}
      - password: {redis-auth-password}
    + agents
      + {instance-id}: {"starting","running"}  # ConfigScopes.NODE
        - ip: {"127.0.0.1"}
        - watcher_port: {"6009"}
+     ...
  + sgroup
    + {name}  # ConfigScopes.SGROUP
      - swarm-manager/token
@@ -145,6 +148,7 @@ import json
 from pathlib import Path
 from typing import (
     Any, Optional, Union,
+    AsyncGenerator,
     Iterable,
     Mapping, DefaultDict,
     Sequence, List, Tuple,
@@ -182,9 +186,11 @@ from ai.backend.common.docker import (
     login as registry_login,
 )
 from .auth import superadmin_required
+from ..manager.background import ProgressReporter
+from ..manager.defs import INTRINSIC_SLOTS
 from .exceptions import InvalidAPIParameters, ServerMisconfiguredError
 from .manager import ManagerStatus
-from .typing import CORSOptions, WebMiddleware
+from .types import CORSOptions, WebMiddleware
 from .utils import chunked, check_api_params
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
@@ -221,6 +227,9 @@ class ConfigServer:
             # TODO: provide a way to specify other scope prefixes
         }
         self.etcd = AsyncEtcd(etcd_addr, namespace, scope_prefix_map, credentials=credentials)
+
+    async def close(self) -> None:
+        await self.etcd.close()
 
     async def get(self, key: str, allow_null: bool = True) -> Optional[str]:
         value = await self.etcd.get(key)
@@ -267,6 +276,7 @@ class ConfigServer:
         installed = (
             await self.context['redis_image'].scard(image_ref.canonical)
         ) > 0
+        installed_agents = await self.context['redis_image'].smembers(image_ref.canonical)
 
         res_limits = []
         for slot_key, slot_range in item['resource'].items():
@@ -300,6 +310,7 @@ class ConfigServer:
             'resource_limits': res_limits,
             'supported_accelerators': accels,
             'installed': installed,
+            'installed_agents': installed_agents,
         }
 
     async def _check_image(self, reference: str) -> ImageRef:
@@ -358,7 +369,12 @@ class ConfigServer:
         if value_range[1] is not None:
             await self.etcd.put(f'{ref.tag_path}/resource/{slot_type}/max', str(value_range[1]))
 
-    async def _rescan_images(self, registry_name, registry_info):
+    async def _rescan_images_single_registry(
+        self,
+        registry_name: str,
+        registry_info: Mapping[str, str],
+        reporter: ProgressReporter = None,
+    ) -> None:
         all_updates = {}
         base_hdrs = {
             'Accept': 'application/vnd.docker.distribution.manifest.v2+json',
@@ -379,14 +395,29 @@ class ConfigServer:
                                              f'repository:{image}:pull')
             rqst_args['headers'].update(**base_hdrs)
             tags = []
-            async with sess.get(registry_url / f'v2/{image}/tags/list',
-                                **rqst_args) as resp:
-                data = json.loads(await resp.read())
-                if 'tags' in data:
-                    # sometimes there are dangling image names in the hub.
-                    tags.extend(data['tags'])
-            scheduler = await aiojobs.create_scheduler(limit=8)
+            tag_list_url = (registry_url / f'v2/{image}/tags/list').with_query(
+                {'n': '10'},
+            )
+            while tag_list_url is not None:
+                async with sess.get(tag_list_url,
+                                    **rqst_args) as resp:
+                    data = json.loads(await resp.read())
+                    if 'tags' in data:
+                        # sometimes there are dangling image names in the hub.
+                        tags.extend(data['tags'])
+                    tag_list_url = None
+                    next_page_link = resp.links.get('next')
+                    if next_page_link:
+                        next_page_url = next_page_link['url']
+                        tag_list_url = (
+                            registry_url
+                            .with_path(next_page_url.path)
+                            .with_query(next_page_url.query)
+                        )
+            scheduler = await aiojobs.create_scheduler(limit=4)
             try:
+                if reporter:
+                    reporter.total_progress += len(tags)
                 jobs = await asyncio.gather(*[
                     scheduler.spawn(_scan_tag(sess, rqst_args, image, tag))
                     for tag in tags])
@@ -419,34 +450,54 @@ class ConfigServer:
                         labels.update(raw_labels)
 
             log.debug('checking image repository {}:{}', image, tag)
-            if 'ai.backend.kernelspec' not in labels:
-                # Skip non-Backend.AI kernel images
-                return
-            if not (MIN_KERNELSPEC <= int(labels['ai.backend.kernelspec']) <= MAX_KERNELSPEC):
-                # Skip unsupported kernelspec images
-                return
+            non_kernel_words = (
+                'common-', 'commons-', 'base-',
+                'krunner', 'builder',
+                'backendai', 'geofront',
+            )
+            skipped = False
+            try:
+                if 'ai.backend.kernelspec' not in labels:
+                    # Skip non-Backend.AI kernel images
+                    if not any((w in image) for w in non_kernel_words):
+                        log.warning('skipping image due to missing kernelspec - {}:{}', image, tag)
+                    skipped = True
+                    return
+                if not (MIN_KERNELSPEC <= int(labels['ai.backend.kernelspec']) <= MAX_KERNELSPEC):
+                    # Skip unsupported kernelspec images
+                    if not any((w in image) for w in non_kernel_words):
+                        log.warning('skipping image due to unsupported kernelspec - {}:{}', image, tag)
+                    skipped = True
+                    return
 
-            log.info('Updating metadata for {0}:{1}', image, tag)
-            updates = {}
-            updates[f'images/{etcd_quote(registry_name)}/'
-                    f'{etcd_quote(image)}'] = '1'
-            tag_prefix = f'images/{etcd_quote(registry_name)}/' \
-                         f'{etcd_quote(image)}/{tag}'
-            updates[tag_prefix] = config_digest
-            updates[f'{tag_prefix}/size_bytes'] = size_bytes
-            for k, v in labels.items():
-                updates[f'{tag_prefix}/labels/{k}'] = v
+                log.info('Updating metadata for {0}:{1}', image, tag)
+                updates = {}
+                updates[f'images/{etcd_quote(registry_name)}/'
+                        f'{etcd_quote(image)}'] = '1'
+                tag_prefix = f'images/{etcd_quote(registry_name)}/' \
+                             f'{etcd_quote(image)}/{tag}'
+                updates[tag_prefix] = config_digest
+                updates[f'{tag_prefix}/size_bytes'] = size_bytes
+                for k, v in labels.items():
+                    updates[f'{tag_prefix}/labels/{k}'] = v
 
-            accels = labels.get('ai.backend.accelerators')
-            if accels:
-                updates[f'{tag_prefix}/accels'] = accels
+                accels = labels.get('ai.backend.accelerators')
+                if accels:
+                    updates[f'{tag_prefix}/accels'] = accels
 
-            res_prefix = 'ai.backend.resource.min.'
-            for k, v in filter(lambda pair: pair[0].startswith(res_prefix),
-                               labels.items()):
-                res_key = k[len(res_prefix):]
-                updates[f'{tag_prefix}/resource/{res_key}/min'] = v
-            all_updates.update(updates)
+                res_prefix = 'ai.backend.resource.min.'
+                for k, v in filter(lambda pair: pair[0].startswith(res_prefix),
+                                   labels.items()):
+                    res_key = k[len(res_prefix):]
+                    updates[f'{tag_prefix}/resource/{res_key}/min'] = v
+                all_updates.update(updates)
+            finally:
+                if reporter:
+                    if skipped:
+                        progress_msg = f"Skipped {image}:{tag}"
+                    else:
+                        progress_msg = f"Updated {image}:{tag}"
+                    await reporter.update(1, message=progress_msg)
 
         ssl_ctx = None  # default
         app_config = self.context.get('config')
@@ -454,39 +505,65 @@ class ConfigServer:
             ssl_ctx = False
         connector = aiohttp.TCPConnector(ssl=ssl_ctx)
         async with aiohttp.ClientSession(connector=connector) as sess:
-            images = []
-            if registry_url.host.endswith('.docker.io'):
+            images: List[str] = []
+            if registry_url.host is not None and registry_url.host.endswith('.docker.io'):
                 # We need some special treatment for the Docker Hub.
-                params = {'page_size': '100'}
+                params = {'page_size': '30'}
                 username = await self.etcd.get(
                     f'config/docker/registry/{etcd_quote(registry_name)}/username')
                 hub_url = yarl.URL('https://hub.docker.com')
-                async with sess.get(hub_url / f'v2/repositories/{username}/',
-                                    params=params) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        images.extend(f"{username}/{item['name']}"
-                                      for item in data['results']
-                                      # a little optimization to ignore legacies
-                                      if not item['name'].startswith('kernel-'))
-                    else:
-                        log.error('Failed to fetch repository list from {0} '
-                                  '(status={1})',
-                                  hub_url, resp.status)
+                repo_list_url: Optional[yarl.URL]
+                repo_list_url = hub_url / f'v2/repositories/{username}/'
+                while repo_list_url is not None:
+                    async with sess.get(repo_list_url, params=params) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            images.extend(f"{username}/{item['name']}"
+                                          for item in data['results']
+                                          # a little optimization to ignore legacies
+                                          if not item['name'].startswith('kernel-'))
+                        else:
+                            log.error('Failed to fetch repository list from {0} '
+                                      '(status={1})',
+                                      repo_list_url, resp.status)
+                            break
+                    repo_list_url = None
+                    next_page_link = data.get('next', None)
+                    if next_page_link:
+                        next_page_url = yarl.URL(next_page_link)
+                        repo_list_url = (
+                            hub_url
+                            .with_path(next_page_url.path)
+                            .with_query(next_page_url.query)
+                        )
             elif registry_type == 'docker':
                 # In other cases, try the catalog search.
                 rqst_args = await registry_login(sess, registry_url, credentials,
                                                  'registry:catalog:*')
-                async with sess.get(registry_url / 'v2/_catalog',
-                                    **rqst_args) as resp:
-                    if resp.status == 200:
-                        data = json.loads(await resp.read())
-                        images.extend(data['repositories'])
-                        log.debug('found {} repositories', len(images))
-                    else:
-                        log.warning('Docker registry {0} does not allow/support '
-                                    'catalog search. (status={1})',
-                                    registry_url, resp.status)
+                catalog_url: Optional[yarl.URL]
+                catalog_url = (registry_url / 'v2/_catalog').with_query(
+                    {'n': '30'}
+                )
+                while catalog_url is not None:
+                    async with sess.get(catalog_url, **rqst_args) as resp:
+                        if resp.status == 200:
+                            data = json.loads(await resp.read())
+                            images.extend(data['repositories'])
+                            log.debug('found {} repositories', len(images))
+                        else:
+                            log.warning('Docker registry {0} does not allow/support '
+                                        'catalog search. (status={1})',
+                                        registry_url, resp.status)
+                            break
+                        catalog_url = None
+                        next_page_link = resp.links.get('next')
+                        if next_page_link:
+                            next_page_url = next_page_link['url']
+                            catalog_url = (
+                                registry_url
+                                .with_path(next_page_url.path)
+                                .with_query(next_page_url.query)
+                            )
             elif registry_type == 'harbor':
                 if credentials:
                     rqst_args = {
@@ -494,29 +571,52 @@ class ConfigServer:
                     }
                 else:
                     rqst_args = {}
-                async with sess.get(registry_url / 'api/projects',
-                                    params={'page_size': '100'},
-                                    **rqst_args) as resp:
-                    projects = await resp.json()
-                    project_id = None
-                    for item in projects:
-                        if item['name'] == registry_project:
-                            project_id = item['project_id']
-                            break
-                    else:
-                        log.warning('There is no given project.')
-                        return
-                async with sess.get(registry_url / 'api/repositories',
-                                    params={'project_id': project_id, 'page_size': '100'},
-                                    **rqst_args) as resp:
-                    items = await resp.json()
-                    repos = [item['name'] for item in items]
-                    images.extend(repos)
+                project_list_url: Optional[yarl.URL]
+                project_list_url = (registry_url / 'api/projects').with_query(
+                    {'page_size': '30'}
+                )
+                project_id = None
+                while project_list_url is not None:
+                    async with sess.get(project_list_url, **rqst_args) as resp:
+                        projects = await resp.json()
+                        for item in projects:
+                            if item['name'] == registry_project:
+                                project_id = item['project_id']
+                                break
+                        project_list_url = None
+                        next_page_link = resp.links.get('next')
+                        if next_page_link:
+                            next_page_url = next_page_link['url']
+                            project_list_url = (
+                                registry_url
+                                .with_path(next_page_url.path)
+                                .with_query(next_page_url.query)
+                            )
+                if project_id is None:
+                    log.warning('There is no given project.')
+                    return
+                repo_list_url = (registry_url / 'api/repositories').with_query(
+                    {'project_id': project_id, 'page_size': '30'}
+                )
+                while repo_list_url is not None:
+                    async with sess.get(repo_list_url, **rqst_args) as resp:
+                        items = await resp.json()
+                        repos = [item['name'] for item in items]
+                        images.extend(repos)
+                        repo_list_url = None
+                        next_page_link = resp.links.get('next')
+                        if next_page_link:
+                            next_page_url = next_page_link['url']
+                            repo_list_url = (
+                                registry_url
+                                .with_path(next_page_url.path)
+                                .with_query(next_page_url.query)
+                            )
             else:
                 log.error('Unsupported registry type')
                 return
 
-            scheduler = await aiojobs.create_scheduler(limit=8)
+            scheduler = await aiojobs.create_scheduler(limit=4)
             try:
                 jobs = await asyncio.gather(*[
                     scheduler.spawn(_scan_image(sess, image)) for image in images])
@@ -530,7 +630,8 @@ class ConfigServer:
         for kvlist in chunked(sorted(all_updates.items()), 16):
             await self.etcd.put_dict(dict(kvlist))
 
-    async def rescan_images(self, registry: str = None) -> None:
+    async def rescan_images(self, registry: str = None, *,
+                            reporter: ProgressReporter = None) -> None:
         if registry is None:
             registries = []
             data = await self.etcd.get_prefix('config/docker/registry')
@@ -546,7 +647,7 @@ class ConfigServer:
             if not registry_info:
                 log.error('Unknown registry: "{0}"', registry)
                 continue
-            coros.append(self._rescan_images(registry, registry_info))
+            coros.append(self._rescan_images_single_registry(registry, registry_info, reporter))
         await asyncio.gather(*coros)
         # TODO: delete images removed from registry?
 
@@ -602,12 +703,8 @@ class ConfigServer:
         try:
             ret = current_resource_slots.get()
         except LookupError:
-            intrinsic_slots = {
-                SlotName('cpu'): SlotTypes('count'),
-                SlotName('mem'): SlotTypes('bytes'),
-            }
             configured_slots = await self._get_resource_slots()
-            ret = {**intrinsic_slots, **configured_slots}
+            ret = {**INTRINSIC_SLOTS, **configured_slots}
             current_resource_slots.set(ret)
         return ret
 
@@ -721,7 +818,9 @@ async def get_docker_registries(request) -> web.Response:
     '''
     log.info('ETCD.GET_DOCKER_REGISTRIES ()')
     etcd = request.app['registry'].config_server.etcd
-    known_registries = await get_known_registries(etcd)
+    _registries = await get_known_registries(etcd)
+    # ``yarl.URL`` is not JSON-serializable, so we need to represent it as string.
+    known_registries: Mapping[str, str] = {k: v.human_repr() for k, v in _registries.items()}
     return web.json_response(known_registries, status=200)
 
 
@@ -764,7 +863,8 @@ async def set_config(request: web.Request, params: Any) -> web.Response:
                 inner_prefix = prefix if k == '' else f'{prefix}/{k}'
                 if isinstance(v, Mapping):
                     flatten(inner_prefix, v)
-                updates[inner_prefix] = v
+                else:
+                    updates[inner_prefix] = v
 
         flatten(params['key'], params['value'])
         # TODO: chunk support if there are too many keys
@@ -795,20 +895,17 @@ async def delete_config(request: web.Request, params: Any) -> web.Response:
     return web.json_response({'result': 'ok'})
 
 
-async def init(app: web.Application) -> None:
+async def app_ctx(app: web.Application) -> AsyncGenerator[None, None]:
     if app['pidx'] == 0:
         await app['config_server'].register_myself()
-
-
-async def shutdown(app: web.Application) -> None:
+    yield
     if app['pidx'] == 0:
         await app['config_server'].deregister_myself()
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()
-    app.on_startup.append(init)
-    app.on_shutdown.append(shutdown)
+    app.cleanup_ctx.append(app_ctx)
     app['prefix'] = 'config'
     app['api_versions'] = (3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)

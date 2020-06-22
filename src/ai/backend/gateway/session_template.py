@@ -16,13 +16,14 @@ from ai.backend.common.types import SessionTypes
 from .auth import auth_required
 from .exceptions import InvalidAPIParameters, TaskTemplateNotFound
 from .manager import READ_ALLOWED, server_status_required
-from .typing import CORSOptions, Iterable, WebMiddleware
+from .types import CORSOptions, Iterable, WebMiddleware
 from .utils import check_api_params, get_access_key_scopes
 
 from ..manager.models import (
     association_groups_users as agus, domains,
     groups, session_templates, keypairs, users, UserRole,
-    query_accessible_session_templates, TemplateType
+    query_accessible_session_templates, TemplateType,
+    verify_vfolder_name
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.session_template'))
@@ -37,7 +38,7 @@ task_template_v1 = t.Dict({
     }),
     t.Key('spec'): t.Dict({
         tx.AliasedKey(['type', 'sessionType'],
-                      default='interactive') >> 'sess_type': tx.Enum(SessionTypes),
+                      default='interactive') >> 'session_type': tx.Enum(SessionTypes),
         t.Key('kernel'): t.Dict({
             t.Key('image'): t.String,
             t.Key('environ', default={}): t.Null | t.Mapping(t.String, t.String),
@@ -171,6 +172,15 @@ async def create(request: web.Request, params: Any) -> web.Response:
             except (yaml.YAMLError, yaml.MarkedYAMLError):
                 raise InvalidAPIParameters('Malformed payload')
         body = task_template_v1.check(body)
+        if mounts := body['spec'].get('mounts'):
+            for p in mounts.values():
+                if p is None:
+                    continue
+                if not p.startswith('/home/work/'):
+                    raise InvalidAPIParameters(f'Path {p} should start with /home/work/')
+                if not verify_vfolder_name(p.replace('/home/work/', '')):
+                    raise InvalidAPIParameters(f'Path {p} is reserved for internal operations.')
+
         template_id = uuid.uuid4().hex
         resp = {
             'id': template_id,

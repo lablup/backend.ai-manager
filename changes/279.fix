@@ -1,0 +1,1 @@
+Destroying sessions now returns periodically collected statistics instead of last-moment statistics

@@ -1,7 +1,14 @@
-from collections import OrderedDict
-import enum
-from typing import Sequence
+from __future__ import annotations
 
+import enum
+from typing import (
+    Any,
+    Optional,
+    Mapping,
+    Sequence,
+)
+
+from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
@@ -11,6 +18,7 @@ from ai.backend.common import msgpack, redis
 from ai.backend.common.types import BinarySize
 from .base import (
     metadata,
+    batch_result,
     EnumType, Item, PaginatedList,
     ResourceSlotColumn,
 )
@@ -57,7 +65,6 @@ class Agent(graphene.ObjectType):
     class Meta:
         interfaces = (Item, )
 
-    id = graphene.ID()
     status = graphene.String()
     status_changed = GQLDateTime()
     region = graphene.String()
@@ -83,14 +90,16 @@ class Agent(graphene.ObjectType):
     cpu_cur_pct = graphene.Float()
     mem_cur_bytes = graphene.Float()
 
-    computations = graphene.List(
-        'ai.backend.manager.models.Computation',
+    compute_containers = graphene.List(
+        'ai.backend.manager.models.ComputeContainer',
         status=graphene.String())
 
     @classmethod
-    def from_row(cls, context, row):
-        if row is None:
-            return None
+    def from_row(
+        cls,
+        context: Mapping[str, Any],
+        row: RowProxy,
+    ) -> Agent:
         mega = 2 ** 20
         return cls(
             id=row['id'],
@@ -131,8 +140,11 @@ class Agent(graphene.ObjectType):
             lambda: rs.get(str(self.id), encoding=None))
         if live_stat is not None:
             live_stat = msgpack.unpackb(live_stat)
-            return float(live_stat['node']['cpu_util']['pct'])
-        return 0
+            try:
+                return float(live_stat['node']['cpu_util']['pct'])
+            except (KeyError, TypeError, ValueError):
+                return 0.0
+        return 0.0
 
     async def resolve_mem_cur_bytes(self, info):
         rs = info.context['redis_stat']
@@ -140,7 +152,10 @@ class Agent(graphene.ObjectType):
             lambda: rs.get(str(self.id), encoding=None))
         if live_stat is not None:
             live_stat = msgpack.unpackb(live_stat)
-            return float(live_stat['node']['mem']['current']) if live_stat else 0
+            try:
+                return int(live_stat['node']['mem']['current'])
+            except (KeyError, TypeError, ValueError):
+                return 0
         return 0
 
     async def resolve_computations(self, info, status=None):
@@ -152,9 +167,11 @@ class Agent(graphene.ObjectType):
         return await loader.load(self.id)
 
     @staticmethod
-    async def load_count(context, *,
-                         scaling_group=None,
-                         status=None):
+    async def load_count(
+        context, *,
+        scaling_group=None,
+        status=None,
+    ) -> int:
         async with context['dbpool'].acquire() as conn:
             query = (
                 sa.select([sa.func.count(agents.c.id)])
@@ -170,11 +187,14 @@ class Agent(graphene.ObjectType):
             count = await result.fetchone()
             return count[0]
 
-    @staticmethod
-    async def load_slice(context, limit, offset, *,
-                         scaling_group=None,
-                         status=None,
-                         order_key=None, order_asc=True):
+    @classmethod
+    async def load_slice(
+        cls, context, limit, offset, *,
+        scaling_group=None,
+        status=None,
+        order_key=None,
+        order_asc=True,
+    ) -> Sequence[Agent]:
         async with context['dbpool'].acquire() as conn:
             # TODO: optimization for pagination using subquery, join
             if order_key is None:
@@ -194,17 +214,16 @@ class Agent(graphene.ObjectType):
             if status is not None:
                 status = AgentStatus[status]
                 query = query.where(agents.c.status == status)
-            result = await conn.execute(query)
-            rows = await result.fetchall()
-            _agents = []
-            for r in rows:
-                _agent = Agent.from_row(context, r)
-                _agents.append(_agent)
-            return _agents
+            return [
+                cls.from_row(context, row) async for row in conn.execute(query)
+            ]
 
-    @staticmethod
-    async def load_all(context, *,
-                       scaling_group=None, status=None):
+    @classmethod
+    async def load_all(
+        cls, context, *,
+        scaling_group=None,
+        status=None,
+    ) -> Sequence[Agent]:
         async with context['dbpool'].acquire() as conn:
             query = (
                 sa.select([agents])
@@ -215,16 +234,15 @@ class Agent(graphene.ObjectType):
             if status is not None:
                 status = AgentStatus[status]
                 query = query.where(agents.c.status == status)
-            result = await conn.execute(query)
-            rows = await result.fetchall()
-            _agents = []
-            for r in rows:
-                _agent = Agent.from_row(context, r)
-                _agents.append(_agent)
-            return _agents
+            return [
+                cls.from_row(context, row) async for row in conn.execute(query)
+            ]
 
-    @staticmethod
-    async def batch_load(context, agent_ids, *, status=None):
+    @classmethod
+    async def batch_load(
+        cls, context, agent_ids, *,
+        status=None,
+    ) -> Sequence[Optional[Agent]]:
         async with context['dbpool'].acquire() as conn:
             query = (sa.select([agents])
                        .select_from(agents)
@@ -233,13 +251,10 @@ class Agent(graphene.ObjectType):
             if status is not None:
                 status = AgentStatus[status]
                 query = query.where(agents.c.status == status)
-            objs_per_key = OrderedDict()
-            for k in agent_ids:
-                objs_per_key[k] = None
-            async for row in conn.execute(query):
-                o = Agent.from_row(context, row)
-                objs_per_key[row.id] = o
-        return tuple(objs_per_key.values())
+            return await batch_result(
+                context, conn, query, cls,
+                agent_ids, lambda row: row['id'],
+            )
 
 
 class AgentList(graphene.ObjectType):

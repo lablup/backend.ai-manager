@@ -92,7 +92,7 @@ level = "INFO"
 # Multi-choice of: "console", "logstash", "file"
 # For each choice, there must be a "logging.<driver>" section
 # in this config file as exemplified below.
-drivers = ["console"]
+drivers = ["console", "file"]
 
 
 [logging.console]

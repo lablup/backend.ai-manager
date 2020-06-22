@@ -1,4 +1,5 @@
 import os
+import re
 import secrets
 import sys
 from pathlib import Path
@@ -17,8 +18,13 @@ _max_cpu_count = os.cpu_count()
 _file_perm = (Path(__file__).parent / 'server.py').stat()
 
 DEFAULT_CHUNK_SIZE: Final = 256 * 1024  # 256 KiB
+DEFAULT_INFLIGHT_CHUNKS: Final = 8
+_RESERVED_VFOLDER_PATTERNS = [r'^\.[a-z0-9]+rc$', r'^\.[a-z0-9]+_profile$']
+RESERVED_DOTFILES = ['.terminfo', '.jupyter', '.ssh', '.ssh/authorized_keys', '.local', '.config']
+RESERVED_VFOLDERS = ['.terminfo', '.jupyter', '.tmux.conf', '.ssh']
+RESERVED_VFOLDER_PATTERNS = [re.compile(x) for x in _RESERVED_VFOLDER_PATTERNS]
 
-manager_config_iv = t.Dict({
+manager_local_config_iv = t.Dict({
     t.Key('db'): t.Dict({
         t.Key('type', default='postgresql'): t.Enum('postgresql'),
         t.Key('addr'): tx.HostPortPair,
@@ -54,11 +60,6 @@ manager_config_iv = t.Dict({
     }).allow_extra('*'),
 }).merge(config.etcd_config_iv).allow_extra('*')
 
-redis_config_iv = t.Dict({
-    t.Key('addr', default=('127.0.0.1', 6379)): tx.HostPortPair,
-    t.Key('password', default=None): t.Null | t.String,
-}).allow_extra('*')
-
 _shdefs: Mapping[str, Any] = {
     'system': {
         'timezone': 'UTC',
@@ -79,9 +80,6 @@ _shdefs: Mapping[str, Any] = {
     'plugins': {
         'accelerator': {},
         'scheduler': {},
-    },
-    'scheduler': {
-        'name': 'fifo',
     },
     'watcher': {
         'token': None,
@@ -104,9 +102,6 @@ shared_config_iv = t.Dict({
             t.Mapping(t.String, t.Mapping(t.String, t.Any)),
         t.Key('scheduler', default=_shdefs['plugins']['scheduler']):
             t.Mapping(t.String, t.Mapping(t.String, t.Any)),
-    }).allow_extra('*'),
-    t.Key('scheduler', default=_shdefs['scheduler']): t.Dict({
-        t.Key('name', default=_shdefs['scheduler']['name']): t.String,
     }).allow_extra('*'),
     t.Key('network', default=_shdefs['network']): t.Dict({
         t.Key('subnet', default=_shdefs['network']['subnet']): t.Dict({
@@ -157,7 +152,7 @@ def load(config_path: Path = None, debug: bool = False) -> Mapping[str, Any]:
     # Validate and fill configurations
     # (allow_extra will make configs to be forward-copmatible)
     try:
-        cfg = config.check(raw_cfg, manager_config_iv)
+        cfg = config.check(raw_cfg, manager_local_config_iv)
         if 'debug' in cfg and cfg['debug']['enabled']:
             print('== Manager configuration ==', file=sys.stderr)
             print(pformat(cfg), file=sys.stderr)
