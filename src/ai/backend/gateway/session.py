@@ -403,7 +403,6 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             }],
             params['config']['scaling_group'],
             params['session_type'],
-            params['config'],
             resource_policy,
             domain_name=params['domain'],
             group_id=group_id,

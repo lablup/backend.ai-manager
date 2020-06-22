@@ -365,7 +365,7 @@ class AgentRegistry:
             (kernels.c.role == 'master')
         )
         cond_name = (
-            (kernels.c.sess_id.like(f'{session_name_or_id}%')) &
+            (kernels.c.session_id.like(f'{session_name_or_id}%')) &
             (kernels.c.access_key == access_key) &
             (kernels.c.role == 'master')
         )
@@ -720,9 +720,9 @@ class AgentRegistry:
                 query = kernels.insert().values({
                     'id': kernel_id,
                     'status': KernelStatus.PENDING,
-                    'sess_id': session_name,    # TODO: rename column to session_name
-                    'sess_type': session_type,  # TODO: rename column to session_type
-                    'sess_uuid': sess_uuid,
+                    'session_id': session_name,    # TODO: rename column to session_name
+                    'session_type': session_type,  # TODO: rename column to session_type
+                    'session_uuid': sess_uuid,
                     'role': kernel['cluster_role'],
                     'idx': kernel['idx'] if is_multicontainer else None,
                     'scaling_group': scaling_group,
@@ -796,7 +796,7 @@ class AgentRegistry:
                             'canonical': kernel.image_ref.canonical,
                             'labels': image_info['labels'],
                         },
-                        'session_type': sess_ctx.sess_type.value,
+                        'session_type': sess_ctx.session_type.value,
                         'resource_slots': kernel.requested_slots.to_json(),
                         'idle_timeout': resource_policy['idle_timeout'],
                         'mounts': sess_ctx.mounts,

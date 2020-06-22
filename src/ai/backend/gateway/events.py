@@ -395,7 +395,7 @@ async def enqueue_session_status_update(
         query = (
             sa.select([
                 kernels.c.role,
-                kernels.c.sess_id,
+                kernels.c.session_id,
                 kernels.c.access_key,
                 kernels.c.domain_name,
                 kernels.c.group_id,
@@ -429,7 +429,7 @@ async def enqueue_batch_session_result_update(
         query = (
             sa.select([
                 kernels.c.role,
-                kernels.c.sess_id,
+                kernels.c.session_id,
                 kernels.c.access_key,
                 kernels.c.domain_name,
                 kernels.c.group_id,

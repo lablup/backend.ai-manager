@@ -339,11 +339,11 @@ class SchedulerDispatcher(aobject):
                                         'status': KernelStatus.CANCELLED,
                                         'status_info': 'failed-to-start',
                                         'status_changed': datetime.now(tzutc()),
-                                    }).where(kernels.c.session_id == sess_ctx.sess_id)
+                                    }).where(kernels.c.session_id == sess_ctx.session_id)
                                     await conn.execute(query)
                                 await self.registry.event_dispatcher.produce_event(
                                     'kernel_cancelled',
-                                    (str(sess_ctx.sess_id), 'failed-to-start'),
+                                    (str(sess_ctx.session_id), 'failed-to-start'),
                                 )
 
                             else:
@@ -536,8 +536,9 @@ async def _list_existing_sessions(
             kernels.c.role,
             kernels.c.idx,
             kernels.c.registry,
-            kernels.c.sess_type,
-            kernels.c.sess_id,
+            kernels.c.session_type,
+            kernels.c.session_id,
+            kernels.c.session_uuid,
             kernels.c.access_key,
             kernels.c.domain_name,
             kernels.c.group_id,
