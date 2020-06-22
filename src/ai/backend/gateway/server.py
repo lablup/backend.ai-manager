@@ -39,11 +39,10 @@ from ai.backend.common.cli import LazyGroup
 from ai.backend.common.config import redis_config_iv
 from ai.backend.common.utils import env_info, current_loop
 from ai.backend.common.logging import Logger, BraceStyleAdapter
-from ai.backend.common.plugin import discover_plugins
 from ai.backend.common.plugin.hook import HookPluginContext
 # from ai.backend.common.plugin.error_monitor import ErrorMonitor
 from ..manager import __version__
-from ..manager.plugin.webapp import WebappPlugin
+from ..manager.plugin.webapp import WebappPluginContext
 from ..manager.registry import AgentRegistry
 from ..manager.scheduler.dispatcher import SchedulerDispatcher
 from ..manager.background import BackgroundTaskManager
@@ -54,7 +53,7 @@ from .events import EventDispatcher
 from .exceptions import (BackendError, MethodNotAllowed, GenericNotFound,
                          GenericBadRequest, InternalServerError)
 from .types import (
-    AppCreator, PluginAppCreator,
+    AppCreator,
     WebRequestHandler, WebMiddleware,
     CleanupContext,
 )
@@ -209,7 +208,8 @@ async def exception_middleware(request: web.Request,
         return resp
 
 
-async def config_server_register(app: web.Application) -> None:
+@aiotools.actxmgr
+async def config_server_ctx(app: web.Application) -> AsyncIterator[None]:
     # populate public interfaces
     app['config_server'] = ConfigServer(
         app, app['config']['etcd']['addr'],
@@ -223,7 +223,22 @@ async def config_server_register(app: web.Application) -> None:
         await app['config_server'].etcd.get_prefix('config/redis')
     )
     _update_public_interface_objs(app)
-    # await app['config_server'].close()
+    yield
+    await app['config_server'].close()
+
+
+@aiotools.actxmgr
+async def webapp_plugin_ctx(root_app: web.Application) -> AsyncIterator[None]:
+    ctx = WebappPluginContext(root_app['config_server'].etcd, root_app['config'])
+    await ctx.init()
+    root_app['webapp_plugin_ctx'] = ctx
+    for plugin_name, plugin_instance in ctx.plugins.items():
+        if root_app['pidx'] == 0:
+            log.info('Loading webapp plugin: {0}', plugin_name)
+        subapp, global_middlewares = await plugin_instance.create_app(root_app['cors_opts'])
+        _init_subapp(plugin_name, root_app, subapp, global_middlewares)
+    yield
+    await ctx.cleanup()
 
 
 async def manager_status_ctx(app: web.Application) -> AsyncIterator[None]:
@@ -303,13 +318,12 @@ async def event_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
 
 
 async def hook_plugin_ctx(app: web.Application) -> AsyncIterator[None]:
-    # Install other hook plugins inside app['plugins'].
-    hook_plugin_ctx = HookPluginContext(app['config_server'].etcd, app['config'])
-    app['hook_plugin_ctx'] = hook_plugin_ctx
+    ctx = HookPluginContext(app['config_server'].etcd, app['config'])
+    app['hook_plugin_ctx'] = ctx
     _update_public_interface_objs(app)
-    await hook_plugin_ctx.init()
+    await ctx.init()
     yield
-    await hook_plugin_ctx.cleanup()
+    await ctx.cleanup()
 
 
 async def agent_registry_ctx(app: web.Application) -> AsyncIterator[None]:
@@ -320,7 +334,8 @@ async def agent_registry_ctx(app: web.Application) -> AsyncIterator[None]:
         app['redis_live'],
         app['redis_image'],
         app['event_dispatcher'],
-        app['hook_plugin_ctx'])
+        app['hook_plugin_ctx'],
+    )
     await app['registry'].init()
     _update_public_interface_objs(app)
     yield
@@ -356,19 +371,6 @@ async def background_task_ctx_shutdown(app: web.Application) -> None:
 
 
 setattr(background_task_ctx, 'shutdown', background_task_ctx_shutdown)
-
-
-async def webapp_plugins_register(root_app: web.Application) -> None:
-    for plugin_name, plugin_cls in discover_plugins(
-        'backendai_webapp_v20',
-        blocklist=root_app['config']['manager']['disabled-plugins']
-    ):
-        if root_app['pidx'] == 0:
-            log.info('Loading webapp plugin: {0}', plugin_name)
-        plugin_config = await root_app['config_server'].etcd.get_prefix(f'config/plugins/{plugin_name}')
-        webapp_instance = cast(WebappPlugin, plugin_cls)(plugin_config, root_app['config'])
-        subapp, global_middlewares = await webapp_instance.create_app(root_app['cors_opts'])
-        _init_subapp(plugin_name, root_app, subapp, global_middlewares)
 
 
 def handle_loop_error(
@@ -461,7 +463,6 @@ def build_root_app(
 
     if cleanup_contexts is None:
         cleanup_contexts = [
-            # config_server_ctx,
             manager_status_ctx,
             redis_ctx,
             database_ctx,
@@ -513,46 +514,45 @@ async def server_main(loop: asyncio.AbstractEventLoop,
 
     # Plugin webapps should be loaded before runner.setup(),
     # which freezes on_startup event.
-    await config_server_register(app)
-    await webapp_plugins_register(app)
-
-    ssl_ctx = None
-    if app['config']['manager']['ssl-enabled']:
-        ssl_ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        ssl_ctx.load_cert_chain(
-            str(app['config']['manager']['ssl-cert']),
-            str(app['config']['manager']['ssl-privkey']),
+    async with config_server_ctx(app), \
+               webapp_plugin_ctx(app):
+        ssl_ctx = None
+        if app['config']['manager']['ssl-enabled']:
+            ssl_ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+            ssl_ctx.load_cert_chain(
+                str(app['config']['manager']['ssl-cert']),
+                str(app['config']['manager']['ssl-privkey']),
+            )
+        runner = web.AppRunner(app)
+        await runner.setup()
+        service_addr = app['config']['manager']['service-addr']
+        site = web.TCPSite(
+            runner,
+            str(service_addr.host),
+            service_addr.port,
+            backlog=1024,
+            reuse_port=True,
+            ssl_context=ssl_ctx,
         )
-    runner = web.AppRunner(app)
-    await runner.setup()
-    service_addr = app['config']['manager']['service-addr']
-    site = web.TCPSite(
-        runner,
-        str(service_addr.host),
-        service_addr.port,
-        backlog=1024,
-        reuse_port=True,
-        ssl_context=ssl_ctx,
-    )
-    await site.start()
+        await site.start()
 
-    if os.geteuid() == 0:
-        uid = app['config']['manager']['user']
-        gid = app['config']['manager']['group']
-        os.setgroups([
-            g.gr_gid for g in grp.getgrall()
-            if pwd.getpwuid(uid).pw_name in g.gr_mem
-        ])
-        os.setgid(gid)
-        os.setuid(uid)
-        log.info('changed process uid and gid to {}:{}', uid, gid)
-    log.info('started handling API requests at {}', service_addr)
+        if os.geteuid() == 0:
+            uid = app['config']['manager']['user']
+            gid = app['config']['manager']['group']
+            os.setgroups([
+                g.gr_gid for g in grp.getgrall()
+                if pwd.getpwuid(uid).pw_name in g.gr_mem
+            ])
+            os.setgid(gid)
+            os.setuid(uid)
+            log.info('changed process uid and gid to {}:{}', uid, gid)
+        log.info('started handling API requests at {}', service_addr)
 
-    try:
-        yield
-    finally:
-        log.info('shutting down...')
-        await runner.cleanup()
+        try:
+            yield
+        finally:
+            log.info('shutting down...')
+            await runner.cleanup()
 
 
 @aiotools.actxmgr

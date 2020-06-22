@@ -6,7 +6,7 @@ from typing import (
 
 from aiohttp import web
 
-from ai.backend.common.plugin import AbstractPlugin
+from ai.backend.common.plugin import AbstractPlugin, BasePluginContext
 from ...gateway.types import CORSOptions, WebMiddleware
 
 
@@ -25,3 +25,7 @@ class WebappPlugin(AbstractPlugin, metaclass=ABCMeta):
         self, cors_options: CORSOptions,
     ) -> Tuple[web.Application, Sequence[WebMiddleware]]:
         pass
+
+
+class WebappPluginContext(BasePluginContext[WebappPlugin]):
+    plugin_group = 'backendai_webapp_v20'
