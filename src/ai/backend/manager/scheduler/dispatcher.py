@@ -49,7 +49,6 @@ from . import (
     AgentAllocationContext,
     AbstractScheduler,
     KernelInfo,
-    get_master_id,
 )
 from .predicates import (
     check_concurrency,
@@ -231,18 +230,17 @@ class SchedulerDispatcher(aobject):
                     candidate_agents = await _list_agents_by_sgroup(db_conn, sgroup_name)
                     total_capacity = sum((ag.available_slots for ag in candidate_agents), zero)
 
-                picked_kernel_id = scheduler.pick_session(
+                picked_session_uuid = scheduler.pick_session(
                     total_capacity,
                     pending_sessions,
                     existing_sessions,
                 )
-                if picked_kernel_id is None:
+                if picked_session_uuid is None:
                     # no session is picked.
                     # continue to next sgroup.
                     return
                 for picked_idx, sess_ctx in enumerate(pending_sessions):
-                    master_id = get_master_id(sess_ctx.kernels)
-                    if master_id == picked_kernel_id:
+                    if sess_ctx.session_uuid == picked_session_uuid:
                         break
                 else:
                     # no matching entry for picked session?
@@ -356,7 +354,6 @@ class SchedulerDispatcher(aobject):
                         task.add_done_callback(lambda fut: asyncio.create_task(_cb(fut)))
                     else:
                         for loaded_kernel in loaded:
-                            master_id = get_master_id(sess_ctx.kernels)
                             await _unreserve_agent_slots(
                                 db_conn, sess_ctx, loaded_kernel[1])
                             async with self.dbpool.acquire() as conn, conn.begin():
@@ -364,7 +361,7 @@ class SchedulerDispatcher(aobject):
                                     'status': KernelStatus.CANCELLED,
                                     'status_info': 'failed-to-start',
                                     'status_changed': datetime.now(tzutc()),
-                                }).where(kernels.c.session_id == master_id)
+                                }).where(kernels.c.session_uuid == sess_ctx.session_uuid)
                                 await conn.execute(query)
                     start_task_args.append(
                         (

@@ -97,6 +97,12 @@ class PendingSession:
     internal_data: Optional[Mapping[str, Any]]
     preopen_ports: List[int]
 
+    @property
+    def master_kernel_id(self) -> KernelId:
+        for k in self.kernels:
+            if k.role == 'master':
+                return k.kernel_id
+        raise RuntimeError('Unable to get master kernel ID')
 
 @attr.s(auto_attribs=True, slots=True)
 class KernelInfo:
@@ -180,10 +186,3 @@ class AbstractScheduler(metaclass=ABCMeta):
         pending_session: PendingSession,
     ) -> Optional[AgentId]:
         return None
-
-
-def get_master_id(kernels: List[KernelInfo]) -> KernelId:
-    for k in kernels:
-        if k.role == 'master':
-            return k.kernel_id
-    raise RuntimeError('Unable to get master kernel ID')

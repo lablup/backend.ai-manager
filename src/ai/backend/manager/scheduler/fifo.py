@@ -10,15 +10,14 @@ from typing import (
 
 from ai.backend.common.types import (
     AgentId,
-    KernelId,
     ResourceSlot,
+    SessionId,
 )
 from . import (
     AbstractScheduler,
     AgentContext,
     PendingSession,
     ExistingSession,
-    get_master_id,
 )
 
 
@@ -49,9 +48,9 @@ class FIFOSlotScheduler(AbstractScheduler):
                      total_capacity: ResourceSlot,
                      pending_sessions: Sequence[PendingSession],
                      existing_sessions: Sequence[ExistingSession],
-                     ) -> Optional[KernelId]:
+                     ) -> Optional[SessionId]:
         # Just pick the first pending session.
-        return get_master_id(pending_sessions[0].kernels)
+        return pending_sessions[0].session_uuid
 
     def assign_agent(self,
                      agents: Sequence[AgentContext],
@@ -80,9 +79,9 @@ class LIFOSlotScheduler(AbstractScheduler):
                      total_capacity: ResourceSlot,
                      pending_sessions: Sequence[PendingSession],
                      existing_sessions: Sequence[ExistingSession],
-                     ) -> Optional[KernelId]:
+                     ) -> Optional[SessionId]:
         # Just pick the last pending session.
-        return get_master_id(pending_sessions[-1].kernels)
+        return pending_sessions[-1].session_uuid
 
     def assign_agent(self,
                      agents: Sequence[AgentContext],

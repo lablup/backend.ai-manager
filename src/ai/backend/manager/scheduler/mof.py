@@ -8,7 +8,7 @@ from typing import (
 )
 
 from ai.backend.common.types import (
-    AgentId, KernelId,
+    AgentId, SessionId,
     ResourceSlot
 )
 
@@ -17,7 +17,6 @@ from . import (
     PendingSession,
     ExistingSession,
     AgentContext,
-    get_master_id,
 )
 
 
@@ -31,9 +30,9 @@ class MOFScheduler(AbstractScheduler):
                      total_capacity: ResourceSlot,
                      pending_sessions: Sequence[PendingSession],
                      existing_sessions: Sequence[ExistingSession],
-                     ) -> Optional[KernelId]:
+                     ) -> Optional[SessionId]:
         # Just pick the first pending session.
-        return get_master_id(pending_sessions[0].kernels)
+        return pending_sessions[0].session_uuid
 
     def assign_agent(self,
                      agents: Sequence[AgentContext],

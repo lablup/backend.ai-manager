@@ -21,7 +21,6 @@ from . import (
     SchedulingContext,
     PendingSession,
     PredicateResult,
-    get_master_id,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.scheduler'))
@@ -105,10 +104,9 @@ async def check_keypair_resource_limit(
             sched_ctx: SchedulingContext,
             sess_ctx: PendingSession,
         ) -> None:
-            master_id = get_master_id(sess_ctx.kernels)
             query = (sa.update(kernels)
                        .values(status_info='out-of-resource (keypair resource quota exceeded)')
-                       .where(kernels.c.id == master_id))
+                       .where(kernels.c.session_uuid == sess_ctx.session_uuid))
             await db_conn.execute(query)
 
         return PredicateResult(
@@ -145,10 +143,9 @@ async def check_group_resource_limit(
             sched_ctx: SchedulingContext,
             sess_ctx: PendingSession,
         ) -> None:
-            master_id = get_master_id(sess_ctx.kernels)
             query = (sa.update(kernels)
                        .values(status_info='out-of-resource (group resource quota exceeded)')
-                       .where(kernels.c.id == master_id))
+                       .where(kernels.c.session_uuid == sess_ctx.session_uuid))
             await db_conn.execute(query)
 
         return PredicateResult(
@@ -187,10 +184,9 @@ async def check_domain_resource_limit(
             sched_ctx: SchedulingContext,
             sess_ctx: PendingSession,
         ) -> None:
-            master_id = get_master_id(sess_ctx.kernels)
             query = (sa.update(kernels)
                        .values(status_info='out-of-resource (domain resource quota exceeded)')
-                       .where(kernels.c.id == master_id))
+                       .where(kernels.c.session_uuid == sess_ctx.session_uuid))
             await db_conn.execute(query)
 
         return PredicateResult(
@@ -239,10 +235,9 @@ async def check_scaling_group(
             sched_ctx: SchedulingContext,
             sess_ctx: PendingSession,
         ) -> None:
-            master_id = get_master_id(sess_ctx.kernels)
             query = (sa.update(kernels)
                        .values(status_info='out-of-resource (no scaling groups available)')
-                       .where(kernels.c.id == master_id))
+                       .where(kernels.c.session_uuid == sess_ctx.session_uuid))
             await db_conn.execute(query)
 
         return PredicateResult(False, 'No available resource in scaling groups.',
