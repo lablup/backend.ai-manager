@@ -1345,11 +1345,14 @@ async def init(app: web.Application) -> None:
     # Scan ALIVE agents
     app['agent_lost_checker'] = aiotools.create_timer(
         functools.partial(check_agent_lost, app), 1.0)
+    app['stats_task'] = asyncio.create_task(stats_report_timer(app))
 
 
 async def shutdown(app: web.Application) -> None:
     app['agent_lost_checker'].cancel()
     await app['agent_lost_checker']
+    app['stats_task'].cancel()
+    await app['stats_task']
 
     checked_tasks = ('kernel_agent_event_collector', 'kernel_ddtimer')
     for tname in checked_tasks:
