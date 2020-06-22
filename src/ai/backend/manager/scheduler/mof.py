@@ -32,7 +32,7 @@ class MOFScheduler(AbstractScheduler):
                      existing_sessions: Sequence[ExistingSession],
                      ) -> Optional[SessionId]:
         # Just pick the first pending session.
-        return pending_sessions[0].session_uuid
+        return SessionId(pending_sessions[0].session_uuid)
 
     def assign_agent(self,
                      agents: Sequence[AgentContext],

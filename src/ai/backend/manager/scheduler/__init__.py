@@ -18,7 +18,7 @@ from ai.backend.common.docker import (
     ImageRef,
 )
 from ai.backend.common.types import (
-    AgentId, KernelId, AccessKey, SessionTypes,
+    AgentId, KernelId, AccessKey, SessionId, SessionTypes,
     ResourceSlot,
 )
 from ..registry import AgentRegistry
@@ -104,6 +104,7 @@ class PendingSession:
                 return k.kernel_id
         raise RuntimeError('Unable to get master kernel ID')
 
+
 @attr.s(auto_attribs=True, slots=True)
 class KernelInfo:
     '''
@@ -176,7 +177,7 @@ class AbstractScheduler(metaclass=ABCMeta):
         total_capacity: ResourceSlot,
         pending_sessions: Sequence[PendingSession],
         existing_sessions: Sequence[ExistingSession],
-    ) -> Optional[KernelId]:
+    ) -> Optional[SessionId]:
         return None
 
     @abstractmethod
