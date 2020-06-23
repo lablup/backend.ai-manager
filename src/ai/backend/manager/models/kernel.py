@@ -436,8 +436,8 @@ class ComputeSession(graphene.ObjectType):
             # identity
             'id': row['id'],
             'tag': row['tag'],
-            'name': row['sess_id'],
-            'type': row['sess_type'].name,
+            'name': row['session_id'],
+            'type': row['session_type'].name,
 
             # image
             'image': row['image'],
