@@ -3,7 +3,7 @@ import json
 import pytest
 
 from ai.backend.gateway.server import (
-    config_server_ctx, redis_ctx, database_ctx,
+    config_server_ctx, redis_ctx, database_ctx, monitoring_ctx,
 )
 import ai.backend.gateway.ratelimit as rlim
 
@@ -12,7 +12,7 @@ import ai.backend.gateway.ratelimit as rlim
 async def test_check_rlim_for_anonymous_query(etcd_fixture, database_fixture,
                                               create_app_and_client):
     app, client = await create_app_and_client(
-        [config_server_ctx, redis_ctx, database_ctx],
+        [config_server_ctx, redis_ctx, database_ctx, monitoring_ctx],
         ['.auth', '.ratelimit'],
     )
     ret = await client.get('/')
@@ -27,7 +27,7 @@ async def test_check_rlim_for_authorized_query(etcd_fixture, database_fixture,
                                                create_app_and_client,
                                                get_headers):
     app, client = await create_app_and_client(
-        [config_server_ctx, redis_ctx, database_ctx],
+        [config_server_ctx, redis_ctx, database_ctx, monitoring_ctx],
         ['.auth', '.ratelimit'],
     )
     url = '/auth/test'
