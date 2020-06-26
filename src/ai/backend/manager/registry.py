@@ -38,6 +38,11 @@ import zmq.asyncio
 from ai.backend.common import msgpack, redis
 from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.plugin.hook import (
+    HookPluginContext,
+    ALL_COMPLETED,
+    PASSED,
+)
 from ai.backend.common.types import (
     BinarySize,
     KernelId,
@@ -52,6 +57,7 @@ from ai.backend.common.utils import current_loop
 from .defs import INTRINSIC_SLOTS
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
+    RejectedByHook,
     InstanceNotFound,
     SessionNotFound, TooManySessionsMatched,
     KernelCreationFailed, KernelDestructionFailed,
@@ -73,6 +79,7 @@ from .models import (
 )
 if TYPE_CHECKING:
     from .scheduler import SchedulingContext, PendingSession, AgentAllocationContext
+    from ..gateway.events import EventDispatcher
 
 __all__ = ['AgentRegistry', 'InstanceNotFound']
 
@@ -164,25 +171,31 @@ async def reenter_txn(pool: SAEngine, conn: SAConnection):
 
 
 class AgentRegistry:
-    '''
+    """
     Provide a high-level API to create, destroy, and query the computation
     kernels.
 
     The registry is also responsible to implement our resource management
     policy, such as the limitation of maximum number of kernels per instance.
-    '''
+    """
 
-    def __init__(self, config_server, dbpool,
-                 redis_stat, redis_live, redis_image,
-                 event_dispatcher,
-                 loop=None) -> None:
-        self.loop = loop if loop is not None else asyncio.get_event_loop()
+    def __init__(
+        self,
+        config_server,
+        dbpool,
+        redis_stat,
+        redis_live,
+        redis_image,
+        event_dispatcher: EventDispatcher,
+        hook_plugin_ctx: HookPluginContext,
+    ) -> None:
         self.config_server = config_server
         self.dbpool = dbpool
         self.redis_stat = redis_stat
         self.redis_live = redis_live
         self.redis_image = redis_image
         self.event_dispatcher = event_dispatcher
+        self.hook_plugin_ctx = hook_plugin_ctx
 
     async def init(self) -> None:
         self.heartbeat_lock = asyncio.Lock()
@@ -633,6 +646,15 @@ class AgentRegistry:
                     image_max_slots.to_humanized(known_slot_types).items()
                 )))
 
+        kernel_id = uuid.uuid4()
+        hook_result = await self.hook_plugin_ctx.dispatch(
+            'PRE_ENQUEUE_SESSION',
+            (KernelId(kernel_id), session_name, user_uuid),
+            return_when=ALL_COMPLETED,
+        )
+        if hook_result.status != PASSED:
+            raise RejectedByHook(hook_result.src_plugin, hook_result.reason)
+
         # Create kernel object in PENDING state.
         async with self.dbpool.acquire() as conn, conn.begin():
             # Feed SSH keypair and dotfiles if exists.
@@ -652,7 +674,6 @@ class AgentRegistry:
                     'private_key': row['ssh_private_key'],
                 }
 
-            kernel_id = uuid.uuid4()
             query = kernels.insert().values({
                 'id': kernel_id,
                 'status': KernelStatus.PENDING,
@@ -684,6 +705,10 @@ class AgentRegistry:
             })
             await conn.execute(query)
 
+        await self.hook_plugin_ctx.notify(
+            'POST_ENQUEUE_SESSION',
+            (KernelId(kernel_id), session_name, user_uuid),
+        )
         await self.event_dispatcher.produce_event('kernel_enqueued', [str(kernel_id)])
         return KernelId(kernel_id)
 
@@ -706,6 +731,14 @@ class AgentRegistry:
             )
             result = await conn.execute(query)
             resource_policy = await result.first()
+
+        hook_result = await self.hook_plugin_ctx.dispatch(
+            'PRE_START_SESSION',
+            (sess_ctx.kernel_id, sess_ctx.session_name, sess_ctx.access_key),
+            return_when=ALL_COMPLETED,
+        )
+        if hook_result.status != PASSED:
+            raise RejectedByHook(hook_result.src_plugin, hook_result.reason)
 
         # Create the kernel by invoking the agent
         async with self.handle_kernel_exception(
@@ -746,6 +779,11 @@ class AgentRegistry:
                   sess_ctx.session_name, sess_ctx.access_key, sess_ctx.kernel_id,
                   agent_ctx.agent_id, created_info)
         assert str(sess_ctx.kernel_id) == created_info['id']
+
+        await self.hook_plugin_ctx.notify(
+            'POST_START_SESSION',
+            (sess_ctx.kernel_id, sess_ctx.session_name, sess_ctx.access_key),
+        )
 
         async with self.dbpool.acquire() as conn, conn.begin():
             # Return and record kernel access information
@@ -942,6 +980,18 @@ class AgentRegistry:
             await self.recalc_resource_usage()
             return {'status': 'terminated'}
 
+        # TODO: rewrite:
+        #       resolve kernel ID first and
+        #       update DB based on it
+        #       during the whole termination process
+        hook_result = await self.hook_plugin_ctx.dispatch(
+            'PRE_DESTROY_SESSION',
+            (None, sess_id, None),
+            return_when=ALL_COMPLETED,
+        )
+        if hook_result.status != PASSED:
+            raise RejectedByHook(hook_result.src_plugin, hook_result.reason)
+
         async with self.handle_kernel_exception(
             'destroy_session', sess_id, access_key, set_error=True,
         ):
@@ -998,10 +1048,15 @@ class AgentRegistry:
                         last_stat['version'] = 2
                 except asyncio.TimeoutError:
                     pass
-                return {
-                    **(last_stat if last_stat is not None else {}),
-                    'status': 'terminated',
-                }
+
+        await self.hook_plugin_ctx.notify(
+            'POST_DESTROY_SESSION',
+            (None, sess_id, None),
+        )
+        return {
+            **(last_stat if last_stat is not None else {}),
+            'status': 'terminated',
+        }
 
     async def restart_session(self, sess_id, access_key):
         async with self.handle_kernel_exception(
@@ -1301,6 +1356,11 @@ class AgentRegistry:
                     pipe.sadd(image_ref.canonical, agent_id)
                 return pipe
             await redis.execute_with_retries(_pipe_builder)
+
+        await self.hook_plugin_ctx.notify(
+            'POST_AGENT_HEARTBEAT',
+            (agent_id, sgroup, available_slots),
+        )
 
     async def mark_agent_terminated(self, agent_id, status, conn=None):
         global agent_peers
