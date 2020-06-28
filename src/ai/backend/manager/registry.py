@@ -666,7 +666,7 @@ class AgentRegistry:
         kernel_id = uuid.uuid4()
         hook_result = await self.hook_plugin_ctx.dispatch(
             'PRE_ENQUEUE_SESSION',
-            (KernelId(kernel_id), session_name, user_uuid),
+            (KernelId(kernel_id), session_name, access_key),
             return_when=ALL_COMPLETED,
         )
         if hook_result.status != PASSED:
@@ -724,7 +724,7 @@ class AgentRegistry:
 
         await self.hook_plugin_ctx.notify(
             'POST_ENQUEUE_SESSION',
-            (KernelId(kernel_id), session_name, user_uuid),
+            (KernelId(kernel_id), session_name, access_key),
         )
         await self.event_dispatcher.produce_event('kernel_enqueued', [str(kernel_id)])
         return KernelId(kernel_id)
@@ -1005,7 +1005,7 @@ class AgentRegistry:
 
         hook_result = await self.hook_plugin_ctx.dispatch(
             'PRE_DESTROY_SESSION',
-            (kernel.id, kernel.sess_id, None),
+            (kernel['id'], kernel['sess_id'], kernel['access_key']),
             return_when=ALL_COMPLETED,
         )
         if hook_result.status != PASSED:
@@ -1064,7 +1064,7 @@ class AgentRegistry:
 
         await self.hook_plugin_ctx.notify(
             'POST_DESTROY_SESSION',
-            (kernel.id, kernel.sess_id, None),
+            (kernel['id'], kernel['sess_id'], kernel['access_key']),
         )
         return {
             **(last_stat if last_stat is not None else {}),
