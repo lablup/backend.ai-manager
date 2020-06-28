@@ -38,15 +38,15 @@ async def check_reserved_batch_session(
     """
     if sess_ctx.session_type == SessionTypes.BATCH:
         query = (
-            sa.select([kernels.c.reserved_at])
+            sa.select([kernels.c.starts_at])
             .select_from(kernels)
             .where(kernels.c.id == sess_ctx.kernel_id)
         )
-        reserved_at = await db_conn.scalar(query)
-        if reserved_at is not None and datetime.now(tzutc()) < reserved_at:
+        starts_at = await db_conn.scalar(query)
+        if starts_at is not None and datetime.now(tzutc()) < starts_at:
             return PredicateResult(
                 False,
-                'Before reservation time'
+                'Before start time'
             )
     return PredicateResult(True)
 
