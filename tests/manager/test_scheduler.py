@@ -6,9 +6,12 @@ from typing import (
     Mapping,
     Sequence,
 )
+from unittest import mock
+from unittest.mock import AsyncMock, MagicMock
 import uuid
 from pprint import pprint
 
+from dateutil.parser import parse as dtparse
 import pytest
 
 from ai.backend.common.docker import ImageRef
@@ -21,6 +24,7 @@ from ai.backend.manager.scheduler.dispatcher import load_scheduler
 from ai.backend.manager.scheduler.fifo import FIFOSlotScheduler, LIFOSlotScheduler
 from ai.backend.manager.scheduler.drf import DRFScheduler
 from ai.backend.manager.scheduler.mof import MOFScheduler
+from ai.backend.manager.scheduler.predicates import check_reserved_batch_session
 
 
 def test_load_intrinsic():
@@ -469,6 +473,52 @@ def test_mof_scheduler_no_valid_agent(example_agents_no_valid, example_pending_s
 
     agent_id = scheduler.assign_agent(example_agents_no_valid, picked_session)
     assert agent_id is None
+
+
+@pytest.mark.asyncio
+@mock.patch('ai.backend.manager.scheduler.predicates.datetime')
+async def test_multiple_timezones_for_reserved_batch_session_predicate(mock_dt):
+    mock_db_conn = MagicMock()
+    mock_sched_ctx = MagicMock()
+    mock_sess_ctx = MagicMock()
+    mock_sess_ctx.session_type = SessionTypes.BATCH
+    mock_sess_ctx.kernel_id = 'fake-kernel-id'
+
+    now = '2020-06-29T00:00:00+00:00'
+    mock_dt.now = MagicMock(return_value=dtparse(now))
+
+    # Start time is not yet reached (now < start time)
+    start_time = '2020-06-29T00:00:01+00:00'
+    mock_db_conn.scalar = AsyncMock(return_value=dtparse(start_time))
+    result = await check_reserved_batch_session(mock_db_conn, mock_sched_ctx, mock_sess_ctx)
+    assert not result.passed, (now, start_time)
+
+    # Start time is reached (now > start time)
+    start_time = '2020-06-28T23:59:59+00:00'
+    mock_db_conn.scalar = AsyncMock(return_value=dtparse(start_time))
+    result = await check_reserved_batch_session(mock_db_conn, mock_sched_ctx, mock_sess_ctx)
+    assert result.passed, (now, start_time)
+
+    # Start time is not yet reached by timezone (now < start time)
+    # Note that 6/29 00:00 (UTC) < 6/29 00:00 (-09:00) == 6/29 09:00 (UTC)
+    for i in range(1, 12):
+        start_time = f'2020-06-29T00:00:00-{i:02d}:00'
+        mock_db_conn.scalar = AsyncMock(return_value=dtparse(start_time))
+        result = await check_reserved_batch_session(mock_db_conn, mock_sched_ctx, mock_sess_ctx)
+        assert not result.passed, (now, start_time)
+
+    # Start time is reached by timezone (now > start time)
+    # Note that 6/29 00:00 (UTC) > 6/29 00:00 (+09:00) == 6/28 15:00 (UTC)
+    for i in range(1, 12):
+        start_time = f'2020-06-29T00:00:00+{i:02d}:00'
+        mock_db_conn.scalar = AsyncMock(return_value=dtparse(start_time))
+        result = await check_reserved_batch_session(mock_db_conn, mock_sched_ctx, mock_sess_ctx)
+        assert result.passed, (now, start_time)
+
+    # Should pass if start time is not specified (start immediately).
+    mock_db_conn.scalar = AsyncMock(return_value=None)
+    result = await check_reserved_batch_session(mock_db_conn, mock_sched_ctx, mock_sess_ctx)
+    assert result.passed
 
 
 # TODO: write tests for multiple agents and scaling groups
