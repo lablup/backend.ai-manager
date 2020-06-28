@@ -10,6 +10,7 @@ from pathlib import Path
 import time
 from typing import (
     Any,
+    AsyncIterator,
     Callable,
     Container,
     Dict,
@@ -17,6 +18,7 @@ from typing import (
     MutableMapping,
     Optional,
     Sequence,
+    Tuple,
     TYPE_CHECKING,
     Union,
 )
@@ -44,12 +46,14 @@ from ai.backend.common.plugin.hook import (
     PASSED,
 )
 from ai.backend.common.types import (
+    AccessKey,
     BinarySize,
+    KernelCreationConfig,
     KernelId,
     ResourceSlot,
-    SessionTypes,
+    SessionId,
     SessionResult,
-    KernelCreationConfig,
+    SessionTypes,
     SlotName,
     SlotTypes,
 )
@@ -231,10 +235,14 @@ class AgentRegistry:
 
     @aiotools.actxmgr
     async def handle_kernel_exception(
-            self, op, sess_id, access_key,
-            error_callback=None,
-            cancellation_callback=None,
-            set_error=False):
+        self,
+        op: str,
+        session_id: SessionId,
+        access_key: AccessKey,
+        error_callback=None,
+        cancellation_callback=None,
+        set_error: bool = False,
+    ) -> AsyncIterator[None]:
         op_exc = {
             'create_session': KernelCreationFailed,
             'restart_session': KernelRestartFailed,
@@ -253,8 +261,11 @@ class AgentRegistry:
         except asyncio.TimeoutError:
             if set_error:
                 await self.set_session_status(
-                    sess_id, access_key, KernelStatus.ERROR,
-                    status_info=f'operation-timeout ({op})')
+                    session_id,
+                    access_key,
+                    KernelStatus.ERROR,
+                    status_info=f'operation-timeout ({op})',
+                )
             if error_callback:
                 await error_callback()
             raise exc_class('TIMEOUT') from None
@@ -265,9 +276,12 @@ class AgentRegistry:
         except AgentError as e:
             # TODO: wrap some assertion errors as "invalid requests"
             if set_error:
-                await self.set_session_status(sess_id, access_key,
-                                              KernelStatus.ERROR,
-                                              status_info=f'agent-error ({e!r})')
+                await self.set_session_status(
+                    session_id,
+                    access_key,
+                    KernelStatus.ERROR,
+                    status_info=f'agent-error ({e!r})',
+                )
             if error_callback:
                 await error_callback()
             raise exc_class('FAILURE', e) from None
@@ -276,9 +290,12 @@ class AgentRegistry:
             raise
         except Exception as e:
             if set_error:
-                await self.set_session_status(sess_id, access_key,
-                                              KernelStatus.ERROR,
-                                              status_info=f'other-error ({e!r})')
+                await self.set_session_status(
+                    session_id,
+                    access_key,
+                    KernelStatus.ERROR,
+                    status_info=f'other-error ({e!r})',
+                )
             if error_callback:
                 await error_callback()
             raise
@@ -649,7 +666,7 @@ class AgentRegistry:
         kernel_id = uuid.uuid4()
         hook_result = await self.hook_plugin_ctx.dispatch(
             'PRE_ENQUEUE_SESSION',
-            (KernelId(kernel_id), session_name, user_uuid),
+            (KernelId(kernel_id), session_name, access_key),
             return_when=ALL_COMPLETED,
         )
         if hook_result.status != PASSED:
@@ -707,7 +724,7 @@ class AgentRegistry:
 
         await self.hook_plugin_ctx.notify(
             'POST_ENQUEUE_SESSION',
-            (KernelId(kernel_id), session_name, user_uuid),
+            (KernelId(kernel_id), session_name, access_key),
         )
         await self.event_dispatcher.produce_event('kernel_enqueued', [str(kernel_id)])
         return KernelId(kernel_id)
@@ -742,9 +759,12 @@ class AgentRegistry:
 
         # Create the kernel by invoking the agent
         async with self.handle_kernel_exception(
-                'create_session', sess_ctx.session_name, sess_ctx.access_key):
+            'create_session', sess_ctx.kernel_id, sess_ctx.access_key,
+        ):
             created_info = None
-            async with RPCContext(agent_ctx.agent_addr, None, order_key=sess_ctx.session_name) as rpc:
+            async with RPCContext(
+                agent_ctx.agent_addr, None, order_key=sess_ctx.session_name,
+            ) as rpc:
                 config: KernelCreationConfig = {
                     'image': {
                         'registry': {
@@ -926,32 +946,34 @@ class AgentRegistry:
 
     async def destroy_session(
         self,
-        sess_id: str,
-        access_key: str,
+        sess_name_or_id: Union[str, SessionId],
+        access_key: AccessKey,
         *,
         forced: bool = False,
         domain_name: str = None,
     ) -> Mapping[str, Any]:
 
-        if forced:
-            # This is for emergency (e.g., when agents are not responding).
-            # Regardless of the container's real status, it marks the session terminated
-            # and recalculate the resource usage.
-            async with self.dbpool.acquire() as conn, conn.begin():
-                kernel = await self.get_session(
-                    sess_id, access_key,
-                    field=[kernels.c.domain_name],
-                    for_update=True,
-                    db_connection=conn,
-                )
-                if domain_name is not None and kernel.domain_name != domain_name:
-                    raise SessionNotFound
+        async with self.dbpool.acquire() as conn:
+            kernel = await self.get_session(
+                sess_name_or_id, access_key,
+                field=[kernels.c.domain_name, kernels.c.role],
+                db_connection=conn,
+                for_update=True,
+            )
+            if domain_name is not None and kernel.domain_name != domain_name:
+                raise SessionNotFound
+
+            if forced:
+                # This is for emergency (e.g., when agents are not responding).
+                # Regardless of the container's real status, it marks the session terminated
+                # and recalculate the resource usage.
                 if kernel.status == KernelStatus.PENDING:
                     await self.set_session_status(
-                        sess_id, access_key,
+                        kernel['id'],
+                        access_key,
                         KernelStatus.CANCELLED,
                         reason='force-cancelled',
-                        db_conn=conn,
+                        db_connection=conn,
                     )
                     await self.event_dispatcher.produce_event(
                         'kernel_cancelled',
@@ -967,49 +989,40 @@ class AgentRegistry:
                     log.warning('force-terminating session in normal status! (k:{}, status:{})',
                                 kernel.id, kernel.status)
                 await self.set_session_status(
-                    sess_id, access_key,
+                    kernel['id'],
+                    access_key,
                     KernelStatus.TERMINATED,
                     reason='force-terminated',
-                    db_conn=conn,
+                    db_connection=conn,
                 )
                 await self.event_dispatcher.produce_event(
                     'kernel_terminated',
                     (str(kernel.id), 'terminated'),
                 )
-            # We intentionally skip the agent RPC call!
-            await self.recalc_resource_usage()
-            return {'status': 'terminated'}
+                # We intentionally skip the agent RPC call!
+                await self.recalc_resource_usage()
+                return {'status': 'terminated'}
 
-        # TODO: rewrite:
-        #       resolve kernel ID first and
-        #       update DB based on it
-        #       during the whole termination process
         hook_result = await self.hook_plugin_ctx.dispatch(
             'PRE_DESTROY_SESSION',
-            (None, sess_id, None),
+            (kernel['id'], kernel['sess_id'], kernel['access_key']),
             return_when=ALL_COMPLETED,
         )
         if hook_result.status != PASSED:
             raise RejectedByHook(hook_result.src_plugin, hook_result.reason)
 
         async with self.handle_kernel_exception(
-            'destroy_session', sess_id, access_key, set_error=True,
+            'destroy_session', kernel.id, access_key, set_error=True,
         ):
             async with self.dbpool.acquire() as conn, conn.begin():
-                kernel = await self.get_session(
-                    sess_id, access_key,
-                    field=[kernels.c.domain_name, kernels.c.role],
-                    for_update=True,
-                    db_connection=conn,
-                )
                 if domain_name is not None and kernel.domain_name != domain_name:
                     raise SessionNotFound
                 if kernel.status == KernelStatus.PENDING:
                     await self.set_session_status(
-                        sess_id, access_key,
+                        kernel.id, access_key,
                         KernelStatus.CANCELLED,
                         reason='user-requested',
-                        db_conn=conn,
+                        db_connection=conn,
                     )
                     await self.event_dispatcher.produce_event(
                         'kernel_cancelled',
@@ -1026,16 +1039,16 @@ class AgentRegistry:
                                    .where(keypairs.c.access_key == kernel.access_key))
                         await conn.execute(query)
                     await self.set_session_status(
-                        sess_id, access_key,
+                        kernel.id, access_key,
                         KernelStatus.TERMINATING,
                         reason='user-requested',
-                        db_conn=conn,
+                        db_connection=conn,
                     )
                     await self.event_dispatcher.produce_event(
                         'kernel_terminating',
                         (str(kernel.id), 'user-requested'),
                     )
-            async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
+            async with RPCContext(kernel['agent_addr'], None, order_key=kernel.id) as rpc:
                 await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
                 last_stat: Optional[Dict[str, Any]]
                 last_stat = None
@@ -1051,38 +1064,49 @@ class AgentRegistry:
 
         await self.hook_plugin_ctx.notify(
             'POST_DESTROY_SESSION',
-            (None, sess_id, None),
+            (kernel['id'], kernel['sess_id'], kernel['access_key']),
         )
         return {
             **(last_stat if last_stat is not None else {}),
             'status': 'terminated',
         }
 
-    async def restart_session(self, sess_id, access_key):
-        async with self.handle_kernel_exception(
-                'restart_session', sess_id, access_key, set_error=True):
-            extra_cols = (
-                kernels.c.image,
-                kernels.c.registry,
-                kernels.c.occupied_slots,
-                kernels.c.environ,
+    async def restart_session(
+        self,
+        session_name_or_id: Union[str, SessionId],
+        access_key: AccessKey,
+    ) -> None:
+        extra_cols = (
+            kernels.c.image,
+            kernels.c.registry,
+            kernels.c.occupied_slots,
+            kernels.c.environ,
+        )
+        async with self.dbpool.acquire() as conn, conn.begin():
+            kernel = await self.get_session(
+                session_name_or_id,
+                access_key,
+                field=extra_cols,
+                db_connection=conn,
+                for_update=True,
             )
-            async with self.dbpool.acquire() as conn, conn.begin():
-                kernel = await self.get_session(sess_id, access_key,
-                                                field=extra_cols,
-                                                for_update=True,
-                                                db_connection=conn)
-                await self.set_session_status(sess_id, access_key,
-                                              KernelStatus.RESTARTING,
-                                              db_conn=conn)
-
+            await self.set_session_status(
+                kernel['id'],
+                access_key,
+                KernelStatus.RESTARTING,
+                db_connection=conn,
+            )
+        async with self.handle_kernel_exception(
+            'restart_session', kernel['id'], access_key, set_error=True,
+        ):
             registry_url, registry_creds = \
                 await get_registry_info(self.config_server.etcd,
                                         kernel['registry'])
             image_ref = ImageRef(kernel['image'], [kernel['registry']])
             image_info = await self.config_server.inspect_image(image_ref)
-
-            async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
+            async with RPCContext(
+                kernel['agent_addr'], None, order_key=kernel['id'],
+            ) as rpc:
                 environ = {
                      k: v for k, v in
                      map(lambda s: s.split('=', 1), kernel['environ'])
@@ -1105,129 +1129,137 @@ class AgentRegistry:
                 }
                 kernel_info = await rpc.call.restart_kernel(str(kernel['id']),
                                                             new_config)
-                # TODO: publish "kernel_started" event
-                # TODO: remove publishing "kernel_started" event from the agent
-                await self.set_session_status(
-                    sess_id, access_key,
-                    KernelStatus.RUNNING,
-                    container_id=kernel_info['container_id'],
-                    repl_in_port=kernel_info['repl_in_port'],
-                    repl_out_port=kernel_info['repl_out_port'],
-                    stdin_port=kernel_info['stdin_port'],
-                    stdout_port=kernel_info['stdout_port'],
-                    service_ports=kernel_info.get('service_ports', [])
-                )
+        # TODO: publish "kernel_started" event
+        # TODO: remove publishing "kernel_started" event from the agent
+        await self.set_session_status(
+            kernel['id'],
+            access_key,
+            KernelStatus.RUNNING,
+            container_id=kernel_info['container_id'],
+            repl_in_port=kernel_info['repl_in_port'],
+            repl_out_port=kernel_info['repl_out_port'],
+            stdin_port=kernel_info['stdin_port'],
+            stdout_port=kernel_info['stdout_port'],
+            service_ports=kernel_info.get('service_ports', [])
+        )
 
-    async def execute(self, sess_id, access_key,
-                      api_version, run_id, mode, code, opts, *,
-                      flush_timeout=None):
-        async with self.handle_kernel_exception('execute', sess_id, access_key):
-            kernel = await self.get_session(sess_id, access_key)
+    async def execute(
+        self,
+        session_name_or_id: Union[str, SessionId],
+        access_key: AccessKey,
+        api_version: Tuple[int, str],
+        run_id: str,
+        mode: str,
+        code: str,
+        opts: Mapping[str, Any],
+        *,
+        flush_timeout: float = None,
+    ) -> Mapping[str, Any]:
+        kernel = await self.get_session(session_name_or_id, access_key)
+        async with self.handle_kernel_exception('execute', kernel['id'], access_key):
             # The agent aggregates at most 2 seconds of outputs
             # if the kernel runs for a long time.
             major_api_version = api_version[0]
             if major_api_version == 4:  # manager-agent protocol is same.
                 major_api_version = 3
-            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
-                coro = rpc.call.execute(str(kernel['id']),
-                                        major_api_version,
-                                        run_id, mode, code, opts,
-                                        flush_timeout)
-                if coro is None:
-                    log.warning('execute cancelled')
-                    return None
-                return await coro
+            async with RPCContext(kernel['agent_addr'], 30, order_key=kernel['id']) as rpc:
+                return await rpc.call.execute(
+                    str(kernel['id']),
+                    major_api_version,
+                    run_id, mode, code, opts,
+                    flush_timeout,
+                )
 
-    async def interrupt_session(self, sess_id, access_key):
-        async with self.handle_kernel_exception('execute', sess_id, access_key):
-            kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
-                coro = rpc.call.interrupt_kernel(str(kernel['id']))
-                if coro is None:
-                    log.warning('interrupt cancelled')
-                    return None
-                return await coro
+    async def interrupt_session(
+        self,
+        session_name_or_id: Union[str, SessionId],
+        access_key: AccessKey,
+    ) -> Mapping[str, Any]:
+        kernel = await self.get_session(session_name_or_id, access_key)
+        async with self.handle_kernel_exception('execute', kernel['id'], access_key):
+            async with RPCContext(kernel['agent_addr'], 30, order_key=kernel['id']) as rpc:
+                return await rpc.call.interrupt_kernel(str(kernel['id']))
 
-    async def get_completions(self, sess_id, access_key, mode, text, opts):
-        async with self.handle_kernel_exception('execute', sess_id, access_key):
-            kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 10, order_key=sess_id) as rpc:
-                coro = rpc.call.get_completions(str(kernel['id']), mode, text, opts)
-                if coro is None:
-                    log.warning('get_completions cancelled')
-                    return None
-                return await coro
+    async def get_completions(
+        self,
+        session_name_or_id: Union[str, SessionId],
+        access_key: AccessKey,
+        mode: str,
+        text: str,
+        opts: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        kernel = await self.get_session(session_name_or_id, access_key)
+        async with self.handle_kernel_exception('execute', kernel['id'], access_key):
+            async with RPCContext(kernel['agent_addr'], 10, order_key=kernel['id']) as rpc:
+                return await rpc.call.get_completions(str(kernel['id']), mode, text, opts)
 
-    async def start_service(self, sess_id, access_key, service, opts):
-        async with self.handle_kernel_exception('execute', sess_id, access_key):
-            kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
-                coro = rpc.call.start_service(str(kernel['id']), service, opts)
-                if coro is None:
-                    log.warning('start_service cancelled')
-                    return None
-                return await coro
+    async def start_service(
+        self,
+        session_name_or_id: Union[str, SessionId],
+        access_key: AccessKey,
+        service: str,
+        opts: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        kernel = await self.get_session(session_name_or_id, access_key)
+        async with self.handle_kernel_exception('execute', kernel['id'], access_key):
+            async with RPCContext(kernel['agent_addr'], None, order_key=kernel['id']) as rpc:
+                return await rpc.call.start_service(str(kernel['id']), service, opts)
 
-    async def upload_file(self, sess_id, access_key, filename, payload):
-        async with self.handle_kernel_exception('upload_file', sess_id, access_key):
-            kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
-                coro = rpc.call.upload_file(str(kernel['id']), filename, payload)
-                if coro is None:
-                    log.warning('upload_file cancelled')
-                    return None
-                return await coro
+    async def upload_file(
+        self,
+        session_name_or_id: Union[str, SessionId],
+        access_key: AccessKey,
+        filename: str,
+        payload: bytes,
+    ) -> Mapping[str, Any]:
+        kernel = await self.get_session(session_name_or_id, access_key)
+        async with self.handle_kernel_exception('upload_file', kernel['id'], access_key):
+            async with RPCContext(kernel['agent_addr'], None, order_key=kernel['id']) as rpc:
+                return await rpc.call.upload_file(str(kernel['id']), filename, payload)
 
-    async def download_file(self, sess_id, access_key, filepath):
-        async with self.handle_kernel_exception('download_file', sess_id,
+    async def download_file(
+        self,
+        session_name_or_id: Union[str, SessionId],
+        access_key: AccessKey,
+        filepath: str,
+    ) -> bytes:
+        kernel = await self.get_session(session_name_or_id, access_key)
+        async with self.handle_kernel_exception('download_file', kernel['id'],
                                                 access_key):
-            kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
-                coro = rpc.call.download_file(str(kernel['id']), filepath)
-                if coro is None:
-                    log.warning('download_file cancelled')
-                    return None
-                return await coro
+            async with RPCContext(kernel['agent_addr'], None, order_key=kernel['id']) as rpc:
+                return await rpc.call.download_file(str(kernel['id']), filepath)
 
-    async def list_files(self, sess_id, access_key, path):
-        async with self.handle_kernel_exception('list_files', sess_id, access_key):
-            kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
-                coro = rpc.call.list_files(str(kernel['id']), path)
-                if coro is None:
-                    log.warning('list_files cancelled')
-                    return None
-                return await coro
+    async def list_files(
+        self,
+        session_name_or_id: Union[str, SessionId],
+        access_key: AccessKey,
+        path: str,
+    ) -> Mapping[str, Any]:
+        kernel = await self.get_session(session_name_or_id, access_key)
+        async with self.handle_kernel_exception('list_files', kernel['id'], access_key):
+            async with RPCContext(kernel['agent_addr'], 30, order_key=kernel['id']) as rpc:
+                return await rpc.call.list_files(str(kernel['id']), path)
 
-    async def get_logs_from_agent(self, sess_id, access_key):
-        async with self.handle_kernel_exception('get_logs_from_agent', sess_id, access_key):
-            kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
-                coro = rpc.call.get_logs(str(kernel['id']))
-                if coro is None:
-                    log.warning('get_logs_from_agent cancelled')
-                    return None
-                return await coro
+    async def get_logs_from_agent(
+        self,
+        session_name_or_id: Union[str, SessionId],
+        access_key: AccessKey,
+    ) -> Mapping[str, Any]:
+        kernel = await self.get_session(session_name_or_id, access_key)
+        async with self.handle_kernel_exception('get_logs_from_agent', kernel['id'], access_key):
+            async with RPCContext(kernel['agent_addr'], 30, order_key=kernel['id']) as rpc:
+                return await rpc.call.get_logs(str(kernel['id']))
 
-    async def refresh_session(self, sess_id, access_key):
+    async def refresh_session(
+        self,
+        session_name_or_id: Union[str, SessionId],
+        access_key: AccessKey,
+    ) -> Mapping[str, Any]:
+        kernel = await self.get_session(session_name_or_id, access_key)
         async with self.handle_kernel_exception('refresh_session',
-                                                sess_id, access_key):
-            kernel = await self.get_session(sess_id, access_key)
-            async with RPCContext(kernel['agent_addr'], 30, order_key=sess_id) as rpc:
-                coro = rpc.call.refresh_idle(str(kernel['id']))
-                if coro is None:
-                    log.warning('refresh_session cancelled')
-                    return None
-                return await coro
-
-    async def update_session(self, sess_id, access_key, updated_fields, conn=None):
-        async with reenter_txn(self.dbpool, conn) as conn:
-            query = (sa.update(kernels)
-                       .values(updated_fields)
-                       .where((kernels.c.sess_id == sess_id) &
-                              (kernels.c.access_key == access_key) &
-                              (kernels.c.role == 'master')))
-            await conn.execute(query)
+                                                kernel['id'], access_key):
+            async with RPCContext(kernel['agent_addr'], 30, order_key=kernel['id']) as rpc:
+                return await rpc.call.refresh_idle(str(kernel['id']))
 
     async def increment_session_usage(self, sess_id, access_key, conn=None):
         async with reenter_txn(self.dbpool, conn) as conn:
@@ -1408,23 +1440,27 @@ class AgentRegistry:
             )
             await conn.execute(query)
 
-    async def set_session_status(self, sess_id, access_key,
-                                 status: KernelStatus,
-                                 reason: str = '', *,
-                                 db_conn: SAConnection = None,
-                                 **extra_fields):
+    async def set_session_status(
+        self,
+        session_id: SessionId,
+        access_key: AccessKey,
+        status: KernelStatus,
+        reason: str = '', *,
+        db_connection: SAConnection = None,
+        **extra_fields,
+    ) -> None:
         data = {
             'status': status,
             'status_info': reason,
             'status_changed': datetime.now(tzutc()),
         }
         data.update(extra_fields)
-        async with reenter_txn(self.dbpool, db_conn) as conn:
+        async with reenter_txn(self.dbpool, db_connection) as conn:
             query = (
                 sa.update(kernels)
                 .values(data)
                 .where(
-                    (kernels.c.sess_id == sess_id) &
+                    (kernels.c.id == session_id) &
                     (kernels.c.access_key == access_key) &
                     ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES))
                 )
