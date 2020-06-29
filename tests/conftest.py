@@ -9,10 +9,14 @@ import shutil
 import subprocess
 import tempfile
 from typing import (
-    Any, Optional,
-    Sequence,
+    Any,
+    AsyncContextManager,
+    List,
     Mapping,
+    Optional,
+    Sequence,
     Tuple,
+    Type,
 )
 
 import aiohttp
@@ -302,6 +306,7 @@ async def create_app_and_client(test_config, event_loop):
     client: Optional[Client] = None
     client_session: Optional[aiohttp.ClientSession] = None
     runner: Optional[web.BaseRunner] = None
+    _outer_ctxs: List[AsyncContextManager] = []
 
     async def app_builder(
         cleanup_contexts: Sequence[CleanupContext] = None,
@@ -309,23 +314,27 @@ async def create_app_and_client(test_config, event_loop):
         scheduler_opts: Mapping[str, Any] = None,
     ) -> Tuple[web.Application, Client]:
         nonlocal client, client_session, runner
+        nonlocal _outer_ctxs
 
         if scheduler_opts is None:
             scheduler_opts = {}
-        _non_ctx_registers = []
         _cleanup_ctxs = []
+        _outer_ctx_classes: List[Type[AsyncContextManager]] = []
         if cleanup_contexts is not None:
             for ctx in cleanup_contexts:
-                if ctx.__name__ in ['config_server_register', 'webapp_plugins_register']:
-                    _non_ctx_registers.append(ctx)
+                # if isinstance(ctx, AsyncContextManager):
+                if ctx.__name__ in ['config_server_ctx', 'webapp_plugins_ctx']:
+                    _outer_ctx_classes.append(ctx)  # type: ignore
                 else:
                     _cleanup_ctxs.append(ctx)
         app = build_root_app(0, test_config,
                              cleanup_contexts=_cleanup_ctxs,
                              subapp_pkgs=subapp_pkgs,
                              scheduler_opts={'close_timeout': 10, **scheduler_opts})
-        for register in _non_ctx_registers:
-            await register(app)  # type: ignore
+        for octx_cls in _outer_ctx_classes:
+            octx = octx_cls(app)  # type: ignore
+            _outer_ctxs.append(octx)
+            await octx.__aenter__()
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(
@@ -345,6 +354,8 @@ async def create_app_and_client(test_config, event_loop):
         await client_session.close()
     if runner:
         await runner.cleanup()
+    for octx in reversed(_outer_ctxs):
+        await octx.__aexit__(None, None, None)
 
 
 @pytest.fixture

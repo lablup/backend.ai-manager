@@ -1,3 +1,7 @@
+from typing import (
+    Any,
+    Mapping,
+)
 from unittest.mock import MagicMock, AsyncMock
 
 import snappy
@@ -7,6 +11,12 @@ from ai.backend.manager.registry import AgentRegistry
 from ai.backend.manager.models import AgentStatus
 from ai.backend.common import msgpack
 from ai.backend.common.types import ResourceSlot
+from ai.backend.common.plugin.hook import HookPluginContext
+
+
+class DummyEtcd:
+    async def get_prefix(self, key: str) -> Mapping[str, Any]:
+        return {}
 
 
 async def test_handle_heartbeat(mocker):
@@ -43,6 +53,14 @@ async def test_handle_heartbeat(mocker):
         ('index.docker.io/lablup/python:3.6-ubuntu18.04', ),
     ]))
 
+    def mocked_entrypoints(entry_point_group: str):
+        return []
+
+    mocker.patch('ai.backend.common.plugin.pkg_resources.iter_entry_points', mocked_entrypoints)
+    mocked_etcd = DummyEtcd()
+    # mocker.object.patch(mocked_etcd, 'get_prefix', AsyncMock(return_value={}))
+    hook_plugin_ctx = HookPluginContext(mocked_etcd, {})
+
     registry = AgentRegistry(
         config_server=mock_config_server,
         dbpool=mock_dbpool,
@@ -50,6 +68,7 @@ async def test_handle_heartbeat(mocker):
         redis_live=mock_redis_live,
         redis_image=mock_redis_image,
         event_dispatcher=mock_event_dispatcher,
+        hook_plugin_ctx=hook_plugin_ctx,
     )
     await registry.init()
 

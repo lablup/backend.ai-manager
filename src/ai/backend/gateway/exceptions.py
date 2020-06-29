@@ -82,6 +82,16 @@ class GenericBadRequest(web.HTTPBadRequest, BackendError):
     error_title = 'Bad request.'
 
 
+class RejectedByHook(web.HTTPBadRequest, BackendError):
+    error_type  = 'https://api.backend.ai/probs/rejected-by-hook'
+    error_title = 'Operation rejected by a hook plugin.'
+
+
+class InvalidCredentials(web.HTTPBadRequest, BackendError):
+    error_type  = 'https://api.backend.ai/probs/invalid-credentials'
+    error_title = 'Invalid credentials for authentication.'
+
+
 class GenericForbidden(web.HTTPForbidden, BackendError):
     error_type  = 'https://api.backend.ai/probs/generic-forbidden'
     error_title = 'Forbidden operation.'
