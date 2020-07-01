@@ -19,6 +19,7 @@ from aiopg.sa.connection import SAConnection
 import aioredlock
 from dateutil.tz import tzutc
 import sqlalchemy as sa
+from sqlalchemy.sql.expression import true
 
 from ai.backend.common import redis
 from ai.backend.common.logging import BraceStyleAdapter
@@ -510,7 +511,8 @@ async def _list_agents_by_sgroup(
         .select_from(agents)
         .where(
             (agents.c.status == AgentStatus.ALIVE) &
-            (agents.c.scaling_group == sgroup_name)
+            (agents.c.scaling_group == sgroup_name) &
+            (agents.c.schedulable == true())
         )
     )
     items = []
