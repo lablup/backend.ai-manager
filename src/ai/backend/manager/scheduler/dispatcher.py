@@ -48,6 +48,7 @@ from . import (
     AbstractScheduler,
 )
 from .predicates import (
+    check_reserved_batch_session,
     check_concurrency,
     check_dependencies,
     check_keypair_resource_limit,
@@ -242,6 +243,7 @@ class SchedulerDispatcher(aobject):
 
                 async with db_conn.begin():
                     predicates: Sequence[Awaitable[PredicateResult]] = [
+                        check_reserved_batch_session(db_conn, sched_ctx, sess_ctx),
                         check_concurrency(db_conn, sched_ctx, sess_ctx),
                         check_dependencies(db_conn, sched_ctx, sess_ctx),
                         check_keypair_resource_limit(db_conn, sched_ctx, sess_ctx),

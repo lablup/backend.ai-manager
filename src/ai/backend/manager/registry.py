@@ -494,6 +494,7 @@ class AgentRegistry:
         startup_command: str = None,
         session_tag: str = None,
         internal_data: dict = None,
+        starts_at: datetime = None,
     ) -> KernelId:
         mounts = creation_config.get('mounts') or []
         mount_map = creation_config.get('mount_map') or {}
@@ -696,6 +697,7 @@ class AgentRegistry:
                 'status': KernelStatus.PENDING,
                 'sess_id': session_name,    # TODO: rename column to session_name
                 'sess_type': session_type,  # TODO: rename column to session_type
+                'starts_at': starts_at,
                 'role': 'master',
                 'scaling_group': scaling_group,
                 'domain_name': domain_name,
