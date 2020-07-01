@@ -164,6 +164,18 @@ async def update_announcement(request: web.Request, params: Any) -> web.Response
     return web.Response(status=204)
 
 
+@atomic
+@superadmin_required
+@check_api_params(
+    t.Dict({
+        t.Key('agent_id'): t.String | t.List(t.String),
+        t.Key('schedulable'): t.ToBool,
+    }))
+async def set_agents_schedulable(request: web.Request, params: Any) -> web.Response:
+    # TODO: implement
+    return web.Response(status=204)
+
+
 async def init(app: web.Application) -> None:
     app['status_watch_task'] = asyncio.create_task(detect_status_update(app))
 
