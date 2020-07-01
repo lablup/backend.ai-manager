@@ -69,6 +69,8 @@ users = sa.Table(
     sa.Column('is_active', sa.Boolean, default=True),
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
+    sa.Column('modified_at', sa.DateTime(timezone=True),
+              server_default=sa.func.now(), onupdate=sa.func.current_timestamp()),
     #: Field for synchronization with external services.
     sa.Column('integration_id', sa.String(length=512)),
 
