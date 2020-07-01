@@ -207,6 +207,9 @@ async def perform_scheduler_ops(request: web.Request, params: Any) -> web.Respon
             result = await conn.execute(query)
             if result.rowcount < len(args):
                 raise InstanceNotFound()
+        if schedulable:
+            # trigger scheduler
+            await request.app['event_dispatcher'].produce_event('do_schedule')
     else:
         raise GenericBadRequest('Unknown scheduler operation')
     return web.Response(status=204)

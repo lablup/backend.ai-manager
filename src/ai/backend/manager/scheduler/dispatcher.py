@@ -134,6 +134,7 @@ class SchedulerDispatcher(aobject):
         self.registry.event_dispatcher.consume('kernel_enqueued', None, self.schedule)
         self.registry.event_dispatcher.consume('kernel_terminated', None, self.schedule)
         self.registry.event_dispatcher.consume('instance_started', None, self.schedule)
+        self.registry.event_dispatcher.consume('do_schedule', None, self.schedule)
         # TODO: add events for resource configuration changes and subscribe them here.
         self.lock_manager = aioredlock.Aioredlock([
             {'host': str(self.config['redis']['addr'][0]),
@@ -174,7 +175,7 @@ class SchedulerDispatcher(aobject):
                 )
                 if now > next_sync_time + local_sync_delay and last_sync_time != next_sync_time:
                     last_sync_time = next_sync_time
-                    await self.registry.event_dispatcher.produce_event('kernel_enqueued', [None])
+                    await self.registry.event_dispatcher.produce_event('do_schedule')
         except asyncio.CancelledError:
             pass
         except Exception:
