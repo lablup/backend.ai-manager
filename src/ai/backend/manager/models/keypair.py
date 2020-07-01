@@ -67,6 +67,8 @@ keypairs = sa.Table(
               default=False, server_default=false()),
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
+    sa.Column('modified_at', sa.DateTime(timezone=True),
+              server_default=sa.func.now(), onupdate=sa.func.current_timestamp()),
     sa.Column('last_used', sa.DateTime(timezone=True), nullable=True),
     sa.Column('concurrency_used', sa.Integer),
     sa.Column('rate_limit', sa.Integer),
