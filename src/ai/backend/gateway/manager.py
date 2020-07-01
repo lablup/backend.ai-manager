@@ -1,4 +1,5 @@
 import asyncio
+import enum
 import functools
 import json
 import logging
@@ -21,13 +22,23 @@ from ai.backend.common import validators as tx
 
 from . import ManagerStatus
 from .auth import superadmin_required
-from .exceptions import InvalidAPIParameters, ServerFrozen, ServiceUnavailable
+from .exceptions import (
+    InstanceNotFound,
+    InvalidAPIParameters,
+    GenericBadRequest,
+    ServerFrozen,
+    ServiceUnavailable,
+)
 from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params
-from ..manager.models import kernels, KernelStatus
-
+from ..manager.models import agents, kernels, KernelStatus
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.manager'))
+
+
+class SchedulerOps(enum.Enum):
+    INCLUDE_AGENTS = 'include-agents'
+    EXCLUDE_AGENTS = 'exclude-agents'
 
 
 def server_status_required(allowed_status: FrozenSet[ManagerStatus]):
@@ -164,6 +175,46 @@ async def update_announcement(request: web.Request, params: Any) -> web.Response
     return web.Response(status=204)
 
 
+iv_scheduler_ops_args = {
+    SchedulerOps.INCLUDE_AGENTS: t.List(t.String),
+    SchedulerOps.EXCLUDE_AGENTS: t.List(t.String),
+}
+
+
+@atomic
+@superadmin_required
+@check_api_params(
+    t.Dict({
+        t.Key('op'): tx.Enum(SchedulerOps),
+        t.Key('args'): t.Any,
+    }))
+async def perform_scheduler_ops(request: web.Request, params: Any) -> web.Response:
+    try:
+        args = iv_scheduler_ops_args[params['op']].check(params['args'])
+    except t.DataError as e:
+        raise InvalidAPIParameters(
+            f"Input validation failed for args with {params['op']}",
+            extra_data=e.as_dict(),
+        )
+    if params['op'] in (SchedulerOps.INCLUDE_AGENTS, SchedulerOps.EXCLUDE_AGENTS):
+        schedulable = (params['op'] == SchedulerOps.INCLUDE_AGENTS)
+        async with request.app['dbpool'].acquire() as conn, conn.begin():
+            query = (
+                agents.update()
+                .values(schedulable=schedulable)
+                .where(agents.c.id.in_(args))
+            )
+            result = await conn.execute(query)
+            if result.rowcount < len(args):
+                raise InstanceNotFound()
+        if schedulable:
+            # trigger scheduler
+            await request.app['event_dispatcher'].produce_event('do_schedule')
+    else:
+        raise GenericBadRequest('Unknown scheduler operation')
+    return web.Response(status=204)
+
+
 async def init(app: web.Application) -> None:
     app['status_watch_task'] = asyncio.create_task(detect_status_update(app))
 
@@ -178,12 +229,13 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app = web.Application()
     app['api_versions'] = (2, 3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
-    status_resource = cors.add(app.router.add_resource(r'/status'))
+    status_resource = cors.add(app.router.add_resource('/status'))
     cors.add(status_resource.add_route('GET', fetch_manager_status))
     cors.add(status_resource.add_route('PUT', update_manager_status))
-    status_resource = cors.add(app.router.add_resource(r'/announcement'))
-    cors.add(status_resource.add_route('GET', get_announcement))
-    cors.add(status_resource.add_route('POST', update_announcement))
+    announcement_resource = cors.add(app.router.add_resource('/announcement'))
+    cors.add(announcement_resource.add_route('GET', get_announcement))
+    cors.add(announcement_resource.add_route('POST', update_announcement))
+    cors.add(app.router.add_route('POST', '/scheduler/operation', perform_scheduler_ops))
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     return app, []
