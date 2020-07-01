@@ -8,11 +8,11 @@ Create Date: 2019-12-12 07:19:48.052928
 from alembic import op
 import sqlalchemy as sa
 
-from ai.backend.manager.models import keypairs
 from cryptography.hazmat.primitives import serialization as crypto_serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend as crypto_default_backend
 
+from ai.backend.manager.models.base import convention
 
 # revision identifiers, used by Alembic.
 revision = '0262e50e90e0'
@@ -42,6 +42,15 @@ def generate_ssh_keypair():
 def upgrade():
     op.add_column('keypairs', sa.Column('ssh_public_key', sa.String(length=750), nullable=True))
     op.add_column('keypairs', sa.Column('ssh_private_key', sa.String(length=2000), nullable=True))
+
+    # partial table to be preserved and referred
+    metadata = sa.MetaData(naming_convention=convention)
+    keypairs = sa.Table(
+        'keypairs', metadata,
+        sa.Column('access_key', sa.String(length=20), primary_key=True),
+        sa.Column('ssh_public_key', sa.String(length=750), nullable=True),
+        sa.Column('ssh_private_key', sa.String(length=2000), nullable=True),
+    )
 
     # Fill in SSH keypairs in every keypairs.
     conn = op.get_bind()
