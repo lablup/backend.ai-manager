@@ -1,1 +1,0 @@
-Add fallback if any keys under last_stat have None value during statistics calculation.
