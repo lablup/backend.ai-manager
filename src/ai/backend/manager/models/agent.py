@@ -12,6 +12,7 @@ from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
+from sqlalchemy.sql.expression import true
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common import msgpack, redis
@@ -45,7 +46,8 @@ agents = sa.Table(
     sa.Column('region', sa.String(length=64), index=True, nullable=False),
     sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True,
               nullable=False, server_default='default', default='default'),
-    sa.Column('schedulable', sa.Boolean(), default=True),
+    sa.Column('schedulable', sa.Boolean(),
+              nullable=False, server_default=true(), default=True),
 
     sa.Column('available_slots', ResourceSlotColumn(), nullable=False),
     sa.Column('occupied_slots', ResourceSlotColumn(), nullable=False),
