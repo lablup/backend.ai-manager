@@ -589,7 +589,8 @@ async def signup(request: web.Request, params: Any) -> web.Response:
         reason = hook_result.reason
         raise RejectedByHook(extra_msg=reason)
     else:
-        user_data_overriden = ChainMap(hook_result.result)
+        # Merge the hook results as a single map.
+        user_data_overriden = ChainMap(*hook_result.result)
 
     async with dbpool.acquire() as conn:
         # Check if email already exists.
