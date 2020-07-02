@@ -110,7 +110,7 @@ PUBLIC_INTERFACES: Final = [
     'event_dispatcher',
     'stats_monitor',
     'error_monitor',
-    'plugins',
+    'hook_plugin_ctx',
 ]
 
 public_interface_objs: MutableMapping[str, Any] = {}
