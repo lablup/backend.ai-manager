@@ -11,10 +11,14 @@ import re
 import time
 import traceback
 from typing import (
-    Any, Union,
-    Awaitable, Callable, Hashable,
+    Any,
+    Awaitable,
+    Callable,
+    Hashable,
+    Mapping,
     MutableMapping,
     Tuple,
+    Union,
 )
 
 from aiohttp import web
@@ -98,7 +102,7 @@ def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None,
                     orig_params = dict(request.query)
                 stripped_params = orig_params.copy()
                 stripped_params.pop('owner_access_key', None)
-                log.debug('stripped raw params: {}', stripped_params)
+                log.debug('stripped raw params: {}', mask_sensitive_keys(stripped_params))
                 checked_params = checker.check(stripped_params)
                 if body_exists and query_param_checker:
                     query_params = query_param_checker.check(request.query)
@@ -113,6 +117,23 @@ def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None,
         return wrapped
 
     return wrap
+
+
+_danger_words = ['password', 'passwd', 'secret']
+
+
+def mask_sensitive_keys(data: Mapping[str, Any]) -> Mapping[str, Any]:
+    """
+    Returns a new cloned mapping by masking the values of
+    sensitive keys with "***" from the given mapping.
+    """
+    sanitized = dict()
+    for k, v in data.items():
+        if any((w in k.lower()) for w in _danger_words):
+            sanitized[k] = '***'
+        else:
+            sanitized[k] = v
+    return sanitized
 
 
 def trim_text(value: str, maxlen: int) -> str:
