@@ -5,6 +5,7 @@ import pytest
 from ai.backend.manager.models import verify_dotfile_name, verify_vfolder_name
 from ai.backend.gateway.utils import (
     call_non_bursty,
+    mask_sensitive_keys,
 )
 
 
@@ -61,3 +62,14 @@ def test_dotfile_name_validator():
     assert not verify_dotfile_name('.ssh/authorized_keys')
     assert verify_dotfile_name('.bashrc')
     assert verify_dotfile_name('.ssh/id_rsa')
+
+
+def test_mask_sensitive_keys():
+    a = {'a': 123, 'my-Secret': 'hello'}
+    b = mask_sensitive_keys(a)
+    # original is untouched
+    assert a['a'] == 123
+    assert a['my-Secret'] == 'hello'
+    # cloned has masked fields
+    assert b['a'] == 123
+    assert b['my-Secret'] == '***'
