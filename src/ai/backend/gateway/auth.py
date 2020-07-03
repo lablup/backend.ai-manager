@@ -552,6 +552,8 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
                    .order_by(sa.desc(keypairs.c.is_admin)))
         result = await conn.execute(query)
         keypair = await result.first()
+    if keypair is None:
+        raise AuthorizationFailed('No API keypairs found.')
     return web.json_response({
         'data': {
             'access_key': keypair['access_key'],
