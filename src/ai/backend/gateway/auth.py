@@ -38,7 +38,7 @@ from .exceptions import (
 from ..manager.models import (
     keypairs, keypair_resource_policies, users,
 )
-from ..manager.models.user import UserRole, check_credential
+from ..manager.models.user import UserRole, UserStatus, check_credential
 from ..manager.models.keypair import generate_keypair as _gen_keypair, generate_ssh_keypair
 from ..manager.models.group import association_groups_users, groups
 from .types import CORSOptions, WebMiddleware
@@ -611,7 +611,8 @@ async def signup(request: web.Request, params: Any) -> web.Response:
             'need_password_change': False,
             'full_name': params['full_name'] if 'full_name' in params else '',
             'description': params['description'] if 'description' in params else '',
-            'is_active': True,
+            'status': UserStatus.ACTIVE,
+            'status_info': 'user-signup',
             'role': UserRole.USER,
             'integration_id': None,
         }
@@ -634,7 +635,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
                 'user_id': params['email'],
                 'access_key': ak,
                 'secret_key': sk,
-                'is_active': data['is_active'] if 'is_active' in data else True,
+                'is_active': True if data.get('status') == UserStatus.ACTIVE else False,
                 'is_admin': False,
                 'resource_policy': resource_policy,
                 'concurrency_used': 0,

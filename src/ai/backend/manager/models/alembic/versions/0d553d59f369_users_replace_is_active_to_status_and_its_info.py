@@ -1,4 +1,4 @@
-"""replace_is_active_to_status_and_its_info
+"""replace_users_is_active_to_status_and_its_info
 
 Revision ID: 0d553d59f369
 Revises: 9cd61b1ae70d
