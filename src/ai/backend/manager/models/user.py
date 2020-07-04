@@ -36,6 +36,7 @@ __all__: Sequence[str] = (
     'UserGroup', 'UserRole',
     'UserInput', 'ModifyUserInput',
     'CreateUser', 'ModifyUser', 'DeleteUser',
+    'UserStatus', 'ACTIVE_USER_STATUSES', 'INACTIVE_USER_STATUSES',
 )
 
 
@@ -56,6 +57,27 @@ class UserRole(str, enum.Enum):
     MONITOR = 'monitor'
 
 
+class UserStatus(str, enum.Enum):
+    '''
+    User account status.
+    '''
+    ACTIVE = 'active'
+    INACTIVE = 'inactive'
+    DELETED = 'deleted'
+    BEFORE_VERIFICATION = 'before-verification'
+
+
+ACTIVE_USER_STATUSES = (
+    UserStatus.ACTIVE,
+)
+
+INACTIVE_USER_STATUSES = (
+    UserStatus.INACTIVE,
+    UserStatus.DELETED,
+    UserStatus.BEFORE_VERIFICATION,
+)
+
+
 users = sa.Table(
     'users', metadata,
     IDColumn('uuid'),
@@ -66,7 +88,8 @@ users = sa.Table(
     sa.Column('need_password_change', sa.Boolean),
     sa.Column('full_name', sa.String(length=64)),
     sa.Column('description', sa.String(length=500)),
-    sa.Column('is_active', sa.Boolean, default=True),
+    sa.Column('status', EnumValueType(UserStatus), default=UserStatus.ACTIVE, nullable=False),
+    sa.Column('status_info', sa.Unicode(), nullable=True, default=sa.null()),
     sa.Column('created_at', sa.DateTime(timezone=True),
               server_default=sa.func.now()),
     sa.Column('modified_at', sa.DateTime(timezone=True),
@@ -122,6 +145,8 @@ class User(graphene.ObjectType):
     full_name = graphene.String()
     description = graphene.String()
     is_active = graphene.Boolean()
+    status = graphene.String()
+    status_info = graphene.String()
     created_at = GQLDateTime()
     domain_name = graphene.String()
     role = graphene.String()
@@ -150,7 +175,9 @@ class User(graphene.ObjectType):
             need_password_change=row['need_password_change'],
             full_name=row['full_name'],
             description=row['description'],
-            is_active=row['is_active'],
+            is_active=True if row['status'] == UserStatus.ACTIVE else False,  # legacy
+            status=row['status'],
+            status_info=row['status_info'],
             created_at=row['created_at'],
             domain_name=row['domain_name'],
             role=row['role'],
@@ -162,6 +189,7 @@ class User(graphene.ObjectType):
         domain_name=None,
         group_id=None,
         is_active=None,
+        status=None,
         limit=None,
     ) -> Sequence[User]:
         '''
@@ -185,8 +213,11 @@ class User(graphene.ObjectType):
                 query = query.where(users.c.domain_name == context['user']['domain_name'])
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
-            if is_active is not None:
-                query = query.where(users.c.is_active == is_active)
+            if status is not None:
+                query = query.where(users.c.status == status)
+            elif is_active is not None:  # consider is_active field only if status is empty
+                _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
+                query = query.where(users.c.status.in_(_statuses))
             if limit is not None:
                 query = query.limit(limit)
             return [cls.from_row(context, row) async for row in conn.execute(query)]
@@ -197,6 +228,7 @@ class User(graphene.ObjectType):
         domain_name=None,
         group_id=None,
         is_active=None,
+        status=None,
     ) -> int:
         async with context['dbpool'].acquire() as conn:
             if group_id is not None:
@@ -216,8 +248,11 @@ class User(graphene.ObjectType):
                 )
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
-            if is_active is not None:
-                query = query.where(users.c.is_active == is_active)
+            if status is not None:
+                query = query.where(users.c.status == status)
+            elif is_active is not None:  # consider is_active field only if status is empty
+                _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
+                query = query.where(users.c.status.in_(_statuses))
             result = await conn.execute(query)
             count = await result.fetchone()
             return count[0]
@@ -228,6 +263,7 @@ class User(graphene.ObjectType):
         domain_name=None,
         group_id=None,
         is_active=None,
+        status=None,
         order_key=None,
         order_asc=True,
     ) -> Sequence[User]:
@@ -258,8 +294,11 @@ class User(graphene.ObjectType):
                 )
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
-            if is_active is not None:
-                query = query.where(users.c.is_active == is_active)
+            if status is not None:
+                query = query.where(users.c.status == status)
+            elif is_active is not None:  # consider is_active field only if status is empty
+                _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
+                query = query.where(users.c.status.in_(_statuses))
             return [
                 cls.from_row(context, row) async for row in conn.execute(query)
             ]
@@ -269,6 +308,7 @@ class User(graphene.ObjectType):
         cls, context, emails=None, *,
         domain_name=None,
         is_active=None,
+        status=None,
     ) -> Sequence[Optional[User]]:
         async with context['dbpool'].acquire() as conn:
             query = (
@@ -278,6 +318,11 @@ class User(graphene.ObjectType):
             )
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
+            if status is not None:
+                query = query.where(users.c.status == status)
+            elif is_active is not None:  # consider is_active field only if status is empty
+                _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
+                query = query.where(users.c.status.in_(_statuses))
             return await batch_result(
                 context, conn, query, cls,
                 emails, lambda row: row['email'],
@@ -288,6 +333,7 @@ class User(graphene.ObjectType):
         cls, context, user_ids=None, *,
         domain_name=None,
         is_active=None,
+        status=None,
     ) -> Sequence[Optional[User]]:
         async with context['dbpool'].acquire() as conn:
             query = (
@@ -297,6 +343,11 @@ class User(graphene.ObjectType):
             )
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
+            if status is not None:
+                query = query.where(users.c.status == status)
+            elif is_active is not None:  # consider is_active field only if status is empty
+                _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
+                query = query.where(users.c.status.in_(_statuses))
             return await batch_result(
                 context, conn, query, cls,
                 user_ids, lambda row: row['uuid'],
@@ -317,6 +368,7 @@ class UserInput(graphene.InputObjectType):
     full_name = graphene.String(required=False, default='')
     description = graphene.String(required=False, default='')
     is_active = graphene.Boolean(required=False, default=True)
+    status = graphene.String(required=False, default=UserStatus.ACTIVE)
     domain_name = graphene.String(required=True, default='default')
     role = graphene.String(required=False, default=UserRole.USER)
     group_ids = graphene.List(lambda: graphene.String, required=False)
@@ -332,6 +384,7 @@ class ModifyUserInput(graphene.InputObjectType):
     full_name = graphene.String(required=False)
     description = graphene.String(required=False)
     is_active = graphene.Boolean(required=False)
+    status = graphene.String(required=False)
     domain_name = graphene.String(required=False)
     role = graphene.String(required=False)
     group_ids = graphene.List(lambda: graphene.String, required=False)
@@ -353,6 +406,10 @@ class CreateUser(graphene.Mutation):
     async def mutate(cls, root, info, email, props):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             username = props.username if props.username else email
+            if props.status is None and props.is_active is not None:
+                _status = UserStatus.ACTIVE if props.is_active else UserStatus.INACTIVE
+            else:
+                _status = UserStatus(props.status)
             data = {
                 'username': username,
                 'email': email,
@@ -360,7 +417,8 @@ class CreateUser(graphene.Mutation):
                 'need_password_change': props.need_password_change,
                 'full_name': props.full_name,
                 'description': props.description,
-                'is_active': props.is_active,
+                'status': _status,
+                'status_info': 'admin-requested',  # user mutation is only for admin
                 'domain_name': props.domain_name,
                 'role': UserRole(props.role),
             }
@@ -382,7 +440,7 @@ class CreateUser(graphene.Mutation):
                         'user_id': email,
                         'access_key': ak,
                         'secret_key': sk,
-                        'is_active': True,
+                        'is_active': True if _status == UserStatus.ACTIVE else False,
                         'is_admin': is_admin,
                         'resource_policy': 'default',
                         'concurrency_used': 0,
@@ -441,24 +499,34 @@ class ModifyUser(graphene.Mutation):
             set_if_set(props, data, 'need_password_change')
             set_if_set(props, data, 'full_name')
             set_if_set(props, data, 'description')
-            set_if_set(props, data, 'is_active')
+            set_if_set(props, data, 'status')
             set_if_set(props, data, 'domain_name')
             set_if_set(props, data, 'role')
+
             if 'role' in data:
                 data['role'] = UserRole(data['role'])
+
+            if data.get('status') is None and props.is_active is not None:
+                _status = 'active' if props.is_active else 'inactive'
+                data['status'] = _status
+            if 'status' in data and data['status'] is not None:
+                data['status'] = UserStatus(data['status'])
 
             if not data and not props.group_ids:
                 return cls(ok=False, msg='nothing to update', user=None)
 
             try:
                 # Get previous domain name of the user.
-                query = (sa.select([users.c.domain_name, users.c.role])
+                query = (sa.select([users.c.domain_name, users.c.role, users.c.status])
                            .select_from(users)
                            .where(users.c.email == email))
                 result = await conn.execute(query)
                 row = await result.fetchone()
                 prev_domain_name = row.domain_name
                 prev_role = row.role
+
+                if 'status' in data and row.status != data['status']:
+                    data['status_info'] = 'admin-requested'  # user mutation is only for admin
 
                 # Update user.
                 query = (users.update().values(data).where(users.c.email == email))
@@ -551,7 +619,7 @@ class ModifyUser(graphene.Mutation):
 
 class DeleteUser(graphene.Mutation):
     '''
-    Instead of deleting user, just inactive the account.
+    Instead of really deleting user, just mark the account as deleted status.
 
     All related keypairs will also be inactivated.
     '''
@@ -568,15 +636,20 @@ class DeleteUser(graphene.Mutation):
     async def mutate(cls, root, info, email):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             try:
-                # query = (users.delete().where(users.c.email == email))
                 # Make all user keypairs inactive.
                 from ai.backend.manager.models import keypairs
-                query = (keypairs.update()
-                                 .values(is_active=False)
-                                 .where(keypairs.c.user_id == email))
+                query = (
+                    keypairs.update()
+                    .values(is_active=False)
+                    .where(keypairs.c.user_id == email)
+                )
                 await conn.execute(query)
-                # Inactivate user.
-                query = (users.update().values(is_active=False).where(users.c.email == email))
+                # Mark user as deleted.
+                query = (
+                    users.update()
+                    .values(status=UserStatus.DELETED)
+                    .where(users.c.email == email)
+                )
                 result = await conn.execute(query)
                 if result.rowcount > 0:
                     return cls(ok=True, msg='success')
