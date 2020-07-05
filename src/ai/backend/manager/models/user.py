@@ -214,7 +214,7 @@ class User(graphene.ObjectType):
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
             if status is not None:
-                query = query.where(users.c.status == status)
+                query = query.where(users.c.status == UserStatus(status))
             elif is_active is not None:  # consider is_active field only if status is empty
                 _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
                 query = query.where(users.c.status.in_(_statuses))
@@ -249,7 +249,7 @@ class User(graphene.ObjectType):
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
             if status is not None:
-                query = query.where(users.c.status == status)
+                query = query.where(users.c.status == UserStatus(status))
             elif is_active is not None:  # consider is_active field only if status is empty
                 _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
                 query = query.where(users.c.status.in_(_statuses))
@@ -295,7 +295,7 @@ class User(graphene.ObjectType):
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
             if status is not None:
-                query = query.where(users.c.status == status)
+                query = query.where(users.c.status == UserStatus(status))
             elif is_active is not None:  # consider is_active field only if status is empty
                 _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
                 query = query.where(users.c.status.in_(_statuses))
@@ -319,7 +319,7 @@ class User(graphene.ObjectType):
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
             if status is not None:
-                query = query.where(users.c.status == status)
+                query = query.where(users.c.status == UserStatus(status))
             elif is_active is not None:  # consider is_active field only if status is empty
                 _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
                 query = query.where(users.c.status.in_(_statuses))
@@ -344,7 +344,7 @@ class User(graphene.ObjectType):
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
             if status is not None:
-                query = query.where(users.c.status == status)
+                query = query.where(users.c.status == UserStatus(status))
             elif is_active is not None:  # consider is_active field only if status is empty
                 _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
                 query = query.where(users.c.status.in_(_statuses))
