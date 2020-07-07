@@ -13,9 +13,7 @@ import re
 from typing import (
     Any,
     MutableMapping,
-    Union,
 )
-import uuid
 
 import aiohttp
 from aiohttp import web
