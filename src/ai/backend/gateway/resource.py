@@ -13,7 +13,9 @@ import re
 from typing import (
     Any,
     MutableMapping,
+    Union,
 )
+import uuid
 
 import aiohttp
 from aiohttp import web
@@ -288,6 +290,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             query = query.where(kernels.c.group_id.in_(group_ids))
         result = await conn.execute(query)
         rows = await result.fetchall()
+
     objs_per_group = {}
     local_tz = request.app['config']['system']['timezone']
 
@@ -319,6 +322,9 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             gpu_allocated = row.occupied_slots['cuda.shares']
         c_info = {
             'id': str(row['id']),
+            'domain_name': row['domain_name'],
+            'group_id': str(row['group_id']),
+            'group_name': row['name'],
             'name': row['sess_id'],
             'access_key': row['access_key'],
             'email': row['email'],
@@ -393,18 +399,17 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
 @superadmin_required
 @check_api_params(
     t.Dict({
-        tx.MultiKey('group_ids'): t.List(t.String),
+        tx.MultiKey('group_ids'): t.List(t.String) | t.Null,
         t.Key('month'): t.Regexp(r'^\d{6}', re.ASCII),
     }),
     loads=_json_loads)
 async def usage_per_month(request: web.Request, params: Any) -> web.Response:
     '''
-    Return usage statistics of terminated containers belonged to the given group for a specified
-    period in dates.
+    Return usage statistics of terminated containers for a specified month.
     The date/time comparison is done using the configured timezone.
 
-    :param year int: The year.
-    :param month int: The month.
+    :param group_ids: If not None, query containers only in those groups.
+    :param month: The year-month to query usage statistics. ex) "202006" to query for Jun 2020
     '''
     log.info('USAGE_PER_MONTH (g:[{}], month:{})',
              ','.join(params['group_ids']), params['month'])
@@ -424,7 +429,7 @@ async def usage_per_month(request: web.Request, params: Any) -> web.Response:
 @superadmin_required
 @check_api_params(
     t.Dict({
-        t.Key('group_id'): t.String,
+        t.Key('group_id'): t.String | t.Null,
         t.Key('start_date'): t.Regexp(r'^\d{8}$', re.ASCII),
         t.Key('end_date'): t.Regexp(r'^\d{8}$', re.ASCII),
     }),
@@ -435,6 +440,7 @@ async def usage_per_period(request: web.Request, params: Any) -> web.Response:
     period in dates.
     The date/time comparison is done using the configured timezone.
 
+    :param group_id: If not None, query containers only in the group.
     :param start_date str: "yyyymmdd" format.
     :param end_date str: "yyyymmdd" format.
     '''
@@ -443,16 +449,15 @@ async def usage_per_period(request: web.Request, params: Any) -> web.Response:
     try:
         start_date = datetime.strptime(params['start_date'], '%Y%m%d').replace(tzinfo=local_tz)
         end_date = datetime.strptime(params['end_date'], '%Y%m%d').replace(tzinfo=local_tz)
+        end_date = end_date + timedelta(days=1)  # include sessions in end_date
     except ValueError:
         raise InvalidAPIParameters(extra_msg='Invalid date values')
     if end_date <= start_date:
         raise InvalidAPIParameters(extra_msg='end_date must be later than start_date.')
     log.info('USAGE_PER_MONTH (g:{}, start_date:{}, end_date:{})',
              group_id, start_date, end_date)
-    resp = await get_container_stats_for_period(request, start_date, end_date, group_ids=[group_id])
-    resp = resp[0] if len(resp) > 0 else {}  # only one group (project)
-    resp['start_date'] = params['start_date']
-    resp['end_date'] = params['end_date']
+    group_ids = [group_id] if group_id is not None else None
+    resp = await get_container_stats_for_period(request, start_date, end_date, group_ids=group_ids)
     log.debug('container list are retrieved from {0} to {1}', start_date, end_date)
     return web.json_response(resp, status=200)
 
