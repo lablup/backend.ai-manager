@@ -43,7 +43,7 @@ from ..manager.models import (
     association_groups_users,
     query_allowed_sgroups,
     AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
-    RESOURCE_USAGE_KERNEL_STATUSES,
+    RESOURCE_USAGE_KERNEL_STATUSES, LIVE_STATUS,
 )
 from .utils import check_api_params
 
@@ -280,9 +280,11 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             sa.select([kernels, groups.c.name, users.c.email])
             .select_from(j)
             .where(
-                (((kernels.c.terminated_at >= start_date) & (kernels.c.terminated_at < end_date)) |
-                 ((kernels.c.created_at < end_date) & kernels.c.terminated_at.is_(None))) &
-                (kernels.c.status.in_(RESOURCE_USAGE_KERNEL_STATUSES))
+                # Filter sessions which existence period overlaps with requested period
+                ((kernels.c.terminated_at >= start_date) & (kernels.c.created_at < end_date) &
+                 (kernels.c.status.in_(RESOURCE_USAGE_KERNEL_STATUSES))) |
+                # Or, filter running sessions which created before requested end_date
+                ((kernels.c.created_at < end_date) & (kernels.c.status.in_(LIVE_STATUS)))
             )
             .order_by(sa.asc(kernels.c.terminated_at))
         )
