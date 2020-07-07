@@ -452,6 +452,8 @@ async def usage_per_period(request: web.Request, params: Any) -> web.Response:
         start_date = datetime.strptime(params['start_date'], '%Y%m%d').replace(tzinfo=local_tz)
         end_date = datetime.strptime(params['end_date'], '%Y%m%d').replace(tzinfo=local_tz)
         end_date = end_date + timedelta(days=1)  # include sessions in end_date
+        if end_date - start_date > timedelta(days=100):
+            raise InvalidAPIParameters('Cannot query more than 100 days')
     except ValueError:
         raise InvalidAPIParameters(extra_msg='Invalid date values')
     if end_date <= start_date:
