@@ -567,10 +567,8 @@ async def get_time_binned_monthly_stats(request, user_uuid=None):
                 "unit_hint": "bytes"
             }
         }
-        # print(stat)
         tseries.append(stat)
         ts += time_window
-    # print(rowcount)
     return tseries
 
 
