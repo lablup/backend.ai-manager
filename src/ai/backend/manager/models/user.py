@@ -649,7 +649,8 @@ class DeleteUser(graphene.Mutation):
                 # Mark user as deleted.
                 query = (
                     users.update()
-                    .values(status=UserStatus.DELETED)
+                    .values(status=UserStatus.DELETED,
+                            status_info='admin_requested')
                     .where(users.c.email == email)
                 )
                 result = await conn.execute(query)
