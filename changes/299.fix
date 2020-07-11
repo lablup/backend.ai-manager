@@ -1,0 +1,1 @@
+Convert user's uuid into str in key getter of fetching user by uuid
