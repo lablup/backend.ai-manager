@@ -148,6 +148,7 @@ class User(graphene.ObjectType):
     status = graphene.String()
     status_info = graphene.String()
     created_at = GQLDateTime()
+    modified_at = GQLDateTime()
     domain_name = graphene.String()
     role = graphene.String()
 
@@ -179,6 +180,7 @@ class User(graphene.ObjectType):
             status=row['status'],
             status_info=row['status_info'],
             created_at=row['created_at'],
+            modified_at=row['modified_at'],
             domain_name=row['domain_name'],
             role=row['role'],
         )
