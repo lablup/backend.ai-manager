@@ -350,7 +350,7 @@ class User(graphene.ObjectType):
                 query = query.where(users.c.status.in_(_statuses))
             return await batch_result(
                 context, conn, query, cls,
-                user_ids, lambda row: row['uuid'],
+                user_ids, lambda row: str(row['uuid']),
             )
 
 
