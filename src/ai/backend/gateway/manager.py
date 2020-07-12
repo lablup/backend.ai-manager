@@ -31,7 +31,7 @@ from .exceptions import (
 )
 from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params
-from ..manager.models import agents, kernels, KernelStatus, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES
+from ..manager.models import agents, kernels, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.manager'))
 
