@@ -31,7 +31,7 @@ from .exceptions import (
 )
 from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params
-from ..manager.models import agents, kernels, KernelStatus
+from ..manager.models import agents, kernels, KernelStatus, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.manager'))
 
@@ -98,7 +98,7 @@ async def fetch_manager_status(request: web.Request) -> web.Response:
             query = (sa.select([sa.func.count(kernels.c.id)])
                        .select_from(kernels)
                        .where((kernels.c.role == 'master') &
-                              (kernels.c.status != KernelStatus.TERMINATED)))
+                              (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))))
             active_sessions_num = await conn.scalar(query)
 
             nodes = [
