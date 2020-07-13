@@ -650,7 +650,7 @@ class DeleteUser(graphene.Mutation):
                 query = (
                     users.update()
                     .values(status=UserStatus.DELETED,
-                            status_info='admin_requested')
+                            status_info='admin-requested')
                     .where(users.c.email == email)
                 )
                 result = await conn.execute(query)
