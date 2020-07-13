@@ -148,6 +148,7 @@ class User(graphene.ObjectType):
     status = graphene.String()
     status_info = graphene.String()
     created_at = GQLDateTime()
+    modified_at = GQLDateTime()
     domain_name = graphene.String()
     role = graphene.String()
 
@@ -179,6 +180,7 @@ class User(graphene.ObjectType):
             status=row['status'],
             status_info=row['status_info'],
             created_at=row['created_at'],
+            modified_at=row['modified_at'],
             domain_name=row['domain_name'],
             role=row['role'],
         )
@@ -647,7 +649,8 @@ class DeleteUser(graphene.Mutation):
                 # Mark user as deleted.
                 query = (
                     users.update()
-                    .values(status=UserStatus.DELETED)
+                    .values(status=UserStatus.DELETED,
+                            status_info='admin-requested')
                     .where(users.c.email == email)
                 )
                 result = await conn.execute(query)

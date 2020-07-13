@@ -1,0 +1,4 @@
+A set of API behavior fixes
+- Fix missing conversion of `user_id` argument to UUID type when resolving the `user_from_uuid` GraphQL query
+- Exclude cancelled sessions from the active session count in the manager status API
+- Fix missing update for user's `status_info` as "admin-requested" when marked as deleted by administrators
