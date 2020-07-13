@@ -1,0 +1,1 @@
+Fix missing conversion of `user_id` argument to UUID type when resolving the `user_from_uuid` GraphQL query
