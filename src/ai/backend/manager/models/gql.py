@@ -1,3 +1,5 @@
+import uuid
+
 import graphene
 
 from .base import privileged_query, scoped_query
@@ -184,7 +186,7 @@ class Queries(graphene.ObjectType):
     user_from_uuid = graphene.Field(
         User,
         domain_name=graphene.String(),
-        user_id=graphene.String())
+        user_id=graphene.ID())
 
     users = graphene.List(  # legacy non-paginated list
         User,
@@ -492,7 +494,9 @@ class Queries(graphene.ObjectType):
                                      domain_name=None, user_id=None):
         manager = info.context['dlmgr']
         loader = manager.get_loader('User.by_uuid', domain_name=domain_name)
-        return await loader.load(user_id)
+        # user_id is retrieved as string since it's a GraphQL's generic ID field
+        user_uuid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
+        return await loader.load(user_uuid)
 
     @staticmethod
     async def resolve_users(executor, info, *,

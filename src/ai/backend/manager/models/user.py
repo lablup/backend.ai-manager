@@ -9,7 +9,6 @@ from typing import (
     Optional,
     Sequence,
 )
-import uuid
 
 from aiopg.sa.result import RowProxy
 import graphene
@@ -121,7 +120,6 @@ class UserGroup(graphene.ObjectType):
     async def batch_load_by_user_id(cls, context, user_ids):
         async with context['dbpool'].acquire() as conn:
             from .group import groups, association_groups_users as agus
-            user_ids = [uuid.UUID(uid) if isinstance(uid, str) else uid for uid in user_ids]
             j = agus.join(groups, agus.c.group_id == groups.c.id)
             query = (
                 sa.select([agus.c.user_id, groups.c.name, groups.c.id])
@@ -352,7 +350,6 @@ class User(graphene.ObjectType):
             elif is_active is not None:  # consider is_active field only if status is empty
                 _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
                 query = query.where(users.c.status.in_(_statuses))
-            user_ids = [uuid.UUID(uid) if isinstance(uid, str) else uid for uid in user_ids]
             return await batch_result(
                 context, conn, query, cls,
                 user_ids, lambda row: row['uuid'],
