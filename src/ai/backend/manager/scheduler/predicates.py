@@ -40,7 +40,7 @@ async def check_reserved_batch_session(
         query = (
             sa.select([kernels.c.starts_at])
             .select_from(kernels)
-            .where(kernels.c.id == sess_ctx.kernel_id)
+            .where(kernels.c.id == sess_ctx.session_uuid)
         )
         starts_at = await db_conn.scalar(query)
         if starts_at is not None and datetime.now(tzutc()) < starts_at:

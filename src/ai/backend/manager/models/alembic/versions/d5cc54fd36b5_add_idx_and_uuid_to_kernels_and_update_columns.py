@@ -1,7 +1,7 @@
 """New idx / session_uuid columns to kernels table and refactor some columns.
 
 Revision ID: d5cc54fd36b5
-Revises: 529113b08c2c
+Revises: 0d553d59f369
 Create Date: 2020-01-06 13:56:50.885635
 
 """
@@ -13,7 +13,7 @@ from ai.backend.manager.models import kernels
 
 # revision identifiers, used by Alembic.
 revision = 'd5cc54fd36b5'
-down_revision = '529113b08c2c'
+down_revision = '0d553d59f369'
 branch_labels = None
 depends_on = None
 

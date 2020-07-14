@@ -857,7 +857,7 @@ class AgentRegistry:
 
             hook_result = await self.hook_plugin_ctx.dispatch(
                 'PRE_START_SESSION',
-                (sess_ctx.kernel_id, sess_ctx.session_name, sess_ctx.access_key),
+                (sess_ctx.session_uuid, sess_ctx.session_name, sess_ctx.access_key),
                 return_when=ALL_COMPLETED,
             )
             if hook_result.status != PASSED:
@@ -865,7 +865,7 @@ class AgentRegistry:
 
             # Create the kernel by invoking the agent
             async with self.handle_kernel_exception(
-                'create_session', sess_ctx.kernel_id, sess_ctx.access_key
+                'create_session', sess_ctx.session_uuid, sess_ctx.access_key
             ):
                 created_info = None
                 async with RPCContext(
@@ -925,7 +925,7 @@ class AgentRegistry:
 
             await self.hook_plugin_ctx.notify(
                 'POST_START_SESSION',
-                (sess_ctx.kernel_id, sess_ctx.session_name, sess_ctx.access_key),
+                (sess_ctx.session_uuid, sess_ctx.session_name, sess_ctx.access_key),
             )
 
             async with self.dbpool.acquire() as conn, conn.begin():
@@ -1139,7 +1139,7 @@ class AgentRegistry:
             try:
                 async with self.dbpool.acquire() as conn, conn.begin():
                     kernel_list = await self.get_session_kernels(
-                        sess_id, access_key,
+                        kernel.id, access_key,
                         field=[kernels.c.domain_name, kernels.c.session_uuid],
                         for_update=True,
                         db_connection=conn,
@@ -1188,7 +1188,7 @@ class AgentRegistry:
                     if kernel.role == 'master':
                         master_stat = {'status': 'terminated'}
                 else:
-                    async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
+                    async with RPCContext(kernel['agent_addr'], None, order_key=kernel.id) as rpc:
                         await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
                         last_stat: Optional[Dict[str, Any]]
                         last_stat = None
@@ -1211,9 +1211,8 @@ class AgentRegistry:
                         (kernel['id'], kernel['sess_id'], kernel['access_key']),
                     )
 
-
             if len(kernel_list) > 1:
-                async with RPCContext(kernel['agent_addr'], None, order_key=sess_id) as rpc:
+                async with RPCContext(kernel['agent_addr'], None, order_key=kernel.id) as rpc:
                     error = await rpc.call.destroy_network(f'bai-{kernel_list[0]["sess_uuid"]}')
                     if error is not None:
                         log.error(f'Error while destroying overlay network: {error}')
@@ -1247,7 +1246,7 @@ class AgentRegistry:
                 db_conn=conn,
             )
         async with self.handle_kernel_exception(
-            'restart_session', session_naidme_or_id, access_key, set_error=True
+            'restart_session', session_name_or_id, access_key, set_error=True
         ):
             for kernel in session:
                 registry_url, registry_creds = \
@@ -1411,7 +1410,7 @@ class AgentRegistry:
         async with self.handle_kernel_exception('refresh_session',
                                                 kernel['id'], access_key):
             async with RPCContext(kernel['agent_addr'], 30, order_key=kernel['id']) as rpc:
-                return await rpc.call.refresh_idle(str(session['id']))
+                return await rpc.call.refresh_idle(str(kernel['id']))
 
     async def increment_session_usage(self, sess_id, access_key, conn=None):
         async with reenter_txn(self.dbpool, conn) as conn:
