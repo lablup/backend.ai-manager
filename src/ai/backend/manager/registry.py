@@ -578,6 +578,7 @@ class AgentRegistry:
         group_id: uuid.UUID,
         user_uuid: uuid.UUID,
         user_role: str,
+        startup_command: str = None,
         session_tag: str = None,
         internal_data: dict = None,
         starts_at: datetime = None,
@@ -874,7 +875,7 @@ class AgentRegistry:
                     config: KernelCreationConfig = {
                         'image': {
                             'registry': {
-                                'name': sess_ctx.image_ref.registry,
+                                'name': kernel.image_ref.registry,
                                 'url': str(registry_url),
                                 **registry_creds,   # type: ignore
                             },
@@ -1127,7 +1128,7 @@ class AgentRegistry:
 
         hook_result = await self.hook_plugin_ctx.dispatch(
             'PRE_DESTROY_SESSION',
-            (kernel['id'], kernel['sess_id'], kernel['access_key']),
+            (kernel['id'], kernel['session_id'], kernel['access_key']),
             return_when=ALL_COMPLETED,
         )
         if hook_result.status != PASSED:
@@ -1208,7 +1209,7 @@ class AgentRegistry:
                             }
                     await self.hook_plugin_ctx.notify(
                         'POST_DESTROY_SESSION',
-                        (kernel['id'], kernel['sess_id'], kernel['access_key']),
+                        (kernel['id'], kernel['session_id'], kernel['access_key']),
                     )
 
             if len(kernel_list) > 1:
@@ -1617,7 +1618,7 @@ class AgentRegistry:
                 sa.update(kernels)
                 .values(data)
                 .where(
-                    (kernels.c.session_id == session_id) &
+                    (kernels.c.session_uuid == session_id) &
                     (kernels.c.access_key == access_key) &
                     ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES))
                 )
