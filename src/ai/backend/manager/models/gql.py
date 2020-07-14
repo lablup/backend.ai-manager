@@ -1,3 +1,5 @@
+import uuid
+
 import graphene
 
 from .base import privileged_query, scoped_query
@@ -184,13 +186,14 @@ class Queries(graphene.ObjectType):
     user_from_uuid = graphene.Field(
         User,
         domain_name=graphene.String(),
-        user_id=graphene.String())
+        user_id=graphene.ID())
 
     users = graphene.List(  # legacy non-paginated list
         User,
         domain_name=graphene.String(),
         group_id=graphene.UUID(),
-        is_active=graphene.Boolean())
+        is_active=graphene.Boolean(),
+        status=graphene.String())
 
     user_list = graphene.Field(
         UserList,
@@ -202,7 +205,8 @@ class Queries(graphene.ObjectType):
         # filters
         domain_name=graphene.String(),
         group_id=graphene.UUID(),
-        is_active=graphene.Boolean())
+        is_active=graphene.Boolean(),
+        status=graphene.String())
 
     keypair = graphene.Field(
         KeyPair,
@@ -490,12 +494,14 @@ class Queries(graphene.ObjectType):
                                      domain_name=None, user_id=None):
         manager = info.context['dlmgr']
         loader = manager.get_loader('User.by_uuid', domain_name=domain_name)
-        return await loader.load(user_id)
+        # user_id is retrieved as string since it's a GraphQL's generic ID field
+        user_uuid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
+        return await loader.load(user_uuid)
 
     @staticmethod
     async def resolve_users(executor, info, *,
                             domain_name=None, group_id=None,
-                            is_active=None):
+                            is_active=None, status=None):
         from .user import UserRole
         client_role = info.context['user']['role']
         client_domain = info.context['user']['domain_name']
@@ -515,13 +521,14 @@ class Queries(graphene.ObjectType):
             domain_name=domain_name,
             group_id=group_id,
             is_active=is_active,
+            status=status,
             limit=100)
 
     @staticmethod
     async def resolve_user_list(
         executor, info, limit, offset, *,
         domain_name=None, group_id=None,
-        is_active=None,
+        is_active=None, status=None,
         order_key=None, order_asc=None,
     ):
         from .user import UserRole
@@ -543,12 +550,14 @@ class Queries(graphene.ObjectType):
             domain_name=domain_name,
             group_id=group_id,
             is_active=is_active,
+            status=status,
         )
         user_list = await User.load_slice(
             info.context, limit, offset,
             domain_name=domain_name,
             group_id=group_id,
             is_active=is_active,
+            status=status,
             order_key=order_key,
             order_asc=order_asc,
         )

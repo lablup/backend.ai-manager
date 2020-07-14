@@ -14,11 +14,15 @@ import ssl
 import sys
 import traceback
 from typing import (
-    cast,
-    Any, Final,
+    Any,
     AsyncIterator,
-    Iterable, List, Sequence,
-    Mapping, MutableMapping,
+    Final,
+    Iterable,
+    List,
+    Mapping,
+    MutableMapping,
+    Sequence,
+    cast,
 )
 
 from aiohttp import web
@@ -35,11 +39,14 @@ from ai.backend.common.cli import LazyGroup
 from ai.backend.common.config import redis_config_iv
 from ai.backend.common.utils import env_info, current_loop
 from ai.backend.common.logging import Logger, BraceStyleAdapter
-from ai.backend.common.plugin import (
-    discover_entrypoints, install_plugins
+from ai.backend.common.plugin.hook import HookPluginContext
+from ai.backend.common.plugin.monitor import (
+    ErrorPluginContext,
+    StatsPluginContext,
+    INCREMENT,
 )
 from ..manager import __version__
-from ..manager.plugin.error_monitor import ErrorMonitor
+from ..manager.plugin.webapp import WebappPluginContext
 from ..manager.registry import AgentRegistry
 from ..manager.scheduler.dispatcher import SchedulerDispatcher
 from ..manager.background import BackgroundTaskManager
@@ -50,7 +57,7 @@ from .events import EventDispatcher
 from .exceptions import (BackendError, MethodNotAllowed, GenericNotFound,
                          GenericBadRequest, InternalServerError)
 from .types import (
-    AppCreator, PluginAppCreator,
+    AppCreator,
     WebRequestHandler, WebMiddleware,
     CleanupContext,
 )
@@ -103,7 +110,7 @@ PUBLIC_INTERFACES: Final = [
     'event_dispatcher',
     'stats_monitor',
     'error_monitor',
-    'plugins',
+    'hook_plugin_ctx',
 ]
 
 public_interface_objs: MutableMapping[str, Any] = {}
@@ -161,24 +168,22 @@ async def api_middleware(request: web.Request,
 async def exception_middleware(request: web.Request,
                                handler: WebRequestHandler) -> web.StreamResponse:
     app = request.app
+    error_monitor = app['error_monitor']
+    stats_monitor = app['stats_monitor']
     try:
-        if (stats_monitor := app.get('stats_monitor', None)) is not None:
-            stats_monitor.report_stats('increment', 'ai.backend.gateway.api.requests')
+        await stats_monitor.report_metric(INCREMENT, 'ai.backend.gateway.api.requests')
         resp = (await handler(request))
     except BackendError as ex:
         if ex.status_code == 500:
             log.exception('Internal server error raised inside handlers')
             raise
-        if (error_monitor := app.get('error_monitor', None)) is not None:
-            await error_monitor.capture_exception()
-        if (stats_monitor := app.get('stats_monitor', None)) is not None:
-            stats_monitor.report_stats('increment', 'ai.backend.gateway.api.failures')
-            stats_monitor.report_stats('increment', f'ai.backend.gateway.api.status.{ex.status_code}')
+        await error_monitor.capture_exception()
+        await stats_monitor.report_metric(INCREMENT, 'ai.backend.gateway.api.failures')
+        await stats_monitor.report_metric(INCREMENT, f'ai.backend.gateway.api.status.{ex.status_code}')
         raise
     except web.HTTPException as ex:
-        if (stats_monitor := app.get('stats_monitor', None)) is not None:
-            stats_monitor.report_stats('increment', 'ai.backend.gateway.api.failures')
-            stats_monitor.report_stats('increment', f'ai.backend.gateway.api.status.{ex.status_code}')
+        await stats_monitor.report_metric(INCREMENT, 'ai.backend.gateway.api.failures')
+        await stats_monitor.report_metric(INCREMENT, f'ai.backend.gateway.api.status.{ex.status_code}')
         if ex.status_code == 404:
             raise GenericNotFound
         if ex.status_code == 405:
@@ -192,20 +197,19 @@ async def exception_middleware(request: web.Request,
         log.debug('Request cancelled ({0} {1})', request.method, request.rel_url)
         raise e
     except Exception as e:
-        if (error_monitor := app.get('error_monitor', None)) is not None:
-            await error_monitor.capture_exception()
+        await error_monitor.capture_exception()
         log.exception('Uncaught exception in HTTP request handlers {0!r}', e)
         if app['config']['debug']['enabled']:
             raise InternalServerError(traceback.format_exc())
         else:
             raise InternalServerError()
     else:
-        if (stats_monitor := app.get('stats_monitor', None)) is not None:
-            stats_monitor.report_stats('increment', f'ai.backend.gateway.api.status.{resp.status}')
+        await stats_monitor.report_metric(INCREMENT, f'ai.backend.gateway.api.status.{resp.status}')
         return resp
 
 
-async def config_server_register(app: web.Application) -> None:
+@aiotools.actxmgr
+async def config_server_ctx(app: web.Application) -> AsyncIterator[None]:
     # populate public interfaces
     app['config_server'] = ConfigServer(
         app, app['config']['etcd']['addr'],
@@ -219,7 +223,22 @@ async def config_server_register(app: web.Application) -> None:
         await app['config_server'].etcd.get_prefix('config/redis')
     )
     _update_public_interface_objs(app)
-    # await app['config_server'].close()
+    yield
+    await app['config_server'].close()
+
+
+@aiotools.actxmgr
+async def webapp_plugin_ctx(root_app: web.Application) -> AsyncIterator[None]:
+    ctx = WebappPluginContext(root_app['config_server'].etcd, root_app['config'])
+    await ctx.init()
+    root_app['webapp_plugin_ctx'] = ctx
+    for plugin_name, plugin_instance in ctx.plugins.items():
+        if root_app['pidx'] == 0:
+            log.info('Loading webapp plugin: {0}', plugin_name)
+        subapp, global_middlewares = await plugin_instance.create_app(root_app['cors_opts'])
+        _init_subapp(plugin_name, root_app, subapp, global_middlewares)
+    yield
+    await ctx.cleanup()
 
 
 async def manager_status_ctx(app: web.Application) -> AsyncIterator[None]:
@@ -298,6 +317,15 @@ async def event_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
     await app['event_dispatcher'].close()
 
 
+async def hook_plugin_ctx(app: web.Application) -> AsyncIterator[None]:
+    ctx = HookPluginContext(app['config_server'].etcd, app['config'])
+    app['hook_plugin_ctx'] = ctx
+    _update_public_interface_objs(app)
+    await ctx.init()
+    yield
+    await ctx.cleanup()
+
+
 async def agent_registry_ctx(app: web.Application) -> AsyncIterator[None]:
     app['registry'] = AgentRegistry(
         app['config_server'],
@@ -305,7 +333,9 @@ async def agent_registry_ctx(app: web.Application) -> AsyncIterator[None]:
         app['redis_stat'],
         app['redis_live'],
         app['redis_image'],
-        app['event_dispatcher'])
+        app['event_dispatcher'],
+        app['hook_plugin_ctx'],
+    )
     await app['registry'].init()
     _update_public_interface_objs(app)
     yield
@@ -320,14 +350,16 @@ async def sched_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
 
 
 async def monitoring_ctx(app: web.Application) -> AsyncIterator[None]:
-    # Install stats hook plugins.
-    app['error_monitor'] = ErrorMonitor(app)
-    plugins = [
-        'stats_monitor',
-    ]
-    install_plugins(plugins, app, 'dict', app['config'])
+    ectx = ErrorPluginContext(app['config_server'].etcd, app['config'])
+    sctx = StatsPluginContext(app['config_server'].etcd, app['config'])
+    await ectx.init()
+    await sctx.init()
+    app['error_monitor'] = ectx
+    app['stats_monitor'] = sctx
     _update_public_interface_objs(app)
     yield
+    await sctx.cleanup()
+    await ectx.cleanup()
 
 
 async def background_task_ctx(app: web.Application) -> AsyncIterator[None]:
@@ -344,42 +376,6 @@ async def background_task_ctx_shutdown(app: web.Application) -> None:
 setattr(background_task_ctx, 'shutdown', background_task_ctx_shutdown)
 
 
-async def hook_plugins_ctx(app: web.Application) -> AsyncIterator[None]:
-    # Install other hook plugins inside app['plugins'].
-    plugins = [
-        'hanati_hook',
-        'cloud_beta_hook',
-    ]
-    app['plugins'] = {}
-    install_plugins(plugins, app['plugins'], 'dict', app['config'])
-    for plugin_name, plugin_registry in app['plugins'].items():
-        if app['pidx'] == 0:
-            log.info('Loading hook plugin: {0}', plugin_name)
-        await plugin_registry.init()
-    _update_public_interface_objs(app)
-    yield
-
-
-async def webapp_plugins_register(app: web.Application) -> None:
-
-    def init_extapp(pkg_name: str, root_app: web.Application, create_subapp: PluginAppCreator) -> None:
-        subapp, global_middlewares = create_subapp(app['config']['plugins'], app['cors_opts'])
-        _init_subapp(pkg_name, root_app, subapp, global_middlewares)
-
-    plugins = [
-        'hanati_webapp',
-        'cloud_beta_webapp',
-    ]
-    for plugin_info in discover_entrypoints(
-        plugins, disable_plugins=app['config']['manager']['disabled-plugins']
-    ):
-        plugin_group, plugin_name, entrypoint = plugin_info
-        if app['pidx'] == 0:
-            log.info('Loading app plugin: {0}', entrypoint.module_name)
-        plugin = entrypoint.load()
-        init_extapp(entrypoint.module_name, app, getattr(plugin, 'create_app'))
-
-
 def handle_loop_error(
     root_app: web.Application,
     loop: asyncio.AbstractEventLoop,
@@ -392,13 +388,13 @@ def handle_loop_error(
     if exception is not None:
         if sys.exc_info()[0] is not None:
             log.exception('Error inside event loop: {0}', msg)
-            if error_monitor := root_app.get('error_monitor', None):
-                loop.create_task(error_monitor.capture_exception())
+            if 'error_monitor' in root_app:
+                loop.create_task(root_app['error_monitor'].capture_exception())
         else:
             exc_info = (type(exception), exception, exception.__traceback__)
             log.error('Error inside event loop: {0}', msg, exc_info=exc_info)
-            if error_monitor := root_app.get('error_monitor', None):
-                loop.create_task(error_monitor.capture_exception(exception))
+            if 'error_monitor' in root_app:
+                loop.create_task(root_app['error_monitor'].capture_exception(exception))
 
 
 def _init_subapp(pkg_name: str,
@@ -470,16 +466,14 @@ def build_root_app(
 
     if cleanup_contexts is None:
         cleanup_contexts = [
-            # config_server_ctx,
             manager_status_ctx,
             redis_ctx,
             database_ctx,
             event_dispatcher_ctx,
+            hook_plugin_ctx,
             monitoring_ctx,
             agent_registry_ctx,
             sched_dispatcher_ctx,
-            # webapp_plugins_ctx,
-            hook_plugins_ctx,
             background_task_ctx,
         ]
     for cleanup_ctx in cleanup_contexts:
@@ -524,46 +518,45 @@ async def server_main(loop: asyncio.AbstractEventLoop,
 
     # Plugin webapps should be loaded before runner.setup(),
     # which freezes on_startup event.
-    await config_server_register(app)
-    await webapp_plugins_register(app)
-
-    ssl_ctx = None
-    if app['config']['manager']['ssl-enabled']:
-        ssl_ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        ssl_ctx.load_cert_chain(
-            str(app['config']['manager']['ssl-cert']),
-            str(app['config']['manager']['ssl-privkey']),
+    async with config_server_ctx(app), \
+               webapp_plugin_ctx(app):
+        ssl_ctx = None
+        if app['config']['manager']['ssl-enabled']:
+            ssl_ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+            ssl_ctx.load_cert_chain(
+                str(app['config']['manager']['ssl-cert']),
+                str(app['config']['manager']['ssl-privkey']),
+            )
+        runner = web.AppRunner(app)
+        await runner.setup()
+        service_addr = app['config']['manager']['service-addr']
+        site = web.TCPSite(
+            runner,
+            str(service_addr.host),
+            service_addr.port,
+            backlog=1024,
+            reuse_port=True,
+            ssl_context=ssl_ctx,
         )
-    runner = web.AppRunner(app)
-    await runner.setup()
-    service_addr = app['config']['manager']['service-addr']
-    site = web.TCPSite(
-        runner,
-        str(service_addr.host),
-        service_addr.port,
-        backlog=1024,
-        reuse_port=True,
-        ssl_context=ssl_ctx,
-    )
-    await site.start()
+        await site.start()
 
-    if os.geteuid() == 0:
-        uid = app['config']['manager']['user']
-        gid = app['config']['manager']['group']
-        os.setgroups([
-            g.gr_gid for g in grp.getgrall()
-            if pwd.getpwuid(uid).pw_name in g.gr_mem
-        ])
-        os.setgid(gid)
-        os.setuid(uid)
-        log.info('changed process uid and gid to {}:{}', uid, gid)
-    log.info('started handling API requests at {}', service_addr)
+        if os.geteuid() == 0:
+            uid = app['config']['manager']['user']
+            gid = app['config']['manager']['group']
+            os.setgroups([
+                g.gr_gid for g in grp.getgrall()
+                if pwd.getpwuid(uid).pw_name in g.gr_mem
+            ])
+            os.setgid(gid)
+            os.setuid(uid)
+            log.info('changed process uid and gid to {}:{}', uid, gid)
+        log.info('started handling API requests at {}', service_addr)
 
-    try:
-        yield
-    finally:
-        log.info('shutting down...')
-        await runner.cleanup()
+        try:
+            yield
+        finally:
+            log.info('shutting down...')
+            await runner.cleanup()
 
 
 @aiotools.actxmgr

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import (
-    Any,
     Awaitable, Callable, Iterable,
     AsyncIterator,
     Tuple,
@@ -24,10 +23,6 @@ WebMiddleware = Callable[
 CORSOptions = Mapping[str, aiohttp_cors.ResourceOptions]
 AppCreator = Callable[
     [CORSOptions],
-    Tuple[web.Application, Iterable[WebMiddleware]]
-]
-PluginAppCreator = Callable[
-    [Mapping[str, Any], CORSOptions],
     Tuple[web.Application, Iterable[WebMiddleware]]
 ]
 

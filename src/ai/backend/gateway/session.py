@@ -18,6 +18,7 @@ from typing import (
     Iterable,
     Tuple,
     Mapping, MutableMapping,
+    Union,
 )
 import uuid
 
@@ -28,6 +29,7 @@ from aiojobs.aiohttp import atomic
 import aioredis
 import aiotools
 from async_timeout import timeout
+from dateutil.parser import isoparse
 from dateutil.tz import tzutc
 import multidict
 import sqlalchemy as sa
@@ -41,10 +43,12 @@ from ai.backend.common.exception import (
     AliasResolutionFailed,
 )
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.utils import str_to_timedelta
 from ai.backend.common.types import (
     AgentId, KernelId,
     SessionTypes,
 )
+from ai.backend.common.plugin.monitor import GAUGE
 from ai.backend.common.utils import current_loop
 from .defs import REDIS_STREAM_DB
 from .exceptions import (
@@ -365,6 +369,15 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
 
     if params['session_type'] == SessionTypes.BATCH and not params['startup_command']:
         raise InvalidAPIParameters('Batch sessions must have a non-empty startup command.')
+    if params['session_type'] != SessionTypes.BATCH and params['starts_at']:
+        raise InvalidAPIParameters('Parameter starts_at should be used only for batch sessions')
+    starts_at: Union[datetime, None] = None
+    if params['starts_at']:
+        try:
+            starts_at = isoparse(params['starts_at'])
+        except ValueError:
+            _td = str_to_timedelta(params['starts_at'])
+            starts_at = datetime.now(tzutc()) + _td
 
     try:
         start_event = asyncio.Event()
@@ -408,7 +421,10 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             group_id=group_id,
             user_uuid=owner_uuid,
             user_role=request['user']['role'],
-            session_tag=params['tag']))
+            startup_command=params['startup_command'],
+            session_tag=params['tag'],
+            starts_at=starts_at,
+        ))
         resp['sessionId'] = str(params['session_name'])  # legacy naming
         resp['status'] = 'PENDING'
         resp['servicePorts'] = []
@@ -491,6 +507,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
         t.Key('tag', default=undefined): UndefChecker | t.Null | t.String,
         t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
         t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
+        t.Key('starts_at', default=None): t.Null | t.String,
         t.Key('reuseIfExists', default=True) >> 'reuse': t.ToBool,
         t.Key('startupCommand', default=undefined) >> 'startup_command':
             UndefChecker | t.Null | t.String,
@@ -629,6 +646,7 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         t.Key('tag', default=None): t.Null | t.String,
         t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
         t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
+        t.Key('starts_at', default=None): t.Null | t.String,
         t.Key('reuseIfExists', default=True) >> 'reuse': t.ToBool,
         t.Key('startupCommand', default=None) >> 'startup_command': t.Null | t.String,
         t.Key('owner_access_key', default=None): t.Null | t.String,
@@ -1043,58 +1061,56 @@ async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name:
         await redis_conn.wait_closed()
 
 
-async def stats_monitor_update(app):
-    with app['stats_monitor'] as stats_monitor:
-        stats_monitor.report_stats(
-            'gauge', 'ai.backend.gateway.coroutines', len(asyncio.Task.all_tasks()))
+async def report_stats(app: web.Application) -> None:
+    stats_monitor = app['stats_monitor']
+    await stats_monitor.report_metric(
+        GAUGE, 'ai.backend.gateway.coroutines', len(asyncio.Task.all_tasks()))
 
-        all_inst_ids = [
-            inst_id async for inst_id
-            in app['registry'].enumerate_instances()]
-        stats_monitor.report_stats(
-            'gauge', 'ai.backend.gateway.agent_instances', len(all_inst_ids))
+    all_inst_ids = [
+        inst_id async for inst_id
+        in app['registry'].enumerate_instances()]
+    await stats_monitor.report_metric(
+        GAUGE, 'ai.backend.gateway.agent_instances', len(all_inst_ids))
 
-        async with app['dbpool'].acquire() as conn, conn.begin():
-            query = (sa.select([sa.func.sum(keypairs.c.concurrency_used)])
-                       .select_from(keypairs))
-            n = await conn.scalar(query)
-            stats_monitor.report_stats(
-                'gauge', 'ai.backend.gateway.active_kernels', n)
+    async with app['dbpool'].acquire() as conn, conn.begin():
+        query = (sa.select([sa.func.sum(keypairs.c.concurrency_used)])
+                   .select_from(keypairs))
+        n = await conn.scalar(query)
+        await stats_monitor.report_metric(
+            GAUGE, 'ai.backend.gateway.active_kernels', n)
 
-            subquery = (sa.select([sa.func.count()])
-                          .select_from(keypairs)
-                          .where(keypairs.c.is_active == true())
-                          .group_by(keypairs.c.user_id))
-            query = sa.select([sa.func.count()]).select_from(subquery.alias())
-            n = await conn.scalar(query)
-            stats_monitor.report_stats(
-                'gauge', 'ai.backend.users.has_active_key', n)
+        subquery = (sa.select([sa.func.count()])
+                      .select_from(keypairs)
+                      .where(keypairs.c.is_active == true())
+                      .group_by(keypairs.c.user_id))
+        query = sa.select([sa.func.count()]).select_from(subquery.alias())
+        n = await conn.scalar(query)
+        await stats_monitor.report_metric(
+            GAUGE, 'ai.backend.users.has_active_key', n)
 
-            subquery = subquery.where(keypairs.c.last_used != null())
-            query = sa.select([sa.func.count()]).select_from(subquery.alias())
-            n = await conn.scalar(query)
-            stats_monitor.report_stats(
-                'gauge', 'ai.backend.users.has_used_key', n)
+        subquery = subquery.where(keypairs.c.last_used != null())
+        query = sa.select([sa.func.count()]).select_from(subquery.alias())
+        n = await conn.scalar(query)
+        await stats_monitor.report_metric(
+            GAUGE, 'ai.backend.users.has_used_key', n)
 
-            '''
-            query = sa.select([sa.func.count()]).select_from(usage)
-            n = await conn.scalar(query)
-            stats_monitor.report_stats(
-                'gauge', 'ai.backend.gateway.accum_kernels', n)
-            '''
+        '''
+        query = sa.select([sa.func.count()]).select_from(usage)
+        n = await conn.scalar(query)
+        await stats_monitor.report_metric(
+            GAUGE, 'ai.backend.gateway.accum_kernels', n)
+        '''
 
 
-async def stats_monitor_update_timer(app):
-    if app['stats_monitor'] is None:
-        return
+async def stats_report_timer(app):
     while True:
         try:
-            await stats_monitor_update(app)
+            await report_stats(app)
         except asyncio.CancelledError:
             break
-        except:
+        except Exception:
             await app['error_monitor'].capture_exception()
-            log.exception('stats_monitor_update unexpected error')
+            log.exception('stats_report_timer: unexpected error')
         try:
             await asyncio.sleep(5)
         except asyncio.CancelledError:
@@ -1623,11 +1639,14 @@ async def init(app: web.Application) -> None:
     # Scan ALIVE agents
     app['agent_lost_checker'] = aiotools.create_timer(
         functools.partial(check_agent_lost, app), 1.0)
+    app['stats_task'] = asyncio.create_task(stats_report_timer(app))
 
 
 async def shutdown(app: web.Application) -> None:
     app['agent_lost_checker'].cancel()
     await app['agent_lost_checker']
+    app['stats_task'].cancel()
+    await app['stats_task']
 
     checked_tasks = ('kernel_agent_event_collector', 'kernel_ddtimer')
     for tname in checked_tasks:

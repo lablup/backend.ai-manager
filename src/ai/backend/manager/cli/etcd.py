@@ -134,8 +134,7 @@ def move_subtree(cli_ctx, src_prefix, dst_prefix, scope):
         async with etcd_ctx(cli_ctx) as etcd:
             try:
                 subtree = await etcd.get_prefix(src_prefix, scope=scope)
-                subtree = {f'{dst_prefix}/{k}': v for k, v in subtree.items()}
-                await etcd.put_dict(subtree, scope=scope)
+                await etcd.put_prefix(dst_prefix, subtree, scope=scope)
                 await etcd.delete_prefix(src_prefix, scope=scope)
             except Exception:
                 log.exception('An error occurred.')

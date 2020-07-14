@@ -1,1 +1,0 @@
-Apply batching to statistics synchroniztion to minimize time used inside DB transactions by batching and splitting transaction blocks

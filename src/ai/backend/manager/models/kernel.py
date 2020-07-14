@@ -150,6 +150,8 @@ kernels = sa.Table(
               server_default=sa.func.now(), index=True),
     sa.Column('terminated_at', sa.DateTime(timezone=True),
               nullable=True, default=sa.null(), index=True),
+    sa.Column('starts_at', sa.DateTime(timezone=True),
+              nullable=True, default=sa.null()),
     sa.Column('status', EnumType(KernelStatus),
               default=KernelStatus.PENDING,
               server_default=KernelStatus.PENDING.name,
@@ -214,6 +216,7 @@ class ComputeContainer(graphene.ObjectType):
     status_info = graphene.String()
     created_at = GQLDateTime()
     terminated_at = GQLDateTime()
+    starts_at = GQLDateTime()
 
     # resources
     agent = graphene.String()
@@ -249,6 +252,7 @@ class ComputeContainer(graphene.ObjectType):
             'status_info': row['status_info'],
             'created_at': row['created_at'],
             'terminated_at': row['terminated_at'],
+            'starts_at': row['starts_at'],
             'occupied_slots': row['occupied_slots'].to_json(),
 
             # resources
@@ -410,6 +414,7 @@ class ComputeSession(graphene.ObjectType):
     status_info = graphene.String()
     created_at = GQLDateTime()
     terminated_at = GQLDateTime()
+    starts_at = GQLDateTime()
     startup_command = graphene.String()
     result = graphene.String()
 
@@ -460,6 +465,7 @@ class ComputeSession(graphene.ObjectType):
             'status_info': row['status_info'],
             'created_at': row['created_at'],
             'terminated_at': row['terminated_at'],
+            'starts_at': row['starts_at'],
             'startup_command': row['startup_command'],
             'result': row['result'].name,
 

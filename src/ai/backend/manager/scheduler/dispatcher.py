@@ -21,6 +21,7 @@ from aiopg.sa.connection import SAConnection
 import aioredlock
 from dateutil.tz import tzutc
 import sqlalchemy as sa
+from sqlalchemy.sql.expression import true
 
 from ai.backend.common import redis
 from ai.backend.common.logging import BraceStyleAdapter
@@ -51,6 +52,7 @@ from . import (
     KernelInfo,
 )
 from .predicates import (
+    check_reserved_batch_session,
     check_concurrency,
     check_dependencies,
     check_keypair_resource_limit,
@@ -143,6 +145,7 @@ class SchedulerDispatcher(aobject):
         self.registry.event_dispatcher.consume('kernel_enqueued', None, self.schedule)
         self.registry.event_dispatcher.consume('kernel_terminated', None, self.schedule)
         self.registry.event_dispatcher.consume('instance_started', None, self.schedule)
+        self.registry.event_dispatcher.consume('do_schedule', None, self.schedule)
         # TODO: add events for resource configuration changes and subscribe them here.
         self.lock_manager = aioredlock.Aioredlock([
             {'host': str(self.config['redis']['addr'][0]),
@@ -183,7 +186,7 @@ class SchedulerDispatcher(aobject):
                 )
                 if now > next_sync_time + local_sync_delay and last_sync_time != next_sync_time:
                     last_sync_time = next_sync_time
-                    await self.registry.event_dispatcher.produce_event('kernel_enqueued', [None])
+                    await self.registry.event_dispatcher.produce_event('do_schedule')
         except asyncio.CancelledError:
             pass
         except Exception:
@@ -253,6 +256,7 @@ class SchedulerDispatcher(aobject):
 
                 async with db_conn.begin():
                     predicates: Sequence[Awaitable[PredicateResult]] = [
+                        check_reserved_batch_session(db_conn, sched_ctx, sess_ctx),
                         check_concurrency(db_conn, sched_ctx, sess_ctx),
                         check_dependencies(db_conn, sched_ctx, sess_ctx),
                         check_keypair_resource_limit(db_conn, sched_ctx, sess_ctx),
@@ -567,7 +571,8 @@ async def _list_agents_by_sgroup(
         .select_from(agents)
         .where(
             (agents.c.status == AgentStatus.ALIVE) &
-            (agents.c.scaling_group == sgroup_name)
+            (agents.c.scaling_group == sgroup_name) &
+            (agents.c.schedulable == true())
         )
     )
     items = []

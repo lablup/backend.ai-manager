@@ -46,7 +46,8 @@
             "need_password_change": false,
             "full_name": "Admin Lablup",
             "description": "Lablup's Admin Account",
-            "is_active": true,
+            "status": "active",
+            "status_info": "admin-requested",
             "domain_name": "default",
             "role": "superadmin"
         },
@@ -58,7 +59,8 @@
             "need_password_change": false,
             "full_name": "Default Domain Admin Lablup",
             "description": "Lablup's Default Domain Admin Account",
-            "is_active": true,
+            "status": "active",
+            "status_info": "admin-requested",
             "domain_name": "default",
             "role": "admin"
         },
@@ -70,7 +72,8 @@
             "need_password_change": false,
             "full_name": "User Lablup",
             "description": "Lablup's User Account",
-            "is_active": true,
+            "status": "active",
+            "status_info": "admin-requested",
             "domain_name": "default",
             "role": "user"
         },
@@ -82,7 +85,8 @@
             "need_password_change": false,
             "full_name": "Monitor Lablup",
             "description": "Lablup's Monitor Account",
-            "is_active": true,
+            "status": "active",
+            "status_info": "admin-requested",
             "domain_name": "default",
             "role": "monitor"
         }
