@@ -827,7 +827,7 @@ async def report_stats(app: web.Application) -> None:
 async def stats_report_timer(app):
     while True:
         try:
-            await report_stats(app)
+            await asyncio.shield(report_stats(app))
         except asyncio.CancelledError:
             break
         except Exception:
