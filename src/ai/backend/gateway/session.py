@@ -484,7 +484,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
         t.Key('tag', default=undefined): UndefChecker | t.Null | t.String,
         t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
         t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
-        t.Key('starts_at', default=None): t.Null | t.String,
+        t.AliasedKey(['starts_at', 'startsAt'], default=None): t.Null | t.String,
         t.Key('reuseIfExists', default=True) >> 'reuse': t.ToBool,
         t.Key('startupCommand', default=undefined) >> 'startup_command':
             UndefChecker | t.Null | t.String,
@@ -623,11 +623,11 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         t.Key('tag', default=None): t.Null | t.String,
         t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
         t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
-        t.Key('starts_at', default=None): t.Null | t.String,
+        t.AliasedKey(['starts_at', 'startsAt'], default=None): t.Null | t.String,
         t.Key('reuseIfExists', default=True) >> 'reuse': t.ToBool,
         t.Key('startupCommand', default=None) >> 'startup_command': t.Null | t.String,
+        t.AliasedKey(['bootstrap_script', 'bootstrapScript'], default=None): t.Null | t.String,
         t.Key('owner_access_key', default=None): t.Null | t.String,
-        t.Key('bootstrap_script', default=None): t.Null | t.String,
     }),
     loads=_json_loads)
 async def create_from_params(request: web.Request, params: Any) -> web.Response:
