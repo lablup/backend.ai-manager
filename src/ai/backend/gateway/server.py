@@ -39,7 +39,7 @@ from ai.backend.common.cli import LazyGroup
 from ai.backend.common.config import redis_config_iv
 from ai.backend.common.utils import env_info, current_loop
 from ai.backend.common.logging import Logger, BraceStyleAdapter
-from ai.backend.common.plugin.hook import HookPluginContext
+from ai.backend.common.plugin.hook import HookPluginContext, ALL_COMPLETED, PASSED
 from ai.backend.common.plugin.monitor import (
     ErrorPluginContext,
     StatsPluginContext,
@@ -322,6 +322,13 @@ async def hook_plugin_ctx(app: web.Application) -> AsyncIterator[None]:
     app['hook_plugin_ctx'] = ctx
     _update_public_interface_objs(app)
     await ctx.init()
+    hook_result = await ctx.dispatch(
+        'ACTIVATE_MANAGER',
+        (),
+        return_when=ALL_COMPLETED,
+    )
+    if hook_result.status != PASSED:
+        raise RuntimeError('Could not activate the manager instance.')
     yield
     await ctx.cleanup()
 
