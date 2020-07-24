@@ -196,7 +196,9 @@ class ModifyDomain(graphene.Mutation):
 
 
 class DeleteDomain(graphene.Mutation):
-
+    '''
+    Instead of deleting the domain, just mark it as inactive.
+    '''
     allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
@@ -212,4 +214,32 @@ class DeleteDomain(graphene.Mutation):
             .values(is_active=False)
             .where(domains.c.name == name)
         )
+        return await simple_db_mutate(cls, info.context, query)
+
+
+class PurgeDomain(graphene.Mutation):
+    '''
+    Completely delete domain from DB.
+
+    To purge domain, there should be no users in the target domain.
+    '''
+    allowed_roles = (UserRole.SUPERADMIN,)
+
+    class Arguments:
+        name = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @classmethod
+    async def mutate(cls, root, info, name):
+        from ai.backend.manager.models import  users
+        async with info.context['dbpool'].acquire() as conn:
+            query = (
+                sa.select([sa.func.count()])
+                .where(users.c.domain_name == name)
+            )
+            user_count = await conn.scalar(query)
+            assert user_count == 0, 'There are users bound to the domain. Remove users first.'
+        query = domains.delete().where(domains.c.name == name)
         return await simple_db_mutate(cls, info.context, query)

@@ -22,6 +22,8 @@ from .base import (
     metadata, GUID, IDColumn, ResourceSlotColumn,
     privileged_mutation,
     set_if_set,
+    simple_db_mutate,
+    simple_db_mutate_returning_item,
     batch_result,
 )
 from .user import UserRole
@@ -220,35 +222,26 @@ class CreateGroup(graphene.Mutation):
         lambda name, props, **kwargs: (props.domain_name, None)
     )
     async def mutate(cls, root, info, name, props):
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            assert _rx_slug.search(name) is not None, 'invalid name format. slug format required.'
-            data = {
-                'name': name,
-                'description': props.description,
-                'is_active': props.is_active,
-                'domain_name': props.domain_name,
-                'total_resource_slots': ResourceSlot.from_user_input(
-                    props.total_resource_slots, None),
-                'allowed_vfolder_hosts': props.allowed_vfolder_hosts,
-                'integration_id': props.integration_id,
-            }
-            query = (groups.insert().values(data))
-            try:
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    checkq = groups.select().where((groups.c.name == name) &
-                                                   (groups.c.domain_name == props.domain_name))
-                    result = await conn.execute(checkq)
-                    o = Group.from_row(info.context, await result.first())
-                    return cls(ok=True, msg='success', group=o)
-                else:
-                    return cls(ok=False, msg='failed to create group', group=None)
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False, msg=f'integrity error: {e}', group=None)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False, msg=f'unexpected error: {e}', group=None)
+        assert _rx_slug.search(name) is not None, 'invalid name format. slug format required.'
+        data = {
+            'name': name,
+            'description': props.description,
+            'is_active': props.is_active,
+            'domain_name': props.domain_name,
+            'total_resource_slots': ResourceSlot.from_user_input(
+                props.total_resource_slots, None),
+            'allowed_vfolder_hosts': props.allowed_vfolder_hosts,
+            'integration_id': props.integration_id,
+        }
+        insert_query = groups.insert().values(data)
+        item_query = (
+            groups.select()
+            .where((groups.c.name == name) &
+                   (groups.c.domain_name == props.domain_name))
+        )
+        return await simple_db_mutate_returning_item(
+            cls, info.context, insert_query,
+            item_query=item_query, item_cls=Group)
 
 
 class ModifyGroup(graphene.Mutation):
@@ -269,26 +262,25 @@ class ModifyGroup(graphene.Mutation):
         lambda gid, **kwargs: (None, gid)
     )
     async def mutate(cls, root, info, gid, props):
+        data = {}
+        set_if_set(props, data, 'name')
+        set_if_set(props, data, 'description')
+        set_if_set(props, data, 'is_active')
+        set_if_set(props, data, 'domain_name')
+        set_if_set(props, data, 'total_resource_slots',
+                   clean_func=lambda v: ResourceSlot.from_user_input(v, None))
+        set_if_set(props, data, 'allowed_vfolder_hosts')
+        set_if_set(props, data, 'integration_id')
+
+        if 'name' in data:
+            assert _rx_slug.search(data['name']) is not None, \
+                'invalid name format. slug format required.'
+        assert props.user_update_mode in (None, 'add', 'remove',), 'invalid user_update_mode'
+        if not props.user_uuids:
+            props.user_update_mode = None
+        if not data and props.user_update_mode is None:
+            return cls(ok=False, msg='nothing to update', group=None)
         async with info.context['dbpool'].acquire() as conn, conn.begin():
-            data = {}
-            set_if_set(props, data, 'name')
-            set_if_set(props, data, 'description')
-            set_if_set(props, data, 'is_active')
-            set_if_set(props, data, 'domain_name')
-            set_if_set(props, data, 'total_resource_slots',
-                       clean_func=lambda v: ResourceSlot.from_user_input(v, None))
-            set_if_set(props, data, 'allowed_vfolder_hosts')
-            set_if_set(props, data, 'integration_id')
-
-            if 'name' in data:
-                assert _rx_slug.search(data['name']) is not None, \
-                    'invalid name format. slug format required.'
-            assert props.user_update_mode in (None, 'add', 'remove',), 'invalid user_update_mode'
-            if not props.user_uuids:
-                props.user_update_mode = None
-            if not data and props.user_update_mode is None:
-                return cls(ok=False, msg='nothing to update', group=None)
-
             try:
                 if props.user_update_mode == 'add':
                     values = [{'user_id': uuid, 'group_id': gid} for uuid in props.user_uuids]
@@ -338,23 +330,11 @@ class DeleteGroup(graphene.Mutation):
         lambda gid, **kwargs: (None, gid)
     )
     async def mutate(cls, root, info, gid):
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            try:
-                query = groups.update().values(
-                    is_active=False,
-                    integration_id=None
-                ).where(groups.c.id == gid)
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    return cls(ok=True, msg='success')
-                else:
-                    return cls(ok=False, msg='no such group')
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False, msg=f'integrity error: {e}')
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False, msg=f'unexpected error: {e}')
+        query = groups.update().values(
+            is_active=False,
+            integration_id=None
+        ).where(groups.c.id == gid)
+        return simple_db_mutate(cls, info.context, query)
 
 
 class PurgeGroup(graphene.Mutation):
@@ -375,17 +355,5 @@ class PurgeGroup(graphene.Mutation):
         lambda gid, **kwargs: (None, gid)
     )
     async def mutate(cls, root, info, gid):
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            try:
-                query = groups.delete().where(groups.c.id == gid)
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    return cls(ok=True, msg='success')
-                else:
-                    return cls(ok=False, msg='no such group')
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False, msg=f'integrity error: {e}')
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False, msg=f'unexpected error: {e}')
+        query = groups.delete().where(groups.c.id == gid)
+        return simple_db_mutate(cls, info.context, query)
