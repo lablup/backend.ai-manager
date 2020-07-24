@@ -557,6 +557,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
             'access_key': keypair['access_key'],
             'secret_key': keypair['secret_key'],
             'role': user['role'],
+            'status': user['status'],
         },
     })
 
