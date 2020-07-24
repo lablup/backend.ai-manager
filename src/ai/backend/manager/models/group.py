@@ -321,7 +321,9 @@ class ModifyGroup(graphene.Mutation):
 
 
 class DeleteGroup(graphene.Mutation):
-
+    '''
+    Instead of deleting the group, just mark it as inactive.
+    '''
     allowed_roles = (UserRole.ADMIN, UserRole.SUPERADMIN)
 
     class Arguments:
@@ -338,9 +340,44 @@ class DeleteGroup(graphene.Mutation):
     async def mutate(cls, root, info, gid):
         async with info.context['dbpool'].acquire() as conn, conn.begin():
             try:
-                # query = groups.delete().where(groups.c.id == gid)
-                query = groups.update().values(is_active=False,
-                                               integration_id=None).where(groups.c.id == gid)
+                query = groups.update().values(
+                    is_active=False,
+                    integration_id=None
+                ).where(groups.c.id == gid)
+                result = await conn.execute(query)
+                if result.rowcount > 0:
+                    return cls(ok=True, msg='success')
+                else:
+                    return cls(ok=False, msg='no such group')
+            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+                return cls(ok=False, msg=f'integrity error: {e}')
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                raise
+            except Exception as e:
+                return cls(ok=False, msg=f'unexpected error: {e}')
+
+
+class PurgeGroup(graphene.Mutation):
+    '''
+    Completely delete group from DB.
+    '''
+    allowed_roles = (UserRole.ADMIN, UserRole.SUPERADMIN)
+
+    class Arguments:
+        gid = graphene.UUID(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @classmethod
+    @privileged_mutation(
+        UserRole.ADMIN,
+        lambda gid, **kwargs: (None, gid)
+    )
+    async def mutate(cls, root, info, gid):
+        async with info.context['dbpool'].acquire() as conn, conn.begin():
+            try:
+                query = groups.delete().where(groups.c.id == gid)
                 result = await conn.execute(query)
                 if result.rowcount > 0:
                     return cls(ok=True, msg='success')
