@@ -233,7 +233,7 @@ class PurgeDomain(graphene.Mutation):
 
     @classmethod
     async def mutate(cls, root, info, name):
-        from ai.backend.manager.models import users
+        from . import users, groups
         async with info.context['dbpool'].acquire() as conn:
             query = (
                 sa.select([sa.func.count()])

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from pathlib import Path
 import re
 from typing import (
     Any, Optional, Union,
@@ -8,6 +10,7 @@ from typing import (
     Sequence,
 )
 import uuid
+import shutil
 
 from aiopg.sa.connection import SAConnection
 from aiopg.sa.result import RowProxy
@@ -17,7 +20,9 @@ import psycopg2 as pg
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
+from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
+from ai.backend.common.utils import current_loop
 from .base import (
     metadata, GUID, IDColumn, ResourceSlotColumn,
     privileged_mutation,
@@ -27,6 +32,8 @@ from .base import (
     batch_result,
 )
 from .user import UserRole
+
+log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
 
 
 __all__: Sequence[str] = (
@@ -358,7 +365,8 @@ class PurgeGroup(graphene.Mutation):
         lambda gid, **kwargs: (None, gid)
     )
     async def mutate(cls, root, info, gid):
-        cls.delete_vfolders(conn, gid, info.context['config_server'])
+        async with info.context['dbpool'].acquire() as conn:
+            cls.delete_vfolders(conn, gid, info.context['config_server'])
         query = groups.delete().where(groups.c.id == gid)
         return simple_db_mutate(cls, info.context, query)
 
@@ -383,7 +391,7 @@ class PurgeGroup(graphene.Mutation):
         query = (
             sa.select([vfolders.c.id, vfolders.c.host, vfolders.c.unmanaged_path])
             .select_from(vfolders)
-            .where(vfolders.c.user == user_uuid)
+            .where(vfolders.c.group == group_id)
         )
         async for row in conn.execute(query):
             if row['unmanaged_path']:
