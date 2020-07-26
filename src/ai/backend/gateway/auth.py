@@ -36,9 +36,9 @@ from .exceptions import (
     RejectedByHook,
 )
 from ..manager.models import (
-    keypairs, keypair_resource_policies, users, UserStatus, INACTIVE_USER_STATUSES,
+    keypairs, keypair_resource_policies, users,
 )
-from ..manager.models.user import UserRole, UserStatus, check_credential
+from ..manager.models.user import UserRole, UserStatus, INACTIVE_USER_STATUSES, check_credential
 from ..manager.models.keypair import generate_keypair as _gen_keypair, generate_ssh_keypair
 from ..manager.models.group import association_groups_users, groups
 from .types import CORSOptions, WebMiddleware
