@@ -340,6 +340,9 @@ class DeleteGroup(graphene.Mutation):
 class PurgeGroup(graphene.Mutation):
     '''
     Completely delete group from DB.
+
+    Group's vfolders and their data will also be lost.
+    There is no migration of the ownership for group folders.
     '''
     allowed_roles = (UserRole.ADMIN, UserRole.SUPERADMIN)
 
@@ -355,5 +358,49 @@ class PurgeGroup(graphene.Mutation):
         lambda gid, **kwargs: (None, gid)
     )
     async def mutate(cls, root, info, gid):
+        cls.delete_vfolders(conn, gid, info.context['config_server'])
         query = groups.delete().where(groups.c.id == gid)
         return simple_db_mutate(cls, info.context, query)
+
+    @classmethod
+    async def delete_vfolders(
+        cls,
+        conn: SAConnection,
+        group_id: uuid.UUID,
+        config_server,
+    ) -> int:
+        """
+        Delete group's all virtual folders as well as their physical data.
+
+        :param conn: DB connection
+        :param group_id: group's UUID to delete virtual folders
+        :return: number of deleted rows
+        """
+        from . import vfolders
+        mount_prefix = Path(await config_server.get('volumes/_mount'))
+        fs_prefix = await config_server.get('volumes/_fsprefix')
+        fs_prefix = Path(fs_prefix.lstrip('/'))
+        query = (
+            sa.select([vfolders.c.id, vfolders.c.host, vfolders.c.unmanaged_path])
+            .select_from(vfolders)
+            .where(vfolders.c.user == user_uuid)
+        )
+        async for row in conn.execute(query):
+            if row['unmanaged_path']:
+                folder_path = Path(row['unmanaged_path'])
+            else:
+                folder_path = (mount_prefix / row['host'] / fs_prefix / row['id'].hex)
+            log.info('deleting physical files: {0}', folder_path)
+            try:
+                loop = current_loop()
+                await loop.run_in_executor(None, lambda: shutil.rmtree(folder_path))  # type: ignore
+            except IOError:
+                pass
+        query = (
+            vfolders.delete()
+            .where(vfolders.c.group == group_id)
+        )
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            log.info('deleted {} group\'s virtual folders', result.rowcount)
+        return result.rowcount

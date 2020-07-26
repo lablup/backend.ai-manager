@@ -241,5 +241,11 @@ class PurgeDomain(graphene.Mutation):
             )
             user_count = await conn.scalar(query)
             assert user_count == 0, 'There are users bound to the domain. Remove users first.'
+            query = (
+                sa.select([sa.func.count()])
+                .where(groups.c.domain_name == name)
+            )
+            group_count = await conn.scalar(query)
+            assert group_count == 0, 'There are groups bound to the domain. Remove groups first.'
         query = domains.delete().where(domains.c.name == name)
         return await simple_db_mutate(cls, info.context, query)

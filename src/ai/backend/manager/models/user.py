@@ -789,7 +789,7 @@ class PurgeUser(graphene.Mutation):
         config_server,
     ) -> int:
         """
-        Delete a user's all virtual folders as well as their physical data.
+        Delete user's all virtual folders as well as their physical data.
 
         :param conn: DB connection
         :param user_uuid: user's UUID to delete virtual folders
@@ -831,7 +831,7 @@ class PurgeUser(graphene.Mutation):
         user_uuid: uuid.UUID,
     ) -> int:
         """
-        Delete a user's all kernels.
+        Delete user's all kernels.
 
         :param conn: DB connection
         :param user_uuid: user's UUID to delete kernels
@@ -854,7 +854,7 @@ class PurgeUser(graphene.Mutation):
         user_uuid: uuid.UUID,
     ) -> int:
         """
-        Delete a user's all keypairs.
+        Delete user's all keypairs.
 
         :param conn: DB connection
         :param user_uuid: user's UUID to delete keypairs
