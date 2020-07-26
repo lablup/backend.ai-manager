@@ -36,7 +36,7 @@ from .exceptions import (
     RejectedByHook,
 )
 from ..manager.models import (
-    keypairs, keypair_resource_policies, users,
+    keypairs, keypair_resource_policies, users, UserStatus, INACTIVE_USER_STATUSES,
 )
 from ..manager.models.user import UserRole, UserStatus, check_credential
 from ..manager.models.keypair import generate_keypair as _gen_keypair, generate_ssh_keypair
@@ -541,6 +541,10 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         dbpool,
         params['domain'], params['username'], params['password'])
     if user is None:
+        raise AuthorizationFailed('User credential mismatch.')
+    if user.get('status') == UserStatus.BEFORE_VERIFICATION:
+        raise AuthorizationFailed('This account needs email verification.')
+    if user.get('status') in INACTIVE_USER_STATUSES:
         raise AuthorizationFailed('User credential mismatch.')
     async with dbpool.acquire() as conn:
         query = (sa.select([keypairs.c.access_key, keypairs.c.secret_key])
