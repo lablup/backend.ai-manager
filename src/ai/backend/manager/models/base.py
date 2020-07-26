@@ -527,7 +527,7 @@ async def simple_db_mutate_returning_item(result_cls, context, mutation_query, *
             if result.rowcount > 0:
                 result = await conn.execute(item_query)
                 item = await result.first()
-                return result_cls(True, 'success', item_cls.from_row(item))
+                return result_cls(True, 'success', item_cls.from_row(context, item))
             else:
                 return result_cls(False, 'no matching record', None)
         except (pg.IntegrityError, sa.exc.IntegrityError) as e:

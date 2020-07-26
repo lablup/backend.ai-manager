@@ -1,11 +1,12 @@
 import logging
-from typing import Sequence
+from typing import Any, Mapping, Sequence
 
 import graphene
 import sqlalchemy as sa
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
+from aiopg.sa.result import RowProxy
 from .base import (
     metadata, BigInt, BinarySize, ResourceSlotColumn,
     simple_db_mutate,
@@ -40,7 +41,11 @@ class ResourcePreset(graphene.ObjectType):
     shared_memory = BigInt()
 
     @classmethod
-    def from_row(cls, context, row):
+    def from_row(
+        cls,
+        context: Mapping[str, Any],
+        row: RowProxy
+    ):
         if row is None:
             return None
         shared_memory = str(row['shared_memory']) if row['shared_memory'] else None
