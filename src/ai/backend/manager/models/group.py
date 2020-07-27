@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from pathlib import Path
 import re
 from typing import (
     Any, Optional, Union,
@@ -8,6 +10,7 @@ from typing import (
     Sequence,
 )
 import uuid
+import shutil
 
 from aiopg.sa.connection import SAConnection
 from aiopg.sa.result import RowProxy
@@ -17,14 +20,20 @@ import psycopg2 as pg
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
+from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
+from ai.backend.common.utils import current_loop
 from .base import (
     metadata, GUID, IDColumn, ResourceSlotColumn,
     privileged_mutation,
     set_if_set,
+    simple_db_mutate,
+    simple_db_mutate_returning_item,
     batch_result,
 )
 from .user import UserRole
+
+log = BraceStyleAdapter(logging.getLogger(__file__))
 
 
 __all__: Sequence[str] = (
@@ -220,35 +229,27 @@ class CreateGroup(graphene.Mutation):
         lambda name, props, **kwargs: (props.domain_name, None)
     )
     async def mutate(cls, root, info, name, props):
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
-            assert _rx_slug.search(name) is not None, 'invalid name format. slug format required.'
-            data = {
-                'name': name,
-                'description': props.description,
-                'is_active': props.is_active,
-                'domain_name': props.domain_name,
-                'total_resource_slots': ResourceSlot.from_user_input(
-                    props.total_resource_slots, None),
-                'allowed_vfolder_hosts': props.allowed_vfolder_hosts,
-                'integration_id': props.integration_id,
-            }
-            query = (groups.insert().values(data))
-            try:
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    checkq = groups.select().where((groups.c.name == name) &
-                                                   (groups.c.domain_name == props.domain_name))
-                    result = await conn.execute(checkq)
-                    o = Group.from_row(info.context, await result.first())
-                    return cls(ok=True, msg='success', group=o)
-                else:
-                    return cls(ok=False, msg='failed to create group', group=None)
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False, msg=f'integrity error: {e}', group=None)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False, msg=f'unexpected error: {e}', group=None)
+        if _rx_slug.search(name) is None:
+            raise ValueError('invalid name format. slug format required.')
+        data = {
+            'name': name,
+            'description': props.description,
+            'is_active': props.is_active,
+            'domain_name': props.domain_name,
+            'total_resource_slots': ResourceSlot.from_user_input(
+                props.total_resource_slots, None),
+            'allowed_vfolder_hosts': props.allowed_vfolder_hosts,
+            'integration_id': props.integration_id,
+        }
+        insert_query = groups.insert().values(data)
+        item_query = (
+            groups.select()
+            .where((groups.c.name == name) &
+                   (groups.c.domain_name == props.domain_name))
+        )
+        return await simple_db_mutate_returning_item(
+            cls, info.context, insert_query,
+            item_query=item_query, item_cls=Group)
 
 
 class ModifyGroup(graphene.Mutation):
@@ -269,26 +270,25 @@ class ModifyGroup(graphene.Mutation):
         lambda gid, **kwargs: (None, gid)
     )
     async def mutate(cls, root, info, gid, props):
+        data = {}
+        set_if_set(props, data, 'name')
+        set_if_set(props, data, 'description')
+        set_if_set(props, data, 'is_active')
+        set_if_set(props, data, 'domain_name')
+        set_if_set(props, data, 'total_resource_slots',
+                   clean_func=lambda v: ResourceSlot.from_user_input(v, None))
+        set_if_set(props, data, 'allowed_vfolder_hosts')
+        set_if_set(props, data, 'integration_id')
+
+        if 'name' in data and _rx_slug.search(data['name']) is None:
+            raise ValueError('invalid name format. slug format required.')
+        if props.user_update_mode not in (None, 'add', 'remove'):
+            raise ValueError('invalid user_update_mode')
+        if not props.user_uuids:
+            props.user_update_mode = None
+        if not data and props.user_update_mode is None:
+            return cls(ok=False, msg='nothing to update', group=None)
         async with info.context['dbpool'].acquire() as conn, conn.begin():
-            data = {}
-            set_if_set(props, data, 'name')
-            set_if_set(props, data, 'description')
-            set_if_set(props, data, 'is_active')
-            set_if_set(props, data, 'domain_name')
-            set_if_set(props, data, 'total_resource_slots',
-                       clean_func=lambda v: ResourceSlot.from_user_input(v, None))
-            set_if_set(props, data, 'allowed_vfolder_hosts')
-            set_if_set(props, data, 'integration_id')
-
-            if 'name' in data:
-                assert _rx_slug.search(data['name']) is not None, \
-                    'invalid name format. slug format required.'
-            assert props.user_update_mode in (None, 'add', 'remove',), 'invalid user_update_mode'
-            if not props.user_uuids:
-                props.user_update_mode = None
-            if not data and props.user_update_mode is None:
-                return cls(ok=False, msg='nothing to update', group=None)
-
             try:
                 if props.user_update_mode == 'add':
                     values = [{'user_id': uuid, 'group_id': gid} for uuid in props.user_uuids]
@@ -321,7 +321,9 @@ class ModifyGroup(graphene.Mutation):
 
 
 class DeleteGroup(graphene.Mutation):
-
+    """
+    Instead of deleting the group, just mark it as inactive.
+    """
     allowed_roles = (UserRole.ADMIN, UserRole.SUPERADMIN)
 
     class Arguments:
@@ -336,19 +338,105 @@ class DeleteGroup(graphene.Mutation):
         lambda gid, **kwargs: (None, gid)
     )
     async def mutate(cls, root, info, gid):
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
+        query = groups.update().values(
+            is_active=False,
+            integration_id=None
+        ).where(groups.c.id == gid)
+        return simple_db_mutate(cls, info.context, query)
+
+
+class PurgeGroup(graphene.Mutation):
+    """
+    Completely deletes a group from DB.
+
+    Group's vfolders and their data will also be lost
+    as well as the kernels run from the group.
+    There is no migration of the ownership for group folders.
+    """
+    allowed_roles = (UserRole.ADMIN, UserRole.SUPERADMIN)
+
+    class Arguments:
+        gid = graphene.UUID(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @classmethod
+    @privileged_mutation(
+        UserRole.ADMIN,
+        lambda gid, **kwargs: (None, gid)
+    )
+    async def mutate(cls, root, info, gid):
+        async with info.context['dbpool'].acquire() as conn:
+            await cls.delete_vfolders(conn, gid, info.context['config_server'])
+        await cls.delete_kernels(conn, gid)
+        query = groups.delete().where(groups.c.id == gid)
+        return simple_db_mutate(cls, info.context, query)
+
+    @classmethod
+    async def delete_vfolders(
+        cls,
+        conn: SAConnection,
+        group_id: uuid.UUID,
+        config_server,
+    ) -> int:
+        """
+        Delete group's all virtual folders as well as their physical data.
+
+        :param conn: DB connection
+        :param group_id: group's UUID to delete virtual folders
+
+        :return: number of deleted rows
+        """
+        from . import vfolders
+        mount_prefix = Path(await config_server.get('volumes/_mount'))
+        fs_prefix = await config_server.get('volumes/_fsprefix')
+        fs_prefix = Path(fs_prefix.lstrip('/'))
+        query = (
+            sa.select([vfolders.c.id, vfolders.c.host, vfolders.c.unmanaged_path])
+            .select_from(vfolders)
+            .where(vfolders.c.group == group_id)
+        )
+        async for row in conn.execute(query):
+            if row['unmanaged_path']:
+                folder_path = Path(row['unmanaged_path'])
+            else:
+                folder_path = (mount_prefix / row['host'] / fs_prefix / row['id'].hex)
+            log.info('deleting physical files: {0}', folder_path)
             try:
-                # query = groups.delete().where(groups.c.id == gid)
-                query = groups.update().values(is_active=False,
-                                               integration_id=None).where(groups.c.id == gid)
-                result = await conn.execute(query)
-                if result.rowcount > 0:
-                    return cls(ok=True, msg='success')
-                else:
-                    return cls(ok=False, msg='no such group')
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
-                return cls(ok=False, msg=f'integrity error: {e}')
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                raise
-            except Exception as e:
-                return cls(ok=False, msg=f'unexpected error: {e}')
+                loop = current_loop()
+                await loop.run_in_executor(None, lambda: shutil.rmtree(folder_path))  # type: ignore
+            except IOError:
+                pass
+        query = (
+            vfolders.delete()
+            .where(vfolders.c.group == group_id)
+        )
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            log.info('deleted {0} group\'s virtual folders ({1})', result.rowcount, group_id)
+        return result.rowcount
+
+    @classmethod
+    async def delete_kernels(
+        cls,
+        conn: SAConnection,
+        group_id: uuid.UUID,
+    ) -> int:
+        """
+        Delete all kernels run from the target groups.
+
+        :param conn: DB connection
+        :param group_id: group's UUID to delete kernels
+
+        :return: number of deleted rows
+        """
+        from . import kernels
+        query = (
+            kernels.delete()
+            .where(kernels.c.group_id == group_id)
+        )
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            log.info('deleted {0} group\'s kernels ({1})', result.rowcount, group_id)
+        return result.rowcount
