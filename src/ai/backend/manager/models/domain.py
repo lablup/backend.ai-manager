@@ -183,9 +183,8 @@ class ModifyDomain(graphene.Mutation):
         set_if_set(props, data, 'allowed_vfolder_hosts')
         set_if_set(props, data, 'allowed_docker_registries')
         set_if_set(props, data, 'integration_id')
-        if 'name' in data:
-            assert _rx_slug.search(data['name']) is not None, \
-                'invalid name format. slug format required.'
+        if 'name' in data and _rx_slug.search(data['name']) is None:
+            raise ValueError('invalid name format. slug format required.')
         update_query = (
             domains.update()
             .values(data)
@@ -246,13 +245,15 @@ class PurgeDomain(graphene.Mutation):
                 .where(users.c.domain_name == name)
             )
             user_count = await conn.scalar(query)
-            assert user_count == 0, 'There are users bound to the domain. Remove users first.'
+            if user_count > 0:
+                RuntimeError('There are users bound to the domain. Remove users first.')
             query = (
                 sa.select([sa.func.count()])
                 .where(groups.c.domain_name == name)
             )
             group_count = await conn.scalar(query)
-            assert group_count == 0, 'There are groups bound to the domain. Remove groups first.'
+            if group_count > 0:
+                RuntimeError('There are groups bound to the domain. Remove groups first.')
 
             await cls.delete_kernels(conn, name)
         query = domains.delete().where(domains.c.name == name)

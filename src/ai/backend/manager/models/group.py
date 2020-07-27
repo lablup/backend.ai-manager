@@ -229,7 +229,8 @@ class CreateGroup(graphene.Mutation):
         lambda name, props, **kwargs: (props.domain_name, None)
     )
     async def mutate(cls, root, info, name, props):
-        assert _rx_slug.search(name) is not None, 'invalid name format. slug format required.'
+        if _rx_slug.search(name) is None:
+            raise ValueError('invalid name format. slug format required.')
         data = {
             'name': name,
             'description': props.description,
@@ -279,10 +280,10 @@ class ModifyGroup(graphene.Mutation):
         set_if_set(props, data, 'allowed_vfolder_hosts')
         set_if_set(props, data, 'integration_id')
 
-        if 'name' in data:
-            assert _rx_slug.search(data['name']) is not None, \
-                'invalid name format. slug format required.'
-        assert props.user_update_mode in (None, 'add', 'remove',), 'invalid user_update_mode'
+        if 'name' in data and _rx_slug.search(data['name']) is None:
+            raise ValueError('invalid name format. slug format required.')
+        if props.user_update_mode not in (None, 'add', 'remove'):
+            raise ValueError('invalid user_update_mode')
         if not props.user_uuids:
             props.user_update_mode = None
         if not data and props.user_update_mode is None:
