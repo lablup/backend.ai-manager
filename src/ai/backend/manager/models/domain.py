@@ -201,9 +201,9 @@ class ModifyDomain(graphene.Mutation):
 
 
 class DeleteDomain(graphene.Mutation):
-    '''
+    """
     Instead of deleting the domain, just mark it as inactive.
-    '''
+    """
     allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
@@ -223,12 +223,12 @@ class DeleteDomain(graphene.Mutation):
 
 
 class PurgeDomain(graphene.Mutation):
-    '''
+    """
     Completely delete domain from DB.
 
     Domain-bound kernels will also be all deleted.
     To purge domain, there should be no users and groups in the target domain.
-    '''
+    """
     allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:

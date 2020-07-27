@@ -320,9 +320,9 @@ class ModifyGroup(graphene.Mutation):
 
 
 class DeleteGroup(graphene.Mutation):
-    '''
+    """
     Instead of deleting the group, just mark it as inactive.
-    '''
+    """
     allowed_roles = (UserRole.ADMIN, UserRole.SUPERADMIN)
 
     class Arguments:
@@ -345,13 +345,13 @@ class DeleteGroup(graphene.Mutation):
 
 
 class PurgeGroup(graphene.Mutation):
-    '''
+    """
     Completely deletes a group from DB.
 
     Group's vfolders and their data will also be lost
     as well as the kernels run from the group.
     There is no migration of the ownership for group folders.
-    '''
+    """
     allowed_roles = (UserRole.ADMIN, UserRole.SUPERADMIN)
 
     class Arguments:

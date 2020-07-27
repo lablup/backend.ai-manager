@@ -57,9 +57,9 @@ class PasswordColumn(TypeDecorator):
 
 
 class UserRole(str, enum.Enum):
-    '''
+    """
     User's role.
-    '''
+    """
     SUPERADMIN = 'superadmin'
     ADMIN = 'admin'
     USER = 'user'
@@ -67,9 +67,9 @@ class UserRole(str, enum.Enum):
 
 
 class UserStatus(str, enum.Enum):
-    '''
+    """
     User account status.
-    '''
+    """
     ACTIVE = 'active'
     INACTIVE = 'inactive'
     DELETED = 'deleted'
@@ -203,9 +203,9 @@ class User(graphene.ObjectType):
         status=None,
         limit=None,
     ) -> Sequence[User]:
-        '''
+        """
         Load user's information. Group names associated with the user are also returned.
-        '''
+        """
         async with context['dbpool'].acquire() as conn:
             if group_id is not None:
                 from .group import association_groups_users as agus
@@ -633,11 +633,11 @@ class ModifyUser(graphene.Mutation):
 
 
 class DeleteUser(graphene.Mutation):
-    '''
+    """
     Instead of really deleting user, just mark the account as deleted status.
 
     All related keypairs will also be inactivated.
-    '''
+    """
 
     allowed_roles = (UserRole.SUPERADMIN,)
 
@@ -680,7 +680,7 @@ class DeleteUser(graphene.Mutation):
 
 
 class PurgeUser(graphene.Mutation):
-    '''
+    """
     Delete user as well as all user-related DB informations such as keypairs, kernels, etc.
 
     If target user has virtual folders, they can be purged together or migrated to the superadmin.
@@ -693,7 +693,7 @@ class PurgeUser(graphene.Mutation):
         + else: change vfolder's owner to requested admin
 
     This action cannot be undone.
-    '''
+    """
     allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
