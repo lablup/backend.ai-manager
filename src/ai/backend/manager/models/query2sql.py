@@ -3,7 +3,6 @@ import lark
 import sqlalchemy as sa
 from sqlalchemy.sql import text
 
-test_query = '''sa.select([text("name, age")]).select_from(text("users")).where(text("name!='dongyun' AND age>20"))'''
 
 class Query2sql:
     __JSON_GRAMMER = r"""
@@ -33,29 +32,31 @@ class Query2sql:
         %import common.WS
         %ignore WS
     """
+
     def __init__(self):
         self._FILTERS = {
-            'and':'AND',
-            'or':'OR', 
-            'gt':'>', 
-            'gte':'>=', 
-            'lt':'<', 
-            'lte':'<=', 
-            'eq':'=', 
-            'ne':'!='
+            'and': 'AND',
+            'or': 'OR',
+            'gt': '>',
+            'gte': '>=',
+            'lt': '<',
+            'lte': '<=',
+            'eq': '=',
+            'ne': '!='
         }
-        self._JSON_PARSER = Lark(Query2sql.__JSON_GRAMMER, parser='lalr', maybe_placeholders=False)
-    
+        self._JSON_PARSER = Lark(
+            Query2sql.__JSON_GRAMMER, parser='lalr', maybe_placeholders=False)
+
     def query2tree(self, query):
         tree = self._JSON_PARSER.parse(query)
         return tree
-    
+
     def _token2str(self, token):
         if type(token) == list:
             token = token[0]
         assert type(token) == lark.lexer.Token
         return str(token)
-    
+
     def tree_partition(self, tree, ret_table=True, ret_filter=True, ret_select=True):
         ret = []
         if tree.data == 'object':
@@ -75,16 +76,18 @@ class Query2sql:
         return ret
 
     def tree2table(self, tree):
-        table = self.tree_partition(tree, ret_table=True, ret_filter=False, ret_select=False)
+        table = self.tree_partition(
+            tree, ret_table=True, ret_filter=False, ret_select=False)
         return table
-            
+
     def tree2where(self, tree):
         filter_stack = []
         count_stack = []
         bracket_stack = []
         where = ""
         if tree.data != "filter":
-            tree = self.tree_partition(tree, ret_table=False, ret_filter=True, ret_select=False)
+            tree = self.tree_partition(
+                tree, ret_table=False, ret_filter=True, ret_select=False)
         tree = list(tree.iter_subtrees_topdown())
         for i in range(len(tree)):
             data = tree[i].data
@@ -108,11 +111,11 @@ class Query2sql:
                                 break
                 else:
                     where += token + " "
-                    if tree[i-1].data != "pair": 
+                    if tree[i-1].data != "pair":
                         while bracket_stack:
                             where = where[:-1]
                             where += bracket_stack.pop()
-                    if filter_stack: 
+                    if filter_stack:
                         where += self._FILTERS[filter_stack.pop()] + " "
         if where[0] == "(" and where[-2] == ")":
             where = where[1:-1]
@@ -120,7 +123,8 @@ class Query2sql:
 
     def tree2select(self, tree):
         if tree.data != 'object' or tree.children[0].data == 'query':
-            tree = self.tree_partition(tree, ret_table=False, ret_filter=False, ret_select=True)
+            tree = self.tree_partition(
+                tree, ret_table=False, ret_filter=False, ret_select=True)
         tree = list(tree.iter_subtrees_topdown())
         select = ""
         for i in range(len(tree)):
@@ -138,7 +142,8 @@ class Query2sql:
             where_clause = self.tree2where(tree)
         assert table != None
         if select_clause != None:
-            sa_query = sa_query.select([text(select_clause)]).select_from(text(table))
+            sa_query = sa_query.select(
+                [text(select_clause)]).select_from(text(table))
         else:
             sa_query = sa_query.select(text(table))
         if where_clause != None:
