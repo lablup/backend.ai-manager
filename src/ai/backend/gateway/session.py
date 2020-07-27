@@ -244,27 +244,31 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     except AliasResolutionFailed:
         raise ImageNotFound
 
-    # Check existing (owner_access_key, session) kernel instance
+    # Check existing (owner_access_key, session_name) instance
     try:
         # NOTE: We can reuse the session IDs of TERMINATED sessions only.
         # NOTE: Reusing a session in the PENDING status returns an empty value in service_ports.
         kern = await registry.get_session(params['session_name'], owner_access_key)
         running_image_ref = ImageRef(kern['image'], [kern['registry']])
         if running_image_ref != requested_image_ref:
-            raise SessionAlreadyExists
-        create = False
-    except SessionNotFound:
-        create = True
-    if not create:
+            # The image must be same if get_or_create() called multiple times
+            # against an existing (non-terminated) session
+            raise SessionAlreadyExists(extra_data={'existing_session_id': kern['id']})
         if not params['reuse']:
-            raise SessionAlreadyExists
+            # Respond as error since the client did not request to reuse,
+            # but provide the overlapping session ID for later use.
+            raise SessionAlreadyExists(extra_data={'existing_session_id': kern['id']})
+        # Respond as success with the reused session's information.
         return web.json_response({
-            'sessionId': None,   # TODO: will be implemented in multi-container session
+            'sessionId': str(kern['id']),
             'sessionName': str(kern['sess_id']),
             'status': kern['status'].name,
             'service_ports': kern['service_ports'],
             'created': False,
         }, status=200)
+    except SessionNotFound:
+        # It's time to create a new session.
+        pass
 
     if params['session_type'] == SessionTypes.BATCH and not params['startup_command']:
         raise InvalidAPIParameters('Batch sessions must have a non-empty startup command.')
