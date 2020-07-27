@@ -366,7 +366,7 @@ class PurgeGroup(graphene.Mutation):
     )
     async def mutate(cls, root, info, gid):
         async with info.context['dbpool'].acquire() as conn:
-            cls.delete_vfolders(conn, gid, info.context['config_server'])
+            await cls.delete_vfolders(conn, gid, info.context['config_server'])
         query = groups.delete().where(groups.c.id == gid)
         return simple_db_mutate(cls, info.context, query)
 
