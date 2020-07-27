@@ -33,7 +33,7 @@ from .base import (
 )
 from .user import UserRole
 
-log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
+log = BraceStyleAdapter(logging.getLogger(__file__))
 
 
 __all__: Sequence[str] = (

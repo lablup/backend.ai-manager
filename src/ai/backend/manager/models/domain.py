@@ -20,7 +20,7 @@ from .base import (
 from .scaling_group import ScalingGroup
 from .user import UserRole
 
-log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
+log = BraceStyleAdapter(logging.getLogger(__file__))
 
 
 __all__: Sequence[str] = (
