@@ -21,7 +21,6 @@ from graphene.types.datetime import DateTime as GQLDateTime
 from passlib.hash import bcrypt
 import psycopg2 as pg
 import sqlalchemy as sa
-from sqlalchemy.sql.expression import bindparam
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
 from ai.backend.common.logging import BraceStyleAdapter
@@ -719,6 +718,7 @@ class PurgeUser(graphene.Mutation):
 
                 if not purge_shared_vfolders:
                     await cls.migrate_shared_vfolders(
+                        conn,
                         deleted_user_uuid=user_uuid,
                         target_user_uuid=info.context['user']['uuid'],
                         target_user_email=info.context['user']['email'],
@@ -770,8 +770,7 @@ class PurgeUser(graphene.Mutation):
             .select_from(vfolders)
             .where(vfolders.c.user == target_user_uuid)
         )
-        result = await conn.execute(query)
-        existing_vfolder_names = await result.fetchall()
+        existing_vfolder_names = [row.name async for row in conn.execute(query)]
 
         # Migrate shared virtual folders.
         # If virtual folder's name collides with target user's folder,
@@ -795,32 +794,36 @@ class PurgeUser(graphene.Mutation):
             # Remove invitations and vfolder_permissions from target user.
             # Target user will be the new owner, and it does not make sense to have
             # invitation and shared permission for its own folder.
+            migrate_vfolder_ids = [item['vid'] for item in migrate_updates]
             query = (
                 vfolder_invitations.delete()
                 .where((vfolder_invitations.c.invitee == target_user_email) &
-                       (vfolder_invitations.c.vfolder == bindparam('vid')))
+                       (vfolder_invitations.c.vfolder.in_(migrate_vfolder_ids)))
             )
-            await conn.execute(query, migrate_updates)
+            a = await conn.execute(query)
             query = (
                 vfolder_permissions.delete()
                 .where((vfolder_permissions.c.user == target_user_uuid) &
-                       (vfolder_permissions.c.vfolder == bindparam('vid')))
+                       (vfolder_permissions.c.vfolder.in_(migrate_vfolder_ids)))
             )
-            await conn.execute(query, migrate_updates)
+            b = await conn.execute(query)
 
-            query = (
-                vfolders.update()
-                .values(
-                    user=target_user_uuid,
-                    name=bindparam('vname'),
+            rowcount = 0
+            for item in migrate_updates:
+                query = (
+                    vfolders.update()
+                    .values(
+                        user=target_user_uuid,
+                        name=item['vname'],
+                    )
+                    .where(vfolders.c.id == item['vid'])
                 )
-                .where(vfolders.c.id == bindparam('vid'))
-            )
-            result = await conn.execute(query, migrate_updates)
-            if result.rowcount > 0:
+                result = await conn.execute(query)
+                rowcount += result.rowcount
+            if rowcount > 0:
                 log.info('{0} shared folders detected. migrated to user {1}',
-                         len(result.rowcount), target_user_uuid)
-            return result.rowcount
+                         rowcount, target_user_uuid)
+            return rowcount
         else:
             return 0
 
