@@ -402,7 +402,8 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             session_tag=params['tag'],
             starts_at=starts_at,
         ))
-        resp['sessionId'] = str(params['session_name'])  # legacy naming
+        resp['sessionId'] = str(kernel_id)  # changed since API v5
+        resp['sessionName'] = str(params['session_name'])
         resp['status'] = 'PENDING'
         resp['servicePorts'] = []
         resp['created'] = True
