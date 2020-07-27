@@ -16,6 +16,21 @@ Changes
 
 .. towncrier release notes start
 
+20.03.0 (2020-07-28)
+--------------------
+
+### Features
+* Add purge mutations for users, groups, and domains. ([#302](https://github.com/lablup/backend.ai-manager/issues/302))
+
+### Fixes
+* Raise explicit exception when no keypair is found during login. ([#297](https://github.com/lablup/backend.ai-manager/issues/297))
+* Adds context for the call to from_row in simple_db_mutate_returning_item. ([#300](https://github.com/lablup/backend.ai-manager/issues/300))
+* The session creation API now returns the session UUID as part of its response, in addition to the meaningless client-provided session alias (name) ([#303](https://github.com/lablup/backend.ai-manager/issues/303))
+
+### Miscellaneous
+* Return explicit message if user needs verification during login. ([#301](https://github.com/lablup/backend.ai-manager/issues/301))
+
+
 20.03.0rc1 (2020-07-23)
 -----------------------
 

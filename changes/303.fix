@@ -1,1 +1,0 @@
-The session creation API now returns the session UUID as part of its response, in addition to the meaningless client-provided session alias (name)
