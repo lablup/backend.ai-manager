@@ -253,11 +253,11 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
         if running_image_ref != requested_image_ref:
             # The image must be same if get_or_create() called multiple times
             # against an existing (non-terminated) session
-            raise SessionAlreadyExists(extra_data={'existingSessionId': kern['id']})
+            raise SessionAlreadyExists(extra_data={'existingSessionId': str(kern['id'])})
         if not params['reuse']:
             # Respond as error since the client did not request to reuse,
             # but provide the overlapping session ID for later use.
-            raise SessionAlreadyExists(extra_data={'existingSessionId': kern['id']})
+            raise SessionAlreadyExists(extra_data={'existingSessionId': str(kern['id'])})
         # Respond as success with the reused session's information.
         return web.json_response({
             'sessionId': str(kern['id']),

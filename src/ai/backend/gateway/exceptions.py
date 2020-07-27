@@ -194,8 +194,7 @@ class AppNotFound(web.HTTPNotFound, BackendError):
 
 class SessionAlreadyExists(web.HTTPBadRequest, BackendError):
     error_type  = 'https://api.backend.ai/probs/session-already-exists'
-    error_title = 'The session already exists with ' \
-                  'a different runtime type (language).'
+    error_title = 'The session already exists but you requested not to reuse existing one.'
 
 
 class VFolderCreationFailed(web.HTTPBadRequest, BackendError):
