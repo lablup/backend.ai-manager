@@ -21,6 +21,7 @@ from graphene.types.datetime import DateTime as GQLDateTime
 from passlib.hash import bcrypt
 import psycopg2 as pg
 import sqlalchemy as sa
+from sqlalchemy.sql.expression import bindparam
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
 from ai.backend.common.logging import BraceStyleAdapter
@@ -682,6 +683,7 @@ class DeleteUser(graphene.Mutation):
 class PurgeUser(graphene.Mutation):
     '''
     Delete user as well as all user-related DB informations such as keypairs, kernels, etc.
+
     If target user has virtual folders, they can be purged together or migrated to the superadmin.
 
     vFolder treatment policy:
@@ -715,24 +717,12 @@ class PurgeUser(graphene.Mutation):
                 user_uuid = await conn.scalar(query)
                 log.info('completly deleting user {0}...', email)
 
-                # Migrate user's shared vfolders to the requested admin.
-                # Then, delete user's vfolders, kernels, and keypairs.
                 if not purge_shared_vfolders:
-                    from . import vfolders, vfolder_permissions
-                    j = vfolder_permissions.join(
-                        vfolders,
-                        vfolder_permissions.c.vfolder == vfolders.c.id
+                    await cls.migrate_shared_vfolders(
+                        deleted_user_uuid=user_uuid,
+                        target_user_uuid=info.context['user']['uuid'],
+                        target_user_email=info.context['user']['email'],
                     )
-                    query = (
-                        sa.select([vfolders.c.id])
-                        .select_from(j)
-                        .where(vfolders.c.user == user_uuid)
-                    )
-                    result = await conn.execute(query)
-                    shared_vfolder_ids = await result.fetchall()
-                    if shared_vfolder_ids:
-                        await cls.migrate_vfolders(conn, info.context['user']['uuid'],
-                                                   shared_vfolder_ids)
                 await cls.delete_vfolders(conn, user_uuid, info.context['config_server'])
                 await cls.delete_kernels(conn, user_uuid)
                 await cls.delete_keypairs(conn, user_uuid)
@@ -755,31 +745,84 @@ class PurgeUser(graphene.Mutation):
                 return cls(ok=False, msg=f'unexpected error: {e}')
 
     @classmethod
-    async def migrate_vfolders(
+    async def migrate_shared_vfolders(
         cls,
         conn: SAConnection,
+        deleted_user_uuid: uuid.UUID,
         target_user_uuid: uuid.UUID,
-        vfolder_uuids: Iterable[uuid.UUID],
+        target_user_email: str,
     ) -> int:
         """
-        Migrate virtual folders' ownership to a target user.
+        Migrate shared virtual folders' ownership to a target user.
+
+        If migrating virtual folder's name collides with target user's already
+        existing folder, append random string to the migrating one.
 
         :param conn: DB connection
+        :param deleted_user_uuid: user's UUID who will be deleted
         :param target_user_uuid: user's UUID who will get the ownership of virtual folders
-        :param vfolder_uuid: vfolders' UUIDs to migrate the ownership
         :return: number of deleted rows
         """
-        from . import vfolders
+        from . import vfolders, vfolder_invitations, vfolder_permissions
+        # Gather target user's virtual folders' names.
         query = (
-            vfolders.update()
-            .values(user=target_user_uuid)
-            .where(vfolders.c.id.in_(vfolder_uuids))
+            sa.select([vfolders.c.name])
+            .select_from(vfolders)
+            .where(vfolders.c.user == target_user_uuid)
         )
         result = await conn.execute(query)
-        if result.rowcount > 0:
-            log.info('{0} shared folders detected. migrated to {1}',
-                     len(result.rowcount), target_user_uuid)
-        return result.rowcount
+        existing_vfolder_names = await result.fetchall()
+
+        # Migrate shared virtual folders.
+        # If virtual folder's name collides with target user's folder,
+        # append random string to the name of the migrating folder.
+        j = vfolder_permissions.join(
+            vfolders,
+            vfolder_permissions.c.vfolder == vfolders.c.id
+        )
+        query = (
+            sa.select([vfolders.c.id, vfolders.c.name])
+            .select_from(j)
+            .where(vfolders.c.user == deleted_user_uuid)
+        )
+        migrate_updates = []
+        async for row in conn.execute(query):
+            name = row.name
+            if name in existing_vfolder_names:
+                name += f'-{uuid.uuid4().hex[:10]}'
+            migrate_updates.append({'vid': row.id, 'vname': name})
+        if migrate_updates:
+            # Remove invitations and vfolder_permissions from target user.
+            # Target user will be the new owner, and it does not make sense to have
+            # invitation and shared permission for its own folder.
+            query = (
+                vfolder_invitations.delete()
+                .where((vfolder_invitations.c.invitee == target_user_email) &
+                       (vfolder_invitations.c.vfolder == bindparam('vid')))
+            )
+            await conn.execute(query, migrate_updates)
+            query = (
+                vfolder_permissions.delete()
+                .where((vfolder_permissions.c.user == target_user_uuid) &
+                       (vfolder_permissions.c.vfolder == bindparam('vid')))
+            )
+            await conn.execute(query, migrate_updates)
+
+            query = (
+                vfolders.update()
+                .values(
+                    user=target_user_uuid,
+                    name=bindparam('vname'),
+                )
+                .where(vfolders.c.id == bindparam('vid'))
+            )
+            result = await conn.execute(query, migrate_updates)
+            if result.rowcount > 0:
+                log.info('{0} shared folders detected. migrated to user {1}',
+                         len(result.rowcount), target_user_uuid)
+            return result.rowcount
+        else:
+            return 0
 
     @classmethod
     async def delete_vfolders(
@@ -821,7 +864,7 @@ class PurgeUser(graphene.Mutation):
         )
         result = await conn.execute(query)
         if result.rowcount > 0:
-            log.info('deleted {} user\'s virtual folders', result.rowcount)
+            log.info('deleted {0} user\'s virtual folders ({1})', result.rowcount, user_uuid)
         return result.rowcount
 
     @classmethod
@@ -844,7 +887,7 @@ class PurgeUser(graphene.Mutation):
         )
         result = await conn.execute(query)
         if result.rowcount > 0:
-            log.info('deleted {} user\'s kernels', result.rowcount)
+            log.info('deleted {0} user\'s kernels ({1})', result.rowcount, user_uuid)
         return result.rowcount
 
     @classmethod
@@ -867,7 +910,7 @@ class PurgeUser(graphene.Mutation):
         )
         result = await conn.execute(query)
         if result.rowcount > 0:
-            log.info('deleted {} user\'s keypairs', result.rowcount)
+            log.info('deleted {0} user\'s keypairs ({1})', result.rowcount, user_uuid)
         return result.rowcount
 
 
