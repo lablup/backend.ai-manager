@@ -761,6 +761,7 @@ class PurgeUser(graphene.Mutation):
         :param conn: DB connection
         :param deleted_user_uuid: user's UUID who will be deleted
         :param target_user_uuid: user's UUID who will get the ownership of virtual folders
+
         :return: number of deleted rows
         """
         from . import vfolders, vfolder_invitations, vfolder_permissions
@@ -800,13 +801,13 @@ class PurgeUser(graphene.Mutation):
                 .where((vfolder_invitations.c.invitee == target_user_email) &
                        (vfolder_invitations.c.vfolder.in_(migrate_vfolder_ids)))
             )
-            a = await conn.execute(query)
+            await conn.execute(query)
             query = (
                 vfolder_permissions.delete()
                 .where((vfolder_permissions.c.user == target_user_uuid) &
                        (vfolder_permissions.c.vfolder.in_(migrate_vfolder_ids)))
             )
-            b = await conn.execute(query)
+            await conn.execute(query)
 
             rowcount = 0
             for item in migrate_updates:
@@ -839,6 +840,7 @@ class PurgeUser(graphene.Mutation):
 
         :param conn: DB connection
         :param user_uuid: user's UUID to delete virtual folders
+
         :return: number of deleted rows
         """
         from . import vfolders

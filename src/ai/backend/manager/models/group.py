@@ -346,9 +346,10 @@ class DeleteGroup(graphene.Mutation):
 
 class PurgeGroup(graphene.Mutation):
     '''
-    Completely delete group from DB.
+    Completely deletes a group from DB.
 
-    Group's vfolders and their data will also be lost.
+    Group's vfolders and their data will also be lost
+    as well as the kernels run from the group.
     There is no migration of the ownership for group folders.
     '''
     allowed_roles = (UserRole.ADMIN, UserRole.SUPERADMIN)
@@ -367,6 +368,7 @@ class PurgeGroup(graphene.Mutation):
     async def mutate(cls, root, info, gid):
         async with info.context['dbpool'].acquire() as conn:
             await cls.delete_vfolders(conn, gid, info.context['config_server'])
+        await cls.delete_kernels(conn, gid)
         query = groups.delete().where(groups.c.id == gid)
         return simple_db_mutate(cls, info.context, query)
 
@@ -382,6 +384,7 @@ class PurgeGroup(graphene.Mutation):
 
         :param conn: DB connection
         :param group_id: group's UUID to delete virtual folders
+
         :return: number of deleted rows
         """
         from . import vfolders
@@ -410,5 +413,29 @@ class PurgeGroup(graphene.Mutation):
         )
         result = await conn.execute(query)
         if result.rowcount > 0:
-            log.info('deleted {} group\'s virtual folders', result.rowcount)
+            log.info('deleted {0} group\'s virtual folders ({1})', result.rowcount, group_id)
+        return result.rowcount
+
+    @classmethod
+    async def delete_kernels(
+        cls,
+        conn: SAConnection,
+        group_id: uuid.UUID,
+    ) -> int:
+        """
+        Delete all kernels run from the target groups.
+
+        :param conn: DB connection
+        :param group_id: group's UUID to delete kernels
+
+        :return: number of deleted rows
+        """
+        from . import kernels
+        query = (
+            kernels.delete()
+            .where(kernels.c.group_id == group_id)
+        )
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            log.info('deleted {0} group\'s kernels ({1})', result.rowcount, group_id)
         return result.rowcount

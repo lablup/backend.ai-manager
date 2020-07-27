@@ -1,11 +1,14 @@
+import logging
 import re
 from typing import Sequence
 
+from aiopg.sa.connection import SAConnection
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
+from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
 from .base import (
     metadata, ResourceSlotColumn,
@@ -16,6 +19,8 @@ from .base import (
 )
 from .scaling_group import ScalingGroup
 from .user import UserRole
+
+log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
 
 
 __all__: Sequence[str] = (
@@ -221,7 +226,8 @@ class PurgeDomain(graphene.Mutation):
     '''
     Completely delete domain from DB.
 
-    To purge domain, there should be no users in the target domain.
+    Domain-bound kernels will also be all deleted.
+    To purge domain, there should be no users and groups in the target domain.
     '''
     allowed_roles = (UserRole.SUPERADMIN,)
 
@@ -247,5 +253,31 @@ class PurgeDomain(graphene.Mutation):
             )
             group_count = await conn.scalar(query)
             assert group_count == 0, 'There are groups bound to the domain. Remove groups first.'
+
+            await cls.delete_kernels(conn, name)
         query = domains.delete().where(domains.c.name == name)
         return await simple_db_mutate(cls, info.context, query)
+
+    @classmethod
+    async def delete_kernels(
+        cls,
+        conn: SAConnection,
+        domain_name: str,
+    ) -> int:
+        """
+        Delete all kernels run from the target domain.
+
+        :param conn: DB connection
+        :param domain_name: domain's name to delete kernels
+
+        :return: number of deleted rows
+        """
+        from . import kernels
+        query = (
+            kernels.delete()
+            .where(kernels.c.domain_name == domain_name)
+        )
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            log.info('deleted {0} domain\'s kernels ({1})', result.rowcount, domain_name)
+        return result.rowcount
