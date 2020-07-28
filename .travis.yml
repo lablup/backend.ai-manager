@@ -29,10 +29,10 @@ install:
   - pip install -U pip setuptools
   - |
     # Use the same branch (if exists) for the backend.ai-common installation
-    export BRANCH=$(if [ "$TRAVIS_PULL_REQUEST" == "false" ]; then echo $TRAVIS_BRANCH; else echo $TRAVIS_PULL_REQUEST_BRANCH; fi)
-    echo "TRAVIS_BRANCH=$TRAVIS_BRANCH"
-    echo "TRAVIS_PULL_REQUEST_BRANCH=$TRAVIS_PULL_REQUEST_BRANCH"
-    echo "BRANCH=$BRANCH"
+    export BRANCH=$(if [ "$TRAVIS_PULL_REQUEST" == "false" ]; then echo "$TRAVIS_BRANCH"; else echo "$TRAVIS_PULL_REQUEST_BRANCH"; fi)
+    if [ "$BRANCH" == "$TRAVIS_TAG" ]; then  # for tagged commits, TRAVIS_BRANCH looses the original branch name
+      export BRANCH=$(git ls-remote origin | sed -n "\|$TRAVIS_COMMIT\s\+refs/heads/|{s///p}")
+    fi
     git ls-remote --heads 'https://github.com/lablup/backend.ai-common' | grep -q "refs/heads/${BRANCH}"
     if [ $? -eq 0 ]; then
       sed -i "s%\(backend.ai-common\)@master%\1@${BRANCH}%" requirements/test.txt
