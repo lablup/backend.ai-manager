@@ -717,7 +717,8 @@ class PurgeUser(graphene.Mutation):
                 log.info('completly deleting user {0}...', email)
 
                 if await cls.user_vfolder_mounted_to_active_kernels(conn, user_uuid):
-                    raise RuntimeError('Some of user\'s virtual folders are mounted to active kernels')
+                    raise RuntimeError('Some of user\'s virtual folders are mounted to active kernels. '
+                                       'Terminate those kernels first.')
                 if await cls.user_has_active_kernels(conn, user_uuid):
                     raise RuntimeError('User has some active kernels. Terminate them first.')
 
@@ -898,7 +899,8 @@ class PurgeUser(graphene.Mutation):
             .where(vfolders.c.user == user_uuid)
         )
         result = await conn.execute(query)
-        user_vfolder_ids = await result.fetchall()
+        rows = await result.fetchall()
+        user_vfolder_ids = [row.id for row in rows]
         query = (
             sa.select([kernels.c.mounts])
             .select_from(kernels)
@@ -906,7 +908,10 @@ class PurgeUser(graphene.Mutation):
         )
         async for row in conn.execute(query):
             for _mount in row['mounts']:
-                vfolder_id = uuid.UUID(_mount[2])
+                try:
+                    vfolder_id = uuid.UUID(_mount[2])
+                except Exception:
+                    pass
                 if vfolder_id in user_vfolder_ids:
                     return True
         return False

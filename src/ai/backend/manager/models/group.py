@@ -369,7 +369,8 @@ class PurgeGroup(graphene.Mutation):
     async def mutate(cls, root, info, gid):
         async with info.context['dbpool'].acquire() as conn:
             if await cls.group_vfolder_mounted_to_active_kernels(conn, gid):
-                raise RuntimeError('Some of group\'s virtual folders are mounted to active kernels')
+                raise RuntimeError('Some of group\'s virtual folders are mounted to active kernels. '
+                                   'Terminate those kernels first')
             if await cls.group_has_active_kernels(conn, gid):
                 raise RuntimeError('Group has some active kernels. Terminate them first.')
             await cls.delete_vfolders(conn, gid, info.context['config_server'])
@@ -466,7 +467,8 @@ class PurgeGroup(graphene.Mutation):
             .where(vfolders.c.group == group_id)
         )
         result = await conn.execute(query)
-        group_vfolder_ids = await result.fetchall()
+        rows = await result.fetchall()
+        group_vfolder_ids = [row.id for row in rows]
         query = (
             sa.select([kernels.c.mounts])
             .select_from(kernels)
@@ -475,7 +477,10 @@ class PurgeGroup(graphene.Mutation):
         )
         async for row in conn.execute(query):
             for _mount in row['mounts']:
-                vfolder_id = uuid.UUID(_mount[2])
+                try:
+                    vfolder_id = uuid.UUID(_mount[2])
+                except Exception:
+                    pass
                 if vfolder_id in group_vfolder_ids:
                     return True
         return False

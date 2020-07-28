@@ -241,7 +241,7 @@ class PurgeDomain(graphene.Mutation):
         from . import users, groups
         async with info.context['dbpool'].acquire() as conn:
             if await cls.domain_has_active_kernels(conn, name):
-                raise RuntimeError('Group has some active kernels. Terminate them first.')
+                raise RuntimeError('Domain has some active kernels. Terminate them first.')
             query = (
                 sa.select([sa.func.count()])
                 .where(users.c.domain_name == name)
