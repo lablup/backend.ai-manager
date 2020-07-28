@@ -368,8 +368,12 @@ class PurgeGroup(graphene.Mutation):
     )
     async def mutate(cls, root, info, gid):
         async with info.context['dbpool'].acquire() as conn:
+            if await cls.group_vfolder_mounted_to_active_kernels(conn, gid):
+                raise RuntimeError('Some of group\'s virtual folders are mounted to active kernels')
+            if await cls.group_has_active_kernels(conn, gid):
+                raise RuntimeError('Group has some active kernels. Terminate them first.')
             await cls.delete_vfolders(conn, gid, info.context['config_server'])
-        await cls.delete_kernels(conn, gid)
+            await cls.delete_kernels(conn, gid)
         query = groups.delete().where(groups.c.id == gid)
         return simple_db_mutate(cls, info.context, query)
 
@@ -440,3 +444,62 @@ class PurgeGroup(graphene.Mutation):
         if result.rowcount > 0:
             log.info('deleted {0} group\'s kernels ({1})', result.rowcount, group_id)
         return result.rowcount
+
+    @classmethod
+    async def group_vfolder_mounted_to_active_kernels(
+        cls,
+        conn: SAConnection,
+        group_id: uuid.UUID,
+    ) -> bool:
+        """
+        Check if no active kernel is using the group's virtual folders.
+
+        :param conn: DB connection
+        :param group_id: group's ID
+
+        :return: True if a virtual folder is mounted to active kernels.
+        """
+        from . import kernels, vfolders, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES
+        query = (
+            sa.select([vfolders.c.id])
+            .select_from(vfolders)
+            .where(vfolders.c.group == group_id)
+        )
+        result = await conn.execute(query)
+        group_vfolder_ids = await result.fetchall()
+        query = (
+            sa.select([kernels.c.mounts])
+            .select_from(kernels)
+            .where((kernels.c.group_id == group_id) &
+                   (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)))
+        )
+        async for row in conn.execute(query):
+            for _mount in row['mounts']:
+                vfolder_id = uuid.UUID(_mount[2])
+                if vfolder_id in group_vfolder_ids:
+                    return True
+        return False
+
+    @classmethod
+    async def group_has_active_kernels(
+        cls,
+        conn: SAConnection,
+        group_id: uuid.UUID,
+    ) -> bool:
+        """
+        Check if the group does not have active kernels.
+
+        :param conn: DB connection
+        :param group_id: group's UUID
+
+        :return: True if the group has some active kernels.
+        """
+        from . import kernels, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES
+        query = (
+            sa.select([sa.func.count()])
+            .select_from(kernels)
+            .where((kernels.c.group_id == group_id) &
+                   (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)))
+        )
+        active_kernel_count = await conn.scalar(query)
+        return True if active_kernel_count > 0 else False
