@@ -16,6 +16,12 @@ Changes
 
 .. towncrier release notes start
 
+20.03.1 (2020-07-28)
+--------------------
+
+* Maintenance release to fix the version reference format to `backend.ai-common` (from "~=20.03.0" to "~=20.3.0")
+
+
 20.03.0 (2020-07-28)
 --------------------
 
