@@ -708,7 +708,7 @@ async def upload(request: web.Request, row: VFolderRow) -> web.Response:
 @check_api_params(
     t.Dict({
         t.Key('path'): t.String,
-        t.Key('size'): t.Int,
+        t.Key('size'): t.ToInt,
     }))
 async def create_tus_upload_session(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     secret = request.app['config']['manager']['secret']
@@ -1012,7 +1012,7 @@ async def download(request: web.Request, params: Any, row: VFolderRow) -> web.Re
 @check_api_params(
     t.Dict({
         t.Key('file'): t.String,
-        t.Key('archive', default=False): t.Bool | t.Null,
+        t.Key('archive', default=False): t.ToBool | t.Null,
     }))
 async def download_single(request: web.Request, params: Any, row: VFolderRow) -> web.StreamResponse:
     folder_name = request.match_info['name']
@@ -1057,7 +1057,7 @@ async def download_single(request: web.Request, params: Any, row: VFolderRow) ->
 @check_api_params(
     t.Dict({
         t.Key('file'): t.String,
-        t.Key('archive', default=False): t.Bool | t.Null,
+        t.Key('archive', default=False): t.ToBool | t.Null,
     }))
 async def request_download(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     secret = request.app['config']['manager']['secret']

@@ -1,0 +1,1 @@
+Fix conversion of string query params to int/bool
