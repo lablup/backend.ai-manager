@@ -1,4 +1,4 @@
-from minilang.queryfilter import Query2sql
+from ai.backend.manager.models.minilang.queryfilter import Query2sql
 
 test_json = r'''
 User(and:{
@@ -14,7 +14,7 @@ User(and:{
 }
 '''
 
-test_deep_json= r'''
+test_deep_json = r'''
 User(and:{
         or:{
             eq:{

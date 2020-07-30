@@ -1,7 +1,6 @@
 from lark import Lark
 import lark
 import sqlalchemy as sa
-from sqlalchemy.sql import text
 
 
 class Query2sql:
