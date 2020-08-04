@@ -6,11 +6,11 @@ from .agent import (
 )
 from .domain import (
     Domain,
-    CreateDomain, ModifyDomain, DeleteDomain,
+    CreateDomain, ModifyDomain, DeleteDomain, PurgeDomain,
 )
 from .group import (
     Group,
-    CreateGroup, ModifyGroup, DeleteGroup,
+    CreateGroup, ModifyGroup, DeleteGroup, PurgeGroup,
 )
 from .image import (
     Image,
@@ -42,8 +42,9 @@ from .scaling_group import (
     AssociateScalingGroupWithKeyPair,   DisassociateScalingGroupWithKeyPair,
 )
 from .user import (
-    User, UserRole,
-    CreateUser, ModifyUser, DeleteUser,
+    User,
+    CreateUser, ModifyUser, DeleteUser, PurgeUser,
+    UserRole,
 )
 from .vfolder import (
     VirtualFolder, VirtualFolderList,
@@ -66,16 +67,19 @@ class Mutations(graphene.ObjectType):
     create_domain = CreateDomain.Field()
     modify_domain = ModifyDomain.Field()
     delete_domain = DeleteDomain.Field()
+    purge_domain = PurgeDomain.Field()
 
     # admin only
     create_group = CreateGroup.Field()
     modify_group = ModifyGroup.Field()
     delete_group = DeleteGroup.Field()
+    purge_group = PurgeGroup.Field()
 
-    # admin only
+    # super-admin only
     create_user = CreateUser.Field()
     modify_user = ModifyUser.Field()
     delete_user = DeleteUser.Field()
+    purge_user = PurgeUser.Field()
 
     # admin only
     create_keypair = CreateKeyPair.Field()

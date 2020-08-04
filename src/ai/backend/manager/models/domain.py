@@ -1,12 +1,15 @@
 from collections import OrderedDict
+import logging
 import re
 from typing import Sequence
 
+from aiopg.sa.connection import SAConnection
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
+from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
 from .base import (
     metadata, ResourceSlotColumn,
@@ -16,6 +19,8 @@ from .base import (
 )
 from .scaling_group import ScalingGroup
 from .user import UserRole
+
+log = BraceStyleAdapter(logging.getLogger(__file__))
 
 
 __all__: Sequence[str] = (
@@ -185,9 +190,8 @@ class ModifyDomain(graphene.Mutation):
         set_if_set(props, data, 'allowed_vfolder_hosts')
         set_if_set(props, data, 'allowed_docker_registries')
         set_if_set(props, data, 'integration_id')
-        if 'name' in data:
-            assert _rx_slug.search(data['name']) is not None, \
-                'invalid name format. slug format required.'
+        if 'name' in data and _rx_slug.search(data['name']) is None:
+            raise ValueError('invalid name format. slug format required.')
         update_query = (
             domains.update()
             .values(data)
@@ -203,7 +207,9 @@ class ModifyDomain(graphene.Mutation):
 
 
 class DeleteDomain(graphene.Mutation):
-
+    """
+    Instead of deleting the domain, just mark it as inactive.
+    """
     allowed_roles = (UserRole.SUPERADMIN,)
 
     class Arguments:
@@ -220,3 +226,66 @@ class DeleteDomain(graphene.Mutation):
             .where(domains.c.name == name)
         )
         return await simple_db_mutate(cls, info.context, query)
+
+
+class PurgeDomain(graphene.Mutation):
+    """
+    Completely delete domain from DB.
+
+    Domain-bound kernels will also be all deleted.
+    To purge domain, there should be no users and groups in the target domain.
+    """
+    allowed_roles = (UserRole.SUPERADMIN,)
+
+    class Arguments:
+        name = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @classmethod
+    async def mutate(cls, root, info, name):
+        from . import users, groups
+        async with info.context['dbpool'].acquire() as conn:
+            query = (
+                sa.select([sa.func.count()])
+                .where(users.c.domain_name == name)
+            )
+            user_count = await conn.scalar(query)
+            if user_count > 0:
+                RuntimeError('There are users bound to the domain. Remove users first.')
+            query = (
+                sa.select([sa.func.count()])
+                .where(groups.c.domain_name == name)
+            )
+            group_count = await conn.scalar(query)
+            if group_count > 0:
+                RuntimeError('There are groups bound to the domain. Remove groups first.')
+
+            await cls.delete_kernels(conn, name)
+        query = domains.delete().where(domains.c.name == name)
+        return await simple_db_mutate(cls, info.context, query)
+
+    @classmethod
+    async def delete_kernels(
+        cls,
+        conn: SAConnection,
+        domain_name: str,
+    ) -> int:
+        """
+        Delete all kernels run from the target domain.
+
+        :param conn: DB connection
+        :param domain_name: domain's name to delete kernels
+
+        :return: number of deleted rows
+        """
+        from . import kernels
+        query = (
+            kernels.delete()
+            .where(kernels.c.domain_name == domain_name)
+        )
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            log.info('deleted {0} domain\'s kernels ({1})', result.rowcount, domain_name)
+        return result.rowcount
