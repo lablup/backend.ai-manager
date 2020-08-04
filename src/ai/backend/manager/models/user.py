@@ -660,15 +660,12 @@ class PurgeUser(graphene.Mutation):
         fs_prefix = await config_server.get('volumes/_fsprefix')
         fs_prefix = Path(fs_prefix.lstrip('/'))
         query = (
-            sa.select([vfolders.c.id, vfolders.c.host, vfolders.c.unmanaged_path])
+            sa.select([vfolders.c.id, vfolders.c.host])
             .select_from(vfolders)
             .where(vfolders.c.user == user_uuid)
         )
         async for row in conn.execute(query):
-            if row['unmanaged_path']:
-                folder_path = Path(row['unmanaged_path'])
-            else:
-                folder_path = (mount_prefix / row['host'] / fs_prefix / row['id'].hex)
+            folder_path = (mount_prefix / row['host'] / fs_prefix / row['id'].hex)
             log.info('deleting physical files: {0}', folder_path)
             try:
                 loop = current_loop()
