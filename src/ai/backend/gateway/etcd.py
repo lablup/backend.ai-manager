@@ -430,6 +430,10 @@ class ConfigServer:
             labels = {}
             async with sess.get(registry_url / f'v2/{image}/manifests/{tag}',
                                 **rqst_args) as resp:
+                if resp.status == 404:
+                    # ignore missing tags
+                    # (may occur after deleting an image from the docker hub)
+                    return
                 resp.raise_for_status()
                 data = await resp.json()
                 config_digest = data['config']['digest']
