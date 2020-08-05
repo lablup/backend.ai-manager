@@ -449,12 +449,8 @@ class ConfigServer:
             finally:
                 if skip_reason:
                     log.warning('Skipped image - {}:{} ({})', image, tag, skip_reason)
-                    progress_msg = f"Skipped {image}:{tag} ({skip_reason})"
                 else:
                     log.info('Updated image - {0}:{1}', image, tag)
-                    progress_msg = f"Updated {image}:{tag}"
-                if reporter:
-                    await reporter.update(1, message=progress_msg)
 
         ssl_ctx = None  # default
         app_config = self.context.get('config')
