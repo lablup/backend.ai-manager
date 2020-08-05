@@ -16,6 +16,19 @@ Changes
 
 .. towncrier release notes start
 
+19.09.27 (2020-08-05)
+---------------------
+
+* This is also a maintenance release to update setup dependencies to make it forward-compatible with the new 2020 pip dependency resolver.
+
+### Features
+* Download a directory from vfolder as an archive. ([#278](https://github.com/lablup/backend.ai-manager/issues/278))
+* Add purge mutations for users, groups, and domains. ([#302](https://github.com/lablup/backend.ai-manager/issues/302))
+
+### Miscellaneous
+* Refactor session usage api. ([#298](https://github.com/lablup/backend.ai-manager/issues/298))
+
+
 19.09.26 (2020-06-15)
 ---------------------
 
