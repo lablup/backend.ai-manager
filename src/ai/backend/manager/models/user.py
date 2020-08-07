@@ -528,6 +528,12 @@ class PurgeUser(graphene.Mutation):
                 user_uuid = await conn.scalar(query)
                 log.info('completly deleting user {0}...', email)
 
+                if await cls.user_vfolder_mounted_to_active_kernels(conn, user_uuid):
+                    raise RuntimeError('Some of user\'s virtual folders are mounted to active kernels. '
+                                       'Terminate those kernels first.')
+                if await cls.user_has_active_kernels(conn, user_uuid):
+                    raise RuntimeError('User has some active kernels. Terminate them first.')
+
                 if not purge_shared_vfolders:
                     await cls.migrate_shared_vfolders(
                         conn,
@@ -680,6 +686,68 @@ class PurgeUser(graphene.Mutation):
         if result.rowcount > 0:
             log.info('deleted {0} user\'s virtual folders ({1})', result.rowcount, user_uuid)
         return result.rowcount
+
+    @classmethod
+    async def user_vfolder_mounted_to_active_kernels(
+        cls,
+        conn: SAConnection,
+        user_uuid: uuid.UUID,
+    ) -> bool:
+        """
+        Check if no active kernel is using the user's virtual folders.
+
+        :param conn: DB connection
+        :param user_uuid: user's UUID
+
+        :return: True if a virtual folder is mounted to active kernels.
+        """
+        from . import kernels, vfolders, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES
+        query = (
+            sa.select([vfolders.c.id])
+            .select_from(vfolders)
+            .where(vfolders.c.user == user_uuid)
+        )
+        result = await conn.execute(query)
+        rows = await result.fetchall()
+        user_vfolder_ids = [row.id for row in rows]
+        query = (
+            sa.select([kernels.c.mounts])
+            .select_from(kernels)
+            .where(kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))
+        )
+        async for row in conn.execute(query):
+            for _mount in row['mounts']:
+                try:
+                    vfolder_id = uuid.UUID(_mount[2])
+                except Exception:
+                    pass
+                if vfolder_id in user_vfolder_ids:
+                    return True
+        return False
+
+    @classmethod
+    async def user_has_active_kernels(
+        cls,
+        conn: SAConnection,
+        user_uuid: uuid.UUID,
+    ) -> bool:
+        """
+        Check if the user does not have active kernels.
+
+        :param conn: DB connection
+        :param user_uuid: user's UUID
+
+        :return: True if the user has some active kernels.
+        """
+        from . import kernels, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES
+        query = (
+            sa.select([sa.func.count()])
+            .select_from(kernels)
+            .where((kernels.c.user_uuid == user_uuid) &
+                   (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)))
+        )
+        active_kernel_count = await conn.scalar(query)
+        return (active_kernel_count > 0)
 
     @classmethod
     async def delete_kernels(
