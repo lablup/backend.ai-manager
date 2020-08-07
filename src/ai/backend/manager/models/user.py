@@ -938,7 +938,7 @@ class PurgeUser(graphene.Mutation):
                    (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)))
         )
         active_kernel_count = await conn.scalar(query)
-        return True if active_kernel_count > 0 else False
+        return (active_kernel_count > 0)
 
     @classmethod
     async def delete_kernels(
