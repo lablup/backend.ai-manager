@@ -40,8 +40,8 @@ User(and:{
 }
 '''
 
-test_escape_filter = "or:{eq:{name:\"test\'er ♪\"},gt:{age:20}}"
-
+escape_filter = "or:{eq:{name:\"test\'er ♪\"},gt:{age:20}}"
+underbar_filter = "eq:{full_name:\"tester1\"}"
 
 Base = declarative_base()
 Session = sessionmaker()
@@ -115,15 +115,21 @@ def test_deep_tree2select():
     assert select_clause == "name, age"
 
 
-def test_escape_filter2where():
-    tree = q2s.query2tree(test_escape_filter)
+def test_escape_filter():
+    tree = q2s.query2tree(escape_filter)
     where_clause = q2s.tree2where(tree)
     assert where_clause == "name = \"test\'er ♪\" OR age > 20"
 
 
 def test_chaining():
     sa_query = sa.select([User.name, User.age]).select_from(User)
-    sa_query = q2s.sa_chaining(sa_query, test_escape_filter)
+    sa_query = q2s.sa_chaining(sa_query, escape_filter)
     ret = list(conn.execute(sa_query))
     test_ret = [("tester", 30), ("test\'er", 30), ("test\'er ♪", 20)]
     assert test_ret == ret
+
+
+def test_underbar_filter():
+    tree = q2s.query2tree(underbar_filter)
+    where_clause = q2s.tree2where(tree)
+    assert where_clause == "full_name = \"tester1\""
