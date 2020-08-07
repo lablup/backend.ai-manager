@@ -157,12 +157,30 @@ class Query2sql:
                 select += token + ", "
         return select[:-2]
 
-    def sa_chaining(self, sa_query, query_arg, type="filter"):
+    def tree_validation(self, tree, validation):
+        tree = list(tree.iter_subtrees_topdown())
+        for i in range(len(tree)):
+            data = tree[i].data
+            children = tree[i].children
+            if data == 'word':
+                token = self._token2str(children)
+                if token in self._FILTERS:
+                    continue
+                if token not in validation:
+                    return False
+        return True
+
+    def sa_chaining(self, sa_query, query_arg, type="filter", validation=None):
         tree = self.query2tree(query_arg)
         if not self._check_type(tree, type):
             raise ValueError(r'''
             The form of the query_arg is not a {}
             '''.format(type))
         where_clause = self.tree2where(tree)
+        if validation:
+            if not self.tree_validation(tree, validation):
+                raise ValueError(r'''
+                Not exist column name in table
+                ''')
         sa_query = sa_query.where(text(where_clause))
         return sa_query
