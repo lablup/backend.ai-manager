@@ -781,7 +781,7 @@ async def tus_upload_part(request):
             await writer.write(chunk)
 
     fs = Path(target_filename).stat().st_size
-    if fs >= params['size']:
+    if fs >= int(params['size']):
         target_path = folder_path / params['path']
         Path(target_filename).rename(target_path)
         try:
