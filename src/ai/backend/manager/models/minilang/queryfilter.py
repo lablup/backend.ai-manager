@@ -1,5 +1,6 @@
 from lark import Lark
 import lark
+from .grammer_checker import checkBracket, checkQuotes, checkEscapeString
 from sqlalchemy.sql import text
 
 
@@ -17,15 +18,15 @@ class Query2sql:
               | "true"             -> true
               | "false"            -> false
               | "null"             -> null
-        query  : [word | string] "(" filter ")" object
+        query  : [word|string] "(" filter ")" object
         array  : "[" [value ("," value)*] "]"
         object : "{" [value ("," value)*] "}"
-        filter : [word | string] ":" object
-        pair   : [word | string] ":" [word | string | number]
-        word   : WORD
+        filter : [word|string] ":" object
+        pair   : [word|string] ":" [word|string|number]
+        word   : CNAME
         string : ESCAPED_STRING
         number : SIGNED_NUMBER
-        %import common.WORD
+        %import common.CNAME
         %import common.ESCAPED_STRING
         %import common.SIGNED_NUMBER
         %import common.WS
@@ -47,8 +48,32 @@ class Query2sql:
             Query2sql.__JSON_GRAMMER, parser='lalr', maybe_placeholders=False)
 
     def query2tree(self, query):
+        if not checkBracket(query):
+            raise ValueError(r'''
+            Check the brackets in the query string.
+            ''')
+        if not checkQuotes(query):
+            raise ValueError(r'''
+            Check the quotes in the value string.
+            If you want to write quotes in the value string, use ' instead of ".
+            ''')
+        if not checkEscapeString(query):
+            raise ValueError(r'''
+            Be careful with the use of Escape string.
+            Escape string can only be used within value string.
+            Double Quotes(") can only be used to represent value string type.
+            If you want to write quotes in the value string, use ' instead of ".
+            ''')
         tree = self._JSON_PARSER.parse(query)
         return tree
+
+    def _check_type(self, tree, type=""):
+        if type == 'word':
+            if type(tree) == str:
+                return True
+        elif tree.data == type:
+            return True
+        return False
 
     def _token2str(self, token):
         if type(token) == list:
@@ -132,17 +157,12 @@ class Query2sql:
                 select += token + ", "
         return select[:-2]
 
-    def sa_chaising(self, sa_query, tree=None, table=None, select_clause=None, where_clause=None):
-        if tree is not None:
-            table = self.tree2table(tree)
-            select_clause = self.tree2select(tree)
-            where_clause = self.tree2where(tree)
-        assert table is not None
-        if select_clause is not None:
-            sa_query = sa_query.select(
-                [text(select_clause)]).select_from(text(table))
-        else:
-            sa_query = sa_query.select(text(table))
-        if where_clause is not None:
-            sa_query = sa_query.where(text(where_clause))
+    def sa_chaining(self, sa_query, query_arg, type="filter"):
+        tree = self.query2tree(query_arg)
+        if not self._check_type(tree, type):
+            raise ValueError(r'''
+            The form of the query_arg is not a {}
+            '''.format(type))
+        where_clause = self.tree2where(tree)
+        sa_query = sa_query.where(text(where_clause))
         return sa_query
