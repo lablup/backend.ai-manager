@@ -1225,6 +1225,18 @@ async def invite(request: web.Request) -> web.Response:
             raise InvalidAPIParameters
         kps = await result.fetchall()
 
+        # Prevent inviting user who already share the target folder.
+        j = sa.join(vfolders, vfolder_permissions,
+                    vfolders.c.id == vfolder_permissions.c.vfolder)
+        query = (sa.select([vfolders.c.id])
+                   .select_from(j)
+                   .where(((vfolders.c.user == user_uuid) |
+                           (vfolder_permissions.c.user == user_uuid)) &
+                          (vfolders.c.name == folder_name)))
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            raise VFolderAlreadyExists
+
         # Create invitation.
         invitees = [kp.user_id for kp in kps]
         invited_ids = []
