@@ -16,6 +16,14 @@ Changes
 
 .. towncrier release notes start
 
+20.03.2 (2020-08-10)
+--------------------
+
+### Fixes
+* Report missing/skipped images with reasons to the client and logger when scanning docker registries ([#309](https://github.com/lablup/backend.ai-manager/issues/309))
+* Fix conversion of string query params to int/bool ([#307](https://github.com/lablup/backend.ai-manager/issues/307))
+
+
 20.03.1 (2020-07-28)
 --------------------
 
