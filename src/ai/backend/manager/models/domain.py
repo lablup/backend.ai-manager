@@ -240,20 +240,22 @@ class PurgeDomain(graphene.Mutation):
     async def mutate(cls, root, info, name):
         from . import users, groups
         async with info.context['dbpool'].acquire() as conn:
+            if await cls.domain_has_active_kernels(conn, name):
+                raise RuntimeError('Domain has some active kernels. Terminate them first.')
             query = (
                 sa.select([sa.func.count()])
                 .where(users.c.domain_name == name)
             )
             user_count = await conn.scalar(query)
             if user_count > 0:
-                RuntimeError('There are users bound to the domain. Remove users first.')
+                raise RuntimeError('There are users bound to the domain. Remove users first.')
             query = (
                 sa.select([sa.func.count()])
                 .where(groups.c.domain_name == name)
             )
             group_count = await conn.scalar(query)
             if group_count > 0:
-                RuntimeError('There are groups bound to the domain. Remove groups first.')
+                raise RuntimeError('There are groups bound to the domain. Remove groups first.')
 
             await cls.delete_kernels(conn, name)
         query = domains.delete().where(domains.c.name == name)
@@ -282,3 +284,27 @@ class PurgeDomain(graphene.Mutation):
         if result.rowcount > 0:
             log.info('deleted {0} domain\'s kernels ({1})', result.rowcount, domain_name)
         return result.rowcount
+
+    @classmethod
+    async def domain_has_active_kernels(
+        cls,
+        conn: SAConnection,
+        domain_name: str,
+    ) -> bool:
+        """
+        Check if the domain does not have active kernels.
+
+        :param conn: DB connection
+        :param domain_name: domain's name
+
+        :return: True if the domain has some active kernels.
+        """
+        from . import kernels, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES
+        query = (
+            sa.select([sa.func.count()])
+            .select_from(kernels)
+            .where((kernels.c.domain_name == domain_name) &
+                   (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)))
+        )
+        active_kernel_count = await conn.scalar(query)
+        return (active_kernel_count > 0)

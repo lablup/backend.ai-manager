@@ -781,7 +781,7 @@ async def tus_upload_part(request):
             await writer.write(chunk)
 
     fs = Path(target_filename).stat().st_size
-    if fs >= params['size']:
+    if fs >= int(params['size']):
         target_path = folder_path / params['path']
         Path(target_filename).rename(target_path)
         try:
@@ -1289,6 +1289,18 @@ async def invite(request: web.Request, params: Any) -> web.Response:
         except psycopg2.DataError:
             raise InvalidAPIParameters
         kps = await result.fetchall()
+
+        # Prevent inviting user who already share the target folder.
+        j = sa.join(vfolders, vfolder_permissions,
+                    vfolders.c.id == vfolder_permissions.c.vfolder)
+        query = (sa.select([vfolders.c.id])
+                   .select_from(j)
+                   .where(((vfolders.c.user == user_uuid) |
+                           (vfolder_permissions.c.user == user_uuid)) &
+                          (vfolders.c.name == folder_name)))
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            raise VFolderAlreadyExists
 
         # Create invitation.
         invitees = [kp.user_id for kp in kps]
