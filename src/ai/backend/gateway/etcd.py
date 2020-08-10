@@ -87,6 +87,11 @@ Alias keys are also URL-quoted in the same way.
      - _mount: {path-to-mount-root-for-vfolder-partitions}
      - _default_host: {default-vfolder-partition-name}
      - _fsprefix: {path-prefix-inside-host-mounts}
+     + proxies:
+       - "local": "localhost:6020"
+       - "mynas1": "proxy1:6020"
+       - "myceph1": "proxy1:6020"
+       - "mypure1": "proxy2:6020"
    + images
      + _aliases
        - {alias}: "{registry}/{image}:{tag}"   # {alias} is url-quoted
