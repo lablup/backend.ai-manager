@@ -786,13 +786,7 @@ class Queries(graphene.ObjectType):
             'ComputeSession.detail',
             domain_name=domain_name,
             access_key=access_key)
-        matches = await loader.load(id)
-        if len(matches) == 0:
-            return None
-        elif len(matches) == 1:
-            return matches[0]
-        else:
-            raise TooManyKernelsFound
+        return await loader.load(id)
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='access_key')
