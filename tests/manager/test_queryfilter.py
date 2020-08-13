@@ -1,135 +1,95 @@
-
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import Sequence, Column, Integer, String
+from sqlalchemy import Table, Column, Sequence, Integer, String
 import sqlalchemy as sa
-
+import pytest
 from ai.backend.manager.models.minilang.queryfilter import Query2sql
 
-test_json = r'''
-User(and:{
-        eq:{
-            name:"tester"
-        },
-        gt:{
-            age:20
-        }
-    }) {
-    name,
-    age
-}
-'''
+example_filter_with_underbar = "eq:{full_name:\'tester1\'}"
+example_filter_with_single_queotes = "eq:{name:\'test\"er\'}"
+example_filter_with_double_queotes = "eq:{name:\"test\'er\"}"
+example_filter_with_special_character = "and:{eq:{name:\"tester ♪\"}, eq:{name:\'tester ♪\'}}"
+example_filter_with_not_exist_column = "eq:{middle_name:\"test\"}"
+deep_example_filter = "or:{eq:{full_name:\"tester1\"}, or:{eq:{name:\"tester ♪\"}, gt:{age:20}}}"
 
-test_deep_json = r'''
-User(and:{
-        or:{
-            eq:{
-                name:"tester"
-            },
-            eq:{
-                name:"lablup"
-            }
-        },
-        gt:{
-            age:20
-        }
-    }) {
-    name,
-    age
-}
-'''
-
-escape_filter = "or:{eq:{name:\"test\'er ♪\"},gt:{age:20}}"
-underbar_filter = "eq:{full_name:\"tester1\"}"
-
-Base = declarative_base()
-Session = sessionmaker()
-engine = create_engine('sqlite:///:memory:', echo=True)
-Session.configure(bind=engine)
-conn = engine.connect()
 q2s = Query2sql()
 
 
-class User(Base):
-    __tablename__ = 'users'
+@pytest.fixture(scope="module")
+def DB():
+    engine = create_engine('sqlite:///:memory:', echo=True)
 
-    id = Column(Integer, Sequence('user_id_seq'), primary_key=True)
-    name = Column(String(50))
-    full_name = Column(String(50))
-    age = Column(Integer)
+    Base = declarative_base()
+    metadata = Base.metadata
 
-    def __init__(self, name, full_name, age):
-        self.name = name
-        self.full_name = full_name
-        self.age = age
+    users = Table(
+        'users', metadata,
+        Column('id', Integer, Sequence('user_id_seq'), primary_key=True),
+        Column('name', String(50)),
+        Column('full_name', String(50)),
+        Column('age', Integer)
+    )
 
-    def __repr__(self):
-        return "<User('%s', '%s', '%s')>" % (self.name, self.full_name, self.age)
+    metadata.create_all(engine)
+    conn = engine.connect()
 
-
-Base.metadata.create_all(engine)
-session = Session()
-
-session.add_all([
-    User('tester', 'tester1', 30),
-    User('test\'er', 'tester2', 30),
-    User('test\'er ♪', 'tester3', 20)])
-
-session.commit()
-
-
-def test_tree2table():
-    tree = q2s.query2tree(test_json)
-    table = q2s.tree2table(tree)
-    assert table == 'User'
+    conn.execute(users.insert(), [
+        {'name': 'tester', 'full_name': 'tester1', 'age': 30},
+        {'name': 'test\"er', 'full_name': 'tester2', 'age': 30},
+        {'name': 'test\'er', 'full_name': 'tester3', 'age': 30},
+        {'name': 'tester ♪', 'full_name': 'tester4', 'age': 20}
+    ])
+    yield conn, users
+    conn.close()
 
 
-def test_tree2where():
-    tree = q2s.query2tree(test_json)
-    where_clause = q2s.tree2where(tree)
-    assert where_clause == "name = \"tester\" AND age > 20"
-
-
-def test_tree2select():
-    tree = q2s.query2tree(test_json)
-    table = q2s.tree2table(tree)
-    assert table == "User"
-
-
-def test_deep_tree2table():
-    tree = q2s.query2tree(test_deep_json)
-    select_clause = q2s.tree2select(tree)
-    assert select_clause == "name, age"
-
-
-def test_deep_tree2where():
-    tree = q2s.query2tree(test_deep_json)
-    where_clause = q2s.tree2where(tree)
-    assert where_clause == "(name = \"tester\" OR name = \"lablup\") AND age > 20"
-
-
-def test_deep_tree2select():
-    tree = q2s.query2tree(test_deep_json)
-    select_clause = q2s.tree2select(tree)
-    assert select_clause == "name, age"
-
-
-def test_escape_filter():
-    tree = q2s.query2tree(escape_filter)
-    where_clause = q2s.tree2where(tree)
-    assert where_clause == "name = \"test\'er ♪\" OR age > 20"
-
-
-def test_chaining():
-    sa_query = sa.select([User.name, User.age]).select_from(User)
-    sa_query = q2s.sa_chaining(sa_query, escape_filter)
+def test_example_filter_with_underbar(DB):
+    conn, users = DB
+    sa_query = sa.select([users.c.name, users.c.age]).select_from(users)
+    sa_query = q2s.sa_chaining(sa_query, example_filter_with_underbar, users)
     ret = list(conn.execute(sa_query))
-    test_ret = [("tester", 30), ("test\'er", 30), ("test\'er ♪", 20)]
+    test_ret = [("tester", 30)]
     assert test_ret == ret
 
 
-def test_underbar_filter():
-    tree = q2s.query2tree(underbar_filter)
-    where_clause = q2s.tree2where(tree)
-    assert where_clause == "full_name = \"tester1\""
+def test_example_filter_with_single_queotes(DB):
+    conn, users = DB
+    sa_query = sa.select([users.c.name, users.c.age]).select_from(users)
+    sa_query = q2s.sa_chaining(sa_query, example_filter_with_single_queotes, users)
+    ret = list(conn.execute(sa_query))
+    test_ret = [("test\"er", 30)]
+    assert test_ret == ret
+
+
+def test_example_filter_with_double_queotes(DB):
+    conn, users = DB
+    sa_query = sa.select([users.c.name, users.c.age]).select_from(users)
+    sa_query = q2s.sa_chaining(sa_query, example_filter_with_double_queotes, users)
+    ret = list(conn.execute(sa_query))
+    test_ret = [("test\'er", 30)]
+    assert test_ret == ret
+
+
+def test_example_filter_with_special_character(DB):
+    conn, users = DB
+    sa_query = sa.select([users.c.name, users.c.age]).select_from(users)
+    sa_query = q2s.sa_chaining(sa_query, example_filter_with_special_character, users)
+    ret = list(conn.execute(sa_query))
+    test_ret = [("tester ♪", 20)]
+    assert test_ret == ret
+
+
+def test_example_filter_with_not_exist_column(DB):
+    _, users = DB
+    sa_query = sa.select([users.c.name, users.c.age]).select_from(users)
+    with pytest.raises(ValueError):
+        sa_query = q2s.sa_chaining(sa_query, example_filter_with_not_exist_column, users)
+
+
+def test_deep_example_filter(DB):
+    conn, users = DB
+    sa_query = sa.select([users.c.name, users.c.age]).select_from(users)
+    sa_query = q2s.sa_chaining(sa_query, deep_example_filter, users)
+    ret = list(conn.execute(sa_query))
+    test_ret = [("tester", 30), ("test\"er", 30), ("test\'er", 30), ("tester ♪", 20)]
+    assert test_ret == ret
