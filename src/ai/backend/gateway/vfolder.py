@@ -8,36 +8,32 @@ from pathlib import Path
 import shutil
 import stat
 from typing import (
-    Any, Awaitable, Callable, Final,
-    Dict, Mapping, MutableMapping,
-    Tuple,
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    Mapping,
+    MutableMapping,
     Set,
+    Tuple,
 )
-import urllib.parse
 import uuid
-import jwt
-from datetime import datetime, timedelta
 
 import aiofiles
 import aiohttp
-from aiohttp import web, hdrs
+from aiohttp import web
 import aiohttp_cors
 import aiojobs
 from aiojobs.aiohttp import atomic
-import aiotools
-import janus
-import multidict
 import sqlalchemy as sa
 import psycopg2
 import trafaret as t
-import zipstream
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.utils import AsyncFileWriter, current_loop, Fstab
+from ai.backend.common.utils import current_loop, Fstab
 
 from .auth import auth_required, superadmin_required
-from .config import DEFAULT_CHUNK_SIZE, DEFAULT_INFLIGHT_CHUNKS
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
     GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
@@ -68,7 +64,6 @@ from ..manager.models import (
     query_owned_dotfiles,
     verify_vfolder_name,
 )
-from ..manager.types import Sentinel
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
 
@@ -670,53 +665,36 @@ async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     return web.Response(status=201)
 
 
+@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
-@vfolder_permission_required(VFolderPermission.READ_WRITE)
-async def upload(request: web.Request, row: VFolderRow) -> web.Response:
-    folder_name = request.match_info['name']
-    access_key = request['keypair']['access_key']
-    log_fmt = 'VFOLDER.UPLOAD (ak:{}, vf:{})'
-    log_args = (access_key, folder_name)
+@vfolder_permission_required(VFolderPermission.READ_ONLY)
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['path', 'file']): t.String,
+        t.Key('archive', default=False): t.ToBool,
+    }))
+async def create_download_session(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
+    log_fmt = 'VFOLDER.CREATE_DOWNLOAD_SESSION(ak:{}, vf:{}, path:{})'
+    log_args = (request['keypair']['access_key'], row['name'], params['file'])
     log.info(log_fmt, *log_args)
-    folder_path = get_folder_hostpath(row, request.app)
-    reader = await request.multipart()
-    file_count = 0
-    async for file in aiotools.aiter(reader.next, None):
-        if file_count == 10:  # TODO: make it configurable
-            raise InvalidAPIParameters('Too many files!')
-        file_count += 1
-        try:
-            file_path = (folder_path / file.filename).resolve()
-            file_path.relative_to(folder_path)
-        except ValueError:
-            raise InvalidAPIParameters('One of target paths is out of the folder.')
-        if file_path.exists() and not file_path.is_file():
-            raise InvalidAPIParameters(
-                f'Cannot overwrite "{file.filename}" because '
-                'it already exists and not a regular file.')
-        file_dir = (folder_path / file.filename).parent
-        try:
-            loop = current_loop()
-            await loop.run_in_executor(None, lambda: file_dir.mkdir(parents=True, exist_ok=True))
-        except FileExistsError as e:
-            raise InvalidAPIParameters(
-                'Failed to create parent directories. '
-                f'"{e.filename}" already exists and is not a directory.')
-        log.info(log_fmt + ': accepted path:{}',
-                 *log_args, file.filename)
-
-        async with AsyncFileWriter(
-                loop=current_loop(),
-                target_filename=file_path,
-                access_mode='wb',
-                decode=file.decode,
-                max_chunks=DEFAULT_INFLIGHT_CHUNKS) as writer:
-            while not file.at_eof():
-                chunk = await file.read_chunk(size=DEFAULT_CHUNK_SIZE)
-                await writer.write(chunk)
-
-    return web.Response(status=201)
+    # TODO: support archive arg
+    storage_api_session = request.app['storage_api_session']
+    async with storage_api_session.post(
+        'https://127.0.0.1:6022/folder/file/download',
+        json={
+            'volume': row['host'],
+            'vfid': str(row['id']),
+            'relpath': params['path'],
+        },
+        raise_for_status=True,
+    ) as storage_resp:
+        storage_reply = await storage_resp.json()
+        resp = {
+            'token': storage_reply['token'],
+            'url': 'http://127.0.0.1:6021/download',
+        }
+    return web.json_response(resp, status=200)
 
 
 @auth_required
@@ -725,37 +703,28 @@ async def upload(request: web.Request, row: VFolderRow) -> web.Response:
 @check_api_params(
     t.Dict({
         t.Key('path'): t.String,
-        t.Key('size'): t.ToInt,
     }))
-async def create_tus_upload_session(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
-    secret = request.app['config']['manager']['secret']
-    folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
-                   request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
-    session_id = uuid.uuid4().hex
-
+async def create_upload_session(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
-    log_fmt = 'VFOLDER.UPLOAD_SESSION (ak:{}, vf:{}, si:{})'
-    log_args = (access_key, folder_name, session_id)
+    log_fmt = 'VFOLDER.CREATE_UPLOAD_SESSION (ak:{}, vf:{})'
+    log_args = (access_key, folder_name)
     log.info(log_fmt, *log_args)
-
-    upload_base = folder_path / ".upload"
-    if not upload_base.exists():
-        upload_base.mkdir()
-    upload_base_path = folder_path / ".upload" / session_id
-    Path(upload_base_path).touch()
-
-    t = params
-    t['host'] = row['host']
-    t['folder'] = row['id'].hex
-    t['session_id'] = session_id
-    t['exp'] = datetime.utcnow() + timedelta(days=1)  # TODO: make it configurable
-
-    token = jwt.encode(t, secret, algorithm='HS256').decode('UTF-8')
-    resp = {
-        'token': token,
-    }
-
+    storage_api_session = request.app['storage_api_session']
+    async with storage_api_session.post(
+        'https://127.0.0.1:6022/folder/file/upload',
+        json={
+            'volume': row['host'],
+            'vfid': str(row['id']),
+            'relpath': params['path'],
+        },
+        raise_for_status=True,
+    ) as storage_resp:
+        storage_reply = await storage_resp.json()
+        resp = {
+            'token': storage_reply['token'],
+            'url': 'http://127.0.0.1:6021/upload',
+        }
     return web.json_response(resp, status=200)
 
 
@@ -813,230 +782,6 @@ async def delete_files(request: web.Request, params: Any, row: VFolderRow) -> we
     ):
         pass
     return web.json_response({}, status=200)
-
-
-async def download_directory_as_archive(request: web.Request,
-                                        file_path: Path,
-                                        zip_filename: str = None) -> web.StreamResponse:
-    """Serve a directory as a zip archive on the fly."""
-    _sentinel: Final = Sentinel.token
-
-    def _iter2aiter(iter):
-        """Iterable to async iterable"""
-        def _consume(loop, iter, q):
-            for item in iter:
-                q.put(item)
-            q.put(_sentinel)
-
-        async def _aiter():
-            loop = current_loop()
-            q = janus.Queue(maxsize=DEFAULT_INFLIGHT_CHUNKS)
-            try:
-                fut = loop.run_in_executor(None, lambda: _consume(loop, iter, q.sync_q))
-                while True:
-                    item = await q.async_q.get()
-                    if item is _sentinel:
-                        break
-                    yield item
-                    q.async_q.task_done()
-                await fut
-            finally:
-                q.close()
-                await q.wait_closed()
-
-        return _aiter()
-
-    if zip_filename is None:
-        zip_filename = file_path.name + '.zip'
-    zf = zipstream.ZipFile(compression=zipstream.ZIP_DEFLATED)
-    async for root, dirs, files in _iter2aiter(os.walk(file_path)):
-        for file in files:
-            zf.write(Path(root) / file, Path(root).relative_to(file_path) / file)
-        if len(dirs) == 0 and len(files) == 0:
-            # Include an empty directory in the archive as well.
-            zf.write(root, Path(root).relative_to(file_path))
-    ascii_filename = zip_filename.encode('ascii', errors='ignore').decode('ascii').replace('"', r'\"')
-    encoded_filename = urllib.parse.quote(zip_filename, encoding='utf-8')
-    response = web.StreamResponse(headers={
-        hdrs.CONTENT_TYPE: 'application/zip',
-        hdrs.CONTENT_DISPOSITION: " ".join([
-            "attachment;"
-            f"filename=\"{ascii_filename}\";",       # RFC-2616 sec2.2
-            f"filename*=UTF-8''{encoded_filename}",  # RFC-5987
-        ])
-    })
-    await response.prepare(request)
-    async for chunk in _iter2aiter(zf):
-        await response.write(chunk)
-    return response
-
-
-@auth_required
-@server_status_required(READ_ALLOWED)
-@vfolder_permission_required(VFolderPermission.READ_ONLY)
-@check_api_params(
-    t.Dict({
-        t.Key('files'): t.List[t.String],
-    }))
-async def download(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
-    folder_name = request.match_info['name']
-    access_key = request['keypair']['access_key']
-    files = params['files']
-    log.info('VFOLDER.DOWNLOAD (ak:{}, vf:{}, path:{})', access_key, folder_name, files[0])
-    folder_path = get_folder_hostpath(row, request.app)
-    for file in files:
-        try:
-            file_path = (folder_path / file).resolve()
-            file_path.relative_to(folder_path)
-        except ValueError:
-            raise InvalidAPIParameters('The requested path is out of the folder')
-        if not file_path.is_file():
-            raise InvalidAPIParameters(
-                f'You cannot download "{file}" because it is not a regular file.')
-    with aiohttp.MultipartWriter('mixed') as mpwriter:
-        total_payloads_length = 0
-        headers = multidict.MultiDict({'Content-Encoding': 'identity'})
-        try:
-            for file in files:
-                data = open(folder_path / file, 'rb')
-                payload = mpwriter.append(data, headers)
-                if payload.size is not None:
-                    total_payloads_length += payload.size
-        except FileNotFoundError:
-            return web.Response(status=404, reason='File not found')
-        mpwriter._headers['X-TOTAL-PAYLOADS-LENGTH'] = str(total_payloads_length)
-        return web.Response(body=mpwriter, status=200)
-
-
-@auth_required
-@server_status_required(READ_ALLOWED)
-@vfolder_permission_required(VFolderPermission.READ_ONLY)
-@check_api_params(
-    t.Dict({
-        t.Key('file'): t.String,
-        t.Key('archive', default=False): t.ToBool | t.Null,
-    }))
-async def download_single(request: web.Request, params: Any, row: VFolderRow) -> web.StreamResponse:
-    folder_name = request.match_info['name']
-    access_key = request['keypair']['access_key']
-    fn = params['file']
-    log.info('VFOLDER.DOWNLOAD_SINGLE (ak:{}, vf:{}, path:{})', access_key, folder_name, fn)
-    folder_path = get_folder_hostpath(row, request.app)
-    try:
-        file_path = (folder_path / fn).resolve()
-        file_path.relative_to(folder_path)
-        if not file_path.exists():
-            raise FileNotFoundError
-    except (ValueError, FileNotFoundError):
-        raise GenericNotFound('The file is not found.')
-    if not file_path.is_file():
-        if params['archive']:
-            # Download directory as an archive when archive param is set.
-            return await download_directory_as_archive(request, file_path)
-        else:
-            raise InvalidAPIParameters('The file is not a regular file.')
-    if request.method == 'HEAD':
-        return web.Response(status=200, headers={
-            hdrs.ACCEPT_RANGES: 'bytes',
-            hdrs.CONTENT_LENGTH: str(file_path.stat().st_size),
-        })
-    ascii_filename = file_path.name.encode('ascii', errors='ignore').decode('ascii').replace('"', r'\"')
-    encoded_filename = urllib.parse.quote(file_path.name, encoding='utf-8')
-    return web.FileResponse(file_path, headers={
-        hdrs.CONTENT_TYPE: "application/octet-stream",
-        hdrs.CONTENT_DISPOSITION: " ".join([
-            "attachment;"
-            f"filename=\"{ascii_filename}\";",       # RFC-2616 sec2.2
-            f"filename*=UTF-8''{encoded_filename}",  # RFC-5987
-        ])
-    })
-
-
-@atomic
-@auth_required
-@server_status_required(READ_ALLOWED)
-@vfolder_permission_required(VFolderPermission.READ_ONLY)
-@check_api_params(
-    t.Dict({
-        t.Key('file'): t.String,
-        t.Key('archive', default=False): t.ToBool | t.Null,
-    }))
-async def request_download(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
-    secret = request.app['config']['manager']['secret']
-    p = {}
-    p['file'] = params['file']
-    p['host'] = row['host']
-    p['id'] = row['id'].hex
-    p['archive'] = params['archive']
-    p['exp'] = datetime.utcnow() + timedelta(minutes=2)  # TODO: make it configurable
-    token = jwt.encode(p, secret, algorithm='HS256').decode('UTF-8')
-    resp = {
-        'token': token,
-    }
-    log.info('VFOLDER.REQUEST_DOWNLOAD_TOKEN (ak:{}, vf:{}, path:{}): generated token:{}',
-             request['keypair']['access_key'], row['name'], params['file'], token)
-    return web.json_response(resp, status=200)
-
-
-async def download_with_token(request) -> web.StreamResponse:
-    try:
-        secret = request.app['config']['manager']['secret']
-        token = request.query.get('token', '')
-        params = jwt.decode(token, secret, algorithms=['HS256'])
-    except jwt.PyJWTError:
-        log.exception('jwt error while parsing "{}"', token)
-        raise InvalidAPIParameters('Could not validate the download token.')
-
-    iv = t.Dict({
-        t.Key('file'): t.String,
-        t.Key('host'): t.String,
-        t.Key('id'): t.String,
-        t.Key('exp'): t.Int,
-        t.Key('archive', default=False): t.Bool | t.Null,
-    })
-    params = iv.check(params)
-    fn = params['file']
-    log.info('VFOLDER.DOWNLOAD_WITH_TOKEN (token:{}, path:{})', token, fn)
-    dbpool = request.app['dbpool']
-    async with dbpool.acquire() as conn:
-        query = (sa.select([vfolders.c.unmanaged_path])
-                   .select_from(vfolders)
-                   .where(vfolders.c.id == params['id'])
-                   .limit(1))
-        unmanaged_path = await conn.scalar(query)
-        if unmanaged_path:
-            folder_path = Path(unmanaged_path)
-        else:
-            folder_path = (request.app['VFOLDER_MOUNT'] / params['host'] /
-                           request.app['VFOLDER_FSPREFIX'] / params['id'])
-    try:
-        file_path = (folder_path / fn).resolve()
-        file_path.relative_to(folder_path)
-        if not file_path.exists():
-            raise FileNotFoundError
-    except (ValueError, FileNotFoundError):
-        raise InvalidAPIParameters('The file is not found.')
-    if not file_path.is_file():
-        if params['archive']:
-            # Download directory as an archive when archive param is set.
-            return await download_directory_as_archive(request, file_path)
-        else:
-            raise InvalidAPIParameters('The file is not a regular file.')
-    if request.method == 'HEAD':
-        return web.Response(status=200, headers={
-            hdrs.ACCEPT_RANGES: 'bytes',
-            hdrs.CONTENT_LENGTH: str(file_path.stat().st_size),
-        })
-    ascii_filename = file_path.name.encode('ascii', errors='ignore').decode('ascii').replace('"', r'\"')
-    encoded_filename = urllib.parse.quote(file_path.name, encoding='utf-8')
-    return web.FileResponse(file_path, headers={
-        hdrs.CONTENT_TYPE: "application/octet-stream",
-        hdrs.CONTENT_DISPOSITION: " ".join([
-            "attachment;"
-            f"filename=\"{ascii_filename}\";",       # RFC-2616 sec2.2
-            f"filename*=UTF-8''{encoded_filename}",  # RFC-5987
-        ])
-    })
 
 
 @auth_required
@@ -1957,23 +1702,22 @@ def create_app(default_cors_options):
     cors.add(vfolder_resource.add_route('GET',    get_info))
     cors.add(vfolder_resource.add_route('DELETE', delete))
     cors.add(add_route('GET',    r'/_/hosts', list_hosts))
-    cors.add(add_route('GET',    r'/_/all_hosts', list_all_hosts))
-    cors.add(add_route('GET',    r'/_/allowed_types', list_allowed_types))
-    cors.add(add_route('GET',    r'/_/download_with_token', download_with_token))
-    cors.add(add_route('HEAD',   r'/_/download_with_token', download_with_token))
+    cors.add(add_route('GET',    r'/_/all-hosts', list_all_hosts))
+    cors.add(add_route('GET',    r'/_/allowed-types', list_allowed_types))
+    cors.add(add_route('GET',    r'/_/all_hosts', list_all_hosts))          # legacy underbar
+    cors.add(add_route('GET',    r'/_/allowed_types', list_allowed_types))  # legacy underbar
     cors.add(add_route('POST',   r'/{name}/rename', rename_vfolder))
     cors.add(add_route('POST',   r'/{name}/mkdir', mkdir))
-    cors.add(add_route('POST',   r'/{name}/upload', upload))
-    cors.add(add_route('POST',   r'/{name}/create_upload_session', create_tus_upload_session))
-    cors.add(add_route('POST',   r'/{name}/rename_file', rename_file))
-    cors.add(add_route('DELETE', r'/{name}/delete_files', delete_files))
-    cors.add(add_route('GET',    r'/{name}/download', download))
-    cors.add(add_route('GET',    r'/{name}/download_single', download_single))
-    cors.add(add_route('HEAD',   r'/{name}/download_single', download_single))
-    cors.add(add_route('POST',   r'/{name}/request_download', request_download))
+    cors.add(add_route('POST',   r'/{name}/request-upload', create_upload_session))
+    cors.add(add_route('POST',   r'/{name}/request-download', create_download_session))
+    cors.add(add_route('POST',   r'/{name}/rename-file', rename_file))
+    cors.add(add_route('DELETE', r'/{name}/delete-files', delete_files))
+    cors.add(add_route('POST',   r'/{name}/rename_file', rename_file))    # legacy underbar
+    cors.add(add_route('DELETE', r'/{name}/delete_files', delete_files))  # legacy underbar
     cors.add(add_route('GET',    r'/{name}/files', list_files))
     cors.add(add_route('POST',   r'/{name}/invite', invite))
-    cors.add(add_route('GET',    r'/invitations/list_sent', list_sent_invitations))
+    cors.add(add_route('GET',    r'/invitations/list-sent', list_sent_invitations))
+    cors.add(add_route('GET',    r'/invitations/list_sent', list_sent_invitations))  # legacy underbar
     cors.add(add_route('POST',   r'/invitations/update/{inv_id}', update_invitation))
     cors.add(add_route('GET',    r'/invitations/list', invitations))
     cors.add(add_route('POST',   r'/invitations/accept', accept_invitation))
