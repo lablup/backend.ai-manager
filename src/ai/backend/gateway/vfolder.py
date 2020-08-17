@@ -536,11 +536,14 @@ async def list_hosts(request: web.Request) -> web.Response:
 async def list_all_hosts(request: web.Request) -> web.Response:
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.LIST_ALL_HOSTS (ak:{})', access_key)
+    storage_api_session = request.app['storage_api_session']
+    async with storage_api_session.get(
+        'https://127.0.0.1:6022/volumes',
+        raise_for_status=True,
+    ) as storage_resp:
+        storage_reply = await storage_resp.json()
+        mounted_hosts = {vol['name'] for vol in storage_reply['volumes']}
     config = request.app['config_server']
-    mount_prefix = await config.get('volumes/_mount')
-    if mount_prefix is None:
-        mount_prefix = '/mnt'
-    mounted_hosts = set(p.name for p in Path(mount_prefix).iterdir() if p.is_dir())
     default_host = await config.get('volumes/_default_host')
     if default_host not in mounted_hosts:
         default_host = None
