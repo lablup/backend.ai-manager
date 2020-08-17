@@ -685,7 +685,7 @@ async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     }))
 async def create_download_session(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     log_fmt = 'VFOLDER.CREATE_DOWNLOAD_SESSION(ak:{}, vf:{}, path:{})'
-    log_args = (request['keypair']['access_key'], row['name'], params['file'])
+    log_args = (request['keypair']['access_key'], row['name'], params['path'])
     log.info(log_fmt, *log_args)
     unmanaged_path = row['unmanaged_path']
     storage_api_session = request.app['storage_api_session']
