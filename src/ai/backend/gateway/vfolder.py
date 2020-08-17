@@ -547,6 +547,28 @@ async def list_all_hosts(request: web.Request) -> web.Response:
 
 
 @atomic
+@superadmin_required
+@server_status_required(READ_ALLOWED)
+@check_api_params(
+    t.Dict({
+        t.Key('volume'): t.String,
+    }))
+async def get_volume_perf_metric(request: web.Request, params: Any) -> web.Response:
+    access_key = request['keypair']['access_key']
+    log.info('VFOLDER.VOLUME_PERF_METRIC (ak:{})', access_key)
+    storage_api_session = request.app['storage_api_session']
+    async with storage_api_session.get(
+        'https://127.0.0.1:6022/volume/performance-metric',
+        json={
+            'volume': params['volume'],
+        },
+        raise_for_status=True,
+    ) as storage_resp:
+        storage_reply = await storage_resp.json()
+    return web.json_response(storage_reply, status=200)
+
+
+@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
 async def list_allowed_types(request: web.Request) -> web.Response:
@@ -1712,6 +1734,7 @@ def create_app(default_cors_options):
     cors.add(add_route('GET',    r'/_/allowed-types', list_allowed_types))
     cors.add(add_route('GET',    r'/_/all_hosts', list_all_hosts))          # legacy underbar
     cors.add(add_route('GET',    r'/_/allowed_types', list_allowed_types))  # legacy underbar
+    cors.add(add_route('GET',    r'/_/perf-metric', get_volume_perf_metric))
     cors.add(add_route('POST',   r'/{name}/rename', rename_vfolder))
     cors.add(add_route('POST',   r'/{name}/mkdir', mkdir))
     cors.add(add_route('POST',   r'/{name}/request-upload', create_upload_session))
