@@ -186,14 +186,6 @@ def vfolder_check_exists(handler: Callable[..., Awaitable[web.Response]]):
     return _wrapped
 
 
-def get_folder_hostpath(row: VFolderRow, app):
-    if row['unmanaged_path']:
-        return Path(row['unmanaged_path'])
-    else:
-        return (app['VFOLDER_MOUNT'] / row['host'] /
-                app['VFOLDER_FSPREFIX'] / row['id'].hex)
-
-
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -1181,15 +1173,17 @@ async def delete(request: web.Request) -> web.Response:
             raise InvalidAPIParameters('No such vfolder.')
         folder_host = entry['host']
         folder_id = entry['id']
-        folder_hex = folder_id.hex
-        folder_path = (request.app['VFOLDER_MOUNT'] / folder_host /
-                       request.app['VFOLDER_FSPREFIX'] / folder_hex)
         query = (vfolders.delete().where(vfolders.c.id == folder_id))
         await conn.execute(query)
-        try:
-            loop = current_loop()
-            await loop.run_in_executor(None, lambda: shutil.rmtree(folder_path))  # type: ignore
-        except IOError:
+        storage_api_session = request.app['storage_api_session']
+        async with storage_api_session.post(
+            'https://127.0.0.1:6022/folder/delete',
+            json={
+                'volume': folder_host,
+                'vfid': str(folder_id),
+            },
+            raise_for_status=True,
+        ):
             pass
     return web.Response(status=204)
 
