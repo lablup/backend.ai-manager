@@ -268,10 +268,16 @@ async def create(request: web.Request, params: Any) -> web.Response:
                                                                         domain_name, user_uuid)
             if folder_host not in allowed_hosts:
                 raise InvalidAPIParameters('You are not allowed to use this vfolder host.')
-            vfroot = (request.app['VFOLDER_MOUNT'] / folder_host /
-                      request.app['VFOLDER_FSPREFIX'])
-            if not vfroot.is_dir():
-                raise InvalidAPIParameters(f'Invalid vfolder host: {folder_host}')
+
+            storage_api_session = request.app['storage_api_session']
+            async with storage_api_session.get(
+                'https://127.0.0.1:6022/volumes',
+                raise_for_status=True,
+            ) as storage_resp:
+                storage_reply = await storage_resp.json()
+                mounted_hosts = {vol['name'] for vol in storage_reply['volumes']}
+                if folder_host not in mounted_hosts:
+                    raise InvalidAPIParameters(f'Invalid vfolder host: {folder_host}')
 
         # Check resource policy's max_vfolder_count
         if resource_policy['max_vfolder_count'] > 0:
