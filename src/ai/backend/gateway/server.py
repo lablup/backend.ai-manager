@@ -83,7 +83,11 @@ VALID_VERSIONS: Final = frozenset([
     'v4.20190615',
 
     # added mount_map parameter when creating kernel
+    # changed GraphQL query structures for multi-container bundled sessions
     'v5.20191215'
+
+    # rewrote vfolder upload/download APIs to migrate to external storage proxies
+    'v6.20200815'
 ])
 LATEST_REV_DATES: Final = {
     1: '20160915',
@@ -91,8 +95,9 @@ LATEST_REV_DATES: Final = {
     3: '20181215',
     4: '20190615',
     5: '20191215',
+    6: '20200815',
 }
-LATEST_API_VERSION: Final = 'v5.20191215'
+LATEST_API_VERSION: Final = 'v6.20200815'
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 
