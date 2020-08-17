@@ -506,10 +506,13 @@ async def list_hosts(request: web.Request) -> web.Response:
             allowed_hosts_by_group = await get_allowed_vfolder_hosts_by_group(
                 conn, resource_policy, domain_name, group_id=None, domain_admin=domain_admin)
             allowed_hosts = allowed_hosts | allowed_hosts_by_group
-    mount_prefix = await config.get('volumes/_mount')
-    if mount_prefix is None:
-        mount_prefix = '/mnt'
-    mounted_hosts = set(p.name for p in Path(mount_prefix).iterdir() if p.is_dir())
+    storage_api_session = request.app['storage_api_session']
+    async with storage_api_session.get(
+        'https://127.0.0.1:6022/volumes',
+        raise_for_status=True,
+    ) as storage_resp:
+        storage_reply = await storage_resp.json()
+        mounted_hosts = {vol['name'] for vol in storage_reply['volumes']}
     allowed_hosts = allowed_hosts & mounted_hosts
     default_host = await config.get('volumes/_default_host')
     if default_host not in allowed_hosts:
@@ -678,7 +681,7 @@ async def create_download_session(request: web.Request, params: Any, row: VFolde
     log_fmt = 'VFOLDER.CREATE_DOWNLOAD_SESSION(ak:{}, vf:{}, path:{})'
     log_args = (request['keypair']['access_key'], row['name'], params['file'])
     log.info(log_fmt, *log_args)
-    # TODO: support archive arg
+    unmanaged_path = row['unmanaged_path']
     storage_api_session = request.app['storage_api_session']
     async with storage_api_session.post(
         'https://127.0.0.1:6022/folder/file/download',
@@ -686,6 +689,8 @@ async def create_download_session(request: web.Request, params: Any, row: VFolde
             'volume': row['host'],
             'vfid': str(row['id']),
             'relpath': params['path'],
+            'archive': params['archive'],
+            'unmanaged_path': unmanaged_path if unmanaged_path else None,
         },
         raise_for_status=True,
     ) as storage_resp:
@@ -703,6 +708,7 @@ async def create_download_session(request: web.Request, params: Any, row: VFolde
 @check_api_params(
     t.Dict({
         t.Key('path'): t.String,
+        t.Key('size'): t.ToInt,
     }))
 async def create_upload_session(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     folder_name = request.match_info['name']
@@ -717,6 +723,7 @@ async def create_upload_session(request: web.Request, params: Any, row: VFolderR
             'volume': row['host'],
             'vfid': str(row['id']),
             'relpath': params['path'],
+            'size': params['size'],
         },
         raise_for_status=True,
     ) as storage_resp:
