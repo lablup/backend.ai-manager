@@ -1683,10 +1683,6 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
 
 
 async def init(app):
-    mount_prefix = await app['config_server'].get('volumes/_mount')
-    fs_prefix = await app['config_server'].get('volumes/_fsprefix')
-    app['VFOLDER_MOUNT'] = Path(mount_prefix)
-    app['VFOLDER_FSPREFIX'] = Path(fs_prefix.lstrip('/'))
     storage_api_connector = aiohttp.TCPConnector(ssl=False)
     app['storage_api_session'] = aiohttp.ClientSession(connector=storage_api_connector)
 
