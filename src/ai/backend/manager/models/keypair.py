@@ -47,6 +47,7 @@ from .user import UserRole
 __all__: Sequence[str] = (
     'keypairs',
     'KeyPair', 'KeyPairList',
+    'UserInfo',
     'KeyPairInput',
     'CreateKeyPair', 'ModifyKeyPair', 'DeleteKeyPair',
     'Dotfile', 'MAXIMUM_DOTFILE_SIZE',
@@ -89,7 +90,7 @@ keypairs = sa.Table(
 )
 
 
-class User(graphene.ObjectType):
+class UserInfo(graphene.ObjectType):
     email = graphene.String()
     full_name = graphene.String()
 
@@ -112,13 +113,13 @@ class User(graphene.ObjectType):
         async with context['dbpool'].acquire() as conn:
             from .user import users
             query = (
-                sa.select([users.c.email, users.c.full_name])
+                sa.select([users.c.uuid, users.c.email, users.c.full_name])
                 .select_from(users)
                 .where(users.c.uuid.in_(user_uuids))
             )
             return await batch_result(
                 context, conn, query, cls,
-                user_uuids, lambda row: row['user_uuid'],
+                user_uuids, lambda row: row['uuid'],
             )
 
 
@@ -148,19 +149,19 @@ class KeyPair(graphene.ObjectType):
         status=graphene.String(),
     )
 
-    user = User()
+    user_info = graphene.Field(lambda: UserInfo)
 
     # Deprecated
     concurrency_limit = graphene.Int(
         deprecation_reason='Moved to KeyPairResourcePolicy object as '
                            'max_concurrent_sessions field.')
 
-    async def resolve_user(
+    async def resolve_user_info(
         self,
         info: graphene.ResolveInfo,
-    ) -> User:
+    ) -> UserInfo:
         manager = info.context['dlmgr']
-        loader = manager.get_loader('User.by_uuid')
+        loader = manager.get_loader('UserInfo.by_uuid')
         return await loader.load(self.user)
 
     @classmethod
