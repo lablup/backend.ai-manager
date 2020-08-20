@@ -99,17 +99,17 @@ class UserInfo(graphene.ObjectType):
         cls,
         context: Mapping[str, Any],
         row: RowProxy,
-    ) -> Optional[User]:
+    ) -> Optional[UserInfo]:
         if row is None:
             return None
         return cls(email=row['email'], full_name=row['full_name'])
 
     @classmethod
     async def batch_load_by_uuid(
-        cls: Mapping[str, Any],
+        cls,
         context: Mapping[str, Any],
-        user_uuids: uuid.UUID
-    ) -> Sequence[Optional[User]]:
+        user_uuids: List[uuid.UUID],
+    ) -> Sequence[Optional[UserInfo]]:
         async with context['dbpool'].acquire() as conn:
             from .user import users
             query = (
