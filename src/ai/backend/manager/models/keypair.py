@@ -12,6 +12,7 @@ from typing import (
     Tuple,
     TypedDict,
 )
+import uuid
 
 from aiopg.sa.connection import SAConnection
 from aiopg.sa.result import RowProxy
@@ -88,6 +89,39 @@ keypairs = sa.Table(
 )
 
 
+class User(graphene.ObjectType):
+    email = graphene.String()
+    full_name = graphene.String()
+
+    @classmethod
+    def from_row(
+        cls,
+        context: Mapping[str, Any],
+        row: RowProxy,
+    ) -> Optional[User]:
+        if row is None:
+            return None
+        return cls(email=row['email'], full_name=row['full_name'])
+
+    @classmethod
+    async def batch_load_by_uuid(
+        cls: Mapping[str, Any],
+        context: Mapping[str, Any],
+        user_uuids: uuid.UUID
+    ) -> Sequence[Optional[User]]:
+        async with context['dbpool'].acquire() as conn:
+            from .user import users
+            query = (
+                sa.select([users.c.email, users.c.full_name])
+                .select_from(users)
+                .where(users.c.uuid.in_(user_uuids))
+            )
+            return await batch_result(
+                context, conn, query, cls,
+                user_uuids, lambda row: row['user_uuid'],
+            )
+
+
 class KeyPair(graphene.ObjectType):
 
     class Meta:
@@ -114,10 +148,20 @@ class KeyPair(graphene.ObjectType):
         status=graphene.String(),
     )
 
+    user = User()
+
     # Deprecated
     concurrency_limit = graphene.Int(
         deprecation_reason='Moved to KeyPairResourcePolicy object as '
                            'max_concurrent_sessions field.')
+
+    async def resolve_user(
+        self,
+        info: graphene.ResolveInfo,
+    ) -> User:
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('User.by_uuid')
+        return await loader.load(self.user)
 
     @classmethod
     def from_row(
