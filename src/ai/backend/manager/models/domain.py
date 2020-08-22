@@ -1,6 +1,11 @@
 import logging
 import re
-from typing import Sequence
+from typing import (
+    Sequence,
+    List,
+    Tuple,
+    TypedDict,
+)
 
 from aiopg.sa.connection import SAConnection
 import graphene
@@ -19,6 +24,8 @@ from .base import (
 )
 from .scaling_group import ScalingGroup
 from .user import UserRole
+from ai.backend.gateway.config import RESERVED_DOTFILES
+from ai.backend.common import msgpack
 
 log = BraceStyleAdapter(logging.getLogger(__file__))
 
@@ -27,8 +34,12 @@ __all__: Sequence[str] = (
     'domains',
     'Domain', 'DomainInput', 'ModifyDomainInput',
     'CreateDomain', 'ModifyDomain', 'DeleteDomain',
+    'Dotfile', 'MAXIMUM_DOTFILE_SIZE',
+    'query_owned_dotfiles',
+    'verify_dotfile_name',
 )
 
+MAXIMUM_DOTFILE_SIZE = 64 * 1024  # 61 KiB
 _rx_slug = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$')
 
 domains = sa.Table(
@@ -45,6 +56,8 @@ domains = sa.Table(
     sa.Column('allowed_docker_registries', pgsql.ARRAY(sa.String), nullable=False, default='{}'),
     #: Field for synchronization with external services.
     sa.Column('integration_id', sa.String(length=512)),
+    # dotfiles column, \x90 means empty list in msgpack
+    sa.Column('dotfiles', sa.LargeBinary(length=MAXIMUM_DOTFILE_SIZE), nullable=False, default=b'\x90'),
 )
 
 
@@ -308,3 +321,27 @@ class PurgeDomain(graphene.Mutation):
         )
         active_kernel_count = await conn.scalar(query)
         return (active_kernel_count > 0)
+
+
+class Dotfile(TypedDict):
+    data: str
+    path: str
+    perm: str
+
+
+async def query_owned_dotfiles(
+    conn: SAConnection,
+    name: str,
+) -> Tuple[List[Dotfile], int]:
+    query = (sa.select([domains.c.dotfiles])
+               .select_from(domains)
+               .where(domains.c.name == name))
+    packed_dotfile = await conn.scalar(query)
+    rows = msgpack.unpackb(packed_dotfile)
+    return rows, MAXIMUM_DOTFILE_SIZE - len(packed_dotfile)
+
+
+def verify_dotfile_name(dotfile: str) -> bool:
+    if dotfile in RESERVED_DOTFILES:
+        return False
+    return True

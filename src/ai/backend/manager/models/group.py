@@ -8,6 +8,9 @@ from typing import (
     Any, Optional, Union,
     Mapping,
     Sequence,
+    List,
+    Tuple,
+    TypedDict,
 )
 import uuid
 import shutil
@@ -32,6 +35,8 @@ from .base import (
     batch_result,
 )
 from .user import UserRole
+from ai.backend.gateway.config import RESERVED_DOTFILES
+from ai.backend.common import msgpack
 
 log = BraceStyleAdapter(logging.getLogger(__file__))
 
@@ -41,8 +46,12 @@ __all__: Sequence[str] = (
     'resolve_group_name_or_id',
     'Group', 'GroupInput', 'ModifyGroupInput',
     'CreateGroup', 'ModifyGroup', 'DeleteGroup',
+    'Dotfile', 'MAXIMUM_DOTFILE_SIZE',
+    'query_owned_dotfiles',
+    'verify_dotfile_name',
 )
 
+MAXIMUM_DOTFILE_SIZE = 64 * 1024  # 61 KiB
 _rx_slug = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$')
 
 association_groups_users = sa.Table(
@@ -508,3 +517,27 @@ class PurgeGroup(graphene.Mutation):
         )
         active_kernel_count = await conn.scalar(query)
         return True if active_kernel_count > 0 else False
+
+
+class Dotfile(TypedDict):
+    data: str
+    path: str
+    perm: str
+
+
+async def query_owned_dotfiles(
+    conn: SAConnection,
+    domain_name: str,
+) -> Tuple[List[Dotfile], int]:
+    query = (sa.select([groups.c.dotfiles])
+               .select_from(groups)
+               .where(groups.c.domain_name == domain_name))
+    packed_dotfile = await conn.scalar(query)
+    rows = msgpack.unpackb(packed_dotfile)
+    return rows, MAXIMUM_DOTFILE_SIZE - len(packed_dotfile)
+
+
+def verify_dotfile_name(dotfile: str) -> bool:
+    if dotfile in RESERVED_DOTFILES:
+        return False
+    return True
