@@ -85,6 +85,8 @@ groups = sa.Table(
     sa.Column('total_resource_slots', ResourceSlotColumn(), default='{}'),
     sa.Column('allowed_vfolder_hosts', pgsql.ARRAY(sa.String), nullable=False, default='{}'),
     sa.UniqueConstraint('name', 'domain_name', name='uq_groups_name_domain_name')
+    # dotfiles column, \x90 means empty list in msgpack
+    sa.Column('dotfiles', sa.LargeBinary(length=MAXIMUM_DOTFILE_SIZE), nullable=False, default=b'\x90'),
 )
 
 
