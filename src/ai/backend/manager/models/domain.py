@@ -332,7 +332,7 @@ class DomainDotfile(TypedDict):
 async def query_domain_dotfiles(
     conn: SAConnection,
     name: str,
-) -> Tuple[List[Dotfile], int]:
+) -> Tuple[List[DomainDotfile], int]:
     query = (sa.select([domains.c.dotfiles])
                .select_from(domains)
                .where(domains.c.name == name))
