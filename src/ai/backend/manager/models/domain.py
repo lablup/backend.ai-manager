@@ -34,8 +34,8 @@ __all__: Sequence[str] = (
     'domains',
     'Domain', 'DomainInput', 'ModifyDomainInput',
     'CreateDomain', 'ModifyDomain', 'DeleteDomain',
-    'Dotfile', 'MAXIMUM_DOTFILE_SIZE',
-    'query_owned_dotfiles',
+    'DomainDotfile', 'MAXIMUM_DOTFILE_SIZE',
+    'query_domain_dotfiles',
     'verify_dotfile_name',
 )
 
@@ -323,13 +323,13 @@ class PurgeDomain(graphene.Mutation):
         return (active_kernel_count > 0)
 
 
-class Dotfile(TypedDict):
+class DomainDotfile(TypedDict):
     data: str
     path: str
     perm: str
 
 
-async def query_owned_dotfiles(
+async def query_domain_dotfiles(
     conn: SAConnection,
     name: str,
 ) -> Tuple[List[Dotfile], int]:
