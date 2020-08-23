@@ -46,8 +46,8 @@ __all__: Sequence[str] = (
     'resolve_group_name_or_id',
     'Group', 'GroupInput', 'ModifyGroupInput',
     'CreateGroup', 'ModifyGroup', 'DeleteGroup',
-    'Dotfile', 'MAXIMUM_DOTFILE_SIZE',
-    'query_owned_dotfiles',
+    'GroupDotfile', 'MAXIMUM_DOTFILE_SIZE',
+    'query_group_dotfiles',
     'verify_dotfile_name',
 )
 
@@ -521,16 +521,16 @@ class PurgeGroup(graphene.Mutation):
         return True if active_kernel_count > 0 else False
 
 
-class Dotfile(TypedDict):
+class GroupDotfile(TypedDict):
     data: str
     path: str
     perm: str
 
 
-async def query_owned_dotfiles(
+async def query_group_dotfiles(
     conn: SAConnection,
     domain_name: str,
-) -> Tuple[List[Dotfile], int]:
+) -> Tuple[List[GroupDotfile], int]:
     query = (sa.select([groups.c.dotfiles])
                .select_from(groups)
                .where(groups.c.domain_name == domain_name))
