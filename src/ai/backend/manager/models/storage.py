@@ -85,7 +85,7 @@ class StorageSessionManager:
         /,
         *args,
         **kwargs,
-    ) -> AsyncIterator[aiohttp.ClientResponse]:
+    ) -> AsyncIterator[Tuple[yarl.URL, aiohttp.ClientResponse]]:
         proxy_name, _ = self.split_host(vfolder_host_or_proxy_name)
         try:
             proxy_info = self._proxies[proxy_name]

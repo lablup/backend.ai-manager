@@ -3,7 +3,6 @@ from datetime import datetime
 import functools
 import json
 import logging
-import os
 from pathlib import Path
 import stat
 from typing import (
