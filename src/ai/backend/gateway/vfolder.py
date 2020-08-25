@@ -1373,7 +1373,7 @@ async def list_mounts(request: web.Request) -> web.Response:
     all_volumes = [*await storage_manager.get_all_volumes()]
     all_mounts = [
         volume_data['path']
-        for volume_data in all_volumes
+        for proxy_name, volume_data in all_volumes
     ]
     all_vfolder_hosts = [
         f"{proxy_name}:{volume_data['name']}"
