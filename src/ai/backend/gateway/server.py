@@ -46,6 +46,7 @@ from ai.backend.common.plugin.monitor import (
     INCREMENT,
 )
 from ..manager import __version__
+from ..manager.exceptions import InvalidArgument
 from ..manager.plugin.webapp import WebappPluginContext
 from ..manager.registry import AgentRegistry
 from ..manager.scheduler.dispatcher import SchedulerDispatcher
@@ -54,8 +55,14 @@ from .config import load as load_config, load_shared as load_shared_config
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB, REDIS_STREAM_DB
 from .etcd import ConfigServer
 from .events import EventDispatcher
-from .exceptions import (BackendError, MethodNotAllowed, GenericNotFound,
-                         GenericBadRequest, InternalServerError)
+from .exceptions import (
+    BackendError,
+    MethodNotAllowed,
+    GenericNotFound,
+    GenericBadRequest,
+    InternalServerError,
+    InvalidAPIParameters,
+)
 from .types import (
     AppCreator,
     WebRequestHandler, WebMiddleware,
@@ -178,6 +185,13 @@ async def exception_middleware(request: web.Request,
     try:
         await stats_monitor.report_metric(INCREMENT, 'ai.backend.gateway.api.requests')
         resp = (await handler(request))
+    except InvalidArgument as ex:
+        if len(ex.args) > 1:
+            raise InvalidAPIParameters(f"{ex.args[0]}: {', '.join(map(str, ex.args[1:]))}")
+        elif len(ex.args) == 1:
+            raise InvalidAPIParameters(ex.args[0])
+        else:
+            raise InvalidAPIParameters()
     except BackendError as ex:
         if ex.status_code == 500:
             log.exception('Internal server error raised inside handlers')

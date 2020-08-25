@@ -5,7 +5,6 @@ import json
 import logging
 import os
 from pathlib import Path
-import shutil
 import stat
 from typing import (
     Any,
@@ -31,9 +30,11 @@ import trafaret as t
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.utils import current_loop, Fstab
+from ai.backend.common.utils import Fstab
 
 from .auth import auth_required, superadmin_required
+from .config import volume_config_iv
+from .etcd import ConfigServer
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
     GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
@@ -64,6 +65,7 @@ from ..manager.models import (
     query_owned_dotfiles,
     verify_vfolder_name,
 )
+from ..manager.models.storage import StorageSessionManager
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
 
@@ -201,7 +203,6 @@ def vfolder_check_exists(handler: Callable[..., Awaitable[web.Response]]):
 async def create(request: web.Request, params: Any) -> web.Response:
     resp: Dict[str, Any] = {}
     dbpool = request.app['dbpool']
-    storage_api_session = request.app['storage_api_session']
     access_key = request['keypair']['access_key']
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
@@ -222,7 +223,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
         # Resolve host for the new virtual folder.
         if not folder_host:
             folder_host = \
-                await request.app['config_server'].etcd.get('volumes/_default_host')
+                await request.app['config_server'].etcd.get('volumes/default_host')
             if not folder_host:
                 raise InvalidAPIParameters(
                     'You must specify the vfolder host '
@@ -258,18 +259,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
             else:
                 allowed_hosts = await get_allowed_vfolder_hosts_by_user(conn, resource_policy,
                                                                         domain_name, user_uuid)
+            # TODO: handle legacy host lists assuming that volume names don't overlap?
             if folder_host not in allowed_hosts:
                 raise InvalidAPIParameters('You are not allowed to use this vfolder host.')
-
-            storage_api_session = request.app['storage_api_session']
-            async with storage_api_session.get(
-                'https://127.0.0.1:6022/volumes',
-                raise_for_status=True,
-            ) as storage_resp:
-                storage_reply = await storage_resp.json()
-                mounted_hosts = {vol['name'] for vol in storage_reply['volumes']}
-                if folder_host not in mounted_hosts:
-                    raise InvalidAPIParameters(f'Invalid vfolder host: {folder_host}')
 
         # Check resource policy's max_vfolder_count
         if resource_policy['max_vfolder_count'] > 0:
@@ -319,10 +311,11 @@ async def create(request: web.Request, params: Any) -> web.Response:
             folder_id = uuid.uuid4()
             if not unmanaged_path:
                 # Try to create actual only if vFolder is managed one
-                async with storage_api_session.post(
-                    'https://127.0.0.1:6022/folder/create',
+                storage_manager = request.app['storage_manager']
+                async with storage_manager.request(
+                    folder_host, 'POST', 'folder/create',
                     json={
-                        'volume': folder_host,
+                        'volume': storage_manager.split_host(folder_host)[1],
                         'vfid': str(folder_id),
                     },
                     raise_for_status=True,
@@ -469,11 +462,11 @@ async def delete_by_id(request: web.Request, params: Any) -> web.Response:
         folder_id = uuid.UUID(params['id'])
         query = (vfolders.delete().where(vfolders.c.id == folder_id))
         await conn.execute(query)
-        storage_api_session = request.app['storage_api_session']
-        async with storage_api_session.post(
-            'https://127.0.0.1:6022/folder/delete',
+        storage_manager = request.app['storage_manager']
+        async with storage_manager.request(
+            folder_host, 'POST', 'folder/delete',
             json={
-                'volume': folder_host,
+                'volume': storage_manager.split_host(folder_host)[1],
                 'vfid': str(folder_id),
             },
             raise_for_status=True,
@@ -504,15 +497,10 @@ async def list_hosts(request: web.Request) -> web.Response:
             allowed_hosts_by_group = await get_allowed_vfolder_hosts_by_group(
                 conn, resource_policy, domain_name, group_id=None, domain_admin=domain_admin)
             allowed_hosts = allowed_hosts | allowed_hosts_by_group
-    storage_api_session = request.app['storage_api_session']
-    async with storage_api_session.get(
-        'https://127.0.0.1:6022/volumes',
-        raise_for_status=True,
-    ) as storage_resp:
-        storage_reply = await storage_resp.json()
-        mounted_hosts = {vol['name'] for vol in storage_reply['volumes']}
-    allowed_hosts = allowed_hosts & mounted_hosts
-    default_host = await config.get('volumes/_default_host')
+    all_volumes = await request.app['storage_manager'].get_all_volumes()
+    all_hosts = {f"{proxy_name}:{volume_data['name']}" for proxy_name, volume_data in all_volumes}
+    allowed_hosts = allowed_hosts & all_hosts
+    default_host = await config.get('volumes/default_host')
     if default_host not in allowed_hosts:
         default_host = None
     resp = {
@@ -528,20 +516,15 @@ async def list_hosts(request: web.Request) -> web.Response:
 async def list_all_hosts(request: web.Request) -> web.Response:
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.LIST_ALL_HOSTS (ak:{})', access_key)
-    storage_api_session = request.app['storage_api_session']
-    async with storage_api_session.get(
-        'https://127.0.0.1:6022/volumes',
-        raise_for_status=True,
-    ) as storage_resp:
-        storage_reply = await storage_resp.json()
-        mounted_hosts = {vol['name'] for vol in storage_reply['volumes']}
+    all_volumes = await request.app['storage_manager'].get_all_volumes()
+    all_hosts = {f"{proxy_name}:{volume_data['name']}" for proxy_name, volume_data in all_volumes}
     config = request.app['config_server']
-    default_host = await config.get('volumes/_default_host')
-    if default_host not in mounted_hosts:
+    default_host = await config.get('volumes/default_host')
+    if default_host not in all_hosts:
         default_host = None
     resp = {
         'default': default_host,
-        'allowed': sorted(mounted_hosts),
+        'allowed': sorted(all_hosts),
     }
     return web.json_response(resp, status=200)
 
@@ -551,19 +534,20 @@ async def list_all_hosts(request: web.Request) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @check_api_params(
     t.Dict({
-        t.Key('volume'): t.String,
+        t.Key('folder_host'): t.String,
     }))
 async def get_volume_perf_metric(request: web.Request, params: Any) -> web.Response:
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.VOLUME_PERF_METRIC (ak:{})', access_key)
-    storage_api_session = request.app['storage_api_session']
-    async with storage_api_session.get(
-        'https://127.0.0.1:6022/volume/performance-metric',
+    storage_manager = request.app['storage_manager']
+    proxy_name, volume_name = storage_manager.split_host(params['folder_host'])
+    async with storage_manager.request(
+        proxy_name, 'GET', 'volume/performance-metric',
         json={
-            'volume': params['volume'],
+            'volume': volume_name,
         },
         raise_for_status=True,
-    ) as storage_resp:
+    ) as (_, storage_resp):
         storage_reply = await storage_resp.json()
     return web.json_response(storage_reply, status=200)
 
@@ -593,15 +577,16 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
     else:
         is_owner = row['is_owner']
         permission = row['permission']
-    storage_api_session = request.app['storage_api_session']
-    async with storage_api_session.get(
-        'https://127.0.0.1:6022/folder/usage',
+    storage_manager = request.app['storage_manager']
+    proxy_name, volume_name = storage_manager.split_host(row['host'])
+    async with storage_manager.request(
+        proxy_name, 'GET', 'folder/usage',
         json={
-            'volume': row['host'],
+            'volume': volume_name,
             'vfid': str(row['id']),
         },
         raise_for_status=True,
-    ) as storage_resp:
+    ) as (_, storage_resp):
         usage = await storage_resp.json()
     resp = {
         'name': row['name'],
@@ -677,11 +662,12 @@ async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.MKDIR (ak:{}, vf:{}, path:{})', access_key, folder_name, params['path'])
-    storage_api_session = request.app['storage_api_session']
-    async with storage_api_session.post(
-        'https://127.0.0.1:6022/folder/file/mkdir',
+    storage_manager = request.app['storage_manager']
+    proxy_name, volume_name = storage_manager.split_host(row['host'])
+    async with storage_manager.request(
+        proxy_name, 'POST', 'folder/file/mkdir',
         json={
-            'volume': row['host'],
+            'volume': volume_name,
             'vfid': str(row['id']),
             'relpath': params['path'],
         },
@@ -705,22 +691,23 @@ async def create_download_session(request: web.Request, params: Any, row: VFolde
     log_args = (request['keypair']['access_key'], row['name'], params['path'])
     log.info(log_fmt, *log_args)
     unmanaged_path = row['unmanaged_path']
-    storage_api_session = request.app['storage_api_session']
-    async with storage_api_session.post(
-        'https://127.0.0.1:6022/folder/file/download',
+    storage_manager = request.app['storage_manager']
+    proxy_name, volume_name = storage_manager.split_host(row['host'])
+    async with storage_manager.request(
+        proxy_name, 'POST', 'folder/file/download',
         json={
-            'volume': row['host'],
+            'volume': volume_name,
             'vfid': str(row['id']),
             'relpath': params['path'],
             'archive': params['archive'],
             'unmanaged_path': unmanaged_path if unmanaged_path else None,
         },
         raise_for_status=True,
-    ) as storage_resp:
+    ) as (client_api_url, storage_resp):
         storage_reply = await storage_resp.json()
         resp = {
             'token': storage_reply['token'],
-            'url': 'http://127.0.0.1:6021/download',
+            'url': str(client_api_url / 'download'),
         }
     return web.json_response(resp, status=200)
 
@@ -739,21 +726,22 @@ async def create_upload_session(request: web.Request, params: Any, row: VFolderR
     log_fmt = 'VFOLDER.CREATE_UPLOAD_SESSION (ak:{}, vf:{})'
     log_args = (access_key, folder_name)
     log.info(log_fmt, *log_args)
-    storage_api_session = request.app['storage_api_session']
-    async with storage_api_session.post(
-        'https://127.0.0.1:6022/folder/file/upload',
+    storage_manager = request.app['storage_manager']
+    proxy_name, volume_name = storage_manager.split_host(row['host'])
+    async with storage_manager.request(
+        proxy_name, 'POST', 'folder/file/upload',
         json={
-            'volume': row['host'],
+            'volume': volume_name,
             'vfid': str(row['id']),
             'relpath': params['path'],
             'size': params['size'],
         },
         raise_for_status=True,
-    ) as storage_resp:
+    ) as (client_api_url, storage_resp):
         storage_reply = await storage_resp.json()
         resp = {
             'token': storage_reply['token'],
-            'url': 'http://127.0.0.1:6021/upload',
+            'url': str(client_api_url / 'upload'),
         }
     return web.json_response(resp, status=200)
 
@@ -771,11 +759,12 @@ async def rename_file(request: web.Request, params: Any, row: VFolderRow) -> web
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.RENAME_FILE (ak:{}, vf:{}, target_path:{}, new_name:{})',
              access_key, folder_name, params['target_path'], params['new_name'])
-    storage_api_session = request.app['storage_api_session']
-    async with storage_api_session.post(
-        'https://127.0.0.1:6022/folder/file/rename',
+    storage_manager = request.app['storage_manager']
+    proxy_name, volume_name = storage_manager.split_host(row['host'])
+    async with storage_manager.request(
+        proxy_name, 'POST', 'folder/file/rename',
         json={
-            'volume': row['host'],
+            'volume': volume_name,
             'vfid': str(row['id']),
             'relpath': params['target_path'],
             'new_name': params['new_name'],
@@ -800,11 +789,12 @@ async def delete_files(request: web.Request, params: Any, row: VFolderRow) -> we
     recursive = params['recursive']
     log.info('VFOLDER.DELETE_FILES (ak:{}, vf:{}, path:{}, recursive:{})',
              access_key, folder_name, folder_name, recursive)
-    storage_api_session = request.app['storage_api_session']
-    async with storage_api_session.post(
-        'https://127.0.0.1:6022/folder/file/delete',
+    storage_manager = request.app['storage_manager']
+    proxy_name, volume_name = storage_manager.split_host(row['host'])
+    async with storage_manager.request(
+        proxy_name, 'POST', 'folder/file/delete',
         json={
-            'volume': row['host'],
+            'volume': volume_name,
             'vfid': str(row['id']),
             'relpaths': params['files'],
         },
@@ -826,16 +816,17 @@ async def list_files(request: web.Request, params: Any, row: VFolderRow) -> web.
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.LIST_FILES (ak:{}, vf:{}, path:{})',
              access_key, folder_name, params['path'])
-    storage_api_session = request.app['storage_api_session']
-    async with storage_api_session.post(
-        'https://127.0.0.1:6022/folder/file/list',
+    storage_manager = request.app['storage_manager']
+    proxy_name, volume_name = storage_manager.split_host(row['host'])
+    async with storage_manager.request(
+        proxy_name, 'POST', 'folder/file/list',
         json={
-            'volume': row['host'],
+            'volume': volume_name,
             'vfid': str(row['id']),
             'relpath': params['path'],
         },
         raise_for_status=True,
-    ) as storage_resp:
+    ) as (_, storage_resp):
         result = await storage_resp.json()
         resp = {
             'items': [
@@ -1197,11 +1188,12 @@ async def delete(request: web.Request) -> web.Response:
         folder_id = entry['id']
         query = (vfolders.delete().where(vfolders.c.id == folder_id))
         await conn.execute(query)
-        storage_api_session = request.app['storage_api_session']
-        async with storage_api_session.post(
-            'https://127.0.0.1:6022/folder/delete',
+        storage_manager = request.app['storage_manager']
+        proxy_name, volume_name = storage_manager.split_host(folder_host)
+        async with storage_manager.request(
+            proxy_name, 'POST', 'folder/delete',
             json={
-                'volume': folder_host,
+                'volume': volume_name,
                 'vfid': str(folder_id),
             },
             raise_for_status=True,
@@ -1349,15 +1341,13 @@ async def get_fstab_contents(request: web.Request, params: Any) -> web.Response:
                           access_key, params['agent_id'])
             raise InternalServerError
     else:
-        # Return manager's fstab.
-        async with aiofiles.open(params['fstab_path'], mode='r') as fp:
-            content = await fp.read()
-            resp = {
-                'content': content,
-                'node': 'manager',
-                'node_id': 'manager',
-            }
-            return web.json_response(resp)
+        resp = {
+            'content':
+                "# Since Backend.AI 20.09, reading the manager fstab is no longer supported.",
+            'node': 'manager',
+            'node_id': 'manager',
+        }
+        return web.json_response(resp)
 
 
 @superadmin_required
@@ -1378,16 +1368,26 @@ async def list_mounts(request: web.Request) -> web.Response:
     if mount_prefix is None:
         mount_prefix = '/mnt'
 
-    # Scan mounted vfolder hosts in manager machine.
-    mounts = set()
-    for p in Path(mount_prefix).iterdir():
-        # TODO: Change os.path.ismount to p.is_mount if Python 3.7 is supported.
-        if p.is_dir() and os.path.ismount(str(p)):
-            mounts.add(str(p))
+    # NOTE: Changed in 20.09: the manager instances no longer have mountpoints.
+    storage_manager: StorageSessionManager = request.app['storage_manager']
+    all_volumes = [*await storage_manager.get_all_volumes()]
+    all_mounts = [
+        volume_data['path']
+        for volume_data in all_volumes
+    ]
+    all_vfolder_hosts = [
+        f"{proxy_name}:{volume_data['name']}"
+        for proxy_name, volume_data in all_volumes
+    ]
     resp: MutableMapping[str, Any] = {
         'manager': {
             'success': True,
-            'mounts': sorted(mounts),
+            'mounts': all_mounts,
+            'message': '(legacy)',
+        },
+        'storage-proxy': {
+            'success': True,
+            'mounts': [*zip(all_vfolder_hosts, all_mounts)],
             'message': '',
         },
         'agents': {},
@@ -1485,35 +1485,14 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
     if mount_prefix is None:
         mount_prefix = '/mnt'
 
-    # Mount on manager.
-    mountpoint = Path(mount_prefix) / params['name']
-    mountpoint.mkdir(exist_ok=True)
-    if params.get('options', None):
-        cmd = ['sudo', 'mount', '-t', params['fs_type'], '-o', params['options'],
-               params['fs_location'], str(mountpoint)]
-    else:
-        cmd = ['sudo', 'mount', '-t', params['fs_type'],
-               params['fs_location'], str(mountpoint)]
-    proc = await asyncio.create_subprocess_exec(*cmd,
-                                                stdout=asyncio.subprocess.PIPE,
-                                                stderr=asyncio.subprocess.PIPE)
-    raw_out, raw_err = await proc.communicate()
-    out = raw_out.decode('utf8')
-    err = raw_err.decode('utf8')
-    await proc.wait()
+    # NOTE: Changed in 20.09: the manager instances no longer have mountpoints.
     resp: MutableMapping[str, Any] = {
         'manager': {
-            'success': True if not err else False,
-            'message': out if not err else err,
+            'success': True,
+            'message': 'Managers do not have mountpoints since v20.09.',
         },
         'agents': {},
     }
-    if params['edit_fstab'] and resp['manager']['success']:
-        fstab_path = params['fstab_path'] if params['fstab_path'] else '/etc/fstab'
-        async with aiofiles.open(fstab_path, mode='r+') as fp:
-            fstab = Fstab(fp)
-            await fstab.add(params['fs_location'], str(mountpoint),
-                            params['fs_type'], params['options'])
 
     # Mount on running agents.
     async with dbpool.acquire() as conn:
@@ -1630,25 +1609,13 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
         _agents = await result.fetchall()
 
     # Unmount from manager.
-    proc = await asyncio.create_subprocess_exec(*[
-        'sudo', 'umount', str(mountpoint)
-    ], stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    raw_out, raw_err = await proc.communicate()
-    out = raw_out.decode('utf8')
-    err = raw_err.decode('utf8')
-    await proc.wait()
     resp: MutableMapping[str, Any] = {
         'manager': {
-            'success': True if not err else False,
-            'message': out if not err else err,
+            'success': True,
+            'message': 'Managers do not have mountpoints since v20.09.',
         },
         'agents': {},
     }
-    if resp['manager']['success']:
-        try:
-            mountpoint.rmdir()  # delete directory if empty
-        except OSError:
-            pass
     if params['edit_fstab'] and resp['manager']['success']:
         fstab_path = params['fstab_path'] if params['fstab_path'] else '/etc/fstab'
         async with aiofiles.open(fstab_path, mode='r+') as fp:
@@ -1704,14 +1671,15 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-async def init(app):
-    storage_api_connector = aiohttp.TCPConnector(ssl=False)
-    app['storage_api_session'] = aiohttp.ClientSession(connector=storage_api_connector)
+async def init(app: web.Application) -> None:
+    config_server: ConfigServer = app['config_server']
+    raw_vol_config = await config_server.etcd.get_prefix('volumes')
+    config = volume_config_iv.check(raw_vol_config)
+    app['storage_manager'] = StorageSessionManager(config)
 
 
-async def shutdown(app):
-    storage_api_session: aiohttp.ClientSession = app['storage_api_session']
-    await storage_api_session.close()
+async def shutdown(app: web.Application) -> None:
+    await app['storage_manager'].aclose()
 
 
 def create_app(default_cors_options):

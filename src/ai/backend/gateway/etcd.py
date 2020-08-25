@@ -84,14 +84,24 @@ Alias keys are also URL-quoted in the same way.
      + watcher
        - token: {some-secret}
    + volumes
+     # pre-20.09
      - _mount: {path-to-mount-root-for-vfolder-partitions}
      - _default_host: {default-vfolder-partition-name}
      - _fsprefix: {path-prefix-inside-host-mounts}
-     + proxies:
-       - "local": "localhost:6020"
-       - "mynas1": "proxy1:6020"
-       - "myceph1": "proxy1:6020"
-       - "mypure1": "proxy2:6020"
+     # 20.09 and later
+     - default_host: "{default-proxy}:{default-volume}"
+     + proxies:   # each proxy may provide multiple volumes
+       + "local"  # proxy name
+         - client_api: "localhost:6021"
+         - manager_api: "localhost:6022"
+         - secret: "xxxxxx..."       # for manager API
+         - ssl_verify: true | false  # for manager API
+       + "mynas1"
+         - client_api: "proxy1.example.com:6021"
+         - manager_api: "proxy1.example.com:6022"
+         - secret: "xxxxxx..."       # for manager API
+         - ssl_verify: true | false  # for manager API
+       ...
    + images
      + _aliases
        - {alias}: "{registry}/{image}:{tag}"   # {alias} is url-quoted
