@@ -114,6 +114,19 @@ shared_config_iv = t.Dict({
     }).allow_extra('*'),
 }).allow_extra('*')
 
+volume_config_iv = t.Dict({
+    t.Key('default_host'): t.String,
+    t.Key('proxies'): t.Mapping(
+        tx.Slug,
+        t.Dict({
+            t.Key('client_api'): t.String,
+            t.Key('manager_api'): t.String,
+            t.Key('secret'): t.String,
+            t.Key('ssl_verify'): t.ToBool,
+        }),
+    ),
+}).allow_extra('*')
+
 
 def load(config_path: Path = None, debug: bool = False) -> Mapping[str, Any]:
 
