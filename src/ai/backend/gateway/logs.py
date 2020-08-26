@@ -117,7 +117,7 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
         else:
             is_admin = False
             where = ((error_logs.c.user == user_uuid) &
-                     (not error_logs.c.is_cleared))
+                     (~error_logs.c.is_cleared))
             query = query.where(where)
             count_query = query.where(where)
 
