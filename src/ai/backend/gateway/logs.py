@@ -111,12 +111,12 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
             result = await conn.execute(usr_query)
             usrs = await result.fetchall()
             user_ids = [g.id for g in usrs]
-            where = error_logs.c.user_id.in_(user_ids)
+            where = error_logs.c.user.in_(user_ids)
             query = query.where(where)
             count_query = query.where(where)
         else:
             is_admin = False
-            where = ((error_logs.c.user_id == user_uuid) &
+            where = ((error_logs.c.user == user_uuid) &
                      (not error_logs.c.is_cleared))
             query = query.where(where)
             count_query = query.where(where)
@@ -174,10 +174,10 @@ async def mark_cleared(request: web.Request) -> web.Response:
             result = await conn.execute(usr_query)
             usrs = await result.fetchall()
             user_ids = [g.id for g in usrs]
-            query = query.where((error_logs.c.user_id.in_(user_ids)) &
+            query = query.where((error_logs.c.user.in_(user_ids)) &
                                 (error_logs.c.id == log_id))
         else:
-            query = (query.where((error_logs.c.user_id == user_uuid) &
+            query = (query.where((error_logs.c.user == user_uuid) &
                                  (error_logs.c.id == log_id)))
 
         result = await conn.execute(query)
