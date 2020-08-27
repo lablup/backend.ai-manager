@@ -378,7 +378,7 @@ async def sched_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
 async def monitoring_ctx(app: web.Application) -> AsyncIterator[None]:
     ectx = ErrorPluginContext(app['config_server'].etcd, app['config'])
     sctx = StatsPluginContext(app['config_server'].etcd, app['config'])
-    await ectx.init(app=app)
+    await ectx.init(context={'app': app})
     await sctx.init()
     app['error_monitor'] = ectx
     app['stats_monitor'] = sctx
