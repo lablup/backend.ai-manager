@@ -17,8 +17,8 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 
 
 class ErrorMonitor(AbstractPlugin):
-    async def init(self, context: Any = {}) -> None:
-        if 'app' not in context:
+    async def init(self, context: Any = None) -> None:
+        if context is None or 'app' not in context:
             raise PluginError('App was not passed in to ErrorMonitor plugin')
         app = context['app']
         app['event_dispatcher'].consume('agent_error', app, self.handle_agent_error)
