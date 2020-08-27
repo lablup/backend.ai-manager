@@ -16,6 +16,20 @@ Changes
 
 .. towncrier release notes start
 
+20.03.3 (2020-08-27)
+--------------------
+
+### Features
+* Include user information (full_name) in keypair gql query. ([#313](https://github.com/lablup/backend.ai-manager/issues/313))
+
+### Fixes
+* Prevent purging a user, group, and domain if they have active sessions and/or their bound resources, such as virtual folders, are being used by other sessions. ([#306](https://github.com/lablup/backend.ai-manager/issues/306))
+* Do not create invitation if target user is already shared the folder. ([#308](https://github.com/lablup/backend.ai-manager/issues/308))
+* Fix a regression of the GQL query to fetch the information about a single compute session ([#311](https://github.com/lablup/backend.ai-manager/issues/311))
+* Return shared memory in preset list API. ([#314](https://github.com/lablup/backend.ai-manager/issues/314))
+* Fix a regression in the server-side error logs query API due to a typo in the DB column name ([#315](https://github.com/lablup/backend.ai-manager/issues/315))
+
+
 20.03.2 (2020-08-10)
 --------------------
 
