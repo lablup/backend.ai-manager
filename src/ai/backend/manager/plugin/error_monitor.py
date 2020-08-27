@@ -1,7 +1,7 @@
 import logging
 import sys
 import traceback
-from typing import Any, Optional
+from typing import Any, Optional, Mapping
 
 from aiohttp import web
 
@@ -9,15 +9,26 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     AgentId
 )
+from ai.backend.common.plugin import AbstractPlugin
 from ..models import error_logs, LogSeverity
+from .exceptions import PluginError
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 
 
-class ErrorMonitor:
-    def __init__(self, app):
-        self.dbpool = app['dbpool']
+class ErrorMonitor(AbstractPlugin):
+    async def init(self, **kwargs) -> None:
+        if 'app' not in kwargs:
+            raise PluginError('App was not passed in to ErrorMonitor plugin')
+        app = kwargs['app']
         app['event_dispatcher'].consume('agent_error', app, self.handle_agent_error)
+        self.dbpool = app['dbpool']
+
+    async def cleanup(self) -> None:
+        pass
+
+    async def update_plugin_config(self, plugin_config: Mapping[str, Any]) -> None:
+        pass
 
     async def capture_exception(self, exc: Optional[BaseException] = None, user: Any = None,
                                 context_env: Any = None,
