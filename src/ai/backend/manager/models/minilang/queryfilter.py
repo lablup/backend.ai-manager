@@ -1,9 +1,19 @@
+from typing import (
+    Sequence,
+    Union,
+)
+
 from lark import Lark
 import lark
+import sqlalchemy as sa
 from sqlalchemy.sql import and_, or_, not_
+from sqlalchemy.sql.elements import ClauseElement
 
 
-class Query2sql:
+FilterableSQLQuery = Union[sa.sql.Select, sa.sql.Update, sa.sql.Delete]
+
+
+class QueryFilterParser():
     __JSON_GRAMMER = r"""
         ?start: value
         ?value: object
@@ -27,22 +37,25 @@ class Query2sql:
         %ignore WS
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._FILTERS = ['and', 'or', 'not', 'gt', 'gte', 'lt', 'lte', 'eq', 'ne']
         self._JSON_PARSER = Lark(
-            Query2sql.__JSON_GRAMMER, parser='lalr', maybe_placeholders=False)
+            self.__JSON_GRAMMER,
+            parser='lalr',
+            maybe_placeholders=False,
+        )
 
-    def query2tree(self, query):
+    def _parse_query(self, query: str) -> lark.tree.Tree:
         tree = self._JSON_PARSER.parse(query)
         return tree
 
-    def _token2str(self, token):
+    def _token2str(self, token: Union[Sequence[lark.lexer.Token], lark.lexer.Token]) -> str:
         if type(token) == list:
             token = token[0]
         assert type(token) == lark.lexer.Token
         return str(token)
 
-    def tree2where(self, tree, table):
+    def _ast_to_where_clause(self, tree: lark.tree.Tree, table: sa.Table) -> ClauseElement:
         values_stack = []
         op_stack = []
         cond_stack = []
@@ -57,9 +70,7 @@ class Query2sql:
                 else:
                     if data == "word":
                         if token not in table.c:
-                            raise ValueError(r'''
-                            Not exist column name in table
-                            ''')
+                            raise ValueError("Unknown column name in the table", token)
                         values_stack.append(table.c[token])
                     elif data == "string":
                         values_stack.append(token[1:-1])
@@ -96,25 +107,25 @@ class Query2sql:
             cond_stack.append(cond)
         return cond_stack.pop()
 
-    def tree_validation(self, tree, table):
-        tree = list(tree.iter_subtrees_topdown())
-        for index, subtree in enumerate(tree):
-            data = subtree.data
-            children = subtree.children
-            if data == 'word':
-                token = self._token2str(children)
-                if token in self._FILTERS:
-                    continue
-                if token not in table.c:
-                    return False
-        return True
-
-    def sa_chaining(self, sa_query, query_arg, table):
-        tree = self.query2tree(query_arg)
-        if tree.data != "filter":
-            raise ValueError(r'''
-            The form of the query_arg is not a filter
-            ''')
-        where_clause = self.tree2where(tree, table)
-        sa_query = sa_query.where(where_clause)
-        return sa_query
+    def append_filter(
+        self,
+        sa_query: FilterableSQLQuery,
+        filter_expr: str,
+    ) -> FilterableSQLQuery:
+        """
+        Parse the given filter expression and build the where clause based on the first target table from
+        the given SQLAlchemy query object.
+        """
+        if isinstance(sa_query, sa.sql.Select):
+            table = sa_query.selectable.locate_all_froms()[0]
+        elif isinstance(sa_query, sa.sql.Delete):
+            table = sa_query.table
+        elif isinstance(sa_query, sa.sql.Update):
+            table = sa_query.table
+        else:
+            raise ValueError('Unsupported SQLAlchemy query object type')
+        ast = self._parse_query(filter_expr)
+        if ast.data != "filter":
+            raise ValueError("The form of the query_arg is not a filter")
+        where_clause = self._ast_to_where_clause(ast, table)
+        return sa_query.where(where_clause)
