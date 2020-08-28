@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import logging
+from pathlib import Path
 from typing import (
     Any,
     Iterable,
@@ -9,7 +11,10 @@ from typing import (
     Optional,
     Sequence,
 )
+import uuid
+import shutil
 
+from aiopg.sa.connection import SAConnection
 from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -18,6 +23,8 @@ import psycopg2 as pg
 import sqlalchemy as sa
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
+from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.utils import current_loop
 from .base import (
     EnumValueType,
     IDColumn,
@@ -28,6 +35,8 @@ from .base import (
     batch_result,
     batch_multiresult,
 )
+
+log = BraceStyleAdapter(logging.getLogger(__file__))
 
 
 __all__: Sequence[str] = (
@@ -48,9 +57,9 @@ class PasswordColumn(TypeDecorator):
 
 
 class UserRole(str, enum.Enum):
-    '''
+    """
     User's role.
-    '''
+    """
     SUPERADMIN = 'superadmin'
     ADMIN = 'admin'
     USER = 'user'
@@ -58,9 +67,9 @@ class UserRole(str, enum.Enum):
 
 
 class UserStatus(str, enum.Enum):
-    '''
+    """
     User account status.
-    '''
+    """
     ACTIVE = 'active'
     INACTIVE = 'inactive'
     DELETED = 'deleted'
@@ -194,9 +203,9 @@ class User(graphene.ObjectType):
         status=None,
         limit=None,
     ) -> Sequence[User]:
-        '''
+        """
         Load user's information. Group names associated with the user are also returned.
-        '''
+        """
         async with context['dbpool'].acquire() as conn:
             if group_id is not None:
                 from .group import association_groups_users as agus
@@ -390,6 +399,10 @@ class ModifyUserInput(graphene.InputObjectType):
     domain_name = graphene.String(required=False)
     role = graphene.String(required=False)
     group_ids = graphene.List(lambda: graphene.String, required=False)
+
+
+class PurgeUserInput(graphene.InputObjectType):
+    purge_shared_vfolders = graphene.Boolean(required=False, default=False)
 
 
 class CreateUser(graphene.Mutation):
@@ -620,11 +633,11 @@ class ModifyUser(graphene.Mutation):
 
 
 class DeleteUser(graphene.Mutation):
-    '''
+    """
     Instead of really deleting user, just mark the account as deleted status.
 
     All related keypairs will also be inactivated.
-    '''
+    """
 
     allowed_roles = (UserRole.SUPERADMIN,)
 
@@ -664,6 +677,314 @@ class DeleteUser(graphene.Mutation):
                 raise
             except Exception as e:
                 return cls(ok=False, msg=f'unexpected error: {e}')
+
+
+class PurgeUser(graphene.Mutation):
+    """
+    Delete user as well as all user-related DB informations such as keypairs, kernels, etc.
+
+    If target user has virtual folders, they can be purged together or migrated to the superadmin.
+
+    vFolder treatment policy:
+      User-type:
+      - vfolder is not shared: delete
+      - vfolder is shared:
+        + if purge_shared_vfolder is True: delete
+        + else: change vfolder's owner to requested admin
+
+    This action cannot be undone.
+    """
+    allowed_roles = (UserRole.SUPERADMIN,)
+
+    class Arguments:
+        email = graphene.String(required=True)
+        props = PurgeUserInput(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @classmethod
+    async def mutate(cls, root, info, email, props):
+        purge_shared_vfolders = props.purge_shared_vfolders if props.purge_shared_vfolders else False
+        async with info.context['dbpool'].acquire() as conn, conn.begin():
+            try:
+                query = (
+                    sa.select([users.c.uuid])
+                    .select_from(users)
+                    .where(users.c.email == email)
+                )
+                user_uuid = await conn.scalar(query)
+                log.info('completly deleting user {0}...', email)
+
+                if await cls.user_vfolder_mounted_to_active_kernels(conn, user_uuid):
+                    raise RuntimeError('Some of user\'s virtual folders are mounted to active kernels. '
+                                       'Terminate those kernels first.')
+                if await cls.user_has_active_kernels(conn, user_uuid):
+                    raise RuntimeError('User has some active kernels. Terminate them first.')
+
+                if not purge_shared_vfolders:
+                    await cls.migrate_shared_vfolders(
+                        conn,
+                        deleted_user_uuid=user_uuid,
+                        target_user_uuid=info.context['user']['uuid'],
+                        target_user_email=info.context['user']['email'],
+                    )
+                await cls.delete_vfolders(conn, user_uuid, info.context['config_server'])
+                await cls.delete_kernels(conn, user_uuid)
+                await cls.delete_keypairs(conn, user_uuid)
+
+                query = (
+                    users.delete()
+                    .where(users.c.email == email)
+                )
+                result = await conn.execute(query)
+                if result.rowcount > 0:
+                    log.info('user is deleted: {0}', email)
+                    return cls(ok=True, msg='success')
+                else:
+                    return cls(ok=False, msg='no such user')
+            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+                return cls(ok=False, msg=f'integrity error: {e}')
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                raise
+            except Exception as e:
+                return cls(ok=False, msg=f'unexpected error: {e}')
+
+    @classmethod
+    async def migrate_shared_vfolders(
+        cls,
+        conn: SAConnection,
+        deleted_user_uuid: uuid.UUID,
+        target_user_uuid: uuid.UUID,
+        target_user_email: str,
+    ) -> int:
+        """
+        Migrate shared virtual folders' ownership to a target user.
+
+        If migrating virtual folder's name collides with target user's already
+        existing folder, append random string to the migrating one.
+
+        :param conn: DB connection
+        :param deleted_user_uuid: user's UUID who will be deleted
+        :param target_user_uuid: user's UUID who will get the ownership of virtual folders
+
+        :return: number of deleted rows
+        """
+        from . import vfolders, vfolder_invitations, vfolder_permissions
+        # Gather target user's virtual folders' names.
+        query = (
+            sa.select([vfolders.c.name])
+            .select_from(vfolders)
+            .where(vfolders.c.user == target_user_uuid)
+        )
+        existing_vfolder_names = [row.name async for row in conn.execute(query)]
+
+        # Migrate shared virtual folders.
+        # If virtual folder's name collides with target user's folder,
+        # append random string to the name of the migrating folder.
+        j = vfolder_permissions.join(
+            vfolders,
+            vfolder_permissions.c.vfolder == vfolders.c.id
+        )
+        query = (
+            sa.select([vfolders.c.id, vfolders.c.name])
+            .select_from(j)
+            .where(vfolders.c.user == deleted_user_uuid)
+        )
+        migrate_updates = []
+        async for row in conn.execute(query):
+            name = row.name
+            if name in existing_vfolder_names:
+                name += f'-{uuid.uuid4().hex[:10]}'
+            migrate_updates.append({'vid': row.id, 'vname': name})
+        if migrate_updates:
+            # Remove invitations and vfolder_permissions from target user.
+            # Target user will be the new owner, and it does not make sense to have
+            # invitation and shared permission for its own folder.
+            migrate_vfolder_ids = [item['vid'] for item in migrate_updates]
+            query = (
+                vfolder_invitations.delete()
+                .where((vfolder_invitations.c.invitee == target_user_email) &
+                       (vfolder_invitations.c.vfolder.in_(migrate_vfolder_ids)))
+            )
+            await conn.execute(query)
+            query = (
+                vfolder_permissions.delete()
+                .where((vfolder_permissions.c.user == target_user_uuid) &
+                       (vfolder_permissions.c.vfolder.in_(migrate_vfolder_ids)))
+            )
+            await conn.execute(query)
+
+            rowcount = 0
+            for item in migrate_updates:
+                query = (
+                    vfolders.update()
+                    .values(
+                        user=target_user_uuid,
+                        name=item['vname'],
+                    )
+                    .where(vfolders.c.id == item['vid'])
+                )
+                result = await conn.execute(query)
+                rowcount += result.rowcount
+            if rowcount > 0:
+                log.info('{0} shared folders detected. migrated to user {1}',
+                         rowcount, target_user_uuid)
+            return rowcount
+        else:
+            return 0
+
+    @classmethod
+    async def delete_vfolders(
+        cls,
+        conn: SAConnection,
+        user_uuid: uuid.UUID,
+        config_server,
+    ) -> int:
+        """
+        Delete user's all virtual folders as well as their physical data.
+
+        :param conn: DB connection
+        :param user_uuid: user's UUID to delete virtual folders
+
+        :return: number of deleted rows
+        """
+        from . import vfolders
+        mount_prefix = Path(await config_server.get('volumes/_mount'))
+        fs_prefix = await config_server.get('volumes/_fsprefix')
+        fs_prefix = Path(fs_prefix.lstrip('/'))
+        query = (
+            sa.select([vfolders.c.id, vfolders.c.host, vfolders.c.unmanaged_path])
+            .select_from(vfolders)
+            .where(vfolders.c.user == user_uuid)
+        )
+        async for row in conn.execute(query):
+            if row['unmanaged_path']:
+                folder_path = Path(row['unmanaged_path'])
+            else:
+                folder_path = (mount_prefix / row['host'] / fs_prefix / row['id'].hex)
+            log.info('deleting physical files: {0}', folder_path)
+            try:
+                loop = current_loop()
+                await loop.run_in_executor(None, lambda: shutil.rmtree(folder_path))  # type: ignore
+            except IOError:
+                pass
+        query = (
+            vfolders.delete()
+            .where(vfolders.c.user == user_uuid)
+        )
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            log.info('deleted {0} user\'s virtual folders ({1})', result.rowcount, user_uuid)
+        return result.rowcount
+
+    @classmethod
+    async def user_vfolder_mounted_to_active_kernels(
+        cls,
+        conn: SAConnection,
+        user_uuid: uuid.UUID,
+    ) -> bool:
+        """
+        Check if no active kernel is using the user's virtual folders.
+
+        :param conn: DB connection
+        :param user_uuid: user's UUID
+
+        :return: True if a virtual folder is mounted to active kernels.
+        """
+        from . import kernels, vfolders, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES
+        query = (
+            sa.select([vfolders.c.id])
+            .select_from(vfolders)
+            .where(vfolders.c.user == user_uuid)
+        )
+        result = await conn.execute(query)
+        rows = await result.fetchall()
+        user_vfolder_ids = [row.id for row in rows]
+        query = (
+            sa.select([kernels.c.mounts])
+            .select_from(kernels)
+            .where(kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))
+        )
+        async for row in conn.execute(query):
+            for _mount in row['mounts']:
+                try:
+                    vfolder_id = uuid.UUID(_mount[2])
+                except Exception:
+                    pass
+                if vfolder_id in user_vfolder_ids:
+                    return True
+        return False
+
+    @classmethod
+    async def user_has_active_kernels(
+        cls,
+        conn: SAConnection,
+        user_uuid: uuid.UUID,
+    ) -> bool:
+        """
+        Check if the user does not have active kernels.
+
+        :param conn: DB connection
+        :param user_uuid: user's UUID
+
+        :return: True if the user has some active kernels.
+        """
+        from . import kernels, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES
+        query = (
+            sa.select([sa.func.count()])
+            .select_from(kernels)
+            .where((kernels.c.user_uuid == user_uuid) &
+                   (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)))
+        )
+        active_kernel_count = await conn.scalar(query)
+        return (active_kernel_count > 0)
+
+    @classmethod
+    async def delete_kernels(
+        cls,
+        conn: SAConnection,
+        user_uuid: uuid.UUID,
+    ) -> int:
+        """
+        Delete user's all kernels.
+
+        :param conn: DB connection
+        :param user_uuid: user's UUID to delete kernels
+        :return: number of deleted rows
+        """
+        from . import kernels
+        query = (
+            kernels.delete()
+            .where(kernels.c.user_uuid == user_uuid)
+        )
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            log.info('deleted {0} user\'s kernels ({1})', result.rowcount, user_uuid)
+        return result.rowcount
+
+    @classmethod
+    async def delete_keypairs(
+        cls,
+        conn: SAConnection,
+        user_uuid: uuid.UUID,
+    ) -> int:
+        """
+        Delete user's all keypairs.
+
+        :param conn: DB connection
+        :param user_uuid: user's UUID to delete keypairs
+        :return: number of deleted rows
+        """
+        from . import keypairs
+        query = (
+            keypairs.delete()
+            .where(keypairs.c.user == user_uuid)
+        )
+        result = await conn.execute(query)
+        if result.rowcount > 0:
+            log.info('deleted {0} user\'s keypairs ({1})', result.rowcount, user_uuid)
+        return result.rowcount
 
 
 def _hash_password(password):

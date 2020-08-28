@@ -16,6 +16,40 @@ Changes
 
 .. towncrier release notes start
 
+20.03.0 (2020-07-28)
+--------------------
+
+### Features
+* Add purge mutations for users, groups, and domains. ([#302](https://github.com/lablup/backend.ai-manager/issues/302))
+
+### Fixes
+* Raise explicit exception when no keypair is found during login. ([#297](https://github.com/lablup/backend.ai-manager/issues/297))
+* Adds context for the call to from_row in simple_db_mutate_returning_item. ([#300](https://github.com/lablup/backend.ai-manager/issues/300))
+* The session creation API now returns the session UUID as part of its response, in addition to the meaningless client-provided session alias (name) ([#303](https://github.com/lablup/backend.ai-manager/issues/303))
+
+### Miscellaneous
+* Return explicit message if user needs verification during login. ([#301](https://github.com/lablup/backend.ai-manager/issues/301))
+
+
+20.03.0rc1 (2020-07-23)
+-----------------------
+
+### Breaking Changes
+* Replace user's boolean-based `is_active` field to a enum-based `status` field to represent multiple user statuses with lifecycle state transitions, changing the signup API and related DB columns.
+* Change the argument type of `user_id` in `user_from_uuid` GraphQL query to the generic `ID` ([#299](https://github.com/lablup/backend.ai-manager/issues/299))
+
+### Fixes
+* Fix misuse of a legacy API in the `etcd move-subtree` manager command, which has unintentionally flattened nested dicts when inserting the data to the new location ([#295](https://github.com/lablup/backend.ai-manager/issues/295))
+* Mask sensitive keys when logging API parameters for debugging ([#296](https://github.com/lablup/backend.ai-manager/issues/296))
+* A set of API behavior fixes ([#299](https://github.com/lablup/backend.ai-manager/issues/299))
+  - Fix missing conversion of `user_id` argument to UUID type when resolving the `user_from_uuid` GraphQL query
+  - Exclude cancelled sessions from the active session count in the manager status API
+  - Fix missing update for user's `status_info` as "admin-requested" when marked as deleted by administrators
+
+### Miscellaneous
+* Refactor session usage api. ([#298](https://github.com/lablup/backend.ai-manager/issues/298))
+
+
 20.03.0b2 (2020-07-02)
 ----------------------
 

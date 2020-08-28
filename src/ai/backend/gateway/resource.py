@@ -64,7 +64,8 @@ async def list_presets(request) -> web.Response:
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         query = (
             sa.select([resource_presets])
-            .select_from(resource_presets))
+            .select_from(resource_presets)
+        )
         # TODO: uncomment when we implement scaling group.
         # scaling_group = request.query.get('scaling_group')
         # if scaling_group is not None:
@@ -74,6 +75,7 @@ async def list_presets(request) -> web.Response:
             preset_slots = row['resource_slots'].normalize_slots(ignore_unknown=True)
             resp['presets'].append({
                 'name': row['name'],
+                'shared_memory': str(row['shared_memory']) if row['shared_memory'] else None,
                 'resource_slots': preset_slots.to_json(),
             })
         return web.json_response(resp, status=200)

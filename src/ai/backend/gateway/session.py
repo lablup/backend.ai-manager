@@ -345,27 +345,31 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     except AliasResolutionFailed:
         raise ImageNotFound
 
-    # Check existing (owner_access_key, session) kernel instance
+    # Check existing (owner_access_key, session_name) instance
     try:
         # NOTE: We can reuse the session IDs of TERMINATED sessions only.
         # NOTE: Reusing a session in the PENDING status returns an empty value in service_ports.
         kern = await registry.get_session(params['session_name'], owner_access_key)
         running_image_ref = ImageRef(kern['image'], [kern['registry']])
         if running_image_ref != requested_image_ref:
-            raise SessionAlreadyExists
-        create = False
-    except SessionNotFound:
-        create = True
-    if not create:
+            # The image must be same if get_or_create() called multiple times
+            # against an existing (non-terminated) session
+            raise SessionAlreadyExists(extra_data={'existingSessionId': str(kern['id'])})
         if not params['reuse']:
-            raise SessionAlreadyExists
+            # Respond as error since the client did not request to reuse,
+            # but provide the overlapping session ID for later use.
+            raise SessionAlreadyExists(extra_data={'existingSessionId': str(kern['id'])})
+        # Respond as success with the reused session's information.
         return web.json_response({
-            'sessionId': None,   # TODO: will be implemented in multi-container session
+            'sessionId': str(kern['id']),
             'sessionName': str(kern['sess_id']),
             'status': kern['status'].name,
             'service_ports': kern['service_ports'],
             'created': False,
         }, status=200)
+    except SessionNotFound:
+        # It's time to create a new session.
+        pass
 
     if params['session_type'] == SessionTypes.BATCH and not params['startup_command']:
         raise InvalidAPIParameters('Batch sessions must have a non-empty startup command.')
@@ -425,7 +429,8 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             session_tag=params['tag'],
             starts_at=starts_at,
         ))
-        resp['sessionId'] = str(params['session_name'])  # legacy naming
+        resp['sessionId'] = str(kernel_id)  # changed since API v5
+        resp['sessionName'] = str(params['session_name'])
         resp['status'] = 'PENDING'
         resp['servicePorts'] = []
         resp['created'] = True
@@ -507,7 +512,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
         t.Key('tag', default=undefined): UndefChecker | t.Null | t.String,
         t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
         t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
-        t.Key('starts_at', default=None): t.Null | t.String,
+        tx.AliasedKey(['starts_at', 'startsAt'], default=None): t.Null | t.String,
         t.Key('reuseIfExists', default=True) >> 'reuse': t.ToBool,
         t.Key('startupCommand', default=undefined) >> 'startup_command':
             UndefChecker | t.Null | t.String,
@@ -646,11 +651,11 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         t.Key('tag', default=None): t.Null | t.String,
         t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
         t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
-        t.Key('starts_at', default=None): t.Null | t.String,
+        tx.AliasedKey(['starts_at', 'startsAt'], default=None): t.Null | t.String,
         t.Key('reuseIfExists', default=True) >> 'reuse': t.ToBool,
         t.Key('startupCommand', default=None) >> 'startup_command': t.Null | t.String,
+        tx.AliasedKey(['bootstrap_script', 'bootstrapScript'], default=None): t.Null | t.String,
         t.Key('owner_access_key', default=None): t.Null | t.String,
-        t.Key('bootstrap_script', default=None): t.Null | t.String,
     }),
     loads=_json_loads)
 async def create_from_params(request: web.Request, params: Any) -> web.Response:
@@ -1105,7 +1110,7 @@ async def report_stats(app: web.Application) -> None:
 async def stats_report_timer(app):
     while True:
         try:
-            await report_stats(app)
+            await asyncio.shield(report_stats(app))
         except asyncio.CancelledError:
             break
         except Exception:

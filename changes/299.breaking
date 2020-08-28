@@ -1,1 +1,0 @@
-Change the argument type of `user_id` in `user_from_uuid` GraphQL query to the generic `ID`

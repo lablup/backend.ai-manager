@@ -39,13 +39,14 @@ from ai.backend.common.cli import LazyGroup
 from ai.backend.common.config import redis_config_iv
 from ai.backend.common.utils import env_info, current_loop
 from ai.backend.common.logging import Logger, BraceStyleAdapter
-from ai.backend.common.plugin.hook import HookPluginContext
+from ai.backend.common.plugin.hook import HookPluginContext, ALL_COMPLETED, PASSED
 from ai.backend.common.plugin.monitor import (
     ErrorPluginContext,
     StatsPluginContext,
     INCREMENT,
 )
 from ..manager import __version__
+from ..manager.exceptions import InvalidArgument
 from ..manager.plugin.webapp import WebappPluginContext
 from ..manager.registry import AgentRegistry
 from ..manager.scheduler.dispatcher import SchedulerDispatcher
@@ -54,8 +55,14 @@ from .config import load as load_config, load_shared as load_shared_config
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB, REDIS_STREAM_DB
 from .etcd import ConfigServer
 from .events import EventDispatcher
-from .exceptions import (BackendError, MethodNotAllowed, GenericNotFound,
-                         GenericBadRequest, InternalServerError)
+from .exceptions import (
+    BackendError,
+    MethodNotAllowed,
+    GenericNotFound,
+    GenericBadRequest,
+    InternalServerError,
+    InvalidAPIParameters,
+)
 from .types import (
     AppCreator,
     WebRequestHandler, WebMiddleware,
@@ -83,7 +90,11 @@ VALID_VERSIONS: Final = frozenset([
     'v4.20190615',
 
     # added mount_map parameter when creating kernel
-    'v5.20191215'
+    # changed GraphQL query structures for multi-container bundled sessions
+    'v5.20191215',
+
+    # rewrote vfolder upload/download APIs to migrate to external storage proxies
+    'v6.20200815',
 ])
 LATEST_REV_DATES: Final = {
     1: '20160915',
@@ -91,8 +102,9 @@ LATEST_REV_DATES: Final = {
     3: '20181215',
     4: '20190615',
     5: '20191215',
+    6: '20200815',
 }
-LATEST_API_VERSION: Final = 'v5.20191215'
+LATEST_API_VERSION: Final = 'v6.20200815'
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 
@@ -173,6 +185,13 @@ async def exception_middleware(request: web.Request,
     try:
         await stats_monitor.report_metric(INCREMENT, 'ai.backend.gateway.api.requests')
         resp = (await handler(request))
+    except InvalidArgument as ex:
+        if len(ex.args) > 1:
+            raise InvalidAPIParameters(f"{ex.args[0]}: {', '.join(map(str, ex.args[1:]))}")
+        elif len(ex.args) == 1:
+            raise InvalidAPIParameters(ex.args[0])
+        else:
+            raise InvalidAPIParameters()
     except BackendError as ex:
         if ex.status_code == 500:
             log.exception('Internal server error raised inside handlers')
@@ -322,6 +341,13 @@ async def hook_plugin_ctx(app: web.Application) -> AsyncIterator[None]:
     app['hook_plugin_ctx'] = ctx
     _update_public_interface_objs(app)
     await ctx.init()
+    hook_result = await ctx.dispatch(
+        'ACTIVATE_MANAGER',
+        (),
+        return_when=ALL_COMPLETED,
+    )
+    if hook_result.status != PASSED:
+        raise RuntimeError('Could not activate the manager instance.')
     yield
     await ctx.cleanup()
 
@@ -352,7 +378,7 @@ async def sched_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
 async def monitoring_ctx(app: web.Application) -> AsyncIterator[None]:
     ectx = ErrorPluginContext(app['config_server'].etcd, app['config'])
     sctx = StatsPluginContext(app['config_server'].etcd, app['config'])
-    await ectx.init()
+    await ectx.init(context={'app': app})
     await sctx.init()
     app['error_monitor'] = ectx
     app['stats_monitor'] = sctx

@@ -38,7 +38,7 @@ from .exceptions import (
 from ..manager.models import (
     keypairs, keypair_resource_policies, users,
 )
-from ..manager.models.user import UserRole, UserStatus, check_credential
+from ..manager.models.user import UserRole, UserStatus, INACTIVE_USER_STATUSES, check_credential
 from ..manager.models.keypair import generate_keypair as _gen_keypair, generate_ssh_keypair
 from ..manager.models.group import association_groups_users, groups
 from .types import CORSOptions, WebMiddleware
@@ -542,6 +542,10 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         params['domain'], params['username'], params['password'])
     if user is None:
         raise AuthorizationFailed('User credential mismatch.')
+    if user.get('status') == UserStatus.BEFORE_VERIFICATION:
+        raise AuthorizationFailed('This account needs email verification.')
+    if user.get('status') in INACTIVE_USER_STATUSES:
+        raise AuthorizationFailed('User credential mismatch.')
     async with dbpool.acquire() as conn:
         query = (sa.select([keypairs.c.access_key, keypairs.c.secret_key])
                    .select_from(keypairs)
@@ -552,11 +556,14 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
                    .order_by(sa.desc(keypairs.c.is_admin)))
         result = await conn.execute(query)
         keypair = await result.first()
+    if keypair is None:
+        raise AuthorizationFailed('No API keypairs found.')
     return web.json_response({
         'data': {
             'access_key': keypair['access_key'],
             'secret_key': keypair['secret_key'],
             'role': user['role'],
+            'status': user['status'],
         },
     })
 

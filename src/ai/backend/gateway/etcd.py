@@ -84,9 +84,24 @@ Alias keys are also URL-quoted in the same way.
      + watcher
        - token: {some-secret}
    + volumes
+     # pre-20.09
      - _mount: {path-to-mount-root-for-vfolder-partitions}
      - _default_host: {default-vfolder-partition-name}
      - _fsprefix: {path-prefix-inside-host-mounts}
+     # 20.09 and later
+     - default_host: "{default-proxy}:{default-volume}"
+     + proxies:   # each proxy may provide multiple volumes
+       + "local"  # proxy name
+         - client_api: "localhost:6021"
+         - manager_api: "localhost:6022"
+         - secret: "xxxxxx..."       # for manager API
+         - ssl_verify: true | false  # for manager API
+       + "mynas1"
+         - client_api: "proxy1.example.com:6021"
+         - manager_api: "proxy1.example.com:6022"
+         - secret: "xxxxxx..."       # for manager API
+         - ssl_verify: true | false  # for manager API
+       ...
    + images
      + _aliases
        - {alias}: "{registry}/{image}:{tag}"   # {alias} is url-quoted
@@ -390,6 +405,12 @@ class ConfigServer:
         if password is not None:
             credentials['password'] = password
 
+        non_kernel_words = (
+            'common-', 'commons-', 'base-',
+            'krunner', 'builder',
+            'backendai', 'geofront',
+        )
+
         async def _scan_image(sess, image):
             rqst_args = await registry_login(sess, registry_url, credentials,
                                              f'repository:{image}:pull')
@@ -428,49 +449,44 @@ class ConfigServer:
         async def _scan_tag(sess, rqst_args, image, tag):
             config_digest = None
             labels = {}
-            async with sess.get(registry_url / f'v2/{image}/manifests/{tag}',
-                                **rqst_args) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
-                config_digest = data['config']['digest']
-                size_bytes = (sum(layer['size'] for layer in data['layers']) +
-                              data['config']['size'])
-            async with sess.get(registry_url / f'v2/{image}/blobs/{config_digest}',
-                                **rqst_args) as resp:
-                # content-type may not be json...
-                resp.raise_for_status()
-                data = json.loads(await resp.read())
-                if 'container_config' in data:
-                    raw_labels = data['container_config']['Labels']
-                    if raw_labels:
-                        labels.update(raw_labels)
-                else:
-                    raw_labels = data['config']['Labels']
-                    if raw_labels:
-                        labels.update(raw_labels)
+            skip_reason = None
 
-            log.debug('checking image repository {}:{}', image, tag)
-            non_kernel_words = (
-                'common-', 'commons-', 'base-',
-                'krunner', 'builder',
-                'backendai', 'geofront',
-            )
-            skipped = False
             try:
+                async with sess.get(registry_url / f'v2/{image}/manifests/{tag}',
+                                    **rqst_args) as resp:
+                    if resp.status == 404:
+                        # ignore missing tags
+                        # (may occur after deleting an image from the docker hub)
+                        skip_reason = "missing/deleted"
+                        return
+                    resp.raise_for_status()
+                    data = await resp.json()
+                    config_digest = data['config']['digest']
+                    size_bytes = (sum(layer['size'] for layer in data['layers']) +
+                                  data['config']['size'])
+
+                async with sess.get(registry_url / f'v2/{image}/blobs/{config_digest}',
+                                    **rqst_args) as resp:
+                    # content-type may not be json...
+                    resp.raise_for_status()
+                    data = json.loads(await resp.read())
+                    if 'container_config' in data:
+                        raw_labels = data['container_config']['Labels']
+                        if raw_labels:
+                            labels.update(raw_labels)
+                    else:
+                        raw_labels = data['config']['Labels']
+                        if raw_labels:
+                            labels.update(raw_labels)
                 if 'ai.backend.kernelspec' not in labels:
                     # Skip non-Backend.AI kernel images
-                    if not any((w in image) for w in non_kernel_words):
-                        log.warning('skipping image due to missing kernelspec - {}:{}', image, tag)
-                    skipped = True
+                    skip_reason = "missing kernelspec"
                     return
                 if not (MIN_KERNELSPEC <= int(labels['ai.backend.kernelspec']) <= MAX_KERNELSPEC):
                     # Skip unsupported kernelspec images
-                    if not any((w in image) for w in non_kernel_words):
-                        log.warning('skipping image due to unsupported kernelspec - {}:{}', image, tag)
-                    skipped = True
+                    skip_reason = "unsupported kernelspec"
                     return
 
-                log.info('Updating metadata for {0}:{1}', image, tag)
                 updates = {}
                 updates[f'images/{etcd_quote(registry_name)}/'
                         f'{etcd_quote(image)}'] = '1'
@@ -492,11 +508,13 @@ class ConfigServer:
                     updates[f'{tag_prefix}/resource/{res_key}/min'] = v
                 all_updates.update(updates)
             finally:
+                if skip_reason:
+                    log.warning('Skipped image - {}:{} ({})', image, tag, skip_reason)
+                    progress_msg = f"Skipped {image}:{tag} ({skip_reason})"
+                else:
+                    log.info('Updated image - {0}:{1}', image, tag)
+                    progress_msg = f"Updated {image}:{tag}"
                 if reporter:
-                    if skipped:
-                        progress_msg = f"Skipped {image}:{tag}"
-                    else:
-                        progress_msg = f"Updated {image}:{tag}"
                     await reporter.update(1, message=progress_msg)
 
         ssl_ctx = None  # default
@@ -618,9 +636,13 @@ class ConfigServer:
 
             scheduler = await aiojobs.create_scheduler(limit=4)
             try:
-                jobs = await asyncio.gather(*[
-                    scheduler.spawn(_scan_image(sess, image)) for image in images])
-                await asyncio.gather(*[job.wait() for job in jobs])
+                spawn_tasks = [
+                    scheduler.spawn(_scan_image(sess, image)) for image in images
+                    if not any((w in image) for w in non_kernel_words)  # skip non-kernel images
+                ]
+                if spawn_tasks:
+                    fetch_jobs = await asyncio.gather(*spawn_tasks)
+                    await asyncio.gather(*[job.wait() for job in fetch_jobs])
             finally:
                 await scheduler.close()
 

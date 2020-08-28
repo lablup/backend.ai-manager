@@ -8,11 +8,11 @@ from .agent import (
 )
 from .domain import (
     Domain,
-    CreateDomain, ModifyDomain, DeleteDomain,
+    CreateDomain, ModifyDomain, DeleteDomain, PurgeDomain,
 )
 from .group import (
     Group,
-    CreateGroup, ModifyGroup, DeleteGroup,
+    CreateGroup, ModifyGroup, DeleteGroup, PurgeGroup,
 )
 from .image import (
     Image,
@@ -49,7 +49,7 @@ from .scaling_group import (
 )
 from .user import (
     User, UserList,
-    CreateUser, ModifyUser, DeleteUser,
+    CreateUser, ModifyUser, DeleteUser, PurgeUser,
     UserRole,
 )
 from .vfolder import (
@@ -73,16 +73,19 @@ class Mutations(graphene.ObjectType):
     create_domain = CreateDomain.Field()
     modify_domain = ModifyDomain.Field()
     delete_domain = DeleteDomain.Field()
+    purge_domain = PurgeDomain.Field()
 
     # admin only
     create_group = CreateGroup.Field()
     modify_group = ModifyGroup.Field()
     delete_group = DeleteGroup.Field()
+    purge_group = PurgeGroup.Field()
 
-    # admin only
+    # super-admin only
     create_user = CreateUser.Field()
     modify_user = ModifyUser.Field()
     delete_user = DeleteUser.Field()
+    purge_user = PurgeUser.Field()
 
     # admin only
     create_keypair = CreateKeyPair.Field()
@@ -783,13 +786,7 @@ class Queries(graphene.ObjectType):
             'ComputeSession.detail',
             domain_name=domain_name,
             access_key=access_key)
-        matches = await loader.load(id)
-        if len(matches) == 0:
-            return None
-        elif len(matches) == 1:
-            return matches[0]
-        else:
-            raise TooManyKernelsFound
+        return await loader.load(id)
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='access_key')
