@@ -1,1 +1,1 @@
-Add graphql translater aka minilang.queryfilter
+Add a generic query filter expression language parser (`ai.backend.manager.models.minilang.queryfilter`) for GraphQL paginated list queries using [the Lark parser framework](https://github.com/lark-parser/lark)
