@@ -1,5 +1,4 @@
 from typing import (
-    Sequence,
     Union,
 )
 
@@ -49,22 +48,15 @@ class QueryFilterParser():
         tree = self._JSON_PARSER.parse(query)
         return tree
 
-    def _token2str(self, token: Union[Sequence[lark.lexer.Token], lark.lexer.Token]) -> str:
-        if type(token) == list:
-            token = token[0]
-        assert type(token) == lark.lexer.Token
-        return str(token)
-
     def _ast_to_where_clause(self, tree: lark.tree.Tree, table: sa.Table) -> ClauseElement:
         values_stack = []
         op_stack = []
         cond_stack = []
-        tree = list(tree.iter_subtrees_topdown())
-        for index, subtree in enumerate(tree):
+        for index, subtree in enumerate(tree.iter_subtrees_topdown()):
             data = subtree.data
             children = subtree.children
-            if type(children[0]) == lark.lexer.Token:
-                token = self._token2str(children)
+            if children and isinstance(children[0], lark.lexer.Token):
+                token = str(children[0])
                 if token in self._FILTERS:
                     op_stack.append(token)
                 else:
