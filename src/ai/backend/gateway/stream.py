@@ -46,6 +46,7 @@ from .manager import READ_ALLOWED, server_status_required
 from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params, call_non_bursty
 from .wsproxy import TCPProxy
+from ..manager.defs import DEFAULT_ROLE
 from ..manager.models import kernels
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.stream'))
@@ -465,7 +466,7 @@ async def kernel_terminated(app: web.Application, agent_id: AgentId, event_name:
             kernel_id, (kernels.c.role, kernels.c.status), allow_stale=True)
     except SessionNotFound:
         return
-    if kernel.role == 'master':
+    if kernel.role == DEFAULT_ROLE:
         session_name = kernel['session_id']
         stream_key = (session_name, kernel['access_key'])
         cancelled_tasks = []

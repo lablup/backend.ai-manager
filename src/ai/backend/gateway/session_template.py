@@ -11,7 +11,6 @@ import yaml
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import SessionTypes
 
 from .auth import auth_required
 from .exceptions import InvalidAPIParameters, TaskTemplateNotFound
@@ -23,46 +22,10 @@ from ..manager.models import (
     association_groups_users as agus, domains,
     groups, session_templates, keypairs, users, UserRole,
     query_accessible_session_templates, TemplateType,
-    verify_vfolder_name
 )
+from ..manager.models.session_template import check_task_template
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.session_template'))
-
-
-task_template_v1 = t.Dict({
-    tx.AliasedKey(['api_version', 'apiVersion']): t.String,
-    t.Key('kind'): t.Enum('taskTemplate', 'task_template'),
-    t.Key('metadata'): t.Dict({
-        t.Key('name'): t.String,
-        t.Key('tag', default=None): t.Null | t.String,
-    }),
-    t.Key('spec'): t.Dict({
-        tx.AliasedKey(['type', 'sessionType'],
-                      default='interactive') >> 'session_type': tx.Enum(SessionTypes),
-        t.Key('kernel'): t.Dict({
-            t.Key('image'): t.String,
-            t.Key('environ', default={}): t.Null | t.Mapping(t.String, t.String),
-            t.Key('run', default=None): t.Null | t.Dict({
-                t.Key('bootstrap', default=None): t.Null | t.String,
-                tx.AliasedKey(['startup', 'startup_command', 'startupCommand'],
-                              default=None) >> 'startup_command': t.Null | t.String
-            }),
-            t.Key('git', default=None): t.Null | t.Dict({
-                t.Key('repository'): t.String,
-                t.Key('commit', default=None): t.Null | t.String,
-                t.Key('branch', default=None): t.Null | t.String,
-                t.Key('credential', default=None): t.Null | t.Dict({
-                    t.Key('username'): t.String,
-                    t.Key('password'): t.String
-                }),
-                tx.AliasedKey(['destination_dir', 'destinationDir'],
-                              default=None) >> 'dest_dir': t.Null | t.String
-            })
-        }),
-        t.Key('mounts', default={}): t.Null | t.Mapping(t.String, t.Any),
-        t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any)
-    })
-}).allow_extra('*')
 
 
 @server_status_required(READ_ALLOWED)
@@ -171,16 +134,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 body = yaml.load(params['payload'], Loader=yaml.BaseLoader)
             except (yaml.YAMLError, yaml.MarkedYAMLError):
                 raise InvalidAPIParameters('Malformed payload')
-        body = task_template_v1.check(body)
-        if mounts := body['spec'].get('mounts'):
-            for p in mounts.values():
-                if p is None:
-                    continue
-                if not p.startswith('/home/work/'):
-                    raise InvalidAPIParameters(f'Path {p} should start with /home/work/')
-                if not verify_vfolder_name(p.replace('/home/work/', '')):
-                    raise InvalidAPIParameters(f'Path {p} is reserved for internal operations.')
-
+        template_data = check_task_template(body)
         template_id = uuid.uuid4().hex
         resp = {
             'id': template_id,
@@ -191,8 +145,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'domain_name': params['domain'],
             'group_id': group_id,
             'user_uuid': user_uuid,
-            'name': body['metadata']['name'],
-            'template': body,
+            'name': template_data['metadata']['name'],
+            'template': template_data,
             'type': TemplateType.TASK,
         })
         result = await conn.execute(query)
@@ -334,9 +288,9 @@ async def put(request: web.Request, params: Any) -> web.Response:
             body = yaml.load(params['payload'], Loader=yaml.BaseLoader)
         except (yaml.YAMLError, yaml.MarkedYAMLError):
             raise InvalidAPIParameters('Malformed payload')
-        body = task_template_v1.check(body)
+        template_data = check_task_template(body)
         query = (sa.update(session_templates)
-                   .values(template=body, name=body['metadata']['name'])
+                   .values(template=template_data, name=template_data['metadata']['name'])
                    .where((session_templates.c.id == template_id)))
         result = await conn.execute(query)
         assert result.rowcount == 1

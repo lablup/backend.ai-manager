@@ -21,6 +21,8 @@ from ai.backend.common.types import (
     AgentId, KernelId, AccessKey, SessionId, SessionTypes,
     ResourceSlot,
 )
+
+from ..defs import DEFAULT_ROLE
 from ..registry import AgentRegistry
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.scheduler'))
@@ -98,11 +100,11 @@ class PendingSession:
     preopen_ports: List[int]
 
     @property
-    def master_kernel_id(self) -> KernelId:
+    def main_kernel_id(self) -> KernelId:
         for k in self.kernels:
-            if k.role == 'master':
+            if k.role == DEFAULT_ROLE:
                 return k.kernel_id
-        raise RuntimeError('Unable to get master kernel ID')
+        raise RuntimeError('Unable to get the main kernel ID')
 
 
 @attr.s(auto_attribs=True, slots=True)

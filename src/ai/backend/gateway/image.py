@@ -24,6 +24,7 @@ from ai.backend.common.types import (
 from .auth import admin_required
 from .exceptions import InvalidAPIParameters
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
+from ..manager.defs import DEFAULT_ROLE
 from ..manager.models import (
     domains, groups, query_allowed_sgroups,
     association_groups_users as agus,
@@ -392,7 +393,7 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
         sess_id, access_key,
         [{
             'image_ref': importer_image,
-            'cluser_role': 'master',
+            'cluster_role': DEFAULT_ROLE,
             'creation_config': {
                 'resources': {'cpu': '1', 'mem': '2g'},
                 'scaling_group': params['launchOptions']['scalingGroup'],

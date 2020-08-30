@@ -18,31 +18,16 @@ from .manager import READ_ALLOWED, server_status_required
 from .types import CORSOptions, Iterable, WebMiddleware
 from .utils import check_api_params, get_access_key_scopes
 
+
+from ..manager.defs import DEFAULT_ROLE
 from ..manager.models import (
     association_groups_users as agus, domains,
     groups, session_templates, keypairs, users, UserRole,
     query_accessible_session_templates, TemplateType
 )
+from ..manager.models.session_template import check_cluster_template
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.cluster_template'))
-
-
-cluster_template_v1 = t.Dict({
-    tx.AliasedKey(['api_version', 'apiVersion']): t.String,
-    t.Key('kind'): t.Enum('clusterTemplate', 'cluster_template'),
-    t.Key('metadata'): t.Dict({
-        t.Key('name'): t.String
-    }),
-    t.Key('spec'): t.Dict({
-        t.Key('environ', default={}): t.Null | t.Mapping(t.String, t.String),
-        t.Key('mounts', default={}): t.Null | t.Mapping(t.String, t.Any),
-        t.Key('nodes'): t.List(t.Dict({
-            t.Key('role'): t.String,
-            tx.AliasedKey(['session_template', 'sessionTemplate']): tx.UUID,
-            t.Key('replicas', default=1): t.Int
-        }))
-    })
-}).allow_extra('*')
 
 
 @server_status_required(READ_ALLOWED)
@@ -151,19 +136,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 body = yaml.load(params['payload'], Loader=yaml.BaseLoader)
             except (yaml.YAMLError, yaml.MarkedYAMLError):
                 raise InvalidAPIParameters('Malformed payload')
-        body = cluster_template_v1.check(body)
-        defined_roles: List[str] = []
-
-        for node in body['spec']['nodes']:
-            node['session_template'] = str(node['session_template'])
-            if node['role'] in defined_roles:
-                raise InvalidAPIParameters('Each role can only be defined once')
-            if node['role'] == 'master' and node['replicas'] != 1:
-                raise InvalidAPIParameters('Only one master node can be created per cluster')
-            defined_roles.append(node['role'])
-
-        if 'master' not in defined_roles:
-            raise InvalidAPIParameters('master node is required for a cluster')
+        template_data = check_cluster_template(body)
         template_id = uuid.uuid4().hex
         resp = {
             'id': template_id,
@@ -174,8 +147,8 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'domain_name': params['domain'],
             'group_id': group_id,
             'user_uuid': user_uuid,
-            'name': body['metadata']['name'],
-            'template': body,
+            'name': template_data['metadata']['name'],
+            'template': template_data,
             'type': TemplateType.CLUSTER,
         })
         result = await conn.execute(query)
@@ -317,20 +290,9 @@ async def put(request: web.Request, params: Any) -> web.Response:
             body = yaml.load(params['payload'], Loader=yaml.BaseLoader)
         except (yaml.YAMLError, yaml.MarkedYAMLError):
             raise InvalidAPIParameters('Malformed payload')
-        body = cluster_template_v1.check(body)
-        defined_roles: List[str] = []
-        for node in body['spec']['nodes']:
-            node['session_template'] = str(node['session_template'])
-            if node['role'] in defined_roles:
-                raise InvalidAPIParameters('Each role can only be defined once')
-            if node['role'] == 'master' and node['replicas'] != 1:
-                raise InvalidAPIParameters('Only one master node can be created per cluster')
-            defined_roles.append(node['role'])
-
-        if 'master' not in defined_roles:
-            raise InvalidAPIParameters('master node is required for a cluster')
+        template_data = check_cluster_template.check(body)
         query = (sa.update(session_templates)
-                   .values(template=body, name=body['metadata']['name'])
+                   .values(template=template_data, name=template_data['metadata']['name'])
                    .where((session_templates.c.id == template_id)))
         result = await conn.execute(query)
         assert result.rowcount == 1

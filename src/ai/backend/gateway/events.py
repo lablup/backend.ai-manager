@@ -39,6 +39,7 @@ from .exceptions import GenericNotFound, GenericForbidden, GroupNotFound
 from .manager import READ_ALLOWED, server_status_required
 from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params
+from ..manager.defs import DEFAULT_ROLE
 from ..manager.models import kernels, groups, UserRole
 from ..manager.types import BackgroundTaskEventArgs, Sentinel
 
@@ -410,7 +411,7 @@ async def enqueue_session_status_update(
         row = await result.first()
         if row is None:
             return
-        if row['role'] != 'master':
+        if row['role'] != DEFAULT_ROLE:
             return
     for q in app['session_event_queues']:
         q.put_nowait((event_name, row, reason))
@@ -444,7 +445,7 @@ async def enqueue_batch_session_result_update(
         row = await result.first()
         if row is None:
             return
-        if row['role'] != 'master':
+        if row['role'] != DEFAULT_ROLE:
             return
     if event_name == 'kernel_success':
         reason = 'task-success'

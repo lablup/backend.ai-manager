@@ -69,6 +69,7 @@ from .utils import (
     catch_unexpected, check_api_params, get_access_key_scopes, undefined
 )
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
+from ..manager.defs import DEFAULT_ROLE
 from ..manager.models import (
     domains,
     association_groups_users as agus, groups,
@@ -413,7 +414,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             params['session_name'], owner_access_key,
             [{
                 'image_ref': requested_image_ref,
-                'cluster_role': 'master',
+                'cluster_role': DEFAULT_ROLE,
                 'creation_config': params['config'],
                 'bootstrap_script': params['bootstrap_script'],
                 'startup_command': params['startup_command'],

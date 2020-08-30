@@ -60,7 +60,7 @@ from ai.backend.common.types import (
     SlotTypes,
 )
 from ai.backend.common.utils import current_loop
-from .defs import INTRINSIC_SLOTS
+from .defs import DEFAULT_ROLE, INTRINSIC_SLOTS
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
     RejectedByHook,
@@ -376,7 +376,7 @@ class AgentRegistry:
                             If False, filter "active" kernels only.
         :param for_update: Apply for_update during select query.
         :param db_connection: Database connection for reuse.
-        :param role: Filter kernels by role. "master", "worker", or None (all).
+        :param role: Filter kernels by role. "main", "sub", or None (all).
         '''
         cols = [
             kernels.c.id, kernels.c.status,
@@ -462,7 +462,7 @@ class AgentRegistry:
         Retrieve the session information by kernel's ID, kernel's session UUID
         (session_uuid), or kernel's name (session_id) paired with access_key.
         If the session is composed of multiple containers, this will return
-        the information of master kernel.
+        the information of the main kernel.
 
         :param session_name_or_id: kernel's id, session_id (session name), or session_uuid.
         :param access_key: Access key used to create kernels.
@@ -472,13 +472,13 @@ class AgentRegistry:
                             If False, filter "active" kernels only.
         :param for_update: Apply for_update during select query.
         :param db_connection: Database connection for reuse.
-        :param role: Filter kernels by role. "master", "worker", or None (all).
+        :param role: Filter kernels by role. "main", "sub", or None (all).
         """
         kernels = await self.get_kernels(
             session_name_or_id, access_key,
             field=field, for_update=for_update,
             db_connection=db_connection,
-            role='master',
+            role=DEFAULT_ROLE,
         )
         if len(kernels) > 1:
             matches = [
@@ -517,7 +517,7 @@ class AgentRegistry:
                             If False, filter "active" kernels only.
         :param for_update: Apply for_update during select query.
         :param db_connection: Database connection for reuse.
-        :param role: Filter kernels by role. "master", "worker", or None (all).
+        :param role: Filter kernels by role. "main", "sub", or None (all).
         '''
         return await self.get_kernels(
             session_uuid, access_key,
@@ -554,12 +554,12 @@ class AgentRegistry:
                 query = (sa.select(cols)
                            .select_from(kernels)
                            .where((kernels.c.session_id.in_(session_names)) &
-                                  (kernels.c.role == 'master')))
+                                  (kernels.c.role == DEFAULT_ROLE)))
             else:
                 query = (sa.select(cols)
                            .select_from(kernels.join(agents))
                            .where((kernels.c.session_id.in_(session_names)) &
-                                  (kernels.c.role == 'master') &
+                                  (kernels.c.role == DEFAULT_ROLE) &
                                   (agents.c.status == AgentStatus.ALIVE) &
                                   (agents.c.id == kernels.c.agent)))
             result = await conn.execute(query)
@@ -821,16 +821,16 @@ class AgentRegistry:
                     'preopen_ports': creation_config.get('preopen_ports', []),
                 })
                 await conn.execute(query)
-                if kernel['cluster_role'] == 'master':
-                    master_id = KernelId(kernel_id)
+                if kernel['cluster_role'] == DEFAULT_ROLE:
+                    main_id = KernelId(kernel_id)
                 ids.append(kernel_id)
 
         await self.hook_plugin_ctx.notify(
             'POST_ENQUEUE_SESSION',
-            (master_id, session_name, access_key),
+            (main_id, session_name, access_key),
         )
         await self.event_dispatcher.produce_event('kernel_enqueued', [str(x) for x in ids])
-        return master_id
+        return main_id
 
     async def start_session(
         self,
@@ -916,8 +916,8 @@ class AgentRegistry:
                                                                 config)
                     if created_info is None:
                         raise KernelCreationFailed('ooops')
-                    if kernel.role == 'master':
-                        master_info = created_info
+                    if kernel.role == DEFAULT_ROLE:
+                        main_info = created_info
 
             log.debug('start_session(s:{}, ak:{}, k:{}) -> created on ag:{}\n{!r}',
                       sess_ctx.session_name, sess_ctx.access_key, kernel.kernel_id,
@@ -942,12 +942,12 @@ class AgentRegistry:
                         'status': KernelStatus.RUNNING,
                         'container_id': created_info['container_id'],
                         'occupied_shares': {},
-                        'attached_devices': master_info.get('attached_devices', {}),
+                        'attached_devices': main_info.get('attached_devices', {}),
                         'kernel_host': kernel_host,
-                        'repl_in_port': master_info['repl_in_port'],
-                        'repl_out_port': master_info['repl_out_port'],
-                        'stdin_port': master_info['stdin_port'],
-                        'stdout_port': master_info['stdout_port'],
+                        'repl_in_port': main_info['repl_in_port'],
+                        'repl_out_port': main_info['repl_out_port'],
+                        'stdin_port': main_info['stdin_port'],
+                        'stdout_port': main_info['stdout_port'],
                         'service_ports': service_ports,
                     })
                     .where(kernels.c.id == kernel.kernel_id))
@@ -1147,7 +1147,7 @@ class AgentRegistry:
                     )
             except SessionNotFound:
                 raise
-            master_stat = {}
+            main_stat = {}
             for kernel in kernel_list:
                 if domain_name is not None and kernel.domain_name != domain_name:
                     raise SessionNotFound
@@ -1162,13 +1162,13 @@ class AgentRegistry:
                         'kernel_cancelled',
                         (str(kernel.id), 'user-requested'),
                     )
-                    if kernel.role == 'master':
-                        master_stat = {'status': 'cancelled'}
+                    if kernel.role == DEFAULT_ROLE:
+                        main_stat = {'status': 'cancelled'}
                 elif kernel.status in (KernelStatus.PREPARING, KernelStatus.PULLING):
                     raise GenericForbidden('Cannot destory kernels in preparing/pulling status')
                 else:
-                    if kernel.role == 'master':
-                        # The master session is terminated; decrement the user's concurrency counter
+                    if kernel.role == DEFAULT_ROLE:
+                        # The main session is terminated; decrement the user's concurrency counter
                         query = (sa.update(keypairs)
                                    .values(concurrency_used=keypairs.c.concurrency_used - 1)
                                    .where(keypairs.c.access_key == kernel.access_key))
@@ -1186,8 +1186,8 @@ class AgentRegistry:
 
                 if kernel['agent_addr'] is None:
                     await self.mark_kernel_terminated(kernel.id, 'Unknown error while allocating')
-                    if kernel.role == 'master':
-                        master_stat = {'status': 'terminated'}
+                    if kernel.role == DEFAULT_ROLE:
+                        main_stat = {'status': 'terminated'}
                 else:
                     async with RPCContext(kernel['agent_addr'], None, order_key=kernel.id) as rpc:
                         await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
@@ -1202,8 +1202,8 @@ class AgentRegistry:
                                 last_stat['version'] = 2
                         except asyncio.TimeoutError:
                             pass
-                        if kernel.role == 'master':
-                            master_stat = {
+                        if kernel.role == DEFAULT_ROLE:
+                            main_stat = {
                                 **(last_stat if last_stat is not None else {}),
                                 'status': 'terminated',
                             }
@@ -1219,7 +1219,7 @@ class AgentRegistry:
                         log.error(f'Error while destroying overlay network: {error}')
                         raise KernelDestructionFailed(f'Error while destroying overlay network: {error}')
 
-            return master_stat
+            return main_stat
 
     async def restart_session(
         self,
@@ -1278,7 +1278,7 @@ class AgentRegistry:
                         'resource_slots':
                             kernel['occupied_slots'].to_json(),  # unused currently
                     }
-                    if kernel['role'] == 'master':
+                    if kernel['role'] == DEFAULT_ROLE:
                         kernel_info = await rpc.call.restart_kernel(str(kernel['id']),
                                                                     new_config)
             # TODO: publish "kernel_started" event
@@ -1419,7 +1419,7 @@ class AgentRegistry:
                        .values(num_queries=kernels.c.num_queries + 1)
                        .where((kernels.c.session_id == sess_id) &
                               (kernels.c.access_key == access_key) &
-                              (kernels.c.role == 'master')))
+                              (kernels.c.role == DEFAULT_ROLE)))
             await conn.execute(query)
 
     async def kill_all_sessions_in_agent(self, agent_addr):

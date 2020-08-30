@@ -19,6 +19,8 @@ from ai.backend.common.types import (
     SessionTypes,
     SessionResult,
 )
+
+from ..defs import DEFAULT_ROLE
 from .base import (
     metadata,
     BigInt, GUID, IDColumn, EnumType,
@@ -107,12 +109,18 @@ LIVE_STATUS = (
 
 kernels = sa.Table(
     'kernels', metadata,
+    # The Backend.AI-side UUID for each kernel
+    # (mapped to a container in the docker backend and a pod in the k8s backend)
     IDColumn(),
+    # session_id == id when the kernel is the main container in a multi-container session or a
+    # single-container session.
+    # Otherwise, it refers the kernel ID of the main contaienr of the belonged multi-container session.
     sa.Column('session_id', sa.String(length=64), unique=False, index=True),
-    sa.Column('session_uuid', GUID, nullable=False),
     sa.Column('session_type', EnumType(SessionTypes), index=True, nullable=False,
               default=SessionTypes.INTERACTIVE, server_default=SessionTypes.INTERACTIVE.name),
-    sa.Column('role', sa.String(length=16), nullable=False, default='master'),
+    sa.Column('role', sa.String(length=16), nullable=False, default=DEFAULT_ROLE),
+
+    # Resource ownership
     sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True, nullable=True),
     sa.Column('agent', sa.String(length=64), sa.ForeignKey('agents.id'), nullable=True),
     sa.Column('agent_addr', sa.String(length=128), nullable=True),
@@ -178,7 +186,7 @@ kernels = sa.Table(
              unique=True,
              postgresql_where=sa.text(
                  "status NOT IN ('TERMINATED', 'CANCELLED') and "
-                 "role = 'master'")),
+                 "role = 'main'")),
 )
 
 kernel_dependencies = sa.Table(
@@ -202,6 +210,7 @@ class ComputeContainer(graphene.ObjectType):
         interfaces = (Item, )
 
     # identity
+    idx = graphene.Int()
     role = graphene.String()
     hostname = graphene.String()
     session_id = graphene.UUID()  # owner session
@@ -238,9 +247,10 @@ class ComputeContainer(graphene.ObjectType):
         return {
             # identity
             'id': row['id'],
+            'idx': row['idx'],
             'role': row['role'],
             'hostname': None,         # TODO: implement
-            'session_id': row['id'],  # master container's ID == session ID
+            'session_id': row['session_id'],  # main container's ID == session ID
 
             # image
             'image': row['image'],
@@ -394,8 +404,8 @@ class ComputeSession(graphene.ObjectType):
     type = graphene.String()
 
     # image
-    image = graphene.String()     # image for the master
-    registry = graphene.String()  # image registry for the master
+    image = graphene.String()     # image for the main container
+    registry = graphene.String()  # image registry for the main container
     cluster_template = graphene.String()
 
     # ownership
@@ -515,7 +525,7 @@ class ComputeSession(graphene.ObjectType):
             query = (
                 sa.select([sa.func.count(kernels.c.id)])
                 .select_from(kernels)
-                .where(kernels.c.role == 'master')
+                .where(kernels.c.role == DEFAULT_ROLE)
                 .as_scalar()
             )
             if domain_name is not None:
@@ -553,7 +563,7 @@ class ComputeSession(graphene.ObjectType):
             query = (
                 sa.select([kernels, groups.c.name, users.c.email])
                 .select_from(j)
-                .where(kernels.c.role == 'master')
+                .where(kernels.c.role == DEFAULT_ROLE)
                 .order_by(*_ordering)
                 .limit(limit)
                 .offset(offset)
@@ -579,7 +589,7 @@ class ComputeSession(graphene.ObjectType):
                 sa.select([kernels])
                 .select_from(j)
                 .where(
-                    (kernels.c.role == 'master') &
+                    (kernels.c.role == DEFAULT_ROLE) &
                     (kernel_dependencies.c.kernel_id.in_(session_ids))
                 )
             )
@@ -601,7 +611,7 @@ class ComputeSession(graphene.ObjectType):
                 sa.select([kernels, groups.c.name, users.c.email])
                 .select_from(j)
                 .where(
-                    (kernels.c.role == 'master') &
+                    (kernels.c.role == DEFAULT_ROLE) &
                     (kernels.c.id.in_(session_ids))
                 ))
             if domain_name is not None:
@@ -631,7 +641,7 @@ class ComputeSessionList(graphene.ObjectType):
 # --------- pre-v5 legacy -----------
 class LegacyComputeSession(graphene.ObjectType):
     """
-    Represents a master session.
+    Represents a main session.
     """
     class Meta:
         interfaces = (Item, )
@@ -852,7 +862,7 @@ class LegacyComputeSession(graphene.ObjectType):
             query = (
                 sa.select([sa.func.count(kernels.c.session_id)])
                 .select_from(kernels)
-                .where(kernels.c.role == 'master')
+                .where(kernels.c.role == DEFAULT_ROLE)
                 .as_scalar()
             )
             if domain_name is not None:
@@ -887,7 +897,7 @@ class LegacyComputeSession(graphene.ObjectType):
             query = (
                 sa.select([kernels, groups.c.name, users.c.email])
                 .select_from(j)
-                .where(kernels.c.role == 'master')
+                .where(kernels.c.role == DEFAULT_ROLE)
                 .order_by(*_ordering)
                 .limit(limit)
                 .offset(offset)
@@ -914,7 +924,7 @@ class LegacyComputeSession(graphene.ObjectType):
                 .select_from(j)
                 .where(
                     (kernels.c.access_key.in_(access_keys)) &
-                    (kernels.c.role == 'master')
+                    (kernels.c.role == DEFAULT_ROLE)
                 )
                 .order_by(
                     sa.desc(sa.func.greatest(
@@ -951,7 +961,7 @@ class LegacyComputeSession(graphene.ObjectType):
                         .join(users, users.c.uuid == kernels.c.user_uuid))
             query = (sa.select([kernels, groups.c.name, users.c.email])
                        .select_from(j)
-                       .where((kernels.c.role == 'master') &
+                       .where((kernels.c.role == DEFAULT_ROLE) &
                               (kernels.c.session_id.in_(sess_ids))))
             if domain_name is not None:
                 query = query.where(kernels.c.domain_name == domain_name)
