@@ -1,12 +1,15 @@
 import json
 import logging
+from typing import (
+    Any,
+    Tuple,
+)
 import uuid
 
 from aiohttp import web
 import aiohttp_cors
 import sqlalchemy as sa
 import trafaret as t
-from typing import Any, Tuple, List
 import yaml
 
 from ai.backend.common import validators as tx
@@ -19,7 +22,6 @@ from .types import CORSOptions, Iterable, WebMiddleware
 from .utils import check_api_params, get_access_key_scopes
 
 
-from ..manager.defs import DEFAULT_ROLE
 from ..manager.models import (
     association_groups_users as agus, domains,
     groups, session_templates, keypairs, users, UserRole,
