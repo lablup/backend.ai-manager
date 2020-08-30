@@ -791,9 +791,9 @@ class AgentRegistry:
                 query = kernels.insert().values({
                     'id': kernel_id,
                     'status': KernelStatus.PENDING,
-                    'session_id': session_name,    # TODO: rename column to session_name
-                    'session_type': session_type,  # TODO: rename column to session_type
                     'session_id': sess_uuid,
+                    'session_name': session_name,
+                    'session_type': session_type,
                     'starts_at': starts_at,
                     'role': kernel['cluster_role'],
                     'idx': kernel['idx'] if is_multicontainer else None,
