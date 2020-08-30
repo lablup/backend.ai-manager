@@ -276,6 +276,7 @@ def example_pending_sessions():
                     role=DEFAULT_ROLE,
                     idx=0,
                     image_ref=common_image_ref,
+                    resource_opts={},
                     requested_slots=ResourceSlot({
                         'cpu': Decimal('2.0'),
                         'mem': Decimal('1024'),
@@ -309,6 +310,7 @@ def example_pending_sessions():
                     role=DEFAULT_ROLE,
                     idx=0,
                     image_ref=common_image_ref,
+                    resource_opts={},
                     requested_slots=ResourceSlot({
                         'cpu': Decimal('1.0'),
                         'mem': Decimal('2048'),
@@ -342,6 +344,7 @@ def example_pending_sessions():
                     role=DEFAULT_ROLE,
                     idx=0,
                     image_ref=common_image_ref,
+                    resource_opts={},
                     requested_slots=ResourceSlot({
                         'cpu': Decimal('0.4'),
                         'mem': Decimal('512'),
@@ -357,6 +360,7 @@ def example_pending_sessions():
                     role='sub',
                     idx=1,
                     image_ref=common_image_ref,
+                    resource_opts={},
                     requested_slots=ResourceSlot({
                         'cpu': Decimal('0.3'),
                         'mem': Decimal('256'),
@@ -372,6 +376,7 @@ def example_pending_sessions():
                     role='sub',
                     idx=2,
                     image_ref=common_image_ref,
+                    resource_opts={},
                     requested_slots=ResourceSlot({
                         'cpu': Decimal('0.3'),
                         'mem': Decimal('256'),
@@ -411,6 +416,7 @@ def example_existing_sessions():
                     role=DEFAULT_ROLE,
                     idx=0,
                     image_ref=common_image_ref,
+                    resource_opts={},
                     requested_slots=ResourceSlot({
                         'cpu': Decimal('1.0'),
                         'mem': Decimal('512'),
@@ -426,6 +432,7 @@ def example_existing_sessions():
                     role=DEFAULT_ROLE,
                     idx=0,
                     image_ref=common_image_ref,
+                    resource_opts={},
                     requested_slots=ResourceSlot({
                         'cpu': Decimal('2.0'),
                         'mem': Decimal('512'),
@@ -458,6 +465,7 @@ def example_existing_sessions():
                     role=DEFAULT_ROLE,
                     idx=0,
                     image_ref=common_image_ref,
+                    resource_opts={},
                     requested_slots=ResourceSlot({
                         'cpu': Decimal('1.0'),
                         'mem': Decimal('2048'),
@@ -490,6 +498,7 @@ def example_existing_sessions():
                     role=DEFAULT_ROLE,
                     idx=0,
                     image_ref=common_image_ref,
+                    resource_opts={},
                     requested_slots=ResourceSlot({
                         'cpu': Decimal('4.0'),
                         'mem': Decimal('4096'),
