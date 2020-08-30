@@ -118,6 +118,7 @@ kernels = sa.Table(
     sa.Column('session_id', sa.String(length=64), unique=False, index=True),
     sa.Column('session_type', EnumType(SessionTypes), index=True, nullable=False,
               default=SessionTypes.INTERACTIVE, server_default=SessionTypes.INTERACTIVE.name),
+    sa.Column('cluster_mode', sa.String(length=16), nullable=True, default=None),
     sa.Column('role', sa.String(length=16), nullable=False, default=DEFAULT_ROLE),
 
     # Resource ownership

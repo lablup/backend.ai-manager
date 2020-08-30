@@ -210,7 +210,7 @@ class SchedulerDispatcher(aobject):
             known_slot_types=known_slot_types,
         )
 
-        log_fmt = 'schedule(k:{}, s:{}, ak:{}): '
+        log_fmt = 'schedule(s:{}, type:{}, name:{}, ak:{}, cluster_mode:{}): '
         start_task_args: List[Tuple[
             Sequence[Any],
             SchedulingContext,
@@ -233,26 +233,33 @@ class SchedulerDispatcher(aobject):
                     candidate_agents = await _list_agents_by_sgroup(db_conn, sgroup_name)
                     total_capacity = sum((ag.available_slots for ag in candidate_agents), zero)
 
-                picked_session_uuid = scheduler.pick_session(
+                picked_session_id = scheduler.pick_session(
                     total_capacity,
                     pending_sessions,
                     existing_sessions,
                 )
-                if picked_session_uuid is None:
+                if picked_session_id is None:
                     # no session is picked.
                     # continue to next sgroup.
                     return
                 for picked_idx, sess_ctx in enumerate(pending_sessions):
-                    if sess_ctx.session_uuid == picked_session_uuid:
+                    if sess_ctx.session_id == picked_session_id:
                         break
                 else:
                     # no matching entry for picked session?
                     raise RuntimeError('should not reach here')
                 sess_ctx = pending_sessions.pop(picked_idx)
 
-                log_args = (sess_ctx.session_uuid, sess_ctx.session_name, sess_ctx.access_key)
+                log_args = (
+                    sess_ctx.session_id,
+                    sess_ctx.session_type,
+                    sess_ctx.session_name,
+                    sess_ctx.access_key,
+                    sess_ctx.cluster_mode,
+                )
                 log.debug(log_fmt + 'try-scheduling', *log_args)
-                alloc_ctxs: List[List[Union[KernelInfo, AgentAllocationContext]]] = []
+                alloc_ctxs: List[List[Union[KernelInfo, AgentAllocationContext]]]
+                alloc_ctxs = []
 
                 async with db_conn.begin():
                     predicates: Sequence[Awaitable[PredicateResult]] = [
@@ -314,6 +321,7 @@ class SchedulerDispatcher(aobject):
                             )
                             # continue
                             raise
+                        # TODO: extend for multi-container sessions
                         query = kernels.update().values({
                             'agent': agent_alloc_ctx.agent_id,
                             'agent_addr': agent_alloc_ctx.agent_addr,
@@ -364,11 +372,11 @@ class SchedulerDispatcher(aobject):
                         'status': KernelStatus.CANCELLED,
                         'status_info': 'failed-to-start',
                         'status_changed': datetime.now(tzutc()),
-                    }).where(kernels.c.session_uuid == sess_ctx.session_uuid)
+                    }).where(kernels.c.session_id == sess_ctx.session_id)
                     await db_conn.execute(query)
                 await self.registry.event_dispatcher.produce_event(
                     'kernel_cancelled',
-                    (str(sess_ctx.session_uuid), 'failed-to-start'),
+                    (str(sess_ctx.session_id), 'failed-to-start'),
                 )
             else:
                 log.info(log_fmt + 'started', *log_args)
@@ -409,9 +417,10 @@ async def _list_pending_sessions(
             kernels.c.role,
             kernels.c.idx,
             kernels.c.registry,
-            kernels.c.session_type,
             kernels.c.session_id,
-            kernels.c.session_uuid,
+            kernels.c.session_type,
+            kernels.c.session_name,
+            kernels.c.cluster_mode,
             kernels.c.access_key,
             kernels.c.domain_name,
             kernels.c.group_id,
@@ -440,6 +449,7 @@ async def _list_pending_sessions(
         )
         .order_by(kernels.c.created_at)
     )
+    # TODO: extend for multi-container sessions
     items: MutableMapping[str, PendingSession] = {}
     async for row in db_conn.execute(query):
         if _session := items.get(row['session_id']):
@@ -448,9 +458,10 @@ async def _list_pending_sessions(
             session = PendingSession(
                 kernels=[],
                 access_key=row['access_key'],
+                session_id=row['session_id'],
                 session_type=row['session_type'],
-                session_name=row['session_id'],
-                session_uuid=row['session_uuid'],
+                session_name=row['session_name'],
+                cluster_mode=row['cluster_mode'],
                 domain_name=row['domain_name'],
                 group_id=row['group_id'],
                 scaling_group=row['scaling_group'],
@@ -470,10 +481,9 @@ async def _list_pending_sessions(
                 preopen_ports=row['preopen_ports'],
             )
             items[row['session_id']] = session
-        # TODO: Remove `type: ignore` when mypy supports type inference for walrus operator
-        # Check https://github.com/python/mypy/issues/7316
-        session.kernels.append(KernelInfo(  # type: ignore
+        session.kernels.append(KernelInfo(
             kernel_id=row['id'],
+            session_id=row['session_id'],
             role=row['role'],
             idx=row['idx'],
             image_ref=ImageRef(row['image'], [row['registry']]),
@@ -499,9 +509,10 @@ async def _list_existing_sessions(
             kernels.c.role,
             kernels.c.idx,
             kernels.c.registry,
-            kernels.c.session_type,
             kernels.c.session_id,
-            kernels.c.session_uuid,
+            kernels.c.session_type,
+            kernels.c.session_name,
+            kernels.c.cluster_mode,
             kernels.c.access_key,
             kernels.c.domain_name,
             kernels.c.group_id,
@@ -531,26 +542,29 @@ async def _list_existing_sessions(
             session = _session
         else:
             session = ExistingSession(
-                    kernels=[],
-                    access_key=row['access_key'],
-                    session_type=row['session_type'],
-                    session_name=row['session_id'],
-                    session_uuid=row['session_uuid'],
-                    domain_name=row['domain_name'],
-                    group_id=row['group_id'],
-                    scaling_group=row['scaling_group'],
-                    occupying_slots=row['occupied_slots'],
+                kernels=[],
+                access_key=row['access_key'],
+                session_id=row['session_id'],
+                session_type=row['session_type'],
+                session_name=row['session_name'],
+                cluster_mode=row['cluster_mode'],
+                domain_name=row['domain_name'],
+                group_id=row['group_id'],
+                scaling_group=row['scaling_group'],
+                occupying_slots=row['occupied_slots'],
             )
             items[row['session_id']] = session
+        # TODO: support multi-container sessions
         session.kernels.append(KernelInfo(  # type: ignore
             kernel_id=row['id'],
+            session_id=row['session_id'],
             role=row['role'],
             idx=row['idx'],
             image_ref=ImageRef(row['image'], [row['registry']]),
             resource_opts={},
             requested_slots=ResourceSlot(),
-            bootstrap_script='',
-            startup_command=''
+            bootstrap_script=None,
+            startup_command=None,
         ))
 
     return list(items.values())

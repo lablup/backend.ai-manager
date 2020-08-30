@@ -50,7 +50,7 @@ class FIFOSlotScheduler(AbstractScheduler):
                      existing_sessions: Sequence[ExistingSession],
                      ) -> Optional[SessionId]:
         # Just pick the first pending session.
-        return SessionId(pending_sessions[0].session_uuid)
+        return SessionId(pending_sessions[0].session_id)
 
     def assign_agent(self,
                      agents: Sequence[AgentContext],
@@ -81,7 +81,7 @@ class LIFOSlotScheduler(AbstractScheduler):
                      existing_sessions: Sequence[ExistingSession],
                      ) -> Optional[SessionId]:
         # Just pick the last pending session.
-        return SessionId(pending_sessions[-1].session_uuid)
+        return SessionId(pending_sessions[-1].session_id)
 
     def assign_agent(self,
                      agents: Sequence[AgentContext],

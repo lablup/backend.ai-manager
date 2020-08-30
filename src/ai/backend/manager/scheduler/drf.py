@@ -74,7 +74,7 @@ class DRFScheduler(AbstractScheduler):
         # who has the lowest dominant share.
         for pending_sess in pending_sessions:
             if pending_sess.access_key == least_dominant_share_user:
-                return SessionId(pending_sess.session_uuid)
+                return SessionId(pending_sess.session_id)
 
         return None
 

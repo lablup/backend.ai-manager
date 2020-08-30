@@ -364,11 +364,11 @@ class AgentRegistry:
     ):
         '''
         Retrieve the kernel information by kernel's ID, kernel's session UUID
-        (session_uuid), or kernel's name (session_id) paired with access_key.
+        (session_id), or kernel's name (session_id) paired with access_key.
         If the session is composed of multiple containers, this will return
         every container information, unless field and role is specified by the caller.
 
-        :param session_name_or_id: kernel's id, session_id (session name), or session_uuid.
+        :param session_name_or_id: kernel's id, session_id (session name), or session_id.
         :param access_key: Access key used to create kernels.
         :param field: If given, it extracts only the raw value of the given field, without
                       wrapping it as Kernel object.
@@ -403,14 +403,14 @@ class AgentRegistry:
             (kernels.c.session_id.like(f'{session_name_or_id}%')) &
             (kernels.c.access_key == access_key)
         )
-        cond_session_uuid = (
-            (sa.sql.expression.cast(kernels.c.session_uuid, sa.String).like(f'{session_name_or_id}%')) &
+        cond_session_id = (
+            (sa.sql.expression.cast(kernels.c.session_id, sa.String).like(f'{session_name_or_id}%')) &
             (kernels.c.access_key == access_key)
         )
         if role is not None:
             cond_id = cond_id & (kernels.c.role == role)
             cond_name = cond_name & (kernels.c.role == role)
-            cond_session_uuid = cond_session_uuid & (kernels.c.role == role)
+            cond_session_id = cond_session_id & (kernels.c.role == role)
         if allow_stale:
             cond_status = true()  # any status
         else:
@@ -428,10 +428,10 @@ class AgentRegistry:
             .where(cond_name & cond_status)
             .order_by(sa.desc(kernels.c.created_at))
         )
-        query_by_session_uuid = (
+        query_by_session_id = (
             sa.select(cols, for_update=for_update)
             .select_from(kernels)
-            .where(cond_session_uuid & cond_status)
+            .where(cond_session_id & cond_status)
             .order_by(sa.desc(kernels.c.created_at))
             .limit(10).offset(0)
         )
@@ -442,7 +442,7 @@ class AgentRegistry:
             query_by_name = query_by_name.limit(1).offset(0)
 
         async with reenter_txn(self.dbpool, db_connection) as conn:
-            for query in [query_by_id, query_by_session_uuid, query_by_name]:
+            for query in [query_by_id, query_by_session_id, query_by_name]:
                 result = await conn.execute(query)
                 if result.rowcount == 0:
                     continue
@@ -460,11 +460,11 @@ class AgentRegistry:
     ):
         """
         Retrieve the session information by kernel's ID, kernel's session UUID
-        (session_uuid), or kernel's name (session_id) paired with access_key.
+        (session_id), or kernel's name (session_id) paired with access_key.
         If the session is composed of multiple containers, this will return
         the information of the main kernel.
 
-        :param session_name_or_id: kernel's id, session_id (session name), or session_uuid.
+        :param session_name_or_id: kernel's id, session_id (session name), or session_id.
         :param access_key: Access key used to create kernels.
         :param field: If given, it extracts only the raw value of the given field, without
                       wrapping it as Kernel object.
@@ -496,7 +496,7 @@ class AgentRegistry:
 
     async def get_session_kernels(
         self,
-        session_uuid: str,
+        session_id: str,
         access_key: str, *,
         field=None,
         allow_stale=False,
@@ -509,7 +509,7 @@ class AgentRegistry:
         If the session is bundled with multiple containers,
         this will return every information of them.
 
-        :param session_uuid: Session's UUID.
+        :param session_id: Session's UUID.
         :param access_key: Access key used to create the session.
         :param field: If given, it extracts only the raw value of the given field, without
                       wrapping it as Kernel object.
@@ -520,7 +520,7 @@ class AgentRegistry:
         :param role: Filter kernels by role. "main", "sub", or None (all).
         '''
         return await self.get_kernels(
-            session_uuid, access_key,
+            session_id, access_key,
             field=field, for_update=for_update,
             db_connection=db_connection,
             role=role,
@@ -793,7 +793,7 @@ class AgentRegistry:
                     'status': KernelStatus.PENDING,
                     'session_id': session_name,    # TODO: rename column to session_name
                     'session_type': session_type,  # TODO: rename column to session_type
-                    'session_uuid': sess_uuid,
+                    'session_id': sess_uuid,
                     'starts_at': starts_at,
                     'role': kernel['cluster_role'],
                     'idx': kernel['idx'] if is_multicontainer else None,
@@ -858,7 +858,7 @@ class AgentRegistry:
 
             hook_result = await self.hook_plugin_ctx.dispatch(
                 'PRE_START_SESSION',
-                (sess_ctx.session_uuid, sess_ctx.session_name, sess_ctx.access_key),
+                (sess_ctx.session_id, sess_ctx.session_name, sess_ctx.access_key),
                 return_when=ALL_COMPLETED,
             )
             if hook_result.status != PASSED:
@@ -866,7 +866,7 @@ class AgentRegistry:
 
             # Create the kernel by invoking the agent
             async with self.handle_kernel_exception(
-                'create_session', sess_ctx.session_uuid, sess_ctx.access_key
+                'create_session', sess_ctx.session_id, sess_ctx.access_key
             ):
                 created_info = None
                 async with RPCContext(
@@ -898,7 +898,7 @@ class AgentRegistry:
                         'preopen_ports': sess_ctx.preopen_ports,
                     }
                     if len(sess_ctx.kernels) > 1:
-                        network_name = f'bai-{sess_ctx.session_uuid}'
+                        network_name = f'bai-{sess_ctx.session_id}'
                         config['cluster'] = {
                             'network': network_name,
                             'role': kernel.role,
@@ -926,7 +926,7 @@ class AgentRegistry:
 
             await self.hook_plugin_ctx.notify(
                 'POST_START_SESSION',
-                (sess_ctx.session_uuid, sess_ctx.session_name, sess_ctx.access_key),
+                (sess_ctx.session_id, sess_ctx.session_name, sess_ctx.access_key),
             )
 
             async with self.dbpool.acquire() as conn, conn.begin():
@@ -1141,7 +1141,7 @@ class AgentRegistry:
                 async with self.dbpool.acquire() as conn, conn.begin():
                     kernel_list = await self.get_session_kernels(
                         kernel.id, access_key,
-                        field=[kernels.c.domain_name, kernels.c.session_uuid],
+                        field=[kernels.c.domain_name, kernels.c.session_id],
                         for_update=True,
                         db_connection=conn,
                     )
@@ -1618,7 +1618,7 @@ class AgentRegistry:
                 sa.update(kernels)
                 .values(data)
                 .where(
-                    (kernels.c.session_uuid == session_id) &
+                    (kernels.c.session_id == session_id) &
                     (kernels.c.access_key == access_key) &
                     ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES))
                 )
@@ -1821,7 +1821,7 @@ class AgentRegistry:
             query = (
                 sa.select([kernels.c.id])
                 .select_from(kernels)
-                .where((kernels.c.session_uuid == sess_uuid) &
+                .where((kernels.c.session_id == sess_uuid) &
                         (kernels.c.access_key == access_key) &
                         ~(kernels.c.status.in_(DEAD_KERNEL_STATUSES)))
                 .limit(1).offset(0)
@@ -1835,7 +1835,7 @@ class AgentRegistry:
     async def kernel_id_to_sess_uuid(self, kernel_id: str, access_key: str) -> str:
         async with self.dbpool.acquire() as conn, conn.begin():
             query = (
-                sa.select([kernels.c.session_uuid])
+                sa.select([kernels.c.session_id])
                 .select_from(kernels)
                 .where((kernels.c.id == kernel_id) &
                         (kernels.c.access_key == access_key) &

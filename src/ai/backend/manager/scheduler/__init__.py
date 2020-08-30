@@ -63,9 +63,10 @@ class SchedulingContext:
 class ExistingSession:
     kernels: List[KernelInfo]
     access_key: AccessKey
-    session_name: str
-    session_uuid: uuid.UUID
+    session_id: uuid.UUID
     session_type: SessionTypes
+    session_name: str
+    cluster_mode: Optional[str]
     domain_name: str
     group_id: uuid.UUID
     scaling_group: str
@@ -81,9 +82,10 @@ class PendingSession:
     '''
     kernels: List[KernelInfo]
     access_key: AccessKey
-    session_name: str
-    session_uuid: uuid.UUID
+    session_id: uuid.UUID
     session_type: SessionTypes
+    session_name: str
+    cluster_mode: Optional[str]
     domain_name: str
     group_id: uuid.UUID
     scaling_group: str
@@ -115,6 +117,7 @@ class KernelInfo:
     for each kernel.
     '''
     kernel_id: KernelId
+    session_id: uuid.UUID
     role: str
     idx: int
     image_ref: ImageRef

@@ -40,7 +40,7 @@ async def check_reserved_batch_session(
         query = (
             sa.select([kernels.c.starts_at])
             .select_from(kernels)
-            .where(kernels.c.id == sess_ctx.session_uuid)
+            .where(kernels.c.id == sess_ctx.session_id)
         )
         starts_at = await db_conn.scalar(query)
         if starts_at is not None and datetime.now(tzutc()) < starts_at:
@@ -131,7 +131,7 @@ async def check_keypair_resource_limit(
         ) -> None:
             query = (sa.update(kernels)
                        .values(status_info='out-of-resource (keypair resource quota exceeded)')
-                       .where(kernels.c.session_uuid == sess_ctx.session_uuid))
+                       .where(kernels.c.session_id == sess_ctx.session_id))
             await db_conn.execute(query)
 
         return PredicateResult(
@@ -170,7 +170,7 @@ async def check_group_resource_limit(
         ) -> None:
             query = (sa.update(kernels)
                        .values(status_info='out-of-resource (group resource quota exceeded)')
-                       .where(kernels.c.session_uuid == sess_ctx.session_uuid))
+                       .where(kernels.c.session_id == sess_ctx.session_id))
             await db_conn.execute(query)
 
         return PredicateResult(
@@ -211,7 +211,7 @@ async def check_domain_resource_limit(
         ) -> None:
             query = (sa.update(kernels)
                        .values(status_info='out-of-resource (domain resource quota exceeded)')
-                       .where(kernels.c.session_uuid == sess_ctx.session_uuid))
+                       .where(kernels.c.session_id == sess_ctx.session_id))
             await db_conn.execute(query)
 
         return PredicateResult(
@@ -262,7 +262,7 @@ async def check_scaling_group(
         ) -> None:
             query = (sa.update(kernels)
                        .values(status_info='out-of-resource (no scaling groups available)')
-                       .where(kernels.c.session_uuid == sess_ctx.session_uuid))
+                       .where(kernels.c.session_id == sess_ctx.session_id))
             await db_conn.execute(query)
 
         return PredicateResult(False, 'No available resource in scaling groups.',
