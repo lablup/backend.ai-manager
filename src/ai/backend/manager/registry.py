@@ -1452,14 +1452,17 @@ class AgentRegistry:
 
             # Check and update status of the agent record in DB
             async with self.dbpool.acquire() as conn, conn.begin():
-                query = (sa.select([agents.c.status,
-                                    agents.c.addr,
-                                    agents.c.scaling_group,
-                                    agents.c.available_slots,
-                                    agents.c.clusterized],
-                                   for_update=True)
-                           .select_from(agents)
-                           .where(agents.c.id == agent_id))
+                query = (
+                    sa.select([
+                        agents.c.status,
+                        agents.c.addr,
+                        agents.c.scaling_group,
+                        agents.c.available_slots,
+                        agents.c.clusterized,
+                    ], for_update=True)
+                    .select_from(agents)
+                    .where(agents.c.id == agent_id)
+                )
                 result = await conn.execute(query)
                 row = await result.first()
 
@@ -1498,7 +1501,7 @@ class AgentRegistry:
                         updates['available_slots'] = available_slots
                     if row['scaling_group'] != sgroup:
                         updates['scaling_group'] = sgroup
-                    if row.clusterized != agent_info.get('swarm_enabled', False):
+                    if row['clusterized'] != agent_info.get('swarm_enabled', False):
                         updates['clusterized'] = agent_info.get('swarm_enabled', False)
                     if row['addr'] != current_addr:
                         updates['addr'] = current_addr
@@ -1513,22 +1516,24 @@ class AgentRegistry:
                 elif row['status'] in (AgentStatus.LOST, AgentStatus.TERMINATED):
                     await self.config_server.update_resource_slots(slot_key_and_units)
                     instance_rejoin = True
-                    query = (sa.update(agents)
-                               .values({
-                                   'status': AgentStatus.ALIVE,
-                                   'region': agent_info['region'],
-                                   'scaling_group': sgroup,
-                                   'addr': agent_info['addr'],
-                                   'lost_at': None,
-                                   'available_slots': available_slots,
-                                   'version': agent_info['version'],
-                                   'compute_plugins': agent_info['compute_plugins'],
-                                   'clusterized': agent_info.get('swarm_enabled', False)
-                               })
-                               .where(agents.c.id == agent_id))
+                    query = (
+                        sa.update(agents)
+                        .values({
+                            'status': AgentStatus.ALIVE,
+                            'region': agent_info['region'],
+                            'scaling_group': sgroup,
+                            'addr': agent_info['addr'],
+                            'lost_at': None,
+                            'available_slots': available_slots,
+                            'version': agent_info['version'],
+                            'compute_plugins': agent_info['compute_plugins'],
+                            'clusterized': agent_info.get('swarm_enabled', False)
+                        })
+                        .where(agents.c.id == agent_id)
+                    )
                     await conn.execute(query)
                 else:
-                    log.error('should not reach here! {0}', type(row.status))
+                    log.error('should not reach here! {0}', type(row['status']))
 
             if instance_rejoin:
                 await self.event_dispatcher.produce_event(
