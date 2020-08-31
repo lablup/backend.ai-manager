@@ -107,7 +107,6 @@ def dbshell(cli_ctx, container_name, psql_help, psql_args):
     # Use the container to start the psql client command
     cmd = [
         'docker', 'exec', '-i', '-t',
-        '-e', f"PGPASSWORD={config['db']['password']}",
         container_name,
         'psql',
         '-U', config['db']['user'],
