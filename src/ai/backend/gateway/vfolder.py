@@ -1262,12 +1262,16 @@ async def update_shared_vfolder(request: web.Request, params: Any) -> web.Respon
     '''
     Update permission for shared vfolders.
 
+    If params['user'] has int value of 0, request['user'] is used.
     If params['perm'] is None, remove user's permission for the vfolder.
     '''
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
     vfolder_id = params['vfolder']
-    user_uuid = params['user']
+    if int(params['user']) == 0:
+        user_uuid = request['user']['uuid']
+    else:
+        user_uuid = params['user']
     perm = params['perm']
     log.info('VFOLDER.UPDATE_SHARED_VFOLDER(ak:{}, vfid:{}, uid:{}, perm:{})',
              access_key, vfolder_id, user_uuid, perm)
