@@ -3,6 +3,7 @@ import logging
 import os
 from setproctitle import setproctitle
 import subprocess
+import sys
 from typing import Any, Mapping
 from pathlib import Path
 
@@ -52,36 +53,55 @@ def main(ctx, config_path, debug):
     atexit.register(_clean_logger)
 
 
-@main.command()
-@click.option('-d', '--dockerize', is_flag=True,
-              help='Assume dockerized db instance. It creates a '
-                   'temporary pgsql shell container. [default: false]')
-@click.option('--docker-network', default='backend_ai_default',
-              help='The network name to attach the shell container. '
-                   '(used only with --dockerize) '
-                   '[default: backend_ai_default]')
-@click.option('--docker-dbaddr', default='backendai-db',
-              help='The address of the database host in the container. '
-                   '(used only with --dockerize) [default: backendai-db]')
+@main.command(context_settings=dict(
+    ignore_unknown_options=True,
+))
+@click.option('-c', '--container-name', type=str, default=None,
+              help='Open a postgres client shell using the psql executable '
+                   'shipped with the given postgres container. '
+                   'If set "-", it will use the host-provided psql executable. '
+                   'You may append additional arguments for the psql cli command. '
+                   '[default: auto-detect from halfstack]')
+@click.option('--psql-help', is_flag=True,
+              help='Show the help text of the psql command.')
+@click.argument('psql_args', nargs=-1, type=click.UNPROCESSED)
 @click.pass_obj
-def dbshell(cli_ctx, dockerize, docker_network, docker_dbaddr):
+def dbshell(cli_ctx, container_name, psql_help, psql_args):
     '''Run the database shell.'''
     config = cli_ctx.config
-    if dockerize:
-        cmd = [
-            'docker', 'run', '--rm', '-i', '-t',
-            '--network', docker_network,
-            'postgres:9.6-alpine',
-            'psql',
-            (f"postgres://{config['db']['user']}:{config['db']['password']}"
-             f"@{docker_dbaddr}/{config['db']['name']}"),
-        ]
-    else:
+    if psql_help:
+        psql_args = ['--help']
+    if container_name is None:
+        # Try to get the database container name of the halfstack
+        candidate_container_names = subprocess.check_output(
+            ['docker', 'ps', '--format', '{{.Names}}', '--filter', 'name=half-db'],
+        )
+        if not candidate_container_names:
+            click.echo("Could not find the halfstack postgres container. "
+                       "Please set the container name explicitly.",
+                       err=True)
+            sys.exit(1)
+        container_name = candidate_container_names.decode().splitlines()[0].strip()
+    elif container_name == '-':
+        # Use the host-provided psql command
         cmd = [
             'psql',
             (f"postgres://{config['db']['user']}:{config['db']['password']}"
              f"@{config['db']['addr']}/{config['db']['name']}"),
+            *psql_args,
         ]
+        subprocess.call(cmd)
+        return
+    # Use the container to start the psql client command
+    cmd = [
+        'docker', 'exec', '-i', '-t',
+        '-e', f"PGPASSWORD={config['db']['password']}",
+        container_name,
+        'psql',
+        '-U', config['db']['user'],
+        '-d', config['db']['name'],
+        *psql_args,
+    ]
     subprocess.call(cmd)
 
 
