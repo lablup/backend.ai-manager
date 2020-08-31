@@ -56,22 +56,34 @@ def main(ctx, config_path, debug):
 @main.command(context_settings=dict(
     ignore_unknown_options=True,
 ))
-@click.option('-c', '--container-name', type=str, default=None,
+@click.option('--psql-container', 'container_name', type=str, default=None,
+              metavar='ID_OR_NAME',
               help='Open a postgres client shell using the psql executable '
                    'shipped with the given postgres container. '
+                   'If not set or set as an empty string "", it will auto-detect '
+                   'the psql container from the halfstack. '
                    'If set "-", it will use the host-provided psql executable. '
-                   'You may append additional arguments for the psql cli command. '
+                   'You may append additional arguments passed to the psql cli command. '
                    '[default: auto-detect from halfstack]')
 @click.option('--psql-help', is_flag=True,
-              help='Show the help text of the psql command.')
+              help='Show the help text of the psql command instead of '
+                   'this dbshell command.')
 @click.argument('psql_args', nargs=-1, type=click.UNPROCESSED)
 @click.pass_obj
 def dbshell(cli_ctx, container_name, psql_help, psql_args):
-    '''Run the database shell.'''
+    """
+    Run the database shell.
+
+    All arguments except `--psql-container` and `--psql-help` are transparently
+    forwarded to the psql command.  For instance, you can use `-c` to execute a
+    psql/SQL statement on the command line.  Note that you do not have to specify
+    connection-related options because the dbshell command fills out them from the
+    manager configuration.
+    """
     config = cli_ctx.config
     if psql_help:
         psql_args = ['--help']
-    if container_name is None:
+    if not container_name:
         # Try to get the database container name of the halfstack
         candidate_container_names = subprocess.check_output(
             ['docker', 'ps', '--format', '{{.Names}}', '--filter', 'name=half-db'],
