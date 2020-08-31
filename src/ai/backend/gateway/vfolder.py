@@ -1211,7 +1211,6 @@ async def leave(request: web.Request, row: VFolderRow) -> web.Response:
 
     Cannot leave a group vfolder or a vfolder that the requesting user owns.
     '''
-    print(row['ownership_type'], row['is_owner'])
     if row['ownership_type'] == VFolderOwnershipType.GROUP:
         raise InvalidAPIParameters('Cannot leave a group vfolder.')
     if row['is_owner']:
