@@ -45,7 +45,9 @@ from ai.backend.common.exception import (
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.utils import str_to_timedelta
 from ai.backend.common.types import (
-    AgentId, KernelId,
+    AgentId,
+    KernelId,
+    ClusterMode,
     SessionTypes,
 )
 from ai.backend.common.plugin.monitor import GAUGE
@@ -156,6 +158,15 @@ creation_config_v4_template = t.Dict({
     t.Key('resources', default=undefined): UndefChecker | t.Null | t.Mapping(t.String, t.Any),
     tx.AliasedKey(['resource_opts', 'resourceOpts'], default=undefined):
         UndefChecker | t.Null | t.Mapping(t.String, t.Any),
+})
+creation_config_v5 = t.Dict({
+    **creation_config_v4,
+    tx.AliasedKey(['cluster_mode', 'clusterMode'], default=None): t.Null | tx.Enum(ClusterMode),
+})
+creation_config_v5_template = t.Dict({
+    **creation_config_v4_template,
+    tx.AliasedKey(['cluster_mode', 'clusterMode'], default=undefined):
+        UndefChecker | t.Null | tx.Enum(ClusterMode),
 })
 
 
@@ -426,6 +437,8 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             group_id=group_id,
             user_uuid=owner_uuid,
             user_role=request['user']['role'],
+            cluster_mode=params['cluster_mode'],
+            cluster_size=params['cluster_size'],
             startup_command=params['startup_command'],
             session_tag=params['tag'],
             starts_at=starts_at,
@@ -530,7 +543,9 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
 
     api_version = request['api_version']
     try:
-        if 5 <= api_version[0]:
+        if 6 <= api_version[0]:
+            params['config'] = creation_config_v5_template.check(params['config'])
+        elif 5 <= api_version[0]:
             params['config'] = creation_config_v4_template.check(params['config'])
         elif (4, '20190315') <= api_version:
             params['config'] = creation_config_v3_template.check(params['config'])
@@ -664,7 +679,9 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
         raise InvalidAPIParameters(f'Requested session ID {params["session_name"]} is reserved word')
 
     api_version = request['api_version']
-    if 5 <= api_version[0]:
+    if 6 <= api_version[0]:
+        creation_config = creation_config_v5.check(params['config'])
+    elif 5 <= api_version[0]:
         creation_config = creation_config_v4.check(params['config'])
     elif (4, '20190315') <= api_version:
         creation_config = creation_config_v3.check(params['config'])
