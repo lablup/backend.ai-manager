@@ -56,6 +56,7 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.stream'))
 @adefer
 async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
     app = request.app
+    config = app['config']
     registry = app['registry']
     session_name = request.match_info['session_name']
     access_key = request['keypair']['access_key']
@@ -70,7 +71,7 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
     log.info('STREAM_PTY(ak:{0}, s:{1})', access_key, session_name)
 
     await asyncio.shield(registry.increment_session_usage(session_name, access_key))
-    ws = web.WebSocketResponse()
+    ws = web.WebSocketResponse(max_msg_size=config['manager']['max-wsmsg-size'])
     await ws.prepare(request)
 
     myself = asyncio.Task.current_task()
@@ -223,6 +224,7 @@ async def stream_execute(defer, request: web.Request) -> web.StreamResponse:
     WebSocket-version of gateway.kernel.execute().
     '''
     app = request.app
+    config = app['config']
     registry = app['registry']
     session_name = request.match_info['session_name']
     access_key = request['keypair']['access_key']
@@ -235,7 +237,7 @@ async def stream_execute(defer, request: web.Request) -> web.StreamResponse:
         raise
 
     await asyncio.shield(registry.increment_session_usage(session_name, access_key))
-    ws = web.WebSocketResponse()
+    ws = web.WebSocketResponse(max_msg_size=config['manager']['max-wsmsg-size'])
     await ws.prepare(request)
 
     myself = asyncio.Task.current_task()
@@ -340,6 +342,7 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
     session_name = request.match_info['session_name']
     access_key = request['keypair']['access_key']
     service = params['app']
+    config = request.app['config']
 
     stream_key = (session_name, access_key)
     myself = asyncio.Task.current_task()
@@ -416,7 +419,7 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
                 extra_data=result['error'])
 
         # TODO: weakref to proxies for graceful shutdown?
-        ws = web.WebSocketResponse(autoping=False)
+        ws = web.WebSocketResponse(autoping=False, max_msg_size=config['manager']['max-wsmsg-size'])
         await ws.prepare(request)
         proxy = proxy_cls(ws, dest[0], dest[1],
                           downstream_callback=down_cb,
