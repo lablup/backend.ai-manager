@@ -366,7 +366,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                 'is_owner': is_owner,
                 'permission': row.vfolders_permission,
                 'unmanaged_path': row.get('unmanaged_path'),
-                'clone_allowed': row.clone_allowed,
+                'clone_allowed': row.vfolders_clone_allowed,
             })
     return entries
 

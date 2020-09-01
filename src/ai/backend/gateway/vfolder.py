@@ -197,6 +197,7 @@ def vfolder_check_exists(handler: Callable[..., Awaitable[web.Response]]):
         t.Key('permission', default='rw'): tx.Enum(VFolderPermission) | t.Null,
         tx.AliasedKey(['unmanaged_path', 'unmanagedPath'], default=None): t.String | t.Null,
         tx.AliasedKey(['group', 'groupId', 'group_id'], default=None): tx.UUID | t.String | t.Null,
+        t.Key('clone_allowed', default=False): t.Bool
     }),
 )
 async def create(request: web.Request, params: Any) -> web.Response:
@@ -337,6 +338,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'user': user_uuid,
             'group': group_uuid,
             'unmanaged_path': '',
+            'clone_allowed': params['clone_allowed'],
         }
         resp = {
             'id': folder_id.hex,
@@ -348,6 +350,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'ownership_type': ownership_type,
             'user': user_uuid,
             'group': group_uuid,
+            'clone_allowed': params['clone_allowed'],
         }
         if unmanaged_path:
             insert_values.update({
