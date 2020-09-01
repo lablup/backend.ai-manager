@@ -1215,9 +1215,6 @@ async def delete(request: web.Request) -> web.Response:
     })
 )
 async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
-    print(row)
-    print(params['target_name'])
-
     resp: Dict[str, Any] = {}
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
@@ -1228,11 +1225,13 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     log.info('VFOLDER.CLONE (ak:{}, vf:{}, vft:{}, vfh:{}, umod:{}, perm:{})',
              access_key, row['name'], params['target_name'], params['folder_host'],
              params['usage_mode'].value, params['permission'].value)
-    folder_host = params['folder_host']
-    if not folder_host:
-        folder_host = \
+    source_folder_host = row['host']
+    target_folder_host = params['folder_host']
+
+    if not target_folder_host:
+        target_folder_host = \
             await request.app['config_server'].etcd.get('volumes/default_host')
-        if not folder_host:
+        if not target_folder_host:
             raise InvalidAPIParameters(
                 'You must specify the vfolder host '
                 'because the default host is not configured.')
@@ -1251,7 +1250,7 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
         allowed_hosts = await get_allowed_vfolder_hosts_by_user(conn, resource_policy,
                                                                 domain_name, user_uuid)
         # TODO: handle legacy host lists assuming that volume names don't overlap?
-        if folder_host not in allowed_hosts:
+        if target_folder_host not in allowed_hosts:
             raise InvalidAPIParameters('You are not allowed to use this vfolder host.')
 
         # Check resource policy's max_vfolder_count
@@ -1264,7 +1263,7 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
 
         # Prevent creation of vfolder with duplicated name.
         extra_vf_conds = [vfolders.c.name == params['target_name']]
-        extra_vf_conds.append(vfolders.c.host == folder_host)
+        extra_vf_conds.append(vfolders.c.host == target_folder_host)
         entries = await query_accessible_vfolders(
             conn, user_uuid,
             user_role=user_role, domain_name=domain_name,
@@ -1284,78 +1283,64 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
 
         # TODO: Check if volumeh as enough memory
         # Requires implementation of storage manager API to return availalbe space
-        # storage_manager = request.app['storage_manager']
-        # source_proxy_name, source_volume_name = storage_manager.split_host(row['host'])
-        # print(storage_manager)
-        # print(source_proxy_name, source_volume_name)
-        # async with storage_manager.request(
-        #     source_proxy_name, 'GET', 'folder/usage',
-        #     json={
-        #         'volume': source_volume_name,
-        #         'vfid': str(row['id']),
-        #     },
-        #     raise_for_status=True,
-        # ) as (_, storage_resp):
-        #     source_usage = await storage_resp.json()
-        # print(source_usage)
-        # then get available memory and check source_usage['used_bytes'] < available_memory
+        # Call 'GET' request to 'folder/usage' endpoint of target_folder_host
 
-        # try:
-        #     folder_id = uuid.uuid4()
-        #     storage_manager = request.app['storage_manager']
-        #     async with storage_manager.request(
-        #         folder_host, 'POST', 'folder/clone',
-        #         json={
-        #             'volume': storage_manager.split_host(folder_host)[1],
-        #             'vfid': str(folder_id),
-        #         },
-        #         raise_for_status=True,
-        #     ):
-        #         pass
-        # except aiohttp.ClientResponseError:
-        #     raise VFolderCreationFailed
-    #     user_uuid = str(user_uuid) if group_id is None else None
-    #     group_uuid = str(group_id) if group_id is not None else None
-    #     ownership_type = 'group' if group_uuid is not None else 'user'
-    #     insert_values = {
-    #         'id': folder_id.hex,
-    #         'name': params['name'],
-    #         'usage_mode': params['usage_mode'],
-    #         'permission': params['permission'],
-    #         'last_used': None,
-    #         'host': folder_host,
-    #         'creator': request['user']['email'],
-    #         'ownership_type': VFolderOwnershipType(ownership_type),
-    #         'user': user_uuid,
-    #         'group': group_uuid,
-    #         'unmanaged_path': '',
-    #     }
-    #     resp = {
-    #         'id': folder_id.hex,
-    #         'name': params['name'],
-    #         'host': folder_host,
-    #         'usage_mode': params['usage_mode'].value,
-    #         'permission': params['permission'].value,
-    #         'creator': request['user']['email'],
-    #         'ownership_type': ownership_type,
-    #         'user': user_uuid,
-    #         'group': group_uuid,
-    #     }
-    #     if unmanaged_path:
-    #         insert_values.update({
-    #             'host': '',
-    #             'unmanaged_path': unmanaged_path
-    #         })
-    #         resp['unmanaged_path'] = unmanaged_path
-    #     query = (vfolders.insert().values(insert_values))
-    #     try:
-    #         result = await conn.execute(query)
-    #     except psycopg2.DataError:
-    #         raise InvalidAPIParameters
-    #     assert result.rowcount == 1
-    # return web.json_response(resp, status=201)
+        storage_manager = request.app['storage_manager']
+        source_proxy_name, source_volume_name = storage_manager.split_host(source_folder_host)
+        target_proxy_name, target_volume_name = storage_manager.split_host(target_folder_host)
+        if source_proxy_name != target_proxy_name:
+            raise InvalidAPIParameters('proxy name of source and target vfolders must be equal.')
 
-    return web.Response(status=201)
+        try:
+            folder_id = uuid.uuid4()
+            async with storage_manager.request(
+                source_folder_host, 'POST', 'folder/clone',
+                json={
+                    'src_volume': source_volume_name,
+                    'src_vfid': str(row['id']),
+                    'new_volume': target_volume_name,
+                    'new_vfid': str(folder_id),
+                },
+                raise_for_status=True,
+            ):
+                pass
+        except aiohttp.ClientResponseError:
+            raise VFolderCreationFailed
+
+        user_uuid = str(user_uuid)
+        group_uuid = None
+        ownership_type = 'user'
+        insert_values = {
+            'id': folder_id.hex,
+            'name': params['target_name'],
+            'usage_mode': params['usage_mode'],
+            'permission': params['permission'],
+            'last_used': None,
+            'host': target_folder_host,
+            'creator': request['user']['email'],
+            'ownership_type': VFolderOwnershipType(ownership_type),
+            'user': user_uuid,
+            'group': group_uuid,
+            'unmanaged_path': '',
+        }
+        resp = {
+            'id': folder_id.hex,
+            'name': params['target_name'],
+            'host': target_folder_host,
+            'usage_mode': params['usage_mode'].value,
+            'permission': params['permission'].value,
+            'creator': request['user']['email'],
+            'ownership_type': ownership_type,
+            'user': user_uuid,
+            'group': group_uuid,
+        }
+        query = (vfolders.insert().values(insert_values))
+        try:
+            result = await conn.execute(query)
+        except psycopg2.DataError:
+            raise InvalidAPIParameters
+        assert result.rowcount == 1
+    return web.json_response(resp, status=201)
 
 
 @atomic
