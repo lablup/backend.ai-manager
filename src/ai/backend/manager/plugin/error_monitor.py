@@ -9,15 +9,15 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     AgentId
 )
-from ai.backend.common.plugin import AbstractPlugin
+from ai.backend.common.plugin.monitor import AbstractErrorReporterPlugin
 from ..models import error_logs, LogSeverity
 from .exceptions import PluginError
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 
 
-class ErrorMonitor(AbstractPlugin):
-    async def init(self, context: Any = None) -> None:
+class ErrorMonitor(AbstractErrorReporterPlugin):
+    async def init(self, context: Mapping[str, Any] = None) -> None:
         if context is None or 'app' not in context:
             raise PluginError('App was not passed in to ErrorMonitor plugin')
         app = context['app']
@@ -30,8 +30,11 @@ class ErrorMonitor(AbstractPlugin):
     async def update_plugin_config(self, plugin_config: Mapping[str, Any]) -> None:
         pass
 
+    async def capture_message(self, message: str) -> None:
+        pass
+
     async def capture_exception(self, exc: Optional[BaseException] = None, user: Any = None,
-                                context_env: Any = None,
+                                context_env: Mapping[str, Any] = None,
                                 severity: Optional[LogSeverity] = None):
         if exc:
             tb = exc.__traceback__
@@ -57,7 +60,7 @@ class ErrorMonitor(AbstractPlugin):
                                  message: str,
                                  traceback: str = None,
                                  user: Any = None,
-                                 context_env: Any = None,
+                                 context_env: Mapping[str, Any] = None,
                                  severity: LogSeverity = None) -> None:
         if severity is None:
             severity = LogSeverity.ERROR
