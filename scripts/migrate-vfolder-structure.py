@@ -1,34 +1,35 @@
 import sys
-import os
+from pathlib import Path
 
 
 def main():
-    input_path = sys.argv[1]  # full path for vroot/local
-    output_path = sys.argv[2]  # full path for volume directory. ex. vfs/
+    input_path = Path(sys.argv[1])  # full path for vroot/local
+    output_path = Path(sys.argv[2])  # full path for volume directory. ex. vfs/
     print(input_path, output_path)
+    subfolders = [x for x in input_path.iterdir() if x.is_dir()]
 
-    subfolders = [f.path for f in os.scandir(input_path) if f.is_dir()]
     print("Subfolders ", subfolders)
+
     for folder in subfolders:
-
+        folder = str(folder)
         folder = folder.split("/")[-1]
-        header_dir = folder[0:2]
-        second_lvl_dir = folder[2:4]
-        rest_dir = folder[4:]
+        header_dir = Path(folder[0:2])
+        second_lvl_dir = Path(folder[2:4])
+        rest_dir = Path(folder[4:])
 
-        list_of_files = os.listdir(input_path + "/" + folder)
-        print(list_of_files)
+        root = Path(input_path / Path(folder))
+        list_of_files = [x for x in root.iterdir() if x.is_file()]
         print("list of files ", list_of_files)
-        try:
-            if not os.path.isdir(output_path + "/" + header_dir):
-                os.mkdir(output_path + "/" + header_dir)
-            if not os.path.isdir(output_path + "/" + header_dir + "/" + second_lvl_dir):
-                os.mkdir(output_path + "/" + header_dir + "/" + second_lvl_dir)
-            if not os.path.isdir(output_path + "/" + header_dir + "/" + second_lvl_dir + "/" + rest_dir):
-                os.mkdir(output_path + "/" + header_dir + "/" + second_lvl_dir + "/" + rest_dir)
 
-            os.rename(input_path + "/" + folder, output_path + "/" + header_dir + "/"
-                      + second_lvl_dir + "/" + rest_dir)
+        try:
+            if not Path.is_dir(output_path / header_dir):
+                Path.mkdir(output_path / header_dir)
+            if not Path.is_dir(output_path / header_dir / second_lvl_dir):
+                Path.mkdir(output_path / header_dir / second_lvl_dir)
+            if not Path.is_dir(output_path / header_dir / second_lvl_dir / rest_dir):
+                Path.mkdir(output_path / header_dir / second_lvl_dir / rest_dir)
+
+            Path.rename(input_path / folder, output_path / header_dir / second_lvl_dir / rest_dir)
 
         except OSError:
             print("Creation of the directories failed")
