@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime
 import functools
 import importlib
+import json
 import logging
 import multiprocessing
 import os
@@ -30,6 +31,7 @@ import aiohttp_cors
 import aiojobs.aiohttp
 import aiotools
 from aiopg.sa import create_engine
+from aiopg.sa.engine import get_dialect
 import click
 from pathlib import Path
 from setproctitle import setproctitle
@@ -38,6 +40,7 @@ from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.config import redis_config_iv
 from ai.backend.common.utils import env_info, current_loop
+from ai.backend.common.json import ExtendedJSONEncoder
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from ai.backend.common.plugin.hook import HookPluginContext, ALL_COMPLETED, PASSED
 from ai.backend.common.plugin.monitor import (
@@ -322,6 +325,9 @@ async def database_ctx(app: web.Application) -> AsyncIterator[None]:
         echo=bool(app['config']['logging']['level'] == 'DEBUG'),
         minsize=8, maxsize=256,
         timeout=60, pool_recycle=120,
+        dialect=get_dialect(
+            json_serializer=functools.partial(json.dumps, cls=ExtendedJSONEncoder),
+        ),
     )
     _update_public_interface_objs(app)
     yield
