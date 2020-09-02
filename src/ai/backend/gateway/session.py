@@ -160,13 +160,32 @@ creation_config_v4_template = t.Dict({
         UndefChecker | t.Null | t.Mapping(t.String, t.Any),
 })
 creation_config_v5 = t.Dict({
-    **creation_config_v4,
-    tx.AliasedKey(['cluster_mode', 'clusterMode'], default=None): t.Null | tx.Enum(ClusterMode),
+    t.Key('mounts', default=None): t.Null | t.List(t.String),
+    tx.AliasedKey(['mount_map', 'mountMap'], default=None):
+        t.Null | t.Mapping(t.String, t.String),
+    t.Key('environ', default=None): t.Null | t.Mapping(t.String, t.String),
+    tx.AliasedKey(['cluster_size', 'clusterSize'], default=None): t.Null | t.Int[1:],
+    tx.AliasedKey(['cluster_mode', 'clusterMode'], default=None):  # new in v5
+        t.Null | tx.Enum(ClusterMode),
+    tx.AliasedKey(['scaling_group', 'scalingGroup'], default=None): t.Null | t.String,
+    t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
+    tx.AliasedKey(['resource_opts', 'resourceOpts'], default=None): t.Null | t.Mapping(t.String, t.Any),
+    tx.AliasedKey(['preopen_ports', 'preopenPorts'], default=None): t.Null | t.List(t.Int[1024:65535]),
 })
 creation_config_v5_template = t.Dict({
-    **creation_config_v4_template,
-    tx.AliasedKey(['cluster_mode', 'clusterMode'], default=undefined):
+    t.Key('mounts', default=undefined): UndefChecker | t.Null | t.List(t.String),
+    tx.AliasedKey(['mount_map', 'mountMap'], default=undefined):
+        UndefChecker | t.Null | t.Mapping(t.String, t.String),
+    t.Key('environ', default=undefined): UndefChecker | t.Null | t.Mapping(t.String, t.String),
+    tx.AliasedKey(['cluster_mode', 'clusterMode'], default=undefined):  # new in v5
         UndefChecker | t.Null | tx.Enum(ClusterMode),
+    tx.AliasedKey(['cluster_size', 'clusterSize'], default=undefined):
+        UndefChecker | t.Null | t.Int[1:],
+    tx.AliasedKey(['scaling_group', 'scalingGroup'], default=undefined):
+        UndefChecker | t.Null | t.String,
+    t.Key('resources', default=undefined): UndefChecker | t.Null | t.Mapping(t.String, t.Any),
+    tx.AliasedKey(['resource_opts', 'resourceOpts'], default=undefined):
+        UndefChecker | t.Null | t.Mapping(t.String, t.Any),
 })
 
 
