@@ -400,7 +400,7 @@ class AgentRegistry:
             (kernels.c.access_key == access_key)
         )
         cond_name = (
-            (kernels.c.session_id.like(f'{session_name_or_id}%')) &
+            (kernels.c.session_name.like(f'{session_name_or_id}%')) &
             (kernels.c.access_key == access_key)
         )
         cond_session_id = (
