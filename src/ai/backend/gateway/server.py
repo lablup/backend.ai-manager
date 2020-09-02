@@ -420,7 +420,7 @@ def handle_loop_error(
             exc_info = (type(exception), exception, exception.__traceback__)
             log.error('Error inside event loop: {0}', msg, exc_info=exc_info)
             if 'error_monitor' in root_app:
-                loop.create_task(root_app['error_monitor'].capture_exception(exception))
+                loop.create_task(root_app['error_monitor'].capture_exception(exc_instance=exception))
 
 
 def _init_subapp(pkg_name: str,

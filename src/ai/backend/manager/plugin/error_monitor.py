@@ -1,7 +1,7 @@
 import logging
 import sys
 import traceback
-from typing import Any, Optional, Mapping
+from typing import Any, Mapping
 
 from aiohttp import web
 
@@ -9,14 +9,14 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     AgentId
 )
-from ai.backend.common.plugin import AbstractPlugin
+from ai.backend.common.plugin.monitor import AbstractErrorReporterPlugin
 from ..models import error_logs, LogSeverity
 from .exceptions import PluginError
 
-log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
+log = BraceStyleAdapter(logging.getLogger(__name__))
 
 
-class ErrorMonitor(AbstractPlugin):
+class ErrorMonitor(AbstractErrorReporterPlugin):
     async def init(self, context: Any = None) -> None:
         if context is None or 'app' not in context:
             raise PluginError('App was not passed in to ErrorMonitor plugin')
@@ -30,16 +30,26 @@ class ErrorMonitor(AbstractPlugin):
     async def update_plugin_config(self, plugin_config: Mapping[str, Any]) -> None:
         pass
 
-    async def capture_exception(self, exc: Optional[BaseException] = None, user: Any = None,
-                                context_env: Any = None,
-                                severity: Optional[LogSeverity] = None):
-        if exc:
-            tb = exc.__traceback__
+    async def capture_message(self, message: str) -> None:
+        pass
+
+    async def capture_exception(self, exc_instance: Exception = None,
+                                context: Mapping[str, Any] = None) -> None:
+        if exc_instance:
+            tb = exc_instance.__traceback__
         else:
             _, exc, tb = sys.exc_info()
         exc_type: Any = type(exc)
-        if severity is None:
+
+        if context is None or 'severity' not in context:
             severity = LogSeverity.ERROR
+        else:
+            severity = context['severity']
+        if context is None or 'user' not in context:
+            user = None
+        else:
+            user = context['user']
+
         async with self.dbpool.acquire() as conn, conn.begin():
             query = error_logs.insert().values({
                 'severity': severity,
@@ -47,7 +57,7 @@ class ErrorMonitor(AbstractPlugin):
                 'user': user,
                 'message': ''.join(traceback.format_exception_only(exc_type, exc)).strip(),
                 'context_lang': 'python',
-                'context_env': context_env,
+                'context_env': context,
                 'traceback': ''.join(traceback.format_tb(tb)).strip()
             })
             await conn.execute(query)
@@ -57,7 +67,7 @@ class ErrorMonitor(AbstractPlugin):
                                  message: str,
                                  traceback: str = None,
                                  user: Any = None,
-                                 context_env: Any = None,
+                                 context_env: Mapping[str, Any] = None,
                                  severity: LogSeverity = None) -> None:
         if severity is None:
             severity = LogSeverity.ERROR
