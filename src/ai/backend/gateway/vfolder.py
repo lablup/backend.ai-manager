@@ -654,6 +654,37 @@ async def rename_vfolder(request: web.Request, params: Any, row: VFolderRow) -> 
     return web.Response(status=201)
 
 
+@atomic
+@auth_required
+@server_status_required(ALL_ALLOWED)
+@vfolder_permission_required(VFolderPermission.OWNER_PERM)
+@check_api_params(
+    t.Dict({
+        t.Key('clone_allowed', default=None): t.Bool | t.Null,
+        t.Key('permission', default=None): tx.Enum(VFolderPermission) | t.Null
+    }))
+async def update_vfolder_options(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
+    updated_fields = {}
+    if params['clone_allowed'] and params['clone_allowed'] != row['clone_allowed']:
+        updated_fields['clone_allowed'] = params['clone_allowed']
+    if params['permission'] and params['permission'] != row['permission']:
+        updated_fields['permission'] = params['permission']
+    if not row['is_owner']:
+        raise InvalidAPIParameters(
+            'Cannot change the options of a vfolder '
+            'that is not owned by myself.')
+
+    dbpool = request.app['dbpool']
+    if len(updated_fields) > 0:
+        async with dbpool.acquire() as conn:
+            query = (
+                sa.update(vfolders)
+                .values(**updated_fields)
+                .where(vfolders.c.id == row['id']))
+            await conn.execute(query)
+    return web.Response(status=201)
+
+
 @auth_required
 @server_status_required(READ_ALLOWED)
 @vfolder_permission_required(VFolderPermission.READ_WRITE)
@@ -1231,6 +1262,10 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     source_folder_host = row['host']
     target_folder_host = params['folder_host']
 
+    # check if the source vfolder is allowed to be cloned
+    if not row['clone_allowed']:
+        raise GenericForbidden('The source vfolder is not permitted to be cloned.')
+
     if not target_folder_host:
         target_folder_host = \
             await request.app['config_server'].etcd.get('volumes/default_host')
@@ -1325,6 +1360,7 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
             'user': user_uuid,
             'group': group_uuid,
             'unmanaged_path': '',
+            'clone_allowed': False
         }
         resp = {
             'id': folder_id.hex,
@@ -1848,6 +1884,7 @@ def create_app(default_cors_options):
     cors.add(add_route('GET',    r'/_/allowed_types', list_allowed_types))  # legacy underbar
     cors.add(add_route('GET',    r'/_/perf-metric', get_volume_perf_metric))
     cors.add(add_route('POST',   r'/{name}/rename', rename_vfolder))
+    cors.add(add_route('POST',   r'/{name}/update-options', update_vfolder_options))
     cors.add(add_route('POST',   r'/{name}/mkdir', mkdir))
     cors.add(add_route('POST',   r'/{name}/request-upload', create_upload_session))
     cors.add(add_route('POST',   r'/{name}/request-download', create_download_session))
