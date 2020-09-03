@@ -164,9 +164,7 @@ creation_config_v5 = t.Dict({
     tx.AliasedKey(['mount_map', 'mountMap'], default=None):
         t.Null | t.Mapping(t.String, t.String),
     t.Key('environ', default=None): t.Null | t.Mapping(t.String, t.String),
-    tx.AliasedKey(['cluster_size', 'clusterSize'], default=None): t.Null | t.Int[1:],
-    tx.AliasedKey(['cluster_mode', 'clusterMode'], default=None):  # new in v5
-        t.Null | tx.Enum(ClusterMode),
+    # cluster_size is moved to the root-level parameters
     tx.AliasedKey(['scaling_group', 'scalingGroup'], default=None): t.Null | t.String,
     t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
     tx.AliasedKey(['resource_opts', 'resourceOpts'], default=None): t.Null | t.Mapping(t.String, t.Any),
@@ -177,10 +175,7 @@ creation_config_v5_template = t.Dict({
     tx.AliasedKey(['mount_map', 'mountMap'], default=undefined):
         UndefChecker | t.Null | t.Mapping(t.String, t.String),
     t.Key('environ', default=undefined): UndefChecker | t.Null | t.Mapping(t.String, t.String),
-    tx.AliasedKey(['cluster_mode', 'clusterMode'], default=undefined):  # new in v5
-        UndefChecker | t.Null | tx.Enum(ClusterMode),
-    tx.AliasedKey(['cluster_size', 'clusterSize'], default=undefined):
-        UndefChecker | t.Null | t.Int[1:],
+    # cluster_size is moved to the root-level parameters
     tx.AliasedKey(['scaling_group', 'scalingGroup'], default=undefined):
         UndefChecker | t.Null | t.String,
     t.Key('resources', default=undefined): UndefChecker | t.Null | t.Mapping(t.String, t.Any),
@@ -541,6 +536,10 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             tx.Enum(SessionTypes),
         tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
         tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
+        tx.AliasedKey(['cluster_size', 'clusterSize'], default=1):
+            t.Int[1:],             # new in APIv6
+        tx.AliasedKey(['cluster_mode', 'clusterMode'], default='single-node'):
+            tx.Enum(ClusterMode),  # new in APIv6
         t.Key('config', default=dict): t.Mapping(t.String, t.Any),
         t.Key('tag', default=undefined): UndefChecker | t.Null | t.String,
         t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
@@ -682,10 +681,14 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
             tx.Enum(SessionTypes),
         tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
         tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
+        tx.AliasedKey(['cluster_size', 'clusterSize'], default=1):
+            t.ToInt[1:],             # new in APIv6
+        tx.AliasedKey(['cluster_mode', 'clusterMode'], default='single-node'):
+            tx.Enum(ClusterMode),    # new in APIv6
         t.Key('config', default=dict): t.Mapping(t.String, t.Any),
         t.Key('tag', default=None): t.Null | t.String,
         t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
-        t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
+        t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.ToInt[0:],
         tx.AliasedKey(['starts_at', 'startsAt'], default=None): t.Null | t.String,
         t.Key('reuseIfExists', default=True) >> 'reuse': t.ToBool,
         t.Key('startupCommand', default=None) >> 'startup_command': t.Null | t.String,

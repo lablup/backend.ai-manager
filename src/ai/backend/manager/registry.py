@@ -49,6 +49,7 @@ from ai.backend.common.plugin.hook import (
 from ai.backend.common.types import (
     AccessKey,
     BinarySize,
+    ClusterMode,
     KernelCreationConfig,
     KernelEnqueueingConfig,
     KernelId,
@@ -578,11 +579,14 @@ class AgentRegistry:
         group_id: uuid.UUID,
         user_uuid: uuid.UUID,
         user_role: str,
+        cluster_mode: ClusterMode,
+        cluster_size: int = 1,
         startup_command: str = None,
         session_tag: str = None,
         internal_data: dict = None,
         starts_at: datetime = None,
     ) -> KernelId:
+
         mounts = kernel_configs[0]['creation_config'].get('mounts') or []
         mount_map = kernel_configs[0]['creation_config'].get('mount_map') or {}
         sess_uuid = uuid.uuid4()
@@ -654,6 +658,22 @@ class AgentRegistry:
 
         ids = []
         is_multicontainer = len(kernel_configs) > 1
+        if is_multicontainer:
+            if len(kernel_configs) == 1:
+                # the first kernel_config is repliacted to sub-containers
+                for i in range(cluster_size - 1):
+                    sub_kernel_config = {**kernel_configs[0]}
+                    sub_kernel_config['cluster_role'] = 'sub'
+                    sub_kernel_config['idx'] = (i + 1)
+                    kernel_configs.append(sub_kernel_config)
+            elif len(kernel_configs) > 1:
+                # each container should have its own kernel_config
+                if len(kernel_configs) != cluster_size:
+                    raise InvalidAPIParameters(
+                        "The number of kernel configs differs from the cluster size")
+            else:
+                raise InvalidAPIParameters("Missing kernel configurations")
+
         for kernel in kernel_configs:
             creation_config = kernel['creation_config']
             image_ref = kernel['image_ref']
@@ -794,6 +814,7 @@ class AgentRegistry:
                     'session_id': sess_uuid,
                     'session_name': session_name,
                     'session_type': session_type,
+                    'cluster_mode': cluster_mode.value,
                     'starts_at': starts_at,
                     'role': kernel['cluster_role'],
                     'idx': kernel['idx'] if is_multicontainer else None,
