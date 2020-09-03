@@ -33,13 +33,16 @@ class ErrorMonitor(AbstractErrorReporterPlugin):
     async def capture_message(self, message: str) -> None:
         pass
 
-    async def capture_exception(self, exc_instance: Exception = None,
-                                context: Mapping[str, Any] = None) -> None:
+    async def capture_exception(
+        self,
+        exc_instance: Exception = None,
+        context: Mapping[str, Any] = None,
+    ) -> None:
         if exc_instance:
             tb = exc_instance.__traceback__
         else:
-            _, exc, tb = sys.exc_info()
-        exc_type: Any = type(exc)
+            _, exc_instance, tb = sys.exc_info()
+        exc_type: Any = type(exc_instance)
 
         if context is None or 'severity' not in context:
             severity = LogSeverity.ERROR
@@ -55,20 +58,26 @@ class ErrorMonitor(AbstractErrorReporterPlugin):
                 'severity': severity,
                 'source': 'manager',
                 'user': user,
-                'message': ''.join(traceback.format_exception_only(exc_type, exc)).strip(),
+                'message': ''.join(traceback.format_exception_only(exc_type, exc_instance)).strip(),
                 'context_lang': 'python',
                 'context_env': context,
                 'traceback': ''.join(traceback.format_tb(tb)).strip()
             })
             await conn.execute(query)
-        log.debug('Manager log collected: {}', str(exc))
+        log.debug('Manager log collected: {}', str(exc_instance))
 
-    async def handle_agent_error(self, app: web.Application, agent_id: AgentId, event_name: str,
-                                 message: str,
-                                 traceback: str = None,
-                                 user: Any = None,
-                                 context_env: Mapping[str, Any] = None,
-                                 severity: LogSeverity = None) -> None:
+    async def handle_agent_error(
+        self,
+        app: web.Application,
+        agent_id: AgentId,
+        event_name: str,
+        # additional event args
+        message: str,
+        traceback: str = None,
+        user: Any = None,
+        context_env: Mapping[str, Any] = None,
+        severity: LogSeverity = None,
+    ) -> None:
         if severity is None:
             severity = LogSeverity.ERROR
         async with self.dbpool.acquire() as conn, conn.begin():
