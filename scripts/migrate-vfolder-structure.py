@@ -6,7 +6,7 @@ def main():
     input_path = Path(sys.argv[1])  # full path for vroot/local
     output_path = Path(sys.argv[2])  # full path for volume directory. ex. vfs/
     print(input_path, output_path)
-    subfolders = [x for x in input_path.iterdir() if x.is_dir()]
+    subfolders = [x for x in input_path.iterdir() if Path(x).is_dir()]
 
     print("Number of folders ", len(subfolders))
     try:
