@@ -49,6 +49,7 @@ class ErrorMonitor(AbstractErrorReporterPlugin):
                 # bypass BaseException as they are used for controlling the process/coroutine lifecycles
                 # instead of indicating actual errors
                 return
+            exc_instance = sys_exc_instance
         exc_type: Any = type(exc_instance)
 
         if context is None or 'severity' not in context:
