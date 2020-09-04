@@ -1,0 +1,1 @@
+Fix regression of the intrinsic error monitoring plugins which logs manager/agent internal errors into the database
