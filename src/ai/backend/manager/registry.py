@@ -22,6 +22,7 @@ from typing import (
     Tuple,
     TYPE_CHECKING,
     Union,
+    cast,
 )
 import uuid
 
@@ -662,7 +663,7 @@ class AgentRegistry:
             if len(kernel_configs) == 1:
                 # the first kernel_config is repliacted to sub-containers
                 for i in range(cluster_size - 1):
-                    sub_kernel_config = {**kernel_configs[0]}
+                    sub_kernel_config = cast(KernelEnqueueingConfig, {**kernel_configs[0]})
                     sub_kernel_config['cluster_role'] = 'sub'
                     sub_kernel_config['idx'] = (i + 1)
                     kernel_configs.append(sub_kernel_config)
