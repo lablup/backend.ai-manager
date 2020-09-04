@@ -41,7 +41,15 @@ class ErrorMonitor(AbstractErrorReporterPlugin):
         if exc_instance:
             tb = exc_instance.__traceback__
         else:
-            _, exc_instance, tb = sys.exc_info()
+            _, sys_exc_instance, tb = sys.exc_info()
+            if (
+                isinstance(sys_exc_instance, BaseException)
+                and not isinstance(sys_exc_instance, Exception)
+            ):
+                # bypass BaseException as they are used for controlling the process/coroutine lifecycles
+                # instead of indicating actual errors
+                return
+            exc_instance = sys_exc_instance
         exc_type: Any = type(exc_instance)
 
         if context is None or 'severity' not in context:
