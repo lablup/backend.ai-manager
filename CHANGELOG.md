@@ -16,6 +16,19 @@ Changes
 
 .. towncrier release notes start
 
+20.03.4 (2020-09-04)
+--------------------
+
+### Features
+* Add an endpoint that allows users to leave a shared virtual folder ([#317](https://github.com/lablup/backend.ai-manager/issues/317))
+* Make the `mgr dbshell` command to be smarter to auto-detect the halfstack db container and use the container-provided psql command for maximum compatibility, with an optinal ability to set the container ID or name explicitly via `--psql-container` option and forward additional arguments to the psql command ([#318](https://github.com/lablup/backend.ai-manager/issues/318))
+* Make the maximum websocket message size configurable, which affects the operation of streaming APIs including service-port proxy ([#320](https://github.com/lablup/backend.ai-manager/issues/320))
+
+### Fixes
+* Fix regression of the intrinsic error monitoring plugins which logs manager/agent internal errors into the database ([#321](https://github.com/lablup/backend.ai-manager/issues/321))
+* Deduplicate explicitly raised internal server errors in the daemon logs ([#322](https://github.com/lablup/backend.ai-manager/issues/322))
+
+
 20.03.3 (2020-08-27)
 --------------------
 
