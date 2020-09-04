@@ -56,6 +56,7 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.stream'))
 @adefer
 async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
     app = request.app
+    config = app['config']
     registry = app['registry']
     session_name = request.match_info['session_name']
     access_key = request['keypair']['access_key']
@@ -70,7 +71,7 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
     log.info('STREAM_PTY(ak:{0}, s:{1})', access_key, session_name)
 
     await asyncio.shield(registry.increment_session_usage(session_name, access_key))
-    ws = web.WebSocketResponse()
+    ws = web.WebSocketResponse(max_msg_size=config['manager']['max-wsmsg-size'])
     await ws.prepare(request)
 
     myself = asyncio.Task.current_task()
@@ -163,7 +164,7 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
             # Agent or kernel is terminated.
             raise
         except Exception:
-            await app['error_monitor'].capture_exception(user=request['user']['uuid'])
+            await app['error_monitor'].capture_exception(context={'user': request['user']['uuid']})
             log.exception('stream_stdin({0}): unexpected error', stream_key)
         finally:
             log.debug('stream_stdin({0}): terminated', stream_key)
@@ -195,7 +196,7 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
         except asyncio.CancelledError:
             pass
         except:
-            await app['error_monitor'].capture_exception(user=request['user']['uuid'])
+            await app['error_monitor'].capture_exception(context={'user': request['user']['uuid']})
             log.exception('stream_stdout({0}): unexpected error', stream_key)
         finally:
             log.debug('stream_stdout({0}): terminated', stream_key)
@@ -207,7 +208,7 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
         stdout_task = asyncio.create_task(stream_stdout())
         await stream_stdin()
     except Exception:
-        await app['error_monitor'].capture_exception(user=request['user']['uuid'])
+        await app['error_monitor'].capture_exception(context={'user': request['user']['uuid']})
         log.exception('stream_pty({0}): unexpected error', stream_key)
     finally:
         stdout_task.cancel()
@@ -223,6 +224,7 @@ async def stream_execute(defer, request: web.Request) -> web.StreamResponse:
     WebSocket-version of gateway.kernel.execute().
     '''
     app = request.app
+    config = app['config']
     registry = app['registry']
     session_name = request.match_info['session_name']
     access_key = request['keypair']['access_key']
@@ -235,7 +237,7 @@ async def stream_execute(defer, request: web.Request) -> web.StreamResponse:
         raise
 
     await asyncio.shield(registry.increment_session_usage(session_name, access_key))
-    ws = web.WebSocketResponse()
+    ws = web.WebSocketResponse(max_msg_size=config['manager']['max-wsmsg-size'])
     await ws.prepare(request)
 
     myself = asyncio.Task.current_task()
@@ -340,6 +342,7 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
     session_name = request.match_info['session_name']
     access_key = request['keypair']['access_key']
     service = params['app']
+    config = request.app['config']
 
     stream_key = (session_name, access_key)
     myself = asyncio.Task.current_task()
@@ -416,7 +419,7 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
                 extra_data=result['error'])
 
         # TODO: weakref to proxies for graceful shutdown?
-        ws = web.WebSocketResponse(autoping=False)
+        ws = web.WebSocketResponse(autoping=False, max_msg_size=config['manager']['max-wsmsg-size'])
         await ws.prepare(request)
         proxy = proxy_cls(ws, dest[0], dest[1],
                           downstream_callback=down_cb,
