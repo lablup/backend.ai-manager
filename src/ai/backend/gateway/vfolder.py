@@ -1530,6 +1530,40 @@ async def delete(request: web.Request) -> web.Response:
 
 @atomic
 @auth_required
+@server_status_required(ALL_ALLOWED)
+@vfolder_permission_required(VFolderPermission.READ_ONLY)
+async def leave(request: web.Request, row: VFolderRow) -> web.Response:
+    '''
+    Leave a shared vfolder.
+
+    Cannot leave a group vfolder or a vfolder that the requesting user owns.
+    '''
+    if row['ownership_type'] == VFolderOwnershipType.GROUP:
+        raise InvalidAPIParameters('Cannot leave a group vfolder.')
+    if row['is_owner']:
+        raise InvalidAPIParameters('Cannot leave a vfolder owned by the requesting user.')
+
+    dbpool = request.app['dbpool']
+    access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
+    vfolder_id = row['id']
+    perm = None
+    log.info('VFOLDER.LEAVE(ak:{}, vfid:{}, uid:{}, perm:{})',
+             access_key, vfolder_id, user_uuid, perm)
+    async with dbpool.acquire() as conn:
+        query = (
+            vfolder_permissions
+            .delete()
+            .where(vfolder_permissions.c.vfolder == vfolder_id)
+            .where(vfolder_permissions.c.user == user_uuid)
+        )
+        await conn.execute(query)
+    resp = {'msg': 'left the shared vfolder'}
+    return web.json_response(resp, status=200)
+
+
+@atomic
+@auth_required
 @server_status_required(READ_ALLOWED)
 @check_api_params(
     t.Dict({
@@ -2065,6 +2099,7 @@ def create_app(default_cors_options):
     cors.add(add_route('POST',   r'/{name}/request_download', request_download))
     cors.add(add_route('GET',    r'/{name}/files', list_files))
     cors.add(add_route('POST',   r'/{name}/invite', invite))
+    cors.add(add_route('POST',   r'/{name}/leave', leave))
     cors.add(add_route('GET',    r'/invitations/list_sent', list_sent_invitations))
     cors.add(add_route('POST',   r'/invitations/update/{inv_id}', update_invitation))
     cors.add(add_route('GET',    r'/invitations/list', invitations))
