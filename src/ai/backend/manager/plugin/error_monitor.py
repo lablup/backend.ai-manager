@@ -10,6 +10,7 @@ from ai.backend.common.types import (
     AgentId
 )
 from ai.backend.common.plugin.monitor import AbstractErrorReporterPlugin
+from .exceptions import PluginError
 from ..models import error_logs, LogSeverity
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
