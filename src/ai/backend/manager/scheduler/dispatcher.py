@@ -12,7 +12,6 @@ from typing import (
     List,
     Mapping,
     MutableMapping,
-    Optional,
     Sequence,
     Tuple,
     Union,

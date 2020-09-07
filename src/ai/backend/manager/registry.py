@@ -53,7 +53,6 @@ from ai.backend.common.types import (
     BinarySize,
     ClusterInfo,
     ClusterMode,
-    KernelCreationConfig,
     KernelEnqueueingConfig,
     KernelId,
     ResourceSlot,
@@ -91,8 +90,6 @@ if TYPE_CHECKING:
     from .scheduler import (
         SchedulingContext,
         PendingSession,
-        AgentAllocationContext,
-        KernelInfo,
         KernelAgentBinding,
     )
     from ..gateway.events import EventDispatcher
@@ -674,7 +671,6 @@ class AgentRegistry:
 
         ids = []
         is_multicontainer = cluster_size > 1
-        is_replicated = False
         if is_multicontainer:
             if len(kernel_configs) == 1:
                 log.debug(
@@ -689,7 +685,6 @@ class AgentRegistry:
                     sub_kernel_config['idx'] = (i + 1)
                     sub_kernel_config['cluster_role'] = 'sub'
                     kernel_configs.append(sub_kernel_config)
-                is_replicated = True
             elif len(kernel_configs) > 1:
                 # each container should have its own kernel_config
                 log.debug(

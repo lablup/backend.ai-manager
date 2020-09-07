@@ -9,7 +9,6 @@ from typing import (
 )
 
 from ai.backend.common.types import (
-    AccessKey,
     AgentId,
     ResourceSlot,
     SessionId,
