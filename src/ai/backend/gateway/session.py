@@ -409,6 +409,9 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             _td = str_to_timedelta(params['starts_at'])
             starts_at = datetime.now(tzutc()) + _td
 
+    if params['cluster_size'] > 1:
+        log.debug(" -> cluster_mode:{} (replicate)", params['cluster_mode'])
+
     try:
         start_event = asyncio.Event()
         kernel_id: Optional[KernelId] = None
@@ -537,7 +540,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
         tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
         tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
         tx.AliasedKey(['cluster_size', 'clusterSize'], default=1):
-            t.Int[1:],             # new in APIv6
+            t.ToInt[1:],             # new in APIv6
         tx.AliasedKey(['cluster_mode', 'clusterMode'], default='single-node'):
             tx.Enum(ClusterMode),  # new in APIv6
         t.Key('config', default=dict): t.Mapping(t.String, t.Any),
@@ -1700,7 +1703,7 @@ async def shutdown(app: web.Application) -> None:
             t.cancel()
             await t
 
-    for task in app['pending_waits']:
+    for task in {*app['pending_waits']}:
         task.cancel()
         try:
             await task

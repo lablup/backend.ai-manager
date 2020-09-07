@@ -404,6 +404,7 @@ class ComputeSession(graphene.ObjectType):
     tag = graphene.String()
     name = graphene.String()
     type = graphene.String()
+    session_id = graphene.UUID()
 
     # image
     image = graphene.String()     # image for the main container
@@ -453,8 +454,9 @@ class ComputeSession(graphene.ObjectType):
             # identity
             'id': row['id'],
             'tag': row['tag'],
-            'name': row['session_id'],
+            'name': row['session_name'],
             'type': row['session_type'].name,
+            'session_id': row['session_id'],
 
             # image
             'image': row['image'],
@@ -792,11 +794,11 @@ class LegacyComputeSession(graphene.ObjectType):
         else:
             hide_agents = context['config']['manager']['hide-agents']
         return {
-            'sess_id': row['session_id'],           # legacy, will be deprecated
+            'id': row['id'],
+            'sess_id': row['session_name'],         # legacy, will be deprecated
             'sess_type': row['session_type'].name,  # legacy, will be deprecated
-            'session_name': row['session_id'],
+            'session_name': row['session_name'],
             'session_type': row['session_type'].name,
-            'id': row['id'],                     # legacy, will be replaced with session UUID
             'role': row['role'],
             'tag': row['tag'],
             'image': row['image'],

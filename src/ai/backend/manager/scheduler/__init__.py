@@ -117,6 +117,7 @@ class KernelInfo:
     for each kernel.
     '''
     kernel_id: KernelId
+    access_key: AccessKey
     session_id: uuid.UUID
     role: str
     idx: int
@@ -183,12 +184,36 @@ class AbstractScheduler(metaclass=ABCMeta):
         pending_sessions: Sequence[PendingSession],
         existing_sessions: Sequence[ExistingSession],
     ) -> Optional[SessionId]:
+        """
+        Pick a session to try schedule.
+        This is where the queueing semantics is implemented such as prioritization.
+        """
         return None
 
     @abstractmethod
-    def assign_agent(
+    def assign_agent_for_session(
         self,
         possible_agents: Sequence[AgentContext],
         pending_session: PendingSession,
     ) -> Optional[AgentId]:
+        """
+        Assign an agent for the entire session, only considering the total requested
+        slots of the session.  This is used for both single-container sessions and
+        single-node multi-container sessions.
+
+        In single-node multi-container sessions, all sub-containers are spawned by
+        slicing the assigned agent's resource.
+        """
+        return None
+
+    @abstractmethod
+    def assign_agent_for_kernel(
+        self,
+        possible_agents: Sequence[AgentContext],
+        pending_kernel: KernelInfo,
+    ) -> Optional[AgentId]:
+        """
+        Assign an agent for a kernel of the session.
+        This may be called multiple times for multi-node multi-container sessions.
+        """
         return None

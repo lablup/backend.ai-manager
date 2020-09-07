@@ -2,14 +2,17 @@ from __future__ import annotations
 
 
 from typing import (
-    Any, Optional,
+    Any,
+    Optional,
     Sequence,
     Mapping,
 )
 
 from ai.backend.common.types import (
-    AgentId, SessionId,
-    ResourceSlot
+    AccessKey,
+    AgentId,
+    SessionId,
+    ResourceSlot,
 )
 
 from . import (
@@ -17,6 +20,7 @@ from . import (
     PendingSession,
     ExistingSession,
     AgentContext,
+    KernelInfo,
 )
 
 
@@ -26,23 +30,44 @@ class MOFScheduler(AbstractScheduler):
     def __init__(self, config: Mapping[str, Any]) -> None:
         super().__init__(config)
 
-    def pick_session(self,
-                     total_capacity: ResourceSlot,
-                     pending_sessions: Sequence[PendingSession],
-                     existing_sessions: Sequence[ExistingSession],
-                     ) -> Optional[SessionId]:
+    def pick_session(
+        self,
+        total_capacity: ResourceSlot,
+        pending_sessions: Sequence[PendingSession],
+        existing_sessions: Sequence[ExistingSession],
+    ) -> Optional[SessionId]:
         # Just pick the first pending session.
         return SessionId(pending_sessions[0].session_id)
 
-    def assign_agent(self,
-                     agents: Sequence[AgentContext],
-                     pending_session: PendingSession,
-                     ) -> Optional[AgentId]:
+    def _assign_agent(
+        self,
+        agents: Sequence[AgentContext],
+        access_key: AccessKey,
+        requested_slots: ResourceSlot,
+    ) -> Optional[AgentId]:
         # return min occupied slot agent or None
         return next((one_agent.agent_id for one_agent in (sorted(
             (agent for agent in agents if (
                 (agent.available_slots - agent.occupied_slots)
-                >= pending_session.requested_slots
+                >= requested_slots
             )),
             key=lambda a: a.occupied_slots)
         )), None)
+
+    def assign_agent_for_session(
+        self,
+        agents: Sequence[AgentContext],
+        pending_session: PendingSession,
+    ) -> Optional[AgentId]:
+        return self._assign_agent(
+            agents, pending_session.access_key, pending_session.requested_slots,
+        )
+
+    def assign_agent_for_kernel(
+        self,
+        agents: Sequence[AgentContext],
+        pending_kernel: KernelInfo,
+    ) -> Optional[AgentId]:
+        return self._assign_agent(
+            agents, pending_kernel.access_key, pending_kernel.requested_slots,
+        )

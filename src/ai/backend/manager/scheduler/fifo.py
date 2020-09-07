@@ -9,6 +9,7 @@ from typing import (
 )
 
 from ai.backend.common.types import (
+    AccessKey,
     AgentId,
     ResourceSlot,
     SessionId,
@@ -18,6 +19,7 @@ from . import (
     AgentContext,
     PendingSession,
     ExistingSession,
+    KernelInfo,
 )
 
 
@@ -44,30 +46,53 @@ class FIFOSlotScheduler(AbstractScheduler):
     def __init__(self, config: Mapping[str, Any]) -> None:
         super().__init__(config)
 
-    def pick_session(self,
-                     total_capacity: ResourceSlot,
-                     pending_sessions: Sequence[PendingSession],
-                     existing_sessions: Sequence[ExistingSession],
-                     ) -> Optional[SessionId]:
+    def pick_session(
+        self,
+        total_capacity: ResourceSlot,
+        pending_sessions: Sequence[PendingSession],
+        existing_sessions: Sequence[ExistingSession],
+    ) -> Optional[SessionId]:
         # Just pick the first pending session.
         return SessionId(pending_sessions[0].session_id)
 
-    def assign_agent(self,
-                     agents: Sequence[AgentContext],
-                     pending_session: PendingSession,
-                     ) -> Optional[AgentId]:
+    def _assign_agent(
+        self,
+        agents: Sequence[AgentContext],
+        requested_slots: ResourceSlot,
+    ) -> Optional[AgentId]:
         possible_agents = []
         for agent in agents:
             remaining_slots = agent.available_slots - agent.occupied_slots
-            if remaining_slots >= pending_session.requested_slots:
+            if remaining_slots >= requested_slots:
                 possible_agents.append(agent)
         if possible_agents:
-            chosen_agent = \
-                max(possible_agents,
-                    key=lambda a: key_by_requested_slots(a,
-                                                         pending_session.requested_slots))
+            chosen_agent = max(
+                possible_agents,
+                key=lambda a: key_by_requested_slots(
+                    a,
+                    requested_slots,
+                )
+            )
             return chosen_agent.agent_id
         return None
+
+    def assign_agent_for_session(
+        self,
+        agents: Sequence[AgentContext],
+        pending_session: PendingSession,
+    ) -> Optional[AgentId]:
+        return self._assign_agent(
+            agents, pending_session.requested_slots,
+        )
+
+    def assign_agent_for_kernel(
+        self,
+        agents: Sequence[AgentContext],
+        pending_kernel: KernelInfo,
+    ) -> Optional[AgentId]:
+        return self._assign_agent(
+            agents, pending_kernel.requested_slots,
+        )
 
 
 class LIFOSlotScheduler(AbstractScheduler):
@@ -75,27 +100,50 @@ class LIFOSlotScheduler(AbstractScheduler):
     def __init__(self, config: Mapping[str, Any]) -> None:
         super().__init__(config)
 
-    def pick_session(self,
-                     total_capacity: ResourceSlot,
-                     pending_sessions: Sequence[PendingSession],
-                     existing_sessions: Sequence[ExistingSession],
-                     ) -> Optional[SessionId]:
+    def pick_session(
+        self,
+        total_capacity: ResourceSlot,
+        pending_sessions: Sequence[PendingSession],
+        existing_sessions: Sequence[ExistingSession],
+    ) -> Optional[SessionId]:
         # Just pick the last pending session.
         return SessionId(pending_sessions[-1].session_id)
 
-    def assign_agent(self,
-                     agents: Sequence[AgentContext],
-                     pending_session: PendingSession,
-                     ) -> Optional[AgentId]:
+    def _assign_agent(
+        self,
+        agents: Sequence[AgentContext],
+        requested_slots: ResourceSlot,
+    ) -> Optional[AgentId]:
         possible_agents = []
         for agent in agents:
             remaining_slots = agent.available_slots - agent.occupied_slots
-            if remaining_slots >= pending_session.requested_slots:
+            if remaining_slots >= requested_slots:
                 possible_agents.append(agent)
         if possible_agents:
-            chosen_agent = \
-                max(possible_agents,
-                    key=lambda a: key_by_requested_slots(a,
-                                                         pending_session.requested_slots))
+            chosen_agent = max(
+                possible_agents,
+                key=lambda a: key_by_requested_slots(
+                    a,
+                    requested_slots,
+                )
+            )
             return chosen_agent.agent_id
         return None
+
+    def assign_agent_for_session(
+        self,
+        agents: Sequence[AgentContext],
+        pending_session: PendingSession,
+    ) -> Optional[AgentId]:
+        return self._assign_agent(
+            agents, pending_session.requested_slots,
+        )
+
+    def assign_agent_for_kernel(
+        self,
+        agents: Sequence[AgentContext],
+        pending_kernel: KernelInfo,
+    ) -> Optional[AgentId]:
+        return self._assign_agent(
+            agents, pending_kernel.requested_slots,
+        )
