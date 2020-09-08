@@ -98,7 +98,7 @@ async def fetch_manager_status(request: web.Request) -> web.Response:
         async with request.app['dbpool'].acquire() as conn, conn.begin():
             query = (sa.select([sa.func.count(kernels.c.id)])
                        .select_from(kernels)
-                       .where((kernels.c.role == DEFAULT_ROLE) &
+                       .where((kernels.c.cluster_role == DEFAULT_ROLE) &
                               (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))))
             active_sessions_num = await conn.scalar(query)
 

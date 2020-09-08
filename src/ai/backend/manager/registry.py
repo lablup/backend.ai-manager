@@ -367,7 +367,7 @@ class AgentRegistry:
         allow_stale=False,
         for_update=False,
         db_connection=None,
-        role=None,
+        cluster_role=None,
     ):
         '''
         Retrieve the kernel information by kernel's ID, kernel's session UUID
@@ -383,7 +383,7 @@ class AgentRegistry:
                             If False, filter "active" kernels only.
         :param for_update: Apply for_update during select query.
         :param db_connection: Database connection for reuse.
-        :param role: Filter kernels by role. "main", "sub", or None (all).
+        :param cluster_role: Filter kernels by role. "main", "sub", or None (all).
         '''
         cols = [
             kernels.c.id,
@@ -391,8 +391,9 @@ class AgentRegistry:
             kernels.c.session_name,
             kernels.c.session_type,
             kernels.c.status,
-            kernels.c.role,
             kernels.c.cluster_mode,
+            kernels.c.cluster_role,
+            kernels.c.cluster_idx,
             kernels.c.access_key,
             kernels.c.agent_addr,
             kernels.c.kernel_host,
@@ -421,10 +422,10 @@ class AgentRegistry:
             (sa.sql.expression.cast(kernels.c.session_id, sa.String).like(f'{session_name_or_id}%')) &
             (kernels.c.access_key == access_key)
         )
-        if role is not None:
-            cond_id = cond_id & (kernels.c.role == role)
-            cond_name = cond_name & (kernels.c.role == role)
-            cond_session_id = cond_session_id & (kernels.c.role == role)
+        if cluster_role is not None:
+            cond_id = cond_id & (kernels.c.cluster_role == cluster_role)
+            cond_name = cond_name & (kernels.c.cluster_role == cluster_role)
+            cond_session_id = cond_session_id & (kernels.c.cluster_role == cluster_role)
         if allow_stale:
             cond_status = true()  # any status
         else:
@@ -486,13 +487,13 @@ class AgentRegistry:
                             If False, filter "active" kernels only.
         :param for_update: Apply for_update during select query.
         :param db_connection: Database connection for reuse.
-        :param role: Filter kernels by role. "main", "sub", or None (all).
+        :param cluster_role: Filter kernels by role. "main", "sub", or None (all).
         """
         kernels = await self.get_kernels(
             session_name_or_id, access_key,
             field=field, for_update=for_update,
             db_connection=db_connection,
-            role=DEFAULT_ROLE,
+            cluster_role=DEFAULT_ROLE,
         )
         if len(kernels) > 1:
             matches = [
@@ -516,7 +517,7 @@ class AgentRegistry:
         allow_stale=False,
         for_update=False,
         db_connection=None,
-        role=None,
+        cluster_role=None,
     ):
         '''
         Retrieve the kernel information of a session by session UUID.
@@ -531,13 +532,13 @@ class AgentRegistry:
                             If False, filter "active" kernels only.
         :param for_update: Apply for_update during select query.
         :param db_connection: Database connection for reuse.
-        :param role: Filter kernels by role. "main", "sub", or None (all).
+        :param cluster_role: Filter kernels by role. "main", "sub", or None (all).
         '''
         return await self.get_kernels(
             session_id, access_key,
             field=field, for_update=for_update,
             db_connection=db_connection,
-            role=role,
+            cluster_role=cluster_role,
         )
 
     async def get_sessions(
@@ -568,12 +569,12 @@ class AgentRegistry:
                 query = (sa.select(cols)
                            .select_from(kernels)
                            .where((kernels.c.session_id.in_(session_names)) &
-                                  (kernels.c.role == DEFAULT_ROLE)))
+                                  (kernels.c.cluster_role == DEFAULT_ROLE)))
             else:
                 query = (sa.select(cols)
                            .select_from(kernels.join(agents))
                            .where((kernels.c.session_id.in_(session_names)) &
-                                  (kernels.c.role == DEFAULT_ROLE) &
+                                  (kernels.c.cluster_role == DEFAULT_ROLE) &
                                   (agents.c.status == AgentStatus.ALIVE) &
                                   (agents.c.id == kernels.c.agent)))
             result = await conn.execute(query)
@@ -584,7 +585,7 @@ class AgentRegistry:
         self,
         session_name: str,
         access_key: str,
-        kernel_configs: List[KernelEnqueueingConfig],
+        kernel_enqueue_configs: List[KernelEnqueueingConfig],
         scaling_group: str,
         session_type: SessionTypes,
         resource_policy: dict, *,
@@ -600,8 +601,8 @@ class AgentRegistry:
         starts_at: datetime = None,
     ) -> SessionId:
 
-        mounts = kernel_configs[0]['creation_config'].get('mounts') or []
-        mount_map = kernel_configs[0]['creation_config'].get('mount_map') or {}
+        mounts = kernel_enqueue_configs[0]['creation_config'].get('mounts') or []
+        mount_map = kernel_enqueue_configs[0]['creation_config'].get('mount_map') or {}
         session_id = SessionId(uuid.uuid4())
 
         # Check scaling group availability if scaling_group parameter is given.
@@ -672,26 +673,26 @@ class AgentRegistry:
         ids = []
         is_multicontainer = cluster_size > 1
         if is_multicontainer:
-            if len(kernel_configs) == 1:
+            if len(kernel_enqueue_configs) == 1:
                 log.debug(
-                    'enqueue_session(): replicating kernel_config with cluster_size={}',
+                    'enqueue_session(): replicating kernel_enqueue_config with cluster_size={}',
                     cluster_size,
                 )
                 # the first kernel_config is repliacted to sub-containers
-                kernel_configs[0]['idx'] = 0
-                kernel_configs[0]['cluster_role'] = DEFAULT_ROLE
+                assert kernel_enqueue_configs[0]['cluster_role'] == DEFAULT_ROLE
+                kernel_enqueue_configs[0]['cluster_idx'] = 0
                 for i in range(cluster_size - 1):
-                    sub_kernel_config = cast(KernelEnqueueingConfig, {**kernel_configs[0]})
-                    sub_kernel_config['idx'] = (i + 1)
+                    sub_kernel_config = cast(KernelEnqueueingConfig, {**kernel_enqueue_configs[0]})
                     sub_kernel_config['cluster_role'] = 'sub'
-                    kernel_configs.append(sub_kernel_config)
-            elif len(kernel_configs) > 1:
+                    sub_kernel_config['cluster_idx'] = (i + 1)
+                    kernel_enqueue_configs.append(sub_kernel_config)
+            elif len(kernel_enqueue_configs) > 1:
                 # each container should have its own kernel_config
                 log.debug(
-                    'enqueue_session(): using given kernel_configs with cluster_size={}',
+                    'enqueue_session(): using given kernel_enqueue_configs with cluster_size={}',
                     cluster_size,
                 )
-                if len(kernel_configs) != cluster_size:
+                if len(kernel_enqueue_configs) != cluster_size:
                     raise InvalidAPIParameters(
                         "The number of kernel configs differs from the cluster size")
             else:
@@ -705,7 +706,7 @@ class AgentRegistry:
         if hook_result.status != PASSED:
             raise RejectedByHook(hook_result.src_plugin, hook_result.reason)
 
-        for kernel in kernel_configs:
+        for kernel in kernel_enqueue_configs:
             kernel_id: KernelId
             if kernel['cluster_role'] == DEFAULT_ROLE:
                 kernel_id = cast(KernelId, session_id)
@@ -788,7 +789,7 @@ class AgentRegistry:
 
             # Check the image resource slots.
             log_fmt = "s:{} k:{} r:{}-{}"
-            log_args = (session_id, kernel_id, kernel['cluster_role'], kernel['idx'])
+            log_args = (session_id, kernel_id, kernel['cluster_role'], kernel['cluster_idx'])
             log.debug(log_fmt + ' -> requested_slots: {}', *log_args, requested_slots)
             log.debug(log_fmt + ' -> resource_opts: {}', *log_args, resource_opts)
             log.debug(log_fmt + ' -> image_min_slots: {}', *log_args, image_min_slots)
@@ -813,10 +814,10 @@ class AgentRegistry:
                         image_max_slots.to_humanized(known_slot_types).items()
                     )))
 
-            environ = kernel_configs[0]['creation_config'].get('environ') or {}
+            environ = kernel_enqueue_configs[0]['creation_config'].get('environ') or {}
             if is_multicontainer:
                 environ['BACKEND_CLUSTER_ROLE'] = kernel['cluster_role']
-                environ['BACKEND_CLUSTER_ROLE_IDX'] = str(kernel['idx'])
+                environ['BACKEND_CLUSTER_IDX'] = str(kernel['cluster_idx'])
 
             # Create kernel object in PENDING state.
             async with self.dbpool.acquire() as conn, conn.begin():
@@ -844,9 +845,9 @@ class AgentRegistry:
                     'session_name': session_name,
                     'session_type': session_type,
                     'cluster_mode': cluster_mode.value,
-                    'starts_at': starts_at,
-                    'role': kernel['cluster_role'],
-                    'idx': kernel['idx'] if is_multicontainer else None,
+                    'cluster_role': kernel['cluster_role'],
+                    'cluster_idx': kernel['cluster_idx'],
+                    'cluster_hostname': f"{kernel['cluster_role']}{kernel['cluster_idx']}",
                     'scaling_group': scaling_group,
                     'domain_name': domain_name,
                     'group_id': group_id,
@@ -855,6 +856,7 @@ class AgentRegistry:
                     'image': image_ref.canonical,
                     'registry': image_ref.registry,
                     'tag': session_tag,
+                    'starts_at': starts_at,
                     'internal_data': internal_data,
                     'startup_command': kernel.get('startup_command'),
                     'occupied_slots': requested_slots,
@@ -918,10 +920,21 @@ class AgentRegistry:
             registry_url, registry_creds = \
                 await get_registry_info(self.config_server.etcd, image_ref.registry)
 
-        if pending_session.cluster_mode == ClusterMode.SINGLE_NODE:
+        if pending_session.cluster_mode == ClusterMode.SINGLE_NODE and pending_session.cluster_size > 1:
+            network_name = f'bai-singlenode-{pending_session.session_id}'
+            async with RPCContext(
+                kernel_agent_bindings[0].agent_alloc_ctx.agent_addr,
+                None,
+                order_key=pending_session.session_name,
+            ) as rpc:
+                try:
+                    await rpc.call.create_local_network(network_name)
+                except Exception:
+                    log.exception(f"Failed to create an agent-local network {network_name}")
+                    raise KernelCreationFailed("Error while creating agent-local network")
             cluster_info = ClusterInfo(
                 mode=ClusterMode.SINGLE_NODE,
-                network_name=None,  # agent will take care of its private network
+                network_name=network_name,
             )
         elif pending_session.cluster_mode == ClusterMode.MULTI_NODE:
             # Create overlay network for multi-node sessions
@@ -932,7 +945,7 @@ class AgentRegistry:
                 order_key=pending_session.session_name,
             ) as rpc:
                 try:
-                    await rpc.call.create_network(network_name)
+                    await rpc.call.create_overlay_network(network_name)
                 except Exception:
                     log.exception(f"Failed to create an overlay network {network_name}")
                     raise KernelCreationFailed("Error while creating overlay network")
@@ -941,7 +954,10 @@ class AgentRegistry:
                 network_name=network_name,
             )
         else:
-            raise RuntimeError("should not reach here")
+            cluster_info = ClusterInfo(
+                mode=ClusterMode.SINGLE_NODE,
+                network_name=None,
+            )
 
         # TODO: use asyncio.gather / taskgroup
         # Aggregate by agents to minimize RPC calls
@@ -974,7 +990,8 @@ class AgentRegistry:
                                 'labels': image_infos[binding.kernel.image_ref]['labels'],
                             },
                             'session_type': pending_session.session_type.value,
-                            'role': binding.kernel.role,
+                            'cluster_role': binding.kernel.cluster_role,
+                            'cluster_hostname': binding.kernel.cluster_hostname,
                             'idle_timeout': resource_policy['idle_timeout'],
                             'mounts': pending_session.mounts,
                             'mount_map': pending_session.mount_map,
@@ -1155,7 +1172,7 @@ class AgentRegistry:
         async with self.dbpool.acquire() as conn:
             session = await self.get_session(
                 sess_name_or_id, access_key,
-                field=[kernels.c.domain_name, kernels.c.role],
+                field=[kernels.c.domain_name, kernels.c.cluster_role, kernels.c.cluster_size],
                 db_connection=conn,
                 for_update=True,
             )
@@ -1239,12 +1256,12 @@ class AgentRegistry:
                         'kernel_cancelled',
                         (str(kernel['id']), 'user-requested'),
                     )
-                    if kernel['role'] == DEFAULT_ROLE:
+                    if kernel['cluster_role'] == DEFAULT_ROLE:
                         main_stat = {'status': 'cancelled'}
                 elif kernel['status'] in (KernelStatus.PREPARING, KernelStatus.PULLING):
                     raise GenericForbidden('Cannot destory kernels in preparing/pulling status')
                 else:
-                    if kernel['role'] == DEFAULT_ROLE:
+                    if kernel['cluster_role'] == DEFAULT_ROLE:
                         # The main session is terminated; decrement the user's concurrency counter
                         query = (sa.update(keypairs)
                                    .values(concurrency_used=keypairs.c.concurrency_used - 1)
@@ -1263,7 +1280,7 @@ class AgentRegistry:
 
                 if kernel['agent_addr'] is None:
                     await self.mark_kernel_terminated(kernel['id'], 'missing-agent-allocation')
-                    if kernel['role'] == DEFAULT_ROLE:
+                    if kernel['cluster_role'] == DEFAULT_ROLE:
                         main_stat = {'status': 'terminated'}
                 else:
                     # TODO: aggregate agent RPC calls per agent
@@ -1284,13 +1301,24 @@ class AgentRegistry:
                                 last_stat['version'] = 2
                         except asyncio.TimeoutError:
                             pass
-                        if kernel['role'] == DEFAULT_ROLE:
+                        if kernel['cluster_role'] == DEFAULT_ROLE:
                             main_stat = {
                                 **(last_stat if last_stat is not None else {}),
                                 'status': 'terminated',
                             }
 
-            if session['cluster_mode'] == ClusterMode.MULTI_NODE:
+            if session['cluster_mode'] == ClusterMode.SINGLE_NODE and session['cluster_size'] > 1:
+                network_name = f'bai-singlenode-{kernel_list[0]["session_id"]}'
+                async with RPCContext(
+                    session['agent_addr'],  # the main-container's agent
+                    None,
+                    order_key=session['session_id'],
+                ) as rpc:
+                    try:
+                        await rpc.call.destroy_local_network(network_name)
+                    except Exception:
+                        log.exception(f"Failed to destroy the agent-local network {network_name}")
+            elif session['cluster_mode'] == ClusterMode.MULTI_NODE:
                 network_name = f'bai-multinode-{kernel_list[0]["session_id"]}'
                 async with RPCContext(
                     session['agent_addr'],  # the main-container's agent
@@ -1298,9 +1326,11 @@ class AgentRegistry:
                     order_key=session['session_id'],
                 ) as rpc:
                     try:
-                        await rpc.call.destroy_network(network_name)
+                        await rpc.call.destroy_overlay_network(network_name)
                     except Exception:
                         log.exception(f"Failed to destroy the overlay network {network_name}")
+            else:
+                pass
 
             await self.hook_plugin_ctx.notify(
                 'POST_DESTROY_SESSION',
@@ -1366,7 +1396,7 @@ class AgentRegistry:
                         'resource_slots':
                             kernel['occupied_slots'].to_json(),  # unused currently
                     }
-                    if kernel['role'] == DEFAULT_ROLE:
+                    if kernel['cluster_role'] == DEFAULT_ROLE:
                         kernel_info = await rpc.call.restart_kernel(str(kernel['id']),
                                                                     new_config)
             # TODO: publish "kernel_started" event
@@ -1507,7 +1537,7 @@ class AgentRegistry:
                        .values(num_queries=kernels.c.num_queries + 1)
                        .where((kernels.c.session_id == sess_id) &
                               (kernels.c.access_key == access_key) &
-                              (kernels.c.role == DEFAULT_ROLE)))
+                              (kernels.c.cluster_role == DEFAULT_ROLE)))
             await conn.execute(query)
 
     async def kill_all_sessions_in_agent(self, agent_addr):

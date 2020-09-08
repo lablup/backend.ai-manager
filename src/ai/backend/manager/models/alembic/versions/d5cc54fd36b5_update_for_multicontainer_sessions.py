@@ -18,6 +18,9 @@ depends_on = None
 
 
 def upgrade():
+    op.drop_index('ix_kernels_sess_id', table_name='kernels')
+    op.drop_index('ix_kernels_sess_type', table_name='kernels')
+
     conn = op.get_bind()
     op.add_column(
         'kernels',
@@ -47,8 +50,16 @@ def upgrade():
     op.alter_column('kernels', 'sess_id', new_column_name='session_name')
     op.alter_column('kernels', 'sess_type', new_column_name='session_type')
 
+    op.create_index(op.f('ix_kernels_session_id'), 'kernels', ['session_id'], unique=False)
+    op.create_index(op.f('ix_kernels_session_name'), 'kernels', ['session_name'], unique=False)
+    op.create_index(op.f('ix_kernels_session_type'), 'kernels', ['session_type'], unique=False)
+
 
 def downgrade():
+    op.drop_index(op.f('ix_kernels_session_type'), table_name='kernels')
+    op.drop_index(op.f('ix_kernels_session_name'), table_name='kernels')
+    op.drop_index(op.f('ix_kernels_session_id'), table_name='kernels')
+
     op.alter_column('kernels', 'session_type', new_column_name='sess_type')
     op.alter_column('kernels', 'session_name', new_column_name='sess_id')
     op.drop_column('kernels', 'session_id')
@@ -61,3 +72,6 @@ def downgrade():
 
     op.drop_column('kernels', 'cluster_mode')
     op.drop_column('kernels', 'idx')
+
+    op.create_index('ix_kernels_sess_type', 'kernels', ['session_type'], unique=False)
+    op.create_index('ix_kernels_sess_id', 'kernels', ['session_name'], unique=False)

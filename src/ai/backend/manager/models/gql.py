@@ -686,6 +686,7 @@ class Queries(graphene.ObjectType):
     async def resolve_vfolder_list(executor, info, limit, offset, *,
                                    domain_name=None, group_id=None, user_id=None,
                                    order_key=None, order_asc=None):
+        # TODO: adopt the generic queryfilter language
         total_count = await VirtualFolder.load_count(
             info.context,
             domain_name=domain_name,  # scope
@@ -710,10 +711,11 @@ class Queries(graphene.ObjectType):
         domain_name=None, group_id=None, access_key=None,
         order_key=None, order_asc=None,
     ):
+        # TODO: adopt the generic queryfilter language
         total_count = await ComputeContainer.load_count(
             info.context,
             session_id,               # filter (mandatory)
-            role=role,                # filter
+            cluster_role=role,        # filter
             domain_name=domain_name,  # scope
             group_id=group_id,        # scope
             access_key=access_key,    # scope
@@ -722,7 +724,7 @@ class Queries(graphene.ObjectType):
             info.context,
             limit, offset,            # slice
             session_id,               # filter (mandatory)
-            role=role,                # filter
+            cluster_role=role,        # filter
             domain_name=domain_name,  # scope
             group_id=group_id,        # scope
             access_key=access_key,    # scope

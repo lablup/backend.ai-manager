@@ -18,7 +18,12 @@ from ai.backend.common.docker import (
     ImageRef,
 )
 from ai.backend.common.types import (
-    AgentId, KernelId, AccessKey, SessionId, SessionTypes,
+    AccessKey,
+    AgentId,
+    ClusterMode,
+    KernelId,
+    SessionId,
+    SessionTypes,
     ResourceSlot,
 )
 
@@ -66,7 +71,8 @@ class ExistingSession:
     session_id: uuid.UUID
     session_type: SessionTypes
     session_name: str
-    cluster_mode: Optional[str]
+    cluster_mode: ClusterMode
+    cluster_size: int
     domain_name: str
     group_id: uuid.UUID
     scaling_group: str
@@ -85,7 +91,8 @@ class PendingSession:
     session_id: uuid.UUID
     session_type: SessionTypes
     session_name: str
-    cluster_mode: Optional[str]
+    cluster_mode: ClusterMode
+    cluster_size: int
     domain_name: str
     group_id: uuid.UUID
     scaling_group: str
@@ -104,7 +111,7 @@ class PendingSession:
     @property
     def main_kernel_id(self) -> KernelId:
         for k in self.kernels:
-            if k.role == DEFAULT_ROLE:
+            if k.cluster_role == DEFAULT_ROLE:
                 return k.kernel_id
         raise RuntimeError('Unable to get the main kernel ID')
 
@@ -119,8 +126,9 @@ class KernelInfo:
     kernel_id: KernelId
     access_key: AccessKey
     session_id: uuid.UUID
-    role: str
-    idx: int
+    cluster_role: str
+    cluster_idx: int
+    cluster_hostname: str
     image_ref: ImageRef
     resource_opts: Mapping[str, Any]
     requested_slots: ResourceSlot
@@ -128,7 +136,7 @@ class KernelInfo:
     startup_command: Optional[str]
 
     def __str__(self):
-        return f'{self.kernel_id}#{self.role}'
+        return f'{self.kernel_id}#{self.cluster_role}{self.cluster_idx}'
 
 
 @attr.s(auto_attribs=True, slots=True)

@@ -466,7 +466,7 @@ async def kernel_terminated(app: web.Application, agent_id: AgentId, event_name:
                             exit_code: int = None) -> None:
     try:
         kernel = await app['registry'].get_kernel(
-            kernel_id, (kernels.c.role, kernels.c.status), allow_stale=True)
+            kernel_id, (kernels.c.cluster_role, kernels.c.status), allow_stale=True)
     except SessionNotFound:
         return
     if kernel.role == DEFAULT_ROLE:

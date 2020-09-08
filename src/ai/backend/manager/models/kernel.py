@@ -16,6 +16,7 @@ from ai.backend.common import msgpack, redis
 from ai.backend.common.types import (
     AccessKey,
     BinarySize,
+    ClusterMode,
     SessionTypes,
     SessionResult,
 )
@@ -107,6 +108,11 @@ LIVE_STATUS = (
 )
 
 
+def default_hostname(context) -> str:
+    params = context.get_current_parameters()
+    return f"{params['cluster_role']}{params['cluster_idx']}"
+
+
 kernels = sa.Table(
     'kernels', metadata,
     # The Backend.AI-side UUID for each kernel
@@ -119,8 +125,12 @@ kernels = sa.Table(
     sa.Column('session_name', sa.String(length=64), unique=False, index=True),     # previously sess_id
     sa.Column('session_type', EnumType(SessionTypes), index=True, nullable=False,  # previously sess_type
               default=SessionTypes.INTERACTIVE, server_default=SessionTypes.INTERACTIVE.name),
-    sa.Column('cluster_mode', sa.String(length=16), nullable=True, default=None),
-    sa.Column('role', sa.String(length=16), nullable=False, default=DEFAULT_ROLE),
+    sa.Column('cluster_mode', sa.String(length=16), nullable=False,
+              default=ClusterMode.SINGLE_NODE, server_default=ClusterMode.SINGLE_NODE.name),
+    sa.Column('cluster_size', sa.Integer, nullable=False, default=1),
+    sa.Column('cluster_role', sa.String(length=16), nullable=False, default=DEFAULT_ROLE),
+    sa.Column('cluster_idx', sa.Integer, nullable=False, default=0),
+    sa.Column('cluster_hostname', sa.String(length=64), nullable=False, default=default_hostname),
 
     # Resource ownership
     sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True, nullable=True),
@@ -174,13 +184,12 @@ kernels = sa.Table(
               server_default=SessionResult.UNDEFINED.name,
               nullable=False, index=True),
     sa.Column('internal_data', pgsql.JSONB(), nullable=True),
-    sa.Column('idx', sa.Integer, nullable=True, default=None),
     sa.Column('container_log', sa.LargeBinary(), nullable=True),
     # Resource metrics measured upon termination
     sa.Column('num_queries', sa.BigInteger(), default=0),
     sa.Column('last_stat', pgsql.JSONB(), nullable=True, default=sa.null()),
 
-    sa.Index('ix_kernels_sess_id_role', 'session_id', 'role', unique=False),
+    sa.Index('ix_kernels_sess_id_role', 'session_id', 'cluster_role', unique=False),
     sa.Index('ix_kernels_updated_order',
              sa.func.greatest('created_at', 'terminated_at', 'status_changed'),
              unique=False),
@@ -188,7 +197,7 @@ kernels = sa.Table(
              unique=True,
              postgresql_where=sa.text(
                  "status NOT IN ('TERMINATED', 'CANCELLED') and "
-                 "role = 'main'")),
+                 "cluster_role = 'main'")),
 )
 
 kernel_dependencies = sa.Table(
@@ -212,9 +221,12 @@ class ComputeContainer(graphene.ObjectType):
         interfaces = (Item, )
 
     # identity
-    idx = graphene.Int()
-    role = graphene.String()
-    hostname = graphene.String()
+    idx = graphene.Int()          # legacy
+    role = graphene.String()      # legacy
+    hostname = graphene.String()  # legacy
+    cluster_idx = graphene.Int()
+    cluster_role = graphene.String()
+    cluster_hostname = graphene.String()
     session_id = graphene.UUID()  # owner session
 
     # image
@@ -249,10 +261,13 @@ class ComputeContainer(graphene.ObjectType):
         return {
             # identity
             'id': row['id'],
-            'idx': row['idx'],
-            'role': row['role'],
-            'hostname': None,         # TODO: implement
-            'session_id': row['session_id'],  # main container's ID == session ID
+            'idx': row['cluster_idx'],
+            'role': row['cluster_role'],
+            'hostname': row['cluster_hostname'],
+            'cluster_idx': row['cluster_idx'],
+            'cluster_role': row['cluster_role'],
+            'cluster_hostname': row['cluster_hostname'],
+            'session_id': row['session_id'],
 
             # image
             'image': row['image'],
@@ -300,7 +315,7 @@ class ComputeContainer(graphene.ObjectType):
 
     @classmethod
     async def load_count(cls, context, session_id, *,
-                         role=None,
+                         cluster_role=None,
                          domain_name=None, group_id=None, access_key=None):
         async with context['dbpool'].acquire() as conn:
             query = (
@@ -310,8 +325,8 @@ class ComputeContainer(graphene.ObjectType):
                 .where(kernels.c.id == session_id)
                 .as_scalar()
             )
-            if role is not None:
-                query = query.where(kernels.c.role == role)
+            if cluster_role is not None:
+                query = query.where(kernels.c.cluster_role == cluster_role)
             if domain_name is not None:
                 query = query.where(kernels.c.domain_name == domain_name)
             if group_id is not None:
@@ -324,7 +339,7 @@ class ComputeContainer(graphene.ObjectType):
 
     @classmethod
     async def load_slice(cls, context, limit, offset, session_id, *,
-                         role=None,
+                         cluster_role=None,
                          domain_name=None, group_id=None, access_key=None,
                          order_key=None, order_asc=None):
         async with context['dbpool'].acquire() as conn:
@@ -339,7 +354,7 @@ class ComputeContainer(graphene.ObjectType):
                 .join(users, users.c.uuid == kernels.c.user_uuid)
             )
             query = (
-                sa.select([kernels, groups.c.name, users.c.email])
+                sa.select([kernels])
                 .select_from(j)
                 # TODO: use "owner session ID" when we implement multi-container session
                 .where(kernels.c.id == session_id)
@@ -347,8 +362,8 @@ class ComputeContainer(graphene.ObjectType):
                 .limit(limit)
                 .offset(offset)
             )
-            if role is not None:
-                query = query.where(kernels.c.role == role)
+            if cluster_role is not None:
+                query = query.where(kernels.c.cluster_role == cluster_role)
             if domain_name is not None:
                 query = query.where(kernels.c.domain_name == domain_name)
             if group_id is not None:
@@ -381,7 +396,7 @@ class ComputeContainer(graphene.ObjectType):
                 .join(users, users.c.uuid == kernels.c.user_uuid)
             )
             query = (
-                sa.select([kernels, groups.c.name, users.c.email])
+                sa.select([kernels])
                 .select_from(j)
                 .where(
                     (kernels.c.id.in_(container_ids))
@@ -410,6 +425,8 @@ class ComputeSession(graphene.ObjectType):
     image = graphene.String()     # image for the main container
     registry = graphene.String()  # image registry for the main container
     cluster_template = graphene.String()
+    cluster_mode = graphene.String()
+    cluster_size = graphene.Int()
 
     # ownership
     domain_name = graphene.String()
@@ -462,10 +479,12 @@ class ComputeSession(graphene.ObjectType):
             'image': row['image'],
             'registry': row['registry'],
             'cluster_template': None,  # TODO: implement
+            'cluster_mode': row['cluster_mode'],
+            'cluster_size': row['cluster_size'],
 
             # ownership
             'domain_name': row['domain_name'],
-            'group_name': row['name'],  # group.name (group is omitted since use_labels=True is not used)
+            'group_name': row['group_name'],
             'group_id': row['group_id'],
             'user_email': row['email'],
             'user_id': row['user_uuid'],
@@ -529,7 +548,7 @@ class ComputeSession(graphene.ObjectType):
             query = (
                 sa.select([sa.func.count(kernels.c.id)])
                 .select_from(kernels)
-                .where(kernels.c.role == DEFAULT_ROLE)
+                .where(kernels.c.cluster_role == DEFAULT_ROLE)
                 .as_scalar()
             )
             if domain_name is not None:
@@ -565,9 +584,13 @@ class ComputeSession(graphene.ObjectType):
                 .join(users, users.c.uuid == kernels.c.user_uuid)
             )
             query = (
-                sa.select([kernels, groups.c.name, users.c.email])
+                sa.select([
+                    kernels,
+                    groups.c.name.label('group_name'),
+                    users.c.email,
+                ])
                 .select_from(j)
-                .where(kernels.c.role == DEFAULT_ROLE)
+                .where(kernels.c.cluster_role == DEFAULT_ROLE)
                 .order_by(*_ordering)
                 .limit(limit)
                 .offset(offset)
@@ -593,7 +616,7 @@ class ComputeSession(graphene.ObjectType):
                 sa.select([kernels])
                 .select_from(j)
                 .where(
-                    (kernels.c.role == DEFAULT_ROLE) &
+                    (kernels.c.cluster_role == DEFAULT_ROLE) &
                     (kernel_dependencies.c.kernel_id.in_(session_ids))
                 )
             )
@@ -612,10 +635,14 @@ class ComputeSession(graphene.ObjectType):
                 .join(users, users.c.uuid == kernels.c.user_uuid)
             )
             query = (
-                sa.select([kernels, groups.c.name, users.c.email])
+                sa.select([
+                    kernels,
+                    groups.c.name.label('group_name'),
+                    users.c.email,
+                ])
                 .select_from(j)
                 .where(
-                    (kernels.c.role == DEFAULT_ROLE) &
+                    (kernels.c.cluster_role == DEFAULT_ROLE) &
                     (kernels.c.id.in_(session_ids))
                 ))
             if domain_name is not None:
@@ -866,7 +893,7 @@ class LegacyComputeSession(graphene.ObjectType):
             query = (
                 sa.select([sa.func.count(kernels.c.session_id)])
                 .select_from(kernels)
-                .where(kernels.c.role == DEFAULT_ROLE)
+                .where(kernels.c.cluster_role == DEFAULT_ROLE)
                 .as_scalar()
             )
             if domain_name is not None:
@@ -901,7 +928,7 @@ class LegacyComputeSession(graphene.ObjectType):
             query = (
                 sa.select([kernels, groups.c.name, users.c.email])
                 .select_from(j)
-                .where(kernels.c.role == DEFAULT_ROLE)
+                .where(kernels.c.cluster_role == DEFAULT_ROLE)
                 .order_by(*_ordering)
                 .limit(limit)
                 .offset(offset)
@@ -928,7 +955,7 @@ class LegacyComputeSession(graphene.ObjectType):
                 .select_from(j)
                 .where(
                     (kernels.c.access_key.in_(access_keys)) &
-                    (kernels.c.role == DEFAULT_ROLE)
+                    (kernels.c.cluster_role == DEFAULT_ROLE)
                 )
                 .order_by(
                     sa.desc(sa.func.greatest(
@@ -965,7 +992,7 @@ class LegacyComputeSession(graphene.ObjectType):
                         .join(users, users.c.uuid == kernels.c.user_uuid))
             query = (sa.select([kernels, groups.c.name, users.c.email])
                        .select_from(j)
-                       .where((kernels.c.role == DEFAULT_ROLE) &
+                       .where((kernels.c.cluster_role == DEFAULT_ROLE) &
                               (kernels.c.session_id.in_(sess_ids))))
             if domain_name is not None:
                 query = query.where(kernels.c.domain_name == domain_name)

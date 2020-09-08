@@ -395,7 +395,7 @@ async def enqueue_session_status_update(
     async with app['dbpool'].acquire() as conn, conn.begin():
         query = (
             sa.select([
-                kernels.c.role,
+                kernels.c.cluster_role,
                 kernels.c.session_id,
                 kernels.c.access_key,
                 kernels.c.domain_name,
@@ -411,7 +411,7 @@ async def enqueue_session_status_update(
         row = await result.first()
         if row is None:
             return
-        if row['role'] != DEFAULT_ROLE:
+        if row['cluster_role'] != DEFAULT_ROLE:
             return
     for q in app['session_event_queues']:
         q.put_nowait((event_name, row, reason))
@@ -429,7 +429,7 @@ async def enqueue_batch_session_result_update(
     async with app['dbpool'].acquire() as conn, conn.begin():
         query = (
             sa.select([
-                kernels.c.role,
+                kernels.c.cluster_role,
                 kernels.c.session_id,
                 kernels.c.access_key,
                 kernels.c.domain_name,
@@ -445,7 +445,7 @@ async def enqueue_batch_session_result_update(
         row = await result.first()
         if row is None:
             return
-        if row['role'] != DEFAULT_ROLE:
+        if row['cluster_role'] != DEFAULT_ROLE:
             return
     if event_name == 'kernel_success':
         reason = 'task-success'
