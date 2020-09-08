@@ -30,6 +30,7 @@ import trafaret as t
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.utils import Fstab
+from ai.backend.common.types import BinarySize
 
 from .auth import auth_required, superadmin_required
 from .config import volume_config_iv
@@ -197,6 +198,7 @@ def vfolder_check_exists(handler: Callable[..., Awaitable[web.Response]]):
         t.Key('permission', default='rw'): tx.Enum(VFolderPermission) | t.Null,
         tx.AliasedKey(['unmanaged_path', 'unmanagedPath'], default=None): t.String | t.Null,
         tx.AliasedKey(['group', 'groupId', 'group_id'], default=None): tx.UUID | t.String | t.Null,
+        t.Key('quota', default=None): t.String | t.Null,
     }),
 )
 async def create(request: web.Request, params: Any) -> web.Response:
@@ -213,6 +215,14 @@ async def create(request: web.Request, params: Any) -> web.Response:
              params['usage_mode'].value, params['permission'].value)
     folder_host = params['folder_host']
     unmanaged_path = params['unmanaged_path']
+    # Check if quota is in right format and covert to BinarySize type
+    if params['quota'] is None:
+        quota = None
+    else:
+        try:
+            quota = BinarySize(params['quota'])
+        except Exception:
+            raise InvalidAPIParameters('Quota cannot be converted to BinarySize.')
     # Check if user is trying to created unmanaged vFolder
     if unmanaged_path:
         # Approve only if user is Admin or Superadmin
@@ -316,6 +326,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                     json={
                         'volume': storage_manager.split_host(folder_host)[1],
                         'vfid': str(folder_id),
+                        'options': {'quota': quota},
                     },
                     raise_for_status=True,
                 ):
