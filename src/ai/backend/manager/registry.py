@@ -926,7 +926,7 @@ class AgentRegistry:
             async with RPCContext(
                 kernel_agent_bindings[0].agent_alloc_ctx.agent_addr,
                 None,
-                order_key=pending_session.session_name,
+                order_key=pending_session.session_id,
             ) as rpc:
                 try:
                     await rpc.call.create_local_network(network_name)
@@ -943,7 +943,7 @@ class AgentRegistry:
             async with RPCContext(
                 kernel_agent_bindings[0].agent_alloc_ctx.agent_addr,
                 None,
-                order_key=pending_session.session_name,
+                order_key=pending_session.session_id,
             ) as rpc:
                 try:
                     await rpc.call.create_overlay_network(network_name)
