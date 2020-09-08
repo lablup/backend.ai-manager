@@ -845,6 +845,7 @@ class AgentRegistry:
                     'session_name': session_name,
                     'session_type': session_type,
                     'cluster_mode': cluster_mode.value,
+                    'cluster_size': cluster_size,
                     'cluster_role': kernel['cluster_role'],
                     'cluster_idx': kernel['cluster_idx'],
                     'cluster_hostname': f"{kernel['cluster_role']}{kernel['cluster_idx']}",
@@ -931,7 +932,7 @@ class AgentRegistry:
                     await rpc.call.create_local_network(network_name)
                 except Exception:
                     log.exception(f"Failed to create an agent-local network {network_name}")
-                    raise KernelCreationFailed("Error while creating agent-local network")
+                    raise
             cluster_info = ClusterInfo(
                 mode=ClusterMode.SINGLE_NODE,
                 network_name=network_name,
@@ -948,7 +949,7 @@ class AgentRegistry:
                     await rpc.call.create_overlay_network(network_name)
                 except Exception:
                     log.exception(f"Failed to create an overlay network {network_name}")
-                    raise KernelCreationFailed("Error while creating overlay network")
+                    raise
             cluster_info = ClusterInfo(
                 mode=ClusterMode.MULTI_NODE,
                 network_name=network_name,

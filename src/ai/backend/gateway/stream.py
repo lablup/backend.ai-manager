@@ -469,7 +469,7 @@ async def kernel_terminated(app: web.Application, agent_id: AgentId, event_name:
             kernel_id, (kernels.c.cluster_role, kernels.c.status), allow_stale=True)
     except SessionNotFound:
         return
-    if kernel.role == DEFAULT_ROLE:
+    if kernel['cluster_role'] == DEFAULT_ROLE:
         session_name = kernel['session_id']
         stream_key = (session_name, kernel['access_key'])
         cancelled_tasks = []
