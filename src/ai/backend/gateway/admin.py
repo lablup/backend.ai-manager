@@ -96,7 +96,7 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
                 errors.append(errmsg)
             else:
                 errmsg = {'message': str(e)}
-                errors.append({'message': str(e)})
+                errors.append(errmsg)
             log.error('ADMIN.GQL Exception: {}', errmsg)
         raise BackendGQLError(extra_data=errors)
     return web.json_response(result.data, status=200)
