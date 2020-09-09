@@ -16,6 +16,13 @@ Changes
 
 .. towncrier release notes start
 
+20.03.5 (2020-09-09)
+--------------------
+
+### Fixes
+* Fix a regression of statistics API due to a wrong default value type ([#326](https://github.com/lablup/backend.ai-manager/issues/326))
+
+
 20.03.4 (2020-09-04)
 --------------------
 
