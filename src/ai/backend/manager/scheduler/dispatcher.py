@@ -144,8 +144,8 @@ class SchedulerDispatcher(aobject):
     async def __ainit__(self) -> None:
         log.info('Session scheduler started')
         self.tick_task = asyncio.create_task(self.generate_scheduling_tick())
-        self.registry.event_dispatcher.consume('kernel_enqueued', None, self.schedule)
-        self.registry.event_dispatcher.consume('kernel_terminated', None, self.schedule)
+        self.registry.event_dispatcher.consume('session_enqueued', None, self.schedule)
+        self.registry.event_dispatcher.consume('session_terminated', None, self.schedule)
         self.registry.event_dispatcher.consume('instance_started', None, self.schedule)
         self.registry.event_dispatcher.consume('do_schedule', None, self.schedule)
         # TODO: add events for resource configuration changes and subscribe them here.
@@ -414,6 +414,10 @@ class SchedulerDispatcher(aobject):
         ) -> None:
             log.debug(log_fmt + 'try-starting', *log_args)
             sess_ctx = session_agent_binding[0]
+            await self.registry.event_dispatcher.produce_event(
+                'session_scheduled',
+                (str(sess_ctx.session_id), ),
+            )
             try:
                 assert len(session_agent_binding[1]) > 0
                 assert len(sess_ctx.kernels) == len(session_agent_binding[1])
@@ -431,7 +435,7 @@ class SchedulerDispatcher(aobject):
                     }).where(kernels.c.session_id == sess_ctx.session_id)
                     await db_conn.execute(query)
                 await self.registry.event_dispatcher.produce_event(
-                    'kernel_cancelled',
+                    'session_cancelled',
                     (str(sess_ctx.session_id), 'failed-to-start'),
                 )
             else:

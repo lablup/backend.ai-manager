@@ -880,7 +880,7 @@ class AgentRegistry:
             'POST_ENQUEUE_SESSION',
             (session_id, session_name, access_key),
         )
-        await self.event_dispatcher.produce_event('kernel_enqueued', [str(x) for x in ids])
+        await self.event_dispatcher.produce_event('session_enqueued', (str(session_id), ))
         return session_id
 
     async def start_session(
@@ -963,10 +963,10 @@ class AgentRegistry:
         # TODO: use asyncio.gather / taskgroup
         # Aggregate by agents to minimize RPC calls
         keyfunc = lambda item: item.agent_alloc_ctx.agent_id
-        for agent_id, grouped_items in itertools.groupby(
+        for agent_id, group_iterator in itertools.groupby(
             sorted(kernel_agent_bindings, key=keyfunc), key=keyfunc,
         ):
-            items = [*grouped_items]
+            items = [*group_iterator]
             # Within a group, agent_alloc_ctx are same.
             agent_alloc_ctx = items[0].agent_alloc_ctx
             async with RPCContext(
@@ -1046,6 +1046,36 @@ class AgentRegistry:
             'POST_START_SESSION',
             (pending_session.session_id, pending_session.session_name, pending_session.access_key),
         )
+
+    async def check_session_started(self, kernel_id: KernelId) -> None:
+        log.warning('check_session_started(k:{})', kernel_id)
+        async with self.dbpool.acquire() as conn, conn.begin():
+            query = (
+                sa.select([
+                    kernels.c.session_id,
+                ])
+                .select_from(kernels)
+                .where(kernels.c.id == kernel_id)
+                .limit(1)
+            )
+            session_id = await conn.scalar(query)
+            query = (
+                sa.select([
+                    kernels.c.status,
+                ])
+                .select_from(kernels)
+                .where(kernels.c.session_id == session_id)
+            )
+            result = await conn.execute(query)
+            all_started = all(map(
+                lambda row: row['status'] == KernelStatus.RUNNING,
+                await result.fetchall(),
+            ))
+        if all_started:
+            await self.registry.event_dispatcher.produce_event(
+                'session_started',
+                (str(session_id), ),
+            )
 
     async def get_keypair_occupancy(self, access_key, *, conn=None):
         known_slot_types = \
@@ -1193,8 +1223,8 @@ class AgentRegistry:
                         db_connection=conn,
                     )
                     await self.event_dispatcher.produce_event(
-                        'kernel_cancelled',
-                        (str(session['id']), 'force-terminated'),
+                        'session_cancelled',
+                        (str(session['session_id']), 'force-terminated'),
                     )
                     return {'status': 'cancelled'}
                 elif session['status'] in (KernelStatus.PREPARING, KernelStatus.PULLING):
@@ -1232,113 +1262,165 @@ class AgentRegistry:
         async with self.handle_kernel_exception(
             'destroy_session', session['id'], access_key, set_error=True,
         ):
-            try:
-                async with self.dbpool.acquire() as conn, conn.begin():
-                    kernel_list = await self.get_session_kernels(
-                        session['id'], access_key,
-                        field=[kernels.c.domain_name, kernels.c.session_id],
-                        for_update=True,
-                        db_connection=conn,
-                    )
-            except SessionNotFound:
-                raise
-            main_stat = {}
-            for kernel in kernel_list:
-                if domain_name is not None and kernel.domain_name != domain_name:
-                    raise SessionNotFound
-                if kernel['status'] == KernelStatus.PENDING:
-                    await self.set_session_status(
-                        kernel['id'], access_key,
-                        KernelStatus.CANCELLED,
-                        reason='user-requested',
-                        db_connection=conn,
-                    )
-                    await self.event_dispatcher.produce_event(
-                        'kernel_cancelled',
-                        (str(kernel['id']), 'user-requested'),
-                    )
-                    if kernel['cluster_role'] == DEFAULT_ROLE:
-                        main_stat = {'status': 'cancelled'}
-                elif kernel['status'] in (KernelStatus.PREPARING, KernelStatus.PULLING):
-                    raise GenericForbidden('Cannot destory kernels in preparing/pulling status')
-                else:
-                    if kernel['cluster_role'] == DEFAULT_ROLE:
-                        # The main session is terminated; decrement the user's concurrency counter
-                        query = (sa.update(keypairs)
-                                   .values(concurrency_used=keypairs.c.concurrency_used - 1)
-                                   .where(keypairs.c.access_key == kernel['access_key']))
-                        await conn.execute(query)
-                    await self.set_session_status(
-                        kernel['id'], access_key,
-                        KernelStatus.TERMINATING,
-                        reason='user-requested',
-                        db_connection=conn,
-                    )
-                    await self.event_dispatcher.produce_event(
-                        'kernel_terminating',
-                        (str(kernel['id']), 'user-requested'),
-                    )
+            async with self.dbpool.acquire() as conn, conn.begin():
+                query = (
+                    sa.select([
+                        kernels.c.id,
+                        kernels.c.session_id,
+                        kernels.c.status,
+                        kernels.c.access_key,
+                        kernels.c.cluster_role,
+                        kernels.c.agent,
+                        kernels.c.agent_addr,
+                    ])
+                    .select_from(kernels)
+                    .where(kernels.c.session_id == session['id'])
+                )
+                result = await conn.execute(query)
+                kernel_list = await result.fetchall()
 
-                if kernel['agent_addr'] is None:
-                    await self.mark_kernel_terminated(kernel['id'], 'missing-agent-allocation')
-                    if kernel['cluster_role'] == DEFAULT_ROLE:
-                        main_stat = {'status': 'terminated'}
-                else:
-                    # TODO: aggregate agent RPC calls per agent
+            main_stat = {}
+            per_agent_tasks = []
+
+            keyfunc = lambda item: item['agent']
+            for agent_id, group_iterator in itertools.groupby(
+                sorted(kernel_list, key=keyfunc), key=keyfunc,
+            ):
+                destroyed_kernels = []
+                grouped_kernels = [*group_iterator]
+                for kernel in grouped_kernels:
+                    if domain_name is not None and kernel.domain_name != domain_name:
+                        raise SessionNotFound
+                    if kernel['status'] == KernelStatus.PENDING:
+                        await self.set_session_status(
+                            kernel['id'], access_key,
+                            KernelStatus.CANCELLED,
+                            reason='user-requested',
+                        )
+                        await self.event_dispatcher.produce_event(
+                            'kernel_cancelled',
+                            (str(kernel['id']), 'user-requested'),
+                        )
+                        if kernel['cluster_role'] == DEFAULT_ROLE:
+                            main_stat = {'status': 'cancelled'}
+                            await self.event_dispatcher.produce_event(
+                                'session_cancelled',
+                                (str(kernel['session_id']), 'user-requested'),
+                            )
+                    elif kernel['status'] in (KernelStatus.PREPARING, KernelStatus.PULLING):
+                        raise GenericForbidden('Cannot destory kernels in preparing/pulling status')
+                    else:
+                        if kernel['cluster_role'] == DEFAULT_ROLE:
+                            # The main session is terminated; decrement the user's concurrency counter
+                            async with self.dbpool.acquire() as conn, conn.begin():
+                                query = (
+                                    sa.update(keypairs)
+                                    .values(concurrency_used=keypairs.c.concurrency_used - 1)
+                                    .where(keypairs.c.access_key == kernel['access_key'])
+                                )
+                                await conn.execute(query)
+                        await self.set_session_status(
+                            kernel['id'], access_key,
+                            KernelStatus.TERMINATING,
+                            reason='user-requested',
+                        )
+                        await self.event_dispatcher.produce_event(
+                            'kernel_terminating',
+                            (str(kernel['id']), 'user-requested'),
+                        )
+
+                    if kernel['agent_addr'] is None:
+                        await self.mark_kernel_terminated(kernel['id'], 'missing-agent-allocation')
+                        if kernel['cluster_role'] == DEFAULT_ROLE:
+                            main_stat = {'status': 'terminated'}
+                    else:
+                        destroyed_kernels.append(kernel)
+
+                async def _destroy_kernels_in_agent(destroyed_kernels) -> None:
+                    nonlocal main_stat
                     async with RPCContext(
-                        kernel['agent_addr'],
+                        grouped_kernels[0]['agent_addr'],
                         None,
                         order_key=session['session_id'],
                     ) as rpc:
-                        await rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
-                        last_stat: Optional[Dict[str, Any]]
-                        last_stat = None
-                        try:
-                            raw_last_stat = await redis.execute_with_retries(
-                                lambda: self.redis_stat.get(str(kernel['id']), encoding=None),
-                                max_retries=3)
-                            if raw_last_stat is not None:
-                                last_stat = msgpack.unpackb(raw_last_stat)
-                                last_stat['version'] = 2
-                        except asyncio.TimeoutError:
-                            pass
-                        if kernel['cluster_role'] == DEFAULT_ROLE:
-                            main_stat = {
-                                **(last_stat if last_stat is not None else {}),
-                                'status': 'terminated',
-                            }
+                        rpc_coros = []
+                        for kernel in destroyed_kernels:
+                            # internally it enqueues a "destroy" lifecycle event.
+                            rpc_coros.append(
+                                rpc.call.destroy_kernel(str(kernel['id']), 'user-requested')
+                            )
+                        await asyncio.gather(*rpc_coros)
+                        for kernel in destroyed_kernels:
+                            last_stat: Optional[Dict[str, Any]]
+                            last_stat = None
+                            try:
+                                raw_last_stat = await redis.execute_with_retries(
+                                    lambda: self.redis_stat.get(str(kernel['id']), encoding=None),
+                                    max_retries=3)
+                                if raw_last_stat is not None:
+                                    last_stat = msgpack.unpackb(raw_last_stat)
+                                    last_stat['version'] = 2
+                            except asyncio.TimeoutError:
+                                pass
+                            if kernel['cluster_role'] == DEFAULT_ROLE:
+                                main_stat = {
+                                    **(last_stat if last_stat is not None else {}),
+                                    'status': 'terminated',
+                                }
 
-            if session['cluster_mode'] == ClusterMode.SINGLE_NODE and session['cluster_size'] > 1:
-                network_name = f'bai-singlenode-{kernel_list[0]["session_id"]}'
-                async with RPCContext(
-                    session['agent_addr'],  # the main-container's agent
-                    None,
-                    order_key=session['session_id'],
-                ) as rpc:
-                    try:
-                        await rpc.call.destroy_local_network(network_name)
-                    except Exception:
-                        log.exception(f"Failed to destroy the agent-local network {network_name}")
-            elif session['cluster_mode'] == ClusterMode.MULTI_NODE:
-                network_name = f'bai-multinode-{kernel_list[0]["session_id"]}'
-                async with RPCContext(
-                    session['agent_addr'],  # the main-container's agent
-                    None,
-                    order_key=session['session_id'],
-                ) as rpc:
-                    try:
-                        await rpc.call.destroy_overlay_network(network_name)
-                    except Exception:
-                        log.exception(f"Failed to destroy the overlay network {network_name}")
-            else:
-                pass
+                per_agent_tasks.append(_destroy_kernels_in_agent(destroyed_kernels))
 
+            await asyncio.gather(*per_agent_tasks)
             await self.hook_plugin_ctx.notify(
                 'POST_DESTROY_SESSION',
                 (session['session_id'], session['session_name'], session['access_key']),
             )
-
             return main_stat
+
+    async def clean_session(
+        self,
+        session_id: SessionId,
+    ) -> None:
+        async with self.dbpool.acquire() as conn, conn.begin():
+            query = (
+                sa.select([
+                    kernels.c.session_id,
+                    kernels.c.cluster_mode,
+                    kernels.c.cluster_size,
+                    kernels.c.agent_addr,
+                ])
+                .select_from(kernels)
+                .where(
+                    (kernels.c.session_id == session_id) &
+                    (kernels.c.cluster_role == DEFAULT_ROLE)
+                )
+            )
+            result = await conn.execute(query)
+            session = await result.first()
+        if session['cluster_mode'] == ClusterMode.SINGLE_NODE and session['cluster_size'] > 1:
+            network_name = f'bai-singlenode-{session["session_id"]}'
+            async with RPCContext(
+                session['agent_addr'],  # the main-container's agent
+                None,
+                order_key=session['session_id'],
+            ) as rpc:
+                try:
+                    await rpc.call.destroy_local_network(network_name)
+                except Exception:
+                    log.exception(f"Failed to destroy the agent-local network {network_name}")
+        elif session['cluster_mode'] == ClusterMode.MULTI_NODE:
+            network_name = f'bai-multinode-{session["session_id"]}'
+            async with RPCContext(
+                session['agent_addr'],  # the main-container's agent
+                None,
+                order_key=session['session_id'],
+            ) as rpc:
+                try:
+                    await rpc.call.destroy_overlay_network(network_name)
+                except Exception:
+                    log.exception(f"Failed to destroy the overlay network {network_name}")
+        else:
+            pass
 
     async def restart_session(
         self,
@@ -1849,7 +1931,8 @@ class AgentRegistry:
                     kernels.c.access_key,
                     kernels.c.agent,
                     kernels.c.status,
-                    kernels.c.occupied_slots
+                    kernels.c.occupied_slots,
+                    kernels.c.session_id,
                 ], for_update=True)
                 .select_from(kernels)
                 .where(kernels.c.id == kernel_id)
@@ -1910,6 +1993,46 @@ class AgentRegistry:
         # it may take a while to fetch stats from Redis.
         async with self.dbpool.acquire() as conn, conn.begin():
             await self.sync_kernel_stats([kernel_id], db_conn=conn)
+
+    async def check_session_terminated(
+        self,
+        kernel_id: KernelId,
+        reason: str,
+    ) -> None:
+        async with self.dbpool.acquire() as conn, conn.begin():
+            query = (
+                sa.select([
+                    kernels.c.session_id,
+                ])
+                .select_from(kernels)
+                .where(kernels.c.id == kernel_id)
+                .limit(1)
+            )
+            session_id = await conn.scalar(query)
+            query = (
+                sa.select([
+                    kernels.c.status,
+                ])
+                .select_from(kernels)
+                .where(kernels.c.session_id == session_id)
+            )
+            result = await conn.execute(query)
+            all_terminated = all(map(
+                lambda row: row['status'] == KernelStatus.TERMINATED,
+                await result.fetchall(),
+            ))
+        if all_terminated:
+            await self.event_dispatcher.produce_event(
+                'session_terminated',
+                (str(session_id), reason),
+            )
+
+    async def mark_session_terminated(
+        self,
+        session_id: SessionId,
+        reason: str,
+    ) -> None:
+        await self.clean_session(session_id)
 
     async def sess_id_to_kernel_id(self, sess_id: str, access_key: str) -> KernelId:
         async with self.dbpool.acquire() as conn, conn.begin():

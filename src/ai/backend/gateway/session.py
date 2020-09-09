@@ -977,10 +977,15 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp, status=201)
 
 
-async def handle_kernel_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
-                                  raw_kernel_id: str,
-                                  reason: str = None,
-                                  exit_code: int = None) -> None:
+async def handle_kernel_lifecycle(
+    app: web.Application, agent_id: AgentId, event_name: str,
+    raw_kernel_id: str,
+    reason: str = None,
+    exit_code: int = None,
+) -> None:
+    """
+    The kernel-level lifecycle events are published by the agents.
+    """
     kernel_id = uuid.UUID(raw_kernel_id)
     registry = app['registry']
     if event_name == 'kernel_preparing':
@@ -991,32 +996,66 @@ async def handle_kernel_lifecycle(app: web.Application, agent_id: AgentId, event
         await registry.set_kernel_status(kernel_id, KernelStatus.PREPARING, reason)
     elif event_name == 'kernel_started':
         # The create_kernel() RPC caller will set the "RUNNING" status.
-        pass
+        await registry.check_session_started(kernel_id)
     elif event_name == 'kernel_terminating':
         # The destroy_kernel() API handler will set the "TERMINATING" status.
         pass
     elif event_name == 'kernel_terminated':
         await registry.mark_kernel_terminated(kernel_id, reason, exit_code)
+        await registry.check_session_terminated(kernel_id, reason)
 
 
-async def handle_kernel_stat_sync(app: web.Application, agent_id: AgentId, event_name: str,
-                                  raw_kernel_ids: str) -> None:
+async def handle_session_lifecycle(
+    app: web.Application,
+    agent_id: AgentId,
+    event_name: str,
+    raw_session_id: str,
+    reason: str = None,
+) -> None:
+    """
+    The session-level lifecycle events are published by the manager.
+    """
+    session_id = uuid.UUID(raw_session_id)
+    registry = app['registry']
+    if event_name == 'session_scheduled':
+        pass
+    elif event_name == 'session_started':
+        pass
+    elif event_name == 'session_terminated':
+        await registry.mark_session_terminated(session_id, reason)
+
+
+async def handle_kernel_stat_sync(
+    app: web.Application,
+    agent_id: AgentId,
+    event_name: str,
+    raw_kernel_ids: str,
+) -> None:
     kernel_ids = [*map(uuid.UUID, raw_kernel_ids.split(','))]
     await app['registry'].sync_kernel_stats(kernel_ids)
 
 
-async def handle_batch_result(app: web.Application, agent_id: AgentId, event_name: str,
-                              raw_kernel_id: str, exit_code: int) -> None:
+async def handle_batch_result(
+    app: web.Application,
+    agent_id: AgentId,
+    event_name: str,
+    raw_kernel_id: str,
+    exit_code: int,
+) -> None:
     kernel_id = uuid.UUID(raw_kernel_id)
     registry = app['registry']
-    if event_name == 'kernel_success':
+    if event_name == 'session_success':
         await registry.set_session_result(kernel_id, True, exit_code)
-    elif event_name == 'kernel_failure':
+    elif event_name == 'session_failure':
         await registry.set_session_result(kernel_id, False, exit_code)
 
 
-async def handle_instance_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
-                                    reason: str = None) -> None:
+async def handle_instance_lifecycle(
+    app: web.Application,
+    agent_id: AgentId,
+    event_name: str,
+    reason: str = None,
+) -> None:
     if event_name == 'instance_started':
         log.info('instance_lifecycle: ag:{0} joined ({1})', agent_id, reason)
         await app['registry'].update_instance(agent_id, {
@@ -1668,14 +1707,17 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
 
 async def init(app: web.Application) -> None:
     event_dispatcher = app['event_dispatcher']
+    event_dispatcher.consume('session_scheduled', app, handle_session_lifecycle)
     event_dispatcher.consume('kernel_preparing', app, handle_kernel_lifecycle)
     event_dispatcher.consume('kernel_pulling', app, handle_kernel_lifecycle)
     event_dispatcher.consume('kernel_creating', app, handle_kernel_lifecycle)
     event_dispatcher.consume('kernel_started', app, handle_kernel_lifecycle)
+    event_dispatcher.consume('session_started', app, handle_session_lifecycle)
     event_dispatcher.consume('kernel_terminating', app, handle_kernel_lifecycle)
     event_dispatcher.consume('kernel_terminated', app, handle_kernel_lifecycle)
-    event_dispatcher.consume('kernel_success', app, handle_batch_result)
-    event_dispatcher.consume('kernel_failure', app, handle_batch_result)
+    event_dispatcher.consume('session_terminated', app, handle_session_lifecycle)
+    event_dispatcher.consume('session_success', app, handle_batch_result)
+    event_dispatcher.consume('session_failure', app, handle_batch_result)
     event_dispatcher.consume('kernel_stat_sync', app, handle_kernel_stat_sync)
     event_dispatcher.consume('kernel_log', app, handle_kernel_log)
     event_dispatcher.consume('instance_started', app, handle_instance_lifecycle)

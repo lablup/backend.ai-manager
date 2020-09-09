@@ -240,7 +240,10 @@ class EventDispatcher(aobject):
     t.Dict({
         tx.AliasedKey(['name', 'sessionName'], default='*') >> 'session_name': t.String,
         t.Key('ownerAccessKey', default=None) >> 'owner_access_key': t.Null | t.String,
+        t.Key('sessionId', default=None) >> 'session_id': t.Null | tx.UUID,
+        # NOTE: if set, sessionId overrides sessionName and ownerAccessKey parameters.
         tx.AliasedKey(['group', 'groupName'], default='*') >> 'group_name': t.String,
+        t.Key('scope', default='*'): t.Enum('*', 'session', 'kernel'),
     }))
 @adefer
 async def push_session_events(
@@ -250,6 +253,8 @@ async def push_session_events(
 ) -> web.StreamResponse:
     app = request.app
     session_name = params['session_name']
+    session_id = params['session_id']
+    scope = params['scope']
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
     access_key = params['owner_access_key']
@@ -293,15 +298,31 @@ async def push_session_events(
                             continue
                     if group_id != '*' and row['group_id'] != group_id:
                         continue
-                    if session_name != '*' and not (
-                        (row['sess_id'] == session_name) and
-                        (row['access_key'] == access_key)):
+                    if scope == 'session' and not event_name.startswith('session_'):
                         continue
-                    await resp.send(json.dumps({
-                        'sessionName': str(row['sess_id']),
-                        'ownerAccessKey': row['access_key'],
+                    if scope == 'kernel' and not event_name.startswith('kernel_'):
+                        continue
+                    if session_id is not None:
+                        if row['session_id'] != session_id:
+                            continue
+                    else:
+                        if session_name != '*' and not (
+                            (row['session_name'] == session_name) and
+                            (row['access_key'] == access_key)):
+                            continue
+                    response_data = {
                         'reason': reason,
-                    }), event=event_name)
+                        'sessionName': row['session_name'],
+                        'ownerAccessKey': row['access_key'],
+                        'sessionId': str(row['session_id']),
+                    }
+                    if kernel_id := row.get('id'):
+                        response_data['kernelId'] = str(kernel_id)
+                    if cluster_role := row.get('cluster_role'):
+                        response_data['clusterRole'] = cluster_role
+                    if cluster_idx := row.get('cluster_idx'):
+                        response_data['clusterIdx'] = cluster_idx
+                    await resp.send(json.dumps(response_data), event=event_name)
                 finally:
                     my_queue.task_done()
     finally:
@@ -380,7 +401,7 @@ async def push_background_task_events(
         return resp
 
 
-async def enqueue_session_status_update(
+async def enqueue_kernel_status_update(
     app: web.Application,
     agent_id: AgentId,
     event_name: str,
@@ -391,13 +412,15 @@ async def enqueue_session_status_update(
     if raw_kernel_id is None:
         return
     kernel_id = uuid.UUID(raw_kernel_id)
-    # TODO: when event_name == 'kernel_started', read the service port data.
     async with app['dbpool'].acquire() as conn, conn.begin():
         query = (
             sa.select([
-                kernels.c.cluster_role,
+                kernels.c.id,
                 kernels.c.session_id,
+                kernels.c.session_name,
                 kernels.c.access_key,
+                kernels.c.cluster_role,
+                kernels.c.cluster_idx,
                 kernels.c.domain_name,
                 kernels.c.group_id,
                 kernels.c.user_uuid,
@@ -411,13 +434,47 @@ async def enqueue_session_status_update(
         row = await result.first()
         if row is None:
             return
-        if row['cluster_role'] != DEFAULT_ROLE:
+    for q in app['session_event_queues']:
+        q.put_nowait((event_name, row, reason))
+
+
+async def enqueue_session_status_update(
+    app: web.Application,
+    agent_id: AgentId,
+    event_name: str,
+    raw_session_id: str,
+    reason: str = None,
+    exit_code: int = None,
+) -> None:
+    if raw_session_id is None:
+        return
+    session_id = uuid.UUID(raw_session_id)
+    async with app['dbpool'].acquire() as conn, conn.begin():
+        query = (
+            sa.select([
+                kernels.c.id,
+                kernels.c.session_id,
+                kernels.c.session_name,
+                kernels.c.access_key,
+                kernels.c.domain_name,
+                kernels.c.group_id,
+                kernels.c.user_uuid,
+            ])
+            .select_from(kernels)
+            .where(
+                (kernels.c.session_id == session_id)
+            )
+            .limit(1)
+        )
+        result = await conn.execute(query)
+        row = await result.first()
+        if row is None:
             return
     for q in app['session_event_queues']:
         q.put_nowait((event_name, row, reason))
 
 
-async def enqueue_batch_session_result_update(
+async def enqueue_batch_task_result_update(
     app: web.Application,
     agent_id: AgentId,
     event_name: str,
@@ -425,12 +482,12 @@ async def enqueue_batch_session_result_update(
     exit_code: int = None,
 ) -> None:
     kernel_id = uuid.UUID(raw_kernel_id)
-    # TODO: when event_name == 'kernel_started', read the service port data.
     async with app['dbpool'].acquire() as conn, conn.begin():
         query = (
             sa.select([
-                kernels.c.cluster_role,
+                kernels.c.id,
                 kernels.c.session_id,
+                kernels.c.session_name,
                 kernels.c.access_key,
                 kernels.c.domain_name,
                 kernels.c.group_id,
@@ -445,9 +502,7 @@ async def enqueue_batch_session_result_update(
         row = await result.first()
         if row is None:
             return
-        if row['cluster_role'] != DEFAULT_ROLE:
-            return
-    if event_name == 'kernel_success':
+    if event_name == 'session_success':
         reason = 'task-success'
     else:
         reason = 'task-failure'
@@ -472,16 +527,20 @@ async def events_app_ctx(app: web.Application) -> AsyncIterator[None]:
     app['session_event_queues'] = set()
     app['task_update_queues'] = set()
     event_dispatcher = app['event_dispatcher']
-    event_dispatcher.subscribe('kernel_enqueued', app, enqueue_session_status_update)
-    event_dispatcher.subscribe('kernel_preparing', app, enqueue_session_status_update)
-    event_dispatcher.subscribe('kernel_pulling', app, enqueue_session_status_update)
-    event_dispatcher.subscribe('kernel_creating', app, enqueue_session_status_update)
-    event_dispatcher.subscribe('kernel_started', app, enqueue_session_status_update)
-    event_dispatcher.subscribe('kernel_terminating', app, enqueue_session_status_update)
-    event_dispatcher.subscribe('kernel_terminated', app, enqueue_session_status_update)
-    event_dispatcher.subscribe('kernel_cancelled', app, enqueue_session_status_update)
-    event_dispatcher.subscribe('kernel_success', app, enqueue_batch_session_result_update)
-    event_dispatcher.subscribe('kernel_failure', app, enqueue_batch_session_result_update)
+    event_dispatcher.subscribe('session_enqueued', app, enqueue_kernel_status_update)
+    event_dispatcher.subscribe('session_scheduled', app, enqueue_session_status_update)
+    event_dispatcher.subscribe('kernel_preparing', app, enqueue_kernel_status_update)
+    event_dispatcher.subscribe('kernel_pulling', app, enqueue_kernel_status_update)
+    event_dispatcher.subscribe('kernel_creating', app, enqueue_kernel_status_update)
+    event_dispatcher.subscribe('kernel_started', app, enqueue_kernel_status_update)
+    event_dispatcher.subscribe('session_started', app, enqueue_session_status_update)
+    event_dispatcher.subscribe('kernel_terminating', app, enqueue_kernel_status_update)
+    event_dispatcher.subscribe('kernel_terminated', app, enqueue_kernel_status_update)
+    event_dispatcher.subscribe('session_terminated', app, enqueue_session_status_update)
+    event_dispatcher.subscribe('kernel_cancelled', app, enqueue_kernel_status_update)
+    event_dispatcher.subscribe('session_cancelled', app, enqueue_session_status_update)
+    event_dispatcher.subscribe('session_success', app, enqueue_batch_task_result_update)
+    event_dispatcher.subscribe('session_failure', app, enqueue_batch_task_result_update)
     event_dispatcher.subscribe('task_updated', app, enqueue_task_status_update)
     event_dispatcher.subscribe('task_done', app, enqueue_task_status_update)
     event_dispatcher.subscribe('task_cancelled', app, enqueue_task_status_update)
