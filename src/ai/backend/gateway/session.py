@@ -890,11 +890,11 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
             if kernel_id is not None and started_kernel_id == str(kernel_id):
                 start_event.set()
 
-        start_handler = request.app['event_dispatcher'].subscribe('kernel_started', None,
+        start_handler = request.app['event_dispatcher'].subscribe('session_started', None,
                                                                   interrupt_wait)
-        term_handler = request.app['event_dispatcher'].subscribe('kernel_terminated', None,
+        term_handler = request.app['event_dispatcher'].subscribe('session_terminated', None,
                                                                  interrupt_wait)
-        cancel_handler = request.app['event_dispatcher'].subscribe('kernel_cancelled', None,
+        cancel_handler = request.app['event_dispatcher'].subscribe('session_cancelled', None,
                                                                    interrupt_wait)
 
         async with dbpool.acquire() as conn, conn.begin():
@@ -971,9 +971,9 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
         raise InternalServerError
     finally:
         request.app['pending_waits'].discard(asyncio.Task.current_task())
-        request.app['event_dispatcher'].unsubscribe('kernel_cancelled', cancel_handler)
-        request.app['event_dispatcher'].unsubscribe('kernel_terminated', term_handler)
-        request.app['event_dispatcher'].unsubscribe('kernel_started', start_handler)
+        request.app['event_dispatcher'].unsubscribe('session_cancelled', cancel_handler)
+        request.app['event_dispatcher'].unsubscribe('session_terminated', term_handler)
+        request.app['event_dispatcher'].unsubscribe('session_started', start_handler)
     return web.json_response(resp, status=201)
 
 
@@ -995,8 +995,9 @@ async def handle_kernel_lifecycle(
     elif event_name == 'kernel_creating':
         await registry.set_kernel_status(kernel_id, KernelStatus.PREPARING, reason)
     elif event_name == 'kernel_started':
-        # The create_kernel() RPC caller will set the "RUNNING" status.
-        await registry.check_session_started(kernel_id)
+        # The create_kernel() RPC caller will set the "RUNNING" status
+        # and produce the "kernel_started" and "session_started" events.
+        pass
     elif event_name == 'kernel_terminating':
         # The destroy_kernel() API handler will set the "TERMINATING" status.
         pass
