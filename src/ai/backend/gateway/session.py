@@ -1116,10 +1116,11 @@ async def shutdown_service(request: web.Request, params: Any) -> web.Response:
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('SHUTDOWN_SERVICE (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, session_name)
+    service_name = params.get('service_name')
     try:
-        await registry.shutdown_service(session_name, owner_access_key)
+        await registry.shutdown_service(session_name, owner_access_key, service_name)
     except BackendError:
-        log.exception('INTERRUPT: exception')
+        log.exception('SHUTDOWN_SERVICE: exception')
         raise
     return web.Response(status=204)
 
