@@ -605,7 +605,8 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
         'type': 'user' if row['user'] is not None else 'group',
         'is_owner': is_owner,
         'permission': permission,
-        'usage_mode': row['usage_mode']
+        'usage_mode': row['usage_mode'],
+        'clone_allowed': row['clone_allowed']
     }
     return web.json_response(resp, status=200)
 
@@ -1353,16 +1354,13 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
         if 'user' not in allowed_vfolder_types:
             raise InvalidAPIParameters('user vfolder cannot be created in this host')
 
-        # TODO: Check if volumeh as enough memory
-        # Requires implementation of storage manager API to return availalbe space
-        # Call 'GET' request to 'folder/usage' endpoint of target_folder_host
-
         storage_manager = request.app['storage_manager']
         source_proxy_name, source_volume_name = storage_manager.split_host(source_folder_host)
         target_proxy_name, target_volume_name = storage_manager.split_host(target_folder_host)
         if source_proxy_name != target_proxy_name:
             raise InvalidAPIParameters('proxy name of source and target vfolders must be equal.')
 
+        # TODO: accept quota as input parameter and pass as argument options
         try:
             folder_id = uuid.uuid4()
             async with storage_manager.request(
@@ -1370,8 +1368,8 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
                 json={
                     'src_volume': source_volume_name,
                     'src_vfid': str(row['id']),
-                    'new_volume': target_volume_name,
-                    'new_vfid': str(folder_id),
+                    'dst_volume': target_volume_name,
+                    'dst_vfid': str(folder_id),
                 },
                 raise_for_status=True,
             ):
