@@ -1,0 +1,1 @@
+Fix a regression of statistics API due to a wrong default value type
