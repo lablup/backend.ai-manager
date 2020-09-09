@@ -248,6 +248,7 @@ class AgentRegistry:
             'restart_session': KernelRestartFailed,
             'destroy_session': KernelDestructionFailed,
             'execute': KernelExecutionFailed,
+            'shutdown_service': KernelExecutionFailed,
             'upload_file': KernelExecutionFailed,
             'download_file': KernelExecutionFailed,
             'list_files': KernelExecutionFailed,
@@ -1214,9 +1215,9 @@ class AgentRegistry:
         service: str
     ) -> None:
         kernel = await self.get_session(session_name_or_id, access_key)
-        async with self.handle_kernel_exception('execute', kernel['id'], access_key):
+        async with self.handle_kernel_exception('shutdown_service', kernel['id'], access_key):
             async with RPCContext(kernel['agent_addr'], None, order_key=kernel['id']) as rpc:
-                return await rpc.call.shutdown(str(kernel['id']), service)
+                return await rpc.call.shutdown_service(str(kernel['id']), service)
 
     async def upload_file(
         self,
