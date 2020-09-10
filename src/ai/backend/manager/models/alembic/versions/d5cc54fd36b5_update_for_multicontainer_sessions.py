@@ -18,6 +18,13 @@ depends_on = None
 
 
 def upgrade():
+    # In this mgiration, we finally clear up the column namings:
+    #   sess_id -> session_name
+    #     => client-provided alias
+    #   (new) -> session_id
+    #     => for single-container sessions, it may be derived from the kernel id.
+    #   sess_type -> session_type
+    #
     op.drop_index('ix_kernels_sess_id', table_name='kernels')
     op.drop_index('ix_kernels_sess_type', table_name='kernels')
 
@@ -35,15 +42,30 @@ def upgrade():
     query = "UPDATE kernels SET role = 'main' WHERE role = 'master'"
     conn.execute(query)
 
-    # Clear up the column namings:
-    #   sess_id -> session_name
-    #     => client-provided alias
-    #   (new) -> session_id
-    #     => for single-container sessions, it may be derived from the kernel id.
-    #   sess_type -> session_type
     # First a session_id column as nullable and fill it up before setting it non-nullable.
     op.add_column('kernels', sa.Column('session_id', GUID, nullable=True))
     query = "UPDATE kernels SET session_id = kernels.id WHERE role = 'main'"
+    conn.execute(query)
+    # If we upgrade from a database downgraded in the past with sub-kernel records,
+    # we loose the information of kernel_id -> session_id mapping.
+    # Try to restore it by getting the session ID of a main-kernel record which is created
+    # at a similar time range.  This will raise an error if there are two or more such records,
+    # and it is based on an assumption that development setups with manual tests would not make such
+    # overlaps.
+    query = """
+    UPDATE kernels t SET session_id = (
+        SELECT session_id
+        FROM kernels s
+        WHERE
+            s.role = 'main'
+            AND (
+                s.created_at BETWEEN
+                t.created_at - (interval '0.5s')
+                AND t.created_at + (interval '3s')
+            )
+    )
+    WHERE t.role <> 'main'
+    """
     conn.execute(query)
     op.alter_column('kernels', 'session_id', nullable=False)
 
