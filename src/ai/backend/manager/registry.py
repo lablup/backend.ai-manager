@@ -944,6 +944,7 @@ class AgentRegistry:
                     raise
             cluster_info = ClusterInfo(
                 mode=ClusterMode.SINGLE_NODE,
+                size=pending_session.cluster_size,
                 network_name=network_name,
             )
         elif pending_session.cluster_mode == ClusterMode.MULTI_NODE:
@@ -961,11 +962,13 @@ class AgentRegistry:
                     raise
             cluster_info = ClusterInfo(
                 mode=ClusterMode.MULTI_NODE,
+                size=pending_session.cluster_size,
                 network_name=network_name,
             )
         else:
             cluster_info = ClusterInfo(
                 mode=ClusterMode.SINGLE_NODE,
+                size=pending_session.cluster_size,
                 network_name=None,
             )
 
@@ -1007,6 +1010,7 @@ class AgentRegistry:
                                 },
                                 'session_type': pending_session.session_type.value,
                                 'cluster_role': binding.kernel.cluster_role,
+                                'cluster_idx': binding.kernel.cluster_idx,
                                 'cluster_hostname': binding.kernel.cluster_hostname,
                                 'idle_timeout': resource_policy['idle_timeout'],
                                 'mounts': pending_session.mounts,
