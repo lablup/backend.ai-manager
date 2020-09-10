@@ -32,8 +32,6 @@ from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.utils import Fstab
 
 from .auth import auth_required, superadmin_required
-from .config import volume_config_iv
-from .etcd import ConfigServer
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
     GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
@@ -1705,14 +1703,11 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
 
 
 async def init(app: web.Application) -> None:
-    config_server: ConfigServer = app['config_server']
-    raw_vol_config = await config_server.etcd.get_prefix('volumes')
-    config = volume_config_iv.check(raw_vol_config)
-    app['storage_manager'] = StorageSessionManager(config)
+    pass
 
 
 async def shutdown(app: web.Application) -> None:
-    await app['storage_manager'].aclose()
+    pass
 
 
 def create_app(default_cors_options):

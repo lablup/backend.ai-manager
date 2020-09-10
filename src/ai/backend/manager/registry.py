@@ -83,6 +83,7 @@ from .models import (
     DEAD_KERNEL_STATUSES,
 )
 if TYPE_CHECKING:
+    from .models.storage import StorageManager
     from .scheduler import SchedulingContext, PendingSession, AgentAllocationContext
     from ..gateway.events import EventDispatcher
 
@@ -192,6 +193,7 @@ class AgentRegistry:
         redis_live,
         redis_image,
         event_dispatcher: EventDispatcher,
+        storage_manager:  StorageManager,
         hook_plugin_ctx: HookPluginContext,
     ) -> None:
         self.config_server = config_server
@@ -200,6 +202,7 @@ class AgentRegistry:
         self.redis_live = redis_live
         self.redis_image = redis_image
         self.event_dispatcher = event_dispatcher
+        self.storage_manager = storage_manager
         self.hook_plugin_ctx = hook_plugin_ctx
 
     async def init(self) -> None:

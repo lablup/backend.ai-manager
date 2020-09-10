@@ -9,6 +9,7 @@ from typing import (
     Mapping,
     Tuple,
 )
+from uuid import UUID
 
 import aiohttp
 import attr
@@ -76,12 +77,12 @@ class StorageSessionManager:
         results = await asyncio.gather(*fetch_aws)
         return itertools.chain(*results)
 
-    async def get_mount_path(self, vfolder_host: str, vfolder_id: str) -> str:
+    async def get_mount_path(self, vfolder_host: str, vfolder_id: UUID) -> str:
         async with self.request(
             vfolder_host, 'GET', 'folder/mount',
-            params={
+            json={
                 'volume': self.split_host(vfolder_host)[1],
-                'vfid': vfolder_id,
+                'vfid': str(vfolder_id),
             },
         ) as (_, resp):
             reply = await resp.json()
