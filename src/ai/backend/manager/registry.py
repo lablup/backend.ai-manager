@@ -33,6 +33,9 @@ import aiotools
 from async_timeout import timeout as _timeout
 from callosum.rpc import Peer, RPCUserError
 from callosum.lower.zeromq import ZeroMQAddress, ZeroMQRPCTransport
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.backends import default_backend
 from dateutil.tz import tzutc
 import snappy
 import sqlalchemy as sa
@@ -53,6 +56,7 @@ from ai.backend.common.types import (
     BinarySize,
     ClusterInfo,
     ClusterMode,
+    ClusterSSHKeyPair,
     KernelEnqueueingConfig,
     KernelId,
     ResourceSlot,
@@ -946,6 +950,7 @@ class AgentRegistry:
                 mode=ClusterMode.SINGLE_NODE,
                 size=pending_session.cluster_size,
                 network_name=network_name,
+                ssh_keypair=await self.create_cluster_ssh_keypair(),
             )
         elif pending_session.cluster_mode == ClusterMode.MULTI_NODE:
             # Create overlay network for multi-node sessions
@@ -964,12 +969,14 @@ class AgentRegistry:
                 mode=ClusterMode.MULTI_NODE,
                 size=pending_session.cluster_size,
                 network_name=network_name,
+                ssh_keypair=await self.create_cluster_ssh_keypair(),
             )
         else:
             cluster_info = ClusterInfo(
                 mode=ClusterMode.SINGLE_NODE,
                 size=pending_session.cluster_size,
                 network_name=None,
+                ssh_keypair=None,
             )
 
         # Aggregate by agents to minimize RPC calls
@@ -1080,6 +1087,26 @@ class AgentRegistry:
             'POST_START_SESSION',
             (pending_session.session_id, pending_session.session_name, pending_session.access_key),
         )
+
+    async def create_cluster_ssh_keypair(self) -> ClusterSSHKeyPair:
+        key = rsa.generate_private_key(
+            backend=default_backend(),
+            public_exponent=65537,
+            key_size=2048,
+        )
+        public_key = key.public_key().public_bytes(
+            serialization.Encoding.OpenSSH,
+            serialization.PublicFormat.OpenSSH,
+        )
+        pem = key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        return {
+            'private_key': pem.decode('utf-8'),
+            'public_key': public_key.decode('utf-8'),
+        }
 
     async def get_keypair_occupancy(self, access_key, *, conn=None):
         known_slot_types = \

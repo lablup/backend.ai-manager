@@ -159,7 +159,7 @@ class SchedulerDispatcher(aobject):
             ],
             # we have explicit semantics: temporary locking failure -> try at the next chance,
             # such as scheduling timer ticks or upon scheduling events
-            retry_count=1,
+            retry_count=2,
         )
 
     async def close(self) -> None:
