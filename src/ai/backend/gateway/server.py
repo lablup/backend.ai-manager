@@ -54,7 +54,12 @@ from ..manager.plugin.webapp import WebappPluginContext
 from ..manager.registry import AgentRegistry
 from ..manager.scheduler.dispatcher import SchedulerDispatcher
 from ..manager.background import BackgroundTaskManager
-from .config import load as load_config, load_shared as load_shared_config
+from ..manager.models.storage import StorageSessionManager
+from .config import (
+    load as load_config,
+    load_shared as load_shared_config,
+    volume_config_iv,
+)
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB, REDIS_STREAM_DB
 from .etcd import ConfigServer
 from .events import EventDispatcher
@@ -123,6 +128,7 @@ PUBLIC_INTERFACES: Final = [
     'redis_image',
     'redis_stream',
     'event_dispatcher',
+    'storage_manager',
     'stats_monitor',
     'error_monitor',
     'hook_plugin_ctx',
@@ -341,6 +347,16 @@ async def event_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
     await app['event_dispatcher'].close()
 
 
+async def storage_manager_ctx(app: web.Application) -> AsyncIterator[None]:
+    config_server: ConfigServer = app['config_server']
+    raw_vol_config = await config_server.etcd.get_prefix('volumes')
+    config = volume_config_iv.check(raw_vol_config)
+    app['storage_manager'] = StorageSessionManager(config)
+    _update_public_interface_objs(app)
+    yield
+    await app['storage_manager'].aclose()
+
+
 async def hook_plugin_ctx(app: web.Application) -> AsyncIterator[None]:
     ctx = HookPluginContext(app['config_server'].etcd, app['config'])
     app['hook_plugin_ctx'] = ctx
@@ -365,6 +381,7 @@ async def agent_registry_ctx(app: web.Application) -> AsyncIterator[None]:
         app['redis_live'],
         app['redis_image'],
         app['event_dispatcher'],
+        app['storage_manager'],
         app['hook_plugin_ctx'],
     )
     await app['registry'].init()
@@ -501,6 +518,7 @@ def build_root_app(
             redis_ctx,
             database_ctx,
             event_dispatcher_ctx,
+            storage_manager_ctx,
             hook_plugin_ctx,
             monitoring_ctx,
             agent_registry_ctx,

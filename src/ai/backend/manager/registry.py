@@ -7,7 +7,6 @@ import copy
 from datetime import datetime
 import itertools
 import logging
-from pathlib import Path
 import time
 from typing import (
     Any,
@@ -27,6 +26,7 @@ from typing import (
 )
 import uuid
 
+import aiohttp
 from aiopg.sa.connection import SAConnection
 from aiopg.sa.engine import Engine as SAEngine
 import aiotools
@@ -62,7 +62,6 @@ from ai.backend.common.types import (
     SlotName,
     SlotTypes,
 )
-from ai.backend.common.utils import current_loop
 from .defs import DEFAULT_ROLE, INTRINSIC_SLOTS
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
@@ -87,6 +86,7 @@ from .models import (
     DEAD_KERNEL_STATUSES,
 )
 if TYPE_CHECKING:
+    from .models.storage import StorageSessionManager
     from .scheduler import (
         AgentAllocationContext,
         SchedulingContext,
@@ -201,6 +201,7 @@ class AgentRegistry:
         redis_live,
         redis_image,
         event_dispatcher: EventDispatcher,
+        storage_manager:  StorageSessionManager,
         hook_plugin_ctx: HookPluginContext,
     ) -> None:
         self.config_server = config_server
@@ -209,6 +210,7 @@ class AgentRegistry:
         self.redis_live = redis_live
         self.redis_image = redis_image
         self.event_dispatcher = event_dispatcher
+        self.storage_manager = storage_manager
         self.hook_plugin_ctx = hook_plugin_ctx
 
     async def init(self) -> None:
@@ -622,7 +624,6 @@ class AgentRegistry:
         # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
         determined_mounts = []
         matched_mounts = set()
-        loop = current_loop()
         async with self.dbpool.acquire() as conn, conn.begin():
             if mounts:
                 extra_vf_conds = (
@@ -638,23 +639,30 @@ class AgentRegistry:
                 extra_vf_conds=extra_vf_conds)
 
             for item in matched_vfolders:
-                log.debug('Matched vFolder: {}, {}, {}', item['name'], item['group'], item['user'])
                 if item['group'] is not None and item['group'] != str(group_id):
                     # User's accessible group vfolders should not be mounted
                     # if not belong to the execution kernel.
                     continue
+                mount_path = await self.storage_manager.get_mount_path(item['host'], item['id'])
                 if item['name'] == '.local' and item['group'] is not None:
-                    mount_prefix = await self.config_server.get('volumes/_mount')
-                    fs_prefix = await self.config_server.get('volumes/_fsprefix')
-                    folder_path = (Path(mount_prefix) / item['host'] /
-                                   fs_prefix.lstrip('/') / item['id'].hex / user_uuid.hex)
-                    mkdir_lambda = lambda: folder_path.mkdir(parents=True, exist_ok=True)
-                    await loop.run_in_executor(None, mkdir_lambda)
+                    try:
+                        async with self.storage_manager.request(
+                            item['host'], 'POST', 'folder/file/mkdir',
+                            params={
+                                'volume': self.storage_manager.split_host(item['host'])[1],
+                                'vfid': item['id'],
+                                'relpath': str(user_uuid.hex)
+                            },
+                        ):
+                            pass
+                    except aiohttp.ClientResponseError:
+                        # the server may respond with error if the directory already exists
+                        pass
                     matched_mounts.add(item['name'])
                     determined_mounts.append((
                         item['name'],
                         item['host'],
-                        f'{item["id"].hex}/{user_uuid.hex}',
+                        f"{mount_path}/{user_uuid.hex}",
                         item['permission'].value,
                         ''
                     ))
@@ -663,7 +671,7 @@ class AgentRegistry:
                     determined_mounts.append((
                         item['name'],
                         item['host'],
-                        item['id'].hex,
+                        mount_path,
                         item['permission'].value,
                         item['unmanaged_path'] if item['unmanaged_path'] else '',
                     ))
