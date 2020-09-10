@@ -1,42 +1,37 @@
 import asyncio
+from datetime import datetime
 import functools
 import json
 import logging
-import os
 from pathlib import Path
-import shutil
 import stat
 from typing import (
-    Any, Awaitable, Callable, Final,
-    Dict, Mapping, MutableMapping,
-    Tuple,
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    Mapping,
+    MutableMapping,
     Set,
+    Tuple,
 )
-import urllib.parse
 import uuid
-import jwt
-from datetime import datetime, timedelta
 
 import aiofiles
 import aiohttp
-from aiohttp import web, hdrs
+from aiohttp import web
 import aiohttp_cors
 import aiojobs
 from aiojobs.aiohttp import atomic
-import aiotools
-import janus
-import multidict
 import sqlalchemy as sa
 import psycopg2
 import trafaret as t
-import zipstream
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.utils import AsyncFileWriter, current_loop, Fstab
+from ai.backend.common.utils import Fstab
 
 from .auth import auth_required, superadmin_required
-from .config import DEFAULT_CHUNK_SIZE, DEFAULT_INFLIGHT_CHUNKS
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
     GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
@@ -67,7 +62,7 @@ from ..manager.models import (
     query_owned_dotfiles,
     verify_vfolder_name,
 )
-from ..manager.types import Sentinel
+from ..manager.models.storage import StorageSessionManager
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.vfolder'))
 
@@ -190,14 +185,6 @@ def vfolder_check_exists(handler: Callable[..., Awaitable[web.Response]]):
     return _wrapped
 
 
-def get_folder_hostpath(row: VFolderRow, app):
-    if row['unmanaged_path']:
-        return Path(row['unmanaged_path'])
-    else:
-        return (app['VFOLDER_MOUNT'] / row['host'] /
-                app['VFOLDER_FSPREFIX'] / row['id'].hex)
-
-
 @auth_required
 @server_status_required(ALL_ALLOWED)
 @check_api_params(
@@ -233,7 +220,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
         # Resolve host for the new virtual folder.
         if not folder_host:
             folder_host = \
-                await request.app['config_server'].etcd.get('volumes/_default_host')
+                await request.app['config_server'].etcd.get('volumes/default_host')
             if not folder_host:
                 raise InvalidAPIParameters(
                     'You must specify the vfolder host '
@@ -269,12 +256,9 @@ async def create(request: web.Request, params: Any) -> web.Response:
             else:
                 allowed_hosts = await get_allowed_vfolder_hosts_by_user(conn, resource_policy,
                                                                         domain_name, user_uuid)
+            # TODO: handle legacy host lists assuming that volume names don't overlap?
             if folder_host not in allowed_hosts:
                 raise InvalidAPIParameters('You are not allowed to use this vfolder host.')
-            vfroot = (request.app['VFOLDER_MOUNT'] / folder_host /
-                      request.app['VFOLDER_FSPREFIX'])
-            if not vfroot.is_dir():
-                raise InvalidAPIParameters(f'Invalid vfolder host: {folder_host}')
 
         # Check resource policy's max_vfolder_count
         if resource_policy['max_vfolder_count'] > 0:
@@ -321,20 +305,26 @@ async def create(request: web.Request, params: Any) -> web.Response:
             if 'user' not in allowed_vfolder_types:
                 raise InvalidAPIParameters('user vfolder cannot be created in this host')
         try:
-            folder_id = uuid.uuid4().hex
+            folder_id = uuid.uuid4()
             if not unmanaged_path:
                 # Try to create actual only if vFolder is managed one
-                folder_path = (request.app['VFOLDER_MOUNT'] / folder_host /
-                               request.app['VFOLDER_FSPREFIX'] / folder_id)
-                loop = current_loop()
-                await loop.run_in_executor(None, lambda: folder_path.mkdir(parents=True, exist_ok=True))
-        except OSError:
+                storage_manager = request.app['storage_manager']
+                async with storage_manager.request(
+                    folder_host, 'POST', 'folder/create',
+                    json={
+                        'volume': storage_manager.split_host(folder_host)[1],
+                        'vfid': str(folder_id),
+                    },
+                    raise_for_status=True,
+                ):
+                    pass
+        except aiohttp.ClientResponseError:
             raise VFolderCreationFailed
         user_uuid = str(user_uuid) if group_id is None else None
         group_uuid = str(group_id) if group_id is not None else None
         ownership_type = 'group' if group_uuid is not None else 'user'
         insert_values = {
-            'id': folder_id,
+            'id': folder_id.hex,
             'name': params['name'],
             'usage_mode': params['usage_mode'],
             'permission': params['permission'],
@@ -347,7 +337,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'unmanaged_path': '',
         }
         resp = {
-            'id': folder_id,
+            'id': folder_id.hex,
             'name': params['name'],
             'host': folder_host,
             'usage_mode': params['usage_mode'].value,
@@ -467,15 +457,17 @@ async def delete_by_id(request: web.Request, params: Any) -> web.Response:
                    .where(vfolders.c.id == params['id']))
         folder_host = await conn.scalar(query)
         folder_id = uuid.UUID(params['id'])
-        folder_hex = folder_id.hex
-        folder_path = (request.app['VFOLDER_MOUNT'] / folder_host /
-                       request.app['VFOLDER_FSPREFIX'] / folder_hex)
         query = (vfolders.delete().where(vfolders.c.id == folder_id))
         await conn.execute(query)
-        try:
-            loop = current_loop()
-            await loop.run_in_executor(None, lambda: shutil.rmtree(folder_path))  # type: ignore
-        except IOError:
+        storage_manager = request.app['storage_manager']
+        async with storage_manager.request(
+            folder_host, 'POST', 'folder/delete',
+            json={
+                'volume': storage_manager.split_host(folder_host)[1],
+                'vfid': str(folder_id),
+            },
+            raise_for_status=True,
+        ):
             pass
     return web.Response(status=204)
 
@@ -502,12 +494,10 @@ async def list_hosts(request: web.Request) -> web.Response:
             allowed_hosts_by_group = await get_allowed_vfolder_hosts_by_group(
                 conn, resource_policy, domain_name, group_id=None, domain_admin=domain_admin)
             allowed_hosts = allowed_hosts | allowed_hosts_by_group
-    mount_prefix = await config.get('volumes/_mount')
-    if mount_prefix is None:
-        mount_prefix = '/mnt'
-    mounted_hosts = set(p.name for p in Path(mount_prefix).iterdir() if p.is_dir())
-    allowed_hosts = allowed_hosts & mounted_hosts
-    default_host = await config.get('volumes/_default_host')
+    all_volumes = await request.app['storage_manager'].get_all_volumes()
+    all_hosts = {f"{proxy_name}:{volume_data['name']}" for proxy_name, volume_data in all_volumes}
+    allowed_hosts = allowed_hosts & all_hosts
+    default_host = await config.get('volumes/default_host')
     if default_host not in allowed_hosts:
         default_host = None
     resp = {
@@ -523,19 +513,40 @@ async def list_hosts(request: web.Request) -> web.Response:
 async def list_all_hosts(request: web.Request) -> web.Response:
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.LIST_ALL_HOSTS (ak:{})', access_key)
+    all_volumes = await request.app['storage_manager'].get_all_volumes()
+    all_hosts = {f"{proxy_name}:{volume_data['name']}" for proxy_name, volume_data in all_volumes}
     config = request.app['config_server']
-    mount_prefix = await config.get('volumes/_mount')
-    if mount_prefix is None:
-        mount_prefix = '/mnt'
-    mounted_hosts = set(p.name for p in Path(mount_prefix).iterdir() if p.is_dir())
-    default_host = await config.get('volumes/_default_host')
-    if default_host not in mounted_hosts:
+    default_host = await config.get('volumes/default_host')
+    if default_host not in all_hosts:
         default_host = None
     resp = {
         'default': default_host,
-        'allowed': sorted(mounted_hosts),
+        'allowed': sorted(all_hosts),
     }
     return web.json_response(resp, status=200)
+
+
+@atomic
+@superadmin_required
+@server_status_required(READ_ALLOWED)
+@check_api_params(
+    t.Dict({
+        t.Key('folder_host'): t.String,
+    }))
+async def get_volume_perf_metric(request: web.Request, params: Any) -> web.Response:
+    access_key = request['keypair']['access_key']
+    log.info('VFOLDER.VOLUME_PERF_METRIC (ak:{})', access_key)
+    storage_manager = request.app['storage_manager']
+    proxy_name, volume_name = storage_manager.split_host(params['folder_host'])
+    async with storage_manager.request(
+        proxy_name, 'GET', 'volume/performance-metric',
+        json={
+            'volume': volume_name,
+        },
+        raise_for_status=True,
+    ) as (_, storage_resp):
+        storage_reply = await storage_resp.json()
+    return web.json_response(storage_reply, status=200)
 
 
 @atomic
@@ -563,16 +574,24 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
     else:
         is_owner = row['is_owner']
         permission = row['permission']
-    # TODO: handle nested directory structure
-    folder_path = get_folder_hostpath(row, request.app)
-    loop = current_loop()
-    num_files = await loop.run_in_executor(None, lambda: len(list(folder_path.iterdir())))
+    storage_manager = request.app['storage_manager']
+    proxy_name, volume_name = storage_manager.split_host(row['host'])
+    async with storage_manager.request(
+        proxy_name, 'GET', 'folder/usage',
+        json={
+            'volume': volume_name,
+            'vfid': str(row['id']),
+        },
+        raise_for_status=True,
+    ) as (_, storage_resp):
+        usage = await storage_resp.json()
     resp = {
         'name': row['name'],
         'id': row['id'].hex,
         'host': row['host'],
-        'numFiles': num_files,  # legacy
-        'num_files': num_files,
+        'numFiles': usage['file_count'],  # legacy
+        'num_files': usage['file_count'],
+        'used_bytes': usage['used_bytes'],  # added in v20.09
         'created': str(row['created_at']),  # legacy
         'created_at': str(row['created_at']),
         'last_used': str(row['created_at']),
@@ -593,7 +612,7 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
     t.Dict({
         t.Key('new_name'): tx.Slug(allow_dot=True),
     }))
-async def rename(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
+async def rename_vfolder(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     dbpool = request.app['dbpool']
     old_name = request.match_info['name']
     access_key = request['keypair']['access_key']
@@ -639,67 +658,55 @@ async def rename(request: web.Request, params: Any, row: VFolderRow) -> web.Resp
 async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
-    path = Path(params['path'])
-    log.info('VFOLDER.MKDIR (ak:{}, vf:{}, path:{})', access_key, folder_name, path)
-    folder_path = get_folder_hostpath(row, request.app)
-    assert not path.is_absolute(), 'path must be relative.'
-    try:
-        loop = current_loop()
-        await loop.run_in_executor(
-            None, lambda: (folder_path / path).mkdir(parents=True, exist_ok=False))
-    except FileExistsError as e:
-        raise InvalidAPIParameters(
-            f'"{e.filename}" already exists and is not a directory.')
+    log.info('VFOLDER.MKDIR (ak:{}, vf:{}, path:{})', access_key, folder_name, params['path'])
+    storage_manager = request.app['storage_manager']
+    proxy_name, volume_name = storage_manager.split_host(row['host'])
+    async with storage_manager.request(
+        proxy_name, 'POST', 'folder/file/mkdir',
+        json={
+            'volume': volume_name,
+            'vfid': str(row['id']),
+            'relpath': params['path'],
+        },
+        raise_for_status=True,
+    ):
+        pass
     return web.Response(status=201)
 
 
+@atomic
 @auth_required
 @server_status_required(READ_ALLOWED)
-@vfolder_permission_required(VFolderPermission.READ_WRITE)
-async def upload(request: web.Request, row: VFolderRow) -> web.Response:
-    folder_name = request.match_info['name']
-    access_key = request['keypair']['access_key']
-    log_fmt = 'VFOLDER.UPLOAD (ak:{}, vf:{})'
-    log_args = (access_key, folder_name)
+@vfolder_permission_required(VFolderPermission.READ_ONLY)
+@check_api_params(
+    t.Dict({
+        tx.AliasedKey(['path', 'file']): t.String,
+        t.Key('archive', default=False): t.ToBool,
+    }))
+async def create_download_session(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
+    log_fmt = 'VFOLDER.CREATE_DOWNLOAD_SESSION(ak:{}, vf:{}, path:{})'
+    log_args = (request['keypair']['access_key'], row['name'], params['path'])
     log.info(log_fmt, *log_args)
-    folder_path = get_folder_hostpath(row, request.app)
-    reader = await request.multipart()
-    file_count = 0
-    async for file in aiotools.aiter(reader.next, None):
-        if file_count == 10:  # TODO: make it configurable
-            raise InvalidAPIParameters('Too many files!')
-        file_count += 1
-        try:
-            file_path = (folder_path / file.filename).resolve()
-            file_path.relative_to(folder_path)
-        except ValueError:
-            raise InvalidAPIParameters('One of target paths is out of the folder.')
-        if file_path.exists() and not file_path.is_file():
-            raise InvalidAPIParameters(
-                f'Cannot overwrite "{file.filename}" because '
-                'it already exists and not a regular file.')
-        file_dir = (folder_path / file.filename).parent
-        try:
-            loop = current_loop()
-            await loop.run_in_executor(None, lambda: file_dir.mkdir(parents=True, exist_ok=True))
-        except FileExistsError as e:
-            raise InvalidAPIParameters(
-                'Failed to create parent directories. '
-                f'"{e.filename}" already exists and is not a directory.')
-        log.info(log_fmt + ': accepted path:{}',
-                 *log_args, file.filename)
-
-        async with AsyncFileWriter(
-                loop=current_loop(),
-                target_filename=file_path,
-                access_mode='wb',
-                decode=file.decode,
-                max_chunks=DEFAULT_INFLIGHT_CHUNKS) as writer:
-            while not file.at_eof():
-                chunk = await file.read_chunk(size=DEFAULT_CHUNK_SIZE)
-                await writer.write(chunk)
-
-    return web.Response(status=201)
+    unmanaged_path = row['unmanaged_path']
+    storage_manager = request.app['storage_manager']
+    proxy_name, volume_name = storage_manager.split_host(row['host'])
+    async with storage_manager.request(
+        proxy_name, 'POST', 'folder/file/download',
+        json={
+            'volume': volume_name,
+            'vfid': str(row['id']),
+            'relpath': params['path'],
+            'archive': params['archive'],
+            'unmanaged_path': unmanaged_path if unmanaged_path else None,
+        },
+        raise_for_status=True,
+    ) as (client_api_url, storage_resp):
+        storage_reply = await storage_resp.json()
+        resp = {
+            'token': storage_reply['token'],
+            'url': str(client_api_url / 'download'),
+        }
+    return web.json_response(resp, status=200)
 
 
 @auth_required
@@ -710,124 +717,30 @@ async def upload(request: web.Request, row: VFolderRow) -> web.Response:
         t.Key('path'): t.String,
         t.Key('size'): t.ToInt,
     }))
-async def create_tus_upload_session(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
-    secret = request.app['config']['manager']['secret']
-    folder_path = (request.app['VFOLDER_MOUNT'] / row['host'] /
-                   request.app['VFOLDER_FSPREFIX'] / row['id'].hex)
-    session_id = uuid.uuid4().hex
-
+async def create_upload_session(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
-    log_fmt = 'VFOLDER.UPLOAD_SESSION (ak:{}, vf:{}, si:{})'
-    log_args = (access_key, folder_name, session_id)
+    log_fmt = 'VFOLDER.CREATE_UPLOAD_SESSION (ak:{}, vf:{})'
+    log_args = (access_key, folder_name)
     log.info(log_fmt, *log_args)
-
-    upload_base = folder_path / ".upload"
-    if not upload_base.exists():
-        upload_base.mkdir()
-    upload_base_path = folder_path / ".upload" / session_id
-    Path(upload_base_path).touch()
-
-    t = params
-    t['host'] = row['host']
-    t['folder'] = row['id'].hex
-    t['session_id'] = session_id
-    t['exp'] = datetime.utcnow() + timedelta(days=1)  # TODO: make it configurable
-
-    token = jwt.encode(t, secret, algorithm='HS256').decode('UTF-8')
-    resp = {
-        'token': token,
-    }
-
+    storage_manager = request.app['storage_manager']
+    proxy_name, volume_name = storage_manager.split_host(row['host'])
+    async with storage_manager.request(
+        proxy_name, 'POST', 'folder/file/upload',
+        json={
+            'volume': volume_name,
+            'vfid': str(row['id']),
+            'relpath': params['path'],
+            'size': params['size'],
+        },
+        raise_for_status=True,
+    ) as (client_api_url, storage_resp):
+        storage_reply = await storage_resp.json()
+        resp = {
+            'token': storage_reply['token'],
+            'url': str(client_api_url / 'upload'),
+        }
     return web.json_response(resp, status=200)
-
-
-async def tus_check_session(request):
-    try:
-        secret = request.app['config']['manager']['secret']
-        token = request.match_info['session']
-        params = jwt.decode(token, secret, algorithms=['HS256'])
-    except jwt.PyJWTError:
-        log.exception('jwt error while parsing "{}"', token)
-        raise InvalidAPIParameters('Could not validate the upload session token.')
-
-    headers = await tus_session_headers(request, params)
-    return web.Response(headers=headers)
-
-
-async def tus_upload_part(request):
-    try:
-        secret = request.app['config']['manager']['secret']
-        token = request.match_info['session']
-        params = jwt.decode(token, secret, algorithms=['HS256'])
-    except jwt.PyJWTError:
-        log.exception('jwt error while parsing "{}"', token)
-        raise InvalidAPIParameters('Could not validate the upload session token.')
-
-    headers = await tus_session_headers(request, params)
-
-    folder_path = (request.app['VFOLDER_MOUNT'] / params['host'] /
-                   request.app['VFOLDER_FSPREFIX'] / params['folder'])
-    upload_base = folder_path / ".upload"
-    target_filename = upload_base / params['session_id']
-
-    async with AsyncFileWriter(
-            loop=current_loop(),
-            target_filename=target_filename,
-            access_mode='ab',
-            max_chunks=DEFAULT_INFLIGHT_CHUNKS) as writer:
-        while not request.content.at_eof():
-            chunk = await request.content.read(DEFAULT_CHUNK_SIZE)
-            await writer.write(chunk)
-
-    fs = Path(target_filename).stat().st_size
-    if fs >= int(params['size']):
-        target_path = folder_path / params['path']
-        Path(target_filename).rename(target_path)
-        try:
-            loop = current_loop()
-            await loop.run_in_executor(None, lambda: upload_base.rmdir())
-        except OSError:
-            pass
-
-    headers['Upload-Offset'] = str(fs)
-    return web.Response(status=204, headers=headers)
-
-
-async def tus_options(request):
-    headers = {}
-    headers["Access-Control-Allow-Origin"] = "*"
-    headers["Access-Control-Allow-Headers"] = \
-        "Tus-Resumable, Upload-Length, Upload-Metadata, Upload-Offset, Content-Type"
-    headers["Access-Control-Expose-Headers"] = \
-        "Tus-Resumable, Upload-Length, Upload-Metadata, Upload-Offset, Content-Type"
-    headers["Access-Control-Allow-Methods"] = "*"
-    headers["Tus-Resumable"] = "1.0.0"
-    headers["Tus-Version"] = "1.0.0"
-    headers["Tus-Max-Size"] = "107374182400"  # 100G TODO: move to settings
-    headers["X-Content-Type-Options"] = "nosniff"
-    return web.Response(headers=headers)
-
-
-async def tus_session_headers(request, params):
-    folder_path = (request.app['VFOLDER_MOUNT'] / params['host'] /
-                   request.app['VFOLDER_FSPREFIX'] / params['folder'])
-    upload_base = folder_path / ".upload"
-    base_file = upload_base / params['session_id']
-    if not Path(base_file).exists():
-        raise web.HTTPNotFound()
-    headers = {}
-    headers["Access-Control-Allow-Origin"] = "*"
-    headers["Access-Control-Allow-Headers"] = \
-        "Tus-Resumable, Upload-Length, Upload-Metadata, Upload-Offset, Content-Type"
-    headers["Access-Control-Expose-Headers"] = \
-        "Tus-Resumable, Upload-Length, Upload-Metadata, Upload-Offset, Content-Type"
-    headers["Access-Control-Allow-Methods"] = "*"
-    headers["Cache-Control"] = "no-store"
-    headers["Tus-Resumable"] = "1.0.0"
-    headers['Upload-Offset'] = str(Path(base_file).stat().st_size)
-    headers['Upload-Length'] = str(params['size'])
-    return headers
 
 
 @auth_required
@@ -843,31 +756,20 @@ async def rename_file(request: web.Request, params: Any, row: VFolderRow) -> web
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.RENAME_FILE (ak:{}, vf:{}, target_path:{}, new_name:{})',
              access_key, folder_name, params['target_path'], params['new_name'])
-    folder_path = get_folder_hostpath(row, request.app)
-    ops = []
-    try:
-        target_path = (folder_path / params['target_path']).resolve(strict=True)
-        target_path.relative_to(folder_path)
-        new_path = target_path.parent / params['new_name']
-        # Ensure new file is in the same directory.
-        if len(params['new_name'].split('/')) > 1:
-            raise InvalidAPIParameters('New name should not be a path: ' + params['new_name'])
-        if new_path.exists():
-            raise InvalidAPIParameters('File already exists: ' + params['new_name'])
-    except FileNotFoundError:
-        raise InvalidAPIParameters('No such target file: ' + params['target_path'])
-    except ValueError:
-        raise InvalidAPIParameters('The requested path is out of the folder')
-    ops.append(functools.partial(target_path.rename, new_path))
-
-    def _do_ops():
-        for op in ops:
-            op()
-
-    loop = current_loop()
-    await loop.run_in_executor(None, _do_ops)
-    resp: Dict[str, Any] = {}
-    return web.json_response(resp, status=200)
+    storage_manager = request.app['storage_manager']
+    proxy_name, volume_name = storage_manager.split_host(row['host'])
+    async with storage_manager.request(
+        proxy_name, 'POST', 'folder/file/rename',
+        json={
+            'volume': volume_name,
+            'vfid': str(row['id']),
+            'relpath': params['target_path'],
+            'new_name': params['new_name'],
+        },
+        raise_for_status=True,
+    ):
+        pass
+    return web.json_response({}, status=200)
 
 
 @auth_required
@@ -884,257 +786,19 @@ async def delete_files(request: web.Request, params: Any, row: VFolderRow) -> we
     recursive = params['recursive']
     log.info('VFOLDER.DELETE_FILES (ak:{}, vf:{}, path:{}, recursive:{})',
              access_key, folder_name, folder_name, recursive)
-    folder_path = get_folder_hostpath(row, request.app)
-    ops = []
-    for file in params['files']:
-        try:
-            file_path = (folder_path / file).resolve()
-            file_path.relative_to(folder_path)
-        except ValueError:
-            # path is out of folder
-            continue
-        if file_path.is_dir():
-            if recursive:
-                ops.append(functools.partial(shutil.rmtree, file_path))
-            else:
-                raise InvalidAPIParameters(
-                    f'"{file_path}" is a directory. '
-                    'Set recursive option to remove it.')
-        elif file_path.is_file():
-            ops.append(functools.partial(os.unlink, file_path))
-
-    def _do_ops():
-        for op in ops:
-            op()
-
-    loop = current_loop()
-    await loop.run_in_executor(None, _do_ops)
-    resp: Dict[str, Any] = {}
-    return web.json_response(resp, status=200)
-
-
-async def download_directory_as_archive(request: web.Request,
-                                        file_path: Path,
-                                        zip_filename: str = None) -> web.StreamResponse:
-    """Serve a directory as a zip archive on the fly."""
-    _sentinel: Final = Sentinel.token
-
-    def _iter2aiter(iter):
-        """Iterable to async iterable"""
-        def _consume(loop, iter, q):
-            for item in iter:
-                q.put(item)
-            q.put(_sentinel)
-
-        async def _aiter():
-            loop = current_loop()
-            q = janus.Queue(maxsize=DEFAULT_INFLIGHT_CHUNKS)
-            try:
-                fut = loop.run_in_executor(None, lambda: _consume(loop, iter, q.sync_q))
-                while True:
-                    item = await q.async_q.get()
-                    if item is _sentinel:
-                        break
-                    yield item
-                    q.async_q.task_done()
-                await fut
-            finally:
-                q.close()
-                await q.wait_closed()
-
-        return _aiter()
-
-    if zip_filename is None:
-        zip_filename = file_path.name + '.zip'
-    zf = zipstream.ZipFile(compression=zipstream.ZIP_DEFLATED)
-    async for root, dirs, files in _iter2aiter(os.walk(file_path)):
-        for file in files:
-            zf.write(Path(root) / file, Path(root).relative_to(file_path) / file)
-        if len(dirs) == 0 and len(files) == 0:
-            # Include an empty directory in the archive as well.
-            zf.write(root, Path(root).relative_to(file_path))
-    ascii_filename = zip_filename.encode('ascii', errors='ignore').decode('ascii').replace('"', r'\"')
-    encoded_filename = urllib.parse.quote(zip_filename, encoding='utf-8')
-    response = web.StreamResponse(headers={
-        hdrs.CONTENT_TYPE: 'application/zip',
-        hdrs.CONTENT_DISPOSITION: " ".join([
-            "attachment;"
-            f"filename=\"{ascii_filename}\";",       # RFC-2616 sec2.2
-            f"filename*=UTF-8''{encoded_filename}",  # RFC-5987
-        ])
-    })
-    await response.prepare(request)
-    async for chunk in _iter2aiter(zf):
-        await response.write(chunk)
-    return response
-
-
-@auth_required
-@server_status_required(READ_ALLOWED)
-@vfolder_permission_required(VFolderPermission.READ_ONLY)
-@check_api_params(
-    t.Dict({
-        t.Key('files'): t.List[t.String],
-    }))
-async def download(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
-    folder_name = request.match_info['name']
-    access_key = request['keypair']['access_key']
-    files = params['files']
-    log.info('VFOLDER.DOWNLOAD (ak:{}, vf:{}, path:{})', access_key, folder_name, files[0])
-    folder_path = get_folder_hostpath(row, request.app)
-    for file in files:
-        try:
-            file_path = (folder_path / file).resolve()
-            file_path.relative_to(folder_path)
-        except ValueError:
-            raise InvalidAPIParameters('The requested path is out of the folder')
-        if not file_path.is_file():
-            raise InvalidAPIParameters(
-                f'You cannot download "{file}" because it is not a regular file.')
-    with aiohttp.MultipartWriter('mixed') as mpwriter:
-        total_payloads_length = 0
-        headers = multidict.MultiDict({'Content-Encoding': 'identity'})
-        try:
-            for file in files:
-                data = open(folder_path / file, 'rb')
-                payload = mpwriter.append(data, headers)
-                if payload.size is not None:
-                    total_payloads_length += payload.size
-        except FileNotFoundError:
-            return web.Response(status=404, reason='File not found')
-        mpwriter._headers['X-TOTAL-PAYLOADS-LENGTH'] = str(total_payloads_length)
-        return web.Response(body=mpwriter, status=200)
-
-
-@auth_required
-@server_status_required(READ_ALLOWED)
-@vfolder_permission_required(VFolderPermission.READ_ONLY)
-@check_api_params(
-    t.Dict({
-        t.Key('file'): t.String,
-        t.Key('archive', default=False): t.ToBool | t.Null,
-    }))
-async def download_single(request: web.Request, params: Any, row: VFolderRow) -> web.StreamResponse:
-    folder_name = request.match_info['name']
-    access_key = request['keypair']['access_key']
-    fn = params['file']
-    log.info('VFOLDER.DOWNLOAD_SINGLE (ak:{}, vf:{}, path:{})', access_key, folder_name, fn)
-    folder_path = get_folder_hostpath(row, request.app)
-    try:
-        file_path = (folder_path / fn).resolve()
-        file_path.relative_to(folder_path)
-        if not file_path.exists():
-            raise FileNotFoundError
-    except (ValueError, FileNotFoundError):
-        raise GenericNotFound('The file is not found.')
-    if not file_path.is_file():
-        if params['archive']:
-            # Download directory as an archive when archive param is set.
-            return await download_directory_as_archive(request, file_path)
-        else:
-            raise InvalidAPIParameters('The file is not a regular file.')
-    if request.method == 'HEAD':
-        return web.Response(status=200, headers={
-            hdrs.ACCEPT_RANGES: 'bytes',
-            hdrs.CONTENT_LENGTH: str(file_path.stat().st_size),
-        })
-    ascii_filename = file_path.name.encode('ascii', errors='ignore').decode('ascii').replace('"', r'\"')
-    encoded_filename = urllib.parse.quote(file_path.name, encoding='utf-8')
-    return web.FileResponse(file_path, headers={
-        hdrs.CONTENT_TYPE: "application/octet-stream",
-        hdrs.CONTENT_DISPOSITION: " ".join([
-            "attachment;"
-            f"filename=\"{ascii_filename}\";",       # RFC-2616 sec2.2
-            f"filename*=UTF-8''{encoded_filename}",  # RFC-5987
-        ])
-    })
-
-
-@atomic
-@auth_required
-@server_status_required(READ_ALLOWED)
-@vfolder_permission_required(VFolderPermission.READ_ONLY)
-@check_api_params(
-    t.Dict({
-        t.Key('file'): t.String,
-        t.Key('archive', default=False): t.ToBool | t.Null,
-    }))
-async def request_download(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
-    secret = request.app['config']['manager']['secret']
-    p = {}
-    p['file'] = params['file']
-    p['host'] = row['host']
-    p['id'] = row['id'].hex
-    p['archive'] = params['archive']
-    p['exp'] = datetime.utcnow() + timedelta(minutes=2)  # TODO: make it configurable
-    token = jwt.encode(p, secret, algorithm='HS256').decode('UTF-8')
-    resp = {
-        'token': token,
-    }
-    log.info('VFOLDER.REQUEST_DOWNLOAD_TOKEN (ak:{}, vf:{}, path:{}): generated token:{}',
-             request['keypair']['access_key'], row['name'], params['file'], token)
-    return web.json_response(resp, status=200)
-
-
-async def download_with_token(request) -> web.StreamResponse:
-    try:
-        secret = request.app['config']['manager']['secret']
-        token = request.query.get('token', '')
-        params = jwt.decode(token, secret, algorithms=['HS256'])
-    except jwt.PyJWTError:
-        log.exception('jwt error while parsing "{}"', token)
-        raise InvalidAPIParameters('Could not validate the download token.')
-
-    iv = t.Dict({
-        t.Key('file'): t.String,
-        t.Key('host'): t.String,
-        t.Key('id'): t.String,
-        t.Key('exp'): t.Int,
-        t.Key('archive', default=False): t.Bool | t.Null,
-    })
-    params = iv.check(params)
-    fn = params['file']
-    log.info('VFOLDER.DOWNLOAD_WITH_TOKEN (token:{}, path:{})', token, fn)
-    dbpool = request.app['dbpool']
-    async with dbpool.acquire() as conn:
-        query = (sa.select([vfolders.c.unmanaged_path])
-                   .select_from(vfolders)
-                   .where(vfolders.c.id == params['id'])
-                   .limit(1))
-        unmanaged_path = await conn.scalar(query)
-        if unmanaged_path:
-            folder_path = Path(unmanaged_path)
-        else:
-            folder_path = (request.app['VFOLDER_MOUNT'] / params['host'] /
-                           request.app['VFOLDER_FSPREFIX'] / params['id'])
-    try:
-        file_path = (folder_path / fn).resolve()
-        file_path.relative_to(folder_path)
-        if not file_path.exists():
-            raise FileNotFoundError
-    except (ValueError, FileNotFoundError):
-        raise InvalidAPIParameters('The file is not found.')
-    if not file_path.is_file():
-        if params['archive']:
-            # Download directory as an archive when archive param is set.
-            return await download_directory_as_archive(request, file_path)
-        else:
-            raise InvalidAPIParameters('The file is not a regular file.')
-    if request.method == 'HEAD':
-        return web.Response(status=200, headers={
-            hdrs.ACCEPT_RANGES: 'bytes',
-            hdrs.CONTENT_LENGTH: str(file_path.stat().st_size),
-        })
-    ascii_filename = file_path.name.encode('ascii', errors='ignore').decode('ascii').replace('"', r'\"')
-    encoded_filename = urllib.parse.quote(file_path.name, encoding='utf-8')
-    return web.FileResponse(file_path, headers={
-        hdrs.CONTENT_TYPE: "application/octet-stream",
-        hdrs.CONTENT_DISPOSITION: " ".join([
-            "attachment;"
-            f"filename=\"{ascii_filename}\";",       # RFC-2616 sec2.2
-            f"filename*=UTF-8''{encoded_filename}",  # RFC-5987
-        ])
-    })
+    storage_manager = request.app['storage_manager']
+    proxy_name, volume_name = storage_manager.split_host(row['host'])
+    async with storage_manager.request(
+        proxy_name, 'POST', 'folder/file/delete',
+        json={
+            'volume': volume_name,
+            'vfid': str(row['id']),
+            'relpaths': params['files'],
+        },
+        raise_for_status=True,
+    ):
+        pass
+    return web.json_response({}, status=200)
 
 
 @auth_required
@@ -1149,38 +813,42 @@ async def list_files(request: web.Request, params: Any, row: VFolderRow) -> web.
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.LIST_FILES (ak:{}, vf:{}, path:{})',
              access_key, folder_name, params['path'])
-    base_path = get_folder_hostpath(row, request.app)
-    try:
-        folder_path = (base_path / params['path']).resolve()
-        folder_path.relative_to(base_path)
-    except ValueError:
-        raise VFolderNotFound('No such file or directory.')
-    if not folder_path.exists():
-        raise VFolderNotFound('No such file or directory.')
-    if not folder_path.is_dir():
-        raise InvalidAPIParameters('The target path must be a directory.')
-    files = []
-
-    def _scan():
-        for f in os.scandir(folder_path):
-            fstat = f.stat()
-            ctime = fstat.st_ctime  # TODO: way to get concrete create time?
-            mtime = fstat.st_mtime
-            atime = fstat.st_atime
-            files.append({
-                'mode': stat.filemode(fstat.st_mode),
-                'size': fstat.st_size,
-                'ctime': ctime,
-                'mtime': mtime,
-                'atime': atime,
-                'filename': f.name,
-            })
-
-    loop = current_loop()
-    await loop.run_in_executor(None, _scan)
-    resp = {
-        'files': json.dumps(files),
-    }
+    storage_manager = request.app['storage_manager']
+    proxy_name, volume_name = storage_manager.split_host(row['host'])
+    async with storage_manager.request(
+        proxy_name, 'POST', 'folder/file/list',
+        json={
+            'volume': volume_name,
+            'vfid': str(row['id']),
+            'relpath': params['path'],
+        },
+        raise_for_status=True,
+    ) as (_, storage_resp):
+        result = await storage_resp.json()
+        resp = {
+            'items': [
+                {
+                    'name': item['name'],
+                    'type': item['type'],
+                    'size': item['stat']['size'],  # humanize?
+                    'mode': oct(item['stat']['mode'])[2:][-3:],
+                    'created': item['stat']['created'],
+                    'modified': item['stat']['modified'],
+                }
+                for item in result['items']
+            ],
+            'files': json.dumps([  # for legacy (to be removed in 21.03)
+                {
+                    'filename': item['name'],
+                    'size': item['stat']['size'],
+                    'mode': stat.filemode(item['stat']['mode']),
+                    'ctime': datetime.fromisoformat(item['stat']['created']).timestamp(),
+                    'atime': 0,
+                    'mtime': datetime.fromisoformat(item['stat']['modified']).timestamp(),
+                }
+                for item in result['items']
+            ]),
+        }
     return web.json_response(resp, status=200)
 
 
@@ -1515,17 +1183,54 @@ async def delete(request: web.Request) -> web.Response:
             raise InvalidAPIParameters('No such vfolder.')
         folder_host = entry['host']
         folder_id = entry['id']
-        folder_hex = folder_id.hex
-        folder_path = (request.app['VFOLDER_MOUNT'] / folder_host /
-                       request.app['VFOLDER_FSPREFIX'] / folder_hex)
         query = (vfolders.delete().where(vfolders.c.id == folder_id))
         await conn.execute(query)
-        try:
-            loop = current_loop()
-            await loop.run_in_executor(None, lambda: shutil.rmtree(folder_path))  # type: ignore
-        except IOError:
+        storage_manager = request.app['storage_manager']
+        proxy_name, volume_name = storage_manager.split_host(folder_host)
+        async with storage_manager.request(
+            proxy_name, 'POST', 'folder/delete',
+            json={
+                'volume': volume_name,
+                'vfid': str(folder_id),
+            },
+            raise_for_status=True,
+        ):
             pass
     return web.Response(status=204)
+
+
+@atomic
+@auth_required
+@server_status_required(ALL_ALLOWED)
+@vfolder_permission_required(VFolderPermission.READ_ONLY)
+async def leave(request: web.Request, row: VFolderRow) -> web.Response:
+    '''
+    Leave a shared vfolder.
+
+    Cannot leave a group vfolder or a vfolder that the requesting user owns.
+    '''
+    if row['ownership_type'] == VFolderOwnershipType.GROUP:
+        raise InvalidAPIParameters('Cannot leave a group vfolder.')
+    if row['is_owner']:
+        raise InvalidAPIParameters('Cannot leave a vfolder owned by the requesting user.')
+
+    dbpool = request.app['dbpool']
+    access_key = request['keypair']['access_key']
+    user_uuid = request['user']['uuid']
+    vfolder_id = row['id']
+    perm = None
+    log.info('VFOLDER.LEAVE(ak:{}, vfid:{}, uid:{}, perm:{})',
+             access_key, vfolder_id, user_uuid, perm)
+    async with dbpool.acquire() as conn:
+        query = (
+            vfolder_permissions
+            .delete()
+            .where(vfolder_permissions.c.vfolder == vfolder_id)
+            .where(vfolder_permissions.c.user == user_uuid)
+        )
+        await conn.execute(query)
+    resp = {'msg': 'left the shared vfolder'}
+    return web.json_response(resp, status=200)
 
 
 @atomic
@@ -1667,15 +1372,13 @@ async def get_fstab_contents(request: web.Request, params: Any) -> web.Response:
                           access_key, params['agent_id'])
             raise InternalServerError
     else:
-        # Return manager's fstab.
-        async with aiofiles.open(params['fstab_path'], mode='r') as fp:
-            content = await fp.read()
-            resp = {
-                'content': content,
-                'node': 'manager',
-                'node_id': 'manager',
-            }
-            return web.json_response(resp)
+        resp = {
+            'content':
+                "# Since Backend.AI 20.09, reading the manager fstab is no longer supported.",
+            'node': 'manager',
+            'node_id': 'manager',
+        }
+        return web.json_response(resp)
 
 
 @superadmin_required
@@ -1696,16 +1399,26 @@ async def list_mounts(request: web.Request) -> web.Response:
     if mount_prefix is None:
         mount_prefix = '/mnt'
 
-    # Scan mounted vfolder hosts in manager machine.
-    mounts = set()
-    for p in Path(mount_prefix).iterdir():
-        # TODO: Change os.path.ismount to p.is_mount if Python 3.7 is supported.
-        if p.is_dir() and os.path.ismount(str(p)):
-            mounts.add(str(p))
+    # NOTE: Changed in 20.09: the manager instances no longer have mountpoints.
+    storage_manager: StorageSessionManager = request.app['storage_manager']
+    all_volumes = [*await storage_manager.get_all_volumes()]
+    all_mounts = [
+        volume_data['path']
+        for proxy_name, volume_data in all_volumes
+    ]
+    all_vfolder_hosts = [
+        f"{proxy_name}:{volume_data['name']}"
+        for proxy_name, volume_data in all_volumes
+    ]
     resp: MutableMapping[str, Any] = {
         'manager': {
             'success': True,
-            'mounts': sorted(mounts),
+            'mounts': all_mounts,
+            'message': '(legacy)',
+        },
+        'storage-proxy': {
+            'success': True,
+            'mounts': [*zip(all_vfolder_hosts, all_mounts)],
             'message': '',
         },
         'agents': {},
@@ -1803,35 +1516,14 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
     if mount_prefix is None:
         mount_prefix = '/mnt'
 
-    # Mount on manager.
-    mountpoint = Path(mount_prefix) / params['name']
-    mountpoint.mkdir(exist_ok=True)
-    if params.get('options', None):
-        cmd = ['sudo', 'mount', '-t', params['fs_type'], '-o', params['options'],
-               params['fs_location'], str(mountpoint)]
-    else:
-        cmd = ['sudo', 'mount', '-t', params['fs_type'],
-               params['fs_location'], str(mountpoint)]
-    proc = await asyncio.create_subprocess_exec(*cmd,
-                                                stdout=asyncio.subprocess.PIPE,
-                                                stderr=asyncio.subprocess.PIPE)
-    raw_out, raw_err = await proc.communicate()
-    out = raw_out.decode('utf8')
-    err = raw_err.decode('utf8')
-    await proc.wait()
+    # NOTE: Changed in 20.09: the manager instances no longer have mountpoints.
     resp: MutableMapping[str, Any] = {
         'manager': {
-            'success': True if not err else False,
-            'message': out if not err else err,
+            'success': True,
+            'message': 'Managers do not have mountpoints since v20.09.',
         },
         'agents': {},
     }
-    if params['edit_fstab'] and resp['manager']['success']:
-        fstab_path = params['fstab_path'] if params['fstab_path'] else '/etc/fstab'
-        async with aiofiles.open(fstab_path, mode='r+') as fp:
-            fstab = Fstab(fp)
-            await fstab.add(params['fs_location'], str(mountpoint),
-                            params['fs_type'], params['options'])
 
     # Mount on running agents.
     async with dbpool.acquire() as conn:
@@ -1948,25 +1640,13 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
         _agents = await result.fetchall()
 
     # Unmount from manager.
-    proc = await asyncio.create_subprocess_exec(*[
-        'sudo', 'umount', str(mountpoint)
-    ], stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    raw_out, raw_err = await proc.communicate()
-    out = raw_out.decode('utf8')
-    err = raw_err.decode('utf8')
-    await proc.wait()
     resp: MutableMapping[str, Any] = {
         'manager': {
-            'success': True if not err else False,
-            'message': out if not err else err,
+            'success': True,
+            'message': 'Managers do not have mountpoints since v20.09.',
         },
         'agents': {},
     }
-    if resp['manager']['success']:
-        try:
-            mountpoint.rmdir()  # delete directory if empty
-        except OSError:
-            pass
     if params['edit_fstab'] and resp['manager']['success']:
         fstab_path = params['fstab_path'] if params['fstab_path'] else '/etc/fstab'
         async with aiofiles.open(fstab_path, mode='r+') as fp:
@@ -2022,14 +1702,11 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-async def init(app):
-    mount_prefix = await app['config_server'].get('volumes/_mount')
-    fs_prefix = await app['config_server'].get('volumes/_fsprefix')
-    app['VFOLDER_MOUNT'] = Path(mount_prefix)
-    app['VFOLDER_FSPREFIX'] = Path(fs_prefix.lstrip('/'))
+async def init(app: web.Application) -> None:
+    pass
 
 
-async def shutdown(app):
+async def shutdown(app: web.Application) -> None:
     pass
 
 
@@ -2049,23 +1726,24 @@ def create_app(default_cors_options):
     cors.add(vfolder_resource.add_route('GET',    get_info))
     cors.add(vfolder_resource.add_route('DELETE', delete))
     cors.add(add_route('GET',    r'/_/hosts', list_hosts))
-    cors.add(add_route('GET',    r'/_/all_hosts', list_all_hosts))
-    cors.add(add_route('GET',    r'/_/allowed_types', list_allowed_types))
-    cors.add(add_route('GET',    r'/_/download_with_token', download_with_token))
-    cors.add(add_route('HEAD',   r'/_/download_with_token', download_with_token))
-    cors.add(add_route('POST',   r'/{name}/rename', rename))
+    cors.add(add_route('GET',    r'/_/all-hosts', list_all_hosts))
+    cors.add(add_route('GET',    r'/_/allowed-types', list_allowed_types))
+    cors.add(add_route('GET',    r'/_/all_hosts', list_all_hosts))          # legacy underbar
+    cors.add(add_route('GET',    r'/_/allowed_types', list_allowed_types))  # legacy underbar
+    cors.add(add_route('GET',    r'/_/perf-metric', get_volume_perf_metric))
+    cors.add(add_route('POST',   r'/{name}/rename', rename_vfolder))
     cors.add(add_route('POST',   r'/{name}/mkdir', mkdir))
-    cors.add(add_route('POST',   r'/{name}/upload', upload))
-    cors.add(add_route('POST',   r'/{name}/create_upload_session', create_tus_upload_session))
-    cors.add(add_route('POST',   r'/{name}/rename_file', rename_file))
-    cors.add(add_route('DELETE', r'/{name}/delete_files', delete_files))
-    cors.add(add_route('GET',    r'/{name}/download', download))
-    cors.add(add_route('GET',    r'/{name}/download_single', download_single))
-    cors.add(add_route('HEAD',   r'/{name}/download_single', download_single))
-    cors.add(add_route('POST',   r'/{name}/request_download', request_download))
+    cors.add(add_route('POST',   r'/{name}/request-upload', create_upload_session))
+    cors.add(add_route('POST',   r'/{name}/request-download', create_download_session))
+    cors.add(add_route('POST',   r'/{name}/rename-file', rename_file))
+    cors.add(add_route('DELETE', r'/{name}/delete-files', delete_files))
+    cors.add(add_route('POST',   r'/{name}/rename_file', rename_file))    # legacy underbar
+    cors.add(add_route('DELETE', r'/{name}/delete_files', delete_files))  # legacy underbar
     cors.add(add_route('GET',    r'/{name}/files', list_files))
     cors.add(add_route('POST',   r'/{name}/invite', invite))
-    cors.add(add_route('GET',    r'/invitations/list_sent', list_sent_invitations))
+    cors.add(add_route('POST',   r'/{name}/leave', leave))
+    cors.add(add_route('GET',    r'/invitations/list-sent', list_sent_invitations))
+    cors.add(add_route('GET',    r'/invitations/list_sent', list_sent_invitations))  # legacy underbar
     cors.add(add_route('POST',   r'/invitations/update/{inv_id}', update_invitation))
     cors.add(add_route('GET',    r'/invitations/list', invitations))
     cors.add(add_route('POST',   r'/invitations/accept', accept_invitation))
@@ -2076,7 +1754,4 @@ def create_app(default_cors_options):
     cors.add(add_route('GET',    r'/_/mounts', list_mounts))
     cors.add(add_route('POST',   r'/_/mounts', mount_host))
     cors.add(add_route('DELETE', r'/_/mounts', umount_host))
-    add_route('OPTIONS', r'/_/tus/upload/{session}', tus_options)
-    add_route('HEAD',    r'/_/tus/upload/{session}', tus_check_session)
-    add_route('PATCH',   r'/_/tus/upload/{session}', tus_upload_part)
     return app, []

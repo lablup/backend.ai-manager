@@ -48,6 +48,7 @@ manager_local_config_iv = t.Dict({
                                                        allow_devnull=True),
         t.Key('hide-agents', default=False): t.Bool,
         t.Key('importer-image', default='lablup/importer:manylinux2010'): t.String,
+        t.Key('max-wsmsg-size', default=16 * (2**20)): t.ToInt,  # default: 16 MiB
     }).allow_extra('*'),
     t.Key('docker-registry'): t.Dict({
         t.Key('ssl-verify', default=True): t.ToBool,
@@ -112,6 +113,19 @@ shared_config_iv = t.Dict({
     t.Key('watcher', default=_shdefs['watcher']): t.Dict({
         t.Key('token', default=_shdefs['watcher']['token']): t.Null | t.String,
     }).allow_extra('*'),
+}).allow_extra('*')
+
+volume_config_iv = t.Dict({
+    t.Key('default_host'): t.String,
+    t.Key('proxies'): t.Mapping(
+        tx.Slug,
+        t.Dict({
+            t.Key('client_api'): t.String,
+            t.Key('manager_api'): t.String,
+            t.Key('secret'): t.String,
+            t.Key('ssl_verify'): t.ToBool,
+        }),
+    ),
 }).allow_extra('*')
 
 

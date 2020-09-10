@@ -64,7 +64,8 @@ async def list_presets(request) -> web.Response:
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         query = (
             sa.select([resource_presets])
-            .select_from(resource_presets))
+            .select_from(resource_presets)
+        )
         # TODO: uncomment when we implement scaling group.
         # scaling_group = request.query.get('scaling_group')
         # if scaling_group is not None:
@@ -74,6 +75,7 @@ async def list_presets(request) -> web.Response:
             preset_slots = row['resource_slots'].normalize_slots(ignore_unknown=True)
             resp['presets'].append({
                 'name': row['name'],
+                'shared_memory': str(row['shared_memory']) if row['shared_memory'] else None,
                 'resource_slots': preset_slots.to_json(),
             })
         return web.json_response(resp, status=200)
@@ -537,7 +539,7 @@ async def get_time_binned_monthly_stats(request, user_uuid=None):
             if row.last_stat:
                 io_read_bytes += int(nmget(row.last_stat, 'io_read.current', 0))
                 io_write_bytes += int(nmget(row.last_stat, 'io_write.current', 0))
-                disk_used += int(nmget(row.last_stat, 'io_scratch_size/stats.max', {}, '/'))
+                disk_used += int(nmget(row.last_stat, 'io_scratch_size/stats.max', 0, '/'))
             idx += 1
         stat = {
             "date": ts,

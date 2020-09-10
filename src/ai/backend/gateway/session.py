@@ -462,7 +462,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     except UnknownImageReference:
         raise InvalidAPIParameters(f"Unknown image reference: {params['image']}")
     except Exception:
-        await request.app['error_monitor'].capture_exception(user=owner_uuid)
+        await request.app['error_monitor'].capture_exception(context={'user': owner_uuid})
         log.exception('GET_OR_CREATE: unexpected error!')
         raise InternalServerError
     finally:
@@ -969,7 +969,7 @@ async def restart(request: web.Request) -> web.Response:
         log.exception('RESTART: exception')
         raise
     except:
-        await request.app['error_monitor'].capture_exception(user=request['user']['uuid'])
+        await request.app['error_monitor'].capture_exception(context={'user': request['user']['uuid']})
         log.exception('RESTART: unexpected error')
         raise web.HTTPInternalServerError
     return web.Response(status=204)
@@ -1181,7 +1181,7 @@ async def download_files(request: web.Request, params: Any) -> web.Response:
     except (ValueError, FileNotFoundError):
         raise InvalidAPIParameters('The file is not found.')
     except Exception:
-        await request.app['error_monitor'].capture_exception(user=request['user']['uuid'])
+        await request.app['error_monitor'].capture_exception(context={'user': request['user']['uuid']})
         log.exception('DOWNLOAD_FILE: unexpected error!')
         raise InternalServerError
 
@@ -1218,7 +1218,7 @@ async def download_single(request: web.Request, params: Any) -> web.Response:
     except (ValueError, FileNotFoundError):
         raise InvalidAPIParameters('The file is not found.')
     except Exception:
-        await request.app['error_monitor'].capture_exception(user=request['user']['uuid'])
+        await request.app['error_monitor'].capture_exception(context={'user': request['user']['uuid']})
         log.exception('DOWNLOAD_SINGLE: unexpected error!')
         raise InternalServerError
     return web.Response(body=result, status=200)
@@ -1252,7 +1252,7 @@ async def list_files(request: web.Request) -> web.Response:
         log.exception('LIST_FILES: exception')
         raise
     except Exception:
-        await request.app['error_monitor'].capture_exception(user=request['user']['uuid'])
+        await request.app['error_monitor'].capture_exception(context={'user': request['user']['uuid']})
         log.exception('LIST_FILES: unexpected error!')
         raise InternalServerError
     return web.json_response(resp, status=200)

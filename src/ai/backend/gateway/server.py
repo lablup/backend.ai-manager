@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime
 import functools
 import importlib
+import json
 import logging
 import multiprocessing
 import os
@@ -30,6 +31,7 @@ import aiohttp_cors
 import aiojobs.aiohttp
 import aiotools
 from aiopg.sa import create_engine
+from aiopg.sa.engine import get_dialect
 import click
 from pathlib import Path
 from setproctitle import setproctitle
@@ -38,6 +40,7 @@ from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.config import redis_config_iv
 from ai.backend.common.utils import env_info, current_loop
+from ai.backend.common.json import ExtendedJSONEncoder
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from ai.backend.common.plugin.hook import HookPluginContext, ALL_COMPLETED, PASSED
 from ai.backend.common.plugin.monitor import (
@@ -46,16 +49,28 @@ from ai.backend.common.plugin.monitor import (
     INCREMENT,
 )
 from ..manager import __version__
+from ..manager.exceptions import InvalidArgument
 from ..manager.plugin.webapp import WebappPluginContext
 from ..manager.registry import AgentRegistry
 from ..manager.scheduler.dispatcher import SchedulerDispatcher
 from ..manager.background import BackgroundTaskManager
-from .config import load as load_config, load_shared as load_shared_config
+from ..manager.models.storage import StorageSessionManager
+from .config import (
+    load as load_config,
+    load_shared as load_shared_config,
+    volume_config_iv,
+)
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB, REDIS_STREAM_DB
 from .etcd import ConfigServer
 from .events import EventDispatcher
-from .exceptions import (BackendError, MethodNotAllowed, GenericNotFound,
-                         GenericBadRequest, InternalServerError)
+from .exceptions import (
+    BackendError,
+    MethodNotAllowed,
+    GenericNotFound,
+    GenericBadRequest,
+    InternalServerError,
+    InvalidAPIParameters,
+)
 from .types import (
     AppCreator,
     WebRequestHandler, WebMiddleware,
@@ -83,7 +98,11 @@ VALID_VERSIONS: Final = frozenset([
     'v4.20190615',
 
     # added mount_map parameter when creating kernel
-    'v5.20191215'
+    # changed GraphQL query structures for multi-container bundled sessions
+    'v5.20191215',
+
+    # rewrote vfolder upload/download APIs to migrate to external storage proxies
+    'v6.20200815',
 ])
 LATEST_REV_DATES: Final = {
     1: '20160915',
@@ -91,8 +110,9 @@ LATEST_REV_DATES: Final = {
     3: '20181215',
     4: '20190615',
     5: '20191215',
+    6: '20200815',
 }
-LATEST_API_VERSION: Final = 'v5.20191215'
+LATEST_API_VERSION: Final = 'v6.20200815'
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 
@@ -108,6 +128,7 @@ PUBLIC_INTERFACES: Final = [
     'redis_image',
     'redis_stream',
     'event_dispatcher',
+    'storage_manager',
     'stats_monitor',
     'error_monitor',
     'hook_plugin_ctx',
@@ -173,10 +194,16 @@ async def exception_middleware(request: web.Request,
     try:
         await stats_monitor.report_metric(INCREMENT, 'ai.backend.gateway.api.requests')
         resp = (await handler(request))
+    except InvalidArgument as ex:
+        if len(ex.args) > 1:
+            raise InvalidAPIParameters(f"{ex.args[0]}: {', '.join(map(str, ex.args[1:]))}")
+        elif len(ex.args) == 1:
+            raise InvalidAPIParameters(ex.args[0])
+        else:
+            raise InvalidAPIParameters()
     except BackendError as ex:
         if ex.status_code == 500:
-            log.exception('Internal server error raised inside handlers')
-            raise
+            log.warning('Internal server error raised inside handlers')
         await error_monitor.capture_exception()
         await stats_monitor.report_metric(INCREMENT, 'ai.backend.gateway.api.failures')
         await stats_monitor.report_metric(INCREMENT, f'ai.backend.gateway.api.status.{ex.status_code}')
@@ -303,6 +330,9 @@ async def database_ctx(app: web.Application) -> AsyncIterator[None]:
         echo=bool(app['config']['logging']['level'] == 'DEBUG'),
         minsize=8, maxsize=256,
         timeout=60, pool_recycle=120,
+        dialect=get_dialect(
+            json_serializer=functools.partial(json.dumps, cls=ExtendedJSONEncoder),
+        ),
     )
     _update_public_interface_objs(app)
     yield
@@ -315,6 +345,16 @@ async def event_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
     _update_public_interface_objs(app)
     yield
     await app['event_dispatcher'].close()
+
+
+async def storage_manager_ctx(app: web.Application) -> AsyncIterator[None]:
+    config_server: ConfigServer = app['config_server']
+    raw_vol_config = await config_server.etcd.get_prefix('volumes')
+    config = volume_config_iv.check(raw_vol_config)
+    app['storage_manager'] = StorageSessionManager(config)
+    _update_public_interface_objs(app)
+    yield
+    await app['storage_manager'].aclose()
 
 
 async def hook_plugin_ctx(app: web.Application) -> AsyncIterator[None]:
@@ -341,6 +381,7 @@ async def agent_registry_ctx(app: web.Application) -> AsyncIterator[None]:
         app['redis_live'],
         app['redis_image'],
         app['event_dispatcher'],
+        app['storage_manager'],
         app['hook_plugin_ctx'],
     )
     await app['registry'].init()
@@ -359,7 +400,7 @@ async def sched_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
 async def monitoring_ctx(app: web.Application) -> AsyncIterator[None]:
     ectx = ErrorPluginContext(app['config_server'].etcd, app['config'])
     sctx = StatsPluginContext(app['config_server'].etcd, app['config'])
-    await ectx.init()
+    await ectx.init(context={'app': app})
     await sctx.init()
     app['error_monitor'] = ectx
     app['stats_monitor'] = sctx
@@ -401,7 +442,7 @@ def handle_loop_error(
             exc_info = (type(exception), exception, exception.__traceback__)
             log.error('Error inside event loop: {0}', msg, exc_info=exc_info)
             if 'error_monitor' in root_app:
-                loop.create_task(root_app['error_monitor'].capture_exception(exception))
+                loop.create_task(root_app['error_monitor'].capture_exception(exc_instance=exception))
 
 
 def _init_subapp(pkg_name: str,
@@ -477,6 +518,7 @@ def build_root_app(
             redis_ctx,
             database_ctx,
             event_dispatcher_ctx,
+            storage_manager_ctx,
             hook_plugin_ctx,
             monitoring_ctx,
             agent_registry_ctx,
