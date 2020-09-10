@@ -73,5 +73,5 @@ def downgrade():
     op.drop_column('kernels', 'cluster_mode')
     op.drop_column('kernels', 'idx')
 
-    op.create_index('ix_kernels_sess_type', 'kernels', ['session_type'], unique=False)
-    op.create_index('ix_kernels_sess_id', 'kernels', ['session_name'], unique=False)
+    op.create_index('ix_kernels_sess_type', 'kernels', ['sess_type'], unique=False)
+    op.create_index('ix_kernels_sess_id', 'kernels', ['sess_id'], unique=False)
