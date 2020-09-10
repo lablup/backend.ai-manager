@@ -6,7 +6,6 @@ from collections import defaultdict
 import copy
 from datetime import datetime
 import logging
-from pathlib import Path
 import time
 from typing import (
     Any,
@@ -58,7 +57,6 @@ from ai.backend.common.types import (
     SlotName,
     SlotTypes,
 )
-from ai.backend.common.utils import current_loop
 from .defs import INTRINSIC_SLOTS
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
@@ -83,7 +81,7 @@ from .models import (
     DEAD_KERNEL_STATUSES,
 )
 if TYPE_CHECKING:
-    from .models.storage import StorageManager
+    from .models.storage import StorageSessionManager
     from .scheduler import SchedulingContext, PendingSession, AgentAllocationContext
     from ..gateway.events import EventDispatcher
 
@@ -193,7 +191,7 @@ class AgentRegistry:
         redis_live,
         redis_image,
         event_dispatcher: EventDispatcher,
-        storage_manager:  StorageManager,
+        storage_manager:  StorageSessionManager,
         hook_plugin_ctx: HookPluginContext,
     ) -> None:
         self.config_server = config_server
