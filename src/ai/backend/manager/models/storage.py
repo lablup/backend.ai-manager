@@ -76,6 +76,17 @@ class StorageSessionManager:
         results = await asyncio.gather(*fetch_aws)
         return itertools.chain(*results)
 
+    async def get_mount_path(self, vfolder_host: str, vfolder_id: str) -> str:
+        async with self.request(
+            vfolder_host, 'GET', 'folder/mount',
+            params={
+                'volume': self.split_host(vfolder_host)[1],
+                'vfid': vfolder_id,
+            },
+        ) as (_, resp):
+            reply = await resp.json()
+            return reply['path']
+
     @actxmgr
     async def request(
         self,
