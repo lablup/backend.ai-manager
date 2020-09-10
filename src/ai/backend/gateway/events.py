@@ -39,7 +39,6 @@ from .exceptions import GenericNotFound, GenericForbidden, GroupNotFound
 from .manager import READ_ALLOWED, server_status_required
 from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params
-from ..manager.defs import DEFAULT_ROLE
 from ..manager.models import kernels, groups, UserRole
 from ..manager.types import BackgroundTaskEventArgs, Sentinel
 
