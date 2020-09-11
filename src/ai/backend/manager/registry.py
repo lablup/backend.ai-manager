@@ -931,6 +931,7 @@ class AgentRegistry:
             registry_url, registry_creds = \
                 await get_registry_info(self.config_server.etcd, image_ref.registry)
 
+        network_name: Optional[str]
         if pending_session.cluster_mode == ClusterMode.SINGLE_NODE:
             if pending_session.cluster_size > 1:
                 network_name = f'bai-singlenode-{pending_session.session_id}'

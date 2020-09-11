@@ -3,10 +3,14 @@ from __future__ import annotations
 from abc import ABCMeta, abstractmethod
 import logging
 from typing import (
-    Any, List, Optional,
-    Protocol,
+    Any,
+    List,
     Mapping,
-    Sequence, MutableSequence,
+    MutableMapping,
+    MutableSequence,
+    Optional,
+    Protocol,
+    Sequence,
 )
 import uuid
 
@@ -100,12 +104,12 @@ class PendingSession:
     resource_opts: Mapping[str, Any]
     requested_slots: ResourceSlot
     target_sgroup_names: MutableSequence[str]
-    environ: Mapping[str, str]
+    environ: MutableMapping[str, str]
     mounts: Sequence[str]
     mount_map: Mapping[str, str]
     bootstrap_script: Optional[str]
     startup_command: Optional[str]
-    internal_data: Optional[Mapping[str, Any]]
+    internal_data: Optional[MutableMapping[str, Any]]
     preopen_ports: List[int]
 
     @property
