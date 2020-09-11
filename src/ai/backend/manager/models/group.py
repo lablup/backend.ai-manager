@@ -530,7 +530,7 @@ class GroupDotfile(TypedDict):
 async def query_group_dotfiles(
     conn: SAConnection,
     group_id: GUID,
-) -> Tuple[List[GroupDotfile], int]:
+) -> Tuple[Union[List[GroupDotfile], None], Union[int, None]]:
     query = (sa.select([groups.c.dotfiles])
                .select_from(groups)
                .where(groups.c.id == group_id))

@@ -5,6 +5,7 @@ from typing import (
     List,
     Tuple,
     TypedDict,
+    Union,
 )
 
 from aiopg.sa.connection import SAConnection
@@ -332,7 +333,7 @@ class DomainDotfile(TypedDict):
 async def query_domain_dotfiles(
     conn: SAConnection,
     name: str,
-) -> Tuple[List[DomainDotfile], int]:
+) -> Tuple[Union[List[DomainDotfile], None], Union[int, None]]:
     query = (sa.select([domains.c.dotfiles])
                .select_from(domains)
                .where(domains.c.name == name))
