@@ -693,11 +693,11 @@ class AgentRegistry:
                 )
                 # the first kernel_config is repliacted to sub-containers
                 assert kernel_enqueue_configs[0]['cluster_role'] == DEFAULT_ROLE
-                kernel_enqueue_configs[0]['cluster_idx'] = 0
+                kernel_enqueue_configs[0]['cluster_idx'] = 1
                 for i in range(cluster_size - 1):
                     sub_kernel_config = cast(KernelEnqueueingConfig, {**kernel_enqueue_configs[0]})
                     sub_kernel_config['cluster_role'] = 'sub'
-                    sub_kernel_config['cluster_idx'] = (i + 1)
+                    sub_kernel_config['cluster_idx'] = i + 1
                     kernel_enqueue_configs.append(sub_kernel_config)
             elif len(kernel_enqueue_configs) > 1:
                 # each container should have its own kernel_config
@@ -828,9 +828,6 @@ class AgentRegistry:
                     )))
 
             environ = kernel_enqueue_configs[0]['creation_config'].get('environ') or {}
-            if is_multicontainer:
-                environ['BACKEND_CLUSTER_ROLE'] = kernel['cluster_role']
-                environ['BACKEND_CLUSTER_IDX'] = str(kernel['cluster_idx'])
 
             # Create kernel object in PENDING state.
             async with self.dbpool.acquire() as conn, conn.begin():
@@ -934,24 +931,21 @@ class AgentRegistry:
             registry_url, registry_creds = \
                 await get_registry_info(self.config_server.etcd, image_ref.registry)
 
-        if pending_session.cluster_mode == ClusterMode.SINGLE_NODE and pending_session.cluster_size > 1:
-            network_name = f'bai-singlenode-{pending_session.session_id}'
-            async with RPCContext(
-                kernel_agent_bindings[0].agent_alloc_ctx.agent_addr,
-                None,
-                order_key=pending_session.session_id,
-            ) as rpc:
-                try:
-                    await rpc.call.create_local_network(network_name)
-                except Exception:
-                    log.exception(f"Failed to create an agent-local network {network_name}")
-                    raise
-            cluster_info = ClusterInfo(
-                mode=ClusterMode.SINGLE_NODE,
-                size=pending_session.cluster_size,
-                network_name=network_name,
-                ssh_keypair=await self.create_cluster_ssh_keypair(),
-            )
+        if pending_session.cluster_mode == ClusterMode.SINGLE_NODE:
+            if pending_session.cluster_size > 1:
+                network_name = f'bai-singlenode-{pending_session.session_id}'
+                async with RPCContext(
+                    kernel_agent_bindings[0].agent_alloc_ctx.agent_addr,
+                    None,
+                    order_key=pending_session.session_id,
+                ) as rpc:
+                    try:
+                        await rpc.call.create_local_network(network_name)
+                    except Exception:
+                        log.exception(f"Failed to create an agent-local network {network_name}")
+                        raise
+            else:
+                network_name = None
         elif pending_session.cluster_mode == ClusterMode.MULTI_NODE:
             # Create overlay network for multi-node sessions
             network_name = f'bai-multinode-{pending_session.session_id}'
@@ -965,19 +959,32 @@ class AgentRegistry:
                 except Exception:
                     log.exception(f"Failed to create an overlay network {network_name}")
                     raise
-            cluster_info = ClusterInfo(
-                mode=ClusterMode.MULTI_NODE,
-                size=pending_session.cluster_size,
-                network_name=network_name,
-                ssh_keypair=await self.create_cluster_ssh_keypair(),
+        keyfunc = lambda item: item.kernel.cluster_role
+        replicas = {
+            cluster_role: len([*group_iterator])
+            for cluster_role, group_iterator in itertools.groupby(
+                sorted(kernel_agent_bindings, key=keyfunc),
+                key=keyfunc,
             )
-        else:
-            cluster_info = ClusterInfo(
-                mode=ClusterMode.SINGLE_NODE,
-                size=pending_session.cluster_size,
-                network_name=None,
-                ssh_keypair=None,
-            )
+        }
+        cluster_info = ClusterInfo(
+            mode=pending_session.cluster_mode,
+            size=pending_session.cluster_size,
+            replicas=replicas,
+            network_name=network_name,
+            ssh_keypair=(
+                await self.create_cluster_ssh_keypair()
+                if pending_session.cluster_size > 1 else None
+            ),
+        )
+        pending_session.environ.update({
+            'BACKENDAI_SESSION_ID': str(pending_session.session_id),
+            'BACKENDAI_CLUSTER_SIZE': str(pending_session.cluster_size),
+            'BACKENDAI_CLUSTER_REPLICAS':
+                ",".join(f"{k}:{v}" for k, v in replicas.items()),
+            'BACKENDAI_CLUSTER_HOSTS':
+                ",".join(binding.kernel.cluster_hostname for binding in kernel_agent_bindings),
+        })
 
         # Aggregate by agents to minimize RPC calls
         per_agent_tasks = []
@@ -1022,7 +1029,13 @@ class AgentRegistry:
                                 'idle_timeout': resource_policy['idle_timeout'],
                                 'mounts': pending_session.mounts,
                                 'mount_map': pending_session.mount_map,
-                                'environ': pending_session.environ,
+                                'environ': {
+                                    **pending_session.environ,
+                                    'BACKENDAI_KERNEL_ID': str(binding.kernel.kernel_id),
+                                    'BACKENDAI_CLUSTER_ROLE': binding.kernel.cluster_role,
+                                    'BACKENDAI_CLUSTER_IDX': str(binding.kernel.cluster_idx),
+                                    'BACKENDAI_CLUSTER_HOST': str(binding.kernel.cluster_hostname),
+                                },
                                 'resource_slots': binding.kernel.requested_slots.to_json(),
                                 'resource_opts': binding.kernel.resource_opts,
                                 'bootstrap_script': binding.kernel.bootstrap_script,

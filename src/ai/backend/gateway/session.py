@@ -876,9 +876,8 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                 raise ImageNotFound
 
             for i in range(node['replicas']):
-                body = {'idx': i + 1}
-                body.update(kernel_config)
-                kernel_configs.append(body)
+                kernel_config['cluster_idx'] = i + 1
+                kernel_configs.append(kernel_config)
 
     try:
         start_event = asyncio.Event()
