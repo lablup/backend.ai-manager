@@ -157,6 +157,11 @@ class ImageNotFound(web.HTTPNotFound, BackendError):
     error_title = 'No such environment image.'
 
 
+class DomainNotFound(web.HTTPNotFound, BackendError):
+    error_type = 'https://api.backend.ai/probs/domain-not-found'
+    error_title = 'No such domain.'
+
+
 class GroupNotFound(web.HTTPNotFound, BackendError):
     error_type  = 'https://api.backend.ai/probs/group-not-found'
     error_title = 'No such user group.'

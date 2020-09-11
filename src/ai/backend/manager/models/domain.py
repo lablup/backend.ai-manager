@@ -337,6 +337,8 @@ async def query_domain_dotfiles(
                .select_from(domains)
                .where(domains.c.name == name))
     packed_dotfile = await conn.scalar(query)
+    if packed_dotfile is None:
+        return None, None
     rows = msgpack.unpackb(packed_dotfile)
     return rows, MAXIMUM_DOTFILE_SIZE - len(packed_dotfile)
 

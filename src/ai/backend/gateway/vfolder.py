@@ -35,7 +35,7 @@ from .auth import auth_required, superadmin_required
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
     GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
-    BackendAgentError, InternalServerError,
+    BackendAgentError, InternalServerError, GroupNotFound,
 )
 from .manager import (
     READ_ALLOWED, ALL_ALLOWED,
@@ -288,7 +288,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
 
         # Check if group exists.
         if group_id_or_name and group_id is None:
-            raise InvalidAPIParameters('no such group')
+            raise GroupNotFound
         if group_id is not None:
             if 'group' not in allowed_vfolder_types:
                 raise InvalidAPIParameters('group vfolder cannot be created in this host')

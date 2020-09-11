@@ -529,12 +529,14 @@ class GroupDotfile(TypedDict):
 
 async def query_group_dotfiles(
     conn: SAConnection,
-    domain_name: str,
+    group_id: GUID,
 ) -> Tuple[List[GroupDotfile], int]:
     query = (sa.select([groups.c.dotfiles])
                .select_from(groups)
-               .where(groups.c.domain_name == domain_name))
+               .where(groups.c.id == group_id))
     packed_dotfile = await conn.scalar(query)
+    if packed_dotfile is None:
+        return None, None
     rows = msgpack.unpackb(packed_dotfile)
     return rows, MAXIMUM_DOTFILE_SIZE - len(packed_dotfile)
 
