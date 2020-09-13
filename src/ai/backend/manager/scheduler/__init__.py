@@ -61,9 +61,9 @@ class ScheduleDecision:
 
 @attr.s(auto_attribs=True, slots=True)
 class SchedulingContext:
-    '''
+    """
     Context for each scheduling decision.
-    '''
+    """
     registry: AgentRegistry
     known_slot_types: Mapping[str, str]
 
@@ -85,11 +85,11 @@ class ExistingSession:
 
 @attr.s(auto_attribs=True, slots=True)
 class PendingSession:
-    '''
+    """
     Context for individual session-related information used during scheduling.
     Resource parameters defined here should contain total amount of resources
     for all kernels in one session.
-    '''
+    """
     kernels: List[KernelInfo]
     access_key: AccessKey
     session_id: uuid.UUID
@@ -122,11 +122,11 @@ class PendingSession:
 
 @attr.s(auto_attribs=True, slots=True)
 class KernelInfo:
-    '''
+    """
     Representing invididual kernel info.
     Resource parameters defined here should contain single value of resource
     for each kernel.
-    '''
+    """
     kernel_id: KernelId
     access_key: AccessKey
     session_id: uuid.UUID
@@ -179,10 +179,10 @@ class SchedulingPredicate(Protocol):
 
 class AbstractScheduler(metaclass=ABCMeta):
 
-    '''
+    """
     Interface for scheduling algorithms where the
     ``schedule()`` method is a pure function.
-    '''
+    """
 
     config: Mapping[str, Any]
 

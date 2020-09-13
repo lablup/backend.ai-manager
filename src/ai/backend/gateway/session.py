@@ -1,6 +1,6 @@
-'''
+"""
 REST-style session management APIs.
-'''
+"""
 
 import asyncio
 import base64
@@ -983,7 +983,8 @@ async def handle_kernel_lifecycle(
     exit_code: int = None,
 ) -> None:
     """
-    The kernel-level lifecycle events are published by the agents.
+    Update the database accroding to the kernel-level lifecycle events
+    published by the agents and the manager.
     """
     kernel_id = uuid.UUID(raw_kernel_id)
     registry = app['registry']
@@ -1013,14 +1014,15 @@ async def handle_session_lifecycle(
     reason: str = None,
 ) -> None:
     """
-    The session-level lifecycle events are published by the manager.
+    Update the database according to the session-level lifecycle events
+    published by the manager.
     """
     session_id = uuid.UUID(raw_session_id)
     registry = app['registry']
     if event_name == 'session_scheduled':
         pass
     elif event_name == 'session_started':
-        pass
+        await registry.trigger_execute_batch(session_id)
     elif event_name == 'session_terminated':
         await registry.mark_session_terminated(session_id, reason)
 
@@ -1041,13 +1043,21 @@ async def handle_batch_result(
     event_name: str,
     raw_kernel_id: str,
     exit_code: int,
+    exit_reason: str,
 ) -> None:
+    """
+    Update the database according to the batch-job completion results
+    """
     kernel_id = uuid.UUID(raw_kernel_id)
     registry = app['registry']
     if event_name == 'session_success':
         await registry.set_session_result(kernel_id, True, exit_code)
     elif event_name == 'session_failure':
         await registry.set_session_result(kernel_id, False, exit_code)
+    await registry.destroy_session(
+        functools.partial(registry.get_session_by_kernel_id, kernel_id),
+        reason='task-finished',
+    )
 
 
 async def handle_instance_lifecycle(
@@ -1182,12 +1192,12 @@ async def report_stats(app: web.Application) -> None:
         await stats_monitor.report_metric(
             GAUGE, 'ai.backend.users.has_used_key', n)
 
-        '''
+        """
         query = sa.select([sa.func.count()]).select_from(usage)
         n = await conn.scalar(query)
         await stats_monitor.report_metric(
             GAUGE, 'ai.backend.gateway.accum_kernels', n)
-        '''
+        """
 
 
 async def stats_report_timer(app):
@@ -1224,9 +1234,12 @@ async def destroy(request: web.Request, params: Any) -> web.Response:
     log.info('DESTROY (ak:{0}/{1}, s:{2}, forced:{3})',
              requester_access_key, owner_access_key, session_name, params['forced'])
     last_stat = await registry.destroy_session(
-        session_name, owner_access_key,
+        functools.partial(
+            registry.get_session,
+            session_name, owner_access_key,
+            domain_name=domain_name,
+        ),
         forced=params['forced'],
-        domain_name=domain_name,
     )
     resp = {
         'stats': last_stat,
@@ -1560,8 +1573,9 @@ async def download_files(request: web.Request, params: Any) -> web.Response:
         t.Key('file'): t.String,
     }))
 async def download_single(request: web.Request, params: Any) -> web.Response:
-    ''' Download single file from scratch root. Only for small files.
-    '''
+    """
+    Download a single file from the scratch root. Only for small files.
+    """
     registry = request.app['registry']
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)

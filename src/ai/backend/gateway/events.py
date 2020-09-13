@@ -479,6 +479,7 @@ async def enqueue_batch_task_result_update(
     event_name: str,
     raw_kernel_id: str,
     exit_code: int = None,
+    exit_reason: str = None,
 ) -> None:
     kernel_id = uuid.UUID(raw_kernel_id)
     async with app['dbpool'].acquire() as conn, conn.begin():
