@@ -698,27 +698,35 @@ class AgentRegistry:
                     'public_key': row['ssh_public_key'],
                     'private_key': row['ssh_private_key'],
                 }
-
             # use dotfiles in the priority of keypair > group > domain
-            if len(dotfiles) > 0:
-                internal_data.update({'dotfiles': dotfiles})  # keypair dotfiles
-            else:
-                query = (sa.select([groups.c.dotfiles])
-                           .select_from(groups)
-                           .where(groups.c.id == group_id))
-                result = await conn.execute(query)
-                row = await result.fetchone()
-                dotfiles = msgpack.unpackb(row['dotfiles'])
-                if len(dotfiles) > 0:
-                    internal_data.update({'dotfiles': dotfiles})
-                else:
-                    query = (sa.select([domains.c.dotfiles])
-                               .select_from(domains)
-                               .where(domains.c.name == domain_name))
-                    result = await conn.execute(query)
-                    row = await result.fetchone()
-                    dotfiles = msgpack.unpackb(row['dotfiles'])
-                    internal_data.update({'dotfiles': dotfiles})
+            dotfile_paths = set(map(lambda x: x['path'], dotfiles))
+            # add keypair dotfiles
+            internal_data.update({'dotfiles': list(dotfiles)})
+            # add group dotfiles
+            query = (sa.select([groups.c.dotfiles])
+                       .select_from(groups)
+                       .where(groups.c.id == group_id))
+            result = await conn.execute(query)
+            row = await result.fetchone()
+            dotfiles = msgpack.unpackb(row['dotfiles'])
+            for dotfile in dotfiles:
+                if dotfile['path'] not in dotfile_paths:
+                    internal_data['dotfiles'].append(dotfile)
+                    dotfile_paths.add(dotfile['path'])
+            # add domain dotfiles
+            query = (sa.select([domains.c.dotfiles])
+                        .select_from(domains)
+                        .where(domains.c.name == domain_name))
+            result = await conn.execute(query)
+            row = await result.fetchone()
+            dotfiles = msgpack.unpackb(row['dotfiles'])
+            for dotfile in dotfiles:
+                if dotfile['path'] not in dotfile_paths:
+                    internal_data['dotfiles'].append(dotfile)
+                    dotfile_paths.add(dotfile['path'])
+            # reverse the dotfiles list so that higher priority can overwrite
+            # in case the actual path is the same
+            internal_data['dotfiles'].reverse()
 
             query = kernels.insert().values({
                 'id': kernel_id,
