@@ -71,7 +71,7 @@ from ..gateway.exceptions import (
     GenericForbidden,
 )
 from .models import (
-    agents, kernels, keypairs, vfolders,
+    agents, kernels, keypairs, vfolders, groups, domains,
     keypair_resource_policies,
     AgentStatus, KernelStatus,
     query_accessible_vfolders, query_allowed_sgroups,
@@ -693,12 +693,32 @@ class AgentRegistry:
             row  = await result.fetchone()
             dotfiles = msgpack.unpackb(row['dotfiles'])
             internal_data = {} if internal_data is None else internal_data
-            internal_data.update({'dotfiles': dotfiles})
             if row['ssh_public_key'] and row['ssh_private_key']:
                 internal_data['ssh_keypair'] = {
                     'public_key': row['ssh_public_key'],
                     'private_key': row['ssh_private_key'],
                 }
+
+            # use dotfiles in the priority of keypair > group > domain
+            if len(dotfiles) > 0:
+                internal_data.update({'dotfiles': dotfiles})  # keypair dotfiles
+            else:
+                query = (sa.select([groups.c.dotfiles])
+                           .select_from(groups)
+                           .where(groups.c.id == group_id))
+                result = await conn.execute(query)
+                row = await result.fetchone()
+                dotfiles = msgpack.unpackb(row['dotfiles'])
+                if len(dotfiles) > 0:
+                    internal_data.update({'dotfiles': dotfiles})
+                else:
+                    query = (sa.select([domains.c.dotfiles])
+                               .select_from(domains)
+                               .where(domains.c.name == domain_name))
+                    result = await conn.execute(query)
+                    row = await result.fetchone()
+                    dotfiles = msgpack.unpackb(row['dotfiles'])
+                    internal_data.update({'dotfiles': dotfiles})
 
             query = kernels.insert().values({
                 'id': kernel_id,
