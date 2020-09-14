@@ -30,8 +30,8 @@ def upgrade():
     conn.execute(query)
     op.alter_column('kernels', 'cluster_hostname', nullable=False)
 
-    op.alter_column('kernels', 'idx', new_column_name='cluster_idx')
-    op.alter_column('kernels', 'role', new_column_name='cluster_role')
+    op.alter_column('kernels', 'idx', new_column_name='cluster_idx', nullable=False)
+    op.alter_column('kernels', 'role', new_column_name='cluster_role', nullable=False)
 
     op.create_index('ix_kernels_sess_id_role', 'kernels', ['session_id', 'cluster_role'], unique=False)
     op.create_index('ix_kernels_unique_sess_token', 'kernels', ['access_key', 'session_id'], unique=True,

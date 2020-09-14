@@ -34,7 +34,8 @@ def upgrade():
         sa.Column('idx', sa.Integer, nullable=True, default=None))
     op.add_column(
         'kernels',
-        sa.Column('cluster_mode', sa.String(16), nullable=True, default=None))
+        sa.Column('cluster_mode', sa.String(16), nullable=False,
+                  default='single-node', server_default='single-node'))
 
     # Convert "master" to "main"
     # NOTE: "main" is defined from ai.backend.manager.defs.DEFAULT_ROLE

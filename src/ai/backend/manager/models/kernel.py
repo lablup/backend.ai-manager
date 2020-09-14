@@ -37,6 +37,7 @@ from .keypair import keypairs
 
 __all__: Sequence[str] = (
     'kernels',
+    'session_dependencies',
     'KernelStatus',
     'ComputeContainer',
     'ComputeSession',
@@ -122,7 +123,7 @@ kernels = sa.Table(
     # session_id == id when the kernel is the main container in a multi-container session or a
     # single-container session.
     # Otherwise, it refers the kernel ID of the main contaienr of the belonged multi-container session.
-    sa.Column('session_id', GUID, unique=True, index=True),
+    sa.Column('session_id', GUID, unique=False, index=True, nullable=False),
     sa.Column('session_name', sa.String(length=64), unique=False, index=True),     # previously sess_id
     sa.Column('session_type', EnumType(SessionTypes), index=True, nullable=False,  # previously sess_type
               default=SessionTypes.INTERACTIVE, server_default=SessionTypes.INTERACTIVE.name),
@@ -201,11 +202,15 @@ kernels = sa.Table(
                  "cluster_role = 'main'")),
 )
 
-kernel_dependencies = sa.Table(
-    'kernel_dependencies', metadata,
-    sa.Column('kernel_id', GUID, sa.ForeignKey('kernels.id'), index=True, nullable=False),
-    sa.Column('depends_on', GUID, sa.ForeignKey('kernels.id'), index=True, nullable=False),
-    sa.PrimaryKeyConstraint('kernel_id', 'depends_on'),
+session_dependencies = sa.Table(
+    'session_dependencies', metadata,
+    sa.Column('session_id', GUID,
+              sa.ForeignKey('kernels.id', onupdate='CASCADE', ondelete='CASCADE'),
+              index=True, nullable=False),
+    sa.Column('depends_on', GUID,
+              sa.ForeignKey('kernels.id', onupdate='CASCADE', ondelete='CASCADE'),
+              index=True, nullable=False),
+    sa.PrimaryKeyConstraint('session_id', 'depends_on'),
 )
 
 DEFAULT_SESSION_ORDERING = [
@@ -625,15 +630,15 @@ class ComputeSession(graphene.ObjectType):
     async def batch_load_by_dependency(cls, context, session_ids):
         async with context['dbpool'].acquire() as conn:
             j = sa.join(
-                kernels, kernel_dependencies,
-                kernels.c.id == kernel_dependencies.c.depends_on,
+                kernels, session_dependencies,
+                kernels.c.session_id == session_dependencies.c.depends_on,
             )
             query = (
                 sa.select([kernels])
                 .select_from(j)
                 .where(
                     (kernels.c.cluster_role == DEFAULT_ROLE) &
-                    (kernel_dependencies.c.kernel_id.in_(session_ids))
+                    (session_dependencies.c.kernel_id.in_(session_ids))
                 )
             )
             return await batch_multiresult(
