@@ -17,6 +17,7 @@ from ai.backend.common.types import (
     AccessKey,
     BinarySize,
     ClusterMode,
+    SessionId,
     SessionTypes,
     SessionResult,
 )
@@ -314,15 +315,21 @@ class ComputeContainer(graphene.ObjectType):
             return self.last_stat
 
     @classmethod
-    async def load_count(cls, context, session_id, *,
-                         cluster_role=None,
-                         domain_name=None, group_id=None, access_key=None):
+    async def load_count(
+        cls,
+        context,
+        session_id: SessionId,
+        *,
+        cluster_role=None,
+        domain_name=None,
+        group_id=None,
+        access_key=None,
+    ):
         async with context['dbpool'].acquire() as conn:
             query = (
                 sa.select([sa.func.count(kernels.c.id)])
                 .select_from(kernels)
-                # TODO: use "owner session ID" when we implement multi-container session
-                .where(kernels.c.id == session_id)
+                .where(kernels.c.session_id == session_id)
                 .as_scalar()
             )
             if cluster_role is not None:
@@ -338,10 +345,20 @@ class ComputeContainer(graphene.ObjectType):
             return count[0]
 
     @classmethod
-    async def load_slice(cls, context, limit, offset, session_id, *,
-                         cluster_role=None,
-                         domain_name=None, group_id=None, access_key=None,
-                         order_key=None, order_asc=None):
+    async def load_slice(
+        cls,
+        context,
+        limit: int,
+        offset: int,
+        session_id: SessionId,
+        *,
+        cluster_role=None,
+        domain_name=None,
+        group_id=None,
+        access_key=None,
+        order_key=None,
+        order_asc=None,
+    ):
         async with context['dbpool'].acquire() as conn:
             if order_key is None:
                 _ordering = DEFAULT_SESSION_ORDERING
@@ -356,8 +373,7 @@ class ComputeContainer(graphene.ObjectType):
             query = (
                 sa.select([kernels])
                 .select_from(j)
-                # TODO: use "owner session ID" when we implement multi-container session
-                .where(kernels.c.id == session_id)
+                .where(kernels.c.session_id == session_id)
                 .order_by(*_ordering)
                 .limit(limit)
                 .offset(offset)
@@ -379,11 +395,11 @@ class ComputeContainer(graphene.ObjectType):
                 sa.select([kernels])
                 .select_from(kernels)
                 # TODO: use "owner session ID" when we implement multi-container session
-                .where(kernels.c.id.in_(session_ids))
+                .where(kernels.c.session_id.in_(session_ids))
             )
             return await batch_multiresult(
                 context, conn, query, cls,
-                session_ids, lambda row: row['id'],
+                session_ids, lambda row: row['session_id'],
             )
 
     @classmethod
