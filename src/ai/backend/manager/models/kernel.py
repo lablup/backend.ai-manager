@@ -1,4 +1,5 @@
 from __future__ import annotations
+from decimal import Decimal
 import enum
 from typing import (
     Any, Iterable, Optional,
@@ -20,6 +21,8 @@ from ai.backend.common.types import (
     SessionId,
     SessionTypes,
     SessionResult,
+    SlotName,
+    ResourceSlot,
 )
 
 from ..defs import DEFAULT_ROLE
@@ -305,7 +308,7 @@ class ComputeContainer(graphene.ObjectType):
         props = cls.parse_row(context, row)
         return cls(**props)
 
-    async def resolve_live_stat(self, info: graphene.ResolveInfo):
+    async def resolve_live_stat(self, info: graphene.ResolveInfo) -> Mapping[str, Any]:
         if not hasattr(self, 'status'):
             return None
         rs = info.context['redis_stat']
@@ -528,7 +531,6 @@ class ComputeSession(graphene.ObjectType):
             'scaling_group': row['scaling_group'],
             'service_ports': row['service_ports'],
             'mounts': row['mounts'],
-            'occupied_slots': row['occupied_slots'].to_json(),  # TODO: sum of owned containers
 
             # statistics
             'num_queries': row['num_queries'],
@@ -541,13 +543,28 @@ class ComputeSession(graphene.ObjectType):
         props = cls.parse_row(context, row)
         return cls(**props)
 
+    async def resolve_occupied_slots(self, info: graphene.ResolveInfo) -> ResourceSlot:
+        """
+        Calculate the sum of occupied resource slots of all sub-kernels.
+        """
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('ComputeContainer.by_session')
+        containers = await loader.load(self.session_id)
+        zero = ResourceSlot()
+        return sum(
+            (ResourceSlot({
+                SlotName(k): Decimal(v) for k, v in c.occupied_slots.items()
+            }) for c in containers),
+            start=zero,
+        ).to_json()
+
     async def resolve_containers(
         self,
         info: graphene.ResolveInfo,
     ) -> Iterable[ComputeContainer]:
         manager = info.context['dlmgr']
         loader = manager.get_loader('ComputeContainer.by_session')
-        return await loader.load(self.id)
+        return await loader.load(self.session_id)
 
     async def resolve_dependencies(
         self,
@@ -638,7 +655,7 @@ class ComputeSession(graphene.ObjectType):
                 .select_from(j)
                 .where(
                     (kernels.c.cluster_role == DEFAULT_ROLE) &
-                    (session_dependencies.c.kernel_id.in_(session_ids))
+                    (session_dependencies.c.session_id.in_(session_ids))
                 )
             )
             return await batch_multiresult(
