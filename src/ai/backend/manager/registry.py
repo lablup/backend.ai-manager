@@ -1758,13 +1758,22 @@ class AgentRegistry:
             async with RPCContext(kernel['agent_addr'], 30, order_key=kernel['id']) as rpc:
                 return await rpc.call.refresh_idle(str(kernel['id']))
 
-    async def increment_session_usage(self, sess_id, access_key, conn=None):
+    async def increment_session_usage(
+        self,
+        session_name: str,
+        access_key: AccessKey,
+        conn: SAConnection = None,
+    ) -> None:
         async with reenter_txn(self.dbpool, conn) as conn:
-            query = (sa.update(kernels)
-                       .values(num_queries=kernels.c.num_queries + 1)
-                       .where((kernels.c.session_id == sess_id) &
-                              (kernels.c.access_key == access_key) &
-                              (kernels.c.cluster_role == DEFAULT_ROLE)))
+            query = (
+                sa.update(kernels)
+                .values(num_queries=kernels.c.num_queries + 1)
+                .where(
+                    (kernels.c.session_name == session_name) &
+                    (kernels.c.access_key == access_key) &
+                    (kernels.c.cluster_role == DEFAULT_ROLE)
+                )
+            )
             await conn.execute(query)
 
     async def kill_all_sessions_in_agent(self, agent_addr):
