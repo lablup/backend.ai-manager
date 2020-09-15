@@ -9,7 +9,7 @@ import trafaret as t
 from ai.backend.common import msgpack
 from ai.backend.common.logging import BraceStyleAdapter
 
-from .auth import auth_required
+from .auth import auth_required, admin_required
 from .exceptions import (
     InvalidAPIParameters, DotfileCreationFailed,
     DotfileNotFound, DotfileAlreadyExists,
@@ -30,7 +30,7 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.dotfile'))
 
 
 @server_status_required(READ_ALLOWED)
-@auth_required
+@admin_required
 @check_api_params(t.Dict(
     {
         t.Key('domain'): t.String,
@@ -41,10 +41,8 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.dotfile'))
 ))
 async def create(request: web.Request, params: Any) -> web.Response:
     log.info('CREATE DOTFILE (domain: {0})', params['domain'])
-    if not request['is_superadmin'] and not request['is_admin']:
-        raise GenericForbidden('Only superadmin or domain admin can create dotfiles')
-    elif request['is_admin'] and request['user']['domain_name'] != params['domain']:
-        raise GenericForbidden('Domain-admins cannot create dotfiles of other domains')
+    if not request['is_superadmin'] and request['user']['domain_name'] != params['domain']:
+        raise GenericForbidden('Domain admins cannot create dotfiles of other domains')
 
     dbpool = request.app['dbpool']
     async with dbpool.acquire() as conn, conn.begin():
@@ -75,17 +73,19 @@ async def create(request: web.Request, params: Any) -> web.Response:
     return web.json_response({})
 
 
-@auth_required
 @server_status_required(READ_ALLOWED)
+@auth_required
 @check_api_params(t.Dict({
     t.Key('domain'): t.String,
     t.Key('path', default=None): t.Null | t.String,
 }))
 async def list_or_get(request: web.Request, params: Any) -> web.Response:
+    log.info('LIST_OR_GET DOTFILE (domain: {0})', params['domain'])
+    if not request['is_superadmin'] and request['user']['domain'] != params['domain']:
+        raise GenericForbidden('Users cannot access dotfiles of other domains')
+
     resp = []
     dbpool = request.app['dbpool']
-
-    log.info('LIST_OR_GET DOTFILE (domain: {0})', params['domain'])
     async with dbpool.acquire() as conn:
         if params['path']:
             dotfiles, _ = await query_domain_dotfiles(conn, params['domain'])
@@ -109,7 +109,7 @@ async def list_or_get(request: web.Request, params: Any) -> web.Response:
 
 
 @server_status_required(READ_ALLOWED)
-@auth_required
+@admin_required
 @check_api_params(t.Dict(
     {
         t.Key('domain'): t.String,
@@ -120,8 +120,10 @@ async def list_or_get(request: web.Request, params: Any) -> web.Response:
 ))
 async def update(request: web.Request, params: Any) -> web.Response:
     log.info('UPDATE DOTFILE (domain:{0})', params['domain'])
-    dbpool = request.app['dbpool']
+    if not request['is_superadmin'] and request['user']['domain_name'] != params['domain']:
+        raise GenericForbidden('Domain admins cannot update dotfiles of other domains')
 
+    dbpool = request.app['dbpool']
     async with dbpool.acquire() as conn, conn.begin():
         dotfiles, _ = await query_domain_dotfiles(conn, params['domain'])
         if dotfiles is None:
@@ -143,8 +145,8 @@ async def update(request: web.Request, params: Any) -> web.Response:
     return web.json_response({})
 
 
-@auth_required
 @server_status_required(READ_ALLOWED)
+@admin_required
 @check_api_params(
     t.Dict({
         t.Key('domain'): t.String,
@@ -152,9 +154,11 @@ async def update(request: web.Request, params: Any) -> web.Response:
     })
 )
 async def delete(request: web.Request, params: Any) -> web.Response:
-    dbpool = request.app['dbpool']
     log.info('DELETE DOTFILE (domain:{0})', params['domain'])
+    if not request['is_superadmin'] and request['user']['domain_name'] != params['domain']:
+        raise GenericForbidden('Domain admins cannot delete dotfiles of other domains')
 
+    dbpool = request.app['dbpool']
     async with dbpool.acquire() as conn, conn.begin():
         dotfiles, _ = await query_domain_dotfiles(conn, params['domain'])
         if dotfiles is None:

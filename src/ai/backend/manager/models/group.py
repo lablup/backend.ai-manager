@@ -48,6 +48,7 @@ __all__: Sequence[str] = (
     'CreateGroup', 'ModifyGroup', 'DeleteGroup',
     'GroupDotfile', 'MAXIMUM_DOTFILE_SIZE',
     'query_group_dotfiles',
+    'query_group_domain',
     'verify_dotfile_name',
 )
 
@@ -539,6 +540,17 @@ async def query_group_dotfiles(
         return None, None
     rows = msgpack.unpackb(packed_dotfile)
     return rows, MAXIMUM_DOTFILE_SIZE - len(packed_dotfile)
+
+
+async def query_group_domain(
+    conn: SAConnection,
+    group_id: GUID
+) -> str:
+    query = (sa.select([groups.c.domain_name])
+                .select_from(groups)
+                .where(groups.c.id == group_id))
+    domain = await conn.scalar(query)
+    return domain
 
 
 def verify_dotfile_name(dotfile: str) -> bool:

@@ -71,7 +71,8 @@ from ..gateway.exceptions import (
     GenericForbidden,
 )
 from .models import (
-    agents, kernels, keypairs, vfolders, groups, domains,
+    agents, kernels, keypairs, vfolders,
+    query_group_dotfiles, query_domain_dotfiles,
     keypair_resource_policies,
     AgentStatus, KernelStatus,
     query_accessible_vfolders, query_allowed_sgroups,
@@ -703,22 +704,13 @@ class AgentRegistry:
             # add keypair dotfiles
             internal_data.update({'dotfiles': list(dotfiles)})
             # add group dotfiles
-            query = (sa.select([groups.c.dotfiles])
-                       .select_from(groups)
-                       .where(groups.c.id == group_id))
-            result = await conn.execute(query)
-            row = await result.fetchone()
-            dotfiles = msgpack.unpackb(row['dotfiles'])
+            dotfiles, _ = await query_group_dotfiles(conn, group_id)
             for dotfile in dotfiles:
                 if dotfile['path'] not in dotfile_paths:
                     internal_data['dotfiles'].append(dotfile)
                     dotfile_paths.add(dotfile['path'])
             # add domain dotfiles
-            query = (sa.select([domains.c.dotfiles])
-                        .select_from(domains)
-                        .where(domains.c.name == domain_name))
-            result = await conn.execute(query)
-            row = await result.fetchone()
+            dotfiles, _ = await query_domain_dotfiles(conn, domain_name)
             dotfiles = msgpack.unpackb(row['dotfiles'])
             for dotfile in dotfiles:
                 if dotfile['path'] not in dotfile_paths:
