@@ -530,7 +530,7 @@ class GroupDotfile(TypedDict):
 
 async def query_group_dotfiles(
     conn: SAConnection,
-    group_id: GUID,
+    group_id: Union[GUID, uuid.UUID],
 ) -> Tuple[Union[List[GroupDotfile], None], Union[int, None]]:
     query = (sa.select([groups.c.dotfiles])
                .select_from(groups)
@@ -544,7 +544,7 @@ async def query_group_dotfiles(
 
 async def query_group_domain(
     conn: SAConnection,
-    group_id: GUID
+    group_id: Union[GUID, uuid.UUID]
 ) -> str:
     query = (sa.select([groups.c.domain_name])
                 .select_from(groups)

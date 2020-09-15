@@ -59,7 +59,6 @@ from ..manager.models import (
     query_accessible_vfolders,
     get_allowed_vfolder_hosts_by_group,
     get_allowed_vfolder_hosts_by_user,
-    query_owned_dotfiles,
     verify_vfolder_name,
 )
 from ..manager.models.storage import StorageSessionManager
@@ -280,11 +279,6 @@ async def create(request: web.Request, params: Any) -> web.Response:
         )
         if len(entries) > 0:
             raise VFolderAlreadyExists
-        if params['name'].startswith('.'):
-            dotfiles, _ = await query_owned_dotfiles(conn, access_key)
-            for dotfile in dotfiles:
-                if params['name'] == dotfile['path']:
-                    raise InvalidAPIParameters('vFolder name conflicts with your dotfile.')
 
         # Check if group exists.
         if group_id_or_name and group_id is None:
