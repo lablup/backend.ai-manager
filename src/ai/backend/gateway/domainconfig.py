@@ -81,7 +81,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
 }))
 async def list_or_get(request: web.Request, params: Any) -> web.Response:
     log.info('LIST_OR_GET DOTFILE (domain: {0})', params['domain'])
-    if not request['is_superadmin'] and request['user']['domain'] != params['domain']:
+    if not request['is_superadmin'] and request['user']['domain_name'] != params['domain']:
         raise GenericForbidden('Users cannot access dotfiles of other domains')
 
     resp = []

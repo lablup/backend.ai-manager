@@ -23,6 +23,7 @@ from .utils import check_api_params
 
 from ..manager.models import (
     groups,
+    association_groups_users as agus,
     query_group_dotfiles,
     query_group_domain,
     verify_dotfile_name,
@@ -113,9 +114,9 @@ async def list_or_get(request: web.Request, params: Any) -> web.Response:
             if params['domain'] is None:
                 raise InvalidAPIParameters('Missing parameter \'domain\'')
             query = (sa.select([groups.c.id])
-                        .select_from(groups)
-                        .where(groups.c.domain_name == params['domain'])
-                        .where(groups.c.name == group_id_or_name))
+                       .select_from(groups)
+                       .where(groups.c.domain_name == params['domain'])
+                       .where(groups.c.name == group_id_or_name))
             group_id = await conn.scalar(query)
             domain = params['domain']
         else:
@@ -123,8 +124,21 @@ async def list_or_get(request: web.Request, params: Any) -> web.Response:
             domain = await query_group_domain(conn, group_id)
         if group_id is None or domain is None:
             raise GroupNotFound
-        if not request['is_superadmin'] and request['user']['domain_name'] != domain:
-            raise GenericForbidden('Users cannot access group dotfiles of other domains')
+        if not request['is_superadmin']:
+            if request['is_admin']:
+                if request['user']['domain_name'] != domain:
+                    raise GenericForbidden(
+                        'Domain admins cannot access group dotfiles of other domains')
+            else:
+                # check if user (non-admin) is in the group
+                query = (sa.select([agus.c.group_id])
+                           .select_from(agus)
+                           .where(agus.c.user_id == request['user']['uuid']))
+                result = await conn.execute(query)
+                rows = await result.fetchall()
+                if group_id not in map(lambda x: x.group_id, rows):
+                    raise GenericForbidden(
+                        'Users cannot access group dotfiles of other groups')
 
         if params['path']:
             dotfiles, _ = await query_group_dotfiles(conn, group_id)
