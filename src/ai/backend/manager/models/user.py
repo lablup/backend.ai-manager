@@ -1015,3 +1015,17 @@ async def check_credential(dbpool, domain: str, email: str, password: str) \
         except ValueError:
             return None
         return None
+
+async def check_userinfo(dbpool, domain: str, email: str) \
+                        -> Any:
+    async with dbpool.acquire() as conn:
+        query = (sa.select([users])
+                   .select_from(users)
+                   .where((users.c.email == email) &
+                          (users.c.domain_name == domain)))
+        result = await conn.execute(query)
+        row = await result.first()
+        if row is None:
+            return None
+        else:
+            return row
