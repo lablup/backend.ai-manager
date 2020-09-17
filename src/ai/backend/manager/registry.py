@@ -1166,6 +1166,7 @@ class AgentRegistry:
             serialization.Encoding.OpenSSH,
             serialization.PublicFormat.OpenSSH,
         )
+        public_key += b' work@cluster.backend.ai.local'
         pem = key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.TraditionalOpenSSL,
