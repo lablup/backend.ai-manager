@@ -38,7 +38,7 @@ from .exceptions import (
 from ..manager.models import (
     keypairs, keypair_resource_policies, users,
 )
-from ..manager.models.user import UserRole, UserStatus, INACTIVE_USER_STATUSES, check_credential
+from ..manager.models.user import UserRole, UserStatus, INACTIVE_USER_STATUSES, check_credential, check_userinfo
 from ..manager.models.keypair import generate_keypair as _gen_keypair, generate_ssh_keypair
 from ..manager.models.group import association_groups_users, groups
 from .types import CORSOptions, WebMiddleware
@@ -766,6 +766,35 @@ async def update_password(request: web.Request, params: Any) -> web.Response:
         await conn.execute(query)
     return web.json_response({}, status=200)
 
+@atomic
+@auth_required
+@check_api_params(
+    t.Dict({
+        t.Key('old_full_name'): t.String,
+        t.Key('new_full_name'): t.String,
+    }))
+async def update_fullname(request: web.Request, params: Any) -> web.Response:
+    domain_name = request['user']['domain_name']
+    email = request['user']['email']
+    log_fmt = 'AUTH.UPDATE_FULLNAME(d:{}, email:{})'
+    log_args = (domain_name, email)
+    log.info(log_fmt, *log_args)
+    dbpool = request.app['dbpool']
+
+    user = await check_userinfo(dbpool, domain_name, email)
+    if user is None:
+        log.info(log_fmt + ': full_name is invalid', *log_args)
+        raise AuthorizationFailed('invalid full_name')
+        return web.json_response({'error_msg': 'invalid user name'}, status=400)
+
+    async with dbpool.acquire() as conn:
+        # Update user password.
+        data = {
+            'full_name': params['new_full_name'],
+        }
+        query = (users.update().values(data).where(users.c.email == email))
+        await conn.execute(query)
+    return web.json_response({}, status=200)
 
 @atomic
 @auth_required
@@ -822,6 +851,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     cors.add(app.router.add_route('POST', '/signup', signup))
     cors.add(app.router.add_route('POST', '/signout', signout))
     cors.add(app.router.add_route('POST', '/update-password', update_password))
+    cors.add(app.router.add_route('POST', '/update-fullname', update_fullname))
     cors.add(app.router.add_route('GET', '/ssh-keypair', get_ssh_keypair))
     cors.add(app.router.add_route('PATCH', '/ssh-keypair', refresh_ssh_keypair))
     return app, [auth_middleware]
