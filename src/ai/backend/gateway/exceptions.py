@@ -27,7 +27,6 @@ class BackendError(web.HTTPError):
     aiohttp.web.HTTPError subclasses.
     '''
 
-    status_code: int = 500
     error_type: str  = 'https://api.backend.ai/probs/general-error'
     error_title: str = 'General Backend API Error.'
 

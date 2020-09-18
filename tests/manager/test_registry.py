@@ -68,6 +68,7 @@ async def test_handle_heartbeat(mocker):
         redis_live=mock_redis_live,
         redis_image=mock_redis_image,
         event_dispatcher=mock_event_dispatcher,
+        storage_manager=None,
         hook_plugin_ctx=hook_plugin_ctx,
     )
     await registry.init()
