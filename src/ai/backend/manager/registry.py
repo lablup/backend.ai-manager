@@ -711,7 +711,6 @@ class AgentRegistry:
                     dotfile_paths.add(dotfile['path'])
             # add domain dotfiles
             dotfiles, _ = await query_domain_dotfiles(conn, domain_name)
-            dotfiles = msgpack.unpackb(row['dotfiles'])
             for dotfile in dotfiles:
                 if dotfile['path'] not in dotfile_paths:
                     internal_data['dotfiles'].append(dotfile)
