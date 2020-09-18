@@ -719,6 +719,23 @@ class AgentRegistry:
             # in case the actual path is the same
             internal_data['dotfiles'].reverse()
 
+            # check if there is no name conflict of dotfile and vfolder
+            for dotfile in internal_data.get('dotfiles', []):
+                if dotfile['path'].startswith('/'):
+                    if dotfile['path'].startswith('/home/'):
+                        path_arr = dotfile['path'].split('/')
+                        # check if there is a dotfile whose path equals /home/work/vfolder_name
+                        if len(path_arr) >= 3 and path_arr[2] == 'work' and \
+                                path_arr[3] in matched_mounts:
+                            raise BackendError(
+                                f'There is a vfolder whose name conflicts with '
+                                f'dotfile {path_arr[3]} with path "{dotfile["path"]}"')
+                else:
+                    if dotfile['path'] in matched_mounts:
+                        raise BackendError(
+                            f'There is a vfolder whose name conflicts with '
+                            f'dotfile {dotfile["path"]}')
+
             query = kernels.insert().values({
                 'id': kernel_id,
                 'status': KernelStatus.PENDING,
