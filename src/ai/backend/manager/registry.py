@@ -28,7 +28,6 @@ import uuid
 
 import aiohttp
 from aiopg.sa.connection import SAConnection
-from aiopg.sa.engine import Engine as SAEngine
 import aiotools
 from async_timeout import timeout as _timeout
 from callosum.rpc import Peer, RPCUserError
@@ -90,6 +89,8 @@ from .models import (
     USER_RESOURCE_OCCUPYING_KERNEL_STATUSES,
     DEAD_KERNEL_STATUSES,
 )
+from .models.kernel import match_session_ids, get_all_kernels, get_main_kernels
+from .models.utils import reenter_txn
 if TYPE_CHECKING:
     from .models.storage import StorageSessionManager
     from .scheduler import (
@@ -177,16 +178,6 @@ async def cleanup_agent_peers():
     for addr, peer in agent_peers.items():
         closing_tasks.append(peer.__aexit__(None, None, None))
     await asyncio.gather(*closing_tasks, return_exceptions=True)
-
-
-@aiotools.actxmgr
-async def reenter_txn(pool: SAEngine, conn: SAConnection):
-    if conn is None:
-        async with pool.acquire() as conn, conn.begin():
-            yield conn
-    else:
-        async with conn.begin_nested():
-            yield conn
 
 
 class AgentRegistry:
@@ -465,12 +456,16 @@ class AgentRegistry:
             query_by_name = query_by_name.limit(1).offset(0)
 
         async with reenter_txn(self.dbpool, db_connection) as conn:
-            for query in [query_by_id, query_by_session_id, query_by_name]:
+            for query in [
+                query_by_id,
+                query_by_session_id,
+                query_by_name,
+            ]:
                 result = await conn.execute(query)
                 if result.rowcount == 0:
                     continue
                 return await result.fetchall()
-            raise SessionNotFound
+        raise SessionNotFound
 
     async def get_session_by_session_id(
         self,
@@ -528,9 +523,7 @@ class AgentRegistry:
         self,
         session_name_or_id: Union[str, uuid.UUID],
         access_key: str, *,
-        field=None,
         allow_stale: bool = False,
-        domain_name: str = None,  # TODO: check?
         for_update: bool = False,
         db_connection: SAConnection = None,
     ) -> sa.engine.RowProxy:
@@ -550,25 +543,27 @@ class AgentRegistry:
         :param db_connection: Database connection for reuse.
         :param cluster_role: Filter kernels by role. "main", "sub", or None (all).
         """
-        kernels = await self.get_kernels(
-            session_name_or_id, access_key,
-            field=field, for_update=for_update,
-            db_connection=db_connection,
-            cluster_role=DEFAULT_ROLE,
-        )
-        if len(kernels) > 1:
-            matches = [
-                {
-                    'id': str(item['id']),
-                    'name': item['sess_id'],
-                    'status': item['status'].name,
-                }
-                for item in kernels
-            ]
-            raise TooManySessionsMatched(extra_data={
-                'matches': matches,
-            })
-        return kernels[0]
+        async with reenter_txn(self.dbpool, db_connection) as conn:
+            if allow_stale:
+                extra_cond = None
+            else:
+                extra_cond = (~kernels.c.status.in_(DEAD_KERNEL_STATUSES))
+            session_infos = await match_session_ids(
+                session_name_or_id,
+                access_key,
+                for_update=for_update,
+                extra_cond=extra_cond,
+                db_connection=conn,
+            )
+            if not session_infos:
+                raise SessionNotFound()
+            if len(session_infos) > 1:
+                raise TooManySessionsMatched(extra_data={'matches': session_infos})
+            kernel_list = await get_main_kernels(
+                [session_infos[0]['session_id']],
+                db_connection=conn,
+            )
+            return kernel_list[0]
 
     async def get_session_kernels(
         self,
@@ -581,7 +576,7 @@ class AgentRegistry:
         cluster_role: str = None,
     ) -> Sequence[sa.engine.RowProxy]:
         """
-        Retrieve the kernel information of a session by session UUID.
+        Retrieve the information of all kernels of a session by session UUID.
         If the session is bundled with multiple containers,
         this will return every information of them.
 
@@ -1545,74 +1540,91 @@ class AgentRegistry:
         session_name_or_id: Union[str, SessionId],
         access_key: AccessKey,
     ) -> None:
-        extra_cols = (
-            kernels.c.image,
-            kernels.c.registry,
-            kernels.c.occupied_slots,
-            kernels.c.environ,
-        )
+        log.warning('restart_session({})', session_name_or_id)
         async with self.dbpool.acquire() as conn, conn.begin():
-            session = await self.get_session(
+            session_infos = await match_session_ids(
                 session_name_or_id,
                 access_key,
-                field=extra_cols,
                 db_connection=conn,
-                for_update=True,
             )
-            await self.set_session_status(
-                session['id'],
-                access_key,
-                KernelStatus.RESTARTING,
-                db_conn=conn,
-            )
-        async with self.handle_kernel_exception(
-            'restart_session', session_name_or_id, access_key, set_error=True
-        ):
-            for kernel in session:
-                registry_url, registry_creds = \
-                    await get_registry_info(self.config_server.etcd,
-                                            kernel['registry'])
-                image_ref = ImageRef(kernel['image'], [kernel['registry']])
-                image_info = await self.config_server.inspect_image(image_ref)
+            if len(session_infos) > 1:
+                raise TooManySessionsMatched(extra_data={'matches': session_infos})
+            elif len(session_infos) == 0:
+                raise SessionNotFound()
+            session_id = session_infos[0]['session_id']
+            kernel_list = [row for row in await get_all_kernels(
+                [session_id],
+                db_connection=conn,
+            )][0]
+
+        async def _restart_kernel(kernel) -> None:
+            try:
+                async with self.dbpool.acquire() as conn, conn.begin():
+                    query = (
+                        kernels.update()
+                        .values({
+                            'status': KernelStatus.RESTARTING,
+                        })
+                        .where(kernels.c.id == kernel['id'])
+                    )
+                    await conn.execute(query)
                 async with RPCContext(
-                    kernel['agent_addr'], None, order_key=session['id'],
+                    kernel['agent_addr'], None, order_key=None,
                 ) as rpc:
-                    environ = {
-                        k: v for k, v in
-                        map(lambda s: s.split('=', 1), kernel['environ'])
+                    updated_config = {
+                        # TODO: support resacling of sub-containers
                     }
-                    new_config = {
-                        'image': {
-                            'registry': {
-                                'name': image_ref.registry,
-                                'url': str(registry_url),
-                                **registry_creds,
-                            },
-                            'digest': image_info['digest'],
-                            'canonical': kernel['image'],
-                            'labels': image_info['labels'],
-                        },
-                        'environ': environ,
-                        'mounts': [],  # recovered from container config
-                        'resource_slots':
-                            kernel['occupied_slots'].to_json(),  # unused currently
-                    }
-                    if kernel['cluster_role'] == DEFAULT_ROLE:
-                        kernel_info = await rpc.call.restart_kernel(str(kernel['id']),
-                                                                    new_config)
-            # TODO: publish "kernel_started" event
-            # TODO: remove publishing "kernel_started" event from the agent
-            await self.set_session_status(
-                session['id'],
-                access_key,
-                KernelStatus.RUNNING,
-                container_id=kernel_info['container_id'],
-                repl_in_port=kernel_info['repl_in_port'],
-                repl_out_port=kernel_info['repl_out_port'],
-                stdin_port=kernel_info['stdin_port'],
-                stdout_port=kernel_info['stdout_port'],
-                service_ports=kernel_info.get('service_ports', []),
-            )
+                    kernel_info = await rpc.call.restart_kernel(
+                        str(kernel['session_id']),
+                        str(kernel['id']),
+                        updated_config,
+                    )
+                async with self.dbpool.acquire() as conn, conn.begin():
+                    query = (
+                        kernels.update()
+                        .values({
+                            'status': KernelStatus.RUNNING,
+                            'container_id': kernel_info['container_id'],
+                            'repl_in_port': kernel_info['repl_in_port'],
+                            'repl_out_port': kernel_info['repl_out_port'],
+                            'stdin_port': kernel_info['stdin_port'],
+                            'stdout_port': kernel_info['stdout_port'],
+                            'service_ports': kernel_info.get('service_ports', []),
+                        })
+                        .where(kernels.c.id == kernel['id'])
+                    )
+                    await conn.execute(query)
+                await self.event_dispatcher.produce_event(
+                    'kernel_started',
+                    (str(kernel['id']), ),
+                    agent_id=kernel['agent'],
+                )
+            except Exception:
+                log.exception('unexpected-error in _restart_kerenl()')
+
+        for idx, kernel in enumerate(kernel_list):
+            try:
+                print(f"restart({idx}, {kernel['id']} begin")
+                await _restart_kernel(kernel)
+                print(f"restart({idx}, {kernel['id']} done")
+            finally:
+                print(f"restart({idx}, {kernel['id']} finally")
+        ## restart_coros = []
+        ## for kernel in kernel_list:
+        ##     restart_coros.append(_restart_kernel(kernel))
+        ## log.warning('-- step 2')
+
+        ## # session_started event will be fired by our kernel_started event handler
+        ## # when all kernels become RUNNING.
+        ## # NOTE: If the restarted session is a batch-type one, then the startup command
+        ## #       will be executed again after restart.
+
+        ## async with self.handle_kernel_exception(
+        ##     'restart_session', session_name_or_id, access_key, set_error=True,
+        ## ):
+        ##     log.warning('-- step 3')
+        ##     await asyncio.gather(*restart_coros)
+        ##     log.warning('-- step 4')
 
     async def execute(
         self,

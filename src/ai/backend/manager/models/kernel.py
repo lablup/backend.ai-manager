@@ -1,10 +1,17 @@
 from __future__ import annotations
+from collections import OrderedDict
 from decimal import Decimal
 import enum
 from typing import (
-    Any, Iterable, Optional,
-    Mapping, Sequence,
+    Any,
+    Iterable,
+    Optional,
+    Mapping,
+    Sequence,
+    TypedDict,
+    Union,
 )
+from uuid import UUID
 
 from aiopg.sa.connection import SAConnection
 from aiopg.sa.result import RowProxy
@@ -223,6 +230,172 @@ DEFAULT_SESSION_ORDERING = [
         kernels.c.status_changed,
     ))
 ]
+
+
+class SessionInfo(TypedDict):
+    session_id: UUID
+    session_name: str
+    status: KernelStatus
+
+
+async def match_session_ids(
+    session_name_or_id: Union[str, UUID],
+    access_key: AccessKey,
+    *,
+    db_connection: SAConnection,
+    extra_cond=None,
+    for_update: bool = False,
+    max_matches: int = 10,
+) -> Sequence[SessionInfo]:
+    """
+    Match the prefix of session ID or session name among the sessions that belongs to the given
+    access key, and return the list of session IDs with matching prefixes.
+    """
+    cond_id = (
+        (sa.sql.expression.cast(kernels.c.id, sa.String).like(f'{session_name_or_id}%')) &
+        (kernels.c.access_key == access_key)
+    )
+    if extra_cond is not None:
+        cond_id = cond_id & extra_cond
+    cond_name = (
+        (kernels.c.session_name.like(f'{session_name_or_id}%')) &
+        (kernels.c.access_key == access_key)
+    )
+    if extra_cond is not None:
+        cond_name = cond_name & extra_cond
+    cond_session_id = (
+        (sa.sql.expression.cast(kernels.c.session_id, sa.String).like(f'{session_name_or_id}%')) &
+        (kernels.c.access_key == access_key)
+    )
+    if extra_cond is not None:
+        cond_session_id = cond_session_id & extra_cond
+    info_cols = [
+        kernels.c.session_id,
+        kernels.c.session_name,
+        kernels.c.status,
+        kernels.c.created_at,
+    ]
+    match_sid_by_id = (
+        sa.select(info_cols, for_update=for_update)
+        .select_from(kernels)
+        .where(
+            (kernels.c.session_id.in_(
+                sa.select(
+                    [kernels.c.session_id]
+                )
+                .select_from(kernels)
+                .where(cond_id)
+                .group_by(kernels.c.session_id)
+                .limit(max_matches).offset(0)
+            )) &
+            (kernels.c.cluster_role == DEFAULT_ROLE)
+        )
+        .order_by(sa.desc(kernels.c.created_at))
+    )
+    match_sid_by_name = (
+        sa.select(info_cols, for_update=for_update)
+        .select_from(kernels)
+        .where(
+            (kernels.c.session_id.in_(
+                sa.select(
+                    [kernels.c.session_id]
+                )
+                .select_from(kernels)
+                .where(cond_name)
+                .group_by(kernels.c.session_id)
+                .limit(max_matches).offset(0)
+            )) &
+            (kernels.c.cluster_role == DEFAULT_ROLE)
+        )
+        .order_by(sa.desc(kernels.c.created_at))
+    )
+    match_sid_by_session_id = (
+        sa.select(info_cols, for_update=for_update)
+        .select_from(kernels)
+        .where(
+            (kernels.c.session_id.in_(
+                sa.select(
+                    [kernels.c.session_id]
+                )
+                .select_from(kernels)
+                .where(cond_session_id)
+                .group_by(kernels.c.session_id)
+                .limit(max_matches).offset(0)
+            )) &
+            (kernels.c.cluster_role == DEFAULT_ROLE)
+        )
+        .order_by(sa.desc(kernels.c.created_at))
+    )
+    for match_query in [
+        match_sid_by_id,
+        match_sid_by_session_id,
+        match_sid_by_name,
+    ]:
+        result = await db_connection.execute(match_query)
+        if result.rowcount == 0:
+            continue
+        return [
+            dict(row) for row in await result.fetchall()
+        ]
+
+
+async def get_main_kernels(
+    session_ids: Sequence[SessionId],
+    *,
+    db_connection: SAConnection,
+    for_update: bool = False,
+) -> Sequence[RowProxy]:
+    """
+    Return a list of the main kernels for the given session IDs.
+    If a given session ID does not exist, its position will be ``None``.
+    """
+    session_id_to_rows = OrderedDict(
+        (session_id, None) for session_id in session_ids
+    )
+    query = (
+        sa.select([sa.text('*')])
+        .select_from(kernels)
+        .where(
+            (kernels.c.session_id.in_(session_ids)) &
+            (kernels.c.cluster_role == DEFAULT_ROLE)
+        )
+    )
+    result = await db_connection.execute(query)
+    for row in await result.fetchall():
+        session_id_to_rows[row['session_id']] = row
+    return [*session_id_to_rows.values()]
+
+
+async def get_all_kernels(
+    session_ids: Sequence[SessionId],
+    *,
+    db_connection: SAConnection,
+    for_update: bool = False,
+) -> Sequence[Sequence[RowProxy]]:
+    """
+    Return a list of all belonging kernel lists per the given session IDs
+    in the order they are given.
+    If a given session ID does not exist, an empty list will be returned
+    at the position of that session ID.
+    """
+    session_id_to_rowsets = OrderedDict(
+        (session_id, []) for session_id in session_ids
+    )
+    for session_id in session_ids:
+        query = (
+            sa.select([sa.text('*')])
+            .select_from(kernels)
+            .where(
+                (kernels.c.session_id == session_id)
+            )
+        )
+        result = await db_connection.execute(query)
+        if result.rowcount == 0:
+            continue
+        session_id_to_rowsets[session_id].extend(
+            row for row in await result.fetchall()
+        )
+    return [*session_id_to_rowsets.values()]
 
 
 class ComputeContainer(graphene.ObjectType):

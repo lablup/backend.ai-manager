@@ -14,10 +14,14 @@ import re
 from pathlib import Path
 import secrets
 from typing import (
-    Any, Optional,
+    Any,
+    Dict,
     Iterable,
+    List,
+    Mapping,
+    MutableMapping,
+    Optional,
     Tuple,
-    Mapping, MutableMapping,
     Union,
 )
 import uuid
@@ -85,6 +89,7 @@ from ..manager.models import (
     verify_vfolder_name,
     DEAD_KERNEL_STATUSES,
 )
+from ..manager.models.kernel import match_session_ids
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.session'))
 
@@ -726,7 +731,7 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
 @auth_required
 @check_api_params(
     t.Dict({
-        t.Key('clientSessionToken') >> 'sess_id':
+        t.Key('clientSessionToken') >> 'session_name':
             t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
         tx.AliasedKey(['template_id', 'templateId']): t.Null | tx.UUID,
         tx.AliasedKey(['type', 'sessionType'], default='interactive') >> 'sess_type':
@@ -751,7 +756,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
     requester_access_key, owner_access_key = await get_access_key_scopes(request, scopes_param)
     log.info('CREAT_CLUSTER (ak:{0}/{1}, s:{3})',
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*',
-             params['sess_id'])
+             params['session_name'])
 
     registry = request.app['registry']
     resp: MutableMapping[str, Any] = {}
@@ -760,10 +765,13 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
     try:
         # NOTE: We can reuse the session IDs of TERMINATED sessions only.
         # NOTE: Reusing a session in the PENDING status returns an empty value in service_ports.
-        await registry.get_session(params['sess_id'], owner_access_key)
-        raise SessionAlreadyExists
+        await registry.get_session(params['session_name'], owner_access_key)
     except SessionNotFound:
         pass
+    except TooManySessionsMatched:
+        raise SessionAlreadyExists
+    else:
+        raise SessionAlreadyExists
 
     async with dbpool.acquire() as conn, conn.begin():
         query = (
@@ -900,7 +908,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
             owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
 
         kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
-            params['sess_id'], owner_access_key,
+            params['session_name'], owner_access_key,
             kernel_configs,
             params['scaling_group'],
             params['sess_type'],
@@ -910,7 +918,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
             user_uuid=owner_uuid,
             user_role=request['user']['role'],
             session_tag=params['tag']))
-        resp['kernelId'] = str(params['sess_id'])  # legacy naming
+        resp['kernelId'] = str(kernel_id)
         resp['status'] = 'PENDING'
         resp['servicePorts'] = []
         resp['created'] = True
@@ -1227,17 +1235,17 @@ async def destroy(request: web.Request, params: Any) -> web.Response:
     if params['forced'] and request['user']['role'] not in (UserRole.ADMIN, UserRole.SUPERADMIN):
         raise InsufficientPrivilege('You are not allowed to force-terminate')
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
-    domain_name = None
-    if requester_access_key != owner_access_key and \
-            not request['is_superadmin'] and request['is_admin']:
-        domain_name = request['user']['domain_name']
+    # domain_name = None
+    # if requester_access_key != owner_access_key and \
+    #         not request['is_superadmin'] and request['is_admin']:
+    #     domain_name = request['user']['domain_name']
     log.info('DESTROY (ak:{0}/{1}, s:{2}, forced:{3})',
              requester_access_key, owner_access_key, session_name, params['forced'])
     last_stat = await registry.destroy_session(
         functools.partial(
             registry.get_session,
             session_name, owner_access_key,
-            domain_name=domain_name,
+            # domain_name=domain_name,
         ),
         forced=params['forced'],
     )
@@ -1258,22 +1266,24 @@ async def match_sessions(request: web.Request, params: Any) -> web.Response:
     """
     A quick session-ID matcher API for use with auto-completion in CLI.
     """
-    registry = request.app['registry']
+    dbpool = request.app['dbpool']
     id_or_name_prefix = params['id']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('MATCH_SESSIONS(ak:{0}/{1}, prefix:{2})',
              requester_access_key, owner_access_key, id_or_name_prefix)
-    matches = []
-    try:
-        compute_session = await registry.get_session(id_or_name_prefix, owner_access_key)
-        matches.append({
-            'id': compute_session['id'],
-            'name': compute_session['sess_id'],
-            'status': compute_session['status'].name,
-        })
-    except TooManySessionsMatched as e:
-        if e.extra_data:
-            matches.extend(e.extra_data.get('matches', []))
+    matches: List[Dict[str, Any]] = []
+    async with dbpool.acquire() as conn:
+        session_infos = await match_session_ids(
+            id_or_name_prefix,
+            owner_access_key,
+            db_connection=conn,
+        )
+    if session_infos:
+        matches.extend({
+            'id': str(item['session_id']),
+            'name': item['session_name'],
+            'status': item['status'].name,
+        } for item in session_infos)
     return web.json_response({
         'matches': matches,
     }, status=200)
