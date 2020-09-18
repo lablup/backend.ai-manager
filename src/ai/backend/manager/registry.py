@@ -583,7 +583,7 @@ class AgentRegistry:
             await self.config_server.get_image_slot_ranges(image_ref)
         known_slot_types = await self.config_server.get_resource_slots()
 
-        # check if there are no duplicate service ports in image label
+        # Validate service ports of the image label
         used_ports = set()
         service_ports = image_info['labels']['ai.backend.service-ports']
         for service_port in service_ports.split(','):
