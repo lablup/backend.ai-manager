@@ -583,6 +583,29 @@ class AgentRegistry:
             await self.config_server.get_image_slot_ranges(image_ref)
         known_slot_types = await self.config_server.get_resource_slots()
 
+        # check if there are no duplicate service ports in image label
+        used_ports = set()
+        service_ports = image_info['labels']['ai.backend.service-ports']
+        for service_port in service_ports.split(','):
+            port_components = service_port.split(':')
+            if len(port_components) != 3:
+                raise BackendError('Service port is in wrong format')
+            name, protocol, ports = port_components
+            if not name:
+                raise BackendError('Service port name must not be empty')
+            if protocol not in ('pty', 'tcp', 'http', 'preopen'):
+                raise BackendError(f'Unsupported service port protocol: {protocol}')
+            ports = tuple(map(int, ports.strip('[]').split(',')))
+            for p in ports:
+                if p in used_ports:
+                    raise BackendError(f'The port {p} is already used by another service port.')
+                if p >= 65535:
+                    raise BackendError(f'The service port number {p} must be smaller than 65535.')
+                if p in (2000, 2001, 2002, 2003, 2200, 7681):
+                    raise BackendError('The service ports 2000 to 2003, 2200 and 7681 '
+                                       'are reserved for internal use.')
+                used_ports.add(p)
+
         # Shared memory.
         # We need to subtract the amount of shared memory from the memory limit of
         # a container, since tmpfs including /dev/shm uses host-side kernel memory
