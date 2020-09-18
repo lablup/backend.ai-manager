@@ -157,12 +157,13 @@ async def api_middleware(request: web.Request,
             path_major_version = int(request.match_info.get('version', 5))
             revision_date = LATEST_REV_DATES[path_major_version]
             request['api_version'] = (path_major_version, revision_date)
-        else:
-            assert api_version in VALID_VERSIONS
+        elif api_version in VALID_VERSIONS:
             hdr_major_version, revision_date = api_version.split('.', maxsplit=1)
             request['api_version'] = (int(hdr_major_version[1:]), revision_date)
-    except (AssertionError, ValueError, KeyError):
-        raise GenericBadRequest('Unsupported API major version.')
+        else:
+            return GenericBadRequest('Unsupported API version.')
+    except (ValueError, KeyError):
+        return GenericBadRequest('Unsupported API version.')
     resp = (await _handler(request))
     return resp
 
