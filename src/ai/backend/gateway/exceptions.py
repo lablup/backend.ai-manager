@@ -11,8 +11,11 @@ future UX improvements.
 
 import json
 from typing import (
-    Optional, Union,
+    Any,
+    Dict,
+    Optional,
     Mapping,
+    Union,
 )
 
 from aiohttp import web
@@ -24,14 +27,13 @@ class BackendError(web.HTTPError):
     aiohttp.web.HTTPError subclasses.
     '''
 
-    status_code: int = 500
     error_type: str  = 'https://api.backend.ai/probs/general-error'
     error_title: str = 'General Backend API Error.'
 
     content_type: str
     extra_msg: Optional[str]
 
-    def __init__(self, extra_msg=None, extra_data=None, **kwargs):
+    def __init__(self, extra_msg: str = None, extra_data: Any = None, **kwargs):
         super().__init__(**kwargs)
         self.args = (self.status_code, self.reason, self.error_type)
         self.empty_body = False
@@ -69,180 +71,199 @@ class BackendError(web.HTTPError):
         return '\n'.join(lines)
 
     def __reduce__(self):
-        return (type(self), (self.extra_msg, self.extra_data))
+        return (
+            type(self),
+            (),  # empty the constructor args to make unpickler to use
+                 # only the exact current state in __dict__
+            self.__dict__,
+        )
 
 
-class GenericNotFound(web.HTTPNotFound, BackendError):
+class GenericNotFound(BackendError, web.HTTPNotFound):
     error_type  = 'https://api.backend.ai/probs/generic-not-found'
     error_title = 'Unknown URL path.'
 
 
-class GenericBadRequest(web.HTTPBadRequest, BackendError):
+class GenericBadRequest(BackendError, web.HTTPBadRequest):
     error_type  = 'https://api.backend.ai/probs/generic-bad-request'
     error_title = 'Bad request.'
 
 
-class RejectedByHook(web.HTTPBadRequest, BackendError):
+class RejectedByHook(BackendError, web.HTTPBadRequest):
     error_type  = 'https://api.backend.ai/probs/rejected-by-hook'
     error_title = 'Operation rejected by a hook plugin.'
 
 
-class InvalidCredentials(web.HTTPBadRequest, BackendError):
+class InvalidCredentials(BackendError, web.HTTPBadRequest):
     error_type  = 'https://api.backend.ai/probs/invalid-credentials'
     error_title = 'Invalid credentials for authentication.'
 
 
-class GenericForbidden(web.HTTPForbidden, BackendError):
+class GenericForbidden(BackendError, web.HTTPForbidden):
     error_type  = 'https://api.backend.ai/probs/generic-forbidden'
     error_title = 'Forbidden operation.'
 
 
-class InsufficientPrivilege(web.HTTPForbidden, BackendError):
+class InsufficientPrivilege(BackendError, web.HTTPForbidden):
     error_type  = 'https://api.backend.ai/probs/insufficient-privilege'
     error_title = 'Insufficient privilege.'
 
 
-class MethodNotAllowed(web.HTTPMethodNotAllowed, BackendError):
+class MethodNotAllowed(BackendError, web.HTTPMethodNotAllowed):
     error_type  = 'https://api.backend.ai/probs/method-not-allowed'
     error_title = 'HTTP Method Not Allowed.'
 
 
-class InternalServerError(web.HTTPInternalServerError, BackendError):
+class InternalServerError(BackendError, web.HTTPInternalServerError):
     error_type  = 'https://api.backend.ai/probs/internal-server-error'
     error_title = 'Internal server error.'
 
 
-class ServerMisconfiguredError(web.HTTPInternalServerError, BackendError):
+class ServerMisconfiguredError(BackendError, web.HTTPInternalServerError):
     error_type  = 'https://api.backend.ai/probs/server-misconfigured'
     error_title = 'Service misconfigured.'
 
 
-class ServiceUnavailable(web.HTTPServiceUnavailable, BackendError):
+class ServiceUnavailable(BackendError, web.HTTPServiceUnavailable):
     error_type  = 'https://api.backend.ai/probs/service-unavailable'
     error_title = 'Serivce unavailable.'
 
 
-class QueryNotImplemented(web.HTTPServiceUnavailable, BackendError):
+class QueryNotImplemented(BackendError, web.HTTPServiceUnavailable):
     error_type  = 'https://api.backend.ai/probs/not-implemented'
     error_title = 'This API query is not implemented.'
 
 
-class InvalidAuthParameters(web.HTTPBadRequest, BackendError):
+class InvalidAuthParameters(BackendError, web.HTTPBadRequest):
     error_type  = 'https://api.backend.ai/probs/invalid-auth-params'
     error_title = 'Missing or invalid authorization parameters.'
 
 
-class AuthorizationFailed(web.HTTPUnauthorized, BackendError):
+class AuthorizationFailed(BackendError, web.HTTPUnauthorized):
     error_type  = 'https://api.backend.ai/probs/auth-failed'
     error_title = 'Credential/signature mismatch.'
 
 
-class InvalidAPIParameters(web.HTTPBadRequest, BackendError):
+class InvalidAPIParameters(BackendError, web.HTTPBadRequest):
     error_type  = 'https://api.backend.ai/probs/invalid-api-params'
     error_title = 'Missing or invalid API parameters.'
 
 
-class GraphQLError(web.HTTPBadRequest, BackendError):
+class GraphQLError(BackendError, web.HTTPBadRequest):
     error_type  = 'https://api.backend.ai/probs/graphql-error'
     error_title = 'GraphQL-generated error.'
 
 
-class InstanceNotFound(web.HTTPNotFound, BackendError):
+class InstanceNotFound(BackendError, web.HTTPNotFound):
     error_type  = 'https://api.backend.ai/probs/instance-not-found'
     error_title = 'No such instance.'
 
 
-class ImageNotFound(web.HTTPNotFound, BackendError):
+class ImageNotFound(BackendError, web.HTTPNotFound):
     error_type  = 'https://api.backend.ai/probs/image-not-found'
     error_title = 'No such environment image.'
 
 
-class GroupNotFound(web.HTTPNotFound, BackendError):
+class GroupNotFound(BackendError, web.HTTPNotFound):
     error_type  = 'https://api.backend.ai/probs/group-not-found'
     error_title = 'No such user group.'
 
 
-class ScalingGroupNotFound(web.HTTPNotFound, BackendError):
+class ScalingGroupNotFound(BackendError, web.HTTPNotFound):
     error_type  = 'https://api.backend.ai/probs/scaling-group-not-found'
     error_title = 'No such scaling group.'
 
 
-class SessionNotFound(web.HTTPNotFound, BackendError):
+class SessionNotFound(BackendError, web.HTTPNotFound):
     error_type  = 'https://api.backend.ai/probs/session-not-found'
     error_title = 'No such session.'
 
 
-class TooManySessionsMatched(web.HTTPNotFound, BackendError):
+class TooManySessionsMatched(BackendError, web.HTTPNotFound):
     error_type  = 'https://api.backend.ai/probs/too-many-sessions-matched'
     error_title = 'Too many sessions matched.'
 
+    def __init__(self, extra_msg: str = None, extra_data: Dict[str, Any] = None, **kwargs):
+        if (
+            extra_data is not None and
+            (matches := extra_data.get('matches', None)) is not None
+        ):
+            serializable_matches = [{
+                'id': str(item['session_id']),
+                'name': item['session_name'],
+                'status': item['status'].name,
+                'created_at': item['created_at'].isoformat(),
+            } for item in matches]
+            extra_data['matches'] = serializable_matches
+        super().__init__(extra_msg, extra_data, **kwargs)
 
-class TaskTemplateNotFound(web.HTTPNotFound, BackendError):
+
+class TaskTemplateNotFound(BackendError, web.HTTPNotFound):
     error_type  = 'https://api.backend.ai/probs/task-template-not-found'
     error_title = 'No such task template.'
 
 
-class TooManyKernelsFound(web.HTTPNotFound, BackendError):
+class TooManyKernelsFound(BackendError, web.HTTPNotFound):
     error_type  = 'https://api.backend.ai/probs/too-many-kernels'
     error_title = 'There are two or more matching kernels.'
 
 
-class AppNotFound(web.HTTPNotFound, BackendError):
+class AppNotFound(BackendError, web.HTTPNotFound):
     error_type  = 'https://api.backend.ai/probs/app-not-found'
     error_title = 'No such app service provided by the session.'
 
 
-class SessionAlreadyExists(web.HTTPBadRequest, BackendError):
+class SessionAlreadyExists(BackendError, web.HTTPBadRequest):
     error_type  = 'https://api.backend.ai/probs/session-already-exists'
     error_title = 'The session already exists but you requested not to reuse existing one.'
 
 
-class VFolderCreationFailed(web.HTTPBadRequest, BackendError):
+class VFolderCreationFailed(BackendError, web.HTTPBadRequest):
     error_type  = 'https://api.backend.ai/probs/vfolder-creation-failed'
     error_title = 'Virtual folder creation has failed.'
 
 
-class VFolderNotFound(web.HTTPNotFound, BackendError):
+class VFolderNotFound(BackendError, web.HTTPNotFound):
     error_type  = 'https://api.backend.ai/probs/vfolder-not-found'
     error_title = 'No such virtual folder.'
 
 
-class VFolderAlreadyExists(web.HTTPBadRequest, BackendError):
+class VFolderAlreadyExists(BackendError, web.HTTPBadRequest):
     error_type  = 'https://api.backend.ai/probs/vfolder-already-exists'
     error_title = 'The virtual folder already exists with the same name.'
 
 
-class DotfileCreationFailed(web.HTTPBadRequest, BackendError):
+class DotfileCreationFailed(BackendError, web.HTTPBadRequest):
     error_type  = 'https://api.backend.ai/probs/generic-bad-request'
     error_title = 'Dotfile creation has failed.'
 
 
-class DotfileAlreadyExists(web.HTTPBadRequest, BackendError):
+class DotfileAlreadyExists(BackendError, web.HTTPBadRequest):
     error_type  = 'https://api.backend.ai/probs/generic-bad-request'
     error_title = 'Dotfile already exists.'
 
 
-class DotfileNotFound(web.HTTPNotFound, BackendError):
+class DotfileNotFound(BackendError, web.HTTPNotFound):
     error_type  = 'https://api.backend.ai/probs/generic-not-found'
     error_title = 'Requested Dotfile not found.'
 
 
-class QuotaExceeded(web.HTTPPreconditionFailed, BackendError):
+class QuotaExceeded(BackendError, web.HTTPPreconditionFailed):
     error_type  = 'https://api.backend.ai/probs/quota-exceeded'
     error_title = 'You have reached your resource limit.'
 
 
-class RateLimitExceeded(web.HTTPTooManyRequests, BackendError):
+class RateLimitExceeded(BackendError, web.HTTPTooManyRequests):
     error_type  = 'https://api.backend.ai/probs/rate-limit-exceeded'
     error_title = 'You have reached your API query rate limit.'
 
 
-class InstanceNotAvailable(web.HTTPServiceUnavailable, BackendError):
+class InstanceNotAvailable(BackendError, web.HTTPServiceUnavailable):
     error_type  = 'https://api.backend.ai/probs/instance-not-available'
     error_title = 'There is no available instance.'
 
 
-class ServerFrozen(web.HTTPServiceUnavailable, BackendError):
+class ServerFrozen(BackendError, web.HTTPServiceUnavailable):
     error_type  = 'https://api.backend.ai/probs/server-frozen'
     error_title = 'The server is frozen due to maintenance. Please try again later.'
 
@@ -344,21 +365,21 @@ class BackendAgentError(BackendError):
         return (type(self), (self.agent_error_type, self.agent_details))
 
 
-class KernelCreationFailed(web.HTTPInternalServerError, BackendAgentError):
+class KernelCreationFailed(BackendAgentError, web.HTTPInternalServerError):
     error_type  = 'https://api.backend.ai/probs/kernel-creation-failed'
     error_title = 'Kernel creation has failed.'
 
 
-class KernelDestructionFailed(web.HTTPInternalServerError, BackendAgentError):
+class KernelDestructionFailed(BackendAgentError, web.HTTPInternalServerError):
     error_type  = 'https://api.backend.ai/probs/kernel-destruction-failed'
     error_title = 'Kernel destruction has failed.'
 
 
-class KernelRestartFailed(web.HTTPInternalServerError, BackendAgentError):
+class KernelRestartFailed(BackendAgentError, web.HTTPInternalServerError):
     error_type  = 'https://api.backend.ai/probs/kernel-restart-failed'
     error_title = 'Kernel restart has failed.'
 
 
-class KernelExecutionFailed(web.HTTPInternalServerError, BackendAgentError):
+class KernelExecutionFailed(BackendAgentError, web.HTTPInternalServerError):
     error_type  = 'https://api.backend.ai/probs/kernel-execution-failed'
     error_title = 'Executing user code in the kernel has failed.'
