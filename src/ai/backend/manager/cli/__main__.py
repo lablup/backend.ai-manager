@@ -105,6 +105,7 @@ def dbshell(cli_ctx, container_name, psql_help, psql_args):
         subprocess.call(cmd)
         return
     # Use the container to start the psql client command
+    print(f"using the db container {container_name} ...")
     cmd = [
         'docker', 'exec', '-i', '-t',
         container_name,
