@@ -788,6 +788,7 @@ async def delete_files(request: web.Request, params: Any, row: VFolderRow) -> we
             'volume': volume_name,
             'vfid': str(row['id']),
             'relpaths': params['files'],
+            'recursive': recursive,
         },
         raise_for_status=True,
     ):

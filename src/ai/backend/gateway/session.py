@@ -898,7 +898,8 @@ async def match_sessions(request: web.Request, params: Any) -> web.Response:
             'status': compute_session['status'].name,
         })
     except TooManySessionsMatched as e:
-        matches.extend(e.extra_data['matches'])
+        if e.extra_data:
+            matches.extend(e.extra_data.get('matches', []))
     return web.json_response({
         'matches': matches,
     }, status=200)
