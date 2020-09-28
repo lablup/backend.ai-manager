@@ -273,8 +273,10 @@ def example_pending_sessions():
                 KernelInfo(
                     kernel_id=pending_session_kernel_ids[0].kernel_ids[0],
                     session_id=pending_session_kernel_ids[0].session_id,
-                    role=DEFAULT_ROLE,
-                    idx=0,
+                    access_key='dummy-access-key',
+                    cluster_role=DEFAULT_ROLE,
+                    cluster_idx=0,
+                    cluster_hostname=f"{DEFAULT_ROLE}0",
                     image_ref=common_image_ref,
                     resource_opts={},
                     requested_slots=ResourceSlot({
@@ -291,7 +293,8 @@ def example_pending_sessions():
             session_id=pending_session_kernel_ids[0].session_id,
             session_name='es01',
             session_type=SessionTypes.BATCH,
-            cluster_mode=None,
+            cluster_mode='single-node',
+            cluster_size=1,
             scaling_group='sg01',
             requested_slots=ResourceSlot({
                 'cpu': Decimal('2.0'),
@@ -307,8 +310,10 @@ def example_pending_sessions():
                 KernelInfo(
                     kernel_id=pending_session_kernel_ids[1].kernel_ids[0],
                     session_id=pending_session_kernel_ids[1].session_id,
-                    role=DEFAULT_ROLE,
-                    idx=0,
+                    access_key='dummy-access-key',
+                    cluster_role=DEFAULT_ROLE,
+                    cluster_idx=0,
+                    cluster_hostname=f"{DEFAULT_ROLE}0",
                     image_ref=common_image_ref,
                     resource_opts={},
                     requested_slots=ResourceSlot({
@@ -325,7 +330,8 @@ def example_pending_sessions():
             session_id=pending_session_kernel_ids[1].session_id,
             session_name='es01',
             session_type=SessionTypes.BATCH,
-            cluster_mode=None,
+            cluster_mode='single-node',
+            cluster_size=1,
             scaling_group='sg01',
             requested_slots=ResourceSlot({
                 'cpu': Decimal('1.0'),
@@ -341,8 +347,10 @@ def example_pending_sessions():
                 KernelInfo(
                     kernel_id=pending_session_kernel_ids[2].kernel_ids[0],
                     session_id=pending_session_kernel_ids[2].session_id,
-                    role=DEFAULT_ROLE,
-                    idx=0,
+                    access_key='dummy-access-key',
+                    cluster_role=DEFAULT_ROLE,
+                    cluster_idx=0,
+                    cluster_hostname=f"{DEFAULT_ROLE}0",
                     image_ref=common_image_ref,
                     resource_opts={},
                     requested_slots=ResourceSlot({
@@ -357,8 +365,10 @@ def example_pending_sessions():
                 KernelInfo(
                     kernel_id=pending_session_kernel_ids[2].kernel_ids[1],
                     session_id=pending_session_kernel_ids[2].session_id,
-                    role='sub',
-                    idx=1,
+                    access_key='dummy-access-key',
+                    cluster_role='sub',
+                    cluster_idx=1,
+                    cluster_hostname="sub1",
                     image_ref=common_image_ref,
                     resource_opts={},
                     requested_slots=ResourceSlot({
@@ -373,8 +383,10 @@ def example_pending_sessions():
                 KernelInfo(
                     kernel_id=pending_session_kernel_ids[2].kernel_ids[2],
                     session_id=pending_session_kernel_ids[2].session_id,
-                    role='sub',
-                    idx=2,
+                    access_key='dummy-access-key',
+                    cluster_role='sub',
+                    cluster_idx=2,
+                    cluster_hostname="sub2",
                     image_ref=common_image_ref,
                     resource_opts={},
                     requested_slots=ResourceSlot({
@@ -392,6 +404,7 @@ def example_pending_sessions():
             session_name='es01',
             session_type=SessionTypes.BATCH,
             cluster_mode='single-node',
+            cluster_size=3,
             scaling_group='sg01',
             requested_slots=ResourceSlot({
                 'cpu': Decimal('1.0'),
@@ -413,8 +426,10 @@ def example_existing_sessions():
                 KernelInfo(
                     kernel_id=existing_session_kernel_ids[0].kernel_ids[0],
                     session_id=existing_session_kernel_ids[0].session_id,
-                    role=DEFAULT_ROLE,
-                    idx=0,
+                    access_key='dummy-access-key',
+                    cluster_role=DEFAULT_ROLE,
+                    cluster_idx=0,
+                    cluster_hostname=f"{DEFAULT_ROLE}0",
                     image_ref=common_image_ref,
                     resource_opts={},
                     requested_slots=ResourceSlot({
@@ -429,8 +444,10 @@ def example_existing_sessions():
                 KernelInfo(
                     kernel_id=existing_session_kernel_ids[0].kernel_ids[1],
                     session_id=existing_session_kernel_ids[0].session_id,
-                    role=DEFAULT_ROLE,
-                    idx=0,
+                    access_key='dummy-access-key',
+                    cluster_role='sub',
+                    cluster_idx=1,
+                    cluster_hostname="sub1",
                     image_ref=common_image_ref,
                     resource_opts={},
                     requested_slots=ResourceSlot({
@@ -448,6 +465,7 @@ def example_existing_sessions():
             session_name='es01',
             session_type=SessionTypes.BATCH,
             cluster_mode='single-node',
+            cluster_size=2,
             occupying_slots=ResourceSlot({
                 'cpu': Decimal('3.0'),
                 'mem': Decimal('1024'),
@@ -462,8 +480,10 @@ def example_existing_sessions():
                 KernelInfo(
                     kernel_id=existing_session_kernel_ids[1].kernel_ids[0],
                     session_id=existing_session_kernel_ids[1].session_id,
-                    role=DEFAULT_ROLE,
-                    idx=0,
+                    access_key='dummy-access-key',
+                    cluster_role=DEFAULT_ROLE,
+                    cluster_idx=0,
+                    cluster_hostname=f"{DEFAULT_ROLE}0",
                     image_ref=common_image_ref,
                     resource_opts={},
                     requested_slots=ResourceSlot({
@@ -480,7 +500,8 @@ def example_existing_sessions():
             session_id=existing_session_kernel_ids[1].session_id,
             session_type=SessionTypes.BATCH,
             session_name='es01',
-            cluster_mode=None,
+            cluster_mode='single-node',
+            cluster_size=1,
             occupying_slots=ResourceSlot({
                 'cpu': Decimal('1.0'),
                 'mem': Decimal('2048'),
@@ -495,8 +516,10 @@ def example_existing_sessions():
                 KernelInfo(
                     kernel_id=existing_session_kernel_ids[2].kernel_ids[0],
                     session_id=existing_session_kernel_ids[2].session_id,
-                    role=DEFAULT_ROLE,
-                    idx=0,
+                    access_key='dummy-access-key',
+                    cluster_role=DEFAULT_ROLE,
+                    cluster_idx=0,
+                    cluster_hostname=f"{DEFAULT_ROLE}0",
                     image_ref=common_image_ref,
                     resource_opts={},
                     requested_slots=ResourceSlot({
@@ -513,7 +536,8 @@ def example_existing_sessions():
             session_id=existing_session_kernel_ids[2].session_id,
             session_type=SessionTypes.BATCH,
             session_name='es01',
-            cluster_mode=None,
+            cluster_mode='single-node',
+            cluster_size=1,
             occupying_slots=ResourceSlot({
                 'cpu': Decimal('4.0'),
                 'mem': Decimal('4096'),
@@ -546,7 +570,7 @@ def test_fifo_scheduler(example_agents, example_pending_sessions, example_existi
     picked_session = _find_and_pop_picked_session(
         example_pending_sessions, picked_session_id)
 
-    agent_id = scheduler.assign_agent(example_agents, picked_session)
+    agent_id = scheduler.assign_agent_for_session(example_agents, picked_session)
     assert agent_id == AgentId('i-001')
 
 
@@ -560,7 +584,7 @@ def test_lifo_scheduler(example_agents, example_pending_sessions, example_existi
     picked_session = _find_and_pop_picked_session(
         example_pending_sessions, picked_session_id)
 
-    agent_id = scheduler.assign_agent(example_agents, picked_session)
+    agent_id = scheduler.assign_agent_for_session(example_agents, picked_session)
     assert agent_id == 'i-001'
 
 
@@ -577,7 +601,7 @@ def test_fifo_scheduler_favor_cpu_for_requests_without_accelerators(
         assert picked_session_id == example_pending_sessions[0].session_id
         picked_session = _find_and_pop_picked_session(
             example_pending_sessions, picked_session_id)
-        agent_id = scheduler.assign_agent(example_mixed_agents, picked_session)
+        agent_id = scheduler.assign_agent_for_session(example_mixed_agents, picked_session)
         if idx == 0:
             # example_mixed_agents do not have any agent with ROCM accelerators.
             assert agent_id is None
@@ -604,7 +628,7 @@ def test_lifo_scheduler_favor_cpu_for_requests_without_accelerators(
         assert picked_session_id == example_pending_sessions[-1].session_id
         picked_session = _find_and_pop_picked_session(
             example_pending_sessions, picked_session_id)
-        agent_id = scheduler.assign_agent(example_mixed_agents, picked_session)
+        agent_id = scheduler.assign_agent_for_session(example_mixed_agents, picked_session)
         if idx == 2:
             # example_mixed_agents do not have any agent with ROCM accelerators.
             assert agent_id is None
@@ -627,7 +651,7 @@ def test_drf_scheduler(example_agents, example_pending_sessions, example_existin
     picked_session = _find_and_pop_picked_session(
         example_pending_sessions, picked_session_id)
 
-    agent_id = scheduler.assign_agent(example_agents, picked_session)
+    agent_id = scheduler.assign_agent_for_session(example_agents, picked_session)
     assert agent_id == 'i-001'
 
 
@@ -641,7 +665,7 @@ def test_mof_scheduler_first_assign(example_agents, example_pending_sessions, ex
     picked_session = _find_and_pop_picked_session(
         example_pending_sessions, picked_session_id)
 
-    agent_id = scheduler.assign_agent(example_agents, picked_session)
+    agent_id = scheduler.assign_agent_for_session(example_agents, picked_session)
     assert agent_id == 'i-001'
 
 
@@ -656,7 +680,7 @@ def test_mof_scheduler_second_assign(example_agents_first_one_assigned, example_
     picked_session = _find_and_pop_picked_session(
         example_pending_sessions, picked_session_id)
 
-    agent_id = scheduler.assign_agent(
+    agent_id = scheduler.assign_agent_for_session(
         example_agents_first_one_assigned, picked_session)
     assert agent_id == 'i-101'
 
@@ -672,7 +696,7 @@ def test_mof_scheduler_no_valid_agent(example_agents_no_valid, example_pending_s
     picked_session = _find_and_pop_picked_session(
         example_pending_sessions, picked_session_id)
 
-    agent_id = scheduler.assign_agent(example_agents_no_valid, picked_session)
+    agent_id = scheduler.assign_agent_for_session(example_agents_no_valid, picked_session)
     assert agent_id is None
 
 
