@@ -473,8 +473,8 @@ class AgentRegistry:
         self,
         session_id: SessionId,
         *,
+        db_connection: SAConnection,
         for_update: bool = False,
-        db_connection: SAConnection = None,
     ) -> sa.engine.RowProxy:
         query = (
             sa.select(
@@ -497,8 +497,8 @@ class AgentRegistry:
         self,
         kernel_id: KernelId,
         *,
+        db_connection: SAConnection,
         for_update: bool = False,
-        db_connection: SAConnection = None,
     ) -> sa.engine.RowProxy:
         query = (
             sa.select(
@@ -552,7 +552,7 @@ class AgentRegistry:
                 extra_cond = (~kernels.c.status.in_(DEAD_KERNEL_STATUSES))
             session_infos = await match_session_ids(
                 session_name_or_id,
-                access_key,
+                AccessKey(access_key),
                 for_update=for_update,
                 extra_cond=extra_cond,
                 db_connection=conn,
@@ -562,7 +562,7 @@ class AgentRegistry:
             if len(session_infos) > 1:
                 raise TooManySessionsMatched(extra_data={'matches': session_infos})
             kernel_list = await get_main_kernels(
-                [session_infos[0]['session_id']],
+                [SessionId(session_infos[0]['session_id'])],
                 db_connection=conn,
             )
             return kernel_list[0]
@@ -1612,7 +1612,7 @@ class AgentRegistry:
                 async with RPCContext(
                     kernel['agent_addr'], None, order_key=None,
                 ) as rpc:
-                    updated_config = {
+                    updated_config: Dict[str, Any] = {
                         # TODO: support resacling of sub-containers
                     }
                     kernel_info = await rpc.call.restart_kernel(

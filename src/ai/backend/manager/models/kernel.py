@@ -4,9 +4,11 @@ from decimal import Decimal
 import enum
 from typing import (
     Any,
+    Dict,
     Iterable,
-    Optional,
+    List,
     Mapping,
+    Optional,
     Sequence,
     TypedDict,
     Union,
@@ -37,6 +39,8 @@ from .base import (
     metadata,
     BigInt, GUID, IDColumn, EnumType,
     ResourceSlotColumn,
+    KernelIDColumn,
+    SessionIDColumnType,
     Item, PaginatedList,
     batch_result,
     batch_multiresult,
@@ -129,11 +133,11 @@ kernels = sa.Table(
     'kernels', metadata,
     # The Backend.AI-side UUID for each kernel
     # (mapped to a container in the docker backend and a pod in the k8s backend)
-    IDColumn(),
+    KernelIDColumn(),
     # session_id == id when the kernel is the main container in a multi-container session or a
     # single-container session.
     # Otherwise, it refers the kernel ID of the main contaienr of the belonged multi-container session.
-    sa.Column('session_id', GUID, unique=False, index=True, nullable=False),
+    sa.Column('session_id', SessionIDColumnType, unique=False, index=True, nullable=False),
     sa.Column('session_name', sa.String(length=64), unique=False, index=True),     # previously sess_id
     sa.Column('session_type', EnumType(SessionTypes), index=True, nullable=False,  # previously sess_type
               default=SessionTypes.INTERACTIVE, server_default=SessionTypes.INTERACTIVE.name),
@@ -233,7 +237,7 @@ DEFAULT_SESSION_ORDERING = [
 
 
 class SessionInfo(TypedDict):
-    session_id: UUID
+    session_id: SessionId
     session_name: str
     status: KernelStatus
 
@@ -335,8 +339,13 @@ async def match_session_ids(
         if result.rowcount == 0:
             continue
         return [
-            dict(row) for row in await result.fetchall()
+            SessionInfo(
+                session_id=row['session_id'],
+                session_name=row['session_name'],
+                status=row['status'],
+            ) for row in await result.fetchall()
         ]
+    return []
 
 
 async def get_main_kernels(
@@ -378,6 +387,7 @@ async def get_all_kernels(
     If a given session ID does not exist, an empty list will be returned
     at the position of that session ID.
     """
+    session_id_to_rowsets: Dict[SessionId, List[RowProxy]]
     session_id_to_rowsets = OrderedDict(
         (session_id, []) for session_id in session_ids
     )
@@ -481,7 +491,7 @@ class ComputeContainer(graphene.ObjectType):
         props = cls.parse_row(context, row)
         return cls(**props)
 
-    async def resolve_live_stat(self, info: graphene.ResolveInfo) -> Mapping[str, Any]:
+    async def resolve_live_stat(self, info: graphene.ResolveInfo) -> Optional[Mapping[str, Any]]:
         if not hasattr(self, 'status'):
             return None
         rs = info.context['redis_stat']
@@ -716,9 +726,10 @@ class ComputeSession(graphene.ObjectType):
         props = cls.parse_row(context, row)
         return cls(**props)
 
-    async def resolve_occupied_slots(self, info: graphene.ResolveInfo) -> ResourceSlot:
+    async def resolve_occupied_slots(self, info: graphene.ResolveInfo) -> Mapping[str, Any]:
         """
-        Calculate the sum of occupied resource slots of all sub-kernels.
+        Calculate the sum of occupied resource slots of all sub-kernels,
+        and return the JSON-serializable object from the sum result.
         """
         manager = info.context['dlmgr']
         loader = manager.get_loader('ComputeContainer.by_session')
