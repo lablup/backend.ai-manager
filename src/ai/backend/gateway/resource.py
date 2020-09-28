@@ -331,7 +331,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'domain_name': row['domain_name'],
             'group_id': str(row['group_id']),
             'group_name': row['name'],
-            'name': row['sess_id'],
+            'name': row['session_id'],
             'access_key': row['access_key'],
             'email': row['email'],
             'agent': row['agent'],

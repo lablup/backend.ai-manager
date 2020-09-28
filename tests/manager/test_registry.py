@@ -96,6 +96,7 @@ async def test_handle_heartbeat(mocker):
         'addr': '10.0.0.5',
         'scaling_group': 'sg-testing',
         'available_slots': ResourceSlot({'cpu': '1', 'mem': '1g'}),
+        'clusterized': True,
     })
     await registry.handle_heartbeat('i-001', {
         'scaling_group': 'sg-testing',
@@ -121,6 +122,7 @@ async def test_handle_heartbeat(mocker):
         'addr': '10.0.0.5',
         'scaling_group': 'sg-testing',
         'available_slots': ResourceSlot({'cpu': '1', 'mem': '1g'}),
+        'clusterized': True,
     })
     await registry.handle_heartbeat('i-001', {
         'scaling_group': 'sg-testing2',

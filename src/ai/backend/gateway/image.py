@@ -24,6 +24,7 @@ from ai.backend.common.types import (
 from .auth import admin_required
 from .exceptions import InvalidAPIParameters
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
+from ..manager.defs import DEFAULT_ROLE
 from ..manager.models import (
     domains, groups, query_allowed_sgroups,
     association_groups_users as agus,
@@ -390,25 +391,31 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
 
     kernel_id = await registry.enqueue_session(
         sess_id, access_key,
-        importer_image,
+        [{
+            'image_ref': importer_image,
+            'cluster_role': DEFAULT_ROLE,
+            'creation_config': {
+                'resources': {'cpu': '1', 'mem': '2g'},
+                'scaling_group': params['launchOptions']['scalingGroup'],
+                'environ': {
+                    'SRC_IMAGE': source_image.canonical,
+                    'TARGET_IMAGE': target_image.canonical,
+                    'RUNTIME_PATH': params['runtimePath'],
+                    'BUILD_SCRIPT': (
+                        base64.b64encode(dockerfile_content.encode('utf8')).decode('ascii')
+                    ),
+                }
+            },
+            'startup_command': '/root/build-image.sh',
+            'bootstrap_script': ''
+        }],
+        None,
         SessionTypes.BATCH,
-        {
-            'resources': {'cpu': '1', 'mem': '2g'},
-            'scaling_group': params['launchOptions']['scalingGroup'],
-            'environ': {
-                'SRC_IMAGE': source_image.canonical,
-                'TARGET_IMAGE': target_image.canonical,
-                'RUNTIME_PATH': params['runtimePath'],
-                'BUILD_SCRIPT': (base64.b64encode(dockerfile_content.encode('utf8'))
-                                 .decode('ascii')),
-            }
-        },
         resource_policy,
         domain_name=request['user']['domain_name'],
         group_id=group_id,
         user_uuid=request['user']['uuid'],
         user_role=request['user']['role'],
-        startup_command='/root/build-image.sh',
         internal_data={
             'domain_socket_proxies': ['/var/run/docker.sock'],
             'docker_credentials': docker_creds,

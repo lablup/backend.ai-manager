@@ -1,9 +1,13 @@
 import enum
 from typing import (
-    Optional, Union,
+    Optional,
+    Protocol,
+    Union,
 )
 
 import attr
+import sqlalchemy as sa
+from aiopg.sa.connection import SAConnection
 
 
 @attr.s(auto_attribs=True, slots=True, frozen=True)
@@ -12,6 +16,12 @@ class BackgroundTaskEventArgs:
     message: Optional[str] = None
     current_progress: Optional[Union[int, float]] = None
     total_progress: Optional[Union[int, float]] = None
+
+
+class SessionGetter(Protocol):
+
+    def __call__(self, *, db_connection: SAConnection) -> sa.engine.RowProxy:
+        ...
 
 
 # Sentinel is a special object that indicates a special status instead of a value

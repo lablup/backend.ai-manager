@@ -8,7 +8,7 @@ Create Date: 2018-06-17 13:52:13.346856
 from alembic import op
 import sqlalchemy as sa
 from ai.backend.manager.models.base import convention
-
+import os
 
 # revision identifiers, used by Alembic.
 revision = 'f8a71c3bffa2'
@@ -30,12 +30,15 @@ def upgrade():
           '     (user_id_map.txt must be present in the current working directory\n'
           '      which contains a space-sep.list of numeric and string ID pairs.)')
     print('NOTE: If you choose [b], you will not be able to downgrade!')
-    while True:
-        choice = input('Your choice? [a/b] ')
-        if choice in ('a', 'b'):
-            break
-        print('Invalid choice.')
-        continue
+
+    choice = os.environ.get('STRINGIFY_USERID_CHOICE')
+    if choice is None:
+        while True:
+            choice = input('Your choice? [a/b] ')
+            if choice in ('a', 'b'):
+                break
+            print('Invalid choice.')
+            continue
 
     op.alter_column('keypairs', 'user_id',
                     existing_type=sa.Integer(),

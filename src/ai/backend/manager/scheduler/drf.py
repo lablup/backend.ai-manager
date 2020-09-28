@@ -13,14 +13,16 @@ from typing import (
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
-    AccessKey, AgentId, KernelId,
+    AccessKey, AgentId,
     ResourceSlot,
+    SessionId,
 )
 from . import (
     AbstractScheduler,
     AgentContext,
     PendingSession,
     ExistingSession,
+    KernelInfo,
 )
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.scheduler'))
@@ -35,11 +37,12 @@ class DRFScheduler(AbstractScheduler):
         super().__init__(config)
         self.per_user_dominant_share = defaultdict(lambda: Decimal(0))
 
-    def pick_session(self,
-                     total_capacity: ResourceSlot,
-                     pending_sessions: Sequence[PendingSession],
-                     existing_sessions: Sequence[ExistingSession],
-                     ) -> Optional[KernelId]:
+    def pick_session(
+        self,
+        total_capacity: ResourceSlot,
+        pending_sessions: Sequence[PendingSession],
+        existing_sessions: Sequence[ExistingSession],
+    ) -> Optional[SessionId]:
         self.total_capacity = total_capacity
 
         # Calculate the initial dominant shares of all users.
@@ -73,15 +76,16 @@ class DRFScheduler(AbstractScheduler):
         # who has the lowest dominant share.
         for pending_sess in pending_sessions:
             if pending_sess.access_key == least_dominant_share_user:
-                return pending_sess.kernel_id
+                return SessionId(pending_sess.session_id)
 
         return None
 
-    def assign_agent(self,
-                     agents: Sequence[AgentContext],
-                     pending_session: PendingSession,
-                     ) -> Optional[AgentId]:
-
+    def _assign_agent(
+        self,
+        agents: Sequence[AgentContext],
+        access_key: AccessKey,
+        requested_slots: ResourceSlot,
+    ) -> Optional[AgentId]:
         # If some predicate checks for a picked session fail,
         # this method is NOT called at all for the picked session.
         # In such case, we just skip updating self.per_user_dominant_share state
@@ -90,7 +94,7 @@ class DRFScheduler(AbstractScheduler):
         possible_agents = []
         for agent in agents:
             remaining_slots = agent.available_slots - agent.occupied_slots
-            if remaining_slots >= pending_session.requested_slots:
+            if remaining_slots >= requested_slots:
                 possible_agents.append(agent)
 
         if possible_agents:
@@ -100,16 +104,16 @@ class DRFScheduler(AbstractScheduler):
             # This is required to use to the latest dominant share information
             # when iterating over multiple pending sessions in a single scaling group.
             dominant_share_from_request = Decimal(0)
-            for slot, value in pending_session.requested_slots.items():
-                self.total_capacity.sync_keys(pending_session.requested_slots)
+            for slot, value in requested_slots.items():
+                self.total_capacity.sync_keys(requested_slots)
                 slot_cap = Decimal(self.total_capacity[slot])
                 if slot_cap == 0:
                     continue
                 slot_share = Decimal(value) / slot_cap
                 if dominant_share_from_request < slot_share:
                     dominant_share_from_request = slot_share
-            if self.per_user_dominant_share[pending_session.access_key] < dominant_share_from_request:
-                self.per_user_dominant_share[pending_session.access_key] = dominant_share_from_request
+            if self.per_user_dominant_share[access_key] < dominant_share_from_request:
+                self.per_user_dominant_share[access_key] = dominant_share_from_request
 
             # Choose the agent.
             chosen_agent = \
@@ -117,3 +121,21 @@ class DRFScheduler(AbstractScheduler):
             return chosen_agent.agent_id
 
         return None
+
+    def assign_agent_for_session(
+        self,
+        agents: Sequence[AgentContext],
+        pending_session: PendingSession,
+    ) -> Optional[AgentId]:
+        return self._assign_agent(
+            agents, pending_session.access_key, pending_session.requested_slots,
+        )
+
+    def assign_agent_for_kernel(
+        self,
+        agents: Sequence[AgentContext],
+        pending_kernel: KernelInfo,
+    ) -> Optional[AgentId]:
+        return self._assign_agent(
+            agents, pending_kernel.access_key, pending_kernel.requested_slots,
+        )

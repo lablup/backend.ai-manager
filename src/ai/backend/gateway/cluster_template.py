@@ -1,12 +1,15 @@
 import json
 import logging
+from typing import (
+    Any,
+    Tuple,
+)
 import uuid
 
 from aiohttp import web
 import aiohttp_cors
 import sqlalchemy as sa
 import trafaret as t
-from typing import Any, Tuple
 import yaml
 
 from ai.backend.common import validators as tx
@@ -18,14 +21,15 @@ from .manager import READ_ALLOWED, server_status_required
 from .types import CORSOptions, Iterable, WebMiddleware
 from .utils import check_api_params, get_access_key_scopes
 
+
 from ..manager.models import (
     association_groups_users as agus, domains,
     groups, session_templates, keypairs, users, UserRole,
-    query_accessible_session_templates, TemplateType,
+    query_accessible_session_templates, TemplateType
 )
-from ..manager.models.session_template import check_task_template
+from ..manager.models.session_template import check_cluster_template
 
-log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.session_template'))
+log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.cluster_template'))
 
 
 @server_status_required(READ_ALLOWED)
@@ -134,7 +138,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 body = yaml.load(params['payload'], Loader=yaml.BaseLoader)
             except (yaml.YAMLError, yaml.MarkedYAMLError):
                 raise InvalidAPIParameters('Malformed payload')
-        template_data = check_task_template(body)
+        template_data = check_cluster_template(body)
         template_id = uuid.uuid4().hex
         resp = {
             'id': template_id,
@@ -147,7 +151,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'user_uuid': user_uuid,
             'name': template_data['metadata']['name'],
             'template': template_data,
-            'type': TemplateType.TASK,
+            'type': TemplateType.CLUSTER,
         })
         result = await conn.execute(query)
         assert result.rowcount == 1
@@ -179,7 +183,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
             query = (sa.select([session_templates, users.c.email, groups.c.name], use_labels=True)
                        .select_from(j)
                        .where((session_templates.c.is_active) &
-                              (session_templates.c.type == TemplateType.TASK)))
+                              (session_templates.c.type == TemplateType.CLUSTER)))
             result = await conn.execute(query)
             entries = []
             async for row in result:
@@ -201,7 +205,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
             if params['group_id'] is not None:
                 extra_conds = ((session_templates.c.group_id == params['group_id']))
             entries = await query_accessible_session_templates(
-                        conn, user_uuid, TemplateType.TASK,
+                        conn, user_uuid, TemplateType.CLUSTER,
                         user_role=user_role, domain_name=domain_name,
                         allowed_types=['user', 'group'], extra_conds=extra_conds)
 
@@ -243,7 +247,7 @@ async def get(request: web.Request, params: Any) -> web.Response:
                    .select_from(session_templates)
                    .where((session_templates.c.id == template_id) &
                           (session_templates.c.is_active) &
-                          (session_templates.c.type == TemplateType.TASK)
+                          (session_templates.c.type == TemplateType.CLUSTER)
                           ))
         template = await conn.scalar(query)
         if not template:
@@ -277,7 +281,7 @@ async def put(request: web.Request, params: Any) -> web.Response:
                    .select_from(session_templates)
                    .where((session_templates.c.id == template_id) &
                           (session_templates.c.is_active) &
-                          (session_templates.c.type == TemplateType.TASK)
+                          (session_templates.c.type == TemplateType.CLUSTER)
                           ))
         result = await conn.scalar(query)
         if not result:
@@ -288,7 +292,7 @@ async def put(request: web.Request, params: Any) -> web.Response:
             body = yaml.load(params['payload'], Loader=yaml.BaseLoader)
         except (yaml.YAMLError, yaml.MarkedYAMLError):
             raise InvalidAPIParameters('Malformed payload')
-        template_data = check_task_template(body)
+        template_data = check_cluster_template.check(body)
         query = (sa.update(session_templates)
                    .values(template=template_data, name=template_data['metadata']['name'])
                    .where((session_templates.c.id == template_id)))
@@ -318,7 +322,7 @@ async def delete(request: web.Request, params: Any) -> web.Response:
                    .select_from(session_templates)
                    .where((session_templates.c.id == template_id) &
                           (session_templates.c.is_active) &
-                          (session_templates.c.type == TemplateType.TASK)
+                          (session_templates.c.type == TemplateType.CLUSTER)
                           ))
         result = await conn.scalar(query)
         if not result:
@@ -346,7 +350,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     app['api_versions'] = (4, 5)
-    app['prefix'] = 'template/session'
+    app['prefix'] = 'template/cluster'
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     cors.add(app.router.add_route('POST', '', create))
     cors.add(app.router.add_route('GET', '', list_template))

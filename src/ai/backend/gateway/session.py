@@ -1,6 +1,6 @@
-'''
+"""
 REST-style session management APIs.
-'''
+"""
 
 import asyncio
 import base64
@@ -14,10 +14,14 @@ import re
 from pathlib import Path
 import secrets
 from typing import (
-    Any, Optional,
+    Any,
+    Dict,
     Iterable,
+    List,
+    Mapping,
+    MutableMapping,
+    Optional,
     Tuple,
-    Mapping, MutableMapping,
     Union,
 )
 import uuid
@@ -45,7 +49,9 @@ from ai.backend.common.exception import (
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.utils import str_to_timedelta
 from ai.backend.common.types import (
-    AgentId, KernelId,
+    AgentId,
+    KernelId,
+    ClusterMode,
     SessionTypes,
 )
 from ai.backend.common.plugin.monitor import GAUGE
@@ -69,6 +75,7 @@ from .utils import (
     catch_unexpected, check_api_params, get_access_key_scopes, undefined
 )
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
+from ..manager.defs import DEFAULT_ROLE
 from ..manager.models import (
     domains,
     association_groups_users as agus, groups,
@@ -82,6 +89,7 @@ from ..manager.models import (
     verify_vfolder_name,
     DEAD_KERNEL_STATUSES,
 )
+from ..manager.models.kernel import match_session_ids
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.session'))
 
@@ -156,6 +164,29 @@ creation_config_v4_template = t.Dict({
     tx.AliasedKey(['resource_opts', 'resourceOpts'], default=undefined):
         UndefChecker | t.Null | t.Mapping(t.String, t.Any),
 })
+creation_config_v5 = t.Dict({
+    t.Key('mounts', default=None): t.Null | t.List(t.String),
+    tx.AliasedKey(['mount_map', 'mountMap'], default=None):
+        t.Null | t.Mapping(t.String, t.String),
+    t.Key('environ', default=None): t.Null | t.Mapping(t.String, t.String),
+    # cluster_size is moved to the root-level parameters
+    tx.AliasedKey(['scaling_group', 'scalingGroup'], default=None): t.Null | t.String,
+    t.Key('resources', default=None): t.Null | t.Mapping(t.String, t.Any),
+    tx.AliasedKey(['resource_opts', 'resourceOpts'], default=None): t.Null | t.Mapping(t.String, t.Any),
+    tx.AliasedKey(['preopen_ports', 'preopenPorts'], default=None): t.Null | t.List(t.Int[1024:65535]),
+})
+creation_config_v5_template = t.Dict({
+    t.Key('mounts', default=undefined): UndefChecker | t.Null | t.List(t.String),
+    tx.AliasedKey(['mount_map', 'mountMap'], default=undefined):
+        UndefChecker | t.Null | t.Mapping(t.String, t.String),
+    t.Key('environ', default=undefined): UndefChecker | t.Null | t.Mapping(t.String, t.String),
+    # cluster_size is moved to the root-level parameters
+    tx.AliasedKey(['scaling_group', 'scalingGroup'], default=undefined):
+        UndefChecker | t.Null | t.String,
+    t.Key('resources', default=undefined): UndefChecker | t.Null | t.Mapping(t.String, t.Any),
+    tx.AliasedKey(['resource_opts', 'resourceOpts'], default=undefined):
+        UndefChecker | t.Null | t.Mapping(t.String, t.Any),
+})
 
 
 overwritten_param_check = t.Dict({
@@ -195,6 +226,108 @@ def drop(d, dropval):
     return newd
 
 
+async def _query_userinfo(request: web.Request, params: Any, conn: Any) -> Tuple[str, str, str]:
+    if params['domain'] is None:
+        params['domain'] = request['user']['domain_name']
+    scopes_param = {
+        'owner_access_key': (None if params['owner_access_key'] is undefined
+                             else params['owner_access_key'])
+    }
+    requester_access_key, owner_access_key = await get_access_key_scopes(request, scopes_param)
+    requester_uuid = request['user']['uuid']
+
+    owner_uuid = ''
+    group_id = ''
+    resource_policy = ''
+
+    if requester_access_key != owner_access_key:
+        # Admin or superadmin is creating sessions for another user.
+        # The check for admin privileges is already done in get_access_key_scope().
+        query = (
+            sa.select([keypairs.c.user, keypairs.c.resource_policy,
+                        users.c.role, users.c.domain_name])
+            .select_from(sa.join(keypairs, users, keypairs.c.user == users.c.uuid))
+            .where(keypairs.c.access_key == owner_access_key)
+        )
+        result = await conn.execute(query)
+        row = await result.fetchone()
+        owner_domain = row['domain_name']
+        owner_uuid = row['user']
+        owner_role = row['role']
+        query = (
+            sa.select([keypair_resource_policies])
+            .select_from(keypair_resource_policies)
+            .where(keypair_resource_policies.c.name == row['resource_policy'])
+        )
+        result = await conn.execute(query)
+        resource_policy = await result.fetchone()
+    else:
+        # Normal case when the user is creating her/his own session.
+        owner_domain = request['user']['domain_name']
+        owner_uuid = requester_uuid
+        owner_role = UserRole.USER
+        resource_policy = request['keypair']['resource_policy']
+
+    query = (
+        sa.select([domains.c.name])
+        .select_from(domains)
+        .where(
+            (domains.c.name == owner_domain) &
+            (domains.c.is_active)
+        )
+    )
+    qresult = await conn.execute(query)
+    domain_name = await qresult.scalar()
+    if domain_name is None:
+        raise InvalidAPIParameters('Invalid domain')
+
+    if owner_role == UserRole.SUPERADMIN:
+        # superadmin can spawn container in any designated domain/group.
+        query = (
+            sa.select([groups.c.id])
+            .select_from(groups)
+            .where(
+                (groups.c.domain_name == params['domain']) &
+                (groups.c.name == params['group']) &
+                (groups.c.is_active)
+            ))
+        qresult = await conn.execute(query)
+        group_id = await qresult.scalar()
+    elif owner_role == UserRole.ADMIN:
+        # domain-admin can spawn container in any group in the same domain.
+        if params['domain'] != owner_domain:
+            raise InvalidAPIParameters("You can only set the domain to the owner's domain.")
+        query = (
+            sa.select([groups.c.id])
+            .select_from(groups)
+            .where(
+                (groups.c.domain_name == owner_domain) &
+                (groups.c.name == params['group']) &
+                (groups.c.is_active)
+            ))
+        qresult = await conn.execute(query)
+        group_id = await qresult.scalar()
+    else:
+        # normal users can spawn containers in their group and domain.
+        if params['domain'] != owner_domain:
+            raise InvalidAPIParameters("You can only set the domain to your domain.")
+        query = (
+            sa.select([agus.c.group_id])
+            .select_from(agus.join(groups, agus.c.group_id == groups.c.id))
+            .where(
+                (agus.c.user_id == owner_uuid) &
+                (groups.c.domain_name == owner_domain) &
+                (groups.c.name == params['group']) &
+                (groups.c.is_active)
+            ))
+        qresult = await conn.execute(query)
+        group_id = await qresult.scalar()
+    if group_id is None:
+        raise InvalidAPIParameters('Invalid group')
+
+    return owner_uuid, group_id, resource_policy
+
+
 async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
@@ -209,7 +342,6 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
 
     registry = request.app['registry']
     resp: MutableMapping[str, Any] = {}
-    requester_uuid = request['user']['uuid']
 
     if mount_map := params['config'].get('mount_map'):
         for p in mount_map.values():
@@ -282,6 +414,9 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             _td = str_to_timedelta(params['starts_at'])
             starts_at = datetime.now(tzutc()) + _td
 
+    if params['cluster_size'] > 1:
+        log.debug(" -> cluster_mode:{} (replicate)", params['cluster_mode'])
+
     try:
         start_event = asyncio.Event()
         kernel_id: Optional[KernelId] = None
@@ -300,90 +435,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
                                                                    interrupt_wait)
 
         async with dbpool.acquire() as conn, conn.begin():
-            if requester_access_key != owner_access_key:
-                # Admin or superadmin is creating sessions for another user.
-                # The check for admin privileges is already done in get_access_key_scope().
-                query = (
-                    sa.select([keypairs.c.user, keypairs.c.resource_policy,
-                               users.c.role, users.c.domain_name])
-                    .select_from(sa.join(keypairs, users, keypairs.c.user == users.c.uuid))
-                    .where(keypairs.c.access_key == owner_access_key)
-                )
-                result = await conn.execute(query)
-                row = await result.fetchone()
-                owner_domain = row['domain_name']
-                owner_uuid = row['user']
-                owner_role = row['role']
-                query = (
-                    sa.select([keypair_resource_policies])
-                    .select_from(keypair_resource_policies)
-                    .where(keypair_resource_policies.c.name == row['resource_policy'])
-                )
-                result = await conn.execute(query)
-                resource_policy = await result.fetchone()
-            else:
-                # Normal case when the user is creating her/his own session.
-                owner_domain = request['user']['domain_name']
-                owner_uuid = requester_uuid
-                owner_role = UserRole.USER
-                resource_policy = request['keypair']['resource_policy']
-
-            query = (
-                sa.select([domains.c.name])
-                .select_from(domains)
-                .where(
-                    (domains.c.name == owner_domain) &
-                    (domains.c.is_active)
-                )
-            )
-            qresult = await conn.execute(query)
-            domain_name = await qresult.scalar()
-            if domain_name is None:
-                raise InvalidAPIParameters('Invalid domain')
-
-            if owner_role == UserRole.SUPERADMIN:
-                # superadmin can spawn container in any designated domain/group.
-                query = (
-                    sa.select([groups.c.id])
-                    .select_from(groups)
-                    .where(
-                        (groups.c.domain_name == params['domain']) &
-                        (groups.c.name == params['group']) &
-                        (groups.c.is_active)
-                    ))
-                qresult = await conn.execute(query)
-                group_id = await qresult.scalar()
-            elif owner_role == UserRole.ADMIN:
-                # domain-admin can spawn container in any group in the same domain.
-                if params['domain'] != owner_domain:
-                    raise InvalidAPIParameters("You can only set the domain to the owner's domain.")
-                query = (
-                    sa.select([groups.c.id])
-                    .select_from(groups)
-                    .where(
-                        (groups.c.domain_name == owner_domain) &
-                        (groups.c.name == params['group']) &
-                        (groups.c.is_active)
-                    ))
-                qresult = await conn.execute(query)
-                group_id = await qresult.scalar()
-            else:
-                # normal users can spawn containers in their group and domain.
-                if params['domain'] != owner_domain:
-                    raise InvalidAPIParameters("You can only set the domain to your domain.")
-                query = (
-                    sa.select([agus.c.group_id])
-                    .select_from(agus.join(groups, agus.c.group_id == groups.c.id))
-                    .where(
-                        (agus.c.user_id == owner_uuid) &
-                        (groups.c.domain_name == owner_domain) &
-                        (groups.c.name == params['group']) &
-                        (groups.c.is_active)
-                    ))
-                qresult = await conn.execute(query)
-                group_id = await qresult.scalar()
-            if group_id is None:
-                raise InvalidAPIParameters('Invalid group')
+            owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
 
             # Use keypair bootstrap_script if it is not delivered as a parameter
             # (only for INTERACTIVE sessions).
@@ -393,15 +445,23 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
 
         kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
             params['session_name'], owner_access_key,
-            requested_image_ref,
+            [{
+                'image_ref': requested_image_ref,
+                'cluster_role': DEFAULT_ROLE,
+                'cluster_idx': 0,
+                'creation_config': params['config'],
+                'bootstrap_script': params['bootstrap_script'],
+                'startup_command': params['startup_command'],
+            }],
+            params['config']['scaling_group'],
             params['session_type'],
-            params['config'],
             resource_policy,
             domain_name=params['domain'],
-            bootstrap_script=params['bootstrap_script'],
             group_id=group_id,
             user_uuid=owner_uuid,
             user_role=request['user']['role'],
+            cluster_mode=params['cluster_mode'],
+            cluster_size=params['cluster_size'],
             startup_command=params['startup_command'],
             session_tag=params['tag'],
             starts_at=starts_at,
@@ -485,6 +545,10 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             tx.Enum(SessionTypes),
         tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
         tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
+        tx.AliasedKey(['cluster_size', 'clusterSize'], default=1):
+            t.ToInt[1:],             # new in APIv6
+        tx.AliasedKey(['cluster_mode', 'clusterMode'], default='single-node'):
+            tx.Enum(ClusterMode),  # new in APIv6
         t.Key('config', default=dict): t.Mapping(t.String, t.Any),
         t.Key('tag', default=undefined): UndefChecker | t.Null | t.String,
         t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
@@ -506,7 +570,9 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
 
     api_version = request['api_version']
     try:
-        if 5 <= api_version[0]:
+        if 6 <= api_version[0]:
+            params['config'] = creation_config_v5_template.check(params['config'])
+        elif 5 <= api_version[0]:
             params['config'] = creation_config_v4_template.check(params['config'])
         elif (4, '20190315') <= api_version:
             params['config'] = creation_config_v3_template.check(params['config'])
@@ -624,10 +690,14 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
             tx.Enum(SessionTypes),
         tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
         tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
+        tx.AliasedKey(['cluster_size', 'clusterSize'], default=1):
+            t.ToInt[1:],             # new in APIv6
+        tx.AliasedKey(['cluster_mode', 'clusterMode'], default='single-node'):
+            tx.Enum(ClusterMode),    # new in APIv6
         t.Key('config', default=dict): t.Mapping(t.String, t.Any),
         t.Key('tag', default=None): t.Null | t.String,
         t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
-        t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
+        t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.ToInt[0:],
         tx.AliasedKey(['starts_at', 'startsAt'], default=None): t.Null | t.String,
         t.Key('reuseIfExists', default=True) >> 'reuse': t.ToBool,
         t.Key('startupCommand', default=None) >> 'startup_command': t.Null | t.String,
@@ -640,7 +710,9 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
         raise InvalidAPIParameters(f'Requested session ID {params["session_name"]} is reserved word')
 
     api_version = request['api_version']
-    if 5 <= api_version[0]:
+    if 6 <= api_version[0]:
+        creation_config = creation_config_v5.check(params['config'])
+    elif 5 <= api_version[0]:
         creation_config = creation_config_v4.check(params['config'])
     elif (4, '20190315') <= api_version:
         creation_config = creation_config_v3.check(params['config'])
@@ -655,10 +727,273 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
     return await _create(request, params, request.app['dbpool'])
 
 
-async def handle_kernel_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
-                                  raw_kernel_id: str,
-                                  reason: str = None,
-                                  exit_code: int = None) -> None:
+@server_status_required(ALL_ALLOWED)
+@auth_required
+@check_api_params(
+    t.Dict({
+        t.Key('clientSessionToken') >> 'session_name':
+            t.Regexp(r'^(?=.{4,64}$)\w[\w.-]*\w$', re.ASCII),
+        tx.AliasedKey(['template_id', 'templateId']): t.Null | tx.UUID,
+        tx.AliasedKey(['type', 'sessionType'], default='interactive') >> 'sess_type':
+            tx.Enum(SessionTypes),
+        tx.AliasedKey(['group', 'groupName', 'group_name'], default='default'): t.String,
+        tx.AliasedKey(['domain', 'domainName', 'domain_name'], default='default'): t.String,
+        tx.AliasedKey(['scaling_group', 'scalingGroup'], default=None): t.Null | t.String,
+        t.Key('tag', default=None): t.Null | t.String,
+        t.Key('enqueueOnly', default=False) >> 'enqueue_only': t.ToBool,
+        t.Key('maxWaitSeconds', default=0) >> 'max_wait_seconds': t.Int[0:],
+        t.Key('owner_access_key', default=None): t.Null | t.String,
+    }),
+    loads=_json_loads)
+async def create_cluster(request: web.Request, params: Any) -> web.Response:
+    dbpool = request.app['dbpool']
+    if params['domain'] is None:
+        params['domain'] = request['user']['domain_name']
+    scopes_param = {
+        'owner_access_key': (None if params['owner_access_key'] is undefined
+                             else params['owner_access_key'])
+    }
+    requester_access_key, owner_access_key = await get_access_key_scopes(request, scopes_param)
+    log.info('CREAT_CLUSTER (ak:{0}/{1}, s:{3})',
+             requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*',
+             params['session_name'])
+
+    registry = request.app['registry']
+    resp: MutableMapping[str, Any] = {}
+
+    # Check existing (owner_access_key, session) kernel instance
+    try:
+        # NOTE: We can reuse the session IDs of TERMINATED sessions only.
+        # NOTE: Reusing a session in the PENDING status returns an empty value in service_ports.
+        await registry.get_session(params['session_name'], owner_access_key)
+    except SessionNotFound:
+        pass
+    except TooManySessionsMatched:
+        raise SessionAlreadyExists
+    else:
+        raise SessionAlreadyExists
+
+    async with dbpool.acquire() as conn, conn.begin():
+        query = (
+                    sa.select([session_templates.c.template])
+                      .select_from(session_templates)
+                      .where((session_templates.c.id == params['template_id']) &
+                             session_templates.c.is_active)
+                )
+        template = await conn.scalar(query)
+        if not template:
+            raise TaskTemplateNotFound
+        mounts = []
+        mount_map = {}
+        environ = {}
+
+        if _mounts := template['spec'].get('mounts'):  # noqa
+            mounts = list(_mounts.keys())
+            mount_map = {
+                key: value
+                for (key, value) in _mounts.items()
+                if len(value) > 0
+            }
+        if _environ := template['spec'].get('environ'):  # noqa
+            environ = _environ
+
+        log.debug('cluster template: {}', template)
+
+        kernel_configs = []
+        for node in template['spec']['nodes']:
+            # Resolve session template.
+            query = (sa.select([session_templates.c.template])
+                       .select_from(session_templates)
+                       .where((session_templates.c.id == node['session_template']) &
+                              session_templates.c.is_active))
+            session_template = await conn.scalar(query)
+            if not template:
+                raise TaskTemplateNotFound
+            log.debug('task template: {}', session_template)
+            kernel_config = {
+                'image_ref': session_template['spec']['kernel']['image'],
+                'cluster_role': node['cluster_role'],
+                'creation_config': {
+                    'mount': mounts,
+                    'mount_map': mount_map,
+                    'environ': environ
+                }
+            }
+
+            if session_template['spec']['sess_type'] == 'interactive':
+                kernel_config['sess_type'] = SessionTypes.INTERACTIVE
+            elif session_template['spec']['sess_type'] == 'batch':
+                kernel_config['sess_type'] = SessionTypes.BATCH
+
+            # TODO: Remove `type: ignore` when mypy supports type inference for walrus operator
+            # Check https://github.com/python/mypy/issues/7316
+            # TODO: remove `NOQA` when flake8 supports Python 3.8 and walrus operator
+            # Check https://gitlab.com/pycqa/flake8/issues/599
+            if tag := session_template['metadata'].get('tag'):  # noqa
+                kernel_config['tag'] = tag
+            if runtime_opt := session_template['spec']['kernel']['run']:  # noqa
+                if bootstrap := runtime_opt['bootstrap']:  # noqa
+                    kernel_config['bootstrap_script'] = bootstrap
+                if startup := runtime_opt['startup_command']:  # noqa
+                    kernel_config['startup_command'] = startup
+
+            if resources := template['spec'].get('resources'):  # noqa
+                kernel_config['creation_config']['resources'] = resources
+
+            if git := session_template['spec']['kernel']['git']:  # noqa
+                if _dest := git.get('dest_dir'):  # noqa
+                    target = _dest
+                else:
+                    target = git['repository'].split('/')[-1]
+
+                cmd_builder = 'git clone '
+                if credential := git.get('credential'):  # noqa
+                    proto, url = git['repository'].split('://')
+                    cmd_builder += f'{proto}://{credential["username"]}:{credential["password"]}@{url}'
+                else:
+                    cmd_builder += git['repository']
+                if branch := git.get('branch'):  # noqa
+                    cmd_builder += f' -b {branch}'
+                cmd_builder += f' {target}\n'
+
+                if commit := git.get('commit'):  # noqa
+                    cmd_builder = 'CWD=$(pwd)\n' + cmd_builder
+                    cmd_builder += f'cd {target}\n'
+                    cmd_builder += f'git checkout {commit}\n'
+                    cmd_builder += 'cd $CWD\n'
+
+                bootstrap = base64.b64decode(kernel_config.get('bootstrap_script') or b'').decode()
+                bootstrap += '\n'
+                bootstrap += cmd_builder
+                kernel_config['bootstrap_script'] = base64.b64encode(bootstrap.encode()).decode()
+
+            # Resolve the image reference.
+            try:
+                requested_image_ref = \
+                    await ImageRef.resolve_alias(kernel_config['image_ref'],
+                                                 request.app['config_server'].etcd)
+                async with dbpool.acquire() as conn, conn.begin():
+                    query = (sa.select([domains.c.allowed_docker_registries])
+                             .select_from(domains)
+                             .where(domains.c.name == params['domain']))
+                    allowed_registries = await conn.scalar(query)
+                    if requested_image_ref.registry not in allowed_registries:
+                        raise AliasResolutionFailed
+                    kernel_config['image_ref'] = requested_image_ref
+            except AliasResolutionFailed:
+                raise ImageNotFound
+
+            for i in range(node['replicas']):
+                kernel_config['cluster_idx'] = i + 1
+                kernel_configs.append(kernel_config)
+
+    try:
+        start_event = asyncio.Event()
+        kernel_id: Optional[KernelId] = None
+
+        def interrupt_wait(ctx: Any, event_name: str, agent_id: AgentId,
+                           started_kernel_id: str, *args, **kwargs) -> None:
+            nonlocal start_event, kernel_id
+            if kernel_id is not None and started_kernel_id == str(kernel_id):
+                start_event.set()
+
+        start_handler = request.app['event_dispatcher'].subscribe('session_started', None,
+                                                                  interrupt_wait)
+        term_handler = request.app['event_dispatcher'].subscribe('session_terminated', None,
+                                                                 interrupt_wait)
+        cancel_handler = request.app['event_dispatcher'].subscribe('session_cancelled', None,
+                                                                   interrupt_wait)
+
+        async with dbpool.acquire() as conn, conn.begin():
+            owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
+
+        kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
+            params['session_name'], owner_access_key,
+            kernel_configs,
+            params['scaling_group'],
+            params['sess_type'],
+            resource_policy,
+            domain_name=params['domain'],
+            group_id=group_id,
+            user_uuid=owner_uuid,
+            user_role=request['user']['role'],
+            session_tag=params['tag']))
+        resp['kernelId'] = str(kernel_id)
+        resp['status'] = 'PENDING'
+        resp['servicePorts'] = []
+        resp['created'] = True
+
+        if not params['enqueue_only']:
+            request.app['pending_waits'].add(asyncio.Task.current_task())
+            max_wait = params['max_wait_seconds']
+            try:
+                if max_wait > 0:
+                    with timeout(max_wait):
+                        await start_event.wait()
+                else:
+                    await start_event.wait()
+            except asyncio.TimeoutError:
+                resp['status'] = 'TIMEOUT'
+            else:
+                await asyncio.sleep(0.5)
+                async with request.app['dbpool'].acquire() as conn, conn.begin():
+                    query = (
+                        sa.select([
+                            kernels.c.status,
+                            kernels.c.service_ports,
+                        ])
+                        .select_from(kernels)
+                        .where(kernels.c.id == kernel_id)
+                    )
+                    result = await conn.execute(query)
+                    row = await result.first()
+                    if row['status'] == KernelStatus.RUNNING:
+                        resp['status'] = 'RUNNING'
+                        for item in row['service_ports']:
+                            response_dict = {
+                                'name': item['name'],
+                                'protocol': item['protocol'],
+                                'ports': item['container_ports'],
+                            }
+                            if 'url_template' in item.keys():
+                                response_dict['url_template'] = item['url_template']
+                            if 'allowed_arguments' in item.keys():
+                                response_dict['allowed_arguments'] = item['allowed_arguments']
+                            if 'allowed_envs' in item.keys():
+                                response_dict['allowed_envs'] = item['allowed_envs']
+                            resp['servicePorts'].append(response_dict)
+                    else:
+                        resp['status'] = row['status'].name
+
+    except asyncio.CancelledError:
+        raise
+    except BackendError:
+        log.exception('GET_OR_CREATE: exception')
+        raise
+    except UnknownImageReference:
+        raise InvalidAPIParameters(f"Unknown image reference: {params['image']}")
+    except Exception:
+        request.app['error_monitor'].capture_exception()
+        log.exception('GET_OR_CREATE: unexpected error!')
+        raise InternalServerError
+    finally:
+        request.app['pending_waits'].discard(asyncio.Task.current_task())
+        request.app['event_dispatcher'].unsubscribe('session_cancelled', cancel_handler)
+        request.app['event_dispatcher'].unsubscribe('session_terminated', term_handler)
+        request.app['event_dispatcher'].unsubscribe('session_started', start_handler)
+    return web.json_response(resp, status=201)
+
+
+async def handle_kernel_lifecycle(
+    app: web.Application, agent_id: AgentId, event_name: str,
+    raw_kernel_id: str,
+    reason: str = None,
+    exit_code: int = None,
+) -> None:
+    """
+    Update the database accroding to the kernel-level lifecycle events
+    published by the agents and the manager.
+    """
     kernel_id = uuid.UUID(raw_kernel_id)
     registry = app['registry']
     if event_name == 'kernel_preparing':
@@ -668,33 +1003,77 @@ async def handle_kernel_lifecycle(app: web.Application, agent_id: AgentId, event
     elif event_name == 'kernel_creating':
         await registry.set_kernel_status(kernel_id, KernelStatus.PREPARING, reason)
     elif event_name == 'kernel_started':
-        # The create_kernel() RPC caller will set the "RUNNING" status.
+        # The create_kernel() RPC caller will set the "RUNNING" status
+        # and produce the "kernel_started" and "session_started" events.
         pass
     elif event_name == 'kernel_terminating':
         # The destroy_kernel() API handler will set the "TERMINATING" status.
         pass
     elif event_name == 'kernel_terminated':
         await registry.mark_kernel_terminated(kernel_id, reason, exit_code)
+        await registry.check_session_terminated(kernel_id, reason)
 
 
-async def handle_kernel_stat_sync(app: web.Application, agent_id: AgentId, event_name: str,
-                                  raw_kernel_ids: str) -> None:
+async def handle_session_lifecycle(
+    app: web.Application,
+    agent_id: AgentId,
+    event_name: str,
+    raw_session_id: str,
+    reason: str = None,
+) -> None:
+    """
+    Update the database according to the session-level lifecycle events
+    published by the manager.
+    """
+    session_id = uuid.UUID(raw_session_id)
+    registry = app['registry']
+    if event_name == 'session_scheduled':
+        pass
+    elif event_name == 'session_started':
+        await registry.trigger_execute_batch(session_id)
+    elif event_name == 'session_terminated':
+        await registry.mark_session_terminated(session_id, reason)
+
+
+async def handle_kernel_stat_sync(
+    app: web.Application,
+    agent_id: AgentId,
+    event_name: str,
+    raw_kernel_ids: str,
+) -> None:
     kernel_ids = [*map(uuid.UUID, raw_kernel_ids.split(','))]
     await app['registry'].sync_kernel_stats(kernel_ids)
 
 
-async def handle_batch_result(app: web.Application, agent_id: AgentId, event_name: str,
-                              raw_kernel_id: str, exit_code: int) -> None:
+async def handle_batch_result(
+    app: web.Application,
+    agent_id: AgentId,
+    event_name: str,
+    raw_kernel_id: str,
+    exit_code: int,
+    exit_reason: str,
+) -> None:
+    """
+    Update the database according to the batch-job completion results
+    """
     kernel_id = uuid.UUID(raw_kernel_id)
     registry = app['registry']
-    if event_name == 'kernel_success':
+    if event_name == 'session_success':
         await registry.set_session_result(kernel_id, True, exit_code)
-    elif event_name == 'kernel_failure':
+    elif event_name == 'session_failure':
         await registry.set_session_result(kernel_id, False, exit_code)
+    await registry.destroy_session(
+        functools.partial(registry.get_session_by_kernel_id, kernel_id),
+        reason='task-finished',
+    )
 
 
-async def handle_instance_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
-                                    reason: str = None) -> None:
+async def handle_instance_lifecycle(
+    app: web.Application,
+    agent_id: AgentId,
+    event_name: str,
+    reason: str = None,
+) -> None:
     if event_name == 'instance_started':
         log.info('instance_lifecycle: ag:{0} joined ({1})', agent_id, reason)
         await app['registry'].update_instance(agent_id, {
@@ -821,12 +1200,12 @@ async def report_stats(app: web.Application) -> None:
         await stats_monitor.report_metric(
             GAUGE, 'ai.backend.users.has_used_key', n)
 
-        '''
+        """
         query = sa.select([sa.func.count()]).select_from(usage)
         n = await conn.scalar(query)
         await stats_monitor.report_metric(
             GAUGE, 'ai.backend.gateway.accum_kernels', n)
-        '''
+        """
 
 
 async def stats_report_timer(app):
@@ -856,16 +1235,19 @@ async def destroy(request: web.Request, params: Any) -> web.Response:
     if params['forced'] and request['user']['role'] not in (UserRole.ADMIN, UserRole.SUPERADMIN):
         raise InsufficientPrivilege('You are not allowed to force-terminate')
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
-    domain_name = None
-    if requester_access_key != owner_access_key and \
-            not request['is_superadmin'] and request['is_admin']:
-        domain_name = request['user']['domain_name']
+    # domain_name = None
+    # if requester_access_key != owner_access_key and \
+    #         not request['is_superadmin'] and request['is_admin']:
+    #     domain_name = request['user']['domain_name']
     log.info('DESTROY (ak:{0}/{1}, s:{2}, forced:{3})',
              requester_access_key, owner_access_key, session_name, params['forced'])
     last_stat = await registry.destroy_session(
-        session_name, owner_access_key,
+        functools.partial(
+            registry.get_session,
+            session_name, owner_access_key,
+            # domain_name=domain_name,
+        ),
         forced=params['forced'],
-        domain_name=domain_name,
     )
     resp = {
         'stats': last_stat,
@@ -884,22 +1266,24 @@ async def match_sessions(request: web.Request, params: Any) -> web.Response:
     """
     A quick session-ID matcher API for use with auto-completion in CLI.
     """
-    registry = request.app['registry']
+    dbpool = request.app['dbpool']
     id_or_name_prefix = params['id']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('MATCH_SESSIONS(ak:{0}/{1}, prefix:{2})',
              requester_access_key, owner_access_key, id_or_name_prefix)
-    matches = []
-    try:
-        compute_session = await registry.get_session(id_or_name_prefix, owner_access_key)
-        matches.append({
-            'id': compute_session['id'],
-            'name': compute_session['sess_id'],
-            'status': compute_session['status'].name,
-        })
-    except TooManySessionsMatched as e:
-        if e.extra_data:
-            matches.extend(e.extra_data.get('matches', []))
+    matches: List[Dict[str, Any]] = []
+    async with dbpool.acquire() as conn:
+        session_infos = await match_session_ids(
+            id_or_name_prefix,
+            owner_access_key,
+            db_connection=conn,
+        )
+    if session_infos:
+        matches.extend({
+            'id': str(item['session_id']),
+            'name': item['session_name'],
+            'status': item['status'].name,
+        } for item in session_infos)
     return web.json_response({
         'matches': matches,
     }, status=200)
@@ -1200,8 +1584,9 @@ async def download_files(request: web.Request, params: Any) -> web.Response:
         t.Key('file'): t.String,
     }))
 async def download_single(request: web.Request, params: Any) -> web.Response:
-    ''' Download single file from scratch root. Only for small files.
-    '''
+    """
+    Download a single file from the scratch root. Only for small files.
+    """
     registry = request.app['registry']
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
@@ -1347,14 +1732,17 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
 
 async def init(app: web.Application) -> None:
     event_dispatcher = app['event_dispatcher']
+    event_dispatcher.consume('session_scheduled', app, handle_session_lifecycle)
     event_dispatcher.consume('kernel_preparing', app, handle_kernel_lifecycle)
     event_dispatcher.consume('kernel_pulling', app, handle_kernel_lifecycle)
     event_dispatcher.consume('kernel_creating', app, handle_kernel_lifecycle)
     event_dispatcher.consume('kernel_started', app, handle_kernel_lifecycle)
+    event_dispatcher.consume('session_started', app, handle_session_lifecycle)
     event_dispatcher.consume('kernel_terminating', app, handle_kernel_lifecycle)
     event_dispatcher.consume('kernel_terminated', app, handle_kernel_lifecycle)
-    event_dispatcher.consume('kernel_success', app, handle_batch_result)
-    event_dispatcher.consume('kernel_failure', app, handle_batch_result)
+    event_dispatcher.consume('session_terminated', app, handle_session_lifecycle)
+    event_dispatcher.consume('session_success', app, handle_batch_result)
+    event_dispatcher.consume('session_failure', app, handle_batch_result)
     event_dispatcher.consume('kernel_stat_sync', app, handle_kernel_stat_sync)
     event_dispatcher.consume('kernel_log', app, handle_kernel_log)
     event_dispatcher.consume('instance_started', app, handle_instance_lifecycle)
@@ -1383,7 +1771,7 @@ async def shutdown(app: web.Application) -> None:
             t.cancel()
             await t
 
-    for task in app['pending_waits']:
+    for task in {*app['pending_waits']}:
         task.cancel()
         try:
             await task
@@ -1397,9 +1785,11 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app.on_shutdown.append(shutdown)
     app['api_versions'] = (1, 2, 3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
-    cors.add(app.router.add_route('POST', '/_/create-from-template', create_from_template))
-    cors.add(app.router.add_route('GET',  '/_/match', match_sessions))
     cors.add(app.router.add_route('POST', '', create_from_params))
+    cors.add(app.router.add_route('POST', '/_/create', create_from_params))
+    cors.add(app.router.add_route('POST', '/_/create-from-template', create_from_template))
+    cors.add(app.router.add_route('POST', '/_/create-cluster', create_cluster))
+    cors.add(app.router.add_route('GET',  '/_/match', match_sessions))
     session_resource = cors.add(app.router.add_resource(r'/{session_name}'))
     cors.add(session_resource.add_route('GET',    get_info))
     cors.add(session_resource.add_route('PATCH',  restart))
