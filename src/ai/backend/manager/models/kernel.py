@@ -36,14 +36,17 @@ from ai.backend.common.types import (
 
 from ..defs import DEFAULT_ROLE
 from .base import (
-    metadata,
-    BigInt, GUID, IDColumn, EnumType,
-    ResourceSlotColumn,
+    BigInt,
+    EnumType,
+    GUID,
+    Item,
     KernelIDColumn,
+    PaginatedList,
+    ResourceSlotColumn,
     SessionIDColumnType,
-    Item, PaginatedList,
     batch_result,
     batch_multiresult,
+    metadata,
 )
 from .group import groups
 from .user import users
