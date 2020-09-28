@@ -57,6 +57,7 @@ from ai.backend.common.types import (
     SlotName,
     SlotTypes,
 )
+from ai.backend.common.service_ports import parse_service_ports
 from .defs import INTRINSIC_SLOTS
 from ..gateway.exceptions import (
     BackendError, InvalidAPIParameters,
@@ -583,6 +584,9 @@ class AgentRegistry:
         image_min_slots, image_max_slots = \
             await self.config_server.get_image_slot_ranges(image_ref)
         known_slot_types = await self.config_server.get_resource_slots()
+
+        # Parse service ports to check for port errors
+        parse_service_ports(image_info['labels'].get('ai.backend.service-ports', ''), BackendError)
 
         # Shared memory.
         # We need to subtract the amount of shared memory from the memory limit of
