@@ -1643,29 +1643,30 @@ class AgentRegistry:
             except Exception:
                 log.exception('unexpected-error in _restart_kerenl()')
 
+        # TODO: debug restarting multiple kernels
         for idx, kernel in enumerate(kernel_list):
             try:
-                print(f"restart({idx}, {kernel['id']} begin")
+                # print(f"restart({idx}, {kernel['id']} begin")
                 await _restart_kernel(kernel)
-                print(f"restart({idx}, {kernel['id']} done")
+                # print(f"restart({idx}, {kernel['id']} done")
             finally:
-                print(f"restart({idx}, {kernel['id']} finally")
-        ## restart_coros = []
-        ## for kernel in kernel_list:
-        ##     restart_coros.append(_restart_kernel(kernel))
-        ## log.warning('-- step 2')
+                # print(f"restart({idx}, {kernel['id']} finally")
+                pass
+        """
+        restart_coros = []
+        for kernel in kernel_list:
+            restart_coros.append(_restart_kernel(kernel))
 
-        ## # session_started event will be fired by our kernel_started event handler
-        ## # when all kernels become RUNNING.
-        ## # NOTE: If the restarted session is a batch-type one, then the startup command
-        ## #       will be executed again after restart.
+        # session_started event will be fired by our kernel_started event handler
+        # when all kernels become RUNNING.
+        # NOTE: If the restarted session is a batch-type one, then the startup command
+        #       will be executed again after restart.
 
-        ## async with self.handle_kernel_exception(
-        ##     'restart_session', session_name_or_id, access_key, set_error=True,
-        ## ):
-        ##     log.warning('-- step 3')
-        ##     await asyncio.gather(*restart_coros)
-        ##     log.warning('-- step 4')
+        async with self.handle_kernel_exception(
+            'restart_session', session_name_or_id, access_key, set_error=True,
+        ):
+            await asyncio.gather(*restart_coros)
+        """
 
     async def execute(
         self,
