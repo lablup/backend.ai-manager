@@ -50,6 +50,7 @@ from ai.backend.common.plugin.hook import (
     ALL_COMPLETED,
     PASSED,
 )
+from ai.backend.common.service_ports import parse_service_ports
 from ai.backend.common.types import (
     AccessKey,
     BinarySize,
@@ -81,6 +82,7 @@ from ..gateway.exceptions import (
 )
 from .models import (
     agents, kernels, keypairs, vfolders,
+    query_group_dotfiles, query_domain_dotfiles,
     keypair_resource_policies,
     AgentStatus, KernelStatus,
     query_accessible_vfolders, query_allowed_sgroups,
@@ -785,6 +787,9 @@ class AgentRegistry:
                 await self.config_server.get_image_slot_ranges(image_ref)
             known_slot_types = await self.config_server.get_resource_slots()
 
+            # Parse service ports to check for port errors
+            parse_service_ports(image_info['labels'].get('ai.backend.service-ports', ''), BackendError)
+
             # Shared memory.
             # We need to subtract the amount of shared memory from the memory limit of
             # a container, since tmpfs including /dev/shm uses host-side kernel memory
@@ -896,6 +901,42 @@ class AgentRegistry:
                         'public_key': row['ssh_public_key'],
                         'private_key': row['ssh_private_key'],
                     }
+                # use dotfiles in the priority of keypair > group > domain
+                dotfile_paths = set(map(lambda x: x['path'], dotfiles))
+                # add keypair dotfiles
+                internal_data.update({'dotfiles': list(dotfiles)})
+                # add group dotfiles
+                dotfiles, _ = await query_group_dotfiles(conn, group_id)
+                for dotfile in dotfiles:
+                    if dotfile['path'] not in dotfile_paths:
+                        internal_data['dotfiles'].append(dotfile)
+                        dotfile_paths.add(dotfile['path'])
+                # add domain dotfiles
+                dotfiles, _ = await query_domain_dotfiles(conn, domain_name)
+                for dotfile in dotfiles:
+                    if dotfile['path'] not in dotfile_paths:
+                        internal_data['dotfiles'].append(dotfile)
+                        dotfile_paths.add(dotfile['path'])
+                # reverse the dotfiles list so that higher priority can overwrite
+                # in case the actual path is the same
+                internal_data['dotfiles'].reverse()
+
+                # check if there is no name conflict of dotfile and vfolder
+                for dotfile in internal_data.get('dotfiles', []):
+                    if dotfile['path'].startswith('/'):
+                        if dotfile['path'].startswith('/home/'):
+                            path_arr = dotfile['path'].split('/')
+                            # check if there is a dotfile whose path equals /home/work/vfolder_name
+                            if len(path_arr) >= 3 and path_arr[2] == 'work' and \
+                                    path_arr[3] in matched_mounts:
+                                raise BackendError(
+                                    f'There is a vfolder whose name conflicts with '
+                                    f'dotfile {path_arr[3]} with path "{dotfile["path"]}"')
+                    else:
+                        if dotfile['path'] in matched_mounts:
+                            raise BackendError(
+                                f'There is a vfolder whose name conflicts with '
+                                f'dotfile {dotfile["path"]}')
 
                 query = kernels.insert().values({
                     'id': kernel_id,

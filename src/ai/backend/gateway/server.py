@@ -562,6 +562,8 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         '.session_template',
         '.image',
         '.userconfig',
+        '.domainconfig',
+        '.groupconfig',
         '.logs',
     ]
     app = build_root_app(pidx, _args[0], subapp_pkgs=subapp_pkgs)
