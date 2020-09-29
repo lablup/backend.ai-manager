@@ -37,6 +37,10 @@ def upgrade():
         sa.Column('cluster_mode', sa.String(16), nullable=False,
                   default='single-node', server_default='single-node'))
 
+    # Set idx to 1 (previous sessions are all composed of one kernel)
+    query = "UPDATE kernels SET idx = 1;"
+    conn.execute(query)
+
     # Convert "master" to "main"
     # NOTE: "main" is defined from ai.backend.manager.defs.DEFAULT_ROLE
     op.alter_column('kernels', 'role', server_default='main')
