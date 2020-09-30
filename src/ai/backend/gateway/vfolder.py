@@ -648,6 +648,8 @@ async def rename_vfolder(request: web.Request, params: Any, row: VFolderRow) -> 
 @check_api_params(
     t.Dict({
         t.Key('path'): t.String,
+        t.Key('parents', default=True): t.ToBool,
+        t.Key('exist_ok', default=False): t.ToBool,
     }))
 async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     folder_name = request.match_info['name']
@@ -661,6 +663,8 @@ async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
             'volume': volume_name,
             'vfid': str(row['id']),
             'relpath': params['path'],
+            'parents': params['parents'],
+            'exist_ok': params['exist_ok'],
         },
         raise_for_status=True,
     ):
