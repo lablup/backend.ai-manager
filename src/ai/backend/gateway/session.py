@@ -1696,9 +1696,7 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
     domain_name = request['user']['domain_name']
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
-    raw_kernel_id = params['kernel_id'].hex
-    mount_prefix = await request.app['config_server'].get('volumes/_mount')
-    fs_prefix = await request.app['config_server'].get('volumes/_fsprefix')
+    kernel_id_str = str(params['kernel_id'])
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         matched_vfolders = await query_accessible_vfolders(
             conn, user_uuid,
@@ -1708,11 +1706,22 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
         if not matched_vfolders:
             raise GenericNotFound('You do not have ".logs" vfolder for persistent task logs.')
         log_vfolder = matched_vfolders[0]
-        log_path = (
-            Path(mount_prefix) / log_vfolder['host'] / Path(fs_prefix.lstrip('/')) /
-            log_vfolder['id'].hex /
-            'task' / raw_kernel_id[:2] / raw_kernel_id[2:4] / f'{raw_kernel_id[4:]}.log'
-        )
+
+    storage_manager = request.app['storage_manager']
+    proxy_name, volume_name = storage_manager.split_host(log_vfolder['host'])
+    async with storage_manager.request(
+        log_vfolder['host'], 'GET', 'folder/mount',
+        json={
+            'volume': volume_name,
+            'vfid': str(log_vfolder['id']),
+        },
+        raise_for_status=True,
+    ) as (_, storage_resp):
+        storage_reply = await storage_resp.json()
+    log_path = (
+        Path(storage_reply['path']) /
+        'task' / kernel_id_str[:2] / kernel_id_str[2:4] / f'{kernel_id_str[4:]}.log'
+    )
 
     def check_file():
         if not log_path.is_file():
