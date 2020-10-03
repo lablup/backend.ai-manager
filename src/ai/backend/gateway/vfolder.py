@@ -57,6 +57,7 @@ from ..manager.models import (
     VFolderUsageMode,
     UserRole,
     query_accessible_vfolders,
+    query_owned_dotfiles,
     get_allowed_vfolder_hosts_by_group,
     get_allowed_vfolder_hosts_by_user,
     verify_vfolder_name,
