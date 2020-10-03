@@ -331,7 +331,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
             'domain_name': row['domain_name'],
             'group_id': str(row['group_id']),
             'group_name': row['name'],
-            'name': row['sess_id'],
+            'name': row['session_id'],
             'access_key': row['access_key'],
             'email': row['email'],
             'agent': row['agent'],
@@ -539,7 +539,7 @@ async def get_time_binned_monthly_stats(request, user_uuid=None):
             if row.last_stat:
                 io_read_bytes += int(nmget(row.last_stat, 'io_read.current', 0))
                 io_write_bytes += int(nmget(row.last_stat, 'io_write.current', 0))
-                disk_used += int(nmget(row.last_stat, 'io_scratch_size/stats.max', {}, '/'))
+                disk_used += int(nmget(row.last_stat, 'io_scratch_size/stats.max', 0, '/'))
             idx += 1
         stat = {
             "date": ts,

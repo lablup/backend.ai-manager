@@ -5,11 +5,20 @@ import enum
 import functools
 import logging
 from typing import (
-    Any, Callable, Optional, Union,
+    Any,
+    Callable,
+    ClassVar,
+    Dict,
+    Generic,
     Iterable,
-    Mapping, Dict,
-    Sequence, List,
-    Type, TypeVar, Protocol,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+    Sequence,
+    Type,
+    TypeVar,
+    Union,
 )
 import sys
 import uuid
@@ -32,7 +41,12 @@ from sqlalchemy.types import (
 from sqlalchemy.dialects.postgresql import UUID, ENUM, JSONB
 
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import BinarySize, ResourceSlot
+from ai.backend.common.types import (
+    BinarySize,
+    KernelId,
+    ResourceSlot,
+    SessionId,
+)
 from .. import models
 from ...gateway.exceptions import (
     GenericForbidden, InvalidAPIParameters,
@@ -60,12 +74,12 @@ def zero_if_none(val):
 
 
 class EnumType(TypeDecorator, SchemaType):
-    '''
+    """
     A stripped-down version of Spoqa's sqlalchemy-enum34.
     It also handles postgres-specific enum type creation.
 
     The actual postgres enum choices are taken from the Python enum names.
-    '''
+    """
 
     impl = ENUM
 
@@ -95,12 +109,12 @@ class EnumType(TypeDecorator, SchemaType):
 
 
 class EnumValueType(TypeDecorator, SchemaType):
-    '''
+    """
     A stripped-down version of Spoqa's sqlalchemy-enum34.
     It also handles postgres-specific enum type creation.
 
     The actual postgres enum choices are taken from the Python enum values.
-    '''
+    """
 
     impl = ENUM
 
@@ -130,9 +144,9 @@ class EnumValueType(TypeDecorator, SchemaType):
 
 
 class ResourceSlotColumn(TypeDecorator):
-    '''
+    """
     A column type wrapper for ResourceSlot from JSONB.
-    '''
+    """
 
     impl = JSONB
 
@@ -157,12 +171,16 @@ class CurrencyTypes(enum.Enum):
     USD = 'USD'
 
 
-class GUID(TypeDecorator):
-    '''
+UUID_SubType = TypeVar('UUID_SubType', bound=uuid.UUID)
+
+
+class GUID(TypeDecorator, Generic[UUID_SubType]):
+    """
     Platform-independent GUID type.
     Uses PostgreSQL's UUID type, otherwise uses CHAR(16) storing as raw bytes.
-    '''
+    """
     impl = CHAR
+    uuid_subtype_func: ClassVar[Callable[[Any], UUID_SubType]] = lambda v: v
 
     def load_dialect_impl(self, dialect):
         if dialect.name == 'postgresql':
@@ -170,7 +188,11 @@ class GUID(TypeDecorator):
         else:
             return dialect.type_descriptor(CHAR(16))
 
-    def process_bind_param(self, value, dialect):
+    def process_bind_param(self, value: Union[UUID_SubType, uuid.UUID], dialect):
+        # NOTE: SessionId, KernelId are *not* actual types defined as classes,
+        #       but a "virtual" type that is an identity function at runtime.
+        #       The type checker treats them as distinct derivatives of uuid.UUID.
+        #       Therefore, we just do isinstance on uuid.UUID only below.
         if value is None:
             return value
         elif dialect.name == 'postgresql':
@@ -184,15 +206,34 @@ class GUID(TypeDecorator):
             else:
                 return uuid.UUID(value).bytes
 
-    def process_result_value(self, value, dialect):
+    def process_result_value(self, value: Any, dialect) -> Optional[UUID_SubType]:
         if value is None:
             return value
         else:
-            return uuid.UUID(value)
+            cls = type(self)
+            return cls.uuid_subtype_func(uuid.UUID(value))
+
+
+class SessionIDColumnType(GUID):
+    uuid_subtype_func = SessionId
+
+
+class KernelIDColumnType(GUID):
+    uuid_subtype_func = KernelId
 
 
 def IDColumn(name='id'):
     return sa.Column(name, GUID, primary_key=True,
+                     server_default=sa.text("uuid_generate_v4()"))
+
+
+def SessionIDColumn(name='id'):
+    return sa.Column(name, SessionIDColumnType, primary_key=True,
+                     server_default=sa.text("uuid_generate_v4()"))
+
+
+def KernelIDColumn(name='id'):
+    return sa.Column(name, KernelIDColumnType, primary_key=True,
                      server_default=sa.text("uuid_generate_v4()"))
 
 
@@ -201,7 +242,7 @@ def ForeignKeyIDColumn(name, fk_field, nullable=True):
 
 
 class DataLoaderManager:
-    '''
+    """
     For every different combination of filtering conditions, we need to make a
     new DataLoader instance because it "batches" the database queries.
     This manager get-or-creates dataloaders with fixed conditions (represetned
@@ -209,7 +250,7 @@ class DataLoaderManager:
 
     NOTE: Just like DataLoaders, it is recommended to instantiate this manager
     for every incoming API request.
-    '''
+    """
 
     def __init__(self, *common_args):
         self.cache = {}
@@ -218,9 +259,9 @@ class DataLoaderManager:
 
     @staticmethod
     def _get_key(otname, args, kwargs):
-        '''
+        """
         Calculate the hash of the all arguments and keyword arguments.
-        '''
+        """
         key = (otname, ) + args
         for item in kwargs.items():
             key += item
@@ -373,7 +414,7 @@ def privileged_query(required_role):
 def scoped_query(*,
                  autofill_user: bool = False,
                  user_key: str = 'access_key'):
-    '''
+    """
     Prepends checks for domain/group/user access rights depending
     on the client's user and keypair information.
 
@@ -382,7 +423,7 @@ def scoped_query(*,
         user who is makeing the API request.
     :param user_key: The key used for storing user identification value
         in the keyword arguments.
-    '''
+    """
 
     def wrap(resolve_func):
 
