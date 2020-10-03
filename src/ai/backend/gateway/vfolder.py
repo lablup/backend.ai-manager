@@ -33,12 +33,10 @@ from ai.backend.common.utils import Fstab
 from ai.backend.common.types import BinarySize
 
 from .auth import auth_required, superadmin_required
-from .config import volume_config_iv
-from .etcd import ConfigServer
 from .exceptions import (
     VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
     GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
-    BackendAgentError, InternalServerError,
+    BackendAgentError, InternalServerError, GroupNotFound,
 )
 from .manager import (
     READ_ALLOWED, ALL_ALLOWED,
@@ -60,9 +58,9 @@ from ..manager.models import (
     VFolderUsageMode,
     UserRole,
     query_accessible_vfolders,
+    query_owned_dotfiles,
     get_allowed_vfolder_hosts_by_group,
     get_allowed_vfolder_hosts_by_user,
-    query_owned_dotfiles,
     verify_vfolder_name,
 )
 from ..manager.models.storage import StorageSessionManager
@@ -199,6 +197,7 @@ def vfolder_check_exists(handler: Callable[..., Awaitable[web.Response]]):
         tx.AliasedKey(['unmanaged_path', 'unmanagedPath'], default=None): t.String | t.Null,
         tx.AliasedKey(['group', 'groupId', 'group_id'], default=None): tx.UUID | t.String | t.Null,
         t.Key('quota', default=None): t.String | t.Null,
+        t.Key('clone_allowed', default=False): t.Bool
     }),
 )
 async def create(request: web.Request, params: Any) -> web.Response:
@@ -292,15 +291,10 @@ async def create(request: web.Request, params: Any) -> web.Response:
         )
         if len(entries) > 0:
             raise VFolderAlreadyExists
-        if params['name'].startswith('.'):
-            dotfiles, _ = await query_owned_dotfiles(conn, access_key)
-            for dotfile in dotfiles:
-                if params['name'] == dotfile['path']:
-                    raise InvalidAPIParameters('vFolder name conflicts with your dotfile.')
 
         # Check if group exists.
         if group_id_or_name and group_id is None:
-            raise InvalidAPIParameters('no such group')
+            raise GroupNotFound
         if group_id is not None:
             if 'group' not in allowed_vfolder_types:
                 raise InvalidAPIParameters('group vfolder cannot be created in this host')
@@ -348,6 +342,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'user': user_uuid,
             'group': group_uuid,
             'unmanaged_path': '',
+            'clone_allowed': params['clone_allowed'],
         }
         resp = {
             'id': folder_id.hex,
@@ -359,6 +354,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'ownership_type': ownership_type,
             'user': user_uuid,
             'group': group_uuid,
+            'clone_allowed': params['clone_allowed'],
         }
         if unmanaged_path:
             insert_values.update({
@@ -613,6 +609,8 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
         'type': 'user' if row['user'] is not None else 'group',
         'is_owner': is_owner,
         'permission': permission,
+        'usage_mode': row['usage_mode'],
+        'clone_allowed': row['clone_allowed']
     }
     return web.json_response(resp, status=200)
 
@@ -658,6 +656,37 @@ async def rename_vfolder(request: web.Request, params: Any, row: VFolderRow) -> 
                     .where(vfolders.c.id == entry['id']))
                 await conn.execute(query)
                 break
+    return web.Response(status=201)
+
+
+@atomic
+@auth_required
+@server_status_required(ALL_ALLOWED)
+@vfolder_permission_required(VFolderPermission.OWNER_PERM)
+@check_api_params(
+    t.Dict({
+        t.Key('clone_allowed', default=None): t.Bool | t.Null,
+        t.Key('permission', default=None): tx.Enum(VFolderPermission) | t.Null
+    }))
+async def update_vfolder_options(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
+    updated_fields = {}
+    if params['clone_allowed'] and params['clone_allowed'] != row['clone_allowed']:
+        updated_fields['clone_allowed'] = params['clone_allowed']
+    if params['permission'] and params['permission'] != row['permission']:
+        updated_fields['permission'] = params['permission']
+    if not row['is_owner']:
+        raise InvalidAPIParameters(
+            'Cannot change the options of a vfolder '
+            'that is not owned by myself.')
+
+    dbpool = request.app['dbpool']
+    if len(updated_fields) > 0:
+        async with dbpool.acquire() as conn:
+            query = (
+                sa.update(vfolders)
+                .values(**updated_fields)
+                .where(vfolders.c.id == row['id']))
+            await conn.execute(query)
     return web.Response(status=201)
 
 
@@ -807,6 +836,7 @@ async def delete_files(request: web.Request, params: Any, row: VFolderRow) -> we
             'volume': volume_name,
             'vfid': str(row['id']),
             'relpaths': params['files'],
+            'recursive': recursive,
         },
         raise_for_status=True,
     ):
@@ -1244,6 +1274,149 @@ async def leave(request: web.Request, row: VFolderRow) -> web.Response:
         await conn.execute(query)
     resp = {'msg': 'left the shared vfolder'}
     return web.json_response(resp, status=200)
+
+
+@atomic
+@auth_required
+@server_status_required(ALL_ALLOWED)
+@vfolder_permission_required(VFolderPermission.READ_ONLY)
+@check_api_params(
+    t.Dict({
+        t.Key('target_name'): tx.Slug(allow_dot=True),
+        t.Key('target_host', default=None) >> 'folder_host': t.String | t.Null,
+        t.Key('usage_mode', default='general'): tx.Enum(VFolderUsageMode) | t.Null,
+        t.Key('permission', default='rw'): tx.Enum(VFolderPermission) | t.Null
+    })
+)
+async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
+    resp: Dict[str, Any] = {}
+    dbpool = request.app['dbpool']
+    access_key = request['keypair']['access_key']
+    user_role = request['user']['role']
+    user_uuid = request['user']['uuid']
+    resource_policy = request['keypair']['resource_policy']
+    domain_name = request['user']['domain_name']
+    log.info('VFOLDER.CLONE (ak:{}, vf:{}, vft:{}, vfh:{}, umod:{}, perm:{})',
+             access_key, row['name'], params['target_name'], params['folder_host'],
+             params['usage_mode'].value, params['permission'].value)
+    source_folder_host = row['host']
+    target_folder_host = params['folder_host']
+
+    # check if the source vfolder is allowed to be cloned
+    if not row['clone_allowed']:
+        raise GenericForbidden('The source vfolder is not permitted to be cloned.')
+
+    if not target_folder_host:
+        target_folder_host = \
+            await request.app['config_server'].etcd.get('volumes/default_host')
+        if not target_folder_host:
+            raise InvalidAPIParameters(
+                'You must specify the vfolder host '
+                'because the default host is not configured.')
+
+    allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
+    for vf_type in allowed_vfolder_types:
+        if vf_type not in ('user', 'group'):
+            raise ServerMisconfiguredError(
+                f'Invalid vfolder type(s): {str(allowed_vfolder_types)}.'
+                ' Only "user" or "group" is allowed.')
+
+    if not verify_vfolder_name(params['target_name']):
+        raise InvalidAPIParameters(f'{params["target_name"]} is reserved for internal operations.')
+
+    async with dbpool.acquire() as conn:
+        allowed_hosts = await get_allowed_vfolder_hosts_by_user(conn, resource_policy,
+                                                                domain_name, user_uuid)
+        # TODO: handle legacy host lists assuming that volume names don't overlap?
+        if target_folder_host not in allowed_hosts:
+            raise InvalidAPIParameters('You are not allowed to use this vfolder host.')
+
+        # Check resource policy's max_vfolder_count
+        if resource_policy['max_vfolder_count'] > 0:
+            query = (sa.select([sa.func.count()])
+                        .where(vfolders.c.user == user_uuid))
+            result = await conn.scalar(query)
+            if result >= resource_policy['max_vfolder_count']:
+                raise InvalidAPIParameters('You cannot create more vfolders.')
+
+        # Prevent creation of vfolder with duplicated name.
+        extra_vf_conds = [vfolders.c.name == params['target_name']]
+        extra_vf_conds.append(vfolders.c.host == target_folder_host)
+        entries = await query_accessible_vfolders(
+            conn, user_uuid,
+            user_role=user_role, domain_name=domain_name,
+            allowed_vfolder_types=allowed_vfolder_types,
+            extra_vf_conds=(sa.and_(*extra_vf_conds))
+        )
+        if len(entries) > 0:
+            raise VFolderAlreadyExists
+        if params['target_name'].startswith('.'):
+            dotfiles, _ = await query_owned_dotfiles(conn, access_key)
+            for dotfile in dotfiles:
+                if params['target_name'] == dotfile['path']:
+                    raise InvalidAPIParameters('vFolder name conflicts with your dotfile.')
+
+        if 'user' not in allowed_vfolder_types:
+            raise InvalidAPIParameters('user vfolder cannot be created in this host')
+
+        storage_manager = request.app['storage_manager']
+        source_proxy_name, source_volume_name = storage_manager.split_host(source_folder_host)
+        target_proxy_name, target_volume_name = storage_manager.split_host(target_folder_host)
+        if source_proxy_name != target_proxy_name:
+            raise InvalidAPIParameters('proxy name of source and target vfolders must be equal.')
+
+        # TODO: accept quota as input parameter and pass as argument options
+        try:
+            folder_id = uuid.uuid4()
+            async with storage_manager.request(
+                source_folder_host, 'POST', 'folder/clone',
+                json={
+                    'src_volume': source_volume_name,
+                    'src_vfid': str(row['id']),
+                    'dst_volume': target_volume_name,
+                    'dst_vfid': str(folder_id),
+                },
+                raise_for_status=True,
+            ):
+                pass
+        except aiohttp.ClientResponseError:
+            raise VFolderCreationFailed
+
+        user_uuid = str(user_uuid)
+        group_uuid = None
+        ownership_type = 'user'
+        insert_values = {
+            'id': folder_id.hex,
+            'name': params['target_name'],
+            'usage_mode': params['usage_mode'],
+            'permission': params['permission'],
+            'last_used': None,
+            'host': target_folder_host,
+            'creator': request['user']['email'],
+            'ownership_type': VFolderOwnershipType(ownership_type),
+            'user': user_uuid,
+            'group': group_uuid,
+            'unmanaged_path': '',
+            'clone_allowed': False
+        }
+        resp = {
+            'id': folder_id.hex,
+            'name': params['target_name'],
+            'host': target_folder_host,
+            'usage_mode': params['usage_mode'].value,
+            'permission': params['permission'].value,
+            'creator': request['user']['email'],
+            'ownership_type': ownership_type,
+            'user': user_uuid,
+            'group': group_uuid,
+        }
+        query = (vfolders.insert().values(insert_values))
+        try:
+            result = await conn.execute(query)
+        except psycopg2.DataError:
+            raise InvalidAPIParameters
+        assert result.rowcount == 1
+    return web.json_response(resp, status=201)
 
 
 @atomic
@@ -1716,14 +1889,11 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
 
 
 async def init(app: web.Application) -> None:
-    config_server: ConfigServer = app['config_server']
-    raw_vol_config = await config_server.etcd.get_prefix('volumes')
-    config = volume_config_iv.check(raw_vol_config)
-    app['storage_manager'] = StorageSessionManager(config)
+    pass
 
 
 async def shutdown(app: web.Application) -> None:
-    await app['storage_manager'].aclose()
+    pass
 
 
 def create_app(default_cors_options):
@@ -1748,6 +1918,7 @@ def create_app(default_cors_options):
     cors.add(add_route('GET',    r'/_/allowed_types', list_allowed_types))  # legacy underbar
     cors.add(add_route('GET',    r'/_/perf-metric', get_volume_perf_metric))
     cors.add(add_route('POST',   r'/{name}/rename', rename_vfolder))
+    cors.add(add_route('POST',   r'/{name}/update-options', update_vfolder_options))
     cors.add(add_route('POST',   r'/{name}/mkdir', mkdir))
     cors.add(add_route('POST',   r'/{name}/request-upload', create_upload_session))
     cors.add(add_route('POST',   r'/{name}/request-download', create_download_session))
@@ -1758,6 +1929,7 @@ def create_app(default_cors_options):
     cors.add(add_route('GET',    r'/{name}/files', list_files))
     cors.add(add_route('POST',   r'/{name}/invite', invite))
     cors.add(add_route('POST',   r'/{name}/leave', leave))
+    cors.add(add_route('POST',   r'/{name}/clone', clone))
     cors.add(add_route('GET',    r'/invitations/list-sent', list_sent_invitations))
     cors.add(add_route('GET',    r'/invitations/list_sent', list_sent_invitations))  # legacy underbar
     cors.add(add_route('POST',   r'/invitations/update/{inv_id}', update_invitation))

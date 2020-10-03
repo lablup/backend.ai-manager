@@ -57,6 +57,7 @@ class TCPProxy(ServiceProxy):
     async def proxy(self):
         try:
             try:
+                log.debug('Trying to open WS Connection to {}:{}', self.host, self.port)
                 reader, writer = await asyncio.open_connection(self.host, self.port)
             except ConnectionRefusedError:
                 await self.ws.close(code=1014)

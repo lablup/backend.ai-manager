@@ -54,7 +54,12 @@ from ..manager.plugin.webapp import WebappPluginContext
 from ..manager.registry import AgentRegistry
 from ..manager.scheduler.dispatcher import SchedulerDispatcher
 from ..manager.background import BackgroundTaskManager
-from .config import load as load_config, load_shared as load_shared_config
+from ..manager.models.storage import StorageSessionManager
+from .config import (
+    load as load_config,
+    load_shared as load_shared_config,
+    volume_config_iv,
+)
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB, REDIS_STREAM_DB
 from .etcd import ConfigServer
 from .events import EventDispatcher
@@ -123,6 +128,7 @@ PUBLIC_INTERFACES: Final = [
     'redis_image',
     'redis_stream',
     'event_dispatcher',
+    'storage_manager',
     'stats_monitor',
     'error_monitor',
     'hook_plugin_ctx',
@@ -169,12 +175,13 @@ async def api_middleware(request: web.Request,
             path_major_version = int(request.match_info.get('version', 5))
             revision_date = LATEST_REV_DATES[path_major_version]
             request['api_version'] = (path_major_version, revision_date)
-        else:
-            assert api_version in VALID_VERSIONS
+        elif api_version in VALID_VERSIONS:
             hdr_major_version, revision_date = api_version.split('.', maxsplit=1)
             request['api_version'] = (int(hdr_major_version[1:]), revision_date)
-    except (AssertionError, ValueError, KeyError):
-        raise GenericBadRequest('Unsupported API major version.')
+        else:
+            return GenericBadRequest('Unsupported API version.')
+    except (ValueError, KeyError):
+        return GenericBadRequest('Unsupported API version.')
     resp = (await _handler(request))
     return resp
 
@@ -341,6 +348,16 @@ async def event_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
     await app['event_dispatcher'].close()
 
 
+async def storage_manager_ctx(app: web.Application) -> AsyncIterator[None]:
+    config_server: ConfigServer = app['config_server']
+    raw_vol_config = await config_server.etcd.get_prefix('volumes')
+    config = volume_config_iv.check(raw_vol_config)
+    app['storage_manager'] = StorageSessionManager(config)
+    _update_public_interface_objs(app)
+    yield
+    await app['storage_manager'].aclose()
+
+
 async def hook_plugin_ctx(app: web.Application) -> AsyncIterator[None]:
     ctx = HookPluginContext(app['config_server'].etcd, app['config'])
     app['hook_plugin_ctx'] = ctx
@@ -365,6 +382,7 @@ async def agent_registry_ctx(app: web.Application) -> AsyncIterator[None]:
         app['redis_live'],
         app['redis_image'],
         app['event_dispatcher'],
+        app['storage_manager'],
         app['hook_plugin_ctx'],
     )
     await app['registry'].init()
@@ -501,6 +519,7 @@ def build_root_app(
             redis_ctx,
             database_ctx,
             event_dispatcher_ctx,
+            storage_manager_ctx,
             hook_plugin_ctx,
             monitoring_ctx,
             agent_registry_ctx,
@@ -539,9 +558,12 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         '.manager',
         '.resource',
         '.scaling_group',
+        '.cluster_template',
         '.session_template',
         '.image',
         '.userconfig',
+        '.domainconfig',
+        '.groupconfig',
         '.logs',
     ]
     app = build_root_app(pidx, _args[0], subapp_pkgs=subapp_pkgs)
