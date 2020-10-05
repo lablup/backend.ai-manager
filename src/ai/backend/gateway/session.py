@@ -11,7 +11,7 @@ from io import BytesIO
 import json
 import logging
 import re
-from pathlib import Path
+from pathlib import PurePosixPath
 import secrets
 from typing import (
     Any,
@@ -55,7 +55,7 @@ from ai.backend.common.types import (
     SessionTypes,
 )
 from ai.backend.common.plugin.monitor import GAUGE
-from ai.backend.common.utils import current_loop
+from .config import DEFAULT_CHUNK_SIZE
 from .defs import REDIS_STREAM_DB
 from .exceptions import (
     InvalidAPIParameters,
@@ -67,7 +67,8 @@ from .exceptions import (
     TooManySessionsMatched,
     BackendError,
     InternalServerError,
-    TaskTemplateNotFound
+    TaskTemplateNotFound,
+    StorageProxyError,
 )
 from .auth import auth_required
 from .types import CORSOptions, WebMiddleware
@@ -1696,9 +1697,7 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
     domain_name = request['user']['domain_name']
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
-    raw_kernel_id = params['kernel_id'].hex
-    mount_prefix = await request.app['config_server'].get('volumes/_mount')
-    fs_prefix = await request.app['config_server'].get('volumes/_fsprefix')
+    kernel_id_str = params['kernel_id'].hex
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         matched_vfolders = await query_accessible_vfolders(
             conn, user_uuid,
@@ -1708,26 +1707,40 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
         if not matched_vfolders:
             raise GenericNotFound('You do not have ".logs" vfolder for persistent task logs.')
         log_vfolder = matched_vfolders[0]
-        log_path = (
-            Path(mount_prefix) / log_vfolder['host'] / Path(fs_prefix.lstrip('/')) /
-            log_vfolder['id'].hex /
-            'task' / raw_kernel_id[:2] / raw_kernel_id[2:4] / f'{raw_kernel_id[4:]}.log'
-        )
 
-    def check_file():
-        if not log_path.is_file():
-            raise GenericNotFound('The requested log file or the task was not found.')
-        try:
-            with open(log_path, 'rb'):
-                pass
-        except IOError:
-            raise GenericNotFound('The requested log file is not readable.')
-
-    loop = current_loop()
-    await loop.run_in_executor(None, check_file)
-    return web.FileResponse(log_path, headers={
-        hdrs.CONTENT_TYPE: "text/plain",
-    })
+    storage_manager = request.app['storage_manager']
+    proxy_name, volume_name = storage_manager.split_host(log_vfolder['host'])
+    response = web.StreamResponse(status=200)
+    response.headers[hdrs.CONTENT_TYPE] = "text/plain"
+    prepared = False
+    try:
+        async with storage_manager.request(
+            log_vfolder['host'], 'POST', 'folder/file/fetch',
+            json={
+                'volume': volume_name,
+                'vfid': str(log_vfolder['id']),
+                'relpath': str(
+                    PurePosixPath('task')
+                    / kernel_id_str[:2] / kernel_id_str[2:4]
+                    / f'{kernel_id_str[4:]}.log'
+                ),
+            },
+            raise_for_status=True,
+        ) as (_, storage_resp):
+            while True:
+                chunk = await storage_resp.content.read(DEFAULT_CHUNK_SIZE)
+                if not chunk:
+                    break
+                if not prepared:
+                    await response.prepare(request)
+                    prepared = True
+                await response.write(chunk)
+    except aiohttp.ClientResponseError as e:
+        raise StorageProxyError(status=e.status, extra_msg=e.message)
+    finally:
+        if prepared:
+            await response.write_eof()
+    return response
 
 
 async def init(app: web.Application) -> None:

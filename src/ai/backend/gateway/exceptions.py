@@ -63,9 +63,11 @@ class BackendError(web.HTTPError):
     def __repr__(self):
         lines = []
         if self.extra_msg:
-            lines.append(f'<{type(self).__name__}: {self.error_title} ({self.extra_msg})>')
+            lines.append(f'<{type(self).__name__}({self.status}): '
+                         f'{self.error_title} ({self.extra_msg})>')
         else:
-            lines.append(f'<{type(self).__name__}: {self.error_title}>')
+            lines.append(f'<{type(self).__name__}({self.status}): '
+                         f'{self.error_title}>')
         if self.extra_data:
             lines.append(' -> extra_data: ' + repr(self.extra_data))
         return '\n'.join(lines)
@@ -271,6 +273,24 @@ class InstanceNotAvailable(BackendError, web.HTTPServiceUnavailable):
 class ServerFrozen(BackendError, web.HTTPServiceUnavailable):
     error_type  = 'https://api.backend.ai/probs/server-frozen'
     error_title = 'The server is frozen due to maintenance. Please try again later.'
+
+
+class StorageProxyError(BackendError, web.HTTPError):
+    error_type  = 'https://api.backend.ai/probs/storage-proxy-error'
+    error_title = 'The storage proxy returned an error.'
+
+    def __init__(self, status: int, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        # Currently there is no good public way to override the status code
+        # after initialization of aiohttp.web.StreamResponse objects. :(
+        self.status_code = status  # HTTPException uses self.status_code
+        self._status = status      # StreamResponse uses self._status
+        self.args = (status, self.args[1], self.args[2])
+
+    @property
+    def status(self) -> int:
+        # override the status property again to refer the subclass' attribute.
+        return self.status_code
 
 
 class AgentError(RuntimeError):
