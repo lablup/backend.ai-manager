@@ -195,7 +195,8 @@ def vfolder_check_exists(handler: Callable[..., Awaitable[web.Response]]):
         t.Key('permission', default='rw'): tx.Enum(VFolderPermission) | t.Null,
         tx.AliasedKey(['unmanaged_path', 'unmanagedPath'], default=None): t.String | t.Null,
         tx.AliasedKey(['group', 'groupId', 'group_id'], default=None): tx.UUID | t.String | t.Null,
-        t.Key('clone_allowed', default=False): t.Bool
+        t.Key('quota', default=None): tx.BinarySize | t.Null,
+        t.Key('cloneable', default=False): t.Bool
     }),
 )
 async def create(request: web.Request, params: Any) -> web.Response:
@@ -310,6 +311,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                     json={
                         'volume': storage_manager.split_host(folder_host)[1],
                         'vfid': str(folder_id),
+                        'options': {'quota': params['quota']},
                     },
                     raise_for_status=True,
                 ):
@@ -331,7 +333,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'user': user_uuid,
             'group': group_uuid,
             'unmanaged_path': '',
-            'clone_allowed': params['clone_allowed'],
+            'cloneable': params['cloneable'],
         }
         resp = {
             'id': folder_id.hex,
@@ -343,7 +345,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             'ownership_type': ownership_type,
             'user': user_uuid,
             'group': group_uuid,
-            'clone_allowed': params['clone_allowed'],
+            'cloneable': params['cloneable'],
         }
         if unmanaged_path:
             insert_values.update({
@@ -599,7 +601,7 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
         'is_owner': is_owner,
         'permission': permission,
         'usage_mode': row['usage_mode'],
-        'clone_allowed': row['clone_allowed']
+        'cloneable': row['cloneable']
     }
     return web.json_response(resp, status=200)
 
@@ -654,14 +656,14 @@ async def rename_vfolder(request: web.Request, params: Any, row: VFolderRow) -> 
 @vfolder_permission_required(VFolderPermission.OWNER_PERM)
 @check_api_params(
     t.Dict({
-        t.Key('clone_allowed', default=None): t.Bool | t.Null,
+        t.Key('cloneable', default=None): t.Bool | t.Null,
         t.Key('permission', default=None): tx.Enum(VFolderPermission) | t.Null
     }))
 async def update_vfolder_options(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     updated_fields = {}
-    if params['clone_allowed'] and params['clone_allowed'] != row['clone_allowed']:
-        updated_fields['clone_allowed'] = params['clone_allowed']
-    if params['permission'] and params['permission'] != row['permission']:
+    if params['cloneable'] is not None and params['cloneable'] != row['cloneable']:
+        updated_fields['cloneable'] = params['cloneable']
+    if params['permission'] is not None and params['permission'] != row['permission']:
         updated_fields['permission'] = params['permission']
     if not row['is_owner']:
         raise InvalidAPIParameters(
@@ -685,6 +687,8 @@ async def update_vfolder_options(request: web.Request, params: Any, row: VFolder
 @check_api_params(
     t.Dict({
         t.Key('path'): t.String,
+        t.Key('parents', default=True): t.ToBool,
+        t.Key('exist_ok', default=False): t.ToBool,
     }))
 async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     folder_name = request.match_info['name']
@@ -698,6 +702,8 @@ async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
             'volume': volume_name,
             'vfid': str(row['id']),
             'relpath': params['path'],
+            'parents': params['parents'],
+            'exist_ok': params['exist_ok'],
         },
         raise_for_status=True,
     ):
@@ -1292,7 +1298,7 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     target_folder_host = params['folder_host']
 
     # check if the source vfolder is allowed to be cloned
-    if not row['clone_allowed']:
+    if not row['cloneable']:
         raise GenericForbidden('The source vfolder is not permitted to be cloned.')
 
     if not target_folder_host:
@@ -1386,7 +1392,7 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
             'user': user_uuid,
             'group': group_uuid,
             'unmanaged_path': '',
-            'clone_allowed': False
+            'cloneable': False
         }
         resp = {
             'id': folder_id.hex,
