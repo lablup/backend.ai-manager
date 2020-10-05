@@ -1,1 +1,0 @@
-Ignore missing tags in the Docker Hub when scanning the metadata for public Docker images, which happens after deleting images from the hub

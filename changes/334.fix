@@ -1,1 +1,0 @@
-Improve pickling of wrapped HTTP exceptions (`BackendError` and its derivatives)

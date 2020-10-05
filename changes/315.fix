@@ -1,1 +1,0 @@
-Fix a regression in the server-side error logs query API due to a typo in the DB column name
