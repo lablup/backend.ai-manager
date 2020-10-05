@@ -11,7 +11,7 @@ from io import BytesIO
 import json
 import logging
 import re
-from pathlib import Path
+from pathlib import PurePosixPath
 import secrets
 from typing import (
     Any,
@@ -55,7 +55,7 @@ from ai.backend.common.types import (
     SessionTypes,
 )
 from ai.backend.common.plugin.monitor import GAUGE
-from ai.backend.common.utils import current_loop
+from .config import DEFAULT_CHUNK_SIZE
 from .defs import REDIS_STREAM_DB
 from .exceptions import (
     InvalidAPIParameters,
@@ -1696,7 +1696,7 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
     domain_name = request['user']['domain_name']
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
-    kernel_id_str = str(params['kernel_id'])
+    kernel_id_str = params['kernel_id'].hex
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         matched_vfolders = await query_accessible_vfolders(
             conn, user_uuid,
@@ -1709,34 +1709,31 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
 
     storage_manager = request.app['storage_manager']
     proxy_name, volume_name = storage_manager.split_host(log_vfolder['host'])
-    async with storage_manager.request(
-        log_vfolder['host'], 'GET', 'folder/mount',
-        json={
-            'volume': volume_name,
-            'vfid': str(log_vfolder['id']),
-        },
-        raise_for_status=True,
-    ) as (_, storage_resp):
-        storage_reply = await storage_resp.json()
-    log_path = (
-        Path(storage_reply['path']) /
-        'task' / kernel_id_str[:2] / kernel_id_str[2:4] / f'{kernel_id_str[4:]}.log'
-    )
-
-    def check_file():
-        if not log_path.is_file():
-            raise GenericNotFound('The requested log file or the task was not found.')
-        try:
-            with open(log_path, 'rb'):
-                pass
-        except IOError:
-            raise GenericNotFound('The requested log file is not readable.')
-
-    loop = current_loop()
-    await loop.run_in_executor(None, check_file)
-    return web.FileResponse(log_path, headers={
-        hdrs.CONTENT_TYPE: "text/plain",
-    })
+    response = web.StreamResponse(status=200)
+    response.headers[hdrs.CONTENT_TYPE] = "text/plain"
+    await response.prepare(request)
+    try:
+        async with storage_manager.request(
+            log_vfolder['host'], 'POST', 'folder/file/fetch',
+            json={
+                'volume': volume_name,
+                'vfid': str(log_vfolder['id']),
+                'relpath': str(
+                    PurePosixPath('task')
+                    / kernel_id_str[:2] / kernel_id_str[2:4]
+                    / f'{kernel_id_str[4:]}.log'
+                ),
+            },
+            raise_for_status=True,
+        ) as (_, storage_resp):
+            while True:
+                chunk = await storage_resp.content.read(DEFAULT_CHUNK_SIZE)
+                if not chunk:
+                    break
+                await response.write(chunk)
+    finally:
+        await response.write_eof()
+        return response
 
 
 async def init(app: web.Application) -> None:
