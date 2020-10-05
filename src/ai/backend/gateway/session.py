@@ -67,7 +67,8 @@ from .exceptions import (
     TooManySessionsMatched,
     BackendError,
     InternalServerError,
-    TaskTemplateNotFound
+    TaskTemplateNotFound,
+    StorageProxyError,
 )
 from .auth import auth_required
 from .types import CORSOptions, WebMiddleware
@@ -1711,7 +1712,7 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
     proxy_name, volume_name = storage_manager.split_host(log_vfolder['host'])
     response = web.StreamResponse(status=200)
     response.headers[hdrs.CONTENT_TYPE] = "text/plain"
-    await response.prepare(request)
+    prepared = False
     try:
         async with storage_manager.request(
             log_vfolder['host'], 'POST', 'folder/file/fetch',
@@ -1730,10 +1731,19 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
                 chunk = await storage_resp.content.read(DEFAULT_CHUNK_SIZE)
                 if not chunk:
                     break
+                if not prepared:
+                    await response.prepare(request)
+                    prepared = True
                 await response.write(chunk)
+    except aiohttp.ClientResponseError as e:
+        if e.status // 100 == 4:
+            raise StorageProxyError(status=e.status, extra_msg=e.message)
+        else:
+            raise
     finally:
-        await response.write_eof()
-        return response
+        if prepared:
+            await response.write_eof()
+    return response
 
 
 async def init(app: web.Application) -> None:
