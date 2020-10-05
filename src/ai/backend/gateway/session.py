@@ -1736,10 +1736,7 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
                     prepared = True
                 await response.write(chunk)
     except aiohttp.ClientResponseError as e:
-        if e.status // 100 == 4:
-            raise StorageProxyError(status=e.status, extra_msg=e.message)
-        else:
-            raise
+        raise StorageProxyError(status=e.status, extra_msg=e.message)
     finally:
         if prepared:
             await response.write_eof()
