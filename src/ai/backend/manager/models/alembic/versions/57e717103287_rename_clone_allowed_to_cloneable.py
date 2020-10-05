@@ -1,4 +1,4 @@
-"""rename-clone_allowed-to-clonable
+"""rename-clone_allowed-to-cloneable
 
 Revision ID: 57e717103287
 Revises: eec98e65902a
@@ -19,4 +19,4 @@ def upgrade():
 
 
 def downgrade():
-    op.alter_column('vfolders', 'clonable', new_column_name='clone_allowed')
+    op.alter_column('vfolders', 'cloneable', new_column_name='clone_allowed')
