@@ -548,7 +548,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
     hook_result = await request.app['hook_plugin_ctx'].dispatch(
         'AUTHORIZE',
         (params, dbpool),
-        return_when=ALL_COMPLETED,
+        return_when=FIRST_COMPLETED,
     )
     if hook_result.status != PASSED:
         # Did not pass AUTHORIZED hook
