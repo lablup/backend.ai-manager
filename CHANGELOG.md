@@ -16,6 +16,17 @@ Changes
 
 .. towncrier release notes start
 
+20.03.6 (2020-10-06)
+--------------------
+
+### Features
+* Add a new hooking point for `AUTHORIZE` with `FIRST_COMPLETED` requirement, which can replace credential checks during the user login process ([#339](https://github.com/lablup/backend.ai-manager/issues/339))
+
+### Fixes
+* Improve pickling of wrapped HTTP exceptions (`BackendError` and its derivatives) ([#334](https://github.com/lablup/backend.ai-manager/issues/334))
+* Show the container name when using the `mgr dbshell` cli command ([#335](https://github.com/lablup/backend.ai-manager/issues/335))
+
+
 20.03.5 (2020-09-09)
 --------------------
 
