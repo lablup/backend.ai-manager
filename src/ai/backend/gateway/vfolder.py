@@ -957,7 +957,7 @@ async def update_invitation(request: web.Request, params: Any) -> web.Response:
 @check_api_params(
     t.Dict({
         tx.AliasedKey(['perm', 'permission'], default='rw'): VFolderPermissionValidator,
-        tx.AliasedKey(['user_ids', 'userIDs']): t.List(t.String),
+        tx.AliasedKey(['emails', 'user_ids', 'userIDs']): t.List(t.String),
     })
 )
 async def invite(request: web.Request, params: Any) -> web.Response:
@@ -966,9 +966,9 @@ async def invite(request: web.Request, params: Any) -> web.Response:
     access_key = request['keypair']['access_key']
     user_uuid = request['user']['uuid']
     perm = params['perm']
-    user_ids = params['user_ids']
+    invitee_emails = params['emails']
     log.info('VFOLDER.INVITE (ak:{}, vf:{}, inv.users:{})',
-             access_key, folder_name, ','.join(user_ids))
+             access_key, folder_name, ','.join(invitee_emails))
     if folder_name.startswith('.'):
         raise GenericForbidden('Cannot share private dot-prefixed vfolders.')
     async with dbpool.acquire() as conn:
@@ -986,23 +986,26 @@ async def invite(request: web.Request, params: Any) -> web.Response:
             raise VFolderNotFound()
 
         # Get invited user's keypairs except vfolder owner.
-        query = (sa.select('*')
+        query = (sa.select([keypairs.c.user_id, keypairs.c.user])
                    .select_from(keypairs)
-                   .where(keypairs.c.user_id.in_(user_ids))
-                   .where(keypairs.c.user_id != request['user']['id']))
+                   .where(keypairs.c.user_id.in_(invitee_emails))
+                   .where(keypairs.c.user_id != request['user']['email']))
         try:
             result = await conn.execute(query)
         except psycopg2.DataError:
             raise InvalidAPIParameters
+        if result.rowcount < 1:
+            raise GenericNotFound('No such vfolder invitation')
         kps = await result.fetchall()
 
         # Prevent inviting user who already share the target folder.
+        invitee_uuids = [kp.user for kp in kps]
         j = sa.join(vfolders, vfolder_permissions,
                     vfolders.c.id == vfolder_permissions.c.vfolder)
         query = (sa.select([vfolders.c.id])
                    .select_from(j)
-                   .where(((vfolders.c.user == user_uuid) |
-                           (vfolder_permissions.c.user == user_uuid)) &
+                   .where((vfolders.c.user.in_(invitee_uuids) |
+                           vfolder_permissions.c.user.in_(invitee_uuids)) &
                           (vfolders.c.name == folder_name)))
         result = await conn.execute(query)
         if result.rowcount > 0:
