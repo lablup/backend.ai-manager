@@ -544,7 +544,6 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
     # ``dbpool`` parameter (if the hook needs to query to database).
     # They should return a corresponding Backend.AI user object after performing
     # their own authentication steps, like LDAP authentication, etc.
-    params['dbpool'] = dbpool  # hack to execute db commands in the hook (TODO: more general logic)
     hook_result = await request.app['hook_plugin_ctx'].dispatch(
         'AUTHORIZE',
         (params, dbpool),
