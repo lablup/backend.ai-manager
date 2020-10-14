@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from collections import UserDict
 import os
 import re
 import secrets
@@ -5,8 +8,13 @@ import sys
 from pathlib import Path
 from pprint import pformat
 from typing import (
-    Any, Final,
+    Any,
+    Awaitable,
+    Callable,
+    Final,
+    List,
     Mapping,
+    Sequence,
 )
 
 import click
@@ -129,7 +137,32 @@ volume_config_iv = t.Dict({
 }).allow_extra('*')
 
 
-def load(config_path: Path = None, debug: bool = False) -> Mapping[str, Any]:
+ConfigWatchCallback = Callable[[Sequence[str]], Awaitable[None]]
+
+
+class AbstractConfig(UserDict):
+
+    _watch_callbacks: List[ConfigWatchCallback]
+
+    def __init__(self, initial_data: Mapping[str, Any] = None) -> None:
+        super().__init__(initial_data)
+        self._watch_callbacks = []
+
+    def add_watch_callback(self, cb: ConfigWatchCallback) -> None:
+        self._watch_callbacks.append(cb)
+
+    async def dispatch_watch_callbacks(self, updated_keys: Sequence[str]) -> None:
+        for cb in self._watch_callbacks:
+            await cb(updated_keys)
+
+
+class LocalConfig(AbstractConfig):
+
+    async def reload(self) -> None:
+        raise NotImplementedError
+
+
+def load(config_path: Path = None, debug: bool = False) -> LocalConfig:
 
     # Determine where to read configuration.
     raw_cfg, cfg_src_path = config.read_from_file(config_path, 'manager')

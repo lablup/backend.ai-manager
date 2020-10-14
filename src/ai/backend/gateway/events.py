@@ -6,12 +6,18 @@ import functools
 import logging
 import json
 from typing import (
-    Any, Union, Final,
-    Iterable, AsyncIterator,
-    Sequence, Tuple,
-    Mapping, MutableMapping,
-    Set,
+    Any,
+    AsyncIterator,
+    Final,
+    Iterable,
+    Mapping,
+    MutableMapping,
     Protocol,
+    Sequence,
+    Set,
+    Tuple,
+    Union,
+    TYPE_CHECKING,
 )
 import uuid
 
@@ -19,7 +25,6 @@ from aiohttp import web
 import aiohttp_cors
 from aiohttp_sse import sse_response
 import aioredis
-from aiojobs.aiohttp import get_scheduler_from_app
 from aiotools import adefer
 import attr
 import sqlalchemy as sa
@@ -28,6 +33,7 @@ import trafaret as t
 from ai.backend.common import msgpack, redis
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.taskgroup import TaskGroup, TaskGroupError
 from ai.backend.common.types import (
     aobject,
     AgentId,
@@ -41,6 +47,8 @@ from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params
 from ..manager.models import kernels, groups, UserRole
 from ..manager.types import BackgroundTaskEventArgs, Sentinel
+if TYPE_CHECKING:
+    from ..gateway.config import LocalConfig
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.events'))
 
@@ -78,7 +86,6 @@ class EventDispatcher(aobject):
     '''
 
     loop: asyncio.AbstractEventLoop
-    root_app: web.Application
     consumers: MutableMapping[str, Set[EventHandler]]
     subscribers: MutableMapping[str, Set[EventHandler]]
     redis_producer: aioredis.Redis
@@ -88,9 +95,9 @@ class EventDispatcher(aobject):
     subscriber_task: asyncio.Task
     producer_lock: asyncio.Lock
 
-    def __init__(self, app: web.Application) -> None:
+    def __init__(self, config: LocalConfig) -> None:
         self.loop = current_loop()
-        self.root_app = app
+        self.config = config
         self.consumers = defaultdict(set)
         self.subscribers = defaultdict(set)
 
@@ -103,12 +110,11 @@ class EventDispatcher(aobject):
         self.producer_lock = asyncio.Lock()
 
     async def _create_redis(self):
-        config = self.root_app['config']
         return await redis.connect_with_retries(
-            config['redis']['addr'].as_sockaddr(),
+            self.config['redis']['addr'].as_sockaddr(),
             db=REDIS_STREAM_DB,
-            password=(config['redis']['password']
-                      if config['redis']['password'] else None),
+            password=(self.config['redis']['password']
+                      if self.config['redis']['password'] else None),
             encoding=None,
         )
 
@@ -160,45 +166,45 @@ class EventDispatcher(aobject):
                                  args: Tuple[Any, ...] = tuple()) -> None:
         log_fmt = 'DISPATCH_CONSUMERS(ev:{}, ag:{})'
         log_args = (event_name, agent_id)
-        if self.root_app['config']['debug']['log-events']:
+        if self.config['debug']['log-events']:
             log.debug(log_fmt, *log_args)
-        scheduler = get_scheduler_from_app(self.root_app)
-        for consumer in self.consumers[event_name]:
-            cb = consumer.callback
-            try:
-                if asyncio.iscoroutine(cb):
-                    await scheduler.spawn(cb)
-                elif asyncio.iscoroutinefunction(cb):
-                    await scheduler.spawn(cb(consumer.context, agent_id, event_name, *args))
-                else:
-                    cb = functools.partial(cb, consumer.context, agent_id, event_name, *args)
-                    self.loop.call_soon(cb)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                log.exception(log_fmt + ': unexpected-error', *log_args)
+        async with TaskGroup(name='event-consume-handlers') as task_group:
+            for consumer in self.consumers[event_name]:
+                cb = consumer.callback
+                try:
+                    if asyncio.iscoroutine(cb):
+                        task_group.create_task(cb)
+                    elif asyncio.iscoroutinefunction(cb):
+                        task_group.create_task(cb(consumer.context, agent_id, event_name, *args))
+                    else:
+                        cb = functools.partial(cb, consumer.context, agent_id, event_name, *args)
+                        self.loop.call_soon(cb)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    log.exception(log_fmt + ': unexpected-error', *log_args)
 
     async def dispatch_subscribers(self, event_name: str, agent_id: AgentId,
                                    args: Tuple[Any, ...] = tuple()) -> None:
         log_fmt = 'DISPATCH_SUBSCRIBERS(ev:{}, ag:{})'
         log_args = (event_name, agent_id)
-        if self.root_app['config']['debug']['log-events']:
+        if self.config['debug']['log-events']:
             log.debug(log_fmt, *log_args)
-        scheduler = get_scheduler_from_app(self.root_app)
-        for subscriber in self.subscribers[event_name]:
-            cb = subscriber.callback
-            try:
-                if asyncio.iscoroutine(cb):
-                    await scheduler.spawn(cb)
-                elif asyncio.iscoroutinefunction(cb):
-                    await scheduler.spawn(cb(subscriber.context, agent_id, event_name, *args))
-                else:
-                    cb = functools.partial(cb, subscriber.context, agent_id, event_name, *args)
-                    self.loop.call_soon(cb)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                log.exception(log_fmt + ': unexpected-error', *log_args)
+        async with TaskGroup(name='event-subscribe-handlers') as task_group:
+            for subscriber in self.subscribers[event_name]:
+                cb = subscriber.callback
+                try:
+                    if asyncio.iscoroutine(cb):
+                        task_group.create_task(cb)
+                    elif asyncio.iscoroutinefunction(cb):
+                        task_group.create_task(cb(subscriber.context, agent_id, event_name, *args))
+                    else:
+                        cb = functools.partial(cb, subscriber.context, agent_id, event_name, *args)
+                        self.loop.call_soon(cb)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    log.exception(log_fmt + ': unexpected-error', *log_args)
 
     async def _consume(self) -> None:
         while True:
@@ -209,6 +215,12 @@ class EventDispatcher(aobject):
                 await self.dispatch_consumers(msg['event_name'],
                                               msg['agent_id'],
                                               msg['args'])
+            except TaskGroupError as e:
+                loop = asyncio.get_running_loop()
+                for sub_error in e.__errors__:
+                    loop.call_exception_handler({
+                        'exception': sub_error,
+                    })
             except asyncio.CancelledError:
                 break
             except Exception:
@@ -227,6 +239,12 @@ class EventDispatcher(aobject):
         while True:
             try:
                 await redis.execute_with_retries(lambda: _subscribe_impl())
+            except TaskGroupError as e:
+                loop = asyncio.get_running_loop()
+                for sub_error in e.__errors__:
+                    loop.call_exception_handler({
+                        'exception': sub_error,
+                    })
             except asyncio.CancelledError:
                 break
             except Exception:
