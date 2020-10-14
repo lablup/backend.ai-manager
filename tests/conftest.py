@@ -341,6 +341,7 @@ async def create_app_and_client(test_config, event_loop):
             runner,
             str(app['config']['manager']['service-addr'].host),
             app['config']['manager']['service-addr'].port,
+            reuse_port=True,
         )
         await site.start()
         port = app['config']['manager']['service-addr'].port

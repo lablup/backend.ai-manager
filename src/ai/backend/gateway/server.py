@@ -342,7 +342,7 @@ async def database_ctx(app: web.Application) -> AsyncIterator[None]:
 
 
 async def event_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
-    app['event_dispatcher'] = await EventDispatcher.new(app)
+    app['event_dispatcher'] = await EventDispatcher.new(app['config'])
     _update_public_interface_objs(app)
     yield
     await app['event_dispatcher'].close()
