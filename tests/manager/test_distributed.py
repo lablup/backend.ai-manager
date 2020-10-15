@@ -7,8 +7,10 @@ import random
 import threading
 import time
 from typing import (
+    Any,
     Iterable,
     Optional,
+    TYPE_CHECKING,
 )
 
 import aioredis
@@ -16,6 +18,9 @@ import aioredis
 from ai.backend.gateway.defs import REDIS_STREAM_DB
 from ai.backend.gateway.events import EventDispatcher
 from ai.backend.manager.distributed import GlobalTimer
+if TYPE_CHECKING:
+    from ai.backend.common.types import AgentId
+    from ai.backend.gateway.config import LocalConfig
 
 
 def drange(start: Decimal, stop: Decimal, step: Decimal) -> Iterable[Decimal]:
@@ -37,13 +42,13 @@ class TimerNode(threading.Thread):
 
     def __init__(
         self,
-        join_delay,
-        leave_delay,
-        interval,
-        thread_idx,
-        test_id,
-        config,
-        event_records,
+        join_delay: float,
+        leave_delay: float,
+        interval: float,
+        thread_idx: int,
+        test_id: str,
+        config: LocalConfig,
+        event_records: queue.Queue[float],
     ) -> None:
         super().__init__()
         self.join_delay = join_delay
@@ -54,24 +59,21 @@ class TimerNode(threading.Thread):
         self.config = config
         self.event_records = event_records
 
-    async def tick(self) -> None:
-        self.event_records.put(time.monotonic())
-
-    async def timer_node_async(self):
-        redis = await aioredis.create_redis(
-            self.config['redis']['addr'].as_sockaddr(),
-            db=REDIS_STREAM_DB,
-            password=(self.config['redis']['password']
-                      if self.config['redis']['password'] else None),
-        )
+    async def timer_node_async(self) -> None:
+        redis_url = self.config.get_redis_url(db=REDIS_STREAM_DB)
+        redis = await aioredis.create_redis(str(redis_url))
         event_dispatcher = await EventDispatcher.new(self.config)
+
+        async def _tick(context: Any, agent_id: AgentId, event_name: str, *args) -> None:
+            self.event_records.put(time.monotonic())
+
+        event_dispatcher.consume(self.test_id, None, _tick)
 
         await asyncio.sleep(self.join_delay)
         timer = GlobalTimer(
             redis,
             event_dispatcher,
             self.test_id,
-            self.tick,
             self.interval,
         )
         try:
@@ -83,11 +85,11 @@ class TimerNode(threading.Thread):
             await redis.wait_closed()
             await event_dispatcher.close()
 
-    def run(self):
+    def run(self) -> None:
         asyncio.run(self.timer_node_async())
 
 
-def test_global_timer(test_id, test_config):
+def test_global_timer(test_id, test_config) -> None:
     event_records = queue.Queue()
     num_threads = 7
     num_records = 0

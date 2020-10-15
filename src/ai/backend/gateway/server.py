@@ -393,7 +393,7 @@ async def agent_registry_ctx(app: web.Application) -> AsyncIterator[None]:
 
 async def sched_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
     sched_dispatcher = await SchedulerDispatcher.new(
-        app['config'], app['config_server'], app['registry'], app['pidx'])
+        app['config'], app['config_server'], app['event_dispatcher'], app['registry'])
     yield
     await sched_dispatcher.close()
 

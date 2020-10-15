@@ -110,13 +110,8 @@ class EventDispatcher(aobject):
         self.producer_lock = asyncio.Lock()
 
     async def _create_redis(self):
-        return await redis.connect_with_retries(
-            self.config['redis']['addr'].as_sockaddr(),
-            db=REDIS_STREAM_DB,
-            password=(self.config['redis']['password']
-                      if self.config['redis']['password'] else None),
-            encoding=None,
-        )
+        redis_url = self.config.get_redis_url(db=REDIS_STREAM_DB)
+        return await redis.connect_with_retries(str(redis_url), encoding=None)
 
     async def close(self) -> None:
         self.consumer_task.cancel()

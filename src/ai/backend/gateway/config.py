@@ -19,6 +19,8 @@ from typing import (
 
 import click
 import trafaret as t
+import yarl
+
 from ai.backend.common import config, validators as tx
 from ai.backend.common.etcd import AsyncEtcd
 
@@ -161,6 +163,17 @@ class LocalConfig(AbstractConfig):
     async def reload(self) -> None:
         raise NotImplementedError
 
+    def get_redis_url(self, db: int = 0) -> yarl.URL:
+        """
+        Returns a complete URL composed from the given Redis config.
+        """
+        url = (yarl.URL('redis://host')
+               .with_host(str(self.data['redis']['addr'][0]))
+               .with_port(self.data['redis']['addr'][1])
+               .with_password(self.data['redis']['password'])
+               / str(db))
+        return url
+
 
 def load(config_path: Path = None, debug: bool = False) -> LocalConfig:
 
@@ -211,7 +224,7 @@ def load(config_path: Path = None, debug: bool = False) -> LocalConfig:
         print(pformat(e.invalid_data), file=sys.stderr)
         raise click.Abort()
     else:
-        return cfg
+        return LocalConfig(cfg)
 
 
 async def load_shared(etcd: AsyncEtcd) -> Mapping[str, Any]:

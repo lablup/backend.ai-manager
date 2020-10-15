@@ -16,7 +16,6 @@ from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
 
 from .auth import auth_required
-from .defs import REDIS_LIVE_DB
 from .manager import READ_ALLOWED, server_status_required
 from .types import CORSOptions, Iterable, WebMiddleware
 from .utils import check_api_params, get_access_key_scopes
@@ -222,12 +221,8 @@ async def log_cleanup_task(app: web.Application, interval):
 
 
 async def init(app: web.Application) -> None:
-    app['log_cleanup_lock'] = aioredlock.Aioredlock([
-        {'host': str(app['config']['redis']['addr'][0]),
-         'port': app['config']['redis']['addr'][1],
-         'password': app['config']['redis']['password'] if app['config']['redis']['password'] else None,
-         'db': REDIS_LIVE_DB},
-    ])
+    redis_url = app['config'].get_redis_url()
+    app['log_cleanup_lock'] = aioredlock.Aioredlock([str(redis_url)])
     app['log_cleanup_task'] = aiotools.create_timer(
         functools.partial(log_cleanup_task, app), 5.0)
 

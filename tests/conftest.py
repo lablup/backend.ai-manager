@@ -26,7 +26,7 @@ import sqlalchemy as sa
 import psycopg2 as pg
 import pytest
 
-from ai.backend.gateway.config import load as load_config
+from ai.backend.gateway.config import LocalConfig, load as load_config
 from ai.backend.gateway.etcd import ConfigServer
 from ai.backend.gateway.server import (
     build_root_app,
@@ -85,6 +85,7 @@ def vfolder_host():
 @pytest.fixture(scope='session')
 def test_config(test_id, test_db):
     cfg = load_config()
+    assert isinstance(cfg, LocalConfig)
     cfg['db']['name'] = test_db
     cfg['manager']['num-proc'] = 1
     cfg['manager']['service-addr'] = HostPortPair('localhost', 29100)
