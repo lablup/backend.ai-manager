@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from decimal import Decimal
-from itertools import count
 import queue
 import random
 import threading
@@ -20,9 +19,9 @@ from ai.backend.manager.distributed import GlobalTimer
 
 
 def drange(start: Decimal, stop: Decimal, step: Decimal) -> Iterable[Decimal]:
-  while start < stop:
-    yield start
-    start += step
+    while start < stop:
+        yield start
+        start += step
 
 
 def dslice(start: Decimal, stop: Decimal, num: int):
@@ -36,7 +35,16 @@ def dslice(start: Decimal, stop: Decimal, num: int):
 
 class TimerNode(threading.Thread):
 
-    def __init__(self, join_delay, leave_delay, interval, thread_idx, test_id, config, event_records) -> None:
+    def __init__(
+        self,
+        join_delay,
+        leave_delay,
+        interval,
+        thread_idx,
+        test_id,
+        config,
+        event_records,
+    ) -> None:
         super().__init__()
         self.join_delay = join_delay
         self.leave_delay = leave_delay
@@ -85,8 +93,14 @@ def test_global_timer(test_id, test_config):
     num_records = 0
     q = Decimal('0.00')
     interval = Decimal('1')
-    join_delays = [interval * x.quantize(q) for x in dslice(Decimal('0'), Decimal('2'), num_threads)]
-    leave_delays = [interval * (x.quantize(q) + Decimal('2.5')) for x in dslice(Decimal('1'), Decimal('3'), num_threads)]
+    join_delays = [
+        interval * x.quantize(q)
+        for x in dslice(Decimal('0'), Decimal('2'), num_threads)
+    ]
+    leave_delays = [
+        interval * (x.quantize(q) + Decimal('2.5'))
+        for x in dslice(Decimal('1'), Decimal('3'), num_threads)
+    ]
     random.shuffle(join_delays)
     random.shuffle(leave_delays)
     print('')
