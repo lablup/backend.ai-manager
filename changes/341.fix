@@ -1,0 +1,1 @@
+Implement and use a new global timer which works regardless of the number of manager instances to sustain periodic tasks such as session scheduling and idle checks
