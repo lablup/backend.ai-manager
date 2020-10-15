@@ -284,33 +284,25 @@ async def manager_status_ctx(app: web.Application) -> AsyncIterator[None]:
 
 async def redis_ctx(app: web.Application) -> AsyncIterator[None]:
     app['redis_live'] = await redis.connect_with_retries(
-        app['config']['redis']['addr'].as_sockaddr(),
-        password=(app['config']['redis']['password']
-                  if app['config']['redis']['password'] else None),
+        str(app['config'].get_redis_url(db=REDIS_LIVE_DB)),
         timeout=3.0,
         encoding='utf8',
-        db=REDIS_LIVE_DB)
+    )
     app['redis_stat'] = await redis.connect_with_retries(
-        app['config']['redis']['addr'].as_sockaddr(),
-        password=(app['config']['redis']['password']
-                  if app['config']['redis']['password'] else None),
+        str(app['config'].get_redis_url(db=REDIS_STAT_DB)),
         timeout=3.0,
         encoding='utf8',
-        db=REDIS_STAT_DB)
+    )
     app['redis_image'] = await redis.connect_with_retries(
-        app['config']['redis']['addr'].as_sockaddr(),
-        password=(app['config']['redis']['password']
-                  if app['config']['redis']['password'] else None),
+        str(app['config'].get_redis_url(db=REDIS_IMAGE_DB)),
         timeout=3.0,
         encoding='utf8',
-        db=REDIS_IMAGE_DB)
+    )
     app['redis_stream'] = await redis.connect_with_retries(
-        app['config']['redis']['addr'].as_sockaddr(),
-        password=(app['config']['redis']['password']
-                  if app['config']['redis']['password'] else None),
+        str(app['config'].get_redis_url(db=REDIS_STREAM_DB)),
         timeout=3.0,
         encoding='utf8',
-        db=REDIS_STREAM_DB)
+    )
     _update_public_interface_objs(app)
     yield
     app['redis_image'].close()
