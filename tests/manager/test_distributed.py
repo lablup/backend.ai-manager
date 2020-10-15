@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+from decimal import Decimal
+from itertools import count
 import queue
+import random
 import threading
+import time
+from typing import (
+    Iterable,
+    Optional,
+)
 
 import aioredis
 
@@ -11,19 +19,35 @@ from ai.backend.gateway.events import EventDispatcher
 from ai.backend.manager.distributed import GlobalTimer
 
 
+def drange(start: Decimal, stop: Decimal, step: Decimal) -> Iterable[Decimal]:
+  while start < stop:
+    yield start
+    start += step
+
+
+def dslice(start: Decimal, stop: Decimal, num: int):
+    """
+    A simplified version of numpy.linspace with default options
+    """
+    delta = stop - start
+    step = delta / (num - 1)
+    yield from (start + step * Decimal(tick) for tick in range(0, num))
+
+
 class TimerNode(threading.Thread):
 
-    def __init__(self, join_delay, leave_delay, thread_idx, test_id, config, event_records) -> None:
+    def __init__(self, join_delay, leave_delay, interval, thread_idx, test_id, config, event_records) -> None:
         super().__init__()
         self.join_delay = join_delay
         self.leave_delay = leave_delay
+        self.interval = interval
         self.thread_idx = thread_idx
         self.test_id = test_id
         self.config = config
         self.event_records = event_records
 
     async def tick(self) -> None:
-        self.event_records.put(f"{self.thread_idx}: tick")
+        self.event_records.put(time.monotonic())
 
     async def timer_node_async(self):
         redis = await aioredis.create_redis(
@@ -40,7 +64,7 @@ class TimerNode(threading.Thread):
             event_dispatcher,
             self.test_id,
             self.tick,
-            0.1,
+            self.interval,
         )
         try:
             await timer.join()
@@ -57,13 +81,40 @@ class TimerNode(threading.Thread):
 
 def test_global_timer(test_id, test_config):
     event_records = queue.Queue()
-    num_threads = 3
+    num_threads = 7
     num_records = 0
+    q = Decimal('0.00')
+    interval = Decimal('1')
+    join_delays = [interval * x.quantize(q) for x in dslice(Decimal('0'), Decimal('2'), num_threads)]
+    leave_delays = [interval * (x.quantize(q) + Decimal('2.5')) for x in dslice(Decimal('1'), Decimal('3'), num_threads)]
+    random.shuffle(join_delays)
+    random.shuffle(leave_delays)
+    print('')
+    print(join_delays)
+    print(leave_delays)
+
+    active_ticks = {
+        str(Decimal(t).quantize(q)): 0
+        for t in drange(
+            min(join_delays),
+            max(Decimal(j + leave_delays[i]) for i, j in enumerate(join_delays)),
+            interval,
+        )
+    }
+    print(list(active_ticks.keys()))
+    for idx, j in enumerate(join_delays):
+        for t in drange(j, j + leave_delays[idx], interval):
+            quantized_tick = t - (t % interval)
+            active_ticks[str(quantized_tick.quantize(q))] += 1
+    target_count = len([*filter(lambda v: v > 0, active_ticks.values())])
+    print(f"{target_count=}")
+
     threads = []
     for thread_idx in range(num_threads):
         t = TimerNode(
-            thread_idx * 0.1,                         # join delay: 0.1, 0.2, 0.3
-            (num_threads - thread_idx) * 0.1 + 0.51,  # leave delay: 0.3+0.5, 0.2+0.5, 0.1+0.5
+            float(join_delays[thread_idx]),
+            float(leave_delays[thread_idx]),
+            float(interval),
             thread_idx,
             test_id,
             test_config,
@@ -73,12 +124,16 @@ def test_global_timer(test_id, test_config):
         t.start()
     for t in threads:
         t.join()
+    prev_record: Optional[float] = None
     while True:
         try:
-            tick_msg = event_records.get_nowait()
-            print(tick_msg)
+            tick = event_records.get_nowait()
+            print(tick)
+            if prev_record is not None:
+                assert tick - prev_record < interval * Decimal('1.8')
+            prev_record = tick
         except queue.Empty:
             break
         num_records += 1
-    # the max diff of join-leave delay is 0.7 and interval is 0.1.
-    assert num_records in (7, 8)
+    print(f"{num_records=}")
+    assert target_count - 1 <= num_records <= target_count + 2
