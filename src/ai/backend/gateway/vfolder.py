@@ -1833,7 +1833,7 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
     }
     if params['edit_fstab'] and resp['manager']['success']:
         fstab_path = params['fstab_path'] if params['fstab_path'] else '/etc/fstab'
-        async with aiofiles.open(fstab_path, mode='r+') as fp:
+        async with aiofiles.open(fstab_path, mode='r+') as fp:  # type: ignore
             fstab = Fstab(fp)
             await fstab.remove_by_mountpoint(str(mountpoint))
 
