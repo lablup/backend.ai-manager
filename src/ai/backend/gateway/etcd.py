@@ -62,6 +62,22 @@ Alias keys are also URL-quoted in the same way.
      + redis
        - addr: "{redis-host}:{redis-port}"
        - password: {password}
+     + idle
+       - enabled: "timeout,utilization"  # comma-separated list of checker names
+       - checker
+         + "timeout"
+           - treshold: "10m"
+         + "utilization"
+           + resource-thresholds
+             + "cpu"
+               - average: 30   # in percent
+               - window: "1m"  # average for duration
+             + "cuda.mem"
+               - average: 15   # in percent
+               - window: "1m"  # average for duration
+               # NOTE: To use "cuda.mem" criteria, user programs must use
+               #       an incremental allocation strategy for CUDA memory.
+           - initial-grace_period: "30s"
      + resource_slots
        - {"cuda.device"}: {"count"}
        - {"cuda.mem"}: {"bytes"}
