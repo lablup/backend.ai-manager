@@ -25,7 +25,11 @@ from aiohttp import web
 import aiohttp_cors
 from aiohttp_sse import sse_response
 import aioredis
-from aiotools import adefer
+from aiotools import (
+    adefer,
+    TaskGroup,
+    TaskGroupError,
+)
 import attr
 import sqlalchemy as sa
 import trafaret as t
@@ -33,7 +37,6 @@ import trafaret as t
 from ai.backend.common import msgpack, redis
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.taskgroup import TaskGroup, TaskGroupError
 from ai.backend.common.types import (
     aobject,
     AgentId,
