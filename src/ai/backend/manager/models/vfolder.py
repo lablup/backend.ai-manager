@@ -451,7 +451,7 @@ class VirtualFolder(graphene.ObjectType):
     # num_attached = graphene.Int()
 
     @classmethod
-    def from_row(cls, row):
+    def from_row(cls, context, row):
         if row is None:
             return None
         return cls(

@@ -288,7 +288,7 @@ class Queries(graphene.ObjectType):
         order_asc=graphene.Boolean(),
         # filters
         domain_name=graphene.String(),
-        group_id=graphene.String(),
+        group_id=graphene.UUID(),
         access_key=graphene.String())  # must be empty for user requests
 
     vfolders = graphene.List(  # legacy non-paginated list
