@@ -459,7 +459,7 @@ class VirtualFolder(graphene.ObjectType):
     cloneable = graphene.Boolean()
 
     @classmethod
-    def from_row(cls, row):
+    def from_row(cls, context, row):
         if row is None:
             return None
         return cls(
