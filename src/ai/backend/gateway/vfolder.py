@@ -1705,7 +1705,7 @@ async def get_fstab_contents(request: web.Request, params: Any) -> web.Response:
             raise InternalServerError
     else:
         # Return manager's fstab.
-        async with aiofiles.open(params['fstab_path'], mode='r') as fp:
+        async with aiofiles.open(params['fstab_path'], mode='r') as fp:  # type: ignore
             content = await fp.read()
             resp = {
                 'content': content,
@@ -1865,7 +1865,7 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
     }
     if params['edit_fstab'] and resp['manager']['success']:
         fstab_path = params['fstab_path'] if params['fstab_path'] else '/etc/fstab'
-        async with aiofiles.open(fstab_path, mode='r+') as fp:
+        async with aiofiles.open(fstab_path, mode='r+') as fp:  # type: ignore
             fstab = Fstab(fp)
             await fstab.add(params['fs_location'], str(mountpoint),
                             params['fs_type'], params['options'])
