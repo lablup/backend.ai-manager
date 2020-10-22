@@ -37,7 +37,7 @@ install:
     if [ $? -eq 0 ]; then
       sed -i "s%\(backend.ai-common\)@master%\1@${BRANCH}%" requirements/test.txt
     fi
-  - pip install -U -r requirements/test.txt
+  - pip install -U --use-feature=2020-resolver -r requirements/test.txt
   - mkdir -p ~/.config/backend.ai
   - cp config/ci.toml ~/.config/backend.ai/manager.toml
   - mkdir -p /tmp/scratches

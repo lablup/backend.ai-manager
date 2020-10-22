@@ -155,7 +155,7 @@ class ResourceSlotColumn(TypeDecorator):
             return value
         return value.to_json() if value is not None else None
 
-    def process_result_value(self, value: Dict[str, str], dialect):
+    def process_result_value(self, value: Dict[str, Any], dialect):
         # legacy handling
         mem = value.get('mem')
         if isinstance(mem, str) and not mem.isdigit():
