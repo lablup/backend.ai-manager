@@ -101,9 +101,16 @@ async def fetch_manager_status(request: web.Request) -> web.Response:
                               (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))))
             active_sessions_num = await conn.scalar(query)
 
+            # TODO: update logic to return information for multiple managers (HA)
+            if '' in etcd_info:
+                _id = etcd_info['']
+            elif etcd_info:
+                _id = list(etcd_info.keys())[0]
+            else:
+                _id = ''
             nodes = [
                 {
-                    'id': etcd_info[''],
+                    'id': _id,
                     'num_proc': configs['num-proc'],
                     'service_addr': str(configs['service-addr']),
                     'heartbeat_timeout': configs['heartbeat-timeout'],
