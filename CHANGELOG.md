@@ -16,6 +16,15 @@ Changes
 
 .. towncrier release notes start
 
+20.03.7 (2020-10-24)
+--------------------
+
+### Fixes
+* Fix a bug that it's unable to invite user to a vfolder, which is shared with another user. ([#340](https://github.com/lablup/backend.ai-manager/issues/340))
+* Fix a regression of the manager status API due to internal etcd data structure changes, by returning the first-seen manager ID (for HA scenarios) to keep the compatibility of API semantics ([#342](https://github.com/lablup/backend.ai-manager/issues/342))
+* Fix a regression in paginated list GraphQL query for vfolders due to missing code updates ([#343](https://github.com/lablup/backend.ai-manager/issues/343))
+
+
 20.03.6 (2020-10-06)
 --------------------
 
