@@ -16,6 +16,60 @@ Changes
 
 .. towncrier release notes start
 
+20.09.0a1 (2020-10-06)
+----------------------
+
+### Breaking Changes
+* The latest API version is now bumped to `v6.20200815`. ([#0](https://github.com/lablup/backend.ai-manager/issues/0))
+* Configuration/DB changes are required for storage proxies ([#312](https://github.com/lablup/backend.ai-manager/issues/312))
+  - To use vfolders, now the storage proxy must be installed and configured.
+  - The "volumes" key in the etcd must include storage proxy configurations,
+    as demonstrated in the `config/sample.volume.json` file.
+  - All vfolder hosts are now in the format of "{proxy-name}:{volume-name}"
+    where proxy-name is the key in the etcd and volume-name values are retrieved from
+    the storage proxies at runtime.
+  - All `allowed_vfolder_hosts` configurations in the database must be updated to
+    the above new vfolder host format.
+  - Clients should use the same vfolder host format when making API requests.
+
+### Features
+* Add support for multi-container sessions ([#217](https://github.com/lablup/backend.ai-manager/issues/217))
+* Add a generic query filter expression language parser (`ai.backend.manager.models.minilang.queryfilter`) for GraphQL paginated list queries using [the Lark parser framework](https://github.com/lark-parser/lark) ([#305](https://github.com/lablup/backend.ai-manager/issues/305))
+* Add support for storage proxies ([#312](https://github.com/lablup/backend.ai-manager/issues/312), [#337](https://github.com/lablup/backend.ai-manager/issues/337))
+  - Storage proxies have a multi-backend architecture, so now storage-specific optimizations such as per-directory quota, performance measurements and fast metadata scanning all becomes available to Backend.AI users.
+  - Offload and unify vfolder upload/download operations to storage proxies via the HTTP ranged queries and the tus.io protocol.
+  - Support multiple storage proxies configured via etcd, and each storage proxy may provide multiple volumes in the mount points shared with agents.
+  - Now the manager instances don't have mount points for the storage volumes, and mount/fstab management APIs skip the manager-side queries and manipulations.
+* Include user information (full_name) in keypair gql query. ([#313](https://github.com/lablup/backend.ai-manager/issues/313))
+* Add an endpoint that allows users to leave a shared virtual folder ([#317](https://github.com/lablup/backend.ai-manager/issues/317))
+* Make the `mgr dbshell` command to be smarter to auto-detect the halfstack db container and use the container-provided psql command for maximum compatibility, with an optinal ability to set the container ID or name explicitly via `--psql-container` option and forward additional arguments to the psql command ([#318](https://github.com/lablup/backend.ai-manager/issues/318))
+* Script to migrate /vroot/local to ex. /vroot/vfs structure according with new Storage Proxy implementation. ([#319](https://github.com/lablup/backend.ai-manager/issues/319))
+* Make the maximum websocket message size configurable, which affects the operation of streaming APIs including service-port proxy ([#320](https://github.com/lablup/backend.ai-manager/issues/320))
+* Add a new vfolder API to clone a vfolder and a property to vfolders for specifying cloneable or not ([#323](https://github.com/lablup/backend.ai-manager/issues/323), [#338](https://github.com/lablup/backend.ai-manager/issues/338))
+* Add `quota` argument when creating vfolders (currently only supported in the xfs storage backend) ([#325](https://github.com/lablup/backend.ai-manager/issues/325))
+* Add support for listing/updating/deleting/creating domain dotfiles and group dotfiles ([#329](https://github.com/lablup/backend.ai-manager/issues/329))
+* Make vfolder's mkdir to accept and deliver parents and exist_ok option. ([#336](https://github.com/lablup/backend.ai-manager/issues/336))
+
+### Fixes
+* Prevent purging a user, group, and domain if they have active sessions and/or
+  their bound resources, such as virtual folders, are being used by other sessions. ([#306](https://github.com/lablup/backend.ai-manager/issues/306))
+* Fix conversion of string query params to int/bool ([#307](https://github.com/lablup/backend.ai-manager/issues/307))
+* Do not create invitation if target user is already shared the folder. ([#308](https://github.com/lablup/backend.ai-manager/issues/308))
+* Ignore missing tags in the Docker Hub when scanning the metadata for public Docker images, which happens after deleting images from the hub ([#309](https://github.com/lablup/backend.ai-manager/issues/309))
+* Fix a regression of the GQL query to fetch the information about a single compute session ([#311](https://github.com/lablup/backend.ai-manager/issues/311))
+* Return shared memory in preset list API. ([#314](https://github.com/lablup/backend.ai-manager/issues/314))
+* Fix a regression in the server-side error logs query API due to a typo in the DB column name ([#315](https://github.com/lablup/backend.ai-manager/issues/315))
+* Fix ErrorMonitor plugin instance to match the updates in plugin class of backend.ai-common ([#316](https://github.com/lablup/backend.ai-manager/issues/316))
+* Deduplicate explicitly raised internal server errors in the daemon logs ([#322](https://github.com/lablup/backend.ai-manager/issues/322))
+* Log detailed error messages when graphQl exceptions are raised. ([#324](https://github.com/lablup/backend.ai-manager/issues/324))
+* Fix a regression of statistics API due to a wrong default value type ([#326](https://github.com/lablup/backend.ai-manager/issues/326))
+* Fix vfolder mounts for compute sessions using agent host paths provided by the storage proxy ([#328](https://github.com/lablup/backend.ai-manager/issues/328))
+* Hand over recursive parameter to storage proxy when deleting files. ([#330](https://github.com/lablup/backend.ai-manager/issues/330))
+* Validate service port declarations before starting the session ([#333](https://github.com/lablup/backend.ai-manager/issues/333))
+* Improve pickling of wrapped HTTP exceptions (`BackendError` and its derivatives) ([#334](https://github.com/lablup/backend.ai-manager/issues/334))
+* Show the container name when using the `mgr dbshell` cli command ([#335](https://github.com/lablup/backend.ai-manager/issues/335))
+
+
 20.03.0 (2020-07-28)
 --------------------
 

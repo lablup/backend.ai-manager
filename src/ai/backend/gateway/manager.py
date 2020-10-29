@@ -31,6 +31,7 @@ from .exceptions import (
 )
 from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params
+from ..manager.defs import DEFAULT_ROLE
 from ..manager.models import agents, kernels, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.manager'))
@@ -97,13 +98,20 @@ async def fetch_manager_status(request: web.Request) -> web.Response:
         async with request.app['dbpool'].acquire() as conn, conn.begin():
             query = (sa.select([sa.func.count(kernels.c.id)])
                        .select_from(kernels)
-                       .where((kernels.c.role == 'master') &
+                       .where((kernels.c.cluster_role == DEFAULT_ROLE) &
                               (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))))
             active_sessions_num = await conn.scalar(query)
 
+            # TODO: update logic to return information for multiple managers (HA)
+            if '' in etcd_info:
+                _id = etcd_info['']
+            elif etcd_info:
+                _id = list(etcd_info.keys())[0]
+            else:
+                _id = ''
             nodes = [
                 {
-                    'id': etcd_info[''],
+                    'id': _id,
                     'num_proc': configs['num-proc'],
                     'service_addr': str(configs['service-addr']),
                     'heartbeat_timeout': configs['heartbeat-timeout'],

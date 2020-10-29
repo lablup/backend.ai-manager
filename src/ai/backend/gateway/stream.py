@@ -46,6 +46,7 @@ from .manager import READ_ALLOWED, server_status_required
 from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params, call_non_bursty
 from .wsproxy import TCPProxy
+from ..manager.defs import DEFAULT_ROLE
 from ..manager.models import kernels
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.stream'))
@@ -65,7 +66,8 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
     api_version = request['api_version']
     try:
         compute_session = await asyncio.shield(
-            registry.get_session(session_name, access_key, field=extra_fields))
+            registry.get_session(session_name, access_key, field=extra_fields)
+        )
     except SessionNotFound:
         raise
     log.info('STREAM_PTY(ak:{0}, s:{1})', access_key, session_name)
@@ -117,8 +119,9 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
                             # when socks[0] is closed, re-initiate the connection.
                             app['stream_stdin_socks'][stream_key].discard(socks[0])
                             socks[1].close()
-                            kernel = await asyncio.shield(registry.get_session(
-                                session_name, access_key, field=extra_fields))
+                            kernel = await asyncio.shield(
+                                registry.get_session(session_name, access_key, field=extra_fields)
+                            )
                             stdin_sock, stdout_sock = await connect_streams(kernel)
                             socks[0] = stdin_sock
                             socks[1] = stdout_sock
@@ -232,7 +235,9 @@ async def stream_execute(defer, request: web.Request) -> web.StreamResponse:
     api_version = request['api_version']
     log.info('STREAM_EXECUTE(ak:{0}, s:{1})', access_key, session_name)
     try:
-        _ = await asyncio.shield(registry.get_session(session_name, access_key))  # noqa
+        _ = await asyncio.shield(
+            registry.get_session(session_name, access_key)  # noqa
+        )
     except SessionNotFound:
         raise
 
@@ -461,11 +466,11 @@ async def kernel_terminated(app: web.Application, agent_id: AgentId, event_name:
                             exit_code: int = None) -> None:
     try:
         kernel = await app['registry'].get_kernel(
-            kernel_id, (kernels.c.role, kernels.c.status), allow_stale=True)
+            kernel_id, (kernels.c.cluster_role, kernels.c.status), allow_stale=True)
     except SessionNotFound:
         return
-    if kernel.role == 'master':
-        session_name = kernel['sess_id']
+    if kernel['cluster_role'] == DEFAULT_ROLE:
+        session_name = kernel['session_id']
         stream_key = (session_name, kernel['access_key'])
         cancelled_tasks = []
         for sock in app['stream_stdin_socks'][session_name]:

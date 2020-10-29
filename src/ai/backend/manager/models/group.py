@@ -8,6 +8,9 @@ from typing import (
     Any, Optional, Union,
     Mapping,
     Sequence,
+    List,
+    Tuple,
+    TypedDict,
 )
 import uuid
 import shutil
@@ -32,6 +35,8 @@ from .base import (
     batch_result,
 )
 from .user import UserRole
+from ai.backend.gateway.config import RESERVED_DOTFILES
+from ai.backend.common import msgpack
 
 log = BraceStyleAdapter(logging.getLogger(__file__))
 
@@ -41,8 +46,13 @@ __all__: Sequence[str] = (
     'resolve_group_name_or_id',
     'Group', 'GroupInput', 'ModifyGroupInput',
     'CreateGroup', 'ModifyGroup', 'DeleteGroup',
+    'GroupDotfile', 'MAXIMUM_DOTFILE_SIZE',
+    'query_group_dotfiles',
+    'query_group_domain',
+    'verify_dotfile_name',
 )
 
+MAXIMUM_DOTFILE_SIZE = 64 * 1024  # 61 KiB
 _rx_slug = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$')
 
 association_groups_users = sa.Table(
@@ -75,7 +85,9 @@ groups = sa.Table(
     # TODO: separate resource-related fields with new domain resource policy table when needed.
     sa.Column('total_resource_slots', ResourceSlotColumn(), default='{}'),
     sa.Column('allowed_vfolder_hosts', pgsql.ARRAY(sa.String), nullable=False, default='{}'),
-    sa.UniqueConstraint('name', 'domain_name', name='uq_groups_name_domain_name')
+    sa.UniqueConstraint('name', 'domain_name', name='uq_groups_name_domain_name'),
+    # dotfiles column, \x90 means empty list in msgpack
+    sa.Column('dotfiles', sa.LargeBinary(length=MAXIMUM_DOTFILE_SIZE), nullable=False, default=b'\x90'),
 )
 
 
@@ -508,3 +520,40 @@ class PurgeGroup(graphene.Mutation):
         )
         active_kernel_count = await conn.scalar(query)
         return True if active_kernel_count > 0 else False
+
+
+class GroupDotfile(TypedDict):
+    data: str
+    path: str
+    perm: str
+
+
+async def query_group_dotfiles(
+    conn: SAConnection,
+    group_id: Union[GUID, uuid.UUID],
+) -> Tuple[Union[List[GroupDotfile], None], Union[int, None]]:
+    query = (sa.select([groups.c.dotfiles])
+               .select_from(groups)
+               .where(groups.c.id == group_id))
+    packed_dotfile = await conn.scalar(query)
+    if packed_dotfile is None:
+        return None, None
+    rows = msgpack.unpackb(packed_dotfile)
+    return rows, MAXIMUM_DOTFILE_SIZE - len(packed_dotfile)
+
+
+async def query_group_domain(
+    conn: SAConnection,
+    group_id: Union[GUID, uuid.UUID]
+) -> str:
+    query = (sa.select([groups.c.domain_name])
+                .select_from(groups)
+                .where(groups.c.id == group_id))
+    domain = await conn.scalar(query)
+    return domain
+
+
+def verify_dotfile_name(dotfile: str) -> bool:
+    if dotfile in RESERVED_DOTFILES:
+        return False
+    return True

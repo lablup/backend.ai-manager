@@ -11,3 +11,7 @@ INTRINSIC_SLOTS: Final = {
     SlotName('cpu'): SlotTypes('count'),
     SlotName('mem'): SlotTypes('bytes'),
 }
+
+
+# The default container role name for multi-container sessions
+DEFAULT_ROLE: Final = "main"

@@ -113,6 +113,7 @@ vfolders = sa.Table(
               default=VFolderOwnershipType.USER, nullable=False),
     sa.Column('user', GUID, sa.ForeignKey('users.uuid'), nullable=True),
     sa.Column('group', GUID, sa.ForeignKey('groups.id'), nullable=True),
+    sa.Column('cloneable', sa.Boolean, default=False, nullable=False),
 
     sa.CheckConstraint(
         '(ownership_type = \'user\' AND "user" IS NOT NULL) OR '
@@ -210,6 +211,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                        vfolders.c.group,
                        vfolders.c.creator,
                        vfolders.c.unmanaged_path,
+                       vfolders.c.cloneable,
                        users.c.email,
                    ])
                    .select_from(j)
@@ -238,6 +240,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                 'is_owner': True,
                 'permission': row.permission,
                 'unmanaged_path': row.get('unmanaged_path'),
+                'cloneable': row.cloneable,
             })
         # Scan vfolders shared with me.
         j = (
@@ -266,6 +269,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                        vfolders.c.unmanaged_path,
                        # vfolders.c.permission,
                        vfolder_permissions.c.permission,  # override vfolder perm
+                       vfolders.c.cloneable,
                        users.c.email,
                    ])
                    .select_from(j)
@@ -294,6 +298,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                 'is_owner': False,
                 'permission': row.permission,  # not vfolders.c.permission!
                 'unmanaged_path': row.get('unmanaged_path'),
+                'cloneable': row.cloneable,
             })
 
     if 'group' in allowed_vfolder_types:
@@ -329,6 +334,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                        vfolders.c.creator,
                        vfolders.c.permission,
                        vfolders.c.unmanaged_path,
+                       vfolders.c.cloneable,
                        groups.c.name,
                    ], use_labels=True)
                    .select_from(j))
@@ -360,6 +366,7 @@ async def query_accessible_vfolders(conn, user_uuid, *,
                 'is_owner': is_owner,
                 'permission': row.vfolders_permission,
                 'unmanaged_path': row.get('unmanaged_path'),
+                'cloneable': row.vfolders_cloneable,
             })
     return entries
 
@@ -449,9 +456,10 @@ class VirtualFolder(graphene.ObjectType):
     num_files = graphene.Int()
     cur_size = BigInt()
     # num_attached = graphene.Int()
+    cloneable = graphene.Boolean()
 
     @classmethod
-    def from_row(cls, row):
+    def from_row(cls, context, row):
         if row is None:
             return None
         return cls(
@@ -470,6 +478,7 @@ class VirtualFolder(graphene.ObjectType):
             created_at=row['created_at'],
             last_used=row['last_used'],
             # num_attached=row['num_attached'],
+            cloneable=row['cloneable'],
         )
 
     async def resolve_num_files(self, info):
