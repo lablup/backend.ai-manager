@@ -23,6 +23,7 @@ from ai.backend.common import validators as tx
 from ai.backend.common.logging import Logger, BraceStyleAdapter
 from ai.backend.common.plugin.hook import (
     ALL_COMPLETED,
+    FIRST_COMPLETED,
     PASSED,
 )
 from .exceptions import (
@@ -537,9 +538,30 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         raise InvalidAPIParameters('Unsupported authorization type')
     log.info('AUTH.AUTHORIZE(d:{0[domain]}, u:{0[username]}, passwd:****, type:{0[type]})', params)
     dbpool = request.app['dbpool']
-    user = await check_credential(
-        dbpool,
-        params['domain'], params['username'], params['password'])
+
+    # [Hooking point for AUTHORIZE with the FIRST_COMPLETED requirement]
+    # The hook handlers should accept the whole ``params`` dict, and optional
+    # ``dbpool`` parameter (if the hook needs to query to database).
+    # They should return a corresponding Backend.AI user object after performing
+    # their own authentication steps, like LDAP authentication, etc.
+    hook_result = await request.app['hook_plugin_ctx'].dispatch(
+        'AUTHORIZE',
+        (params, dbpool),
+        return_when=FIRST_COMPLETED,
+    )
+    if hook_result.status != PASSED:
+        # Did not pass AUTHORIZED hook
+        reason = hook_result.reason
+        raise RejectedByHook(extra_msg=reason)
+    elif hook_result.result:
+        # Passed one of AUTHORIZED hook
+        user = hook_result.result
+    else:
+        # No AUTHORIZE hook is defined (proceed with normal login)
+        user = await check_credential(
+            dbpool,
+            params['domain'], params['username'], params['password']
+        )
     if user is None:
         raise AuthorizationFailed('User credential mismatch.')
     if user.get('status') == UserStatus.BEFORE_VERIFICATION:

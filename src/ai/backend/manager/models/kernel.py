@@ -1,9 +1,19 @@
 from __future__ import annotations
+from collections import OrderedDict
+from decimal import Decimal
 import enum
 from typing import (
-    Any, Iterable, Optional,
-    Mapping, Sequence,
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    TypedDict,
+    Union,
 )
+from uuid import UUID
 
 from aiopg.sa.connection import SAConnection
 from aiopg.sa.result import RowProxy
@@ -16,16 +26,27 @@ from ai.backend.common import msgpack, redis
 from ai.backend.common.types import (
     AccessKey,
     BinarySize,
+    ClusterMode,
+    SessionId,
     SessionTypes,
     SessionResult,
+    SlotName,
+    ResourceSlot,
 )
+
+from ..defs import DEFAULT_ROLE
 from .base import (
-    metadata,
-    BigInt, GUID, IDColumn, EnumType,
+    BigInt,
+    EnumType,
+    GUID,
+    Item,
+    KernelIDColumn,
+    PaginatedList,
     ResourceSlotColumn,
-    Item, PaginatedList,
+    SessionIDColumnType,
     batch_result,
     batch_multiresult,
+    metadata,
 )
 from .group import groups
 from .user import users
@@ -33,6 +54,7 @@ from .keypair import keypairs
 
 __all__: Sequence[str] = (
     'kernels',
+    'session_dependencies',
     'KernelStatus',
     'ComputeContainer',
     'ComputeSession',
@@ -105,13 +127,31 @@ LIVE_STATUS = (
 )
 
 
+def default_hostname(context) -> str:
+    params = context.get_current_parameters()
+    return f"{params['cluster_role']}{params['cluster_idx']}"
+
+
 kernels = sa.Table(
     'kernels', metadata,
-    IDColumn(),
-    sa.Column('sess_id', sa.String(length=64), unique=False, index=True),
-    sa.Column('sess_type', EnumType(SessionTypes), index=True, nullable=False,
+    # The Backend.AI-side UUID for each kernel
+    # (mapped to a container in the docker backend and a pod in the k8s backend)
+    KernelIDColumn(),
+    # session_id == id when the kernel is the main container in a multi-container session or a
+    # single-container session.
+    # Otherwise, it refers the kernel ID of the main contaienr of the belonged multi-container session.
+    sa.Column('session_id', SessionIDColumnType, unique=False, index=True, nullable=False),
+    sa.Column('session_name', sa.String(length=64), unique=False, index=True),     # previously sess_id
+    sa.Column('session_type', EnumType(SessionTypes), index=True, nullable=False,  # previously sess_type
               default=SessionTypes.INTERACTIVE, server_default=SessionTypes.INTERACTIVE.name),
-    sa.Column('role', sa.String(length=16), nullable=False, default='master'),
+    sa.Column('cluster_mode', sa.String(length=16), nullable=False,
+              default=ClusterMode.SINGLE_NODE, server_default=ClusterMode.SINGLE_NODE.name),
+    sa.Column('cluster_size', sa.Integer, nullable=False, default=1),
+    sa.Column('cluster_role', sa.String(length=16), nullable=False, default=DEFAULT_ROLE),
+    sa.Column('cluster_idx', sa.Integer, nullable=False, default=0),
+    sa.Column('cluster_hostname', sa.String(length=64), nullable=False, default=default_hostname),
+
+    # Resource ownership
     sa.Column('scaling_group', sa.ForeignKey('scaling_groups.name'), index=True, nullable=True),
     sa.Column('agent', sa.String(length=64), sa.ForeignKey('agents.id'), nullable=True),
     sa.Column('agent_addr', sa.String(length=128), nullable=True),
@@ -168,22 +208,26 @@ kernels = sa.Table(
     sa.Column('num_queries', sa.BigInteger(), default=0),
     sa.Column('last_stat', pgsql.JSONB(), nullable=True, default=sa.null()),
 
-    sa.Index('ix_kernels_sess_id_role', 'sess_id', 'role', unique=False),
+    sa.Index('ix_kernels_sess_id_role', 'session_id', 'cluster_role', unique=False),
     sa.Index('ix_kernels_updated_order',
              sa.func.greatest('created_at', 'terminated_at', 'status_changed'),
              unique=False),
-    sa.Index('ix_kernels_unique_sess_token', 'access_key', 'sess_id',
+    sa.Index('ix_kernels_unique_sess_token', 'access_key', 'session_id',
              unique=True,
              postgresql_where=sa.text(
                  "status NOT IN ('TERMINATED', 'CANCELLED') and "
-                 "role = 'master'")),
+                 "cluster_role = 'main'")),
 )
 
-kernel_dependencies = sa.Table(
-    'kernel_dependencies', metadata,
-    sa.Column('kernel_id', GUID, sa.ForeignKey('kernels.id'), index=True, nullable=False),
-    sa.Column('depends_on', GUID, sa.ForeignKey('kernels.id'), index=True, nullable=False),
-    sa.PrimaryKeyConstraint('kernel_id', 'depends_on'),
+session_dependencies = sa.Table(
+    'session_dependencies', metadata,
+    sa.Column('session_id', GUID,
+              sa.ForeignKey('kernels.id', onupdate='CASCADE', ondelete='CASCADE'),
+              index=True, nullable=False),
+    sa.Column('depends_on', GUID,
+              sa.ForeignKey('kernels.id', onupdate='CASCADE', ondelete='CASCADE'),
+              index=True, nullable=False),
+    sa.PrimaryKeyConstraint('session_id', 'depends_on'),
 )
 
 DEFAULT_SESSION_ORDERING = [
@@ -195,13 +239,189 @@ DEFAULT_SESSION_ORDERING = [
 ]
 
 
+class SessionInfo(TypedDict):
+    session_id: SessionId
+    session_name: str
+    status: KernelStatus
+
+
+async def match_session_ids(
+    session_name_or_id: Union[str, UUID],
+    access_key: AccessKey,
+    *,
+    db_connection: SAConnection,
+    extra_cond=None,
+    for_update: bool = False,
+    max_matches: int = 10,
+) -> Sequence[SessionInfo]:
+    """
+    Match the prefix of session ID or session name among the sessions that belongs to the given
+    access key, and return the list of session IDs with matching prefixes.
+    """
+    cond_id = (
+        (sa.sql.expression.cast(kernels.c.id, sa.String).like(f'{session_name_or_id}%')) &
+        (kernels.c.access_key == access_key)
+    )
+    if extra_cond is not None:
+        cond_id = cond_id & extra_cond
+    cond_name = (
+        (kernels.c.session_name.like(f'{session_name_or_id}%')) &
+        (kernels.c.access_key == access_key)
+    )
+    if extra_cond is not None:
+        cond_name = cond_name & extra_cond
+    cond_session_id = (
+        (sa.sql.expression.cast(kernels.c.session_id, sa.String).like(f'{session_name_or_id}%')) &
+        (kernels.c.access_key == access_key)
+    )
+    if extra_cond is not None:
+        cond_session_id = cond_session_id & extra_cond
+    info_cols = [
+        kernels.c.session_id,
+        kernels.c.session_name,
+        kernels.c.status,
+        kernels.c.created_at,
+    ]
+    match_sid_by_id = (
+        sa.select(info_cols, for_update=for_update)
+        .select_from(kernels)
+        .where(
+            (kernels.c.session_id.in_(
+                sa.select(
+                    [kernels.c.session_id]
+                )
+                .select_from(kernels)
+                .where(cond_id)
+                .group_by(kernels.c.session_id)
+                .limit(max_matches).offset(0)
+            )) &
+            (kernels.c.cluster_role == DEFAULT_ROLE)
+        )
+        .order_by(sa.desc(kernels.c.created_at))
+    )
+    match_sid_by_name = (
+        sa.select(info_cols, for_update=for_update)
+        .select_from(kernels)
+        .where(
+            (kernels.c.session_id.in_(
+                sa.select(
+                    [kernels.c.session_id]
+                )
+                .select_from(kernels)
+                .where(cond_name)
+                .group_by(kernels.c.session_id)
+                .limit(max_matches).offset(0)
+            )) &
+            (kernels.c.cluster_role == DEFAULT_ROLE)
+        )
+        .order_by(sa.desc(kernels.c.created_at))
+    )
+    match_sid_by_session_id = (
+        sa.select(info_cols, for_update=for_update)
+        .select_from(kernels)
+        .where(
+            (kernels.c.session_id.in_(
+                sa.select(
+                    [kernels.c.session_id]
+                )
+                .select_from(kernels)
+                .where(cond_session_id)
+                .group_by(kernels.c.session_id)
+                .limit(max_matches).offset(0)
+            )) &
+            (kernels.c.cluster_role == DEFAULT_ROLE)
+        )
+        .order_by(sa.desc(kernels.c.created_at))
+    )
+    for match_query in [
+        match_sid_by_id,
+        match_sid_by_session_id,
+        match_sid_by_name,
+    ]:
+        result = await db_connection.execute(match_query)
+        if result.rowcount == 0:
+            continue
+        return [
+            SessionInfo(
+                session_id=row['session_id'],
+                session_name=row['session_name'],
+                status=row['status'],
+            ) for row in await result.fetchall()
+        ]
+    return []
+
+
+async def get_main_kernels(
+    session_ids: Sequence[SessionId],
+    *,
+    db_connection: SAConnection,
+    for_update: bool = False,
+) -> Sequence[RowProxy]:
+    """
+    Return a list of the main kernels for the given session IDs.
+    If a given session ID does not exist, its position will be ``None``.
+    """
+    session_id_to_rows = OrderedDict(
+        (session_id, None) for session_id in session_ids
+    )
+    query = (
+        sa.select([sa.text('*')])
+        .select_from(kernels)
+        .where(
+            (kernels.c.session_id.in_(session_ids)) &
+            (kernels.c.cluster_role == DEFAULT_ROLE)
+        )
+    )
+    result = await db_connection.execute(query)
+    for row in await result.fetchall():
+        session_id_to_rows[row['session_id']] = row
+    return [*session_id_to_rows.values()]
+
+
+async def get_all_kernels(
+    session_ids: Sequence[SessionId],
+    *,
+    db_connection: SAConnection,
+    for_update: bool = False,
+) -> Sequence[Sequence[RowProxy]]:
+    """
+    Return a list of all belonging kernel lists per the given session IDs
+    in the order they are given.
+    If a given session ID does not exist, an empty list will be returned
+    at the position of that session ID.
+    """
+    session_id_to_rowsets: Dict[SessionId, List[RowProxy]]
+    session_id_to_rowsets = OrderedDict(
+        (session_id, []) for session_id in session_ids
+    )
+    for session_id in session_ids:
+        query = (
+            sa.select([sa.text('*')])
+            .select_from(kernels)
+            .where(
+                (kernels.c.session_id == session_id)
+            )
+        )
+        result = await db_connection.execute(query)
+        if result.rowcount == 0:
+            continue
+        session_id_to_rowsets[session_id].extend(
+            row for row in await result.fetchall()
+        )
+    return [*session_id_to_rowsets.values()]
+
+
 class ComputeContainer(graphene.ObjectType):
     class Meta:
         interfaces = (Item, )
 
     # identity
-    role = graphene.String()
-    hostname = graphene.String()
+    idx = graphene.Int()          # legacy
+    role = graphene.String()      # legacy
+    hostname = graphene.String()  # legacy
+    cluster_idx = graphene.Int()
+    cluster_role = graphene.String()
+    cluster_hostname = graphene.String()
     session_id = graphene.UUID()  # owner session
 
     # image
@@ -236,9 +456,13 @@ class ComputeContainer(graphene.ObjectType):
         return {
             # identity
             'id': row['id'],
-            'role': row['role'],
-            'hostname': None,         # TODO: implement
-            'session_id': row['id'],  # master container's ID == session ID
+            'idx': row['cluster_idx'],
+            'role': row['cluster_role'],
+            'hostname': row['cluster_hostname'],
+            'cluster_idx': row['cluster_idx'],
+            'cluster_role': row['cluster_role'],
+            'cluster_hostname': row['cluster_hostname'],
+            'session_id': row['session_id'],
 
             # image
             'image': row['image'],
@@ -270,7 +494,7 @@ class ComputeContainer(graphene.ObjectType):
         props = cls.parse_row(context, row)
         return cls(**props)
 
-    async def resolve_live_stat(self, info: graphene.ResolveInfo):
+    async def resolve_live_stat(self, info: graphene.ResolveInfo) -> Optional[Mapping[str, Any]]:
         if not hasattr(self, 'status'):
             return None
         rs = info.context['redis_stat']
@@ -285,19 +509,25 @@ class ComputeContainer(graphene.ObjectType):
             return self.last_stat
 
     @classmethod
-    async def load_count(cls, context, session_id, *,
-                         role=None,
-                         domain_name=None, group_id=None, access_key=None):
+    async def load_count(
+        cls,
+        context,
+        session_id: SessionId,
+        *,
+        cluster_role=None,
+        domain_name=None,
+        group_id=None,
+        access_key=None,
+    ):
         async with context['dbpool'].acquire() as conn:
             query = (
                 sa.select([sa.func.count(kernels.c.id)])
                 .select_from(kernels)
-                # TODO: use "owner session ID" when we implement multi-container session
-                .where(kernels.c.id == session_id)
+                .where(kernels.c.session_id == session_id)
                 .as_scalar()
             )
-            if role is not None:
-                query = query.where(kernels.c.role == role)
+            if cluster_role is not None:
+                query = query.where(kernels.c.cluster_role == cluster_role)
             if domain_name is not None:
                 query = query.where(kernels.c.domain_name == domain_name)
             if group_id is not None:
@@ -309,10 +539,20 @@ class ComputeContainer(graphene.ObjectType):
             return count[0]
 
     @classmethod
-    async def load_slice(cls, context, limit, offset, session_id, *,
-                         role=None,
-                         domain_name=None, group_id=None, access_key=None,
-                         order_key=None, order_asc=None):
+    async def load_slice(
+        cls,
+        context,
+        limit: int,
+        offset: int,
+        session_id: SessionId,
+        *,
+        cluster_role=None,
+        domain_name=None,
+        group_id=None,
+        access_key=None,
+        order_key=None,
+        order_asc=None,
+    ):
         async with context['dbpool'].acquire() as conn:
             if order_key is None:
                 _ordering = DEFAULT_SESSION_ORDERING
@@ -325,16 +565,15 @@ class ComputeContainer(graphene.ObjectType):
                 .join(users, users.c.uuid == kernels.c.user_uuid)
             )
             query = (
-                sa.select([kernels, groups.c.name, users.c.email])
+                sa.select([kernels])
                 .select_from(j)
-                # TODO: use "owner session ID" when we implement multi-container session
-                .where(kernels.c.id == session_id)
+                .where(kernels.c.session_id == session_id)
                 .order_by(*_ordering)
                 .limit(limit)
                 .offset(offset)
             )
-            if role is not None:
-                query = query.where(kernels.c.role == role)
+            if cluster_role is not None:
+                query = query.where(kernels.c.cluster_role == cluster_role)
             if domain_name is not None:
                 query = query.where(kernels.c.domain_name == domain_name)
             if group_id is not None:
@@ -350,11 +589,11 @@ class ComputeContainer(graphene.ObjectType):
                 sa.select([kernels])
                 .select_from(kernels)
                 # TODO: use "owner session ID" when we implement multi-container session
-                .where(kernels.c.id.in_(session_ids))
+                .where(kernels.c.session_id.in_(session_ids))
             )
             return await batch_multiresult(
                 context, conn, query, cls,
-                session_ids, lambda row: row['id'],
+                session_ids, lambda row: row['session_id'],
             )
 
     @classmethod
@@ -367,7 +606,7 @@ class ComputeContainer(graphene.ObjectType):
                 .join(users, users.c.uuid == kernels.c.user_uuid)
             )
             query = (
-                sa.select([kernels, groups.c.name, users.c.email])
+                sa.select([kernels])
                 .select_from(j)
                 .where(
                     (kernels.c.id.in_(container_ids))
@@ -390,11 +629,14 @@ class ComputeSession(graphene.ObjectType):
     tag = graphene.String()
     name = graphene.String()
     type = graphene.String()
+    session_id = graphene.UUID()
 
     # image
-    image = graphene.String()     # image for the master
-    registry = graphene.String()  # image registry for the master
+    image = graphene.String()     # image for the main container
+    registry = graphene.String()  # image registry for the main container
     cluster_template = graphene.String()
+    cluster_mode = graphene.String()
+    cluster_size = graphene.Int()
 
     # ownership
     domain_name = graphene.String()
@@ -439,17 +681,20 @@ class ComputeSession(graphene.ObjectType):
             # identity
             'id': row['id'],
             'tag': row['tag'],
-            'name': row['sess_id'],
-            'type': row['sess_type'].name,
+            'name': row['session_name'],
+            'type': row['session_type'].name,
+            'session_id': row['session_id'],
 
             # image
             'image': row['image'],
             'registry': row['registry'],
             'cluster_template': None,  # TODO: implement
+            'cluster_mode': row['cluster_mode'],
+            'cluster_size': row['cluster_size'],
 
             # ownership
             'domain_name': row['domain_name'],
-            'group_name': row['name'],  # group.name (group is omitted since use_labels=True is not used)
+            'group_name': row['group_name'],
             'group_id': row['group_id'],
             'user_email': row['email'],
             'user_id': row['user_uuid'],
@@ -472,7 +717,6 @@ class ComputeSession(graphene.ObjectType):
             'scaling_group': row['scaling_group'],
             'service_ports': row['service_ports'],
             'mounts': row['mounts'],
-            'occupied_slots': row['occupied_slots'].to_json(),  # TODO: sum of owned containers
 
             # statistics
             'num_queries': row['num_queries'],
@@ -485,13 +729,29 @@ class ComputeSession(graphene.ObjectType):
         props = cls.parse_row(context, row)
         return cls(**props)
 
+    async def resolve_occupied_slots(self, info: graphene.ResolveInfo) -> Mapping[str, Any]:
+        """
+        Calculate the sum of occupied resource slots of all sub-kernels,
+        and return the JSON-serializable object from the sum result.
+        """
+        manager = info.context['dlmgr']
+        loader = manager.get_loader('ComputeContainer.by_session')
+        containers = await loader.load(self.session_id)
+        zero = ResourceSlot()
+        return sum(
+            (ResourceSlot({
+                SlotName(k): Decimal(v) for k, v in c.occupied_slots.items()
+            }) for c in containers),
+            start=zero,
+        ).to_json()
+
     async def resolve_containers(
         self,
         info: graphene.ResolveInfo,
     ) -> Iterable[ComputeContainer]:
         manager = info.context['dlmgr']
         loader = manager.get_loader('ComputeContainer.by_session')
-        return await loader.load(self.id)
+        return await loader.load(self.session_id)
 
     async def resolve_dependencies(
         self,
@@ -513,7 +773,7 @@ class ComputeSession(graphene.ObjectType):
             query = (
                 sa.select([sa.func.count(kernels.c.id)])
                 .select_from(kernels)
-                .where(kernels.c.role == 'master')
+                .where(kernels.c.cluster_role == DEFAULT_ROLE)
                 .as_scalar()
             )
             if domain_name is not None:
@@ -549,9 +809,13 @@ class ComputeSession(graphene.ObjectType):
                 .join(users, users.c.uuid == kernels.c.user_uuid)
             )
             query = (
-                sa.select([kernels, groups.c.name, users.c.email])
+                sa.select([
+                    kernels,
+                    groups.c.name.label('group_name'),
+                    users.c.email,
+                ])
                 .select_from(j)
-                .where(kernels.c.role == 'master')
+                .where(kernels.c.cluster_role == DEFAULT_ROLE)
                 .order_by(*_ordering)
                 .limit(limit)
                 .offset(offset)
@@ -570,15 +834,15 @@ class ComputeSession(graphene.ObjectType):
     async def batch_load_by_dependency(cls, context, session_ids):
         async with context['dbpool'].acquire() as conn:
             j = sa.join(
-                kernels, kernel_dependencies,
-                kernels.c.id == kernel_dependencies.c.depends_on,
+                kernels, session_dependencies,
+                kernels.c.session_id == session_dependencies.c.depends_on,
             )
             query = (
                 sa.select([kernels])
                 .select_from(j)
                 .where(
-                    (kernels.c.role == 'master') &
-                    (kernel_dependencies.c.kernel_id.in_(session_ids))
+                    (kernels.c.cluster_role == DEFAULT_ROLE) &
+                    (session_dependencies.c.session_id.in_(session_ids))
                 )
             )
             return await batch_multiresult(
@@ -596,10 +860,14 @@ class ComputeSession(graphene.ObjectType):
                 .join(users, users.c.uuid == kernels.c.user_uuid)
             )
             query = (
-                sa.select([kernels, groups.c.name, users.c.email])
+                sa.select([
+                    kernels,
+                    groups.c.name.label('group_name'),
+                    users.c.email,
+                ])
                 .select_from(j)
                 .where(
-                    (kernels.c.role == 'master') &
+                    (kernels.c.cluster_role == DEFAULT_ROLE) &
                     (kernels.c.id.in_(session_ids))
                 ))
             if domain_name is not None:
@@ -629,7 +897,7 @@ class ComputeSessionList(graphene.ObjectType):
 # --------- pre-v5 legacy -----------
 class LegacyComputeSession(graphene.ObjectType):
     """
-    Represents a master session.
+    Represents a main session.
     """
     class Meta:
         interfaces = (Item, )
@@ -778,11 +1046,11 @@ class LegacyComputeSession(graphene.ObjectType):
         else:
             hide_agents = context['config']['manager']['hide-agents']
         return {
-            'sess_id': row['sess_id'],           # legacy, will be deprecated
-            'sess_type': row['sess_type'].name,  # legacy, will be deprecated
-            'session_name': row['sess_id'],
-            'session_type': row['sess_type'].name,
-            'id': row['id'],                     # legacy, will be replaced with session UUID
+            'id': row['id'],
+            'sess_id': row['session_name'],         # legacy, will be deprecated
+            'sess_type': row['session_type'].name,  # legacy, will be deprecated
+            'session_name': row['session_name'],
+            'session_type': row['session_type'].name,
             'role': row['role'],
             'tag': row['tag'],
             'image': row['image'],
@@ -848,9 +1116,9 @@ class LegacyComputeSession(graphene.ObjectType):
             status_list = [status]
         async with context['dbpool'].acquire() as conn:
             query = (
-                sa.select([sa.func.count(kernels.c.sess_id)])
+                sa.select([sa.func.count(kernels.c.session_id)])
                 .select_from(kernels)
-                .where(kernels.c.role == 'master')
+                .where(kernels.c.cluster_role == DEFAULT_ROLE)
                 .as_scalar()
             )
             if domain_name is not None:
@@ -885,7 +1153,7 @@ class LegacyComputeSession(graphene.ObjectType):
             query = (
                 sa.select([kernels, groups.c.name, users.c.email])
                 .select_from(j)
-                .where(kernels.c.role == 'master')
+                .where(kernels.c.cluster_role == DEFAULT_ROLE)
                 .order_by(*_ordering)
                 .limit(limit)
                 .offset(offset)
@@ -912,7 +1180,7 @@ class LegacyComputeSession(graphene.ObjectType):
                 .select_from(j)
                 .where(
                     (kernels.c.access_key.in_(access_keys)) &
-                    (kernels.c.role == 'master')
+                    (kernels.c.cluster_role == DEFAULT_ROLE)
                 )
                 .order_by(
                     sa.desc(sa.func.greatest(
@@ -949,8 +1217,8 @@ class LegacyComputeSession(graphene.ObjectType):
                         .join(users, users.c.uuid == kernels.c.user_uuid))
             query = (sa.select([kernels, groups.c.name, users.c.email])
                        .select_from(j)
-                       .where((kernels.c.role == 'master') &
-                              (kernels.c.sess_id.in_(sess_ids))))
+                       .where((kernels.c.cluster_role == DEFAULT_ROLE) &
+                              (kernels.c.session_id.in_(sess_ids))))
             if domain_name is not None:
                 query = query.where(kernels.c.domain_name == domain_name)
             if access_key is not None:

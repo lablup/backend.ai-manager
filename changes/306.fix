@@ -1,2 +1,0 @@
-Prevent purging a user, group, and domain if they have active sessions and/or
-their bound resources, such as virtual folders, are being used by other sessions.

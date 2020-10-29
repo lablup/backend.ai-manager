@@ -68,6 +68,7 @@ async def test_handle_heartbeat(mocker):
         redis_live=mock_redis_live,
         redis_image=mock_redis_image,
         event_dispatcher=mock_event_dispatcher,
+        storage_manager=None,
         hook_plugin_ctx=hook_plugin_ctx,
     )
     await registry.init()
@@ -95,6 +96,7 @@ async def test_handle_heartbeat(mocker):
         'addr': '10.0.0.5',
         'scaling_group': 'sg-testing',
         'available_slots': ResourceSlot({'cpu': '1', 'mem': '1g'}),
+        'clusterized': True,
     })
     await registry.handle_heartbeat('i-001', {
         'scaling_group': 'sg-testing',
@@ -120,6 +122,7 @@ async def test_handle_heartbeat(mocker):
         'addr': '10.0.0.5',
         'scaling_group': 'sg-testing',
         'available_slots': ResourceSlot({'cpu': '1', 'mem': '1g'}),
+        'clusterized': True,
     })
     await registry.handle_heartbeat('i-001', {
         'scaling_group': 'sg-testing2',
