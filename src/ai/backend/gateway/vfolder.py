@@ -452,23 +452,30 @@ async def delete_by_id(request: web.Request, params: Any) -> web.Response:
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.DELETE_BY_ID (ak:{}, vf:{})', access_key, params['id'])
     async with dbpool.acquire() as conn, conn.begin():
-        query = (sa.select([vfolders.c.host])
-                   .select_from(vfolders)
-                   .where(vfolders.c.id == params['id']))
+        query = (
+            sa.select([vfolders.c.host])
+            .select_from(vfolders)
+            .where(
+                (vfolders.c.id == params['id'])
+                & (vfolders.c.access_key == access_key)
+            )
+        )
         folder_host = await conn.scalar(query)
         folder_id = uuid.UUID(params['id'])
         query = (vfolders.delete().where(vfolders.c.id == folder_id))
         await conn.execute(query)
-        storage_manager = request.app['storage_manager']
-        async with storage_manager.request(
-            folder_host, 'POST', 'folder/delete',
-            json={
-                'volume': storage_manager.split_host(folder_host)[1],
-                'vfid': str(folder_id),
-            },
-            raise_for_status=True,
-        ):
-            pass
+    # fs-level deletion may fail or take longer time
+    # but let's complete the db transaction to reflect that it's deleted.
+    storage_manager = request.app['storage_manager']
+    async with storage_manager.request(
+        folder_host, 'POST', 'folder/delete',
+        json={
+            'volume': storage_manager.split_host(folder_host)[1],
+            'vfid': str(folder_id),
+        },
+        raise_for_status=True,
+    ):
+        pass
     return web.Response(status=204)
 
 
@@ -1214,8 +1221,10 @@ async def delete(request: web.Request) -> web.Response:
         for entry in entries:
             if entry['name'] == folder_name:
                 # Folder owner OR user who have DELETE permission can delete folder.
-                if not entry['is_owner'] \
-                        and entry['permission'] != VFolderPermission.RW_DELETE:
+                if (
+                    not entry['is_owner']
+                    and entry['permission'] != VFolderPermission.RW_DELETE
+                ):
                     raise InvalidAPIParameters(
                         'Cannot delete the vfolder '
                         'that is not owned by myself.')
@@ -1226,17 +1235,19 @@ async def delete(request: web.Request) -> web.Response:
         folder_id = entry['id']
         query = (vfolders.delete().where(vfolders.c.id == folder_id))
         await conn.execute(query)
-        storage_manager = request.app['storage_manager']
-        proxy_name, volume_name = storage_manager.split_host(folder_host)
-        async with storage_manager.request(
-            proxy_name, 'POST', 'folder/delete',
-            json={
-                'volume': volume_name,
-                'vfid': str(folder_id),
-            },
-            raise_for_status=True,
-        ):
-            pass
+    # fs-level deletion may fail or take longer time
+    # but let's complete the db transaction to reflect that it's deleted.
+    storage_manager = request.app['storage_manager']
+    proxy_name, volume_name = storage_manager.split_host(folder_host)
+    async with storage_manager.request(
+        proxy_name, 'POST', 'folder/delete',
+        json={
+            'volume': volume_name,
+            'vfid': str(folder_id),
+        },
+        raise_for_status=True,
+    ):
+        pass
     return web.Response(status=204)
 
 

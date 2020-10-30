@@ -553,9 +553,9 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         # Did not pass AUTHORIZED hook
         reason = hook_result.reason
         raise RejectedByHook(extra_msg=reason)
-    elif 'user' in ChainMap(*hook_result.result):
+    elif hook_result.result:
         # Passed one of AUTHORIZED hook
-        user = ChainMap(*hook_result.result)['user']
+        user = hook_result.result
     else:
         # No AUTHORIZE hook is defined (proceed with normal login)
         user = await check_credential(
