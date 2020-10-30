@@ -20,6 +20,7 @@ from typing import (
     Optional,
     Tuple,
     Union,
+    cast,
 )
 
 from aiohttp import web
@@ -48,7 +49,7 @@ async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tup
     if not request['is_authorized']:
         raise GenericForbidden('Only authorized requests may have access key scopes.')
     requester_access_key: AccessKey = request['keypair']['access_key']
-    owner_access_key: Optional[AccessKey] = request.query.get('owner_access_key', None)
+    owner_access_key = cast(Optional[AccessKey], request.query.get('owner_access_key', None))
     if owner_access_key is None and params is not None:
         owner_access_key = params.get('owner_access_key', None)
     if owner_access_key is not None and owner_access_key != requester_access_key:
