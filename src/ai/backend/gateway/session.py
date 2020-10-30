@@ -1493,6 +1493,7 @@ async def complete(request: web.Request) -> web.Response:
         raise
     return web.json_response(resp, status=200)
 
+
 @atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
@@ -1513,6 +1514,7 @@ async def shutdown_service(request: web.Request, params: Any) -> web.Response:
         log.exception('SHUTDOWN_SERVICE: exception')
         raise
     return web.Response(status=204)
+
 
 @server_status_required(READ_ALLOWED)
 @auth_required

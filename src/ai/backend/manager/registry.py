@@ -1757,7 +1757,7 @@ class AgentRegistry:
         async with self.handle_kernel_exception('execute', kernel['id'], access_key):
             async with RPCContext(kernel['agent_addr'], None, order_key=kernel['id']) as rpc:
                 return await rpc.call.start_service(str(kernel['id']), service, opts)
-    
+
     async def shutdown_service(
         self,
         session_name_or_id: Union[str, SessionId],
