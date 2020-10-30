@@ -1836,7 +1836,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     cors.add(app.router.add_route('GET',  '/{session_name}/logs', get_container_logs))
     cors.add(app.router.add_route('POST', '/{session_name}/interrupt', interrupt))
     cors.add(app.router.add_route('POST', '/{session_name}/complete', complete))
-    cors.add(app.router.add_route('POST', '/{session_name}/shutdown_service', shutdown_service))
+    cors.add(app.router.add_route('POST', '/{session_name}/shutdown-service', shutdown_service))
     cors.add(app.router.add_route('POST', '/{session_name}/upload', upload_files))
     cors.add(app.router.add_route('GET',  '/{session_name}/download', download_files))
     cors.add(app.router.add_route('GET',  '/{session_name}/download_single', download_single))
