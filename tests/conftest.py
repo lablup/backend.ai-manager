@@ -325,7 +325,7 @@ async def create_app_and_client(test_config, event_loop):
         if cleanup_contexts is not None:
             for ctx in cleanup_contexts:
                 # if isinstance(ctx, AsyncContextManager):
-                if ctx.__name__ in ['config_server_ctx', 'webapp_plugins_ctx']:
+                if ctx.__name__ in ['shared_config_ctx', 'webapp_plugins_ctx']:
                     _outer_ctx_classes.append(ctx)  # type: ignore
                 else:
                     _cleanup_ctxs.append(ctx)
