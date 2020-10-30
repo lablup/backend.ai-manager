@@ -1493,9 +1493,13 @@ async def complete(request: web.Request) -> web.Response:
         raise
     return web.json_response(resp, status=200)
 
+@atomic
 @server_status_required(READ_ALLOWED)
 @auth_required
-@check_api_params
+@check_api_params(
+    t.Dict({
+        t.Key('service_name'): t.String,
+    }))
 async def shutdown_service(request: web.Request, params: Any) -> web.Response:
     registry = request.app['registry']
     session_name = request.match_info['session_name']
