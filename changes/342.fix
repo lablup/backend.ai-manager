@@ -1,1 +1,0 @@
-Fix a regression of the manager status API due to internal etcd data structure changes, by returning the first-seen manager ID (for HA scenarios) to keep the compatibility of API semantics

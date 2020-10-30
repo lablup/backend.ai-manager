@@ -16,6 +16,21 @@ Changes
 
 .. towncrier release notes start
 
+20.09.0a2 (2020-10-30)
+----------------------
+
+### Features
+* Add a new API `/session/{session_ref}/shutdown-service` for shutting down running in-container services ([#327](https://github.com/lablup/backend.ai-manager/issues/327))
+* Add hooking point for AUTHORIZE with FIRST_COMPLETED requirement. ([#339](https://github.com/lablup/backend.ai-manager/issues/339))
+
+### Fixes
+* Unable to invite user to a vfolder, which is shared with another user. ([#340](https://github.com/lablup/backend.ai-manager/issues/340))
+* Fix a regression of the manager status API due to internal etcd data structure changes, by returning the first-seen manager ID (for HA scenarios) to keep the compatibility of API semantics ([#342](https://github.com/lablup/backend.ai-manager/issues/342))
+* Fix a regression in paginated list GraphQL query for vfolders due to missing code updates ([#343](https://github.com/lablup/backend.ai-manager/issues/343))
+* Ensure removal of vfolders from the database when storage-proxy returns an error (e.g., not found) ([#344](https://github.com/lablup/backend.ai-manager/issues/344))
+* Update dependencies (aiohttp~=3.7.0, trafaret~=2.1). ([#345](https://github.com/lablup/backend.ai-manager/issues/345))
+
+
 20.09.0a1 (2020-10-06)
 ----------------------
 
