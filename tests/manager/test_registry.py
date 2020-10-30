@@ -20,9 +20,9 @@ class DummyEtcd:
 
 
 async def test_handle_heartbeat(mocker):
-    mock_config_server = MagicMock()
-    mock_config_server.update_resource_slots = AsyncMock()
-    mock_config_server.etcd = None
+    mock_shared_config = MagicMock()
+    mock_shared_config.update_resource_slots = AsyncMock()
+    mock_shared_config.etcd = None
     mock_dbpool = MagicMock()
     mock_dbconn = MagicMock()
     mock_dbconn_ctx = MagicMock()
@@ -62,7 +62,7 @@ async def test_handle_heartbeat(mocker):
     hook_plugin_ctx = HookPluginContext(mocked_etcd, {})
 
     registry = AgentRegistry(
-        config_server=mock_config_server,
+        shared_config=mock_shared_config,
         dbpool=mock_dbpool,
         redis_stat=mock_redis_stat,
         redis_live=mock_redis_live,
@@ -84,12 +84,12 @@ async def test_handle_heartbeat(mocker):
         'compute_plugins': [],
         'images': image_data,
     })
-    mock_config_server.update_resource_slots.assert_awaited_once()
+    mock_shared_config.update_resource_slots.assert_awaited_once()
     q = mock_dbconn.execute.await_args_list[1].args[0]
     assert isinstance(q, Insert)
 
     # Update alive instance
-    mock_config_server.update_resource_slots.reset_mock()
+    mock_shared_config.update_resource_slots.reset_mock()
     mock_dbconn.execute.reset_mock()
     mock_dbresult.first = AsyncMock(return_value={
         'status': AgentStatus.ALIVE,
@@ -107,7 +107,7 @@ async def test_handle_heartbeat(mocker):
         'compute_plugins': [],
         'images': image_data,
     })
-    mock_config_server.update_resource_slots.assert_awaited_once()
+    mock_shared_config.update_resource_slots.assert_awaited_once()
     q = mock_dbconn.execute.await_args_list[1].args[0]
     assert isinstance(q, Update)
     assert q.parameters['addr'] == '10.0.0.6'
@@ -115,7 +115,7 @@ async def test_handle_heartbeat(mocker):
     assert 'scaling_group' not in q.parameters
 
     # Rejoin
-    mock_config_server.update_resource_slots.reset_mock()
+    mock_shared_config.update_resource_slots.reset_mock()
     mock_dbconn.execute.reset_mock()
     mock_dbresult.first = AsyncMock(return_value={
         'status': AgentStatus.LOST,
@@ -133,7 +133,7 @@ async def test_handle_heartbeat(mocker):
         'compute_plugins': [],
         'images': image_data,
     })
-    mock_config_server.update_resource_slots.assert_awaited_once()
+    mock_shared_config.update_resource_slots.assert_awaited_once()
     q = mock_dbconn.execute.await_args_list[1].args[0]
     assert isinstance(q, Update)
     assert q.parameters['status'] == AgentStatus.ALIVE

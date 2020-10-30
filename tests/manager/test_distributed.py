@@ -20,7 +20,7 @@ from ai.backend.gateway.events import EventDispatcher
 from ai.backend.manager.distributed import GlobalTimer
 if TYPE_CHECKING:
     from ai.backend.common.types import AgentId
-    from ai.backend.gateway.config import LocalConfig
+    from ai.backend.gateway.config import LocalConfig, SharedConfig
 
 
 def drange(start: Decimal, stop: Decimal, step: Decimal) -> Iterable[Decimal]:
@@ -47,7 +47,8 @@ class TimerNode(threading.Thread):
         interval: float,
         thread_idx: int,
         test_id: str,
-        config: LocalConfig,
+        local_config: LocalConfig,
+        shared_config: SharedConfig,
         event_records: queue.Queue[float],
     ) -> None:
         super().__init__()
@@ -56,13 +57,14 @@ class TimerNode(threading.Thread):
         self.interval = interval
         self.thread_idx = thread_idx
         self.test_id = test_id
-        self.config = config
+        self.local_config = local_config
+        self.shared_config = shared_config
         self.event_records = event_records
 
     async def timer_node_async(self) -> None:
-        redis_url = self.config.get_redis_url(db=REDIS_STREAM_DB)
+        redis_url = self.shared_config.get_redis_url(db=REDIS_STREAM_DB)
         redis = await aioredis.create_redis(str(redis_url))
-        event_dispatcher = await EventDispatcher.new(self.config)
+        event_dispatcher = await EventDispatcher.new(self.local_config, self.shared_config)
 
         async def _tick(context: Any, agent_id: AgentId, event_name: str, *args) -> None:
             self.event_records.put(time.monotonic())
@@ -89,7 +91,7 @@ class TimerNode(threading.Thread):
         asyncio.run(self.timer_node_async())
 
 
-def test_global_timer(test_id, test_config) -> None:
+def test_global_timer(test_id, local_config, shared_config) -> None:
     event_records = queue.Queue()
     num_threads = 7
     num_records = 0
@@ -133,7 +135,8 @@ def test_global_timer(test_id, test_config) -> None:
             float(interval),
             thread_idx,
             test_id,
-            test_config,
+            local_config,
+            shared_config,
             event_records,
         )
         threads.append(t)

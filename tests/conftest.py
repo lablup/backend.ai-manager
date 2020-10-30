@@ -96,7 +96,7 @@ def local_config(test_id, test_db):
 
 
 @pytest.fixture(scope='session')
-def etcd_fixture(test_id, test_config, vfolder_mount, vfolder_fsprefix, vfolder_host):
+def etcd_fixture(test_id, local_config, vfolder_mount, vfolder_fsprefix, vfolder_host):
     # Clear and reset etcd namespace using CLI functions.
     with tempfile.NamedTemporaryFile(mode='w', suffix='.etcd.json') as f:
         etcd_fixture = {
@@ -151,14 +151,14 @@ async def shared_config(app, etcd_fixture):
 
 
 @pytest.fixture(scope='session')
-def database(request, test_config, test_db):
+def database(request, local_config, test_db):
     '''
     Create a new database for the current test session
     and install the table schema using alembic.
     '''
-    db_addr = test_config['db']['addr']
-    db_user = test_config['db']['user']
-    db_pass = test_config['db']['password']
+    db_addr = local_config['db']['addr']
+    db_user = local_config['db']['user']
+    db_pass = local_config['db']['password']
 
     # Create database using low-level psycopg2 API.
     # Temporarily use "testing" dbname until we create our own db.
@@ -203,14 +203,14 @@ def database(request, test_config, test_db):
 
 
 @pytest.fixture()
-def database_fixture(test_config, test_db, database):
+def database_fixture(local_config, test_db, database):
     '''
     Populate the example data as fixtures to the database
     and delete them after use.
     '''
-    db_addr = test_config['db']['addr']
-    db_user = test_config['db']['user']
-    db_pass = test_config['db']['password']
+    db_addr = local_config['db']['addr']
+    db_user = local_config['db']['user']
+    db_pass = local_config['db']['password']
     alembic_url = f'postgresql://{db_user}:{db_pass}@{db_addr}/{test_db}'
 
     fixtures = {}
@@ -294,17 +294,17 @@ class Client:
 
 
 @pytest.fixture
-async def app(test_config, event_loop):
+async def app(local_config, event_loop):
     '''
     Create an empty application with the test configuration.
     '''
-    return build_root_app(0, test_config,
+    return build_root_app(0, local_config,
                           cleanup_contexts=[],
                           subapp_pkgs=[])
 
 
 @pytest.fixture
-async def create_app_and_client(test_config, event_loop):
+async def create_app_and_client(local_config, event_loop):
     client: Optional[Client] = None
     client_session: Optional[aiohttp.ClientSession] = None
     runner: Optional[web.BaseRunner] = None
@@ -329,7 +329,7 @@ async def create_app_and_client(test_config, event_loop):
                     _outer_ctx_classes.append(ctx)  # type: ignore
                 else:
                     _cleanup_ctxs.append(ctx)
-        app = build_root_app(0, test_config,
+        app = build_root_app(0, local_config,
                              cleanup_contexts=_cleanup_ctxs,
                              subapp_pkgs=subapp_pkgs,
                              scheduler_opts={'close_timeout': 10, **scheduler_opts})
