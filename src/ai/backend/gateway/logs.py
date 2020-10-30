@@ -187,7 +187,7 @@ async def mark_cleared(request: web.Request) -> web.Response:
 
 async def log_cleanup_task(app: web.Application, interval):
     dbpool = app['dbpool']
-    etcd = app['config_server'].etcd
+    etcd = app['shared_config'].etcd
     raw_lifetime = await etcd.get('config/logs/error/retention')
     if raw_lifetime is None:
         raw_lifetime = '90d'
@@ -221,7 +221,7 @@ async def log_cleanup_task(app: web.Application, interval):
 
 
 async def init(app: web.Application) -> None:
-    redis_url = app['config'].get_redis_url()
+    redis_url = app['shared_config'].get_redis_url()
     app['log_cleanup_lock'] = aioredlock.Aioredlock([str(redis_url)])
     app['log_cleanup_task'] = aiotools.create_timer(
         functools.partial(log_cleanup_task, app), 5.0)

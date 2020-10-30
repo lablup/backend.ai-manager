@@ -366,7 +366,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     # Resolve the image reference.
     try:
         requested_image_ref = \
-            await ImageRef.resolve_alias(params['image'], request.app['config_server'].etcd)
+            await ImageRef.resolve_alias(params['image'], request.app['shared_config'].etcd)
         async with dbpool.acquire() as conn, conn.begin():
             query = (sa.select([domains.c.allowed_docker_registries])
                        .select_from(domains)
@@ -872,7 +872,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
             try:
                 requested_image_ref = \
                     await ImageRef.resolve_alias(kernel_config['image_ref'],
-                                                 request.app['config_server'].etcd)
+                                                 request.app['shared_config'].etcd)
                 async with dbpool.acquire() as conn, conn.begin():
                     query = (sa.select([domains.c.allowed_docker_registries])
                              .select_from(domains)
@@ -1103,7 +1103,7 @@ async def handle_instance_heartbeat(app: web.Application, agent_id: AgentId, eve
 async def check_agent_lost(app, interval):
     try:
         now = datetime.now(tzutc())
-        timeout = timedelta(seconds=app['config']['manager']['heartbeat-timeout'])
+        timeout = timedelta(seconds=app['local_config']['manager']['heartbeat-timeout'])
 
         async def _check_impl():
             async for agent_id, prev in app['redis_live'].ihscan('last_seen'):
@@ -1128,10 +1128,7 @@ async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name:
                             raw_kernel_id: str, container_id: str):
     dbpool = app['dbpool']
     redis_conn: aioredis.Redis = await redis.connect_with_retries(
-        app['config']['redis']['addr'].as_sockaddr(),
-        db=REDIS_STREAM_DB,
-        password=(app['config']['redis']['password']
-                  if app['config']['redis']['password'] else None),
+        str(app['shared_config'].get_redis_url(db=REDIS_STREAM_DB)),
         encoding=None,
     )
     # The log data is at most 10 MiB.

@@ -89,7 +89,7 @@ def vfolder_permission_required(perm: VFolderPermission):
             user_role = request['user']['role']
             user_uuid = request['user']['uuid']
             folder_name = request.match_info['name']
-            allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
+            allowed_vfolder_types = await request.app['shared_config'].get_vfolder_types()
             vf_user_cond = None
             vf_group_cond = None
             if perm == VFolderPermission.READ_ONLY:
@@ -222,12 +222,12 @@ async def create(request: web.Request, params: Any) -> web.Response:
         # Resolve host for the new virtual folder.
         if not folder_host:
             folder_host = \
-                await request.app['config_server'].etcd.get('volumes/default_host')
+                await request.app['shared_config'].etcd.get('volumes/default_host')
             if not folder_host:
                 raise InvalidAPIParameters(
                     'You must specify the vfolder host '
                     'because the default host is not configured.')
-    allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
+    allowed_vfolder_types = await request.app['shared_config'].get_vfolder_types()
     for vf_type in allowed_vfolder_types:
         if vf_type not in ('user', 'group'):
             raise ServerMisconfiguredError(
@@ -380,7 +380,7 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
 
     log.info('VFOLDER.LIST (ak:{})', access_key)
     async with dbpool.acquire() as conn:
-        allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
+        allowed_vfolder_types = await request.app['shared_config'].get_vfolder_types()
         if request['is_superadmin'] and params['all']:
             # List all folders for superadmin if all is specified
             j = (vfolders.join(users, vfolders.c.user == users.c.uuid, isouter=True)
@@ -478,12 +478,12 @@ async def delete_by_id(request: web.Request, params: Any) -> web.Response:
 async def list_hosts(request: web.Request) -> web.Response:
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.LIST_HOSTS (ak:{})', access_key)
-    config = request.app['config_server']
+    config = request.app['shared_config']
     dbpool = request.app['dbpool']
     domain_name = request['user']['domain_name']
     domain_admin = request['user']['role'] == UserRole.ADMIN
     resource_policy = request['keypair']['resource_policy']
-    allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
+    allowed_vfolder_types = await request.app['shared_config'].get_vfolder_types()
     async with dbpool.acquire() as conn:
         allowed_hosts: Set[str] = set()
         if 'user' in allowed_vfolder_types:
@@ -515,7 +515,7 @@ async def list_all_hosts(request: web.Request) -> web.Response:
     log.info('VFOLDER.LIST_ALL_HOSTS (ak:{})', access_key)
     all_volumes = await request.app['storage_manager'].get_all_volumes()
     all_hosts = {f"{proxy_name}:{volume_data['name']}" for proxy_name, volume_data in all_volumes}
-    config = request.app['config_server']
+    config = request.app['shared_config']
     default_host = await config.get('volumes/default_host')
     if default_host not in all_hosts:
         default_host = None
@@ -555,7 +555,7 @@ async def get_volume_perf_metric(request: web.Request, params: Any) -> web.Respo
 async def list_allowed_types(request: web.Request) -> web.Response:
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.LIST_ALLOWED_TYPES (ak:{})', access_key)
-    allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
+    allowed_vfolder_types = await request.app['shared_config'].get_vfolder_types()
     return web.json_response(allowed_vfolder_types, status=200)
 
 
@@ -622,7 +622,7 @@ async def rename_vfolder(request: web.Request, params: Any, row: VFolderRow) -> 
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
     new_name = params['new_name']
-    allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
+    allowed_vfolder_types = await request.app['shared_config'].get_vfolder_types()
     log.info('VFOLDER.RENAME (ak:{}, vf.old:{}, vf.new:{})',
              access_key, old_name, new_name)
     async with dbpool.acquire() as conn:
@@ -1204,7 +1204,7 @@ async def delete(request: web.Request) -> web.Response:
     domain_name = request['user']['domain_name']
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
-    allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
+    allowed_vfolder_types = await request.app['shared_config'].get_vfolder_types()
     log.info('VFOLDER.DELETE (ak:{}, vf:{})', access_key, folder_name)
     async with dbpool.acquire() as conn, conn.begin():
         entries = await query_accessible_vfolders(
@@ -1306,13 +1306,13 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
 
     if not target_folder_host:
         target_folder_host = \
-            await request.app['config_server'].etcd.get('volumes/default_host')
+            await request.app['shared_config'].etcd.get('volumes/default_host')
         if not target_folder_host:
             raise InvalidAPIParameters(
                 'You must specify the vfolder host '
                 'because the default host is not configured.')
 
-    allowed_vfolder_types = await request.app['config_server'].get_vfolder_types()
+    allowed_vfolder_types = await request.app['shared_config'].get_vfolder_types()
     for vf_type in allowed_vfolder_types:
         if vf_type not in ('user', 'group'):
             raise ServerMisconfiguredError(
@@ -1578,7 +1578,7 @@ async def list_mounts(request: web.Request) -> web.Response:
     dbpool = request.app['dbpool']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.LIST_MOUNTS(ak:{})', access_key)
-    config = request.app['config_server']
+    config = request.app['shared_config']
     mount_prefix = await config.get('volumes/_mount')
     if mount_prefix is None:
         mount_prefix = '/mnt'
@@ -1695,7 +1695,7 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
     log_fmt = 'VFOLDER.MOUNT_HOST(ak:{}, name:{}, fs:{}, sg:{})'
     log_args = (access_key, params['name'], params['fs_location'], params['scaling_group'])
     log.info(log_fmt, *log_args)
-    config = request.app['config_server']
+    config = request.app['shared_config']
     mount_prefix = await config.get('volumes/_mount')
     if mount_prefix is None:
         mount_prefix = '/mnt'
@@ -1791,7 +1791,7 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
     log_fmt = 'VFOLDER.UMOUNT_HOST(ak:{}, name:{}, sg:{})'
     log_args = (access_key, params['name'], params['scaling_group'])
     log.info(log_fmt, *log_args)
-    config = request.app['config_server']
+    config = request.app['shared_config']
     mount_prefix = await config.get('volumes/_mount')
     if mount_prefix is None:
         mount_prefix = '/mnt'

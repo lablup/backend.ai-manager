@@ -33,12 +33,11 @@ from ai.backend.common.types import (
     ResourceSlot,
 )
 if TYPE_CHECKING:
-    from ai.backend.gateway.config import LocalConfig
+    from ai.backend.gateway.config import LocalConfig, SharedConfig
     from ai.backend.gateway.events import EventDispatcher
 
 from ai.backend.manager.distributed import GlobalTimer
 from ...gateway.defs import REDIS_STREAM_DB
-from ...gateway.etcd import ConfigServer
 from ...gateway.exceptions import InstanceNotAvailable
 if TYPE_CHECKING:
     from ..registry import AgentRegistry
@@ -98,7 +97,7 @@ def merge_resource(src: MutableMapping[str, Any], val: MutableMapping[str, Any])
 class SchedulerDispatcher(aobject):
 
     config: LocalConfig
-    config_server: ConfigServer
+    shared_config: SharedConfig
     registry: AgentRegistry
 
     lock_manager: aioredlock.Aioredlock
@@ -108,13 +107,13 @@ class SchedulerDispatcher(aobject):
 
     def __init__(
         self,
-        config: LocalConfig,
-        config_server: ConfigServer,
+        local_config: LocalConfig,
+        shared_config: SharedConfig,
         event_dispatcher: EventDispatcher,
         registry: AgentRegistry,
     ) -> None:
-        self.config = config
-        self.config_server = config_server
+        self.local_config = local_config
+        self.shared_config = shared_config
         self.event_dispatcher = event_dispatcher
         self.registry = registry
         self.dbpool = registry.dbpool
@@ -125,8 +124,7 @@ class SchedulerDispatcher(aobject):
         self.registry.event_dispatcher.consume('session_terminated', None, self.schedule)
         self.registry.event_dispatcher.consume('instance_started', None, self.schedule)
         self.registry.event_dispatcher.consume('do_schedule', None, self.schedule)
-        # TODO: add events for resource configuration changes and subscribe them here.
-        redis_url = self.config.get_redis_url(db=REDIS_STREAM_DB)
+        redis_url = self.shared_config.get_redis_url(db=REDIS_STREAM_DB)
         self.lock_manager = aioredlock.Aioredlock(
             [str(redis_url)],
             # we have explicit semantics: temporary locking failure -> try at the next chance,
@@ -160,7 +158,7 @@ class SchedulerDispatcher(aobject):
 
     async def schedule_impl(self) -> None:
         log.debug('schedule(): triggered')
-        known_slot_types = await self.config_server.get_resource_slots()
+        known_slot_types = await self.shared_config.get_resource_slots()
         sched_ctx = SchedulingContext(
             registry=self.registry,
             known_slot_types=known_slot_types,
@@ -408,7 +406,7 @@ class SchedulerDispatcher(aobject):
         )
         result = await db_conn.execute(query)
         scheduler_name = await result.scalar()
-        return load_scheduler(scheduler_name, self.config['plugins']['scheduler'])
+        return load_scheduler(scheduler_name, self.shared_config['plugins']['scheduler'])
 
 
 async def _list_pending_sessions(

@@ -66,6 +66,8 @@ from ai.backend.common.types import (
     SlotName,
     SlotTypes,
 )
+
+from ai.backend.gateway.config import SharedConfig
 from .defs import DEFAULT_ROLE, INTRINSIC_SLOTS
 from .types import SessionGetter
 from ..gateway.exceptions import (
@@ -193,7 +195,7 @@ class AgentRegistry:
 
     def __init__(
         self,
-        config_server,
+        shared_config: SharedConfig,
         dbpool,
         redis_stat,
         redis_live,
@@ -202,7 +204,7 @@ class AgentRegistry:
         storage_manager:  StorageSessionManager,
         hook_plugin_ctx: HookPluginContext,
     ) -> None:
-        self.config_server = config_server
+        self.shared_config = shared_config
         self.dbpool = dbpool
         self.redis_stat = redis_stat
         self.redis_live = redis_live
@@ -676,7 +678,7 @@ class AgentRegistry:
 
         # sanity check for vfolders
         allowed_vfolder_types = ['user', 'group']
-        # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
+        # allowed_vfolder_types = await request.app['shared_config'].etcd.get('path-to-vfolder-type')
         determined_mounts = []
         matched_mounts = set()
         async with self.dbpool.acquire() as conn, conn.begin():
@@ -782,10 +784,10 @@ class AgentRegistry:
 
             creation_config['mounts'] = mounts
             # TODO: merge into a single call
-            image_info = await self.config_server.inspect_image(image_ref)
+            image_info = await self.shared_config.inspect_image(image_ref)
             image_min_slots, image_max_slots = \
-                await self.config_server.get_image_slot_ranges(image_ref)
-            known_slot_types = await self.config_server.get_resource_slots()
+                await self.shared_config.get_image_slot_ranges(image_ref)
+            known_slot_types = await self.shared_config.get_resource_slots()
 
             # Parse service ports to check for port errors
             parse_service_ports(image_info['labels'].get('ai.backend.service-ports', ''), BackendError)
@@ -1009,7 +1011,7 @@ class AgentRegistry:
             )
             result = await conn.execute(query)
             resource_policy = await result.first()
-        auto_pull = await self.config_server.get('config/docker/image/auto_pull')
+        auto_pull = await self.shared_config.get_raw('config/docker/image/auto_pull')
 
         # Aggregate image registry information
         keyfunc = lambda item: item.kernel.image_ref
@@ -1017,9 +1019,9 @@ class AgentRegistry:
         for image_ref, _ in itertools.groupby(
             sorted(kernel_agent_bindings, key=keyfunc), key=keyfunc,
         ):
-            image_infos[image_ref] = await self.config_server.inspect_image(image_ref)
+            image_infos[image_ref] = await self.shared_config.inspect_image(image_ref)
             registry_url, registry_creds = \
-                await get_registry_info(self.config_server.etcd, image_ref.registry)
+                await get_registry_info(self.shared_config.etcd, image_ref.registry)
 
         network_name: Optional[str]
         if pending_session.cluster_mode == ClusterMode.SINGLE_NODE:
@@ -1215,7 +1217,7 @@ class AgentRegistry:
 
     async def get_keypair_occupancy(self, access_key, *, conn=None):
         known_slot_types = \
-            await self.config_server.get_resource_slots()
+            await self.shared_config.get_resource_slots()
         async with reenter_txn(self.dbpool, conn) as conn:
             query = (
                 sa.select([kernels.c.occupied_slots])
@@ -1236,7 +1238,7 @@ class AgentRegistry:
 
     async def get_domain_occupancy(self, domain_name, *, conn=None):
         # TODO: store domain occupied_slots in Redis?
-        known_slot_types = await self.config_server.get_resource_slots()
+        known_slot_types = await self.shared_config.get_resource_slots()
         async with reenter_txn(self.dbpool, conn) as conn:
             query = (
                 sa.select([kernels.c.occupied_slots])
@@ -1255,7 +1257,7 @@ class AgentRegistry:
 
     async def get_group_occupancy(self, group_id, *, conn=None):
         # TODO: store domain occupied_slots in Redis?
-        known_slot_types = await self.config_server.get_resource_slots()
+        known_slot_types = await self.shared_config.get_resource_slots()
         async with reenter_txn(self.dbpool, conn) as conn:
             query = (
                 sa.select([kernels.c.occupied_slots])
@@ -1887,7 +1889,7 @@ class AgentRegistry:
                 if row is None or row['status'] is None:
                     # new agent detected!
                     log.info('agent {0} joined!', agent_id)
-                    await self.config_server.update_resource_slots(slot_key_and_units)
+                    await self.shared_config.update_resource_slots(slot_key_and_units)
                     query = agents.insert().values({
                         'id': agent_id,
                         'status': AgentStatus.ALIVE,
@@ -1917,13 +1919,13 @@ class AgentRegistry:
                     updates['version'] = agent_info['version']
                     # occupied_slots are updated when kernels starts/terminates
                     if updates:
-                        await self.config_server.update_resource_slots(slot_key_and_units)
+                        await self.shared_config.update_resource_slots(slot_key_and_units)
                         query = (sa.update(agents)
                                    .values(updates)
                                    .where(agents.c.id == agent_id))
                         await conn.execute(query)
                 elif row['status'] in (AgentStatus.LOST, AgentStatus.TERMINATED):
-                    await self.config_server.update_resource_slots(slot_key_and_units)
+                    await self.shared_config.update_resource_slots(slot_key_and_units)
                     instance_rejoin = True
                     query = (
                         sa.update(agents)
@@ -1950,7 +1952,7 @@ class AgentRegistry:
                     agent_id=agent_id)
 
             # Update the mapping of kernel images to agents.
-            known_registries = await get_known_registries(self.config_server.etcd)
+            known_registries = await get_known_registries(self.shared_config.etcd)
             images = msgpack.unpackb(snappy.decompress(agent_info['images']))
 
             def _pipe_builder():

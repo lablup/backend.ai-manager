@@ -48,7 +48,7 @@ def server_status_required(allowed_status: FrozenSet[ManagerStatus]):
 
         @functools.wraps(handler)
         async def wrapped(request, *args, **kwargs):
-            status = await request.app['config_server'].get_manager_status()
+            status = await request.app['shared_config'].get_manager_status()
             if status not in allowed_status:
                 if status == ManagerStatus.FROZEN:
                     raise ServerFrozen
@@ -76,11 +76,11 @@ class GQLMutationUnfrozenRequiredMiddleware:
 
 async def detect_status_update(app):
     try:
-        async with aclosing(app['config_server'].watch_manager_status()) as agen:
+        async with aclosing(app['shared_config'].watch_manager_status()) as agen:
             async for ev in agen:
                 if ev.event == 'put':
-                    app['config_server'].get_manager_status.cache_clear()
-                    updated_status = await app['config_server'].get_manager_status()
+                    app['shared_config'].get_manager_status.cache_clear()
+                    updated_status = await app['shared_config'].get_manager_status()
                     log.debug('Process-{0} detected manager status update: {1}',
                               app['pidx'], updated_status)
     except asyncio.CancelledError:
@@ -91,9 +91,9 @@ async def detect_status_update(app):
 async def fetch_manager_status(request: web.Request) -> web.Response:
     log.info('MANAGER.FETCH_MANAGER_STATUS ()')
     try:
-        status = await request.app['config_server'].get_manager_status()
-        etcd_info = await request.app['config_server'].get_manager_nodes_info()
-        configs = request.app['config']['manager']
+        status = await request.app['shared_config'].get_manager_status()
+        etcd_info = await request.app['shared_config'].get_manager_nodes_info()
+        configs = request.app['local_config']['manager']
 
         async with request.app['dbpool'].acquire() as conn, conn.begin():
             query = (sa.select([sa.func.count(kernels.c.id)])
@@ -144,14 +144,14 @@ async def update_manager_status(request: web.Request, params: Any) -> web.Respon
 
     if force_kill:
         await request.app['registry'].kill_all_sessions()
-    await request.app['config_server'].update_manager_status(status)
+    await request.app['shared_config'].update_manager_status(status)
 
     return web.Response(status=204)
 
 
 @atomic
 async def get_announcement(request: web.Request) -> web.Response:
-    data = await request.app['config_server'].etcd.get('manager/announcement')
+    data = await request.app['shared_config'].etcd.get('manager/announcement')
     if data is None:
         ret = {'enabled': False, 'message': ''}
     else:
@@ -170,9 +170,9 @@ async def update_announcement(request: web.Request, params: Any) -> web.Response
     if params['enabled']:
         if not params['message']:
             raise InvalidAPIParameters(extra_msg='Empty message not allowed to enable announcement')
-        await request.app['config_server'].etcd.put('manager/announcement', params['message'])
+        await request.app['shared_config'].etcd.put('manager/announcement', params['message'])
     else:
-        await request.app['config_server'].etcd.delete('manager/announcement')
+        await request.app['shared_config'].etcd.delete('manager/announcement')
     return web.Response(status=204)
 
 

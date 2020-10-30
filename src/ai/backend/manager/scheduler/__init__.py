@@ -29,6 +29,8 @@ from ai.backend.common.types import (
     SessionId,
     SessionTypes,
     ResourceSlot,
+    SlotName,
+    SlotTypes,
 )
 
 from ..defs import DEFAULT_ROLE
@@ -65,7 +67,7 @@ class SchedulingContext:
     Context for each scheduling decision.
     """
     registry: AgentRegistry
-    known_slot_types: Mapping[str, str]
+    known_slot_types: Mapping[SlotName, SlotTypes]
 
 
 @attr.s(auto_attribs=True, slots=True)

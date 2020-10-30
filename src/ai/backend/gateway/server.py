@@ -38,7 +38,6 @@ from setproctitle import setproctitle
 
 from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
-from ai.backend.common.config import redis_config_iv
 from ai.backend.common.utils import env_info, current_loop
 from ai.backend.common.json import ExtendedJSONEncoder
 from ai.backend.common.logging import Logger, BraceStyleAdapter
@@ -56,12 +55,12 @@ from ..manager.scheduler.dispatcher import SchedulerDispatcher
 from ..manager.background import BackgroundTaskManager
 from ..manager.models.storage import StorageSessionManager
 from .config import (
+    LocalConfig,
+    SharedConfig,
     load as load_config,
-    load_shared as load_shared_config,
     volume_config_iv,
 )
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB, REDIS_STREAM_DB
-from .etcd import ConfigServer
 from .events import EventDispatcher
 from .exceptions import (
     BackendError,
@@ -119,8 +118,8 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.server'))
 PUBLIC_INTERFACES: Final = [
     'pidx',
     'background_task_manager',
-    'config',
-    'config_server',
+    'local_config',
+    'shared_config',
     'dbpool',
     'registry',
     'redis_live',
@@ -227,7 +226,7 @@ async def exception_middleware(request: web.Request,
     except Exception as e:
         await error_monitor.capture_exception()
         log.exception('Uncaught exception in HTTP request handlers {0!r}', e)
-        if app['config']['debug']['enabled']:
+        if app['local_config']['debug']['enabled']:
             raise InternalServerError(traceback.format_exc())
         else:
             raise InternalServerError()
@@ -237,27 +236,27 @@ async def exception_middleware(request: web.Request,
 
 
 @aiotools.actxmgr
-async def config_server_ctx(app: web.Application) -> AsyncIterator[None]:
+async def shared_config_ctx(app: web.Application) -> AsyncIterator[None]:
     # populate public interfaces
-    app['config_server'] = ConfigServer(
-        app, app['config']['etcd']['addr'],
-        app['config']['etcd']['user'], app['config']['etcd']['password'],
-        app['config']['etcd']['namespace'])
-
-    app['config'].update(
-        await load_shared_config(app['config_server'].etcd)
+    app['shared_config'] = SharedConfig(
+        app,
+        app['local_config']['etcd']['addr'],
+        app['local_config']['etcd']['user'],
+        app['local_config']['etcd']['password'],
+        app['local_config']['etcd']['namespace'],
     )
-    app['config']['redis'] = redis_config_iv.check(
-        await app['config_server'].etcd.get_prefix('config/redis')
-    )
+    await app['shared_config'].reload()
+    # app['local_config']['redis'] = redis_config_iv.check(
+    #     await app['shared_config'].etcd.get_prefix('config/redis')
+    # )
     _update_public_interface_objs(app)
     yield
-    await app['config_server'].close()
+    await app['shared_config'].close()
 
 
 @aiotools.actxmgr
 async def webapp_plugin_ctx(root_app: web.Application) -> AsyncIterator[None]:
-    ctx = WebappPluginContext(root_app['config_server'].etcd, root_app['config'])
+    ctx = WebappPluginContext(root_app['shared_config'].etcd, root_app['local_config'])
     await ctx.init()
     root_app['webapp_plugin_ctx'] = ctx
     for plugin_name, plugin_instance in ctx.plugins.items():
@@ -271,35 +270,35 @@ async def webapp_plugin_ctx(root_app: web.Application) -> AsyncIterator[None]:
 
 async def manager_status_ctx(app: web.Application) -> AsyncIterator[None]:
     if app['pidx'] == 0:
-        mgr_status = await app['config_server'].get_manager_status()
+        mgr_status = await app['shared_config'].get_manager_status()
         if mgr_status is None or mgr_status not in (ManagerStatus.RUNNING, ManagerStatus.FROZEN):
             # legacy transition: we now have only RUNNING or FROZEN for HA setup.
-            await app['config_server'].update_manager_status(ManagerStatus.RUNNING)
+            await app['shared_config'].update_manager_status(ManagerStatus.RUNNING)
             mgr_status = ManagerStatus.RUNNING
         log.info('Manager status: {}', mgr_status)
-        tz = app['config']['system']['timezone']
+        tz = app['shared_config']['system']['timezone']
         log.info('Configured timezone: {}', tz.tzname(datetime.now()))
     yield
 
 
 async def redis_ctx(app: web.Application) -> AsyncIterator[None]:
     app['redis_live'] = await redis.connect_with_retries(
-        str(app['config'].get_redis_url(db=REDIS_LIVE_DB)),
+        str(app['shared_config'].get_redis_url(db=REDIS_LIVE_DB)),
         timeout=3.0,
         encoding='utf8',
     )
     app['redis_stat'] = await redis.connect_with_retries(
-        str(app['config'].get_redis_url(db=REDIS_STAT_DB)),
+        str(app['shared_config'].get_redis_url(db=REDIS_STAT_DB)),
         timeout=3.0,
         encoding='utf8',
     )
     app['redis_image'] = await redis.connect_with_retries(
-        str(app['config'].get_redis_url(db=REDIS_IMAGE_DB)),
+        str(app['shared_config'].get_redis_url(db=REDIS_IMAGE_DB)),
         timeout=3.0,
         encoding='utf8',
     )
     app['redis_stream'] = await redis.connect_with_retries(
-        str(app['config'].get_redis_url(db=REDIS_STREAM_DB)),
+        str(app['shared_config'].get_redis_url(db=REDIS_STREAM_DB)),
         timeout=3.0,
         encoding='utf8',
     )
@@ -317,10 +316,10 @@ async def redis_ctx(app: web.Application) -> AsyncIterator[None]:
 
 async def database_ctx(app: web.Application) -> AsyncIterator[None]:
     app['dbpool'] = await create_engine(
-        host=app['config']['db']['addr'].host, port=app['config']['db']['addr'].port,
-        user=app['config']['db']['user'], password=app['config']['db']['password'],
-        dbname=app['config']['db']['name'],
-        echo=bool(app['config']['logging']['level'] == 'DEBUG'),
+        host=app['local_config']['db']['addr'].host, port=app['local_config']['db']['addr'].port,
+        user=app['local_config']['db']['user'], password=app['local_config']['db']['password'],
+        dbname=app['local_config']['db']['name'],
+        echo=bool(app['local_config']['logging']['level'] == 'DEBUG'),
         minsize=8, maxsize=256,
         timeout=60, pool_recycle=120,
         dialect=get_dialect(
@@ -334,15 +333,15 @@ async def database_ctx(app: web.Application) -> AsyncIterator[None]:
 
 
 async def event_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
-    app['event_dispatcher'] = await EventDispatcher.new(app['config'])
+    app['event_dispatcher'] = await EventDispatcher.new(app['local_config'], app['shared_config'])
     _update_public_interface_objs(app)
     yield
     await app['event_dispatcher'].close()
 
 
 async def storage_manager_ctx(app: web.Application) -> AsyncIterator[None]:
-    config_server: ConfigServer = app['config_server']
-    raw_vol_config = await config_server.etcd.get_prefix('volumes')
+    shared_config: SharedConfig = app['shared_config']
+    raw_vol_config = await shared_config.etcd.get_prefix('volumes')
     config = volume_config_iv.check(raw_vol_config)
     app['storage_manager'] = StorageSessionManager(config)
     _update_public_interface_objs(app)
@@ -351,7 +350,7 @@ async def storage_manager_ctx(app: web.Application) -> AsyncIterator[None]:
 
 
 async def hook_plugin_ctx(app: web.Application) -> AsyncIterator[None]:
-    ctx = HookPluginContext(app['config_server'].etcd, app['config'])
+    ctx = HookPluginContext(app['shared_config'].etcd, app['local_config'])
     app['hook_plugin_ctx'] = ctx
     _update_public_interface_objs(app)
     await ctx.init()
@@ -368,7 +367,7 @@ async def hook_plugin_ctx(app: web.Application) -> AsyncIterator[None]:
 
 async def agent_registry_ctx(app: web.Application) -> AsyncIterator[None]:
     app['registry'] = AgentRegistry(
-        app['config_server'],
+        app['shared_config'],
         app['dbpool'],
         app['redis_stat'],
         app['redis_live'],
@@ -385,14 +384,14 @@ async def agent_registry_ctx(app: web.Application) -> AsyncIterator[None]:
 
 async def sched_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
     sched_dispatcher = await SchedulerDispatcher.new(
-        app['config'], app['config_server'], app['event_dispatcher'], app['registry'])
+        app['local_config'], app['shared_config'], app['event_dispatcher'], app['registry'])
     yield
     await sched_dispatcher.close()
 
 
 async def monitoring_ctx(app: web.Application) -> AsyncIterator[None]:
-    ectx = ErrorPluginContext(app['config_server'].etcd, app['config'])
-    sctx = StatsPluginContext(app['config_server'].etcd, app['config'])
+    ectx = ErrorPluginContext(app['shared_config'].etcd, app['local_config'])
+    sctx = StatsPluginContext(app['shared_config'].etcd, app['local_config'])
     await ectx.init(context={'app': app})
     await sctx.init()
     app['error_monitor'] = ectx
@@ -473,7 +472,7 @@ def _update_public_interface_objs(root_app: web.Application) -> None:
 
 def build_root_app(
     pidx: int,
-    config: Mapping[str, Any], *,
+    local_config: LocalConfig, *,
     cleanup_contexts: Sequence[CleanupContext] = None,
     subapp_pkgs: Sequence[str] = None,
     scheduler_opts: Mapping[str, Any] = None,
@@ -486,7 +485,7 @@ def build_root_app(
     global_exception_handler = functools.partial(handle_loop_error, app)
     loop = asyncio.get_running_loop()
     loop.set_exception_handler(global_exception_handler)
-    app['config'] = config
+    app['local_config'] = local_config
     app['cors_opts'] = {
         '*': aiohttp_cors.ResourceOptions(
             allow_credentials=False,
@@ -562,18 +561,18 @@ async def server_main(loop: asyncio.AbstractEventLoop,
 
     # Plugin webapps should be loaded before runner.setup(),
     # which freezes on_startup event.
-    async with config_server_ctx(app), \
+    async with shared_config_ctx(app), \
                webapp_plugin_ctx(app):
         ssl_ctx = None
-        if app['config']['manager']['ssl-enabled']:
+        if app['local_config']['manager']['ssl-enabled']:
             ssl_ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
             ssl_ctx.load_cert_chain(
-                str(app['config']['manager']['ssl-cert']),
-                str(app['config']['manager']['ssl-privkey']),
+                str(app['local_config']['manager']['ssl-cert']),
+                str(app['local_config']['manager']['ssl-privkey']),
             )
         runner = web.AppRunner(app)
         await runner.setup()
-        service_addr = app['config']['manager']['service-addr']
+        service_addr = app['local_config']['manager']['service-addr']
         site = web.TCPSite(
             runner,
             str(service_addr.host),
@@ -585,8 +584,8 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         await site.start()
 
         if os.geteuid() == 0:
-            uid = app['config']['manager']['user']
-            gid = app['config']['manager']['group']
+            uid = app['local_config']['manager']['user']
+            gid = app['local_config']['manager']['group']
             os.setgroups([
                 g.gr_gid for g in grp.getgrall()
                 if pwd.getpwuid(uid).pw_name in g.gr_mem

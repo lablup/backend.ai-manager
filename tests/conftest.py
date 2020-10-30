@@ -26,8 +26,7 @@ import sqlalchemy as sa
 import psycopg2 as pg
 import pytest
 
-from ai.backend.gateway.config import LocalConfig, load as load_config
-from ai.backend.gateway.etcd import ConfigServer
+from ai.backend.gateway.config import LocalConfig, SharedConfig, load as load_config
 from ai.backend.gateway.server import (
     build_root_app,
 )
@@ -83,7 +82,7 @@ def vfolder_host():
 
 
 @pytest.fixture(scope='session')
-def test_config(test_id, test_db):
+def local_config(test_id, test_db):
     cfg = load_config()
     assert isinstance(cfg, LocalConfig)
     cfg['db']['name'] = test_db
@@ -138,15 +137,17 @@ def etcd_fixture(test_id, test_config, vfolder_mount, vfolder_fsprefix, vfolder_
 
 
 @pytest.fixture
-async def config_server(app, etcd_fixture):
-    server = ConfigServer(
+async def shared_config(app, etcd_fixture):
+    shared_config = SharedConfig(
         app,
-        app['config']['etcd']['addr'],
-        app['config']['etcd']['user'],
-        app['config']['etcd']['password'],
-        app['config']['etcd']['namespace'],
+        app['local_config']['etcd']['addr'],
+        app['local_config']['etcd']['user'],
+        app['local_config']['etcd']['password'],
+        app['local_config']['etcd']['namespace'],
     )
-    yield server
+    await shared_config.reload()
+    app['shared_config'] = shared_config
+    yield shared_config
 
 
 @pytest.fixture(scope='session')
@@ -340,12 +341,12 @@ async def create_app_and_client(test_config, event_loop):
         await runner.setup()
         site = web.TCPSite(
             runner,
-            str(app['config']['manager']['service-addr'].host),
-            app['config']['manager']['service-addr'].port,
+            str(app['local_config']['manager']['service-addr'].host),
+            app['local_config']['manager']['service-addr'].port,
             reuse_port=True,
         )
         await site.start()
-        port = app['config']['manager']['service-addr'].port
+        port = app['local_config']['manager']['service-addr'].port
         client_session = aiohttp.ClientSession()
         client = Client(client_session, f'http://localhost:{port}')
         return app, client
@@ -399,7 +400,7 @@ def get_headers(app, default_keypair):
                       hash_type='sha256', api_version='v5.20191215',
                       keypair=default_keypair):
         now = datetime.now(tzutc())
-        hostname = f"localhost:{app['config']['manager']['service-addr'].port}"
+        hostname = f"localhost:{app['local_config']['manager']['service-addr'].port}"
         headers = {
             'Date': now.isoformat(),
             'Content-Type': ctype,

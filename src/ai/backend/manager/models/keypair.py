@@ -25,7 +25,6 @@ import sqlalchemy as sa
 from sqlalchemy.sql.expression import false
 import psycopg2 as pg
 
-from ai.backend.gateway.config import RESERVED_DOTFILES
 from ai.backend.common import msgpack
 from ai.backend.common.types import (
     AccessKey,
@@ -43,6 +42,7 @@ from .base import (
     simple_db_mutate,
 )
 from .user import UserRole
+from ..defs import RESERVED_DOTFILES
 
 __all__: Sequence[str] = (
     'keypairs',

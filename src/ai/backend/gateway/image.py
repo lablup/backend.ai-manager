@@ -376,13 +376,13 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
             raise InvalidAPIParameters("You do not belong to the given group.")
 
     importer_image = ImageRef(
-        request.app['config']['manager']['importer-image'],
+        request.app['local_config']['manager']['importer-image'],
         allowed_docker_registries,
     )
 
     docker_creds = {}
     for img_ref in (source_image, target_image):
-        registry_info = await request.app['config_server'].etcd.get_prefix_dict(
+        registry_info = await request.app['shared_config'].etcd.get_prefix_dict(
             f'config/docker/registry/{etcd_quote(img_ref.registry)}')
         docker_creds[img_ref.registry] = {
             'username': registry_info.get('username'),
