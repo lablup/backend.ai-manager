@@ -1494,6 +1494,28 @@ async def complete(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+@atomic
+@server_status_required(READ_ALLOWED)
+@auth_required
+@check_api_params(
+    t.Dict({
+        t.Key('service_name'): t.String,
+    }))
+async def shutdown_service(request: web.Request, params: Any) -> web.Response:
+    registry = request.app['registry']
+    session_name = request.match_info['session_name']
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
+    log.info('SHUTDOWN_SERVICE (ak:{0}/{1}, s:{2})',
+             requester_access_key, owner_access_key, session_name)
+    service_name = params.get('service_name')
+    try:
+        await registry.shutdown_service(session_name, owner_access_key, service_name)
+    except BackendError:
+        log.exception('SHUTDOWN_SERVICE: exception')
+        raise
+    return web.Response(status=204)
+
+
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def upload_files(request: web.Request) -> web.Response:
@@ -1814,6 +1836,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     cors.add(app.router.add_route('GET',  '/{session_name}/logs', get_container_logs))
     cors.add(app.router.add_route('POST', '/{session_name}/interrupt', interrupt))
     cors.add(app.router.add_route('POST', '/{session_name}/complete', complete))
+    cors.add(app.router.add_route('POST', '/{session_name}/shutdown-service', shutdown_service))
     cors.add(app.router.add_route('POST', '/{session_name}/upload', upload_files))
     cors.add(app.router.add_route('GET',  '/{session_name}/download', download_files))
     cors.add(app.router.add_route('GET',  '/{session_name}/download_single', download_single))
