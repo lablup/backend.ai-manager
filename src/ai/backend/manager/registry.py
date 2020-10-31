@@ -525,7 +525,8 @@ class AgentRegistry:
     async def get_session(
         self,
         session_name_or_id: Union[str, uuid.UUID],
-        access_key: str, *,
+        access_key: Union[str, AccessKey],
+        *,
         allow_stale: bool = False,
         for_update: bool = False,
         db_connection: SAConnection = None,

@@ -23,6 +23,7 @@ from typing import (
     Optional,
     Tuple,
     Union,
+    TYPE_CHECKING,
 )
 import uuid
 
@@ -55,6 +56,7 @@ from ai.backend.common.types import (
     SessionTypes,
 )
 from ai.backend.common.plugin.monitor import GAUGE
+
 from .config import DEFAULT_CHUNK_SIZE
 from .defs import REDIS_STREAM_DB
 from .exceptions import (
@@ -91,6 +93,8 @@ from ..manager.models import (
     DEAD_KERNEL_STATUSES,
 )
 from ..manager.models.kernel import match_session_ids
+if TYPE_CHECKING:
+    from ..manager.registry import AgentRegistry
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.session'))
 
@@ -1675,8 +1679,8 @@ async def list_files(request: web.Request) -> web.Response:
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }))
 async def get_container_logs(request: web.Request, params: Any) -> web.Response:
-    registry = request.app['registry']
-    session_name = request.match_info['session_name']
+    registry: AgentRegistry = request.app['registry']
+    session_name: str = request.match_info['session_name']
     dbpool = request.app['dbpool']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('GET_CONTAINER_LOG (ak:{}/{}, s:{})',
@@ -1685,7 +1689,6 @@ async def get_container_logs(request: web.Request, params: Any) -> web.Response:
     async with dbpool.acquire() as conn, conn.begin():
         compute_session = await registry.get_session(
             session_name, owner_access_key,
-            field=[kernels.c.container_log],
             allow_stale=True,
             db_connection=conn,
         )
