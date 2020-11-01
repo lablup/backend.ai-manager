@@ -27,8 +27,11 @@ from typing import (
 import uuid
 
 import aiohttp
-from aiopg.sa.connection import SAConnection
+if TYPE_CHECKING:
+    from aiopg.sa.connection import SAConnection
+    from aiopg.sa.engine import _PoolAcquireContextManager as SAPool
 import aiotools
+from aioredis import Redis
 from async_timeout import timeout as _timeout
 from callosum.rpc import Peer, RPCUserError
 from callosum.lower.zeromq import ZeroMQAddress, ZeroMQRPCTransport
@@ -196,10 +199,10 @@ class AgentRegistry:
     def __init__(
         self,
         shared_config: SharedConfig,
-        dbpool,
-        redis_stat,
-        redis_live,
-        redis_image,
+        dbpool: SAPool,
+        redis_stat: Redis,
+        redis_live: Redis,
+        redis_image: Redis,
         event_dispatcher: EventDispatcher,
         storage_manager:  StorageSessionManager,
         hook_plugin_ctx: HookPluginContext,
@@ -1023,7 +1026,7 @@ class AgentRegistry:
             registry_url, registry_creds = \
                 await get_registry_info(self.shared_config.etcd, image_ref.registry)
 
-        network_name: Optional[str]
+        network_name: Optional[str] = None
         if pending_session.cluster_mode == ClusterMode.SINGLE_NODE:
             if pending_session.cluster_size > 1:
                 network_name = f'bai-singlenode-{pending_session.session_id}'

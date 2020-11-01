@@ -64,7 +64,7 @@ Alias keys are also URL-quoted in the same way.
        - password: {password}
      + idle
        - enabled: "timeout,utilization"  # comma-separated list of checker names
-       - checker
+       - checkers
          + "timeout"
            - treshold: "10m"
          + "utilization"
