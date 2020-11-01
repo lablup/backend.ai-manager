@@ -19,11 +19,13 @@ from typing import (
     Union,
 )
 from urllib.parse import urlparse
+import uuid
 import weakref
 
 import aiohttp
 from aiohttp import web
 import aiohttp_cors
+import aioredis
 from aiotools import apartial, adefer
 import trafaret as t
 import zmq, zmq.asyncio
@@ -36,6 +38,7 @@ from ai.backend.common.types import (
 )
 
 from .auth import auth_required
+from .defs import REDIS_LIVE_DB
 from .exceptions import (
     AppNotFound, SessionNotFound,
     BackendError,
@@ -350,6 +353,7 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
     local_config = request.app['local_config']
 
     stream_key = (session_name, access_key)
+    stream_id = uuid.uuid4().hex
     myself = asyncio.Task.current_task()
     request.app['stream_proxy_handlers'][stream_key].add(myself)
     defer(lambda: request.app['stream_proxy_handlers'][stream_key].discard(myself))
@@ -358,11 +362,11 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
         kernel = await asyncio.shield(registry.get_session(session_name, access_key))
     except SessionNotFound:
         raise
-    if kernel.kernel_host is None:
-        kernel_host = urlparse(kernel.agent_addr).hostname
+    if kernel['kernel_host'] is None:
+        kernel_host = urlparse(kernel['agent_addr']).hostname
     else:
-        kernel_host = kernel.kernel_host
-    for sport in kernel.service_ports:
+        kernel_host = kernel['kernel_host']
+    for sport in kernel['service_ports']:
         if sport['name'] == service:
             if params['port']:
                 # using one of the primary/secondary ports of the app
@@ -399,15 +403,21 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
     # TODO: apply a (distributed) semaphore to limit concurrency per user.
     await asyncio.shield(registry.increment_session_usage(session_name, access_key))
 
+    redis_live: aioredis.Redis = request.app['redis_live']
+    conn_tracker_key = f"session.{kernel['id']}.active_app_connections"
+    conn_tracker_val = f"{kernel['id']}:{service}:{stream_id}"
+
     async def refresh_cb(kernel_id: str, data: bytes):
+        now = await redis_live.time()
+        await redis_live.zadd(conn_tracker_key, f"{now:.06f}", conn_tracker_val)
         await asyncio.shield(call_non_bursty(
             kernel_id,
             apartial(registry.refresh_session, session_name, access_key),
             max_bursts=64, max_idle=2000))
 
-    down_cb = apartial(refresh_cb, kernel.id)
-    up_cb = apartial(refresh_cb, kernel.id)
-    ping_cb = apartial(refresh_cb, kernel.id)
+    down_cb = apartial(refresh_cb, kernel['id'])
+    up_cb = apartial(refresh_cb, kernel['id'])
+    ping_cb = apartial(refresh_cb, kernel['id'])
 
     try:
         opts: MutableMapping[str, Union[None, str, List[str]]] = {}
@@ -428,15 +438,29 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
             autoping=False,
             max_msg_size=local_config['manager']['max-wsmsg-size'],
         )
-        await ws.prepare(request)
-        proxy = proxy_cls(ws, dest[0], dest[1],
-                          downstream_callback=down_cb,
-                          upstream_callback=up_cb,
-                          ping_callback=ping_cb)
-        return await proxy.proxy()
+        try:
+            request.app['active_session_ids'].add(kernel['id'])
+            now = await redis_live.time()
+            await redis_live.zadd(conn_tracker_key, f"{now:.06f}", conn_tracker_val)
+            await ws.prepare(request)
+            proxy = proxy_cls(
+                ws, dest[0], dest[1],
+                downstream_callback=down_cb,
+                upstream_callback=up_cb,
+                ping_callback=ping_cb,
+            )
+            return await proxy.proxy()
+        finally:
+            await redis_live.zrem(conn_tracker_key, conn_tracker_val)
+            remaining_count = await redis_live.zcount(conn_tracker_key)
+            if remaining_count == 0:
+                pass
+                # TODO: idle_checker._update_last_access
     except asyncio.CancelledError:
         log.debug('stream_proxy({}, {}) cancelled', stream_key, service)
         raise
+    finally:
+        request.app['active_session_ids'].discard(kernel['id'])
 
 
 @server_status_required(READ_ALLOWED)
@@ -491,6 +515,29 @@ async def kernel_terminated(app: web.Application, agent_id: AgentId, event_name:
         # TODO: reconnect if restarting?
 
 
+async def stream_conn_tracker_gc(app: web.Application) -> None:
+    redis_live: aioredis.Redis = app['redis_live']
+    try:
+        while True:
+            no_packet_timeout = 300.0  # 5 minutes
+            # no_packet_timeout = 30.0   # for testing
+            now = await redis_live.time()
+            for session_id in app['active_session_ids']:
+                conn_tracker_key = f"session.{session_id}.active_app_connections"
+                removed_count = await redis_live.zremrangebyscore(
+                    conn_tracker_key, float('-inf'), now - no_packet_timeout,
+                )
+                remaining_count = await redis_live.zcount(conn_tracker_key)
+                log.debug(f"conn_tracker: gc {session_id} "
+                          f"removed/remaining = {removed_count}/{remaining_count}")
+                if remaining_count == 0:
+                    pass
+                    # TODO: idle_checker._update_last_access
+            await asyncio.sleep(10)
+    except asyncio.CancelledError:
+        pass
+
+
 async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
     app['stream_pty_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_execute_handlers'] = defaultdict(weakref.WeakSet)
@@ -498,12 +545,17 @@ async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
     app['stream_stdin_socks'] = defaultdict(weakref.WeakSet)
     app['zctx'] = zmq.asyncio.Context()
 
+    app['active_session_ids'] = set()
+    conn_tracker_gc_task = asyncio.create_task(stream_conn_tracker_gc(app))
+
     event_dispatcher = app['event_dispatcher']
     event_dispatcher.subscribe('kernel_terminated', app, kernel_terminated)
 
     yield
 
     cancelled_tasks: List[asyncio.Task] = []
+    conn_tracker_gc_task.cancel()
+    cancelled_tasks.append(conn_tracker_gc_task)
     for per_kernel_handlers in app['stream_pty_handlers'].values():
         for handler in list(per_kernel_handlers):
             if not handler.done():
@@ -520,6 +572,7 @@ async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
                 handler.cancel()
                 cancelled_tasks.append(handler)
     await asyncio.gather(*cancelled_tasks, return_exceptions=True)
+
     app['zctx'].term()
 
 

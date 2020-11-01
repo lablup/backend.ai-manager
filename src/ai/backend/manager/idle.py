@@ -105,6 +105,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
 
     name: ClassVar[str] = "timeout"
     default_idle_timeout: ClassVar[float] = 600.0  # 10 minutes
+    # default_idle_timeout: ClassVar[float] = 30.0   # for testing
 
     async def __ainit__(self) -> None:
         await super().__ainit__()
@@ -112,10 +113,16 @@ class TimeoutIdleChecker(BaseIdleChecker):
             self._event_dispatcher.consume("execution_started", None, self._disable_timeout)
         self._evh_execution_finished = \
             self._event_dispatcher.consume("execution_finished", None, self._update_last_access)
+        self._evh_execution_timeout = \
+            self._event_dispatcher.consume("execution_timeout", None, self._update_last_access)
+        self._evh_execution_cancelled = \
+            self._event_dispatcher.consume("execution_cancelled", None, self._update_last_access)
 
     async def aclose(self) -> None:
         self._event_dispatcher.unconsume("execution_started", self._evh_execution_started)
         self._event_dispatcher.unconsume("execution_finished", self._evh_execution_finished)
+        self._event_dispatcher.unconsume("execution_timeout", self._evh_execution_timeout)
+        self._event_dispatcher.unconsume("execution_cancelled", self._evh_execution_cancelled)
         await super().aclose()
 
     async def populate_config(self, config: Mapping[str, Any]) -> None:
@@ -148,6 +155,9 @@ class TimeoutIdleChecker(BaseIdleChecker):
 
     async def check_session(self, session) -> bool:
         session_id = session['id']
+        active_streams = await self._redis.zcount(f"session.{session_id}.active_app_connections")
+        if active_streams is not None and active_streams > 0:
+            return True
         t = await self._redis.time()
         last_access = await self._redis.get(f"session.{session_id}.last_access")
         if last_access is None or last_access == "0":
