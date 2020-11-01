@@ -1106,7 +1106,7 @@ async def check_agent_lost(app, interval):
         timeout = timedelta(seconds=app['local_config']['manager']['heartbeat-timeout'])
 
         async def _check_impl():
-            async for agent_id, prev in app['redis_live'].ihscan('last_seen'):
+            async for agent_id, prev in app['redis_live'].ihscan('agent.last_seen'):
                 prev = datetime.fromtimestamp(float(prev), tzutc())
                 if now - prev > timeout:
                     await app['event_dispatcher'].produce_event(

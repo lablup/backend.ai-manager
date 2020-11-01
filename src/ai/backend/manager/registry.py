@@ -1859,7 +1859,7 @@ class AgentRegistry:
             instance_rejoin = False
 
             # Update "last seen" timestamp for liveness tracking
-            await self.redis_live.hset('last_seen', agent_id, now.timestamp())
+            await self.redis_live.hset('agent.last_seen', agent_id, now.timestamp())
 
             # Check and update status of the agent record in DB
             async with self.dbpool.acquire() as conn, conn.begin():
@@ -1970,7 +1970,7 @@ class AgentRegistry:
 
     async def mark_agent_terminated(self, agent_id, status, conn=None):
         global agent_peers
-        await self.redis_live.hdel('last_seen', agent_id)
+        await self.redis_live.hdel('agent.last_seen', agent_id)
 
         async def _pipe_builder():
             pipe = self.redis_image.pipeline()
