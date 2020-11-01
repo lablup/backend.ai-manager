@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from abc import abstractmethod
+from abc import ABCMeta, abstractmethod
 import logging
 from typing import (
     Any,
     ClassVar,
-    Final,
     Mapping,
     Sequence,
     Type,
@@ -33,7 +32,9 @@ if TYPE_CHECKING:
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.idle'))
 
 
-class BaseIdleChecker(aobject):
+class BaseIdleChecker(aobject, metaclass=ABCMeta):
+
+    name: ClassVar[str] = "base"
 
     def __init__(
         self,
@@ -49,6 +50,9 @@ class BaseIdleChecker(aobject):
         self._redis = await aioredis.create_redis(
             str(self._shared_config.get_redis_url(db=REDIS_LIVE_DB))
         )
+        config = await self._shared_config.etcd.get_prefix_dict(f"config/idle/checkers/{self.name}")
+        if config is not None:
+            await self.populate_config(config)
         self.timer = GlobalTimer(self._redis, self._event_dispatcher, 'do_idle_check', 10.0)
         self._evh_idle_check = self._event_dispatcher.consume('do_idle_check', None, self._do_idle_check)
         await self.timer.join()
@@ -60,7 +64,7 @@ class BaseIdleChecker(aobject):
         await self._redis.wait_closed()
 
     @abstractmethod
-    def populate_config(self, idle_check_config: Mapping[str, Any]) -> None:
+    def populate_config(self, config: Mapping[str, Any]) -> None:
         raise NotImplementedError
 
     async def _do_idle_check(self, context: Any, agent_id: AgentId, event_name: str) -> None:
@@ -99,13 +103,11 @@ class TimeoutIdleChecker(BaseIdleChecker):
     query/batch-mode code execution and having active service-port connections.
     """
 
+    name: ClassVar[str] = "timeout"
     default_idle_timeout: ClassVar[float] = 600.0  # 10 minutes
 
     async def __ainit__(self) -> None:
         await super().__ainit__()
-        config = await self._shared_config.etcd.get_prefix_dict("config/idle/checkers/timeout")
-        if config is not None:
-            self.idle_timeout = float(config.get('idle_timeout', self.default_idle_timeout))
         self._evh_execution_started = \
             self._event_dispatcher.consume("execution_started", None, self._disable_timeout)
         self._evh_execution_finished = \
@@ -115,6 +117,9 @@ class TimeoutIdleChecker(BaseIdleChecker):
         self._event_dispatcher.unconsume("execution_started", self._evh_execution_started)
         self._event_dispatcher.unconsume("execution_finished", self._evh_execution_finished)
         await super().aclose()
+
+    async def populate_config(self, config: Mapping[str, Any]) -> None:
+        self.idle_timeout = float(config.get('idle_timeout', self.default_idle_timeout))
 
     async def _disable_timeout(
         self,
@@ -162,6 +167,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
     compute devices and agents assigned to it.
     """
 
+    name: ClassVar[str] = "utilization"
     default_cpu_util_threshold: ClassVar[float] = 30.0
     default_accelerator_util_threshold: ClassVar[float] = 10.0
     default_initial_grace_period: ClassVar[float] = 300.0  # allow first 5 minutes to be idle
@@ -173,8 +179,8 @@ class UtilizationIdleChecker(BaseIdleChecker):
 
 
 checker_registry: Mapping[str, Type[BaseIdleChecker]] = {
-    "timeout": TimeoutIdleChecker,
-    "utilization": UtilizationIdleChecker,
+    TimeoutIdleChecker.name: TimeoutIdleChecker,
+    UtilizationIdleChecker.name: UtilizationIdleChecker,
 }
 
 
@@ -195,6 +201,7 @@ async def create_idle_checkers(
         checker_cls = checker_registry.get(checker_name, None)
         if checker_cls is None:
             log.warning("ignoring an unknown idle checker name: {checker_name}")
+        log.debug(f"initializing idle checker: {checker_name}")
         checker_instance = await checker_cls.new(dbpool, shared_config, event_dispatcher)
         instances.append(checker_instance)
     return instances
