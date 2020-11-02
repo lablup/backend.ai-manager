@@ -16,6 +16,14 @@ Changes
 
 .. towncrier release notes start
 
+20.09.0a3 (2020-11-03)
+----------------------
+
+### Fixes
+* Fix a regression in container-logs API since session name/ID matching generalization ([#346](https://github.com/lablup/backend.ai-manager/issues/346))
+* Improve error handling in `gateway.wsproxy.TCPProxy` and use only aiohttp-supported WebSocket close codes to prevent client-side break-up ([#347](https://github.com/lablup/backend.ai-manager/issues/347))
+
+
 20.09.0a2 (2020-10-30)
 ----------------------
 
