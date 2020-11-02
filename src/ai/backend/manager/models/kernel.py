@@ -366,7 +366,7 @@ async def get_main_kernels(
         (session_id, None) for session_id in session_ids
     )
     query = (
-        sa.select([sa.text('*')])
+        sa.select([kernels])
         .select_from(kernels)
         .where(
             (kernels.c.session_id.in_(session_ids)) &

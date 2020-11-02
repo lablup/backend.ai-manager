@@ -1693,11 +1693,11 @@ async def get_container_logs(request: web.Request, params: Any) -> web.Response:
             db_connection=conn,
         )
         if (
-            compute_session.status in DEAD_KERNEL_STATUSES and
-            compute_session.container_log is not None
+            compute_session['status'] in DEAD_KERNEL_STATUSES
+            and compute_session['container_log'] is not None
         ):
             log.debug('returning log from database record')
-            resp['result']['logs'] = compute_session.container_log.decode('utf-8')
+            resp['result']['logs'] = compute_session['container_log'].decode('utf-8')
             return web.json_response(resp, status=200)
     try:
         await registry.increment_session_usage(session_name, owner_access_key)
