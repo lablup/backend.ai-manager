@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from collections import OrderedDict
+from datetime import datetime
 from decimal import Decimal
 import enum
 from typing import (
@@ -243,6 +245,7 @@ class SessionInfo(TypedDict):
     session_id: SessionId
     session_name: str
     status: KernelStatus
+    created_at: datetime
 
 
 async def match_session_ids(
@@ -346,6 +349,7 @@ async def match_session_ids(
                 session_id=row['session_id'],
                 session_name=row['session_name'],
                 status=row['status'],
+                created_at=row['created_at'],
             ) for row in await result.fetchall()
         ]
     return []
@@ -365,7 +369,7 @@ async def get_main_kernels(
         (session_id, None) for session_id in session_ids
     )
     query = (
-        sa.select([sa.text('*')])
+        sa.select([kernels])
         .select_from(kernels)
         .where(
             (kernels.c.session_id.in_(session_ids)) &
