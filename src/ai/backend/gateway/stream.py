@@ -409,11 +409,11 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
 
     async def refresh_cb(kernel_id: str, data: bytes):
         now = await redis_live.time()
-        await redis_live.zadd(conn_tracker_key, f"{now:.06f}", conn_tracker_val)
         await asyncio.shield(call_non_bursty(
-            kernel_id,
-            apartial(registry.refresh_session, session_name, access_key),
-            max_bursts=64, max_idle=2000))
+            conn_tracker_key,
+            apartial(redis_live.zadd, conn_tracker_key, now, conn_tracker_val),
+            max_bursts=64, max_idle=2000,
+        ))
 
     down_cb = apartial(refresh_cb, kernel['id'])
     up_cb = apartial(refresh_cb, kernel['id'])
@@ -441,7 +441,7 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
         try:
             request.app['active_session_ids'].add(kernel['id'])
             now = await redis_live.time()
-            await redis_live.zadd(conn_tracker_key, f"{now:.06f}", conn_tracker_val)
+            await redis_live.zadd(conn_tracker_key, now, conn_tracker_val)
             await ws.prepare(request)
             proxy = proxy_cls(
                 ws, dest[0], dest[1],
@@ -451,6 +451,7 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
             )
             return await proxy.proxy()
         finally:
+            request.app['active_session_ids'].discard(kernel['id'])
             await redis_live.zrem(conn_tracker_key, conn_tracker_val)
             remaining_count = await redis_live.zcount(conn_tracker_key)
             if remaining_count == 0:
@@ -459,8 +460,6 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
     except asyncio.CancelledError:
         log.debug('stream_proxy({}, {}) cancelled', stream_key, service)
         raise
-    finally:
-        request.app['active_session_ids'].discard(kernel['id'])
 
 
 @server_status_required(READ_ALLOWED)

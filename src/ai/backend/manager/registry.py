@@ -1807,17 +1807,6 @@ class AgentRegistry:
             async with RPCContext(kernel['agent_addr'], 30, order_key=kernel['id']) as rpc:
                 return await rpc.call.get_logs(str(kernel['id']))
 
-    async def refresh_session(
-        self,
-        session_name_or_id: Union[str, SessionId],
-        access_key: AccessKey,
-    ) -> Mapping[str, Any]:
-        kernel = await self.get_session(session_name_or_id, access_key)
-        async with self.handle_kernel_exception('refresh_session',
-                                                kernel['id'], access_key):
-            async with RPCContext(kernel['agent_addr'], 30, order_key=kernel['id']) as rpc:
-                return await rpc.call.refresh_idle(str(kernel['id']))
-
     async def increment_session_usage(
         self,
         session_name: str,
