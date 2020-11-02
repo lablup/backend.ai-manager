@@ -346,6 +346,7 @@ async def match_session_ids(
                 session_id=row['session_id'],
                 session_name=row['session_name'],
                 status=row['status'],
+                created_at=row['created_at'],
             ) for row in await result.fetchall()
         ]
     return []
