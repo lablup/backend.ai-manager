@@ -12,10 +12,14 @@ import json
 import logging
 import secrets
 from typing import (
-    Any, Iterable, AsyncIterator,
+    Any,
+    AsyncIterator,
+    Iterable,
+    List,
     Mapping,
     MutableMapping,
-    List, Tuple,
+    TYPE_CHECKING,
+    Tuple,
     Union,
 )
 from urllib.parse import urlparse
@@ -31,22 +35,27 @@ import zmq, zmq.asyncio
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
+    AccessKey,
     AgentId,
     KernelId,
 )
 
 from .auth import auth_required
 from .exceptions import (
-    AppNotFound, SessionNotFound,
+    AppNotFound,
     BackendError,
-    InvalidAPIParameters,
     InternalServerError,
+    InvalidAPIParameters,
+    SessionNotFound,
+    TooManySessionsMatched,
 )
 from .manager import READ_ALLOWED, server_status_required
 from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params, call_non_bursty
 from .wsproxy import TCPProxy
 from ..manager.models import kernels
+if TYPE_CHECKING:
+    from ..manager.registry import AgentRegistry
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.stream'))
 
@@ -338,10 +347,10 @@ async def stream_execute(defer, request: web.Request) -> web.StreamResponse:
     }))
 @adefer
 async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -> web.StreamResponse:
-    registry = request.app['registry']
-    session_name = request.match_info['session_name']
-    access_key = request['keypair']['access_key']
-    service = params['app']
+    registry: AgentRegistry = request.app['registry']
+    session_name: str = request.match_info['session_name']
+    access_key: AccessKey = request['keypair']['access_key']
+    service: str = params['app']
     config = request.app['config']
 
     stream_key = (session_name, access_key)
@@ -351,13 +360,13 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
 
     try:
         kernel = await asyncio.shield(registry.get_session(session_name, access_key))
-    except SessionNotFound:
+    except (SessionNotFound, TooManySessionsMatched):
         raise
-    if kernel.kernel_host is None:
-        kernel_host = urlparse(kernel.agent_addr).hostname
+    if kernel['kernel_host'] is None:
+        kernel_host = urlparse(kernel['agent_addr']).hostname
     else:
-        kernel_host = kernel.kernel_host
-    for sport in kernel.service_ports:
+        kernel_host = kernel['kernel_host']
+    for sport in kernel['service_ports']:
         if sport['name'] == service:
             if params['port']:
                 # using one of the primary/secondary ports of the app

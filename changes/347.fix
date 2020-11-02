@@ -1,0 +1,1 @@
+Improve error handling in `gateway.wsproxy.TCPProxy` and use only aiohttp-supported WebSocket close codes to prevent client-side break-up
