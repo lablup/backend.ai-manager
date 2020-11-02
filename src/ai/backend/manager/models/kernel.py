@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from collections import OrderedDict
+from datetime import datetime
 from decimal import Decimal
 import enum
 from typing import (
@@ -243,6 +245,7 @@ class SessionInfo(TypedDict):
     session_id: SessionId
     session_name: str
     status: KernelStatus
+    created_at: datetime
 
 
 async def match_session_ids(
