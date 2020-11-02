@@ -6,11 +6,15 @@ from abc import ABCMeta, abstractmethod
 import asyncio
 import logging
 from typing import (
-    Optional, Union,
+    Any,
     Awaitable,
+    Callable,
+    Optional,
+    Union,
 )
 
 import aiohttp
+from aiohttp import WSCloseCode
 from aiohttp import web
 
 from ai.backend.common.logging import BraceStyleAdapter
@@ -30,10 +34,16 @@ class ServiceProxy(metaclass=ABCMeta):
         'downstream_cb', 'upstream_cb', 'ping_cb',
     )
 
-    def __init__(self, down_ws, dest_host, dest_port, *,
-                 downstream_callback: Awaitable = None,
-                 upstream_callback: Awaitable = None,
-                 ping_callback: Awaitable = None):
+    def __init__(
+        self,
+        down_ws: web.WebSocketResponse,
+        dest_host: str,
+        dest_port: int,
+        *,
+        downstream_callback: Callable[[Any], Awaitable[None]] = None,
+        upstream_callback: Callable[[Any], Awaitable[None]] = None,
+        ping_callback: Callable[[Any], Awaitable[None]] = None,
+    ) -> None:
         self.ws = down_ws
         self.host = dest_host
         self.port = dest_port
@@ -42,7 +52,7 @@ class ServiceProxy(metaclass=ABCMeta):
         self.ping_cb = ping_callback
 
     @abstractmethod
-    async def proxy(self):
+    async def proxy(self) -> web.WebSocketResponse:
         pass
 
 
@@ -50,20 +60,23 @@ class TCPProxy(ServiceProxy):
 
     __slots__ = ServiceProxy.__slots__ + ('down_task', )
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.down_task = None
 
-    async def proxy(self):
+    async def proxy(self) -> web.WebSocketResponse:
         try:
             try:
-                log.debug('Trying to open WS Connection to {}:{}', self.host, self.port)
+                log.debug('Trying to open proxied TCP connection to {}:{}', self.host, self.port)
                 reader, writer = await asyncio.open_connection(self.host, self.port)
             except ConnectionRefusedError:
-                await self.ws.close(code=1014)
+                await self.ws.close(code=WSCloseCode.TRY_AGAIN_LATER)
+                return self.ws
+            except Exception:
+                log.exception("TCPProxy.proxy(): unexpected initial connection error")
+                await self.ws.close(code=WSCloseCode.INTERNAL_ERROR)
                 return self.ws
 
-            async def downstream():
+            async def downstream() -> None:
                 try:
                     while True:
                         try:
@@ -73,18 +86,20 @@ class TCPProxy(ServiceProxy):
                             await self.ws.send_bytes(chunk)
                         except (RuntimeError, ConnectionResetError,
                                 asyncio.CancelledError):
-                            # connection interrupted
+                            # connection interrupted by client-side
                             break
                         else:
                             if self.downstream_cb is not None:
                                 await self.downstream_cb(chunk)
                 except asyncio.CancelledError:
                     pass
+                except Exception:
+                    log.exception("TCPProxy.proxy(): unexpected downstream error")
                 finally:
-                    await self.ws.close(code=1001)
+                    await self.ws.close(code=WSCloseCode.GOING_AWAY)
 
             log.debug('TCPProxy connected {0}:{1}', self.host, self.port)
-            self.down_task = asyncio.ensure_future(downstream())
+            self.down_task = asyncio.create_task(downstream())
             async for msg in self.ws:
                 if msg.type == web.WSMsgType.BINARY:
                     try:
@@ -98,14 +113,15 @@ class TCPProxy(ServiceProxy):
                     await self.ws.pong(msg.data)
                     if self.ping_cb is not None:
                         await self.ping_cb(msg.data)
-                elif msg.type == aiohttp.WSMsgType.ERROR:
-                    log.debug('ws connection closed with exception %s' %
-                              self.ws.exception())
+                elif msg.type == web.WSMsgType.ERROR:
+                    log.debug("TCPProxy.proxy(): websocket upstream error", exc_info=msg.data)
                     writer.close()
                     await writer.wait_closed()
 
         except asyncio.CancelledError:
             pass
+        except Exception:
+            log.exception("TCPProxy.proxy(): unexpected upstream error")
         finally:
             if self.down_task is not None and not self.down_task.done():
                 self.down_task.cancel()
