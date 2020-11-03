@@ -23,6 +23,7 @@ from typing import (
     Optional,
     Tuple,
     Union,
+    TYPE_CHECKING,
 )
 import uuid
 
@@ -57,7 +58,6 @@ from ai.backend.common.types import (
 )
 from ai.backend.common.plugin.monitor import GAUGE
 
-from ai.backend.manager.idle import create_idle_checkers
 from .config import DEFAULT_CHUNK_SIZE
 from .defs import REDIS_STREAM_DB
 from .exceptions import (
@@ -80,6 +80,7 @@ from .utils import (
 )
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.defs import DEFAULT_ROLE
+from ..manager.idle import create_idle_checkers
 from ..manager.models import (
     domains,
     association_groups_users as agus, groups,
@@ -94,6 +95,8 @@ from ..manager.models import (
     DEAD_KERNEL_STATUSES,
 )
 from ..manager.models.kernel import match_session_ids
+if TYPE_CHECKING:
+    from ..manager.registry import AgentRegistry
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.session'))
 
@@ -1494,6 +1497,28 @@ async def complete(request: web.Request) -> web.Response:
     return web.json_response(resp, status=200)
 
 
+@atomic
+@server_status_required(READ_ALLOWED)
+@auth_required
+@check_api_params(
+    t.Dict({
+        t.Key('service_name'): t.String,
+    }))
+async def shutdown_service(request: web.Request, params: Any) -> web.Response:
+    registry = request.app['registry']
+    session_name = request.match_info['session_name']
+    requester_access_key, owner_access_key = await get_access_key_scopes(request)
+    log.info('SHUTDOWN_SERVICE (ak:{0}/{1}, s:{2})',
+             requester_access_key, owner_access_key, session_name)
+    service_name = params.get('service_name')
+    try:
+        await registry.shutdown_service(session_name, owner_access_key, service_name)
+    except BackendError:
+        log.exception('SHUTDOWN_SERVICE: exception')
+        raise
+    return web.Response(status=204)
+
+
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def upload_files(request: web.Request) -> web.Response:
@@ -1653,8 +1678,8 @@ async def list_files(request: web.Request) -> web.Response:
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }))
 async def get_container_logs(request: web.Request, params: Any) -> web.Response:
-    registry = request.app['registry']
-    session_name = request.match_info['session_name']
+    registry: AgentRegistry = request.app['registry']
+    session_name: str = request.match_info['session_name']
     dbpool = request.app['dbpool']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('GET_CONTAINER_LOG (ak:{}/{}, s:{})',
@@ -1663,16 +1688,15 @@ async def get_container_logs(request: web.Request, params: Any) -> web.Response:
     async with dbpool.acquire() as conn, conn.begin():
         compute_session = await registry.get_session(
             session_name, owner_access_key,
-            field=[kernels.c.container_log],
             allow_stale=True,
             db_connection=conn,
         )
         if (
-            compute_session.status in DEAD_KERNEL_STATUSES and
-            compute_session.container_log is not None
+            compute_session['status'] in DEAD_KERNEL_STATUSES
+            and compute_session['container_log'] is not None
         ):
             log.debug('returning log from database record')
-            resp['result']['logs'] = compute_session.container_log.decode('utf-8')
+            resp['result']['logs'] = compute_session['container_log'].decode('utf-8')
             return web.json_response(resp, status=200)
     try:
         await registry.increment_session_usage(session_name, owner_access_key)
@@ -1820,6 +1844,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     cors.add(app.router.add_route('GET',  '/{session_name}/logs', get_container_logs))
     cors.add(app.router.add_route('POST', '/{session_name}/interrupt', interrupt))
     cors.add(app.router.add_route('POST', '/{session_name}/complete', complete))
+    cors.add(app.router.add_route('POST', '/{session_name}/shutdown-service', shutdown_service))
     cors.add(app.router.add_route('POST', '/{session_name}/upload', upload_files))
     cors.add(app.router.add_route('GET',  '/{session_name}/download', download_files))
     cors.add(app.router.add_route('GET',  '/{session_name}/download_single', download_single))

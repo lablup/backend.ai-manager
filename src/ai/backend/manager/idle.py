@@ -64,7 +64,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
         await self._redis.wait_closed()
 
     @abstractmethod
-    def populate_config(self, config: Mapping[str, Any]) -> None:
+    async def populate_config(self, config: Mapping[str, Any]) -> None:
         raise NotImplementedError
 
     async def _do_idle_check(self, context: Any, agent_id: AgentId, event_name: str) -> None:
@@ -85,7 +85,6 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
                     "terminate_session",
                     (),
                 )
-
 
     @abstractmethod
     async def check_session(self, session) -> bool:
@@ -211,6 +210,7 @@ async def create_idle_checkers(
         checker_cls = checker_registry.get(checker_name, None)
         if checker_cls is None:
             log.warning("ignoring an unknown idle checker name: {checker_name}")
+            continue
         log.debug(f"initializing idle checker: {checker_name}")
         checker_instance = await checker_cls.new(dbpool, shared_config, event_dispatcher)
         instances.append(checker_instance)

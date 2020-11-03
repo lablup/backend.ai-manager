@@ -1,1 +1,0 @@
-Ensure removal of vfolders from the database when storage-proxy returns an error (e.g., not found)
