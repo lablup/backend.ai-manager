@@ -80,7 +80,6 @@ from .utils import (
 )
 from .manager import ALL_ALLOWED, READ_ALLOWED, server_status_required
 from ..manager.defs import DEFAULT_ROLE
-from ..manager.idle import create_idle_checkers
 from ..manager.models import (
     domains,
     association_groups_users as agus, groups,
@@ -1792,18 +1791,12 @@ async def init(app: web.Application) -> None:
     # Scan ALIVE agents
     app['agent_lost_checker'] = aiotools.create_timer(
         functools.partial(check_agent_lost, app), 1.0)
-    app['idle_checkers'] = await create_idle_checkers(
-        app['dbpool'], app['shared_config'], app['event_dispatcher'],
-    )
     app['stats_task'] = asyncio.create_task(stats_report_timer(app))
 
 
 async def shutdown(app: web.Application) -> None:
     app['agent_lost_checker'].cancel()
     await app['agent_lost_checker']
-    async with TaskGroup() as tg:
-        for idle_checker in app['idle_checkers']:
-            tg.create_task(idle_checker.aclose())
     app['stats_task'].cancel()
     await app['stats_task']
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABCMeta, abstractmethod
+import enum
 import logging
 from typing import (
     Any,
@@ -30,6 +31,11 @@ if TYPE_CHECKING:
     from ..gateway.events import EventDispatcher
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.idle'))
+
+
+class AppStreamingStatus(enum.Enum):
+    NO_ACTIVE_CONNECTIONS = 0
+    HAS_ACTIVE_CONNECTIONS = 1
 
 
 class BaseIdleChecker(aobject, metaclass=ABCMeta):
@@ -67,11 +73,15 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
     async def populate_config(self, config: Mapping[str, Any]) -> None:
         raise NotImplementedError
 
+    @abstractmethod
+    async def update_app_streaming_status(self, session_id: SessionId, status: AppStreamingStatus) -> None:
+        pass
+
     async def _do_idle_check(self, context: Any, agent_id: AgentId, event_name: str) -> None:
         log.debug('do_idle_check')
         async with self._dbpool.acquire() as conn:
             query = (
-                sa.select([sa.text("*")])
+                sa.select([kernels])
                 .select_from(kernels)
                 .where(
                     (kernels.c.status.in_(LIVE_STATUS))
@@ -103,21 +113,24 @@ class TimeoutIdleChecker(BaseIdleChecker):
     """
 
     name: ClassVar[str] = "timeout"
-    default_idle_timeout: ClassVar[float] = 600.0  # 10 minutes
-    # default_idle_timeout: ClassVar[float] = 30.0   # for testing
+    # default_idle_timeout: ClassVar[float] = 600.0  # 10 minutes
+    default_idle_timeout: ClassVar[float] = 30.0   # for testing
 
     async def __ainit__(self) -> None:
         await super().__ainit__()
+        self._evh_session_started = \
+            self._event_dispatcher.consume("session_started", None, self._session_started_cb)
         self._evh_execution_started = \
-            self._event_dispatcher.consume("execution_started", None, self._disable_timeout)
+            self._event_dispatcher.consume("execution_started", None, self._execution_started_cb)
         self._evh_execution_finished = \
-            self._event_dispatcher.consume("execution_finished", None, self._update_last_access)
+            self._event_dispatcher.consume("execution_finished", None, self._execution_exited_cb)
         self._evh_execution_timeout = \
-            self._event_dispatcher.consume("execution_timeout", None, self._update_last_access)
+            self._event_dispatcher.consume("execution_timeout", None, self._execution_exited_cb)
         self._evh_execution_cancelled = \
-            self._event_dispatcher.consume("execution_cancelled", None, self._update_last_access)
+            self._event_dispatcher.consume("execution_cancelled", None, self._execution_exited_cb)
 
     async def aclose(self) -> None:
+        self._event_dispatcher.unconsume("session_started", self._evh_session_started)
         self._event_dispatcher.unconsume("execution_started", self._evh_execution_started)
         self._event_dispatcher.unconsume("execution_finished", self._evh_execution_finished)
         self._event_dispatcher.unconsume("execution_timeout", self._evh_execution_timeout)
@@ -127,32 +140,55 @@ class TimeoutIdleChecker(BaseIdleChecker):
     async def populate_config(self, config: Mapping[str, Any]) -> None:
         self.idle_timeout = float(config.get('idle_timeout', self.default_idle_timeout))
 
-    async def _disable_timeout(
-        self,
-        context: Any,
-        agent_id: AgentId,
-        event_name: str,
-        session_id: SessionId,
-    ) -> None:
-        """
-        Disable the timeout check for this particular session during code execution.
-        """
+    async def update_app_streaming_status(self, session_id: SessionId, status: AppStreamingStatus) -> None:
+        if status == AppStreamingStatus.HAS_ACTIVE_CONNECTIONS:
+            print(f"TimeoutIdleChecker.update__app_streaming_status({session_id}, 'having')")
+            await self._disable_timeout(session_id)
+        elif status == AppStreamingStatus.NO_ACTIVE_CONNECTIONS:
+            print(f"TimeoutIdleChecker.update__app_streaming_status({session_id}, 'none')")
+            await self._update_timeout(session_id)
+
+    async def _disable_timeout(self, session_id: SessionId) -> None:
+        print(f"TimeoutIdleChecker._disable_timeout({session_id})")
         await self._redis.set(f"session.{session_id}.last_access", "0", exists=self._redis.SET_IF_EXIST)
 
-    async def _update_last_access(
-        self,
-        context: Any,
-        agent_id: AgentId,
-        event_name: str,
-        session_id: SessionId,
-    ) -> None:
-        """
-        Enable the timeout check and reset the last-access timestamp.
-        """
+    async def _update_timeout(self, session_id: SessionId) -> None:
+        print(f"TimeoutIdleChecker._update_timeout({session_id})")
         t = await self._redis.time()
         await self._redis.set(f"session.{session_id}.last_access", f"{t:.06f}", expire=86400)
 
+    async def _session_started_cb(
+        self,
+        context: Any,
+        agent_id: AgentId,
+        event_name: str,
+        session_id: SessionId,
+    ) -> None:
+        print(f"TimeoutIdleChecker._session_started_cb({session_id})")
+        await self._update_timeout(session_id)
+
+    async def _execution_started_cb(
+        self,
+        context: Any,
+        agent_id: AgentId,
+        event_name: str,
+        session_id: SessionId,
+    ) -> None:
+        print(f"TimeoutIdleChecker._execution_started_cb({session_id})")
+        await self._disable_timeout(session_id)
+
+    async def _execution_exited_cb(
+        self,
+        context: Any,
+        agent_id: AgentId,
+        event_name: str,
+        session_id: SessionId,
+    ) -> None:
+        print(f"TimeoutIdleChecker._execution_exited_cb({session_id})")
+        await self._update_timeout(session_id)
+
     async def check_session(self, session) -> bool:
+        print(f"TimeoutIdleChecker.check_session({session['id']})")
         session_id = session['id']
         active_streams = await self._redis.zcount(f"session.{session_id}.active_app_connections")
         if active_streams is not None and active_streams > 0:
@@ -161,10 +197,12 @@ class TimeoutIdleChecker(BaseIdleChecker):
         last_access = await self._redis.get(f"session.{session_id}.last_access")
         if last_access is None or last_access == "0":
             return True
-        if session['idle_timeout'] is not None:
-            idle_timeout = session['idle_timeout']
-        else:
-            idle_timeout = self.idle_timeout
+        # TODO: load from session owner's resource policy
+        idle_timeout = self.idle_timeout
+        # if session['idle_timeout'] is not None:
+        #     idle_timeout = session['idle_timeout']
+        # else:
+        #     idle_timeout = self.idle_timeout
         if t - float(last_access) <= idle_timeout:
             return True
         return False
@@ -181,10 +219,16 @@ class UtilizationIdleChecker(BaseIdleChecker):
     default_accelerator_util_threshold: ClassVar[float] = 10.0
     default_initial_grace_period: ClassVar[float] = 300.0  # allow first 5 minutes to be idle
 
-    async def check_session(self, session) -> bool:
+    async def populate_config(self, config: Mapping[str, Any]) -> None:
+        pass
+
+    async def check_session(self, session_id: SessionId) -> bool:
         # last_stat = session['last_stat']
         # TODO: implement
         return True
+
+    async def update_app_streaming_status(self, session_id: SessionId, status: AppStreamingStatus) -> None:
+        pass
 
 
 checker_registry: Mapping[str, Type[BaseIdleChecker]] = {
@@ -211,7 +255,7 @@ async def create_idle_checkers(
         if checker_cls is None:
             log.warning("ignoring an unknown idle checker name: {checker_name}")
             continue
-        log.debug(f"initializing idle checker: {checker_name}")
+        log.info(f"Initializing idle checker: {checker_name}")
         checker_instance = await checker_cls.new(dbpool, shared_config, event_dispatcher)
         instances.append(checker_instance)
     return instances

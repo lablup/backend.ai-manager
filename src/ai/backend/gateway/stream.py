@@ -43,6 +43,8 @@ from ai.backend.common.types import (
     KernelId,
 )
 
+from ai.backend.manager.idle import AppStreamingStatus
+
 from .auth import auth_required
 from .exceptions import (
     AppNotFound,
@@ -220,8 +222,8 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
 
     # According to aiohttp docs, reading ws must be done inside this task.
     # We execute the stdout handler as another task.
+    stdout_task = asyncio.create_task(stream_stdout())
     try:
-        stdout_task = asyncio.create_task(stream_stdout())
         await stream_stdin()
     except Exception:
         await app['error_monitor'].capture_exception(context={'user': request['user']['uuid']})
@@ -410,7 +412,6 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
     else:
         raise InvalidAPIParameters(
             f"Unsupported service protocol: {sport['protocol']}")
-    # TODO: apply a (distributed) semaphore to limit concurrency per user.
     await asyncio.shield(registry.increment_session_usage(session_name, access_key))
 
     redis_live: aioredis.Redis = request.app['redis_live']
@@ -455,6 +456,11 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
             now = await redis_live.time()
             await redis_live.zadd(conn_tracker_key, now, conn_tracker_val)
             await ws.prepare(request)
+            for idle_checker in request.app['idle_checkers']:
+                await idle_checker.update_app_status(
+                    kernel_id,
+                    AppStreamingStatus.HAS_ACTIVE_CONNECTIONS,
+                )
             proxy = proxy_cls(
                 ws, dest[0], dest[1],
                 downstream_callback=down_cb,
@@ -469,8 +475,11 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
             await redis_live.zrem(conn_tracker_key, conn_tracker_val)
             remaining_count = await redis_live.zcount(conn_tracker_key)
             if remaining_count == 0:
-                pass
-                # TODO: idle_checker._update_last_access
+                for idle_checker in request.app['idle_checkers']:
+                    await idle_checker.update_app_status(
+                        kernel_id,
+                        AppStreamingStatus.NO_ACTIVE_CONNECTIONS,
+                    )
     except asyncio.CancelledError:
         log.debug('stream_proxy({}, {}) cancelled', stream_key, service)
         raise
@@ -532,8 +541,8 @@ async def stream_conn_tracker_gc(app: web.Application) -> None:
     redis_live: aioredis.Redis = app['redis_live']
     try:
         while True:
-            no_packet_timeout = 300.0  # 5 minutes
-            # no_packet_timeout = 30.0   # for testing
+            # no_packet_timeout = 300.0  # 5 minutes
+            no_packet_timeout = 30.0   # for testing
             now = await redis_live.time()
             for session_id in app['active_session_ids'].keys():
                 conn_tracker_key = f"session.{session_id}.active_app_connections"
@@ -544,8 +553,11 @@ async def stream_conn_tracker_gc(app: web.Application) -> None:
                 log.debug(f"conn_tracker: gc {session_id} "
                           f"removed/remaining = {removed_count}/{remaining_count}")
                 if remaining_count == 0:
-                    pass
-                    # TODO: idle_checker._update_last_access
+                    for idle_checker in app['idle_checkers']:
+                        await idle_checker.update_app_status(
+                            session_id,
+                            AppStreamingStatus.NO_ACTIVE_CONNECTIONS,
+                        )
             await asyncio.sleep(10)
     except asyncio.CancelledError:
         pass

@@ -47,13 +47,15 @@ from ai.backend.common.plugin.monitor import (
     StatsPluginContext,
     INCREMENT,
 )
+
 from ..manager import __version__
+from ..manager.background import BackgroundTaskManager
 from ..manager.exceptions import InvalidArgument
+from ..manager.idle import create_idle_checkers
+from ..manager.models.storage import StorageSessionManager
 from ..manager.plugin.webapp import WebappPluginContext
 from ..manager.registry import AgentRegistry
 from ..manager.scheduler.dispatcher import SchedulerDispatcher
-from ..manager.background import BackgroundTaskManager
-from ..manager.models.storage import StorageSessionManager
 from .config import (
     LocalConfig,
     SharedConfig,
@@ -127,6 +129,7 @@ PUBLIC_INTERFACES: Final = [
     'redis_image',
     'redis_stream',
     'event_dispatcher',
+    'idle_checkers',
     'storage_manager',
     'stats_monitor',
     'error_monitor',
@@ -339,6 +342,16 @@ async def event_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
     await app['event_dispatcher'].close()
 
 
+async def idle_checker_ctx(app: web.Application) -> AsyncIterator[None]:
+    app['idle_checkers'] = await create_idle_checkers(
+        app['dbpool'], app['shared_config'], app['event_dispatcher'],
+    )
+    _update_public_interface_objs(app)
+    yield
+    for instance in app['idle_checkers']:
+        await instance.aclose()
+
+
 async def storage_manager_ctx(app: web.Application) -> AsyncIterator[None]:
     shared_config: SharedConfig = app['shared_config']
     raw_vol_config = await shared_config.etcd.get_prefix('volumes')
@@ -510,6 +523,7 @@ def build_root_app(
             redis_ctx,
             database_ctx,
             event_dispatcher_ctx,
+            idle_checker_ctx,
             storage_manager_ctx,
             hook_plugin_ctx,
             monitoring_ctx,
