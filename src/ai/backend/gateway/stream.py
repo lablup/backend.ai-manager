@@ -14,6 +14,7 @@ import secrets
 from typing import (
     Any,
     AsyncIterator,
+    DefaultDict,
     Iterable,
     List,
     Mapping,
@@ -447,8 +448,10 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
             autoping=False,
             max_msg_size=local_config['manager']['max-wsmsg-size'],
         )
+        active_session_ids: DefaultDict[str, int] = request.app['active_session_ids']
+        kernel_id = kernel['id']
         try:
-            request.app['active_session_ids'].add(kernel['id'])
+            active_session_ids[kernel_id] += 1
             now = await redis_live.time()
             await redis_live.zadd(conn_tracker_key, now, conn_tracker_val)
             await ws.prepare(request)
@@ -460,7 +463,9 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
             )
             return await proxy.proxy()
         finally:
-            request.app['active_session_ids'].discard(kernel['id'])
+            active_session_ids[kernel_id] -= 1
+            if active_session_ids[kernel_id] <= 0:
+                del active_session_ids[kernel_id]
             await redis_live.zrem(conn_tracker_key, conn_tracker_val)
             remaining_count = await redis_live.zcount(conn_tracker_key)
             if remaining_count == 0:
@@ -530,7 +535,7 @@ async def stream_conn_tracker_gc(app: web.Application) -> None:
             no_packet_timeout = 300.0  # 5 minutes
             # no_packet_timeout = 30.0   # for testing
             now = await redis_live.time()
-            for session_id in app['active_session_ids']:
+            for session_id in app['active_session_ids'].keys():
                 conn_tracker_key = f"session.{session_id}.active_app_connections"
                 removed_count = await redis_live.zremrangebyscore(
                     conn_tracker_key, float('-inf'), now - no_packet_timeout,
@@ -553,7 +558,7 @@ async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
     app['stream_stdin_socks'] = defaultdict(weakref.WeakSet)
     app['zctx'] = zmq.asyncio.Context()
 
-    app['active_session_ids'] = set()
+    app['active_session_ids'] = defaultdict(int)  # multiset[int]
     conn_tracker_gc_task = asyncio.create_task(stream_conn_tracker_gc(app))
 
     event_dispatcher = app['event_dispatcher']
