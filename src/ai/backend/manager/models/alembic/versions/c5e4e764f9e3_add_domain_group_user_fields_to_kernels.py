@@ -73,13 +73,13 @@ def upgrade():
         ON CONFLICT (name, domain_name) DO NOTHING
         RETURNING id;
     ''')
-    result = connection.execute(query).fetchone()
+    result = connection.execute(query).first()
     gid = result.id if hasattr(result, 'id') else None
     if gid is None:  # group already exists
         query = textwrap.dedent('''\
             SELECT id FROM groups where name = 'default' and domain_name = 'default';
         ''')
-        gid = connection.execute(query).fetchone().id
+        gid = connection.execute(query).first().id
 
     # Fill in kernels' domain_name, group_id, and user_uuid.
     query = sa.select([kernels.c.id, kernels.c.access_key]).select_from(kernels)
@@ -88,7 +88,7 @@ def upgrade():
         # Get kernel's keypair (access_key).
         query = (sa.select([keypairs.c.user]).select_from(keypairs)
                    .where(keypairs.c.access_key == kernel['access_key']))
-        kp = connection.execute(query).fetchone()
+        kp = connection.execute(query).first()
         # Update kernel information.
         query = '''\
             UPDATE kernels SET domain_name = 'default', group_id = '%s', user_uuid = '%s'

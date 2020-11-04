@@ -371,7 +371,7 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
             )
         )
         result = await conn.execute(query)
-        row = await result.fetchone()
+        row = await result.first()
         if row is None:
             raise InvalidAPIParameters("You do not belong to the given group.")
 

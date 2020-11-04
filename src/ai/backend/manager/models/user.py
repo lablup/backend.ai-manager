@@ -265,8 +265,7 @@ class User(graphene.ObjectType):
                 _statuses = ACTIVE_USER_STATUSES if is_active else INACTIVE_USER_STATUSES
                 query = query.where(users.c.status.in_(_statuses))
             result = await conn.execute(query)
-            count = await result.fetchone()
-            return count[0]
+            return await result.scalar()
 
     @classmethod
     async def load_slice(
@@ -536,7 +535,7 @@ class ModifyUser(graphene.Mutation):
                            .select_from(users)
                            .where(users.c.email == email))
                 result = await conn.execute(query)
-                row = await result.fetchone()
+                row = await result.first()
                 prev_domain_name = row.domain_name
                 prev_role = row.role
 
@@ -567,7 +566,7 @@ class ModifyUser(graphene.Mutation):
                     result = await conn.execute(query)
                     if data['role'] in [UserRole.SUPERADMIN, UserRole.ADMIN]:
                         # User's becomes admin. Set the keypair as active admin.
-                        kp = await result.fetchone()
+                        kp = await result.first()
                         kp_data = dict()
                         if not kp.is_admin:
                             kp_data['is_admin'] = True

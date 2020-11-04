@@ -102,11 +102,9 @@ class Image(graphene.ObjectType):
                 sa.select([domains.c.allowed_docker_registries])
                 .select_from(domains)
                 .where(domains.c.name == domain_name)
-                .as_scalar()
             )
             result = await conn.execute(query)
-            row = await result.fetchone()
-            allowed_docker_registries = row[0]
+            allowed_docker_registries = await result.scalar()
         items = [
             item for item in items
             if item.registry in allowed_docker_registries

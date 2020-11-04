@@ -507,8 +507,7 @@ class VirtualFolder(graphene.ObjectType):
             if user_id is not None:
                 query = query.where(vfolders.c.user == user_id)
             result = await conn.execute(query)
-            count = await result.fetchone()
-            return count[0]
+            return await result.scalar()
 
     @classmethod
     async def load_slice(cls, context, limit, offset, *,

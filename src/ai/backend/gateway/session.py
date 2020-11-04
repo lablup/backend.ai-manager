@@ -255,7 +255,7 @@ async def _query_userinfo(request: web.Request, params: Any, conn: Any) -> Tuple
             .where(keypairs.c.access_key == owner_access_key)
         )
         result = await conn.execute(query)
-        row = await result.fetchone()
+        row = await result.first()
         owner_domain = row['domain_name']
         owner_uuid = row['user']
         owner_role = row['role']
@@ -265,7 +265,7 @@ async def _query_userinfo(request: web.Request, params: Any, conn: Any) -> Tuple
             .where(keypair_resource_policies.c.name == row['resource_policy'])
         )
         result = await conn.execute(query)
-        resource_policy = await result.fetchone()
+        resource_policy = await result.first()
     else:
         # Normal case when the user is creating her/his own session.
         owner_domain = request['user']['domain_name']
