@@ -539,8 +539,7 @@ class ComputeContainer(graphene.ObjectType):
             if access_key is not None:
                 query = query.where(kernels.c.access_key == access_key)
             result = await conn.execute(query)
-            count = await result.fetchone()
-            return count[0]
+            return await result.scalar()
 
     @classmethod
     async def load_slice(
@@ -789,8 +788,7 @@ class ComputeSession(graphene.ObjectType):
             if status is not None:
                 query = query.where(kernels.c.status.in_(status_list))
             result = await conn.execute(query)
-            count = await result.fetchone()
-            return count[0]
+            return await result.scalar()
 
     @classmethod
     async def load_slice(cls, context, limit, offset, *,
@@ -1134,8 +1132,7 @@ class LegacyComputeSession(graphene.ObjectType):
             if status is not None:
                 query = query.where(kernels.c.status.in_(status_list))
             result = await conn.execute(query)
-            count = await result.fetchone()
-            return count[0]
+            return await result.scalar()
 
     @classmethod
     async def load_slice(cls, context, limit, offset, *,

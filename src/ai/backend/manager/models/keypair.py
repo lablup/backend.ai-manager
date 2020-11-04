@@ -238,7 +238,6 @@ class KeyPair(graphene.ObjectType):
             query = (
                 sa.select([sa.func.count(keypairs.c.access_key)])
                 .select_from(j)
-                .as_scalar()
             )
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)
@@ -247,8 +246,7 @@ class KeyPair(graphene.ObjectType):
             if is_active is not None:
                 query = query.where(keypairs.c.is_active == is_active)
             result = await conn.execute(query)
-            count = await result.fetchone()
-            return count[0]
+            return await result.scalar()
 
     @classmethod
     async def load_slice(
@@ -375,10 +373,9 @@ class CreateKeyPair(graphene.Mutation):
                        .where(users.c.email == user_id))
             try:
                 result = await conn.execute(query)
-                user = await result.fetchone()
-                if user is None:
+                user_uuid = await result.scalar()
+                if user_uuid is None:
                     return cls(ok=False, msg=f'User not found: {user_id}', keypair=None)
-                user_uuid = user['uuid']
             except (pg.IntegrityError, sa.exc.IntegrityError) as e:
                 return cls(ok=False, msg=f'integrity error: {e}', keypair=None)
             except (asyncio.CancelledError, asyncio.TimeoutError):

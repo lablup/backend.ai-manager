@@ -93,7 +93,7 @@ def upgrade():
             continue
         # Try to get a user whose email matches with current keypair's email
         query = sa.select([users.c.uuid, users.c.role]).select_from(users).where(users.c.email == email)
-        user = connection.execute(query).fetchone()
+        user = connection.execute(query).first()
         if user:
             # Update user's role if current keypair is admin keypair
             user_uuid = user['uuid']
@@ -113,7 +113,7 @@ def upgrade():
                                password=temp_password,
                                need_password_change=True,
                                is_active=True, role=role))
-            user = connection.execute(query).fetchone()
+            user = connection.execute(query).first()
             user_uuid = user[0]
         # Update current keypair's `user` field with associated user's uuid.
         query = (sa.update(keypairs)

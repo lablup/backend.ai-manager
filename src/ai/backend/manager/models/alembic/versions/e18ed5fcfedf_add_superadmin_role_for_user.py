@@ -44,7 +44,7 @@ def upgrade():
     # So, this policy is changed to simply adopt superadmin role, and superadmin can also have
     # domain and groups as well.
     query = "SELECT uuid FROM users where email = 'admin@lablup.com';"
-    result = conn.execute(query).fetchone()
+    result = conn.execute(query).first()
     uuid = result.uuid if hasattr(result, 'uuid') else None
     if uuid is not None:  # update only when admin@lablup.com user exist
         query = textwrap.dedent('''\

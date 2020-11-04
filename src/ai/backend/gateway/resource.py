@@ -133,9 +133,9 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
                        (groups.c.name == params['group']) &
                        (domains.c.name == domain_name)))
         result = await conn.execute(query)
-        row = await result.fetchone()
-        group_id = row.id
-        group_resource_slots = row.total_resource_slots
+        row = await result.first()
+        group_id = row['id']
+        group_resource_slots = row['total_resource_slots']
         if group_id is None:
             raise InvalidAPIParameters('Unknown user group')
         group_resource_policy = {
@@ -190,7 +190,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
                 (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
                 (kernels.c.scaling_group.in_(sgroup_names))))
         async for row in conn.execute(query):
-            per_sgroup[row.scaling_group]['using'] += row.occupied_slots
+            per_sgroup[row['scaling_group']]['using'] += row['occupied_slots']
 
         # Per scaling group resource remaining from agents stats.
         sgroup_remaining = ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
@@ -208,7 +208,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             remaining += ResourceSlot({k: Decimal(0) for k in known_slot_types.keys()})
             sgroup_remaining += remaining
             agent_slots.append(remaining)
-            per_sgroup[row.scaling_group]['remaining'] += remaining
+            per_sgroup[row['scaling_group']]['remaining'] += remaining
 
         # Take maximum allocatable resources per sgroup.
         for sgname, sgfields in per_sgroup.items():
@@ -300,11 +300,11 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
     local_tz = request.app['shared_config']['system']['timezone']
 
     for row in rows:
-        group_id = str(row.group_id)
-        last_stat = row.last_stat
+        group_id = str(row['group_id'])
+        last_stat = row['last_stat']
         nfs = None
-        if row.mounts is not None:
-            nfs = list(set([mount[1] for mount in row.mounts]))
+        if row['mounts'] is not None:
+            nfs = list(set([mount[1] for mount in row['mounts']]))
         if row['terminated_at'] is None:
             used_time = used_days = None
         else:
