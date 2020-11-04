@@ -55,7 +55,7 @@ def upgrade():
     # Create default domain if not exist.
     connection = op.get_bind()
     query = sa.select([domains]).select_from(domains).where(domains.c.name == 'default')
-    results = connection.execute(query).fetchone()
+    results = connection.execute(query).first()
     if results is None:
         query = (sa.insert(domains)
                    .values(name='default',

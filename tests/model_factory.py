@@ -35,7 +35,7 @@ class ModelFactory(ABC):
         async with self.app['dbpool'].acquire() as conn:
             query = (self.model.insert().returning(self.model).values(self.defaults))
             result = await conn.execute(query)
-            row = await result.fetchone()
+            row = await result.first()
         row = dict(row.items())
         row = await self.after_creation(row)
         return row

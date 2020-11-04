@@ -63,7 +63,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
                 .where(keypairs.c.access_key == owner_access_key)
             )
             result = await conn.execute(query)
-            row = await result.fetchone()
+            row = await result.first()
             owner_domain = row['domain_name']
             owner_uuid = row['user']
             owner_role = row['role']

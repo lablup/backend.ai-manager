@@ -894,7 +894,7 @@ class AgentRegistry:
                            .select_from(keypairs)
                            .where(keypairs.c.access_key == access_key))
                 result = await conn.execute(query)
-                row  = await result.fetchone()
+                row  = await result.first()
                 dotfiles = msgpack.unpackb(row['dotfiles'])
                 internal_data = {} if internal_data is None else internal_data
                 internal_data.update({'dotfiles': dotfiles})

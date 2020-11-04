@@ -682,7 +682,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
                        .where(groups.c.domain_name == params['domain'])
                        .where(groups.c.name == group_name))
             result = await conn.execute(query)
-            grp = await result.fetchone()
+            grp = await result.first()
             if grp is not None:
                 values = [{'user_id': user.uuid, 'group_id': grp.id}]
                 query = association_groups_users.insert().values(values)

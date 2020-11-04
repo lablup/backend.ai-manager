@@ -189,8 +189,7 @@ class Agent(graphene.ObjectType):
                 status = AgentStatus[status]
                 query = query.where(agents.c.status == status)
             result = await conn.execute(query)
-            count = await result.fetchone()
-            return count[0]
+            return await result.scalar()
 
     @classmethod
     async def load_slice(

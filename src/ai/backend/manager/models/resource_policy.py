@@ -94,7 +94,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
                        .select_from(keypairs)
                        .where(keypairs.c.access_key == access_key))
             result = await conn.execute(query)
-            row = await result.fetchone()
+            row = await result.first()
             user_id = row['user_id']
             j = sa.join(
                 keypairs, keypair_resource_policies,
