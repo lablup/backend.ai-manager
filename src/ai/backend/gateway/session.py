@@ -398,7 +398,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
         # Respond as success with the reused session's information.
         return web.json_response({
             'sessionId': str(kern['id']),
-            'sessionName': str(kern['sess_id']),
+            'sessionName': str(kern['session_name']),
             'status': kern['status'].name,
             'service_ports': kern['service_ports'],
             'created': False,
