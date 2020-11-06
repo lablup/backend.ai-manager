@@ -271,8 +271,8 @@ async def health_check(request: web.Request, params: Any) -> web.Response:
         return web.json_response(result)
 
     # ## Get agent host information
-    async def _agent_health_check(sess: aiohttp.ClientSession , agent_id: str) -> dict:
-        none_result = {agent_id: {}}
+    async def _agent_health_check(sess: aiohttp.ClientSession, agent_id: str) -> dict:
+        none_result: dict = {agent_id: {}}
         watcher_info = await get_watcher_info(request, agent_id)
         if not watcher_info:
             return none_result
