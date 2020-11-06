@@ -17,8 +17,9 @@ import aiohttp_cors
 from aiojobs.aiohttp import atomic
 from aiotools import aclosing
 
-from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common import validators as tx
+from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.utils import host_health_check
 
 from . import ManagerStatus
 from .auth import superadmin_required
@@ -31,6 +32,7 @@ from .exceptions import (
 )
 from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params
+from ..manager import __version__
 from ..manager.defs import DEFAULT_ROLE
 from ..manager.models import agents, kernels, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES
 
@@ -223,6 +225,28 @@ async def perform_scheduler_ops(request: web.Request, params: Any) -> web.Respon
     return web.Response(status=204)
 
 
+@superadmin_required
+@check_api_params(
+    t.Dict({
+        tx.MultiKey('agent_ids', default=[]): t.Null | t.List(t.String),
+    }))
+async def health_check(request: web.Request, params: Any) -> web.Response:
+    from .resource import get_watcher_info
+    from .server import LATEST_API_VERSION
+
+    log.info('HEALTH_CHECK (agents:[{}])', ','.join(params['agent_ids']))
+    # watcher_info = await get_watcher_info(request, params['agent_id'])
+    result = {
+        'daemon': {
+            'version': __version__,
+            'api_version': LATEST_API_VERSION,
+        }
+    }
+    mgr_data = await host_health_check()
+    result.update(mgr_data)
+    return web.json_response(result)
+
+
 async def init(app: web.Application) -> None:
     app['status_watch_task'] = asyncio.create_task(detect_status_update(app))
 
@@ -244,6 +268,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     cors.add(announcement_resource.add_route('GET', get_announcement))
     cors.add(announcement_resource.add_route('POST', update_announcement))
     cors.add(app.router.add_route('POST', '/scheduler/operation', perform_scheduler_ops))
+    cors.add(app.router.add_route('GET', '/health', health_check))
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     return app, []

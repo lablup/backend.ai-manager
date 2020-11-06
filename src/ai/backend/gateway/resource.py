@@ -405,7 +405,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
 @superadmin_required
 @check_api_params(
     t.Dict({
-        tx.MultiKey('group_ids'): t.List(t.String) | t.Null,
+        tx.MultiKey('group_ids'): t.Null | t.List(t.String),
         t.Key('month'): t.Regexp(r'^\d{6}', re.ASCII),
     }),
     loads=_json_loads)
@@ -435,7 +435,7 @@ async def usage_per_month(request: web.Request, params: Any) -> web.Response:
 @superadmin_required
 @check_api_params(
     t.Dict({
-        t.Key('group_id'): t.String | t.Null,
+        t.Key('group_id'): t.Null | t.String,
         t.Key('start_date'): t.Regexp(r'^\d{8}$', re.ASCII),
         t.Key('end_date'): t.Regexp(r'^\d{8}$', re.ASCII),
     }),
@@ -610,12 +610,10 @@ async def get_watcher_info(request: web.Request, agent_id: str) -> dict:
     :return addr: address of agent watcher (eg: http://127.0.0.1:6009)
     :return token: agent watcher token ("insecure" if not set in config server)
     '''
-    token = request.app['config']['watcher']['token']
-    if token is None:
-        token = 'insecure'
-    agent_ip = await request.app['registry'].config_server.get(f'nodes/agents/{agent_id}/ip')
-    watcher_port = await request.app['registry'].config_server.get(
-        f'nodes/agents/{agent_id}/watcher_port')
+    config_server = requsest.app['registry'].config_server
+    token = request.app['config']['watcher'].get('token', 'insecure')
+    agent_ip = await config_server.get(f'nodes/agents/{agent_id}/ip')
+    watcher_port = await config_server.get(f'nodes/agents/{agent_id}/watcher_port')
     if watcher_port is None:
         watcher_port = 6009
     # TODO: watcher scheme is assumed to be http
