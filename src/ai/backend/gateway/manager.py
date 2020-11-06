@@ -231,15 +231,26 @@ async def perform_scheduler_ops(request: web.Request, params: Any) -> web.Respon
 @superadmin_required
 @check_api_params(
     t.Dict({
-        tx.MultiKey('agent_ids', default=[]): t.Null | t.List(t.String),
+        tx.MultiKey('agent_ids', default=[]): t.Null | t.List(t.Null | t.String),
     }))
 async def health_check(request: web.Request, params: Any) -> web.Response:
+    """
+    Return manager/agent host status.
+
+    If ``agent_ids`` is empty, just return manager host's status.
+    If there are ALIVE agents corresponding to ``agent_ids``, their host status
+    will be returned as well. If there is no ALIVE agent corresponding to ``agent_ids``,
+    the status will be just an empty dict.
+
+    :param agent_ids: agent hosts' IDs to query status
+    """
+    # Circumvent cyclic imports
     from .resource import get_watcher_info
     from .server import LATEST_API_VERSION
 
     log.info('HEALTH_CHECK (agents:[{}])', ','.join(params['agent_ids']))
 
-    # ## Get daemon ID
+    # ## Get daemon information
     etcd_info = await request.app['config_server'].get_manager_nodes_info()
     _id = ''
     if '' in etcd_info:
@@ -260,16 +271,20 @@ async def health_check(request: web.Request, params: Any) -> web.Response:
         return web.json_response(result)
 
     # ## Get agent host information
-    async def _agent_health_check(sess, agent_id):
+    async def _agent_health_check(sess: aiohttp.ClientSession , agent_id: str) -> dict:
+        none_result = {agent_id: {}}
         watcher_info = await get_watcher_info(request, agent_id)
+        if not watcher_info:
+            return none_result
         watcher_url = watcher_info['addr'] / 'health'
-        with _timeout(5.0):
+        with _timeout(10.0):
             headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
             async with sess.get(watcher_url, headers=headers) as resp:
                 if resp.status == 200:
-                    return await resp.json()
+                    result = await resp.json()
+                    return {agent_id: result}
                 else:
-                    return None
+                    return none_result
 
     # TODO: support per-watcher ssl context
     connector = aiohttp.TCPConnector()
@@ -283,11 +298,9 @@ async def health_check(request: web.Request, params: Any) -> web.Response:
         finally:
             await scheduler.close()
 
-    result['agents'] = []
+    result['agents'] = {}
     for agent_info in agent_infos:
-        if agent_info:
-            result['agents'].append(agent_info)
-
+        result['agents'].update(agent_info)
     return web.json_response(result)
 
 

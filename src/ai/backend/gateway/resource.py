@@ -615,6 +615,8 @@ async def get_watcher_info(request: web.Request, agent_id: str) -> dict:
     if token is None:
         token = 'insecure'
     agent_ip = await config_server.get(f'nodes/agents/{agent_id}/ip')
+    if not agent_ip:
+        return {}
     watcher_port = await config_server.get(f'nodes/agents/{agent_id}/watcher_port')
     if watcher_port is None:
         watcher_port = 6009
