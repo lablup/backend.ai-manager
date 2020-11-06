@@ -235,15 +235,27 @@ async def health_check(request: web.Request, params: Any) -> web.Response:
     from .server import LATEST_API_VERSION
 
     log.info('HEALTH_CHECK (agents:[{}])', ','.join(params['agent_ids']))
-    # watcher_info = await get_watcher_info(request, params['agent_id'])
+
+    # Get daemon ID
+    etcd_info = await request.app['config_server'].get_manager_nodes_info()
+    _id = ''
+    if '' in etcd_info:
+        _id = etcd_info['']
+    elif etcd_info:
+        _id = list(etcd_info.keys())[0]
+
     result = {
         'daemon': {
+            'id': _id,
+            'type': 'manager',
             'version': __version__,
             'api_version': LATEST_API_VERSION,
         }
     }
-    mgr_data = await host_health_check()
-    result.update(mgr_data)
+    result['host'] = await host_health_check()
+
+    # watcher_info = await get_watcher_info(request, params['agent_id'])
+
     return web.json_response(result)
 
 
