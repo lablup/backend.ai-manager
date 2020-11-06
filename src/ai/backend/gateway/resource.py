@@ -610,8 +610,10 @@ async def get_watcher_info(request: web.Request, agent_id: str) -> dict:
     :return addr: address of agent watcher (eg: http://127.0.0.1:6009)
     :return token: agent watcher token ("insecure" if not set in config server)
     '''
-    config_server = requsest.app['registry'].config_server
-    token = request.app['config']['watcher'].get('token', 'insecure')
+    config_server = request.app['registry'].config_server
+    token = request.app['config']['watcher']['token']
+    if token is None:
+        token = 'insecure'
     agent_ip = await config_server.get(f'nodes/agents/{agent_id}/ip')
     watcher_port = await config_server.get(f'nodes/agents/{agent_id}/watcher_port')
     if watcher_port is None:

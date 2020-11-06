@@ -12,10 +12,13 @@ from typing import (
     Tuple,
 )
 
+import aiohttp
 from aiohttp import web
 import aiohttp_cors
+import aiojobs
 from aiojobs.aiohttp import atomic
 from aiotools import aclosing
+from async_timeout import timeout as _timeout
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
@@ -236,7 +239,7 @@ async def health_check(request: web.Request, params: Any) -> web.Response:
 
     log.info('HEALTH_CHECK (agents:[{}])', ','.join(params['agent_ids']))
 
-    # Get daemon ID
+    # ## Get daemon ID
     etcd_info = await request.app['config_server'].get_manager_nodes_info()
     _id = ''
     if '' in etcd_info:
@@ -253,8 +256,37 @@ async def health_check(request: web.Request, params: Any) -> web.Response:
         }
     }
     result['host'] = await host_health_check()
+    if not params['agent_ids']:
+        return web.json_response(result)
 
-    # watcher_info = await get_watcher_info(request, params['agent_id'])
+    # ## Get agent host information
+    async def _agent_health_check(sess, agent_id):
+        watcher_info = await get_watcher_info(request, agent_id)
+        watcher_url = watcher_info['addr'] / 'health'
+        with _timeout(5.0):
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            async with sess.get(watcher_url, headers=headers) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                else:
+                    return None
+
+    # TODO: support per-watcher ssl context
+    connector = aiohttp.TCPConnector()
+    async with aiohttp.ClientSession(connector=connector) as sess:
+        scheduler = await aiojobs.create_scheduler(limit=4)
+        try:
+            jobs = await asyncio.gather(*[
+                scheduler.spawn(_agent_health_check(sess, aid)) for aid in params['agent_ids']
+            ])
+            agent_infos = await asyncio.gather(*[job.wait() for job in jobs])
+        finally:
+            await scheduler.close()
+
+    result['agents'] = []
+    for agent_info in agent_infos:
+        if agent_info:
+            result['agents'].append(agent_info)
 
     return web.json_response(result)
 
