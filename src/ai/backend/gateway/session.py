@@ -33,7 +33,6 @@ import aiohttp_cors
 from aiojobs.aiohttp import atomic
 import aioredis
 import aiotools
-from aiotools.taskgroup import TaskGroup
 from async_timeout import timeout
 from dateutil.parser import isoparse
 from dateutil.tz import tzutc
@@ -1041,6 +1040,25 @@ async def handle_session_lifecycle(
         await registry.mark_session_terminated(session_id, reason)
 
 
+async def handle_destroy_session(
+    app: web.Application,
+    agent_id: AgentId,
+    event_name: str,
+    raw_session_id: str,
+    reason: str = None,
+) -> None:
+    session_id = uuid.UUID(raw_session_id)
+    registry: AgentRegistry = app['registry']
+    await registry.destroy_session(
+        functools.partial(
+            registry.get_session_by_session_id,
+            session_id,
+        ),
+        forced=False,
+        reason=reason or 'killed-by-event',
+    )
+
+
 async def handle_kernel_stat_sync(
     app: web.Application,
     agent_id: AgentId,
@@ -1768,6 +1786,8 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
 
 async def init(app: web.Application) -> None:
     event_dispatcher = app['event_dispatcher']
+
+    # passive events
     event_dispatcher.consume('session_scheduled', app, handle_session_lifecycle)
     event_dispatcher.consume('kernel_preparing', app, handle_kernel_lifecycle)
     event_dispatcher.consume('kernel_pulling', app, handle_kernel_lifecycle)
@@ -1785,6 +1805,9 @@ async def init(app: web.Application) -> None:
     event_dispatcher.consume('instance_terminated', app, handle_instance_lifecycle)
     event_dispatcher.consume('instance_heartbeat', app, handle_instance_heartbeat)
     event_dispatcher.consume('instance_stats', app, handle_instance_stats)
+
+    # action-trigerring events
+    event_dispatcher.consume('do_terminate_session', app, handle_destroy_session)
 
     app['pending_waits'] = set()
 

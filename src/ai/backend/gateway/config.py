@@ -63,7 +63,9 @@ Alias keys are also URL-quoted in the same way.
        - addr: "{redis-host}:{redis-port}"
        - password: {password}
      + idle
-       - enabled: "timeout,utilization"  # comma-separated list of checker names
+       - enabled: "timeout,utilization"      # comma-separated list of checker names
+       - app-streaming-packet-timeout: "5m"  # in seconds; idleness of app-streaming TCP connections
+         # NOTE: idle checkers get activated AFTER the app-streaming packet timeout has passed.
        - checkers
          + "timeout"
            - treshold: "10m"

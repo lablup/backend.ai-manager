@@ -8,6 +8,7 @@ NOTE: For nginx-based setups, we need to gather all websocket-based API handlers
 import asyncio
 import base64
 from collections import defaultdict
+from datetime import timedelta
 import json
 import logging
 import secrets
@@ -42,6 +43,7 @@ from ai.backend.common.types import (
     AgentId,
     KernelId,
 )
+from ai.backend.gateway.config import SharedConfig
 
 from ai.backend.manager.idle import AppStreamingStatus
 
@@ -412,13 +414,12 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
     else:
         raise InvalidAPIParameters(
             f"Unsupported service protocol: {sport['protocol']}")
-    await asyncio.shield(registry.increment_session_usage(session_name, access_key))
 
     redis_live: aioredis.Redis = request.app['redis_live']
     conn_tracker_key = f"session.{kernel['id']}.active_app_connections"
     conn_tracker_val = f"{kernel['id']}:{service}:{stream_id}"
 
-    async def refresh_cb(kernel_id: str, data: bytes):
+    async def refresh_cb(kernel_id: str, data: bytes) -> None:
         now = await redis_live.time()
         await asyncio.shield(call_non_bursty(
             conn_tracker_key,
@@ -430,7 +431,40 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
     up_cb = apartial(refresh_cb, kernel['id'])
     ping_cb = apartial(refresh_cb, kernel['id'])
 
+    active_session_ids: DefaultDict[str, int] = request.app['active_session_ids']
+    kernel_id = kernel['id']
+
+    async def add_conn_track() -> None:
+        async with request.app['conn_tracker_lock']:
+            print('-- add conn track --')
+            active_session_ids[kernel_id] += 1
+            now = await redis_live.time()
+            await redis_live.zadd(conn_tracker_key, now, conn_tracker_val)
+            for idle_checker in request.app['idle_checkers']:
+                await idle_checker.update_app_streaming_status(
+                    kernel_id,
+                    AppStreamingStatus.HAS_ACTIVE_CONNECTIONS,
+                )
+
+    async def clear_conn_track() -> None:
+        async with request.app['conn_tracker_lock']:
+            print('-- clear conn track --')
+            active_session_ids[kernel_id] -= 1
+            if active_session_ids[kernel_id] <= 0:
+                del active_session_ids[kernel_id]
+            await redis_live.zrem(conn_tracker_key, conn_tracker_val)
+            remaining_count = await redis_live.zcount(conn_tracker_key)
+            if remaining_count == 0:
+                for idle_checker in request.app['idle_checkers']:
+                    await idle_checker.update_app_streaming_status(
+                        kernel_id,
+                        AppStreamingStatus.NO_ACTIVE_CONNECTIONS,
+                    )
+
     try:
+        await asyncio.shield(add_conn_track())
+        await asyncio.shield(registry.increment_session_usage(session_name, access_key))
+
         opts: MutableMapping[str, Union[None, str, List[str]]] = {}
         if params['arguments'] is not None:
             opts['arguments'] = json.loads(params['arguments'])
@@ -449,40 +483,19 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
             autoping=False,
             max_msg_size=local_config['manager']['max-wsmsg-size'],
         )
-        active_session_ids: DefaultDict[str, int] = request.app['active_session_ids']
-        kernel_id = kernel['id']
-        try:
-            active_session_ids[kernel_id] += 1
-            now = await redis_live.time()
-            await redis_live.zadd(conn_tracker_key, now, conn_tracker_val)
-            await ws.prepare(request)
-            for idle_checker in request.app['idle_checkers']:
-                await idle_checker.update_app_status(
-                    kernel_id,
-                    AppStreamingStatus.HAS_ACTIVE_CONNECTIONS,
-                )
-            proxy = proxy_cls(
-                ws, dest[0], dest[1],
-                downstream_callback=down_cb,
-                upstream_callback=up_cb,
-                ping_callback=ping_cb,
-            )
-            return await proxy.proxy()
-        finally:
-            active_session_ids[kernel_id] -= 1
-            if active_session_ids[kernel_id] <= 0:
-                del active_session_ids[kernel_id]
-            await redis_live.zrem(conn_tracker_key, conn_tracker_val)
-            remaining_count = await redis_live.zcount(conn_tracker_key)
-            if remaining_count == 0:
-                for idle_checker in request.app['idle_checkers']:
-                    await idle_checker.update_app_status(
-                        kernel_id,
-                        AppStreamingStatus.NO_ACTIVE_CONNECTIONS,
-                    )
+        await ws.prepare(request)
+        proxy = proxy_cls(
+            ws, dest[0], dest[1],
+            downstream_callback=down_cb,
+            upstream_callback=up_cb,
+            ping_callback=ping_cb,
+        )
+        return await proxy.proxy()
     except asyncio.CancelledError:
         log.debug('stream_proxy({}, {}) cancelled', stream_key, service)
         raise
+    finally:
+        await asyncio.shield(clear_conn_track())
 
 
 @server_status_required(READ_ALLOWED)
@@ -539,25 +552,29 @@ async def kernel_terminated(app: web.Application, agent_id: AgentId, event_name:
 
 async def stream_conn_tracker_gc(app: web.Application) -> None:
     redis_live: aioredis.Redis = app['redis_live']
+    shared_config: SharedConfig = app['shared_config']
     try:
         while True:
-            # no_packet_timeout = 300.0  # 5 minutes
-            no_packet_timeout = 30.0   # for testing
-            now = await redis_live.time()
-            for session_id in app['active_session_ids'].keys():
-                conn_tracker_key = f"session.{session_id}.active_app_connections"
-                removed_count = await redis_live.zremrangebyscore(
-                    conn_tracker_key, float('-inf'), now - no_packet_timeout,
-                )
-                remaining_count = await redis_live.zcount(conn_tracker_key)
-                log.debug(f"conn_tracker: gc {session_id} "
-                          f"removed/remaining = {removed_count}/{remaining_count}")
-                if remaining_count == 0:
-                    for idle_checker in app['idle_checkers']:
-                        await idle_checker.update_app_status(
-                            session_id,
-                            AppStreamingStatus.NO_ACTIVE_CONNECTIONS,
-                        )
+            no_packet_timeout: timedelta = tx.TimeDuration().check(
+                await shared_config.etcd.get('config/idle/app-streaming-packet-timeout', '5m')
+            )
+            async with app['conn_tracker_lock']:
+                now = await redis_live.time()
+                for session_id in app['active_session_ids'].keys():
+                    conn_tracker_key = f"session.{session_id}.active_app_connections"
+                    prev_remaining_count = await redis_live.zcount(conn_tracker_key)
+                    removed_count = await redis_live.zremrangebyscore(
+                        conn_tracker_key, float('-inf'), now - no_packet_timeout.total_seconds(),
+                    )
+                    remaining_count = await redis_live.zcount(conn_tracker_key)
+                    log.debug(f"conn_tracker: gc {session_id} "
+                              f"removed/remaining = {removed_count}/{remaining_count}")
+                    if prev_remaining_count > 0 and remaining_count == 0:
+                        for idle_checker in app['idle_checkers']:
+                            await idle_checker.update_app_streaming_status(
+                                session_id,
+                                AppStreamingStatus.NO_ACTIVE_CONNECTIONS,
+                            )
             await asyncio.sleep(10)
     except asyncio.CancelledError:
         pass
@@ -570,6 +587,7 @@ async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
     app['stream_stdin_socks'] = defaultdict(weakref.WeakSet)
     app['zctx'] = zmq.asyncio.Context()
 
+    app['conn_tracker_lock'] = asyncio.Lock()
     app['active_session_ids'] = defaultdict(int)  # multiset[int]
     conn_tracker_gc_task = asyncio.create_task(stream_conn_tracker_gc(app))
 
