@@ -464,7 +464,7 @@ async def enqueue_session_status_update(
     if raw_session_id is None:
         return
     session_id = uuid.UUID(raw_session_id)
-    async with app['dbpool'].acquire() as conn, conn.begin():
+    async with app['dbpool'].acquire() as conn:
         query = (
             sa.select([
                 kernels.c.id,
@@ -498,7 +498,7 @@ async def enqueue_batch_task_result_update(
     exit_reason: str = None,
 ) -> None:
     kernel_id = uuid.UUID(raw_kernel_id)
-    async with app['dbpool'].acquire() as conn, conn.begin():
+    async with app['dbpool'].acquire() as conn:
         query = (
             sa.select([
                 kernels.c.id,
