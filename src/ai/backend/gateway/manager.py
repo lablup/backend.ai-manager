@@ -281,14 +281,16 @@ async def health_check(request: web.Request, params: Any) -> web.Response:
         _id = list(etcd_info.keys())[0]
 
     result = {
-        'daemon': {
-            'id': _id,
-            'type': 'manager',
-            'version': __version__,
-            'api_version': LATEST_API_VERSION,
-        }
+        'managers': [
+            {
+                'id': _id,
+                'type': 'manager',
+                'version': __version__,
+                'api_version': LATEST_API_VERSION,
+            }
+        ],
     }
-    result['host'] = await host_health_check()
+    result['managers'][0].update(await host_health_check())
     if not params['agent_ids']:
         return web.json_response(result)
 
@@ -303,8 +305,7 @@ async def health_check(request: web.Request, params: Any) -> web.Response:
             headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
             async with sess.get(watcher_url, headers=headers) as resp:
                 if resp.status == 200:
-                    result = await resp.json()
-                    return {agent_id: result}
+                    return await resp.json()
                 else:
                     return none_result
 
@@ -320,9 +321,9 @@ async def health_check(request: web.Request, params: Any) -> web.Response:
         finally:
             await scheduler.close()
 
-    result['agents'] = {}
+    result['agents'] = []
     for agent_info in agent_infos:
-        result['agents'].update(agent_info)
+        result['agents'].append(agent_info)
     return web.json_response(result)
 
 
