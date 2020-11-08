@@ -37,7 +37,10 @@ from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params
 from ..manager import __version__
 from ..manager.defs import DEFAULT_ROLE
-from ..manager.models import agents, kernels, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES
+from ..manager.models import (
+    agents, AgentStatus,
+    kernels, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES
+)
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.manager'))
 
@@ -231,7 +234,8 @@ async def perform_scheduler_ops(request: web.Request, params: Any) -> web.Respon
 @superadmin_required
 @check_api_params(
     t.Dict({
-        tx.MultiKey('agent_ids', default=[]): t.Null | t.List(t.Null | t.String),
+        tx.MultiKey('agent_ids', default=[]): t.List(t.Null | t.String),
+        t.Key('with_all_agents', default=False): t.ToBool,
     }))
 async def health_check(request: web.Request, params: Any) -> web.Response:
     """
@@ -242,6 +246,7 @@ async def health_check(request: web.Request, params: Any) -> web.Response:
     will be returned as well. If there is no ALIVE agent corresponding to ``agent_ids``,
     the status will be just an empty dict.
 
+    :param with_all_agents: return host information of all ALIVE agents
     :param agent_ids: agent hosts' IDs to query status
     """
     # Circumvent cyclic imports
@@ -249,6 +254,23 @@ async def health_check(request: web.Request, params: Any) -> web.Response:
     from .server import LATEST_API_VERSION
 
     log.info('HEALTH_CHECK (agents:[{}])', ','.join(params['agent_ids']))
+
+    if params['with_all_agents'] and params['agent_ids']:
+        raise InvalidAPIParameters(
+            extra_msg='either one of with_all_agents or agent_ids should be given'
+        )
+    if params['with_all_agents']:
+        async with request.app['dbpool'].acquire() as conn, conn.begin():
+            query = (
+                sa.select([agents.c.id])
+                .select_from(agents)
+                .where(agents.c.status == AgentStatus.ALIVE)
+            )
+            result = await conn.execute(query)
+            agent_ids = []
+            async for row in result:
+                agent_ids.append(row.id)
+            params['agent_ids'] = agent_ids
 
     # ## Get daemon information
     etcd_info = await request.app['config_server'].get_manager_nodes_info()
