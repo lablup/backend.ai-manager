@@ -701,20 +701,23 @@ async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.MKDIR (ak:{}, vf:{}, path:{})', access_key, folder_name, params['path'])
-    storage_manager = request.app['storage_manager']
-    proxy_name, volume_name = storage_manager.split_host(row['host'])
-    async with storage_manager.request(
-        proxy_name, 'POST', 'folder/file/mkdir',
-        json={
-            'volume': volume_name,
-            'vfid': str(row['id']),
-            'relpath': params['path'],
-            'parents': params['parents'],
-            'exist_ok': params['exist_ok'],
-        },
-        raise_for_status=True,
-    ):
-        pass
+    try:
+        storage_manager = request.app['storage_manager']
+        proxy_name, volume_name = storage_manager.split_host(row['host'])
+        async with storage_manager.request(
+            proxy_name, 'POST', 'folder/file/mkdir',
+            json={
+                'volume': volume_name,
+                'vfid': str(row['id']),
+                'relpath': params['path'],
+                'parents': params['parents'],
+                'exist_ok': params['exist_ok'],
+            },
+            raise_for_status=True,
+        ):
+            pass
+    except aiohttp.ClientResponseError:
+        raise VFolderCreationFailed
     return web.Response(status=201)
 
 
