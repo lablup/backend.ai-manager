@@ -14,7 +14,9 @@ from typing import (
 )
 
 if TYPE_CHECKING:
+    from aiopg.sa.connection import SAConnection
     from aiopg.sa.engine import _PoolAcquireContextManager as SAPool
+    from aiopg.sa.result import RowProxy
 import aioredis
 import sqlalchemy as sa
 import trafaret as t
@@ -26,7 +28,7 @@ if TYPE_CHECKING:
     from ai.backend.common.types import AgentId, SessionId
 
 from .distributed import GlobalTimer
-from .models import kernels
+from .models import kernels, keypair_resource_policies
 from .models.kernel import LIVE_STATUS
 from ..gateway.defs import REDIS_LIVE_DB
 if TYPE_CHECKING:
@@ -95,16 +97,16 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
             )
             result = await conn.execute(query)
             rows = await result.fetchall()
-        for row in rows:
-            if not (await self.check_session(row)):
-                log.info(f"{self!r} triggered termination of s:{row['id']}")
-                await self._event_dispatcher.produce_event(
-                    "do_terminate_session",
-                    (str(row['id']), "idle-timeout"),
-                )
+            for row in rows:
+                if not (await self.check_session(row, conn)):
+                    log.info(f"{self!r} triggered termination of s:{row['id']}")
+                    await self._event_dispatcher.produce_event(
+                        "do_terminate_session",
+                        (str(row['id']), "idle-timeout"),
+                    )
 
     @abstractmethod
-    async def check_session(self, session) -> bool:
+    async def check_session(self, session: RowProxy, dbconn: SAConnection) -> bool:
         """
         Return True if the session should be kept alive or
         return False if the session should be terminated.
@@ -170,7 +172,11 @@ class TimeoutIdleChecker(BaseIdleChecker):
     async def _update_timeout(self, session_id: SessionId) -> None:
         log.debug(f"TimeoutIdleChecker._update_timeout({session_id})")
         t = await self._redis.time()
-        await self._redis.set(f"session.{session_id}.last_access", f"{t:.06f}", expire=86400)
+        await self._redis.set(
+            f"session.{session_id}.last_access",
+            f"{t:.06f}",
+            expire=max(86400, self.idle_timeout.total_seconds() * 2),
+        )
 
     async def _session_started_cb(
         self,
@@ -199,7 +205,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
     ) -> None:
         await self._update_timeout(session_id)
 
-    async def check_session(self, session) -> bool:
+    async def check_session(self, session: RowProxy, dbconn: SAConnection) -> bool:
         session_id = session['id']
         active_streams = await self._redis.zcount(f"session.{session_id}.active_app_connections")
         if active_streams is not None and active_streams > 0:
@@ -209,12 +215,16 @@ class TimeoutIdleChecker(BaseIdleChecker):
         if raw_last_access is None or raw_last_access == "0":
             return True
         last_access = float(raw_last_access)
-        # TODO: load from session owner's resource policy
         idle_timeout = self.idle_timeout.total_seconds()
-        # if session['idle_timeout'] is not None:
-        #     idle_timeout = session['idle_timeout']
-        # else:
-        #     idle_timeout = self.idle_timeout
+        query = (
+            sa.select([keypair_resource_policies])
+            .select_from(keypair_resource_policies)
+            .where(keypair_resource_policies.c.name == session['resource_policy'])
+        )
+        result = await dbconn.execute(query)
+        policy = await result.first()
+        if policy is not None and policy['idle_timeout'] is not None:
+            idle_timeout = float(policy['idle_timeout'])
         if t - last_access <= idle_timeout:
             return True
         return False
@@ -234,7 +244,7 @@ class UtilizationIdleChecker(BaseIdleChecker):
     async def populate_config(self, config: Mapping[str, Any]) -> None:
         pass
 
-    async def check_session(self, session_id: SessionId) -> bool:
+    async def check_session(self, session: RowProxy, dbconn: SAConnection) -> bool:
         # last_stat = session['last_stat']
         # TODO: implement
         return True
