@@ -6,7 +6,7 @@ from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 import trafaret as t
 
-from ai.backend.gateway.config import RESERVED_VFOLDER_PATTERNS, RESERVED_VFOLDERS
+from ..defs import RESERVED_VFOLDER_PATTERNS, RESERVED_VFOLDERS
 from .base import (
     metadata, EnumValueType, GUID, IDColumn,
     Item, PaginatedList, BigInt,

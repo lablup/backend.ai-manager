@@ -25,7 +25,7 @@ from .base import (
 )
 from .scaling_group import ScalingGroup
 from .user import UserRole
-from ai.backend.gateway.config import RESERVED_DOTFILES
+from ..defs import RESERVED_DOTFILES
 from ai.backend.common import msgpack
 
 log = BraceStyleAdapter(logging.getLogger(__file__))

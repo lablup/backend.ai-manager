@@ -57,12 +57,12 @@ class GQLLoggingMiddleware:
 async def handle_gql(request: web.Request, params: Any) -> web.Response:
     executor = request.app['admin.gql_executor']
     schema = request.app['admin.gql_schema']
-    manager_status = await request.app['config_server'].get_manager_status()
-    known_slot_types = await request.app['config_server'].get_resource_slots()
+    manager_status = await request.app['shared_config'].get_manager_status()
+    known_slot_types = await request.app['shared_config'].get_resource_slots()
     context = {
-        'config': request.app['config'],
-        'config_server': request.app['config_server'],
-        'etcd': request.app['config_server'].etcd,
+        'local_config': request.app['local_config'],
+        'shared_config': request.app['shared_config'],
+        'etcd': request.app['shared_config'].etcd,
         'user': request['user'],
         'access_key': request['keypair']['access_key'],
         'dbpool': request.app['dbpool'],

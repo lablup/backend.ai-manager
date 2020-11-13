@@ -30,7 +30,7 @@ jobs:
           sed -i "s%\(backend.ai-common\)@master%\1@${GHBRANCH}%" requirements/lint.txt
         fi
         set -e
-        python -m pip install -U -r requirements/lint.txt
+        python -m pip install -U --use-feature=2020-resolver -r requirements/lint.txt
     - name: Lint with flake8
       run: |
         if [ "$GITHUB_EVENT_NAME" == "pull_request" -a -n "$GITHUB_HEAD_REF" ]; then

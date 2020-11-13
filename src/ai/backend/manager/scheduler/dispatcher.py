@@ -5,7 +5,6 @@ from datetime import datetime
 import itertools
 import logging
 import pkg_resources
-import time
 from typing import (
     Any,
     Awaitable,
@@ -15,15 +14,16 @@ from typing import (
     Sequence,
     Tuple,
     Union,
+    TYPE_CHECKING,
 )
 
 from aiopg.sa.connection import SAConnection
+import aioredis
 import aioredlock
 from dateutil.tz import tzutc
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import true
 
-from ai.backend.common import redis
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.docker import ImageRef
 from ai.backend.common.types import (
@@ -32,11 +32,15 @@ from ai.backend.common.types import (
     ClusterMode,
     ResourceSlot,
 )
-from ai.backend.common.identity import get_instance_id
-from ...gateway.defs import REDIS_LIVE_DB
-from ...gateway.etcd import ConfigServer
+if TYPE_CHECKING:
+    from ai.backend.gateway.config import LocalConfig, SharedConfig
+    from ai.backend.gateway.events import EventDispatcher
+
+from ai.backend.manager.distributed import GlobalTimer
+from ...gateway.defs import REDIS_STREAM_DB
 from ...gateway.exceptions import InstanceNotAvailable
-from ..registry import AgentRegistry
+if TYPE_CHECKING:
+    from ..registry import AgentRegistry
 from ..models import (
     agents, kernels, keypairs, scaling_groups,
     AgentStatus, KernelStatus,
@@ -92,113 +96,55 @@ def merge_resource(src: MutableMapping[str, Any], val: MutableMapping[str, Any])
 
 class SchedulerDispatcher(aobject):
 
-    config_server: ConfigServer
+    config: LocalConfig
+    shared_config: SharedConfig
     registry: AgentRegistry
 
-    tick_script = '''
-    local key_last_sync = KEYS[1]
-    local key_schedulers = KEYS[2]
-    local member_id = ARGV[1]
-    local sync_interval = tonumber(ARGV[2])
-    local sync_time = tonumber(redis.call('GET', key_last_sync))
-    local current_time = tonumber(redis.call('TIME')[1])
-    if sync_time == nil then
-      redis.log(redis.LOG_NOTICE, "backend.ai scheduler - init sync_time")
-      sync_time = current_time
-      redis.call('SET', key_last_sync, sync_time)
-    elseif current_time >= sync_time + sync_interval then
-      redis.log(redis.LOG_NOTICE, "backend.ai scheduler - update sync_time")
-      sync_time = sync_time + sync_interval
-      if current_time - sync_time > sync_interval then
-        redis.log(redis.LOG_NOTICE, "backend.ai scheduler - detected too old sync_time; resyncing")
-        sync_time = current_time + sync_interval
-      end
-      redis.call('SET', key_last_sync, sync_time)
-    end
-    redis.call('SADD', key_schedulers, member_id)
-    local members = redis.call('SMEMBERS', key_schedulers)
-    local member_count = tonumber(redis.call('SCARD', key_schedulers))
-    table.sort(members)
-    for i, member in ipairs(members) do
-      if member == member_id then
-        local member_delay = i * (sync_interval / (member_count + 1))
-        return {member_delay, sync_time}
-      end
-    end
-    return {0, sync_time}
-    '''
+    lock_manager: aioredlock.Aioredlock
+    timer_redis: aioredis.Redis
+    event_dispatcher: EventDispatcher
+    schedule_timer: GlobalTimer
 
     def __init__(
         self,
-        config: dict,
-        config_server: ConfigServer,
+        local_config: LocalConfig,
+        shared_config: SharedConfig,
+        event_dispatcher: EventDispatcher,
         registry: AgentRegistry,
-        pidx: int,
     ) -> None:
-        self.config = config
-        self.config_server = config_server
+        self.local_config = local_config
+        self.shared_config = shared_config
+        self.event_dispatcher = event_dispatcher
         self.registry = registry
         self.dbpool = registry.dbpool
-        self.pidx = pidx
 
     async def __ainit__(self) -> None:
         log.info('Session scheduler started')
-        self.tick_task = asyncio.create_task(self.generate_scheduling_tick())
         self.registry.event_dispatcher.consume('session_enqueued', None, self.schedule)
         self.registry.event_dispatcher.consume('session_terminated', None, self.schedule)
         self.registry.event_dispatcher.consume('instance_started', None, self.schedule)
         self.registry.event_dispatcher.consume('do_schedule', None, self.schedule)
-        # TODO: add events for resource configuration changes and subscribe them here.
+        redis_url = self.shared_config.get_redis_url(db=REDIS_STREAM_DB)
         self.lock_manager = aioredlock.Aioredlock(
-            [
-                {'host': str(self.config['redis']['addr'][0]),
-                 'port': self.config['redis']['addr'][1],
-                 'password': self.config['redis']['password']
-                             if self.config['redis']['password'] else None,
-                 'db': REDIS_LIVE_DB},
-            ],
+            [str(redis_url)],
             # we have explicit semantics: temporary locking failure -> try at the next chance,
             # such as scheduling timer ticks or upon scheduling events
             retry_count=2,
         )
+        self.timer_redis = await aioredis.create_redis(str(redis_url))
+        self.schedule_timer = GlobalTimer(
+            self.timer_redis,
+            self.event_dispatcher,
+            'do_schedule',
+            interval=10.0,
+        )
+        await self.schedule_timer.join()
 
     async def close(self) -> None:
         log.info('Session scheduler stopped')
-        self.tick_task.cancel()
-        await self.tick_task
-
-    async def generate_scheduling_tick(self) -> None:
-        """
-        Periodically generate a scheduling event, considering other manager worker instances,
-        using a distributed spread-interval clock.  All workers get a chance to dispatch
-        the scheduler once in a minute.  Increasing the number of workers shortens the interval
-        between each scheduler dispatch.
-
-        This function relies on the wall clock of the Redis server, and is not affected
-        by clock skews of the manager instances using differences of monotonic clocks.
-        """
-        instance_id = await get_instance_id()
-        scheduler_id = f"{instance_id}.{self.pidx}"
-        base_time = await redis.execute_with_retries(lambda: self.registry.redis_live.time())
-        base_mono = time.monotonic()
-        epoch_length = 60
-        last_sync_time = base_time
-        try:
-            while True:
-                await asyncio.sleep(2)
-                now = base_time + (time.monotonic() - base_mono)
-                local_sync_delay, next_sync_time = await redis.execute_script(
-                    self.registry.redis_live, 'scheduler_tick', self.tick_script,
-                    ['_last_scheduler_sync', '_schedulers'],
-                    [scheduler_id, str(epoch_length)],
-                )
-                if now > next_sync_time + local_sync_delay and last_sync_time != next_sync_time:
-                    last_sync_time = next_sync_time
-                    await self.registry.event_dispatcher.produce_event('do_schedule')
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            log.exception('scheduling-tick: unexpected error')
+        await self.schedule_timer.leave()
+        self.timer_redis.close()
+        await self.timer_redis.wait_closed()
 
     async def schedule(self, ctx: object, agent_id: AgentId, event_name: str,
                        *args, **kwargs) -> None:
@@ -212,7 +158,7 @@ class SchedulerDispatcher(aobject):
 
     async def schedule_impl(self) -> None:
         log.debug('schedule(): triggered')
-        known_slot_types = await self.config_server.get_resource_slots()
+        known_slot_types = await self.shared_config.get_resource_slots()
         sched_ctx = SchedulingContext(
             registry=self.registry,
             known_slot_types=known_slot_types,
@@ -460,7 +406,7 @@ class SchedulerDispatcher(aobject):
         )
         result = await db_conn.execute(query)
         scheduler_name = await result.scalar()
-        return load_scheduler(scheduler_name, self.config['plugins']['scheduler'])
+        return load_scheduler(scheduler_name, self.shared_config['plugins']['scheduler'])
 
 
 async def _list_pending_sessions(

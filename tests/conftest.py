@@ -26,8 +26,7 @@ import sqlalchemy as sa
 import psycopg2 as pg
 import pytest
 
-from ai.backend.gateway.config import load as load_config
-from ai.backend.gateway.etcd import ConfigServer
+from ai.backend.gateway.config import LocalConfig, SharedConfig, load as load_config
 from ai.backend.gateway.server import (
     build_root_app,
 )
@@ -83,8 +82,9 @@ def vfolder_host():
 
 
 @pytest.fixture(scope='session')
-def test_config(test_id, test_db):
+def local_config(test_id, test_db):
     cfg = load_config()
+    assert isinstance(cfg, LocalConfig)
     cfg['db']['name'] = test_db
     cfg['manager']['num-proc'] = 1
     cfg['manager']['service-addr'] = HostPortPair('localhost', 29100)
@@ -96,7 +96,7 @@ def test_config(test_id, test_db):
 
 
 @pytest.fixture(scope='session')
-def etcd_fixture(test_id, test_config, vfolder_mount, vfolder_fsprefix, vfolder_host):
+def etcd_fixture(test_id, local_config, vfolder_mount, vfolder_fsprefix, vfolder_host):
     # Clear and reset etcd namespace using CLI functions.
     with tempfile.NamedTemporaryFile(mode='w', suffix='.etcd.json') as f:
         etcd_fixture = {
@@ -137,26 +137,28 @@ def etcd_fixture(test_id, test_config, vfolder_mount, vfolder_fsprefix, vfolder_
 
 
 @pytest.fixture
-async def config_server(app, etcd_fixture):
-    server = ConfigServer(
+async def shared_config(app, etcd_fixture):
+    shared_config = SharedConfig(
         app,
-        app['config']['etcd']['addr'],
-        app['config']['etcd']['user'],
-        app['config']['etcd']['password'],
-        app['config']['etcd']['namespace'],
+        app['local_config']['etcd']['addr'],
+        app['local_config']['etcd']['user'],
+        app['local_config']['etcd']['password'],
+        app['local_config']['etcd']['namespace'],
     )
-    yield server
+    await shared_config.reload()
+    app['shared_config'] = shared_config
+    yield shared_config
 
 
 @pytest.fixture(scope='session')
-def database(request, test_config, test_db):
+def database(request, local_config, test_db):
     '''
     Create a new database for the current test session
     and install the table schema using alembic.
     '''
-    db_addr = test_config['db']['addr']
-    db_user = test_config['db']['user']
-    db_pass = test_config['db']['password']
+    db_addr = local_config['db']['addr']
+    db_user = local_config['db']['user']
+    db_pass = local_config['db']['password']
 
     # Create database using low-level psycopg2 API.
     # Temporarily use "testing" dbname until we create our own db.
@@ -201,14 +203,14 @@ def database(request, test_config, test_db):
 
 
 @pytest.fixture()
-def database_fixture(test_config, test_db, database):
+def database_fixture(local_config, test_db, database):
     '''
     Populate the example data as fixtures to the database
     and delete them after use.
     '''
-    db_addr = test_config['db']['addr']
-    db_user = test_config['db']['user']
-    db_pass = test_config['db']['password']
+    db_addr = local_config['db']['addr']
+    db_user = local_config['db']['user']
+    db_pass = local_config['db']['password']
     alembic_url = f'postgresql://{db_user}:{db_pass}@{db_addr}/{test_db}'
 
     fixtures = {}
@@ -292,17 +294,17 @@ class Client:
 
 
 @pytest.fixture
-async def app(test_config, event_loop):
+async def app(local_config, event_loop):
     '''
     Create an empty application with the test configuration.
     '''
-    return build_root_app(0, test_config,
+    return build_root_app(0, local_config,
                           cleanup_contexts=[],
                           subapp_pkgs=[])
 
 
 @pytest.fixture
-async def create_app_and_client(test_config, event_loop):
+async def create_app_and_client(local_config, event_loop):
     client: Optional[Client] = None
     client_session: Optional[aiohttp.ClientSession] = None
     runner: Optional[web.BaseRunner] = None
@@ -323,11 +325,11 @@ async def create_app_and_client(test_config, event_loop):
         if cleanup_contexts is not None:
             for ctx in cleanup_contexts:
                 # if isinstance(ctx, AsyncContextManager):
-                if ctx.__name__ in ['config_server_ctx', 'webapp_plugins_ctx']:
+                if ctx.__name__ in ['shared_config_ctx', 'webapp_plugins_ctx']:
                     _outer_ctx_classes.append(ctx)  # type: ignore
                 else:
                     _cleanup_ctxs.append(ctx)
-        app = build_root_app(0, test_config,
+        app = build_root_app(0, local_config,
                              cleanup_contexts=_cleanup_ctxs,
                              subapp_pkgs=subapp_pkgs,
                              scheduler_opts={'close_timeout': 10, **scheduler_opts})
@@ -339,11 +341,12 @@ async def create_app_and_client(test_config, event_loop):
         await runner.setup()
         site = web.TCPSite(
             runner,
-            str(app['config']['manager']['service-addr'].host),
-            app['config']['manager']['service-addr'].port,
+            str(app['local_config']['manager']['service-addr'].host),
+            app['local_config']['manager']['service-addr'].port,
+            reuse_port=True,
         )
         await site.start()
-        port = app['config']['manager']['service-addr'].port
+        port = app['local_config']['manager']['service-addr'].port
         client_session = aiohttp.ClientSession()
         client = Client(client_session, f'http://localhost:{port}')
         return app, client
@@ -397,7 +400,7 @@ def get_headers(app, default_keypair):
                       hash_type='sha256', api_version='v5.20191215',
                       keypair=default_keypair):
         now = datetime.now(tzutc())
-        hostname = f"localhost:{app['config']['manager']['service-addr'].port}"
+        hostname = f"localhost:{app['local_config']['manager']['service-addr'].port}"
         headers = {
             'Date': now.isoformat(),
             'Content-Type': ctype,
