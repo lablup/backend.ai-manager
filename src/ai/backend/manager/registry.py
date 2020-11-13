@@ -1922,6 +1922,7 @@ class AgentRegistry:
                     if row['addr'] != current_addr:
                         updates['addr'] = current_addr
                     updates['version'] = agent_info['version']
+                    updates['compute_plugins'] = agent_info['compute_plugins']
                     # occupied_slots are updated when kernels starts/terminates
                     if updates:
                         await self.shared_config.update_resource_slots(slot_key_and_units)
