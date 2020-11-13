@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABCMeta, abstractmethod
+from contextvars import ContextVar
 from datetime import timedelta
 import enum
 import logging
@@ -8,7 +9,9 @@ import math
 from typing import (
     Any,
     ClassVar,
+    Dict,
     Mapping,
+    Optional,
     Sequence,
     Type,
     TYPE_CHECKING,
@@ -23,7 +26,7 @@ import sqlalchemy as sa
 import trafaret as t
 
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import aobject
+from ai.backend.common.types import aobject, AccessKey
 import ai.backend.common.validators as tx
 if TYPE_CHECKING:
     from ai.backend.common.types import AgentId, SessionId
@@ -129,9 +132,11 @@ class TimeoutIdleChecker(BaseIdleChecker):
     }).allow_extra('*')
 
     idle_timeout: timedelta
+    _policy_cache: ContextVar[Dict[AccessKey, Optional[Mapping[str, Any]]]]
 
     async def __ainit__(self) -> None:
         await super().__ainit__()
+        self._policy_cache = ContextVar('_policy_cache')
         self._evh_session_started = \
             self._event_dispatcher.consume("session_started", None, self._session_started_cb)
         self._evh_execution_started = \
@@ -154,7 +159,10 @@ class TimeoutIdleChecker(BaseIdleChecker):
     async def populate_config(self, raw_config: Mapping[str, Any]) -> None:
         config = self._config_iv.check(raw_config)
         self.idle_timeout = config['threshold']
-        log.info('TimeoutIdleChecker: default idle_timeout = {0:,} seconds', self.idle_timeout.total_seconds())
+        log.info(
+            'TimeoutIdleChecker: default idle_timeout = {0:,} seconds',
+            self.idle_timeout.total_seconds(),
+        )
 
     async def update_app_streaming_status(
         self,
@@ -206,6 +214,13 @@ class TimeoutIdleChecker(BaseIdleChecker):
     ) -> None:
         await self._update_timeout(session_id)
 
+    async def _do_idle_check(self, context: Any, agent_id: AgentId, event_name: str) -> None:
+        cache_token = self._policy_cache.set(dict())
+        try:
+            return await super()._do_idle_check(context, agent_id, event_name)
+        finally:
+            self._policy_cache.reset(cache_token)
+
     async def check_session(self, session: RowProxy, dbconn: SAConnection) -> bool:
         session_id = session['id']
         active_streams = await self._redis.zcount(f"session.{session_id}.active_app_connections")
@@ -218,25 +233,30 @@ class TimeoutIdleChecker(BaseIdleChecker):
         last_access = float(raw_last_access)
         # serves as the default fallback if keypair resource policy's idle_timeout is "undefined"
         idle_timeout = self.idle_timeout.total_seconds()
-        query = (
-            sa.select([keypair_resource_policies])
-            .select_from(
-                sa.join(
-                    keypairs,
-                    keypair_resource_policies,
-                    (keypair_resource_policies.c.name == keypairs.c.resource_policy),
+        policy_cache = self._policy_cache.get()
+        policy = policy_cache.get(session['access_key'], None)
+        if policy is None:
+            query = (
+                sa.select([keypair_resource_policies])
+                .select_from(
+                    sa.join(
+                        keypairs,
+                        keypair_resource_policies,
+                        (keypair_resource_policies.c.name == keypairs.c.resource_policy),
+                    )
+                )
+                .where(
+                    keypairs.c.access_key == session['access_key']
                 )
             )
-            .where(
-                keypairs.c.access_key == session['access_key']
-            )
-        )
-        result = await dbconn.execute(query)
-        policy = await result.first()
+            result = await dbconn.execute(query)
+            policy = await result.first()
+            assert policy is not None
+            policy_cache[session['access_key']] = policy
         # setting idle_timeout:
         # - zero/inf means "infinite"
         # - negative means "undefined"
-        if policy is not None and policy['idle_timeout'] >= 0:
+        if policy['idle_timeout'] >= 0:
             idle_timeout = float(policy['idle_timeout'])
         if (
             (idle_timeout <= 0)
