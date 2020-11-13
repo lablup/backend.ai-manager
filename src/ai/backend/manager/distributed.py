@@ -40,7 +40,9 @@ class GlobalTimer:
         try:
             while True:
                 try:
-                    async with (await self._lock_manager.lock(self.lock_key, lock_timeout=10.0)) as lock:
+                    async with (
+                        await self._lock_manager.lock(self.lock_key, lock_timeout=self.interval)
+                    ) as lock:
                         await self._event_dispatcher.produce_event(self.event_name)
                         await self._lock_manager.extend(lock, lock_timeout=self.interval)
                         await asyncio.sleep(self.interval)

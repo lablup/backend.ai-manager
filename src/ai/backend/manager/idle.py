@@ -4,6 +4,7 @@ from abc import ABCMeta, abstractmethod
 from datetime import timedelta
 import enum
 import logging
+import math
 from typing import (
     Any,
     ClassVar,
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
     from ai.backend.common.types import AgentId, SessionId
 
 from .distributed import GlobalTimer
-from .models import kernels, keypair_resource_policies
+from .models import kernels, keypairs, keypair_resource_policies
 from .models.kernel import LIVE_STATUS
 from ..gateway.defs import REDIS_LIVE_DB
 if TYPE_CHECKING:
@@ -99,7 +100,7 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
             rows = await result.fetchall()
             for row in rows:
                 if not (await self.check_session(row, conn)):
-                    log.info(f"{self!r} triggered termination of s:{row['id']}")
+                    log.info(f"The {self.name} idle checker triggered termination of s:{row['id']}")
                     await self._event_dispatcher.produce_event(
                         "do_terminate_session",
                         (str(row['id']), "idle-timeout"),
@@ -153,7 +154,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
     async def populate_config(self, raw_config: Mapping[str, Any]) -> None:
         config = self._config_iv.check(raw_config)
         self.idle_timeout = config['threshold']
-        log.info('TimeoutIdleChecker: idle_timeout = {0:,} seconds', self.idle_timeout.total_seconds())
+        log.info('TimeoutIdleChecker: default idle_timeout = {0:,} seconds', self.idle_timeout.total_seconds())
 
     async def update_app_streaming_status(
         self,
@@ -215,17 +216,33 @@ class TimeoutIdleChecker(BaseIdleChecker):
         if raw_last_access is None or raw_last_access == "0":
             return True
         last_access = float(raw_last_access)
+        # serves as the default fallback if keypair resource policy's idle_timeout is "undefined"
         idle_timeout = self.idle_timeout.total_seconds()
         query = (
             sa.select([keypair_resource_policies])
-            .select_from(keypair_resource_policies)
-            .where(keypair_resource_policies.c.name == session['resource_policy'])
+            .select_from(
+                sa.join(
+                    keypairs,
+                    keypair_resource_policies,
+                    (keypair_resource_policies.c.name == keypairs.c.resource_policy),
+                )
+            )
+            .where(
+                keypairs.c.access_key == session['access_key']
+            )
         )
         result = await dbconn.execute(query)
         policy = await result.first()
-        if policy is not None and policy['idle_timeout'] is not None:
+        # setting idle_timeout:
+        # - zero/inf means "infinite"
+        # - negative means "undefined"
+        if policy is not None and policy['idle_timeout'] >= 0:
             idle_timeout = float(policy['idle_timeout'])
-        if t - last_access <= idle_timeout:
+        if (
+            (idle_timeout <= 0)
+            or (math.isinf(idle_timeout) and idle_timeout > 0)
+            or (t - last_access <= idle_timeout)
+        ):
             return True
         return False
 
