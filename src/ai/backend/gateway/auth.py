@@ -729,7 +729,7 @@ async def signout(request: web.Request, params: Any) -> web.Response:
     async with dbpool.acquire() as conn, conn.begin():
         # Inactivate the user.
         query = (users.update()
-                      .values(is_active=False)
+                      .values(status=UserStatus.INACTIVE)
                       .where(users.c.email == params['email']))
         await conn.execute(query)
         # Inactivate every keypairs of the user.
