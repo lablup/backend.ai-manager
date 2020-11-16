@@ -1,1 +1,0 @@
-Fix intermittent resource warnings from aiopg by replacing all `fetchone()` with `first()` and `scalar()` that closes the database cursor automatically always

@@ -16,6 +16,20 @@ Changes
 
 .. towncrier release notes start
 
+20.09.0a4 (2020-11-16)
+----------------------
+
+### Features
+* New idle checker to automatically kill sessions using various criteria ([#341](https://github.com/lablup/backend.ai-manager/issues/341))
+
+### Fixes
+* Implement and use a new global timer which works regardless of the number of manager instances to sustain periodic tasks such as session scheduling and idle checks ([#341](https://github.com/lablup/backend.ai-manager/issues/341))
+* Replace legacy sess_id to session_name. ([#348](https://github.com/lablup/backend.ai-manager/issues/348))
+* Fix intermittent resource warnings from aiopg by replacing all `fetchone()` with `first()` and `scalar()` that closes the database cursor automatically always ([#349](https://github.com/lablup/backend.ai-manager/issues/349))
+* Update compute_plugins info from heartbeat for an ALIVE agent. ([#350](https://github.com/lablup/backend.ai-manager/issues/350))
+* Fix broken signout. ([#353](https://github.com/lablup/backend.ai-manager/issues/353))
+
+
 20.09.0a3 (2020-11-03)
 ----------------------
 
