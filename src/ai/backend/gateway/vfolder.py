@@ -33,7 +33,7 @@ from ai.backend.common.utils import Fstab
 
 from .auth import auth_required, superadmin_required
 from .exceptions import (
-    VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists, VFolderOperationFailed
+    VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists, VFolderOperationFailed,
     GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
     BackendAgentError, InternalServerError, GroupNotFound,
 )
@@ -710,8 +710,8 @@ async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.MKDIR (ak:{}, vf:{}, path:{})', access_key, folder_name, params['path'])
-        storage_manager = request.app['storage_manager']
-        proxy_name, volume_name = storage_manager.split_host(row['host'])
+    storage_manager = request.app['storage_manager']
+    proxy_name, volume_name = storage_manager.split_host(row['host'])
     try:
         async with storage_manager.request(
             proxy_name, 'POST', 'folder/file/mkdir',
