@@ -33,7 +33,7 @@ from ai.backend.common.utils import Fstab
 
 from .auth import auth_required, superadmin_required
 from .exceptions import (
-    VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists,
+    VFolderCreationFailed, VFolderNotFound, VFolderAlreadyExists, VFolderOperationFailed
     GenericForbidden, GenericNotFound, InvalidAPIParameters, ServerMisconfiguredError,
     BackendAgentError, InternalServerError, GroupNotFound,
 )
@@ -467,15 +467,18 @@ async def delete_by_id(request: web.Request, params: Any) -> web.Response:
     # fs-level deletion may fail or take longer time
     # but let's complete the db transaction to reflect that it's deleted.
     storage_manager = request.app['storage_manager']
-    async with storage_manager.request(
-        folder_host, 'POST', 'folder/delete',
-        json={
-            'volume': storage_manager.split_host(folder_host)[1],
-            'vfid': str(folder_id),
-        },
-        raise_for_status=True,
-    ):
-        pass
+    try:
+        async with storage_manager.request(
+            folder_host, 'POST', 'folder/delete',
+            json={
+                'volume': storage_manager.split_host(folder_host)[1],
+                'vfid': str(folder_id),
+            },
+            raise_for_status=True,
+        ):
+            pass
+    except aiohttp.ClientResponseError:
+        raise VFolderOperationFailed
     return web.Response(status=204)
 
 
@@ -545,14 +548,17 @@ async def get_volume_perf_metric(request: web.Request, params: Any) -> web.Respo
     log.info('VFOLDER.VOLUME_PERF_METRIC (ak:{})', access_key)
     storage_manager = request.app['storage_manager']
     proxy_name, volume_name = storage_manager.split_host(params['folder_host'])
-    async with storage_manager.request(
-        proxy_name, 'GET', 'volume/performance-metric',
-        json={
-            'volume': volume_name,
-        },
-        raise_for_status=True,
-    ) as (_, storage_resp):
-        storage_reply = await storage_resp.json()
+    try:
+        async with storage_manager.request(
+            proxy_name, 'GET', 'volume/performance-metric',
+            json={
+                'volume': volume_name,
+            },
+            raise_for_status=True,
+        ) as (_, storage_resp):
+            storage_reply = await storage_resp.json()
+    except aiohttp.ClientResponseError:
+        raise VFolderOperationFailed
     return web.json_response(storage_reply, status=200)
 
 
@@ -583,33 +589,36 @@ async def get_info(request: web.Request, row: VFolderRow) -> web.Response:
         permission = row['permission']
     storage_manager = request.app['storage_manager']
     proxy_name, volume_name = storage_manager.split_host(row['host'])
-    async with storage_manager.request(
-        proxy_name, 'GET', 'folder/usage',
-        json={
-            'volume': volume_name,
-            'vfid': str(row['id']),
-        },
-        raise_for_status=True,
-    ) as (_, storage_resp):
-        usage = await storage_resp.json()
-    resp = {
-        'name': row['name'],
-        'id': row['id'].hex,
-        'host': row['host'],
-        'numFiles': usage['file_count'],  # legacy
-        'num_files': usage['file_count'],
-        'used_bytes': usage['used_bytes'],  # added in v20.09
-        'created': str(row['created_at']),  # legacy
-        'created_at': str(row['created_at']),
-        'last_used': str(row['created_at']),
-        'user': str(row['user']),
-        'group': str(row['group']),
-        'type': 'user' if row['user'] is not None else 'group',
-        'is_owner': is_owner,
-        'permission': permission,
-        'usage_mode': row['usage_mode'],
-        'cloneable': row['cloneable']
-    }
+    try:
+        async with storage_manager.request(
+            proxy_name, 'GET', 'folder/usage',
+            json={
+                'volume': volume_name,
+                'vfid': str(row['id']),
+            },
+            raise_for_status=True,
+        ) as (_, storage_resp):
+            usage = await storage_resp.json()
+        resp = {
+            'name': row['name'],
+            'id': row['id'].hex,
+            'host': row['host'],
+            'numFiles': usage['file_count'],  # legacy
+            'num_files': usage['file_count'],
+            'used_bytes': usage['used_bytes'],  # added in v20.09
+            'created': str(row['created_at']),  # legacy
+            'created_at': str(row['created_at']),
+            'last_used': str(row['created_at']),
+            'user': str(row['user']),
+            'group': str(row['group']),
+            'type': 'user' if row['user'] is not None else 'group',
+            'is_owner': is_owner,
+            'permission': permission,
+            'usage_mode': row['usage_mode'],
+            'cloneable': row['cloneable']
+        }
+    except aiohttp.ClientResponseError:
+        raise VFolderOperationFailed
     return web.json_response(resp, status=200)
 
 
@@ -701,9 +710,9 @@ async def mkdir(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
     folder_name = request.match_info['name']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.MKDIR (ak:{}, vf:{}, path:{})', access_key, folder_name, params['path'])
-    try:
         storage_manager = request.app['storage_manager']
         proxy_name, volume_name = storage_manager.split_host(row['host'])
+    try:
         async with storage_manager.request(
             proxy_name, 'POST', 'folder/file/mkdir',
             json={
@@ -737,22 +746,25 @@ async def create_download_session(request: web.Request, params: Any, row: VFolde
     unmanaged_path = row['unmanaged_path']
     storage_manager = request.app['storage_manager']
     proxy_name, volume_name = storage_manager.split_host(row['host'])
-    async with storage_manager.request(
-        proxy_name, 'POST', 'folder/file/download',
-        json={
-            'volume': volume_name,
-            'vfid': str(row['id']),
-            'relpath': params['path'],
-            'archive': params['archive'],
-            'unmanaged_path': unmanaged_path if unmanaged_path else None,
-        },
-        raise_for_status=True,
-    ) as (client_api_url, storage_resp):
-        storage_reply = await storage_resp.json()
-        resp = {
-            'token': storage_reply['token'],
-            'url': str(client_api_url / 'download'),
-        }
+    try:
+        async with storage_manager.request(
+            proxy_name, 'POST', 'folder/file/download',
+            json={
+                'volume': volume_name,
+                'vfid': str(row['id']),
+                'relpath': params['path'],
+                'archive': params['archive'],
+                'unmanaged_path': unmanaged_path if unmanaged_path else None,
+            },
+            raise_for_status=True,
+        ) as (client_api_url, storage_resp):
+            storage_reply = await storage_resp.json()
+            resp = {
+                'token': storage_reply['token'],
+                'url': str(client_api_url / 'download'),
+            }
+    except aiohttp.ClientResponseError:
+        raise VFolderOperationFailed
     return web.json_response(resp, status=200)
 
 
@@ -772,21 +784,24 @@ async def create_upload_session(request: web.Request, params: Any, row: VFolderR
     log.info(log_fmt, *log_args)
     storage_manager = request.app['storage_manager']
     proxy_name, volume_name = storage_manager.split_host(row['host'])
-    async with storage_manager.request(
-        proxy_name, 'POST', 'folder/file/upload',
-        json={
-            'volume': volume_name,
-            'vfid': str(row['id']),
-            'relpath': params['path'],
-            'size': params['size'],
-        },
-        raise_for_status=True,
-    ) as (client_api_url, storage_resp):
-        storage_reply = await storage_resp.json()
-        resp = {
-            'token': storage_reply['token'],
-            'url': str(client_api_url / 'upload'),
-        }
+    try:
+        async with storage_manager.request(
+            proxy_name, 'POST', 'folder/file/upload',
+            json={
+                'volume': volume_name,
+                'vfid': str(row['id']),
+                'relpath': params['path'],
+                'size': params['size'],
+            },
+            raise_for_status=True,
+        ) as (client_api_url, storage_resp):
+            storage_reply = await storage_resp.json()
+            resp = {
+                'token': storage_reply['token'],
+                'url': str(client_api_url / 'upload'),
+            }
+    except aiohttp.ClientResponseError:
+        raise VFolderOperationFailed
     return web.json_response(resp, status=200)
 
 
@@ -805,17 +820,20 @@ async def rename_file(request: web.Request, params: Any, row: VFolderRow) -> web
              access_key, folder_name, params['target_path'], params['new_name'])
     storage_manager = request.app['storage_manager']
     proxy_name, volume_name = storage_manager.split_host(row['host'])
-    async with storage_manager.request(
-        proxy_name, 'POST', 'folder/file/rename',
-        json={
-            'volume': volume_name,
-            'vfid': str(row['id']),
-            'relpath': params['target_path'],
-            'new_name': params['new_name'],
-        },
-        raise_for_status=True,
-    ):
-        pass
+    try:
+        async with storage_manager.request(
+            proxy_name, 'POST', 'folder/file/rename',
+            json={
+                'volume': volume_name,
+                'vfid': str(row['id']),
+                'relpath': params['target_path'],
+                'new_name': params['new_name'],
+            },
+            raise_for_status=True,
+        ):
+            pass
+    except aiohttp.ClientResponseError:
+        raise VFolderOperationFailed
     return web.json_response({}, status=200)
 
 
@@ -835,17 +853,20 @@ async def delete_files(request: web.Request, params: Any, row: VFolderRow) -> we
              access_key, folder_name, folder_name, recursive)
     storage_manager = request.app['storage_manager']
     proxy_name, volume_name = storage_manager.split_host(row['host'])
-    async with storage_manager.request(
-        proxy_name, 'POST', 'folder/file/delete',
-        json={
-            'volume': volume_name,
-            'vfid': str(row['id']),
-            'relpaths': params['files'],
-            'recursive': recursive,
-        },
-        raise_for_status=True,
-    ):
-        pass
+    try:
+        async with storage_manager.request(
+            proxy_name, 'POST', 'folder/file/delete',
+            json={
+                'volume': volume_name,
+                'vfid': str(row['id']),
+                'relpaths': params['files'],
+                'recursive': recursive,
+            },
+            raise_for_status=True,
+        ):
+            pass
+    except aiohttp.ClientResponseError:
+        raise VFolderOperationFailed
     return web.json_response({}, status=200)
 
 
@@ -863,40 +884,43 @@ async def list_files(request: web.Request, params: Any, row: VFolderRow) -> web.
              access_key, folder_name, params['path'])
     storage_manager = request.app['storage_manager']
     proxy_name, volume_name = storage_manager.split_host(row['host'])
-    async with storage_manager.request(
-        proxy_name, 'POST', 'folder/file/list',
-        json={
-            'volume': volume_name,
-            'vfid': str(row['id']),
-            'relpath': params['path'],
-        },
-        raise_for_status=True,
-    ) as (_, storage_resp):
-        result = await storage_resp.json()
-        resp = {
-            'items': [
-                {
-                    'name': item['name'],
-                    'type': item['type'],
-                    'size': item['stat']['size'],  # humanize?
-                    'mode': oct(item['stat']['mode'])[2:][-3:],
-                    'created': item['stat']['created'],
-                    'modified': item['stat']['modified'],
-                }
-                for item in result['items']
-            ],
-            'files': json.dumps([  # for legacy (to be removed in 21.03)
-                {
-                    'filename': item['name'],
-                    'size': item['stat']['size'],
-                    'mode': stat.filemode(item['stat']['mode']),
-                    'ctime': datetime.fromisoformat(item['stat']['created']).timestamp(),
-                    'atime': 0,
-                    'mtime': datetime.fromisoformat(item['stat']['modified']).timestamp(),
-                }
-                for item in result['items']
-            ]),
-        }
+    try:
+        async with storage_manager.request(
+            proxy_name, 'POST', 'folder/file/list',
+            json={
+                'volume': volume_name,
+                'vfid': str(row['id']),
+                'relpath': params['path'],
+            },
+            raise_for_status=True,
+        ) as (_, storage_resp):
+            result = await storage_resp.json()
+            resp = {
+                'items': [
+                    {
+                        'name': item['name'],
+                        'type': item['type'],
+                        'size': item['stat']['size'],  # humanize?
+                        'mode': oct(item['stat']['mode'])[2:][-3:],
+                        'created': item['stat']['created'],
+                        'modified': item['stat']['modified'],
+                    }
+                    for item in result['items']
+                ],
+                'files': json.dumps([  # for legacy (to be removed in 21.03)
+                    {
+                        'filename': item['name'],
+                        'size': item['stat']['size'],
+                        'mode': stat.filemode(item['stat']['mode']),
+                        'ctime': datetime.fromisoformat(item['stat']['created']).timestamp(),
+                        'atime': 0,
+                        'mtime': datetime.fromisoformat(item['stat']['modified']).timestamp(),
+                    }
+                    for item in result['items']
+                ]),
+            }
+    except aiohttp.ClientResponseError:
+        raise VFolderOperationFailed
     return web.json_response(resp, status=200)
 
 
@@ -1242,15 +1266,18 @@ async def delete(request: web.Request) -> web.Response:
     # but let's complete the db transaction to reflect that it's deleted.
     storage_manager = request.app['storage_manager']
     proxy_name, volume_name = storage_manager.split_host(folder_host)
-    async with storage_manager.request(
-        proxy_name, 'POST', 'folder/delete',
-        json={
-            'volume': volume_name,
-            'vfid': str(folder_id),
-        },
-        raise_for_status=True,
-    ):
-        pass
+    try:
+        async with storage_manager.request(
+            proxy_name, 'POST', 'folder/delete',
+            json={
+                'volume': volume_name,
+                'vfid': str(folder_id),
+            },
+            raise_for_status=True,
+        ):
+            pass
+    except aiohttp.ClientResponseError:
+        raise VFolderOperationFailed
     return web.Response(status=204)
 
 
@@ -1392,7 +1419,7 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
             ):
                 pass
         except aiohttp.ClientResponseError:
-            raise VFolderCreationFailed
+            raise VFolderOperationFailed
 
         user_uuid = str(user_uuid)
         group_uuid = None
