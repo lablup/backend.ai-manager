@@ -273,18 +273,18 @@ async def health_check(request: web.Request, params: Any) -> web.Response:
             params['agent_ids'] = agent_ids
 
     # ## Get daemon information
-    etcd_info = await request.app['config_server'].get_manager_nodes_info()
+    etcd_info = await request.app['shared_config'].get_manager_nodes_info()
     _id = ''
     if '' in etcd_info:
         _id = etcd_info['']
     elif etcd_info:
         _id = list(etcd_info.keys())[0]
-
     result = {
         'managers': [
             {
                 'id': _id,
                 'type': 'manager',
+                'host': str(request.app['local_config']['manager']['service-addr']),
                 'version': __version__,
                 'api_version': LATEST_API_VERSION,
             }
