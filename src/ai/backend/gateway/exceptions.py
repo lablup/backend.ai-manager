@@ -240,6 +240,11 @@ class VFolderAlreadyExists(BackendError, web.HTTPBadRequest):
     error_title = 'The virtual folder already exists with the same name.'
 
 
+class VFolderOperationFailed(BackendError, web.HTTPBadRequest):
+    error_type  = 'https://api.backend.ai/probs/vfolder-operation-failed'
+    error_title = 'Virtual folder operation has failed.'
+
+
 class DotfileCreationFailed(BackendError, web.HTTPBadRequest):
     error_type  = 'https://api.backend.ai/probs/generic-bad-request'
     error_title = 'Dotfile creation has failed.'
