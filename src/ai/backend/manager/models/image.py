@@ -71,12 +71,12 @@ class Image(graphene.ObjectType):
 
     @classmethod
     async def load_item(cls, context, reference):
-        r = await context['config_server'].inspect_image(reference)
+        r = await context['shared_config'].inspect_image(reference)
         return cls._convert_from_dict(context, r)
 
     @classmethod
     async def load_all(cls, context, is_installed=None, is_operation=None):
-        raw_items = await context['config_server'].list_images()
+        raw_items = await context['shared_config'].list_images()
         items = []
         # Convert to GQL objects
         for r in raw_items:
@@ -184,7 +184,7 @@ class RescanImages(graphene.Mutation):
     ) -> RescanImages:
         log.info('rescanning docker registry {0} by API request',
                  f'({registry})' if registry else '(all)')
-        config_server = info.context['config_server']
+        config_server = info.context['shared_config']
 
         async def _rescan_task(reporter: ProgressReporter) -> None:
             await config_server.rescan_images(registry, reporter=reporter)
@@ -210,7 +210,7 @@ class ForgetImage(graphene.Mutation):
         reference: str,
     ) -> ForgetImage:
         log.info('forget image {0} by API request', reference)
-        config_server = info.context['config_server']
+        config_server = info.context['shared_config']
         await config_server.forget_image(reference)
         return ForgetImage(ok=True, msg='')
 
@@ -234,7 +234,7 @@ class AliasImage(graphene.Mutation):
         target: str,
     ) -> AliasImage:
         log.info('alias image {0} -> {1} by API request', alias, target)
-        config_server = info.context['config_server']
+        config_server = info.context['shared_config']
         try:
             await config_server.alias(alias, target)
         except ValueError as e:
@@ -259,6 +259,6 @@ class DealiasImage(graphene.Mutation):
         alias: str,
     ) -> DealiasImage:
         log.info('dealias image {0} by API request', alias)
-        config_server = info.context['config_server']
+        config_server = info.context['shared_config']
         await config_server.dealias(alias)
         return DealiasImage(ok=True, msg='')

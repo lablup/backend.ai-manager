@@ -60,7 +60,7 @@ async def list_presets(request) -> web.Response:
     Returns the list of all resource presets.
     '''
     log.info('LIST_PRESETS (ak:{})', request['keypair']['access_key'])
-    await request.app['registry'].config_server.get_resource_slots()
+    await request.app['shared_config'].get_resource_slots()
     async with request.app['dbpool'].acquire() as conn, conn.begin():
         query = (
             sa.select([resource_presets])
@@ -105,7 +105,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
     except (json.decoder.JSONDecodeError, AssertionError) as e:
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
     registry = request.app['registry']
-    known_slot_types = await registry.config_server.get_resource_slots()
+    known_slot_types = await request.app['shared_config'].get_resource_slots()
     resp: MutableMapping[str, Any] = {
         'keypair_limits': None,
         'keypair_using': None,
@@ -241,7 +241,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             })
 
         # Return group resource status as NaN if not allowed.
-        group_resource_visibility = await request.app['registry'].config_server.get(
+        group_resource_visibility = await request.app['shared_config'].get_raw(
                 'config/api/resources/group_resource_visibility')
         group_resource_visibility = t.ToBool().check(group_resource_visibility)
         if not group_resource_visibility:
@@ -613,8 +613,8 @@ async def get_watcher_info(request: web.Request, agent_id: str) -> dict:
     token = request.app['shared_config']['watcher']['token']
     if token is None:
         token = 'insecure'
-    agent_ip = await request.app['registry'].config_server.get(f'nodes/agents/{agent_id}/ip')
-    watcher_port = await request.app['registry'].config_server.get(
+    agent_ip = await request.app['shared_config'].get(f'nodes/agents/{agent_id}/ip')
+    watcher_port = await request.app['shared_config'].get(
         f'nodes/agents/{agent_id}/watcher_port')
     if watcher_port is None:
         watcher_port = 6009
