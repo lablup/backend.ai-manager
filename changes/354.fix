@@ -1,1 +1,1 @@
-Replace config_server to shared_config.
+Fix missing replacement of `config_server` to `shared_config` in GraphQL context objects and references via `request.app['registry'].config_server` in some API handlers
