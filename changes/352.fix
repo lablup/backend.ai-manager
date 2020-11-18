@@ -1,1 +1,1 @@
-fix unhandled errors during storage-manager invocation to be handled in `try-except` block by using `VfolderOperationFailed` exception.
+Improve handling of storage-manager invocation failures using a new `VFolderOperationFailed` API exception.
