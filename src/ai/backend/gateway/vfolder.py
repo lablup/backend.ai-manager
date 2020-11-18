@@ -504,7 +504,7 @@ async def list_hosts(request: web.Request) -> web.Response:
     all_volumes = await request.app['storage_manager'].get_all_volumes()
     all_hosts = {f"{proxy_name}:{volume_data['name']}" for proxy_name, volume_data in all_volumes}
     allowed_hosts = allowed_hosts & all_hosts
-    default_host = await config.get('volumes/default_host')
+    default_host = await config.get_raw('volumes/default_host')
     if default_host not in allowed_hosts:
         default_host = None
     resp = {
@@ -523,7 +523,7 @@ async def list_all_hosts(request: web.Request) -> web.Response:
     all_volumes = await request.app['storage_manager'].get_all_volumes()
     all_hosts = {f"{proxy_name}:{volume_data['name']}" for proxy_name, volume_data in all_volumes}
     config = request.app['shared_config']
-    default_host = await config.get('volumes/default_host')
+    default_host = await config.get_raw('volumes/default_host')
     if default_host not in all_hosts:
         default_host = None
     resp = {
@@ -1590,7 +1590,7 @@ async def list_mounts(request: web.Request) -> web.Response:
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.LIST_MOUNTS(ak:{})', access_key)
     config = request.app['shared_config']
-    mount_prefix = await config.get('volumes/_mount')
+    mount_prefix = await config.get_raw('volumes/_mount')
     if mount_prefix is None:
         mount_prefix = '/mnt'
 
@@ -1707,7 +1707,7 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
     log_args = (access_key, params['name'], params['fs_location'], params['scaling_group'])
     log.info(log_fmt, *log_args)
     config = request.app['shared_config']
-    mount_prefix = await config.get('volumes/_mount')
+    mount_prefix = await config.get_raw('volumes/_mount')
     if mount_prefix is None:
         mount_prefix = '/mnt'
 
@@ -1803,7 +1803,7 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
     log_args = (access_key, params['name'], params['scaling_group'])
     log.info(log_fmt, *log_args)
     config = request.app['shared_config']
-    mount_prefix = await config.get('volumes/_mount')
+    mount_prefix = await config.get_raw('volumes/_mount')
     if mount_prefix is None:
         mount_prefix = '/mnt'
     mountpoint = Path(mount_prefix) / params['name']
