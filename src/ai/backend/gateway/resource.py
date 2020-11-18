@@ -297,7 +297,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
         rows = await result.fetchall()
 
     objs_per_group = {}
-    local_tz = request.app['config']['system']['timezone']
+    local_tz = request.app['shared_config']['system']['timezone']
 
     for row in rows:
         group_id = str(row['group_id'])
@@ -419,7 +419,7 @@ async def usage_per_month(request: web.Request, params: Any) -> web.Response:
     '''
     log.info('USAGE_PER_MONTH (g:[{}], month:{})',
              ','.join(params['group_ids']), params['month'])
-    local_tz = request.app['config']['system']['timezone']
+    local_tz = request.app['shared_config']['system']['timezone']
     try:
         start_date = datetime.strptime(params['month'], '%Y%m').replace(tzinfo=local_tz)
         end_date = start_date + relativedelta(months=+1)
@@ -451,7 +451,7 @@ async def usage_per_period(request: web.Request, params: Any) -> web.Response:
     :param end_date str: "yyyymmdd" format.
     '''
     group_id = params['group_id']
-    local_tz = request.app['config']['system']['timezone']
+    local_tz = request.app['shared_config']['system']['timezone']
     try:
         start_date = datetime.strptime(params['start_date'], '%Y%m%d').replace(tzinfo=local_tz)
         end_date = datetime.strptime(params['end_date'], '%Y%m%d').replace(tzinfo=local_tz)
@@ -611,7 +611,7 @@ async def get_watcher_info(request: web.Request, agent_id: str) -> dict:
     :return token: agent watcher token ("insecure" if not set in config server)
     '''
     config_server = request.app['registry'].config_server
-    token = request.app['config']['watcher']['token']
+    token = request.app['shared_config']['watcher']['token']
     if token is None:
         token = 'insecure'
     agent_ip = await config_server.get(f'nodes/agents/{agent_id}/ip')

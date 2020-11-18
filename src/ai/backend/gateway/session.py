@@ -370,7 +370,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     # Resolve the image reference.
     try:
         requested_image_ref = \
-            await ImageRef.resolve_alias(params['image'], request.app['config_server'].etcd)
+            await ImageRef.resolve_alias(params['image'], request.app['shared_config'].etcd)
         async with dbpool.acquire() as conn, conn.begin():
             query = (sa.select([domains.c.allowed_docker_registries])
                        .select_from(domains)
@@ -876,7 +876,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
             try:
                 requested_image_ref = \
                     await ImageRef.resolve_alias(kernel_config['image_ref'],
-                                                 request.app['config_server'].etcd)
+                                                 request.app['shared_config'].etcd)
                 async with dbpool.acquire() as conn, conn.begin():
                     query = (sa.select([domains.c.allowed_docker_registries])
                              .select_from(domains)
@@ -1040,6 +1040,25 @@ async def handle_session_lifecycle(
         await registry.mark_session_terminated(session_id, reason)
 
 
+async def handle_destroy_session(
+    app: web.Application,
+    agent_id: AgentId,
+    event_name: str,
+    raw_session_id: str,
+    reason: str = None,
+) -> None:
+    session_id = uuid.UUID(raw_session_id)
+    registry: AgentRegistry = app['registry']
+    await registry.destroy_session(
+        functools.partial(
+            registry.get_session_by_session_id,
+            session_id,
+        ),
+        forced=False,
+        reason=reason or 'killed-by-event',
+    )
+
+
 async def handle_kernel_stat_sync(
     app: web.Application,
     agent_id: AgentId,
@@ -1107,10 +1126,10 @@ async def handle_instance_heartbeat(app: web.Application, agent_id: AgentId, eve
 async def check_agent_lost(app, interval):
     try:
         now = datetime.now(tzutc())
-        timeout = timedelta(seconds=app['config']['manager']['heartbeat-timeout'])
+        timeout = timedelta(seconds=app['local_config']['manager']['heartbeat-timeout'])
 
         async def _check_impl():
-            async for agent_id, prev in app['redis_live'].ihscan('last_seen'):
+            async for agent_id, prev in app['redis_live'].ihscan('agent.last_seen'):
                 prev = datetime.fromtimestamp(float(prev), tzutc())
                 if now - prev > timeout:
                     await app['event_dispatcher'].produce_event(
@@ -1132,10 +1151,7 @@ async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name:
                             raw_kernel_id: str, container_id: str):
     dbpool = app['dbpool']
     redis_conn: aioredis.Redis = await redis.connect_with_retries(
-        app['config']['redis']['addr'].as_sockaddr(),
-        db=REDIS_STREAM_DB,
-        password=(app['config']['redis']['password']
-                  if app['config']['redis']['password'] else None),
+        str(app['shared_config'].get_redis_url(db=REDIS_STREAM_DB)),
         encoding=None,
     )
     # The log data is at most 10 MiB.
@@ -1770,6 +1786,8 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
 
 async def init(app: web.Application) -> None:
     event_dispatcher = app['event_dispatcher']
+
+    # passive events
     event_dispatcher.consume('session_scheduled', app, handle_session_lifecycle)
     event_dispatcher.consume('kernel_preparing', app, handle_kernel_lifecycle)
     event_dispatcher.consume('kernel_pulling', app, handle_kernel_lifecycle)
@@ -1787,6 +1805,9 @@ async def init(app: web.Application) -> None:
     event_dispatcher.consume('instance_terminated', app, handle_instance_lifecycle)
     event_dispatcher.consume('instance_heartbeat', app, handle_instance_heartbeat)
     event_dispatcher.consume('instance_stats', app, handle_instance_stats)
+
+    # action-trigerring events
+    event_dispatcher.consume('do_terminate_session', app, handle_destroy_session)
 
     app['pending_waits'] = set()
 

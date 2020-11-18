@@ -27,8 +27,11 @@ from typing import (
 import uuid
 
 import aiohttp
-from aiopg.sa.connection import SAConnection
+if TYPE_CHECKING:
+    from aiopg.sa.connection import SAConnection
+    from aiopg.sa.engine import _PoolAcquireContextManager as SAPool
 import aiotools
+from aioredis import Redis
 from async_timeout import timeout as _timeout
 from callosum.rpc import Peer, RPCUserError
 from callosum.lower.zeromq import ZeroMQAddress, ZeroMQRPCTransport
@@ -66,6 +69,8 @@ from ai.backend.common.types import (
     SlotName,
     SlotTypes,
 )
+
+from ai.backend.gateway.config import SharedConfig
 from .defs import DEFAULT_ROLE, INTRINSIC_SLOTS
 from .types import SessionGetter
 from ..gateway.exceptions import (
@@ -193,16 +198,16 @@ class AgentRegistry:
 
     def __init__(
         self,
-        config_server,
-        dbpool,
-        redis_stat,
-        redis_live,
-        redis_image,
+        shared_config: SharedConfig,
+        dbpool: SAPool,
+        redis_stat: Redis,
+        redis_live: Redis,
+        redis_image: Redis,
         event_dispatcher: EventDispatcher,
         storage_manager:  StorageSessionManager,
         hook_plugin_ctx: HookPluginContext,
     ) -> None:
-        self.config_server = config_server
+        self.shared_config = shared_config
         self.dbpool = dbpool
         self.redis_stat = redis_stat
         self.redis_live = redis_live
@@ -678,7 +683,7 @@ class AgentRegistry:
 
         # sanity check for vfolders
         allowed_vfolder_types = ['user', 'group']
-        # allowed_vfolder_types = await request.app['config_server'].etcd.get('path-to-vfolder-type')
+        # allowed_vfolder_types = await request.app['shared_config'].etcd.get('path-to-vfolder-type')
         determined_mounts = []
         matched_mounts = set()
         async with self.dbpool.acquire() as conn, conn.begin():
@@ -784,10 +789,10 @@ class AgentRegistry:
 
             creation_config['mounts'] = mounts
             # TODO: merge into a single call
-            image_info = await self.config_server.inspect_image(image_ref)
+            image_info = await self.shared_config.inspect_image(image_ref)
             image_min_slots, image_max_slots = \
-                await self.config_server.get_image_slot_ranges(image_ref)
-            known_slot_types = await self.config_server.get_resource_slots()
+                await self.shared_config.get_image_slot_ranges(image_ref)
+            known_slot_types = await self.shared_config.get_resource_slots()
 
             # Parse service ports to check for port errors
             parse_service_ports(image_info['labels'].get('ai.backend.service-ports', ''), BackendError)
@@ -1011,7 +1016,7 @@ class AgentRegistry:
             )
             result = await conn.execute(query)
             resource_policy = await result.first()
-        auto_pull = await self.config_server.get('config/docker/image/auto_pull')
+        auto_pull = await self.shared_config.get_raw('config/docker/image/auto_pull')
 
         # Aggregate image registry information
         keyfunc = lambda item: item.kernel.image_ref
@@ -1019,11 +1024,11 @@ class AgentRegistry:
         for image_ref, _ in itertools.groupby(
             sorted(kernel_agent_bindings, key=keyfunc), key=keyfunc,
         ):
-            image_infos[image_ref] = await self.config_server.inspect_image(image_ref)
+            image_infos[image_ref] = await self.shared_config.inspect_image(image_ref)
             registry_url, registry_creds = \
-                await get_registry_info(self.config_server.etcd, image_ref.registry)
+                await get_registry_info(self.shared_config.etcd, image_ref.registry)
 
-        network_name: Optional[str]
+        network_name: Optional[str] = None
         if pending_session.cluster_mode == ClusterMode.SINGLE_NODE:
             if pending_session.cluster_size > 1:
                 network_name = f'bai-singlenode-{pending_session.session_id}'
@@ -1217,7 +1222,7 @@ class AgentRegistry:
 
     async def get_keypair_occupancy(self, access_key, *, conn=None):
         known_slot_types = \
-            await self.config_server.get_resource_slots()
+            await self.shared_config.get_resource_slots()
         async with reenter_txn(self.dbpool, conn) as conn:
             query = (
                 sa.select([kernels.c.occupied_slots])
@@ -1238,7 +1243,7 @@ class AgentRegistry:
 
     async def get_domain_occupancy(self, domain_name, *, conn=None):
         # TODO: store domain occupied_slots in Redis?
-        known_slot_types = await self.config_server.get_resource_slots()
+        known_slot_types = await self.shared_config.get_resource_slots()
         async with reenter_txn(self.dbpool, conn) as conn:
             query = (
                 sa.select([kernels.c.occupied_slots])
@@ -1257,7 +1262,7 @@ class AgentRegistry:
 
     async def get_group_occupancy(self, group_id, *, conn=None):
         # TODO: store domain occupied_slots in Redis?
-        known_slot_types = await self.config_server.get_resource_slots()
+        known_slot_types = await self.shared_config.get_resource_slots()
         async with reenter_txn(self.dbpool, conn) as conn:
             query = (
                 sa.select([kernels.c.occupied_slots])
@@ -1815,17 +1820,6 @@ class AgentRegistry:
             async with RPCContext(kernel['agent_addr'], 30, order_key=kernel['id']) as rpc:
                 return await rpc.call.get_logs(str(kernel['id']))
 
-    async def refresh_session(
-        self,
-        session_name_or_id: Union[str, SessionId],
-        access_key: AccessKey,
-    ) -> Mapping[str, Any]:
-        kernel = await self.get_session(session_name_or_id, access_key)
-        async with self.handle_kernel_exception('refresh_session',
-                                                kernel['id'], access_key):
-            async with RPCContext(kernel['agent_addr'], 30, order_key=kernel['id']) as rpc:
-                return await rpc.call.refresh_idle(str(kernel['id']))
-
     async def increment_session_usage(
         self,
         session_name: str,
@@ -1870,7 +1864,7 @@ class AgentRegistry:
             instance_rejoin = False
 
             # Update "last seen" timestamp for liveness tracking
-            await self.redis_live.hset('last_seen', agent_id, now.timestamp())
+            await self.redis_live.hset('agent.last_seen', agent_id, now.timestamp())
 
             # Check and update status of the agent record in DB
             async with self.dbpool.acquire() as conn, conn.begin():
@@ -1900,7 +1894,7 @@ class AgentRegistry:
                 if row is None or row['status'] is None:
                     # new agent detected!
                     log.info('agent {0} joined!', agent_id)
-                    await self.config_server.update_resource_slots(slot_key_and_units)
+                    await self.shared_config.update_resource_slots(slot_key_and_units)
                     query = agents.insert().values({
                         'id': agent_id,
                         'status': AgentStatus.ALIVE,
@@ -1928,15 +1922,16 @@ class AgentRegistry:
                     if row['addr'] != current_addr:
                         updates['addr'] = current_addr
                     updates['version'] = agent_info['version']
+                    updates['compute_plugins'] = agent_info['compute_plugins']
                     # occupied_slots are updated when kernels starts/terminates
                     if updates:
-                        await self.config_server.update_resource_slots(slot_key_and_units)
+                        await self.shared_config.update_resource_slots(slot_key_and_units)
                         query = (sa.update(agents)
                                    .values(updates)
                                    .where(agents.c.id == agent_id))
                         await conn.execute(query)
                 elif row['status'] in (AgentStatus.LOST, AgentStatus.TERMINATED):
-                    await self.config_server.update_resource_slots(slot_key_and_units)
+                    await self.shared_config.update_resource_slots(slot_key_and_units)
                     instance_rejoin = True
                     query = (
                         sa.update(agents)
@@ -1963,7 +1958,7 @@ class AgentRegistry:
                     agent_id=agent_id)
 
             # Update the mapping of kernel images to agents.
-            known_registries = await get_known_registries(self.config_server.etcd)
+            known_registries = await get_known_registries(self.shared_config.etcd)
             images = msgpack.unpackb(snappy.decompress(agent_info['images']))
 
             def _pipe_builder():
@@ -1981,7 +1976,7 @@ class AgentRegistry:
 
     async def mark_agent_terminated(self, agent_id, status, conn=None):
         global agent_peers
-        await self.redis_live.hdel('last_seen', agent_id)
+        await self.redis_live.hdel('agent.last_seen', agent_id)
 
         async def _pipe_builder():
             pipe = self.redis_image.pipeline()

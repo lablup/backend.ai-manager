@@ -30,7 +30,7 @@ jobs:
           sed -i "s%\(backend.ai-common\)@master%\1@${GHBRANCH}%" requirements/typecheck.txt
         fi
         set -e
-        python -m pip install -U -r requirements/typecheck.txt
+        python -m pip install -U --use-feature=2020-resolver -r requirements/typecheck.txt
     - name: Type check with mypy
       run: |
         if [ "$GITHUB_EVENT_NAME" == "pull_request" -a -n "$GITHUB_HEAD_REF" ]; then

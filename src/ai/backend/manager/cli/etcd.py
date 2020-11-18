@@ -18,8 +18,8 @@ from ai.backend.common.etcd import (
     unquote as etcd_unquote,
 )
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.gateway.config import SharedConfig
 from ai.backend.gateway.defs import REDIS_IMAGE_DB
-from ai.backend.gateway.etcd import ConfigServer
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
@@ -56,7 +56,7 @@ async def config_ctx(cli_ctx):
     ctx = {}
     ctx['config'] = config
     # scope_prefix_map is created inside ConfigServer
-    config_server = ConfigServer(
+    config_server = SharedConfig(
         ctx, config['etcd']['addr'],
         config['etcd']['user'], config['etcd']['password'],
         config['etcd']['namespace'])

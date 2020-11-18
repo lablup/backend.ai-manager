@@ -79,12 +79,10 @@ async def rlim_middleware(app: web.Application,
 
 async def init(app: web.Application) -> None:
     rr = await redis.connect_with_retries(
-        app['config']['redis']['addr'].as_sockaddr(),
-        password=(app['config']['redis']['password']
-                  if app['config']['redis']['password'] else None),
+        str(app['shared_config'].get_redis_url(db=REDIS_RLIM_DB)),
         timeout=3.0,
         encoding='utf8',
-        db=REDIS_RLIM_DB)
+    )
     app['redis_rlim'] = rr
     app['redis_rlim_script'] = await rr.script_load(_rlim_script)
 
