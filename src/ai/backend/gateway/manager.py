@@ -7,7 +7,7 @@ from typing import FrozenSet
 import sqlalchemy as sa
 import trafaret as t
 from typing import (
-    Any, Final,
+    Any, Final, Optional,
     Iterable,
     Tuple,
 )
@@ -15,10 +15,8 @@ from typing import (
 import aiohttp
 from aiohttp import web
 import aiohttp_cors
-import aiojobs
 from aiojobs.aiohttp import atomic
 from aiotools import aclosing, TaskGroup
-from async_timeout import timeout as _timeout
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
@@ -302,7 +300,7 @@ async def health_check(request: web.Request, params: Any) -> web.Response:
         return web.json_response(result)
 
     # ## Get agent host information
-    async def _agent_health_check(sess: aiohttp.ClientSession, agent_id: str) -> dict:
+    async def _agent_health_check(sess: aiohttp.ClientSession, agent_id: str) -> Optional[dict]:
         watcher_info = await get_watcher_info(request, agent_id)
         if not watcher_info:
             return None
