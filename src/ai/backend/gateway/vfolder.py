@@ -29,7 +29,7 @@ import trafaret as t
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.utils import Fstab
+from ai.backend.common.host import Fstab
 
 from .auth import auth_required, superadmin_required
 from .exceptions import (

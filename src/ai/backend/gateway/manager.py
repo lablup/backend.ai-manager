@@ -17,12 +17,12 @@ from aiohttp import web
 import aiohttp_cors
 import aiojobs
 from aiojobs.aiohttp import atomic
-from aiotools import aclosing
+from aiotools import aclosing, TaskGroup
 from async_timeout import timeout as _timeout
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.utils import host_health_check
+from ai.backend.common.host import host_health_check
 
 from . import ManagerStatus
 from .auth import superadmin_required
@@ -234,20 +234,26 @@ async def perform_scheduler_ops(request: web.Request, params: Any) -> web.Respon
 @superadmin_required
 @check_api_params(
     t.Dict({
-        tx.MultiKey('agent_ids', default=[]): t.List(t.Null | t.String),
-        t.Key('with_all_agents', default=False): t.ToBool,
+        t.Key('agent_ids', default='*'): t.String | t.List(t.String),
+        t.Key('alive', default=None): t.Null | t.ToBool,
     }))
 async def health_check(request: web.Request, params: Any) -> web.Response:
     """
     Return manager/agent host status.
 
-    If ``agent_ids`` is empty, just return manager host's status.
-    If there are ALIVE agents corresponding to ``agent_ids``, their host status
-    will be returned as well. If there is no ALIVE agent corresponding to ``agent_ids``,
+    If ``agent_ids`` is an asterisk (``*``), return all agent hosts' statuses as well.
+    It can be a single string or a list of string, to specifically indicate
+    target agent(s) to fetch host status(es). If there is no corresponding agent ID,
     the status will be just an empty dict.
 
-    :param with_all_agents: return host information of all ALIVE agents
+    ``alive`` parameter can have three state.
+
+      * ``None``: return both alive and dead agents
+      * ``True``: return alive agents only
+      * ``False``: return non-alive agents only
+
     :param agent_ids: agent hosts' IDs to query status
+    :param alive: specify the agent daemon's status to return
     """
     # Circumvent cyclic imports
     from .resource import get_watcher_info
@@ -255,22 +261,23 @@ async def health_check(request: web.Request, params: Any) -> web.Response:
 
     log.info('HEALTH_CHECK (agents:[{}])', ','.join(params['agent_ids']))
 
-    if params['with_all_agents'] and params['agent_ids']:
-        raise InvalidAPIParameters(
-            extra_msg='either one of with_all_agents or agent_ids should be given'
+    async with request.app['dbpool'].acquire() as conn, conn.begin():
+        query = (
+            sa.select([agents.c.id])
+            .select_from(agents)
         )
-    if params['with_all_agents']:
-        async with request.app['dbpool'].acquire() as conn, conn.begin():
-            query = (
-                sa.select([agents.c.id])
-                .select_from(agents)
-                .where(agents.c.status == AgentStatus.ALIVE)
-            )
-            result = await conn.execute(query)
-            agent_ids = []
-            async for row in result:
-                agent_ids.append(row.id)
-            params['agent_ids'] = agent_ids
+        if isinstance(params['agent_ids'], list):
+            query = query.where(agents.c.id.in_(params['agent_ids']))
+        elif params['agent_ids'] != '*':
+            query = query.where(agents.c.id == params['agent_ids'])
+        # If ``agent_ids`` is ``*``, do not pose a condition on agent ID.
+        if params['alive'] is True:
+            query = query.where(agents.c.status == AgentStatus.ALIVE)
+        elif params['alive'] is False:
+            query = query.where(agents.c.status != AgentStatus.ALIVE)
+        # If ``params['alive']`` is ``None``, do not pose a condition on agent status.
+        result = await conn.execute(query)
+        agent_ids = [row.id async for row in result]
 
     # ## Get daemon information
     etcd_info = await request.app['shared_config'].get_manager_nodes_info()
@@ -291,35 +298,38 @@ async def health_check(request: web.Request, params: Any) -> web.Response:
         ],
     }
     result['managers'][0].update(await host_health_check())
-    if not params['agent_ids']:
+    if not agent_ids:
         return web.json_response(result)
 
     # ## Get agent host information
     async def _agent_health_check(sess: aiohttp.ClientSession, agent_id: str) -> dict:
-        none_result: dict = {agent_id: {}}
         watcher_info = await get_watcher_info(request, agent_id)
         if not watcher_info:
-            return none_result
+            return None
         watcher_url = watcher_info['addr'] / 'health'
-        with _timeout(10.0):
-            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
-            async with sess.get(watcher_url, headers=headers) as resp:
+        headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+        timeout = aiohttp.ClientTimeout(total=5)
+        try:
+            async with sess.get(watcher_url, headers=headers, timeout=timeout) as resp:
                 if resp.status == 200:
                     return await resp.json()
                 else:
-                    return none_result
+                    return None
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            return None
 
     # TODO: support per-watcher ssl context
     connector = aiohttp.TCPConnector()
     async with aiohttp.ClientSession(connector=connector) as sess:
-        scheduler = await aiojobs.create_scheduler(limit=4)
-        try:
-            jobs = await asyncio.gather(*[
-                scheduler.spawn(_agent_health_check(sess, aid)) for aid in params['agent_ids']
-            ])
-            agent_infos = await asyncio.gather(*[job.wait() for job in jobs])
-        finally:
-            await scheduler.close()
+        tasks = []
+        async with TaskGroup() as tg:
+            sem = asyncio.Semaphore(10)
+            for aid in agent_ids:
+                async with sem:
+                    tasks.append(tg.create_task(_agent_health_check(sess, aid)))
+        agent_infos = [t.result() for t in tasks if not t.cancelled() and t.result() is not None]
 
     result['agents'] = []
     for agent_info in agent_infos:
