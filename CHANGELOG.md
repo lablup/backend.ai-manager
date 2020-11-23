@@ -16,6 +16,13 @@ Changes
 
 .. towncrier release notes start
 
+20.03.9 (2020-11-23)
+--------------------
+
+### Fixes
+* Improve error handling in `gateway.wsproxy.TCPProxy` and use only aiohttp-supported WebSocket close codes to prevent client-side break-up ([#347](https://github.com/lablup/backend.ai-manager/issues/347))
+
+
 20.03.8 (2020-11-23)
 --------------------
 
