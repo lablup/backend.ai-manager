@@ -385,7 +385,7 @@ class PurgeGroup(graphene.Mutation):
                                    'Terminate those kernels first')
             if await cls.group_has_active_kernels(conn, gid):
                 raise RuntimeError('Group has some active kernels. Terminate them first.')
-            await cls.delete_vfolders(conn, gid, info.context['config_server'])
+            await cls.delete_vfolders(conn, gid, info.context['shared_config'])
             await cls.delete_kernels(conn, gid)
         query = groups.delete().where(groups.c.id == gid)
         return simple_db_mutate(cls, info.context, query)

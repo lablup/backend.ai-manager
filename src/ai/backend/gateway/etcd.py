@@ -45,7 +45,7 @@ async def get_docker_registries(request: web.Request) -> web.Response:
     Returns the list of all registered docker registries.
     '''
     log.info('ETCD.GET_DOCKER_REGISTRIES ()')
-    etcd = request.app['registry'].config_server.etcd
+    etcd = request.app['shared_config'].etcd
     _registries = await get_known_registries(etcd)
     # ``yarl.URL`` is not JSON-serializable, so we need to represent it as string.
     known_registries: Mapping[str, str] = {k: v.human_repr() for k, v in _registries.items()}

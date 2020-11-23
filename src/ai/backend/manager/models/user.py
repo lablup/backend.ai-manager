@@ -728,7 +728,7 @@ class PurgeUser(graphene.Mutation):
                         target_user_uuid=info.context['user']['uuid'],
                         target_user_email=info.context['user']['email'],
                     )
-                await cls.delete_vfolders(conn, user_uuid, info.context['config_server'])
+                await cls.delete_vfolders(conn, user_uuid, info.context['shared_config'])
                 await cls.delete_kernels(conn, user_uuid)
                 await cls.delete_keypairs(conn, user_uuid)
 
