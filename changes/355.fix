@@ -1,0 +1,1 @@
+Fix a regression of fetching `live_stat` GraphQL field values
