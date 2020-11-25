@@ -502,7 +502,7 @@ class ComputeContainer(graphene.ObjectType):
         if not hasattr(self, 'status'):
             return None
         rs = info.context['redis_stat']
-        if self.status in LIVE_STATUS:
+        if KernelStatus[self.status] in LIVE_STATUS:
             raw_live_stat = await redis.execute_with_retries(
                 lambda: rs.get(str(self.id), encoding=None))
             if raw_live_stat is not None:
@@ -973,7 +973,7 @@ class LegacyComputeSession(graphene.ObjectType):
         if not hasattr(self, 'status'):
             return None
         rs = info.context['redis_stat']
-        if self.status not in LIVE_STATUS:
+        if KernelStatus[self.status] not in LIVE_STATUS:
             return self.last_stat
         else:
             return await type(self)._resolve_live_stat(rs, str(self.id))
@@ -985,7 +985,7 @@ class LegacyComputeSession(graphene.ObjectType):
         if not hasattr(self, 'status'):
             return None
         rs = info.context['redis_stat']
-        if self.status not in LIVE_STATUS:
+        if KernelStatus[self.status] not in LIVE_STATUS:
             if self.last_stat is None:
                 return convert_type(0)
             metric = self.last_stat.get(metric_key)
