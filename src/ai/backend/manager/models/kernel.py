@@ -12,13 +12,16 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
+    Type,
     TypedDict,
+    TypeVar,
     Union,
 )
 from uuid import UUID
 
 from aiopg.sa.connection import SAConnection
 from aiopg.sa.result import RowProxy
+from aioredis import Redis
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
@@ -29,6 +32,7 @@ from ai.backend.common.types import (
     AccessKey,
     BinarySize,
     ClusterMode,
+    KernelId,
     SessionId,
     SessionTypes,
     SessionResult,
@@ -449,7 +453,7 @@ class ComputeContainer(graphene.ObjectType):
     last_stat = graphene.JSONString()
 
     @classmethod
-    def parse_row(cls, context, row):
+    def parse_row(cls, context: Any, row: RowProxy) -> Mapping[str, Any]:
         assert row is not None
         from .user import UserRole
         is_superadmin = (context['user']['role'] == UserRole.SUPERADMIN)
@@ -492,7 +496,7 @@ class ComputeContainer(graphene.ObjectType):
         }
 
     @classmethod
-    def from_row(cls, context, row):
+    def from_row(cls, context: Any, row: RowProxy) -> Optional[ComputeContainer]:
         if row is None:
             return None
         props = cls.parse_row(context, row)
@@ -502,7 +506,7 @@ class ComputeContainer(graphene.ObjectType):
         if not hasattr(self, 'status'):
             return None
         rs = info.context['redis_stat']
-        if self.status in LIVE_STATUS:
+        if KernelStatus[self.status] in LIVE_STATUS:
             raw_live_stat = await redis.execute_with_retries(
                 lambda: rs.get(str(self.id), encoding=None))
             if raw_live_stat is not None:
@@ -522,7 +526,7 @@ class ComputeContainer(graphene.ObjectType):
         domain_name=None,
         group_id=None,
         access_key=None,
-    ):
+    ) -> int:
         async with context['dbpool'].acquire() as conn:
             query = (
                 sa.select([sa.func.count(kernels.c.id)])
@@ -555,7 +559,7 @@ class ComputeContainer(graphene.ObjectType):
         access_key=None,
         order_key=None,
         order_asc=None,
-    ):
+    ) -> Sequence[Optional[ComputeContainer]]:
         async with context['dbpool'].acquire() as conn:
             if order_key is None:
                 _ordering = DEFAULT_SESSION_ORDERING
@@ -586,7 +590,11 @@ class ComputeContainer(graphene.ObjectType):
             return [cls.from_row(context, r) async for r in conn.execute(query)]
 
     @classmethod
-    async def batch_load_by_session(cls, context, session_ids):
+    async def batch_load_by_session(
+        cls,
+        context,
+        session_ids: Sequence[SessionId],
+    ) -> Sequence[Sequence[ComputeContainer]]:
         async with context['dbpool'].acquire() as conn:
             query = (
                 sa.select([kernels])
@@ -600,8 +608,14 @@ class ComputeContainer(graphene.ObjectType):
             )
 
     @classmethod
-    async def batch_load_detail(cls, context, container_ids, *,
-                                domain_name=None, access_key=None):
+    async def batch_load_detail(
+        cls,
+        context,
+        container_ids: Sequence[KernelId],
+        *,
+        domain_name=None,
+        access_key=None,
+    ) -> Sequence[Optional[ComputeContainer]]:
         async with context['dbpool'].acquire() as conn:
             j = (
                 kernels
@@ -678,7 +692,7 @@ class ComputeSession(graphene.ObjectType):
     dependencies = graphene.List(lambda: ComputeSession)
 
     @classmethod
-    def parse_row(cls, context, row):
+    def parse_row(cls, context: Any, row: RowProxy) -> Mapping[str, Any]:
         assert row is not None
         return {
             # identity
@@ -765,9 +779,15 @@ class ComputeSession(graphene.ObjectType):
         return await loader.load(self.id)
 
     @classmethod
-    async def load_count(cls, context, *,
-                         domain_name=None, group_id=None, access_key=None,
-                         status=None):
+    async def load_count(
+        cls,
+        context,
+        *,
+        domain_name=None,
+        group_id=None,
+        access_key=None,
+        status=None,
+    ) -> int:
         if isinstance(status, str):
             status_list = [KernelStatus[s] for s in status.split(',')]
         elif isinstance(status, KernelStatus):
@@ -791,10 +811,19 @@ class ComputeSession(graphene.ObjectType):
             return await result.scalar()
 
     @classmethod
-    async def load_slice(cls, context, limit, offset, *,
-                         domain_name=None, group_id=None, access_key=None,
-                         status=None,
-                         order_key=None, order_asc=None):
+    async def load_slice(
+        cls,
+        context,
+        limit: int,
+        offset: int,
+        *,
+        domain_name=None,
+        group_id=None,
+        access_key=None,
+        status=None,
+        order_key=None,
+        order_asc=None,
+    ) -> Sequence[Optional[ComputeSession]]:
         if isinstance(status, str):
             status_list = [KernelStatus[s] for s in status.split(',')]
         elif isinstance(status, KernelStatus):
@@ -833,7 +862,11 @@ class ComputeSession(graphene.ObjectType):
             return [cls.from_row(context, r) async for r in conn.execute(query)]
 
     @classmethod
-    async def batch_load_by_dependency(cls, context, session_ids):
+    async def batch_load_by_dependency(
+        cls,
+        context,
+        session_ids: Sequence[SessionId],
+    ) -> Sequence[Sequence[ComputeSession]]:
         async with context['dbpool'].acquire() as conn:
             j = sa.join(
                 kernels, session_dependencies,
@@ -853,8 +886,14 @@ class ComputeSession(graphene.ObjectType):
             )
 
     @classmethod
-    async def batch_load_detail(cls, context, session_ids, *,
-                                domain_name=None, access_key=None):
+    async def batch_load_detail(
+        cls,
+        context,
+        session_ids: Sequence[SessionId],
+        *,
+        domain_name=None,
+        access_key=None,
+    ) -> Sequence[Optional[ComputeSession]]:
         async with context['dbpool'].acquire() as conn:
             j = (
                 kernels
@@ -897,6 +936,10 @@ class ComputeSessionList(graphene.ObjectType):
 
 
 # --------- pre-v5 legacy -----------
+
+MetricValueType = TypeVar('MetricValueType', int, float)
+
+
 class LegacyComputeSession(graphene.ObjectType):
     """
     Represents a main session.
@@ -962,30 +1005,37 @@ class LegacyComputeSession(graphene.ObjectType):
     io_cur_scratch_size = BigInt()
 
     @classmethod
-    async def _resolve_live_stat(cls, redis_stat, kernel_id):
+    async def _resolve_live_stat(
+        cls,
+        redis_stat: Redis,
+        kernel_id: str,
+    ) -> Optional[Mapping[str, Any]]:
         cstat = await redis.execute_with_retries(
             lambda: redis_stat.get(kernel_id, encoding=None))
         if cstat is not None:
             cstat = msgpack.unpackb(cstat)
         return cstat
 
-    async def resolve_live_stat(self, info: graphene.ResolveInfo):
+    async def resolve_live_stat(self, info: graphene.ResolveInfo) -> Optional[Mapping[str, Any]]:
         if not hasattr(self, 'status'):
             return None
         rs = info.context['redis_stat']
-        if self.status not in LIVE_STATUS:
+        if KernelStatus[self.status] not in LIVE_STATUS:
             return self.last_stat
         else:
             return await type(self)._resolve_live_stat(rs, str(self.id))
 
     async def _resolve_legacy_metric(
-        self, info: graphene.ResolveInfo,
-        metric_key, metric_field, convert_type,
-    ):
+        self,
+        info: graphene.ResolveInfo,
+        metric_key: str,
+        metric_field: str,
+        convert_type: Type[MetricValueType],
+    ) -> Optional[MetricValueType]:
         if not hasattr(self, 'status'):
             return None
         rs = info.context['redis_stat']
-        if self.status not in LIVE_STATUS:
+        if KernelStatus[self.status] not in LIVE_STATUS:
             if self.last_stat is None:
                 return convert_type(0)
             metric = self.last_stat.get(metric_key)
@@ -1007,38 +1057,38 @@ class LegacyComputeSession(graphene.ObjectType):
                 return convert_type(0)
             return convert_type(value)
 
-    async def resolve_cpu_used(self, info: graphene.ResolveInfo):
+    async def resolve_cpu_used(self, info: graphene.ResolveInfo) -> Optional[float]:
         return await self._resolve_legacy_metric(info, 'cpu_used', 'current', float)
 
-    async def resolve_cpu_using(self, info: graphene.ResolveInfo):
+    async def resolve_cpu_using(self, info: graphene.ResolveInfo) -> Optional[float]:
         return await self._resolve_legacy_metric(info, 'cpu_util', 'pct', float)
 
-    async def resolve_mem_max_bytes(self, info: graphene.ResolveInfo):
+    async def resolve_mem_max_bytes(self, info: graphene.ResolveInfo) -> Optional[int]:
         return await self._resolve_legacy_metric(info, 'mem', 'stats.max', int)
 
-    async def resolve_mem_cur_bytes(self, info: graphene.ResolveInfo):
+    async def resolve_mem_cur_bytes(self, info: graphene.ResolveInfo) -> Optional[int]:
         return await self._resolve_legacy_metric(info, 'mem', 'current', int)
 
-    async def resolve_net_rx_bytes(self, info: graphene.ResolveInfo):
+    async def resolve_net_rx_bytes(self, info: graphene.ResolveInfo) -> Optional[int]:
         return await self._resolve_legacy_metric(info, 'net_rx', 'stats.rate', int)
 
-    async def resolve_net_tx_bytes(self, info: graphene.ResolveInfo):
+    async def resolve_net_tx_bytes(self, info: graphene.ResolveInfo) -> Optional[int]:
         return await self._resolve_legacy_metric(info, 'net_tx', 'stats.rate', int)
 
-    async def resolve_io_read_bytes(self, info: graphene.ResolveInfo):
+    async def resolve_io_read_bytes(self, info: graphene.ResolveInfo) -> Optional[int]:
         return await self._resolve_legacy_metric(info, 'io_read', 'current', int)
 
-    async def resolve_io_write_bytes(self, info: graphene.ResolveInfo):
+    async def resolve_io_write_bytes(self, info: graphene.ResolveInfo) -> Optional[int]:
         return await self._resolve_legacy_metric(info, 'io_write', 'current', int)
 
-    async def resolve_io_max_scratch_size(self, info: graphene.ResolveInfo):
+    async def resolve_io_max_scratch_size(self, info: graphene.ResolveInfo) -> Optional[int]:
         return await self._resolve_legacy_metric(info, 'io_scratch_size', 'stats.max', int)
 
-    async def resolve_io_cur_scratch_size(self, info: graphene.ResolveInfo):
+    async def resolve_io_cur_scratch_size(self, info: graphene.ResolveInfo) -> Optional[int]:
         return await self._resolve_legacy_metric(info, 'io_scratch_size', 'current', int)
 
     @classmethod
-    def parse_row(cls, context, row):
+    def parse_row(cls, context: Any, row: RowProxy) -> Mapping[str, Any]:
         assert row is not None
         from .user import UserRole
         mega = 2 ** 20
@@ -1102,7 +1152,7 @@ class LegacyComputeSession(graphene.ObjectType):
         }
 
     @classmethod
-    def from_row(cls, context, row):
+    def from_row(cls, context: Any, row: RowProxy) -> Optional[LegacyComputeSession]:
         if row is None:
             return None
         props = cls.parse_row(context, row)
