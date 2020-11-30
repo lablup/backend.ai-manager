@@ -379,7 +379,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             if requested_image_ref.registry not in allowed_registries:
                 raise AliasResolutionFailed
     except AliasResolutionFailed:
-        raise ImageNotFound
+        raise ImageNotFound('unknown alias or disallowed registry')
 
     # Check existing (owner_access_key, session_name) instance
     try:
@@ -886,7 +886,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                         raise AliasResolutionFailed
                     kernel_config['image_ref'] = requested_image_ref
             except AliasResolutionFailed:
-                raise ImageNotFound
+                raise ImageNotFound('unknown alias or disallowed registry')
 
             for i in range(node['replicas']):
                 kernel_config['cluster_idx'] = i + 1
