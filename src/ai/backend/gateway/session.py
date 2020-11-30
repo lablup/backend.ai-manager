@@ -242,7 +242,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             if requested_image_ref.registry not in allowed_registries:
                 raise AliasResolutionFailed
     except AliasResolutionFailed:
-        raise ImageNotFound
+        raise ImageNotFound('unknown alias or disallowed registry')
 
     # Check existing (owner_access_key, session_name) instance
     try:
