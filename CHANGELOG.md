@@ -16,6 +16,14 @@ Changes
 
 .. towncrier release notes start
 
+20.03.10 (2020-12-02)
+---------------------
+
+### Fixes
+* Fix a regression of fetching `live_stat` GraphQL field values ([#355](https://github.com/lablup/backend.ai-manager/issues/355))
+* Improve the error message for image not found errors when creating new sessions so that users could guess the reason quicklier ([#356](https://github.com/lablup/backend.ai-manager/issues/356))
+
+
 20.03.9 (2020-11-23)
 --------------------
 
