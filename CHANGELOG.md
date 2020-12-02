@@ -16,6 +16,16 @@ Changes
 
 .. towncrier release notes start
 
+20.09.0b1 (2020-12-02)
+----------------------
+
+### Fixes
+* Improve handling of storage-manager invocation failures using a new `VFolderOperationFailed` API exception. ([#352](https://github.com/lablup/backend.ai-manager/issues/352))
+* Fix missing replacement of `config_server` to `shared_config` in GraphQL context objects and references via `request.app['registry'].config_server` in some API handlers ([#354](https://github.com/lablup/backend.ai-manager/issues/354))
+* Fix a regression of fetching `live_stat` GraphQL field values ([#355](https://github.com/lablup/backend.ai-manager/issues/355))
+* Improve the error message for image not found errors when creating new sessions so that users could guess the reason quicklier ([#356](https://github.com/lablup/backend.ai-manager/issues/356))
+
+
 20.09.0a4 (2020-11-16)
 ----------------------
 
