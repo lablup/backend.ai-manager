@@ -629,7 +629,6 @@ class SharedConfig(AbstractConfig):
                     registries.append(etcd_unquote(key))
         else:
             registries = [registry]
-        completion_events = []
         async with aiotools.TaskGroup() as tg:
             for registry in registries:
                 log.info('Scanning kernel images from the registry "{0}"', registry)
@@ -641,14 +640,7 @@ class SharedConfig(AbstractConfig):
                     continue
                 scanner_cls = get_container_registry(registry_info)
                 scanner = scanner_cls(self.etcd, registry, registry_info)
-                completion_event = asyncio.Event()
-                tg.create_task(scanner.rescan_single_registry(
-                    completion_event,
-                    reporter,
-                ))
-                completion_events.append(completion_event)
-            for ev in completion_events:
-                await ev.wait()
+                tg.create_task(scanner.rescan_single_registry(reporter))
         # TODO: delete images removed from registry?
 
     async def alias(self, alias: str, target: str) -> None:

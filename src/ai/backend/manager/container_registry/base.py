@@ -69,42 +69,38 @@ class BaseContainerRegistry(metaclass=ABCMeta):
 
     async def rescan_single_registry(
         self,
-        completion_event: asyncio.Event,
         reporter: ProgressReporter = None,
     ) -> None:
         self.all_updates.set({})
         self.sema.set(asyncio.Semaphore(self.max_concurrency_per_registry))
         self.reporter.set(reporter)
-        try:
-            username = self.registry_info.get('username')
-            if username is not None:
-                self.credentials['username'] = username
-            password = self.registry_info.get('password')
-            if password is not None:
-                self.credentials['password'] = password
-            non_kernel_words = (
-                'common-', 'commons-', 'base-',
-                'krunner', 'builder',
-                'backendai', 'geofront',
-            )
-            ssl_ctx = None  # default
-            if not t.ToBool().check(self.registry_info.get('ssl-verify', 'yes')):
-                ssl_ctx = False
-            connector = aiohttp.TCPConnector(ssl=ssl_ctx)
-            async with aiohttp.ClientSession(connector=connector) as sess:
-                async with aiotools.TaskGroup() as tg:
-                    async for image in self.fetch_repositories(sess):
-                        if not any((w in image) for w in non_kernel_words):  # skip non-kernel images
-                            tg.create_task(self._scan_image(sess, image))
-            all_updates = self.all_updates.get()
-            if not all_updates:
-                log.info('No images found in registry {0}', self.registry_url)
-                # return
-            else:
-                for kvlist in chunked(sorted(all_updates.items()), 16):
-                    await self.etcd.put_dict(dict(kvlist))
-        finally:
-            completion_event.set()
+        username = self.registry_info.get('username')
+        if username is not None:
+            self.credentials['username'] = username
+        password = self.registry_info.get('password')
+        if password is not None:
+            self.credentials['password'] = password
+        non_kernel_words = (
+            'common-', 'commons-', 'base-',
+            'krunner', 'builder',
+            'backendai', 'geofront',
+        )
+        ssl_ctx = None  # default
+        if not t.ToBool().check(self.registry_info.get('ssl-verify', 'yes')):
+            ssl_ctx = False
+        connector = aiohttp.TCPConnector(ssl=ssl_ctx)
+        async with aiohttp.ClientSession(connector=connector) as sess:
+            async with aiotools.TaskGroup() as tg:
+                async for image in self.fetch_repositories(sess):
+                    if not any((w in image) for w in non_kernel_words):  # skip non-kernel images
+                        tg.create_task(self._scan_image(sess, image))
+        all_updates = self.all_updates.get()
+        if not all_updates:
+            log.info('No images found in registry {0}', self.registry_url)
+            # return
+        else:
+            for kvlist in chunked(sorted(all_updates.items()), 16):
+                await self.etcd.put_dict(dict(kvlist))
 
     async def _scan_image(
         self,
