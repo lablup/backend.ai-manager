@@ -144,7 +144,6 @@ from contextvars import ContextVar
 from collections import defaultdict
 from decimal import Decimal
 import logging
-import json
 from pathlib import Path
 from typing import (
     Any, Optional, Union,
@@ -154,20 +153,16 @@ from typing import (
     Sequence, List, Tuple,
 )
 
-import aiohttp
 from aiohttp import web
 import aiohttp_cors
-import aiojobs
 from aiojobs.aiohttp import atomic
 import aiotools
 import trafaret as t
 import yaml
-import yarl
 
 from ai.backend.common.identity import get_instance_id
 from ai.backend.common.docker import (
     ImageRef, get_known_registries,
-    MIN_KERNELSPEC, MAX_KERNELSPEC,
 )
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
@@ -182,16 +177,15 @@ from ai.backend.common.etcd import (
     unquote as etcd_unquote,
     ConfigScopes,
 )
-from ai.backend.common.docker import (
-    login as registry_login,
-)
 from .auth import superadmin_required
+from .config import container_registry_iv
 from ..manager.background import ProgressReporter
+from ..manager.container_registry import get_container_registry
 from ..manager.defs import INTRINSIC_SLOTS
 from .exceptions import InvalidAPIParameters, ServerMisconfiguredError
 from .manager import ManagerStatus
 from .types import CORSOptions, WebMiddleware
-from .utils import chunked, check_api_params
+from .utils import check_api_params
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
 
@@ -369,293 +363,27 @@ class ConfigServer:
         if value_range[1] is not None:
             await self.etcd.put(f'{ref.tag_path}/resource/{slot_type}/max', str(value_range[1]))
 
-    async def _rescan_images_single_registry(
+    async def rescan_images(
         self,
-        registry_name: str,
-        registry_info: Mapping[str, str],
+        registry: str = None,
+        *,
         reporter: ProgressReporter = None,
     ) -> None:
-        all_updates = {}
-        base_hdrs = {
-            'Accept': 'application/vnd.docker.distribution.manifest.v2+json',
-        }
-        registry_url = yarl.URL(registry_info[''])
-        registry_type = registry_info.get('type', 'docker')
-        registry_project = registry_info.get('project')
-        credentials = {}
-        username = registry_info.get('username')
-        if username is not None:
-            credentials['username'] = username
-        password = registry_info.get('password')
-        if password is not None:
-            credentials['password'] = password
-
-        non_kernel_words = (
-            'common-', 'commons-', 'base-',
-            'krunner', 'builder',
-            'backendai', 'geofront',
-        )
-
-        async def _scan_image(sess, image):
-            rqst_args = await registry_login(sess, registry_url, credentials,
-                                             f'repository:{image}:pull')
-            rqst_args['headers'].update(**base_hdrs)
-            tags = []
-            tag_list_url = (registry_url / f'v2/{image}/tags/list').with_query(
-                {'n': '10'},
-            )
-            while tag_list_url is not None:
-                async with sess.get(tag_list_url,
-                                    **rqst_args) as resp:
-                    data = json.loads(await resp.read())
-                    if 'tags' in data:
-                        # sometimes there are dangling image names in the hub.
-                        tags.extend(data['tags'])
-                    tag_list_url = None
-                    next_page_link = resp.links.get('next')
-                    if next_page_link:
-                        next_page_url = next_page_link['url']
-                        tag_list_url = (
-                            registry_url
-                            .with_path(next_page_url.path)
-                            .with_query(next_page_url.query)
-                        )
-            scheduler = await aiojobs.create_scheduler(limit=4)
-            try:
-                if reporter:
-                    reporter.total_progress += len(tags)
-                jobs = await asyncio.gather(*[
-                    scheduler.spawn(_scan_tag(sess, rqst_args, image, tag))
-                    for tag in tags])
-                await asyncio.gather(*[job.wait() for job in jobs])
-            finally:
-                await scheduler.close()
-
-        async def _scan_tag(sess, rqst_args, image, tag):
-            config_digest = None
-            labels = {}
-            skip_reason = None
-
-            try:
-                async with sess.get(registry_url / f'v2/{image}/manifests/{tag}',
-                                    **rqst_args) as resp:
-                    if resp.status == 404:
-                        # ignore missing tags
-                        # (may occur after deleting an image from the docker hub)
-                        skip_reason = "missing/deleted"
-                        return
-                    resp.raise_for_status()
-                    data = await resp.json()
-                    config_digest = data['config']['digest']
-                    size_bytes = (sum(layer['size'] for layer in data['layers']) +
-                                  data['config']['size'])
-
-                async with sess.get(registry_url / f'v2/{image}/blobs/{config_digest}',
-                                    **rqst_args) as resp:
-                    # content-type may not be json...
-                    resp.raise_for_status()
-                    data = json.loads(await resp.read())
-                    if 'container_config' in data:
-                        raw_labels = data['container_config']['Labels']
-                        if raw_labels:
-                            labels.update(raw_labels)
-                    else:
-                        raw_labels = data['config']['Labels']
-                        if raw_labels:
-                            labels.update(raw_labels)
-                if 'ai.backend.kernelspec' not in labels:
-                    # Skip non-Backend.AI kernel images
-                    skip_reason = "missing kernelspec"
-                    return
-                if not (MIN_KERNELSPEC <= int(labels['ai.backend.kernelspec']) <= MAX_KERNELSPEC):
-                    # Skip unsupported kernelspec images
-                    skip_reason = "unsupported kernelspec"
-                    return
-
-                updates = {}
-                updates[f'images/{etcd_quote(registry_name)}/'
-                        f'{etcd_quote(image)}'] = '1'
-                tag_prefix = f'images/{etcd_quote(registry_name)}/' \
-                             f'{etcd_quote(image)}/{tag}'
-                updates[tag_prefix] = config_digest
-                updates[f'{tag_prefix}/size_bytes'] = size_bytes
-                for k, v in labels.items():
-                    updates[f'{tag_prefix}/labels/{k}'] = v
-
-                accels = labels.get('ai.backend.accelerators')
-                if accels:
-                    updates[f'{tag_prefix}/accels'] = accels
-
-                res_prefix = 'ai.backend.resource.min.'
-                for k, v in filter(lambda pair: pair[0].startswith(res_prefix),
-                                   labels.items()):
-                    res_key = k[len(res_prefix):]
-                    updates[f'{tag_prefix}/resource/{res_key}/min'] = v
-                all_updates.update(updates)
-            finally:
-                if skip_reason:
-                    log.warning('Skipped image - {}:{} ({})', image, tag, skip_reason)
-                    progress_msg = f"Skipped {image}:{tag} ({skip_reason})"
-                else:
-                    log.info('Updated image - {0}:{1}', image, tag)
-                    progress_msg = f"Updated {image}:{tag}"
-                if reporter:
-                    await reporter.update(1, message=progress_msg)
-
-        ssl_ctx = None  # default
-        app_config = self.context.get('config')
-        if app_config is not None and not app_config['docker-registry']['ssl-verify']:
-            ssl_ctx = False
-        connector = aiohttp.TCPConnector(ssl=ssl_ctx)
-        async with aiohttp.ClientSession(connector=connector) as sess:
-            images: List[str] = []
-            if registry_url.host is not None and registry_url.host.endswith('.docker.io'):
-                # We need some special treatment for the Docker Hub.
-                params = {'page_size': '30'}
-                username = await self.etcd.get(
-                    f'config/docker/registry/{etcd_quote(registry_name)}/username')
-                hub_url = yarl.URL('https://hub.docker.com')
-                repo_list_url: Optional[yarl.URL]
-                repo_list_url = hub_url / f'v2/repositories/{username}/'
-                while repo_list_url is not None:
-                    async with sess.get(repo_list_url, params=params) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            images.extend(f"{username}/{item['name']}"
-                                          for item in data['results']
-                                          # a little optimization to ignore legacies
-                                          if not item['name'].startswith('kernel-'))
-                        else:
-                            log.error('Failed to fetch repository list from {0} '
-                                      '(status={1})',
-                                      repo_list_url, resp.status)
-                            break
-                    repo_list_url = None
-                    next_page_link = data.get('next', None)
-                    if next_page_link:
-                        next_page_url = yarl.URL(next_page_link)
-                        repo_list_url = (
-                            hub_url
-                            .with_path(next_page_url.path)
-                            .with_query(next_page_url.query)
-                        )
-            elif registry_type == 'docker':
-                # In other cases, try the catalog search.
-                rqst_args = await registry_login(sess, registry_url, credentials,
-                                                 'registry:catalog:*')
-                catalog_url: Optional[yarl.URL]
-                catalog_url = (registry_url / 'v2/_catalog').with_query(
-                    {'n': '30'}
-                )
-                while catalog_url is not None:
-                    async with sess.get(catalog_url, **rqst_args) as resp:
-                        if resp.status == 200:
-                            data = json.loads(await resp.read())
-                            images.extend(data['repositories'])
-                            log.debug('found {} repositories', len(images))
-                        else:
-                            log.warning('Docker registry {0} does not allow/support '
-                                        'catalog search. (status={1})',
-                                        registry_url, resp.status)
-                            break
-                        catalog_url = None
-                        next_page_link = resp.links.get('next')
-                        if next_page_link:
-                            next_page_url = next_page_link['url']
-                            catalog_url = (
-                                registry_url
-                                .with_path(next_page_url.path)
-                                .with_query(next_page_url.query)
-                            )
-            elif registry_type == 'harbor':
-                if credentials:
-                    rqst_args = {
-                        'auth': aiohttp.BasicAuth(credentials['username'], credentials['password'])
-                    }
-                else:
-                    rqst_args = {}
-                project_list_url: Optional[yarl.URL]
-                project_list_url = (registry_url / 'api/projects').with_query(
-                    {'page_size': '30'}
-                )
-                project_id = None
-                while project_list_url is not None:
-                    async with sess.get(project_list_url, **rqst_args) as resp:
-                        projects = await resp.json()
-                        for item in projects:
-                            if item['name'] == registry_project:
-                                project_id = item['project_id']
-                                break
-                        project_list_url = None
-                        next_page_link = resp.links.get('next')
-                        if next_page_link:
-                            next_page_url = next_page_link['url']
-                            project_list_url = (
-                                registry_url
-                                .with_path(next_page_url.path)
-                                .with_query(next_page_url.query)
-                            )
-                if project_id is None:
-                    log.warning('There is no given project.')
-                    return
-                repo_list_url = (registry_url / 'api/repositories').with_query(
-                    {'project_id': project_id, 'page_size': '30'}
-                )
-                while repo_list_url is not None:
-                    async with sess.get(repo_list_url, **rqst_args) as resp:
-                        items = await resp.json()
-                        repos = [item['name'] for item in items]
-                        images.extend(repos)
-                        repo_list_url = None
-                        next_page_link = resp.links.get('next')
-                        if next_page_link:
-                            next_page_url = next_page_link['url']
-                            repo_list_url = (
-                                registry_url
-                                .with_path(next_page_url.path)
-                                .with_query(next_page_url.query)
-                            )
-            else:
-                log.error('Unsupported registry type')
-                return
-
-            scheduler = await aiojobs.create_scheduler(limit=4)
-            try:
-                spawn_tasks = [
-                    scheduler.spawn(_scan_image(sess, image)) for image in images
-                    if not any((w in image) for w in non_kernel_words)  # skip non-kernel images
-                ]
-                if spawn_tasks:
-                    fetch_jobs = await asyncio.gather(*spawn_tasks)
-                    await asyncio.gather(*[job.wait() for job in fetch_jobs])
-            finally:
-                await scheduler.close()
-
-        if not all_updates:
-            log.info('No images found in registry {0}', registry_url)
-            return
-        for kvlist in chunked(sorted(all_updates.items()), 16):
-            await self.etcd.put_dict(dict(kvlist))
-
-    async def rescan_images(self, registry: str = None, *,
-                            reporter: ProgressReporter = None) -> None:
+        registry_config = await self.etcd.get_prefix('config/docker/registry')
         if registry is None:
-            registries = []
-            data = await self.etcd.get_prefix('config/docker/registry')
-            for key, val in data.items():
-                if key:
-                    registries.append(etcd_unquote(key))
+            # scan all configured registries
+            registries = {k: container_registry_iv.check(v) for k, v in registry_config.items()}
         else:
-            registries = [registry]
-        coros = []
-        for registry in registries:
-            log.info('Scanning kernel images from the registry "{0}"', registry)
-            registry_info = await self.etcd.get_prefix(f'config/docker/registry/{etcd_quote(registry)}')
-            if not registry_info:
-                log.error('Unknown registry: "{0}"', registry)
-                continue
-            coros.append(self._rescan_images_single_registry(registry, registry_info, reporter))
-        await asyncio.gather(*coros)
+            try:
+                registries = {registry: container_registry_iv.check(registry_config[registry])}
+            except KeyError:
+                raise RuntimeError("It is an unknown registry.", registry)
+        async with aiotools.TaskGroup() as tg:
+            for registry_name, registry_info in registries.items():
+                log.info('Scanning kernel images from the registry "{0}"', registry_name)
+                scanner_cls = get_container_registry(registry_info)
+                scanner = scanner_cls(self.etcd, registry_name, registry_info)
+                tg.create_task(scanner.rescan_single_registry(reporter))
         # TODO: delete images removed from registry?
 
     async def alias(self, alias: str, target: str) -> None:

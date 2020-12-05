@@ -50,7 +50,7 @@ manager_local_config_iv = t.Dict({
         t.Key('importer-image', default='lablup/importer:manylinux2010'): t.String,
         t.Key('max-wsmsg-size', default=16 * (2**20)): t.ToInt,  # default: 16 MiB
     }).allow_extra('*'),
-    t.Key('docker-registry'): t.Dict({
+    t.Key('docker-registry'): t.Dict({  # deprecated in v20.09
         t.Key('ssl-verify', default=True): t.ToBool,
     }).allow_extra('*'),
     t.Key('logging'): t.Any,  # checked in ai.backend.common.logging
@@ -87,6 +87,15 @@ _shdefs: Mapping[str, Any] = {
     }
 }
 
+container_registry_iv = t.Dict({
+    t.Key(''): tx.URL,
+    t.Key('type', default="docker"): t.String,
+    t.Key('username', default=None): t.Null | t.String,
+    t.Key('password', default=None): t.Null | t.String,
+    t.Key('project', default=None): t.Null | tx.StringList | t.List(t.String),
+    t.Key('ssl-verify', default=True): t.ToBool,
+}).allow_extra('*')
+
 shared_config_iv = t.Dict({
     t.Key('system', default=_shdefs['system']): t.Dict({
         t.Key('timezone', default=_shdefs['system']['timezone']): tx.TimeZone,
@@ -97,6 +106,9 @@ shared_config_iv = t.Dict({
     t.Key('redis', default=_shdefs['redis']): t.Dict({
         t.Key('addr', default=_shdefs['redis']['addr']): tx.HostPortPair,
         t.Key('password', default=_shdefs['redis']['password']): t.Null | t.String,
+    }).allow_extra('*'),
+    t.Key('docker'): t.Dict({
+        t.Key('registry'): t.Mapping(t.String, container_registry_iv),
     }).allow_extra('*'),
     t.Key('plugins', default=_shdefs['plugins']): t.Dict({
         t.Key('accelerator', default=_shdefs['plugins']['accelerator']):

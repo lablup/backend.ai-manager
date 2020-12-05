@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import atexit
 import logging
 import os
 from setproctitle import setproctitle
 import subprocess
 import sys
-from typing import Any, Mapping
+from typing import Any, Dict
 from pathlib import Path
 
 import attr
@@ -20,7 +22,7 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.cli'))
 @attr.s(auto_attribs=True, frozen=True)
 class CLIContext:
     logger: Logger
-    config: Mapping[str, Any]
+    config: Dict[str, Any]
 
 
 @click.group(invoke_without_command=True, context_settings={'help_option_names': ['-h', '--help']})
@@ -30,18 +32,18 @@ class CLIContext:
               help='Enable the debug mode and override the global log level to DEBUG.')
 @click.pass_context
 def main(ctx, config_path, debug):
-    cfg = load_config(config_path)
-    setproctitle(f"backend.ai: manager.cli {cfg['etcd']['namespace']}")
-    if 'file' in cfg['logging']['drivers']:
-        cfg['logging']['drivers'].remove('file')
+    config = load_config(config_path)
+    setproctitle(f"backend.ai: manager.cli {config['etcd']['namespace']}")
+    if 'file' in config['logging']['drivers']:
+        config['logging']['drivers'].remove('file')
     # log_endpoint = f'tcp://127.0.0.1:{find_free_port()}'
     log_sockpath = Path(f'/tmp/backend.ai/ipc/manager-cli-{os.getpid()}.sock')
     log_sockpath.parent.mkdir(parents=True, exist_ok=True)
     log_endpoint = f'ipc://{log_sockpath}'
-    logger = Logger(cfg['logging'], is_master=True, log_endpoint=log_endpoint)
+    logger = Logger(config['logging'], is_master=True, log_endpoint=log_endpoint)
     ctx.obj = CLIContext(
         logger=logger,
-        config=cfg,
+        config=config,
     )
 
     def _clean_logger():

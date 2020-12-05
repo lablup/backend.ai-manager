@@ -110,7 +110,11 @@ def etcd_fixture(test_id, test_config, vfolder_mount, vfolder_fsprefix, vfolder_
             'config': {
                 'docker': {
                     'registry': {
-                        'index.docker.io': 'https://registry-1.docker.io',
+                        'cr.backend.ai': {
+                            '': 'https://cr.backend.ai',
+                            'type': 'harbor2',
+                            'project': 'stable',
+                        },
                     },
                 },
                 'redis': {
