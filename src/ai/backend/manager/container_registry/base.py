@@ -8,7 +8,6 @@ from typing import Any, AsyncIterator, Dict, Mapping, Optional, TYPE_CHECKING, c
 
 import aiohttp
 import aiotools
-import trafaret as t
 import yarl
 
 from abc import ABCMeta, abstractmethod

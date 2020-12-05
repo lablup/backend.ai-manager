@@ -1,10 +1,11 @@
+from __future__ import annotations
+
 import atexit
 import logging
 import os
 from setproctitle import setproctitle
 import subprocess
 import sys
-from typing import Any, Mapping
 from pathlib import Path
 
 import attr
@@ -12,7 +13,7 @@ import click
 
 from ai.backend.common.cli import LazyGroup
 from ai.backend.common.logging import Logger, BraceStyleAdapter
-from ai.backend.gateway.config import load as load_config
+from ai.backend.gateway.config import LocalConfig, load as load_config
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.cli'))
 
@@ -20,7 +21,7 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.cli'))
 @attr.s(auto_attribs=True, frozen=True)
 class CLIContext:
     logger: Logger
-    local_config: Mapping[str, Any]
+    local_config: LocalConfig
 
 
 @click.group(invoke_without_command=True, context_settings={'help_option_names': ['-h', '--help']})

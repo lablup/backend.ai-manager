@@ -3,6 +3,7 @@ import contextlib
 import json
 import logging
 from pprint import pprint
+from typing import Any, Dict
 import sys
 
 import aioredis
@@ -54,27 +55,31 @@ async def etcd_ctx(cli_ctx: CLIContext):
 @contextlib.asynccontextmanager
 async def config_ctx(cli_ctx: CLIContext):
     local_config = cli_ctx.local_config
-    ctx = {}
+    ctx: Dict[str, Any] = {}
     ctx['config'] = local_config
     # scope_prefix_map is created inside ConfigServer
     shared_config = SharedConfig(
-        ctx, local_config['etcd']['addr'],
-        local_config['etcd']['user'], local_config['etcd']['password'],
-        local_config['etcd']['namespace'])
+        ctx,
+        local_config['etcd']['addr'],
+        local_config['etcd']['user'],
+        local_config['etcd']['password'],
+        local_config['etcd']['namespace'],
+    )
     await shared_config.reload()
     raw_redis_config = await shared_config.etcd.get_prefix('config/redis')
     local_config['redis'] = redis_config_iv.check(raw_redis_config)
-    ctx['redis_image'] = await aioredis.create_redis(
+    redis_image = await aioredis.create_redis(
         local_config['redis']['addr'].as_sockaddr(),
         password=local_config['redis']['password'] if local_config['redis']['password'] else None,
         timeout=3.0,
         encoding='utf8',
         db=REDIS_IMAGE_DB)
+    ctx['redis_image'] = redis_image
     try:
         yield shared_config
     finally:
-        ctx['redis_image'].close()
-        await ctx['redis_image'].wait_closed()
+        redis_image.close()
+        await redis_image.wait_closed()
         await shared_config.close()
 
 

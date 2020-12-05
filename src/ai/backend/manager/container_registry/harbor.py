@@ -17,6 +17,7 @@ class HarborRegistry_v1(BaseContainerRegistry):
         self,
         sess: aiohttp.ClientSession,
     ) -> AsyncIterator[str]:
+        api_url = self.registry_url / 'api'
         registry_projects = self.registry_info['project']
         rqst_args = {}
         if self.credentials:
@@ -25,7 +26,7 @@ class HarborRegistry_v1(BaseContainerRegistry):
                 self.credentials['password'],
             )
         project_list_url: Optional[yarl.URL]
-        project_list_url = (self.registry_url / 'api/projects').with_query(
+        project_list_url = (api_url / 'projects').with_query(
             {'page_size': '30'}
         )
         project_ids = []
@@ -49,7 +50,7 @@ class HarborRegistry_v1(BaseContainerRegistry):
             return
         repo_list_url: Optional[yarl.URL]
         for project_id in project_ids:
-            repo_list_url = (self.registry_url / 'api/repositories').with_query(
+            repo_list_url = (api_url / 'repositories').with_query(
                 {'project_id': project_id, 'page_size': '30'}
             )
             while repo_list_url is not None:
@@ -75,4 +76,34 @@ class HarborRegistry_v2(BaseContainerRegistry):
         self,
         sess: aiohttp.ClientSession,
     ) -> AsyncIterator[str]:
-        yield 'xx'
+        api_url = self.registry_url / 'api' / 'v2.0'
+        registry_projects = self.registry_info['project']
+        rqst_args = {}
+        if self.credentials:
+            rqst_args['auth'] = aiohttp.BasicAuth(
+                self.credentials['username'],
+                self.credentials['password'],
+            )
+        repo_list_url: Optional[yarl.URL]
+        for project_name in registry_projects:
+            repo_list_url = (api_url / 'projects' / project_name / 'repositories').with_query(
+                {'page_size': '30'}
+            )
+            while repo_list_url is not None:
+                async with sess.get(repo_list_url, allow_redirects=False, **rqst_args) as resp:
+                    items = await resp.json()
+                    if isinstance(items, dict) and (errors := items.get('errors', [])):
+                        raise RuntimeError(f"failed to fetch repositories in project {project_name}",
+                                           errors[0]['code'], errors[0]['message'])
+                    repos = [item['name'] for item in items]
+                    for item in repos:
+                        yield item
+                    repo_list_url = None
+                    next_page_link = resp.links.get('next')
+                    if next_page_link:
+                        next_page_url = cast(yarl.URL, next_page_link['url'])
+                        repo_list_url = (
+                            self.registry_url
+                            .with_path(next_page_url.path)
+                            .with_query(next_page_url.query)
+                        )
