@@ -276,7 +276,7 @@ manager_local_config_iv = t.Dict({
         t.Key('importer-image', default='lablup/importer:manylinux2010'): t.String,
         t.Key('max-wsmsg-size', default=16 * (2**20)): t.ToInt,  # default: 16 MiB
     }).allow_extra('*'),
-    t.Key('docker-registry'): t.Dict({
+    t.Key('docker-registry'): t.Dict({  # deprecated in v20.09
         t.Key('ssl-verify', default=True): t.ToBool,
     }).allow_extra('*'),
     t.Key('logging'): t.Any,  # checked in ai.backend.common.logging
@@ -313,6 +313,15 @@ _shdefs: Mapping[str, Any] = {
     }
 }
 
+container_registry_iv = t.Dict({
+    t.Key(''): tx.URL,
+    t.Key('type', default="docker"): t.String,
+    t.Key('username', default=None): t.Null | t.String,
+    t.Key('password', default=None): t.Null | t.String,
+    t.Key('project', default=None): t.Null | tx.StringList | t.List(t.String),
+    t.Key('ssl-verify', default=True): t.ToBool,
+}).allow_extra('*')
+
 shared_config_iv = t.Dict({
     t.Key('system', default=_shdefs['system']): t.Dict({
         t.Key('timezone', default=_shdefs['system']['timezone']): tx.TimeZone,
@@ -323,6 +332,9 @@ shared_config_iv = t.Dict({
     t.Key('redis', default=_shdefs['redis']): t.Dict({
         t.Key('addr', default=_shdefs['redis']['addr']): tx.HostPortPair,
         t.Key('password', default=_shdefs['redis']['password']): t.Null | t.String,
+    }).allow_extra('*'),
+    t.Key('docker'): t.Dict({
+        t.Key('registry'): t.Mapping(t.String, container_registry_iv),
     }).allow_extra('*'),
     t.Key('plugins', default=_shdefs['plugins']): t.Dict({
         t.Key('accelerator', default=_shdefs['plugins']['accelerator']):
@@ -622,24 +634,18 @@ class SharedConfig(AbstractConfig):
         reporter: ProgressReporter = None,
     ) -> None:
         if registry is None:
-            registries = []
-            data = await self.etcd.get_prefix('config/docker/registry')
-            for key, _ in data.items():
-                if key:
-                    registries.append(etcd_unquote(key))
+            # scan all configured registries
+            registries = self['docker']['registry']
         else:
-            registries = [registry]
+            try:
+                registries = {registry: self['docker']['registry'][registry]}
+            except KeyError:
+                raise RuntimeError("It is an unknown registry.", registry)
         async with aiotools.TaskGroup() as tg:
-            for registry in registries:
-                log.info('Scanning kernel images from the registry "{0}"', registry)
-                registry_info = await self.etcd.get_prefix(
-                    f'config/docker/registry/{etcd_quote(registry)}'
-                )
-                if not registry_info:
-                    log.error('Unknown registry: "{0}"', registry)
-                    continue
+            for registry_name, registry_info in registries.items():
+                log.info('Scanning kernel images from the registry "{0}"', registry_name)
                 scanner_cls = get_container_registry(registry_info)
-                scanner = scanner_cls(self.etcd, registry, registry_info)
+                scanner = scanner_cls(self.etcd, registry_name, registry_info)
                 tg.create_task(scanner.rescan_single_registry(reporter))
         # TODO: delete images removed from registry?
 

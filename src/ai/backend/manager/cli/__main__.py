@@ -20,7 +20,7 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.cli'))
 @attr.s(auto_attribs=True, frozen=True)
 class CLIContext:
     logger: Logger
-    config: Mapping[str, Any]
+    local_config: Mapping[str, Any]
 
 
 @click.group(invoke_without_command=True, context_settings={'help_option_names': ['-h', '--help']})
@@ -30,18 +30,18 @@ class CLIContext:
               help='Enable the debug mode and override the global log level to DEBUG.')
 @click.pass_context
 def main(ctx, config_path, debug):
-    cfg = load_config(config_path)
-    setproctitle(f"backend.ai: manager.cli {cfg['etcd']['namespace']}")
-    if 'file' in cfg['logging']['drivers']:
-        cfg['logging']['drivers'].remove('file')
+    local_config = load_config(config_path)
+    setproctitle(f"backend.ai: manager.cli {local_config['etcd']['namespace']}")
+    if 'file' in local_config['logging']['drivers']:
+        local_config['logging']['drivers'].remove('file')
     # log_endpoint = f'tcp://127.0.0.1:{find_free_port()}'
     log_sockpath = Path(f'/tmp/backend.ai/ipc/manager-cli-{os.getpid()}.sock')
     log_sockpath.parent.mkdir(parents=True, exist_ok=True)
     log_endpoint = f'ipc://{log_sockpath}'
-    logger = Logger(cfg['logging'], is_master=True, log_endpoint=log_endpoint)
+    logger = Logger(local_config['logging'], is_master=True, log_endpoint=log_endpoint)
     ctx.obj = CLIContext(
         logger=logger,
-        config=cfg,
+        local_config=local_config,
     )
 
     def _clean_logger():
@@ -80,7 +80,7 @@ def dbshell(cli_ctx, container_name, psql_help, psql_args):
     connection-related options because the dbshell command fills out them from the
     manager configuration.
     """
-    config = cli_ctx.config
+    local_config = cli_ctx.local_config
     if psql_help:
         psql_args = ['--help']
     if not container_name:
@@ -98,8 +98,8 @@ def dbshell(cli_ctx, container_name, psql_help, psql_args):
         # Use the host-provided psql command
         cmd = [
             'psql',
-            (f"postgres://{config['db']['user']}:{config['db']['password']}"
-             f"@{config['db']['addr']}/{config['db']['name']}"),
+            (f"postgres://{local_config['db']['user']}:{local_config['db']['password']}"
+             f"@{local_config['db']['addr']}/{local_config['db']['name']}"),
             *psql_args,
         ]
         subprocess.call(cmd)
@@ -110,8 +110,8 @@ def dbshell(cli_ctx, container_name, psql_help, psql_args):
         'docker', 'exec', '-i', '-t',
         container_name,
         'psql',
-        '-U', config['db']['user'],
-        '-d', config['db']['name'],
+        '-U', local_config['db']['user'],
+        '-d', local_config['db']['name'],
         *psql_args,
     ]
     subprocess.call(cmd)

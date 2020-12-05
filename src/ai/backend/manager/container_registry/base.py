@@ -56,7 +56,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
         self.etcd = etcd
         self.registry_name = registry_name
         self.registry_info = registry_info
-        self.registry_url = yarl.URL(registry_info[''])
+        self.registry_url = registry_info['']
         self.max_concurrency_per_registry = max_concurrency_per_registry
         self.base_hdrs = {
             'Accept': 'application/vnd.docker.distribution.manifest.v2+json',
@@ -74,10 +74,10 @@ class BaseContainerRegistry(metaclass=ABCMeta):
         self.all_updates.set({})
         self.sema.set(asyncio.Semaphore(self.max_concurrency_per_registry))
         self.reporter.set(reporter)
-        username = self.registry_info.get('username')
+        username = self.registry_info['username']
         if username is not None:
             self.credentials['username'] = username
-        password = self.registry_info.get('password')
+        password = self.registry_info['password']
         if password is not None:
             self.credentials['password'] = password
         non_kernel_words = (
@@ -86,7 +86,7 @@ class BaseContainerRegistry(metaclass=ABCMeta):
             'backendai', 'geofront',
         )
         ssl_ctx = None  # default
-        if not t.ToBool().check(self.registry_info.get('ssl-verify', 'yes')):
+        if not self.registry_info['ssl-verify']:
             ssl_ctx = False
         connector = aiohttp.TCPConnector(ssl=ssl_ctx)
         async with aiohttp.ClientSession(connector=connector) as sess:
@@ -97,7 +97,6 @@ class BaseContainerRegistry(metaclass=ABCMeta):
         all_updates = self.all_updates.get()
         if not all_updates:
             log.info('No images found in registry {0}', self.registry_url)
-            # return
         else:
             for kvlist in chunked(sorted(all_updates.items()), 16):
                 await self.etcd.put_dict(dict(kvlist))
