@@ -1,7 +1,0 @@
-volumes:
-  - name: local
-    mount:
-      at: requested
-      fstype: nfs
-      path: "/home/gofeel/Projects/backend.ai/run/vfolder"
-      options: ""
