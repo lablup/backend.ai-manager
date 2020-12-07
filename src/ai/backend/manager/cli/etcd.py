@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import json
 import logging
 from pprint import pprint
-from typing import Any, AsyncIterator, Dict
+from typing import Any, AsyncIterator, Dict, TYPE_CHECKING
 import sys
 
 import aioredis
@@ -21,7 +23,8 @@ from ai.backend.common.etcd import (
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.gateway.config import SharedConfig
 from ai.backend.gateway.defs import REDIS_IMAGE_DB
-from .__main__ import CLIContext
+if TYPE_CHECKING:
+    from .__main__ import CLIContext
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
