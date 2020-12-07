@@ -16,6 +16,16 @@ Changes
 
 .. towncrier release notes start
 
+20.09.0b2 (2020-12-07)
+----------------------
+
+### Features
+* Add support for Harbor v2 and generalize internal abstractions of container registries, making it easier to add new registries in the future ([#357](https://github.com/lablup/backend.ai-manager/issues/357))
+
+### Fixes
+* Update fixtures to put the default registry as `cr.backend.ai` and remove unused ones ([#358](https://github.com/lablup/backend.ai-manager/issues/358))
+
+
 20.09.0b1 (2020-12-02)
 ----------------------
 
