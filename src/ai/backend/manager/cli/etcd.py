@@ -3,7 +3,7 @@ import contextlib
 import json
 import logging
 from pprint import pprint
-from typing import Any, Dict
+from typing import Any, AsyncIterator, Dict
 import sys
 
 import aioredis
@@ -27,12 +27,12 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
 
 
 @click.group()
-def cli():
+def cli() -> None:
     pass
 
 
 @contextlib.asynccontextmanager
-async def etcd_ctx(cli_ctx: CLIContext):
+async def etcd_ctx(cli_ctx: CLIContext) -> AsyncIterator[AsyncEtcd]:
     local_config = cli_ctx.local_config
     creds = None
     if local_config['etcd']['user']:
@@ -53,7 +53,7 @@ async def etcd_ctx(cli_ctx: CLIContext):
 
 
 @contextlib.asynccontextmanager
-async def config_ctx(cli_ctx: CLIContext):
+async def config_ctx(cli_ctx: CLIContext) -> AsyncIterator[SharedConfig]:
     local_config = cli_ctx.local_config
     ctx: Dict[str, Any] = {}
     ctx['config'] = local_config
@@ -89,7 +89,7 @@ async def config_ctx(cli_ctx: CLIContext):
 @click.option('-s', '--scope', type=EnumChoice(ConfigScopes), default=ConfigScopes.GLOBAL,
               help='The configuration scope to put the value.')
 @click.pass_obj
-def put(cli_ctx: CLIContext, key, value, scope):
+def put(cli_ctx: CLIContext, key, value, scope) -> None:
     '''Put a single key-value pair into the etcd.'''
     async def _impl():
         async with etcd_ctx(cli_ctx) as etcd:
@@ -108,7 +108,7 @@ def put(cli_ctx: CLIContext, key, value, scope):
               default=ConfigScopes.GLOBAL,
               help='The configuration scope to put the value.')
 @click.pass_obj
-def put_json(cli_ctx: CLIContext, key, file, scope):
+def put_json(cli_ctx: CLIContext, key, file, scope) -> None:
     '''
     Put a JSON object from FILE to the etcd as flattened key-value pairs
     under the given KEY prefix.
@@ -133,7 +133,7 @@ def put_json(cli_ctx: CLIContext, key, file, scope):
                    'To move between different scopes, use the global scope '
                    'and specify the per-scope prefixes manually.')
 @click.pass_obj
-def move_subtree(cli_ctx: CLIContext, src_prefix, dst_prefix, scope):
+def move_subtree(cli_ctx: CLIContext, src_prefix, dst_prefix, scope) -> None:
     '''
     Move a subtree to another key prefix.
     '''
@@ -158,7 +158,7 @@ def move_subtree(cli_ctx: CLIContext, src_prefix, dst_prefix, scope):
               default=ConfigScopes.GLOBAL,
               help='The configuration scope to put the value.')
 @click.pass_obj
-def get(cli_ctx: CLIContext, key, prefix, scope):
+def get(cli_ctx: CLIContext, key, prefix, scope) -> None:
     '''
     Get the value of a key in the configured etcd namespace.
     '''
@@ -187,7 +187,7 @@ def get(cli_ctx: CLIContext, key, prefix, scope):
               default=ConfigScopes.GLOBAL,
               help='The configuration scope to put the value.')
 @click.pass_obj
-def delete(cli_ctx: CLIContext, key, prefix, scope):
+def delete(cli_ctx: CLIContext, key, prefix, scope) -> None:
     '''Delete the key in the configured etcd namespace.'''
     async def _impl():
         async with etcd_ctx(cli_ctx) as etcd:
@@ -208,7 +208,7 @@ def delete(cli_ctx: CLIContext, key, prefix, scope):
 @click.option('-i', '--installed', is_flag=True,
               help='Show only the installed images.')
 @click.pass_obj
-def list_images(cli_ctx: CLIContext, short, installed):
+def list_images(cli_ctx: CLIContext, short, installed) -> None:
     '''List all configured images.'''
     async def _impl():
         async with config_ctx(cli_ctx) as shared_config:
@@ -235,7 +235,7 @@ def list_images(cli_ctx: CLIContext, short, installed):
 @cli.command()
 @click.argument('reference')
 @click.pass_obj
-def inspect_image(cli_ctx: CLIContext, reference):
+def inspect_image(cli_ctx: CLIContext, reference) -> None:
     '''Show the details of the given image or alias.'''
     async def _impl():
         async with config_ctx(cli_ctx) as shared_config:
@@ -251,7 +251,7 @@ def inspect_image(cli_ctx: CLIContext, reference):
 @cli.command()
 @click.argument('reference')
 @click.pass_obj
-def forget_image(cli_ctx: CLIContext, reference):
+def forget_image(cli_ctx: CLIContext, reference) -> None:
     '''
     Forget (delete) a specific image.
     NOTE: aliases to the given reference are NOT deleted.
@@ -272,7 +272,7 @@ def forget_image(cli_ctx: CLIContext, reference):
 @click.argument('slot_type')
 @click.argument('range_value', type=MinMaxRange)
 @click.pass_obj
-def set_image_resource_limit(cli_ctx: CLIContext, reference, slot_type, range_value):
+def set_image_resource_limit(cli_ctx: CLIContext, reference, slot_type, range_value) -> None:
     '''Set the MIN:MAX values of a SLOT_TYPE limit for the given image REFERENCE.'''
     async def _impl():
         async with config_ctx(cli_ctx) as shared_config:
@@ -288,7 +288,7 @@ def set_image_resource_limit(cli_ctx: CLIContext, reference, slot_type, range_va
 @cli.command()
 @click.argument('registry')
 @click.pass_obj
-def rescan_images(cli_ctx: CLIContext, registry):
+def rescan_images(cli_ctx: CLIContext, registry) -> None:
     '''
     Update the kernel image metadata from all configured docker registries.
 
@@ -308,7 +308,7 @@ def rescan_images(cli_ctx: CLIContext, registry):
 @click.argument('alias')
 @click.argument('target')
 @click.pass_obj
-def alias(cli_ctx: CLIContext, alias, target):
+def alias(cli_ctx: CLIContext, alias, target) -> None:
     '''Add an image alias from the given alias to the target image reference.'''
     async def _impl():
         async with config_ctx(cli_ctx) as shared_config:
@@ -323,7 +323,7 @@ def alias(cli_ctx: CLIContext, alias, target):
 @cli.command()
 @click.argument('alias')
 @click.pass_obj
-def dealias(cli_ctx: CLIContext, alias):
+def dealias(cli_ctx: CLIContext, alias) -> None:
     '''Remove an alias.'''
     async def _impl():
         async with config_ctx(cli_ctx) as shared_config:
@@ -338,7 +338,7 @@ def dealias(cli_ctx: CLIContext, alias):
 @cli.command()
 @click.argument('value')
 @click.pass_obj
-def quote(cli_ctx: CLIContext, value):
+def quote(cli_ctx: CLIContext, value) -> None:
     '''
     Quote the given string for use as a URL piece in etcd keys.
     Use this to generate argument inputs for aliases and raw image keys.
@@ -349,7 +349,7 @@ def quote(cli_ctx: CLIContext, value):
 @cli.command()
 @click.argument('value')
 @click.pass_obj
-def unquote(cli_ctx: CLIContext, value):
+def unquote(cli_ctx: CLIContext, value) -> None:
     '''
     Unquote the given string used as a URL piece in etcd keys.
     '''
