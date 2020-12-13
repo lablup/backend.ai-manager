@@ -300,33 +300,35 @@ async def health_check(request: web.Request, params: Any) -> web.Response:
         return web.json_response(result)
 
     # ## Get agent host information
+    sem = asyncio.Semaphore(10)
+
     async def _agent_health_check(sess: aiohttp.ClientSession, agent_id: str) -> Optional[dict]:
-        watcher_info = await get_watcher_info(request, agent_id)
-        if not watcher_info:
-            return None
-        watcher_url = watcher_info['addr'] / 'health'
-        headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
-        timeout = aiohttp.ClientTimeout(total=5)
-        try:
-            async with sess.get(watcher_url, headers=headers, timeout=timeout) as resp:
-                if resp.status == 200:
-                    return await resp.json()
-                else:
-                    return None
-        except asyncio.CancelledError:
-            raise
-        except asyncio.TimeoutError:
-            return None
+        nonlocal sem
+        async with sem:
+            watcher_info = await get_watcher_info(request, agent_id)
+            if not watcher_info:
+                return None
+            watcher_url = watcher_info['addr'] / 'health'
+            headers = {'X-BackendAI-Watcher-Token': watcher_info['token']}
+            timeout = aiohttp.ClientTimeout(total=5)
+            try:
+                async with sess.get(watcher_url, headers=headers, timeout=timeout) as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+                    else:
+                        return None
+            except asyncio.CancelledError:
+                raise
+            except asyncio.TimeoutError:
+                return None
 
     # TODO: support per-watcher ssl context
     connector = aiohttp.TCPConnector()
     async with aiohttp.ClientSession(connector=connector) as sess:
         tasks = []
         async with TaskGroup() as tg:
-            sem = asyncio.Semaphore(10)
             for aid in agent_ids:
-                async with sem:
-                    tasks.append(tg.create_task(_agent_health_check(sess, aid)))
+                tasks.append(tg.create_task(_agent_health_check(sess, aid)))
         agent_infos = [t.result() for t in tasks if not t.cancelled() and t.result() is not None]
 
     result['agents'] = []
