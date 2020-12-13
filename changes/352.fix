@@ -1,1 +1,0 @@
-Improve handling of storage-manager invocation failures using a new `VFolderOperationFailed` API exception.

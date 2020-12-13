@@ -110,7 +110,11 @@ def etcd_fixture(test_id, local_config, vfolder_mount, vfolder_fsprefix, vfolder
             'config': {
                 'docker': {
                     'registry': {
-                        'index.docker.io': 'https://registry-1.docker.io',
+                        'cr.backend.ai': {
+                            '': 'https://cr.backend.ai',
+                            'type': 'harbor2',
+                            'project': 'stable',
+                        },
                     },
                 },
                 'redis': {
@@ -216,10 +220,10 @@ def database_fixture(local_config, test_db, database):
     fixtures = {}
     fixtures.update(json.loads(
         (Path(__file__).parent.parent /
-         'sample-configs' / 'example-keypairs.json').read_text()))
+         'fixtures' / 'example-keypairs.json').read_text()))
     fixtures.update(json.loads(
         (Path(__file__).parent.parent /
-         'sample-configs' / 'example-resource-presets.json').read_text()))
+         'fixtures' / 'example-resource-presets.json').read_text()))
     engine = sa.create_engine(alembic_url)
     conn = engine.connect()
     try:

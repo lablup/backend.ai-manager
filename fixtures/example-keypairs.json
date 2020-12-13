@@ -6,7 +6,7 @@
             "is_active": true,
             "total_resource_slots": {},
             "allowed_vfolder_hosts": {},
-            "allowed_docker_registries": ["index.docker.io"]
+            "allowed_docker_registries": ["cr.backend.ai"]
         }
     ],
     "groups": [

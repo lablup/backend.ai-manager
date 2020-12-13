@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 from alembic.config import Config
 from alembic import command
@@ -10,12 +13,14 @@ import sqlalchemy as sa
 from ai.backend.common.logging import BraceStyleAdapter
 
 from ..models.base import metadata
+if TYPE_CHECKING:
+    from .__main__ import CLIContext
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
 
 @click.group()
-def cli(args):
+def cli(args) -> None:
     pass
 
 
@@ -25,7 +30,7 @@ def cli(args):
               help='The path to Alembic config file. '
                    '[default: alembic.ini]')
 @click.pass_obj
-def show(cli_ctx, alembic_config):
+def show(cli_ctx: CLIContext, alembic_config) -> None:
     '''Show the current schema information.'''
     with cli_ctx.logger:
         alembic_cfg = Config(alembic_config)
@@ -47,7 +52,7 @@ def show(cli_ctx, alembic_config):
               help='The path to Alembic config file. '
                    '[default: alembic.ini]')
 @click.pass_obj
-def oneshot(cli_ctx, alembic_config):
+def oneshot(cli_ctx: CLIContext, alembic_config) -> None:
     '''
     Set up your database with one-shot schema migration instead of
     iterating over multiple revisions if there is no existing database.
