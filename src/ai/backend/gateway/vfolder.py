@@ -1163,10 +1163,14 @@ async def list_files(request: web.Request, params: Any, row: VFolderRow) -> web.
 
     def _scan():
         for f in os.scandir(folder_path):
-            fstat = f.stat()
-            ctime = fstat.st_ctime  # TODO: way to get concrete create time?
+            fstat = f.stat(follow_symlinks=False)
+            ctime = fstat.st_ctime
             mtime = fstat.st_mtime
             atime = fstat.st_atime
+            if Path(f).is_symlink():
+                symlink_target = str(Path(f).resolve())
+            else:
+                symlink_target = ''
             files.append({
                 'mode': stat.filemode(fstat.st_mode),
                 'size': fstat.st_size,
@@ -1174,6 +1178,7 @@ async def list_files(request: web.Request, params: Any, row: VFolderRow) -> web.
                 'mtime': mtime,
                 'atime': atime,
                 'filename': f.name,
+                'symlink_target': symlink_target,  # symbolic link target
             })
 
     loop = current_loop()
