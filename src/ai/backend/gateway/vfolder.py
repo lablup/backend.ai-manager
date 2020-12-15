@@ -455,10 +455,7 @@ async def delete_by_id(request: web.Request, params: Any) -> web.Response:
         query = (
             sa.select([vfolders.c.host])
             .select_from(vfolders)
-            .where(
-                (vfolders.c.id == params['id'])
-                & (vfolders.c.access_key == access_key)
-            )
+            .where(vfolders.c.id == params['id'])
         )
         folder_host = await conn.scalar(query)
         folder_id = uuid.UUID(params['id'])
