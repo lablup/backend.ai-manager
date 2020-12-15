@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import enum
 import logging
-from pathlib import Path
 from typing import (
     Any,
     Iterable,
@@ -12,7 +11,6 @@ from typing import (
     Sequence,
 )
 import uuid
-import shutil
 
 import aiohttp
 from aiopg.sa.connection import SAConnection
@@ -25,7 +23,6 @@ import sqlalchemy as sa
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.utils import current_loop
 from .base import (
     EnumValueType,
     IDColumn,
@@ -36,6 +33,7 @@ from .base import (
     batch_result,
     batch_multiresult,
 )
+from ai.backend.gateway.exceptions import VFolderOperationFailed
 from .storage import StorageSessionManager
 
 log = BraceStyleAdapter(logging.getLogger(__file__))
@@ -850,7 +848,12 @@ class PurgeUser(graphene.Mutation):
 
         :return: number of deleted rows
         """
-        from . import vfolders
+        from . import vfolders, vfolder_permissions
+        query = (
+            vfolder_permissions.delete()
+            .where(vfolder_permissions.c.user == user_uuid)
+        )
+        await conn.execute(query)
         query = (
             sa.select([vfolders.c.id, vfolders.c.host])
             .select_from(vfolders)
@@ -873,7 +876,7 @@ class PurgeUser(graphene.Mutation):
                     pass
             except aiohttp.ClientResponseError:
                 log.error('error on deleting vfolder filesystem directory: {0}', row['id'])
-                raise VfolderOperationFailed
+                raise VFolderOperationFailed
         if result.rowcount > 0:
             log.info('deleted {0} user\'s virtual folders ({1})', result.rowcount, user_uuid)
         return result.rowcount

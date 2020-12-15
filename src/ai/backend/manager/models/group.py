@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from pathlib import Path
 import re
 from typing import (
     Any, Optional, Union,
@@ -13,7 +12,6 @@ from typing import (
     TypedDict,
 )
 import uuid
-import shutil
 
 import aiohttp
 from aiopg.sa.connection import SAConnection
@@ -26,7 +24,6 @@ from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
-from ai.backend.common.utils import current_loop
 from .base import (
     metadata, GUID, IDColumn, ResourceSlotColumn,
     privileged_mutation,
@@ -35,6 +32,7 @@ from .base import (
     simple_db_mutate_returning_item,
     batch_result,
 )
+from ai.backend.gateway.exceptions import VFolderOperationFailed
 from .storage import StorageSessionManager
 from .user import UserRole
 from ..defs import RESERVED_DOTFILES
@@ -430,7 +428,7 @@ class PurgeGroup(graphene.Mutation):
                     pass
             except aiohttp.ClientResponseError:
                 log.error('error on deleting vfolder filesystem directory: {0}', row['id'])
-                raise VfolderOperationFailed
+                raise VFolderOperationFailed
         if result.rowcount > 0:
             log.info('deleted {0} group\'s virtual folders ({1})', result.rowcount, group_id)
         return result.rowcount
