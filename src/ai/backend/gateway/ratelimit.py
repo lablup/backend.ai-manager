@@ -59,10 +59,13 @@ async def rlim_middleware(app: web.Application,
             [access_key],
             [str(now), str(_rlim_window)],
         )
-        rolling_count = int(ret)
-        if rolling_count > rate_limit:
-            raise RateLimitExceeded
-        remaining = rate_limit - rolling_count
+        if ret is None:
+            remaining = rate_limit
+        else:
+            rolling_count = int(ret)
+            if rolling_count > rate_limit:
+                raise RateLimitExceeded
+            remaining = rate_limit - rolling_count
         response = await handler(request)
         response.headers['X-RateLimit-Limit'] = str(rate_limit)
         response.headers['X-RateLimit-Remaining'] = str(remaining)

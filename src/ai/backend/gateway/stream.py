@@ -69,7 +69,6 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
     registry = app['registry']
     session_name = request.match_info['session_name']
     access_key = request['keypair']['access_key']
-    stream_key = (session_name, access_key)
     extra_fields = (kernels.c.stdin_port, kernels.c.stdout_port)
     api_version = request['api_version']
     try:
@@ -78,6 +77,7 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
     except SessionNotFound:
         raise
     log.info('STREAM_PTY(ak:{0}, s:{1})', access_key, session_name)
+    stream_key = compute_session['id']
 
     await asyncio.shield(registry.increment_session_usage(session_name, access_key))
     ws = web.WebSocketResponse(max_msg_size=config['manager']['max-wsmsg-size'])
@@ -237,13 +237,15 @@ async def stream_execute(defer, request: web.Request) -> web.StreamResponse:
     registry = app['registry']
     session_name = request.match_info['session_name']
     access_key = request['keypair']['access_key']
-    stream_key = (session_name, access_key)
     api_version = request['api_version']
     log.info('STREAM_EXECUTE(ak:{0}, s:{1})', access_key, session_name)
     try:
-        _ = await asyncio.shield(registry.get_session(session_name, access_key))  # noqa
+        compute_session = await asyncio.shield(
+            registry.get_session(session_name, access_key)  # noqa
+        )
     except SessionNotFound:
         raise
+    stream_key = compute_session['id']
 
     await asyncio.shield(registry.increment_session_usage(session_name, access_key))
     ws = web.WebSocketResponse(max_msg_size=config['manager']['max-wsmsg-size'])
@@ -352,16 +354,14 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
     access_key: AccessKey = request['keypair']['access_key']
     service: str = params['app']
     config = request.app['config']
-
-    stream_key = (session_name, access_key)
     myself = asyncio.Task.current_task()
-    request.app['stream_proxy_handlers'][stream_key].add(myself)
-    defer(lambda: request.app['stream_proxy_handlers'][stream_key].discard(myself))
-
     try:
         kernel = await asyncio.shield(registry.get_session(session_name, access_key))
     except (SessionNotFound, TooManySessionsMatched):
         raise
+    stream_key = kernel['id']
+    request.app['stream_proxy_handlers'][stream_key].add(myself)
+    defer(lambda: request.app['stream_proxy_handlers'][stream_key].discard(myself))
     if kernel['kernel_host'] is None:
         kernel_host = urlparse(kernel['agent_addr']).hostname
     else:
@@ -474,10 +474,9 @@ async def kernel_terminated(app: web.Application, agent_id: AgentId, event_name:
     except SessionNotFound:
         return
     if kernel.role == 'master':
-        session_name = kernel['sess_id']
-        stream_key = (session_name, kernel['access_key'])
+        stream_key = kernel['id']
         cancelled_tasks = []
-        for sock in app['stream_stdin_socks'][session_name]:
+        for sock in app['stream_stdin_socks'][stream_key]:
             sock.close()
         for handler in list(app['stream_pty_handlers'].get(stream_key, [])):
             handler.cancel()
@@ -504,6 +503,11 @@ async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
 
     yield
 
+    # The shutdown handler below is called before this cleanup.
+    app['zctx'].term()
+
+
+async def stream_shutdown(app: web.Application) -> None:
     cancelled_tasks: List[asyncio.Task] = []
     for per_kernel_handlers in app['stream_pty_handlers'].values():
         for handler in list(per_kernel_handlers):
@@ -521,12 +525,12 @@ async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
                 handler.cancel()
                 cancelled_tasks.append(handler)
     await asyncio.gather(*cancelled_tasks, return_exceptions=True)
-    app['zctx'].term()
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()
     app.cleanup_ctx.append(stream_app_ctx)
+    app.on_shutdown.append(stream_shutdown)
     app['prefix'] = 'stream'
     app['api_versions'] = (2, 3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
