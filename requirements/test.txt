@@ -1,2 +1,2 @@
--e git+https://github.com/lablup/backend.ai-common@master#egg=backend.ai-common
+-e git+https://github.com/lablup/backend.ai-common@20.03#egg=backend.ai-common
 -e .[test]

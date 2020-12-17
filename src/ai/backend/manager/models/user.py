@@ -849,10 +849,15 @@ class PurgeUser(graphene.Mutation):
 
         :return: number of deleted rows
         """
-        from . import vfolders
+        from . import vfolders, vfolder_permissions
         mount_prefix = Path(await config_server.get('volumes/_mount'))
         fs_prefix = await config_server.get('volumes/_fsprefix')
         fs_prefix = Path(fs_prefix.lstrip('/'))
+        query = (
+            vfolder_permissions.delete()
+            .where(vfolder_permissions.c.user == user_uuid)
+        )
+        await conn.execute(query)
         query = (
             sa.select([vfolders.c.id, vfolders.c.host, vfolders.c.unmanaged_path])
             .select_from(vfolders)

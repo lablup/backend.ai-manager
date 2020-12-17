@@ -462,9 +462,11 @@ async def delete_by_id(request: web.Request, params: Any) -> web.Response:
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.DELETE_BY_ID (ak:{}, vf:{})', access_key, params['id'])
     async with dbpool.acquire() as conn, conn.begin():
-        query = (sa.select([vfolders.c.host])
-                   .select_from(vfolders)
-                   .where(vfolders.c.id == params['id']))
+        query = (
+            sa.select([vfolders.c.host])
+            .select_from(vfolders)
+            .where(vfolders.c.id == params['id'])
+        )
         folder_host = await conn.scalar(query)
         folder_id = uuid.UUID(params['id'])
         folder_hex = folder_id.hex
