@@ -1,0 +1,1 @@
+Handle exception in file list API which will be raised when there is a symbolic link to a broken target.
