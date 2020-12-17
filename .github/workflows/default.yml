@@ -96,10 +96,10 @@ jobs:
           POSTGRES_USER: lablup
           POSTGRES_PASSWORD: develove
           POSTGRES_DATABASE: testing
-        options: -v "$(pwd)/scripts:/docker-entrypoint-initdb.d"
         ports:
           - 5432:5432
         options: >-
+          -v "$(pwd)/scripts:/docker-entrypoint-initdb.d"
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
