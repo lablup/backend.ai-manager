@@ -1,1 +1,0 @@
-Fix a hang-up issue when shutting down the gateway daemon with running service-port streaming sessions

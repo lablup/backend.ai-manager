@@ -16,6 +16,14 @@ Changes
 
 .. towncrier release notes start
 
+20.03.13 (2020-12-18)
+---------------------
+
+
+### Fixes
+* Fix a hang-up issue when shutting down the gateway daemon with running service-port streaming sessions ([#365](https://github.com/lablup/backend.ai-manager/issues/365))
+
+
 20.03.12 (2020-12-17)
 ---------------------
 
