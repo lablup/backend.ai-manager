@@ -1,0 +1,31 @@
+name: timeline-check
+
+on: [pull_request]
+
+jobs:
+  towncrier:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+    - name: Set up Python 3.8
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.8
+    - name: Cache pip packages
+      uses: actions/cache@v2
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements/*.txt') }}
+    - name: Install dependencies
+      run: |
+        sudo apt-get install libsnappy-dev
+        python -m pip install -U pip setuptools
+        python -m pip install -U -r requirements/build.txt
+    - name: Check existence of news fragment
+      run: |
+        git fetch --no-tags origin +refs/heads/${BASE_BRANCH}:refs/remotes/origin/${BASE_BRANCH}
+        python -m towncrier.check --compare-with=origin/${BASE_BRANCH}
+      env:
+        BASE_BRANCH: ${{ github.base_ref }}
