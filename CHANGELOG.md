@@ -16,6 +16,18 @@ Changes
 
 .. towncrier release notes start
 
+20.03.12 (2020-12-17)
+---------------------
+
+### Fixes
+* Handle exception in file list API which will be raised when there is a symbolic link to a broken target. ([#360](https://github.com/lablup/backend.ai-manager/issues/360))
+* Update aiotools to v1.1.1 to fix a potential memory leak in long-lived taskgroup instances ([#362](https://github.com/lablup/backend.ai-manager/issues/362))
+
+### Miscellaneous
+* Update dependencies and adapt with the new pip resolver ([#359](https://github.com/lablup/backend.ai-manager/issues/359))
+* Migrate to GitHub Actions completely for all CI jobs including tests and PyPI deployment ([#364](https://github.com/lablup/backend.ai-manager/issues/364))
+
+
 20.03.11 (2020-12-07)
 ---------------------
 
