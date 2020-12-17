@@ -65,6 +65,7 @@ class TCPProxy(ServiceProxy):
 
     async def proxy(self) -> web.WebSocketResponse:
         try:
+            self.down_task = None
             try:
                 reader, writer = await asyncio.open_connection(self.host, self.port)
             except ConnectionRefusedError:
