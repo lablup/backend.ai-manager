@@ -96,6 +96,8 @@ jobs:
           POSTGRES_USER: lablup
           POSTGRES_PASSWORD: develove
           POSTGRES_DATABASE: testing
+        volumes:
+          - ./scripts:/docker-entrypoint-initdb.d/
         ports:
           - 5432:5432
         options: >-
