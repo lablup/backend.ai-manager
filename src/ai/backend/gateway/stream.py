@@ -78,7 +78,6 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
     registry = app['registry']
     session_name = request.match_info['session_name']
     access_key = request['keypair']['access_key']
-    stream_key = (session_name, access_key)
     extra_fields = (kernels.c.stdin_port, kernels.c.stdout_port)
     api_version = request['api_version']
     try:
@@ -88,6 +87,7 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
     except SessionNotFound:
         raise
     log.info('STREAM_PTY(ak:{0}, s:{1})', access_key, session_name)
+    stream_key = compute_session['id']
 
     await asyncio.shield(registry.increment_session_usage(session_name, access_key))
     ws = web.WebSocketResponse(max_msg_size=local_config['manager']['max-wsmsg-size'])
@@ -248,15 +248,15 @@ async def stream_execute(defer, request: web.Request) -> web.StreamResponse:
     registry = app['registry']
     session_name = request.match_info['session_name']
     access_key = request['keypair']['access_key']
-    stream_key = (session_name, access_key)
     api_version = request['api_version']
     log.info('STREAM_EXECUTE(ak:{0}, s:{1})', access_key, session_name)
     try:
-        _ = await asyncio.shield(
+        compute_session = await asyncio.shield(
             registry.get_session(session_name, access_key)  # noqa
         )
     except SessionNotFound:
         raise
+    stream_key = compute_session['id']
 
     await asyncio.shield(registry.increment_session_usage(session_name, access_key))
     ws = web.WebSocketResponse(max_msg_size=local_config['manager']['max-wsmsg-size'])
@@ -365,17 +365,15 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
     access_key: AccessKey = request['keypair']['access_key']
     service: str = params['app']
     local_config: LocalConfig = request.app['local_config']
-
-    stream_key = (session_name, access_key)
-    stream_id = uuid.uuid4().hex
     myself = asyncio.Task.current_task()
-    request.app['stream_proxy_handlers'][stream_key].add(myself)
-    defer(lambda: request.app['stream_proxy_handlers'][stream_key].discard(myself))
-
     try:
         kernel = await asyncio.shield(registry.get_session(session_name, access_key))
     except (SessionNotFound, TooManySessionsMatched):
         raise
+    stream_key = kernel['id']
+    stream_id = uuid.uuid4().hex
+    request.app['stream_proxy_handlers'][stream_key].add(myself)
+    defer(lambda: request.app['stream_proxy_handlers'][stream_key].discard(myself))
     if kernel['kernel_host'] is None:
         kernel_host = urlparse(kernel['agent_addr']).hostname
     else:
@@ -436,7 +434,6 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
 
     async def add_conn_track() -> None:
         async with request.app['conn_tracker_lock']:
-            print('-- add conn track --')
             active_session_ids[kernel_id] += 1
             now = await redis_live.time()
             await redis_live.zadd(conn_tracker_key, now, conn_tracker_val)
@@ -448,7 +445,6 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
 
     async def clear_conn_track() -> None:
         async with request.app['conn_tracker_lock']:
-            print('-- clear conn track --')
             active_session_ids[kernel_id] -= 1
             if active_session_ids[kernel_id] <= 0:
                 del active_session_ids[kernel_id]
@@ -532,10 +528,9 @@ async def kernel_terminated(app: web.Application, agent_id: AgentId, event_name:
     except SessionNotFound:
         return
     if kernel['cluster_role'] == DEFAULT_ROLE:
-        session_name = kernel['session_id']
-        stream_key = (session_name, kernel['access_key'])
+        stream_key = kernel['id']
         cancelled_tasks = []
-        for sock in app['stream_stdin_socks'][session_name]:
+        for sock in app['stream_stdin_socks'][stream_key]:
             sock.close()
         for handler in list(app['stream_pty_handlers'].get(stream_key, [])):
             handler.cancel()
@@ -586,19 +581,23 @@ async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
     app['stream_proxy_handlers'] = defaultdict(weakref.WeakSet)
     app['stream_stdin_socks'] = defaultdict(weakref.WeakSet)
     app['zctx'] = zmq.asyncio.Context()
-
     app['conn_tracker_lock'] = asyncio.Lock()
     app['active_session_ids'] = defaultdict(int)  # multiset[int]
-    conn_tracker_gc_task = asyncio.create_task(stream_conn_tracker_gc(app))
+    app['conn_tracker_gc_task'] = asyncio.create_task(stream_conn_tracker_gc(app))
 
     event_dispatcher = app['event_dispatcher']
     event_dispatcher.subscribe('kernel_terminated', app, kernel_terminated)
 
     yield
 
+    # The shutdown handler below is called before this cleanup.
+    app['zctx'].term()
+
+
+async def stream_shutdown(app: web.Application) -> None:
     cancelled_tasks: List[asyncio.Task] = []
-    conn_tracker_gc_task.cancel()
-    cancelled_tasks.append(conn_tracker_gc_task)
+    app['conn_tracker_gc_task'].cancel()
+    cancelled_tasks.append(app['conn_tracker_gc_task'])
     for per_kernel_handlers in app['stream_pty_handlers'].values():
         for handler in list(per_kernel_handlers):
             if not handler.done():
@@ -616,12 +615,11 @@ async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
                 cancelled_tasks.append(handler)
     await asyncio.gather(*cancelled_tasks, return_exceptions=True)
 
-    app['zctx'].term()
-
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()
     app.cleanup_ctx.append(stream_app_ctx)
+    app.on_shutdown.append(stream_shutdown)
     app['prefix'] = 'stream'
     app['api_versions'] = (2, 3, 4)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
