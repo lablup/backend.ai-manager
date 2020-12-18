@@ -7,7 +7,8 @@ from typing import FrozenSet
 import sqlalchemy as sa
 import trafaret as t
 from typing import (
-    Any, Final,
+    Any,
+    Final,
     Iterable,
     Tuple,
 )
