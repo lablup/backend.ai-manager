@@ -56,10 +56,12 @@ from ai.backend.common.plugin.hook import (
 from ai.backend.common.service_ports import parse_service_ports
 from ai.backend.common.types import (
     AccessKey,
+    AgentId,
     BinarySize,
     ClusterInfo,
     ClusterMode,
     ClusterSSHKeyPair,
+    HardwareMetadata,
     KernelEnqueueingConfig,
     KernelId,
     ResourceSlot,
@@ -68,6 +70,7 @@ from ai.backend.common.types import (
     SessionTypes,
     SlotName,
     SlotTypes,
+    check_hardware_metadata,
 )
 
 from ai.backend.gateway.config import SharedConfig
@@ -222,7 +225,7 @@ class AgentRegistry:
     async def shutdown(self) -> None:
         await cleanup_agent_peers()
 
-    async def get_instance(self, inst_id, field=None):
+    async def get_instance(self, inst_id: AgentId, field=None):
         async with self.dbpool.acquire() as conn, conn.begin():
             query = (sa.select(['id', field] if field else None)
                        .select_from(agents)
@@ -247,6 +250,19 @@ class AgentRegistry:
                        .values(**updated_fields)
                        .where(agents.c.id == inst_id))
             await conn.execute(query)
+
+    async def gather_hwinfo(self, instance_id: AgentId) -> Mapping[str, HardwareMetadata]:
+        agent = await self.get_instance(instance_id, agents.c.addr)
+        async with RPCContext(agent['addr'], None) as rpc:
+            try:
+                result = await rpc.call.gather_hwinfo()
+                return {
+                    k: check_hardware_metadata(v)
+                    for k, v in result.items()
+                }
+            except Exception:
+                log.exception("Failed to fetch hardware metadata from {}", instance_id)
+                raise
 
     @aiotools.actxmgr
     async def handle_kernel_exception(
