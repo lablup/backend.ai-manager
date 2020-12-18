@@ -16,6 +16,18 @@ Changes
 
 .. towncrier release notes start
 
+20.09.0b3 (2020-12-18)
+----------------------
+
+### Fixes
+* Update aiotools to v1.1.1 to fix a potential memory leak in long-lived taskgroup instances ([#362](https://github.com/lablup/backend.ai-manager/issues/362))
+* Fix a hang-up issue when shutting down the gateway daemon with running service-port streaming sessions ([#365](https://github.com/lablup/backend.ai-manager/issues/365))
+
+### Miscellaneous
+* Update dependencies and adapt with the new pip resolver ([#359](https://github.com/lablup/backend.ai-manager/issues/359))
+* Migrate to GitHub Actions completely for all CI jobs including tests and PyPI deployment ([#364](https://github.com/lablup/backend.ai-manager/issues/364))
+
+
 20.09.0b2 (2020-12-07)
 ----------------------
 
