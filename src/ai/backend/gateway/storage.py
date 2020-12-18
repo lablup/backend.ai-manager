@@ -29,27 +29,27 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
 @superadmin_required
 @check_api_params(
     t.Dict({
-        tx.MultiKey('agent_ids'): t.String | t.List(t.String),
+        tx.MultiKey('volume_ids'): t.String | t.List(t.String),
     }))
-async def get_agent_hwinfo(request: web.Request, params: Any) -> web.Response:
+async def get_storage_hwinfo(request: web.Request, params: Any) -> web.Response:
     registry: AgentRegistry = request.app['registry']
     tasks = []
     results = []
-    for agent_id in params['agent_ids']:
-        tasks.append(await registry.gather_agent_hwinfo(agent_id))
+    for volume_id in params['volume_ids']:
+        tasks.append(await registry.gather_agent_hwinfo(volume_id))
     results = await asyncio.gather(*tasks, return_exceptions=True)
     reply = []
-    for agent_id, result in zip(params['agent_ids'], results):
+    for volume_id, result in zip(params['volume_ids'], results):
         if isinstance(result, Exception):
-            log.error("gathering hwinfo failed for agent {}",
-                      agent_id, exc_info=result)
+            log.error("gathering hwinfo failed for storage-proxy {}",
+                      volume_id, exc_info=result)
             reply.append({
-                'agent': agent_id,
+                'volume': volume_id,
                 'error': str(result),
             })
         else:
             reply.append({
-                'agent': agent_id,
+                'volume': volume_id,
                 'error': None,
                 **result,  # a mapping of compute plugin keys (e.g., "cpu", "cuda")
                            # to HardwareMetadata dicts
@@ -70,7 +70,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app['api_versions'] = (5,)
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     status_resource = cors.add(app.router.add_resource('/hwinfo'))
-    cors.add(status_resource.add_route('GET', get_agent_hwinfo))
+    cors.add(status_resource.add_route('GET', get_storage_hwinfo))
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     return app, []

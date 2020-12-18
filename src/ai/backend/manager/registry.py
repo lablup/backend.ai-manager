@@ -251,7 +251,7 @@ class AgentRegistry:
                        .where(agents.c.id == inst_id))
             await conn.execute(query)
 
-    async def gather_hwinfo(self, instance_id: AgentId) -> Mapping[str, HardwareMetadata]:
+    async def gather_agent_hwinfo(self, instance_id: AgentId) -> Mapping[str, HardwareMetadata]:
         agent = await self.get_instance(instance_id, agents.c.addr)
         async with RPCContext(agent['addr'], None) as rpc:
             try:
@@ -263,6 +263,9 @@ class AgentRegistry:
             except Exception:
                 log.exception("Failed to fetch hardware metadata from {}", instance_id)
                 raise
+
+    async def gather_storage_hwinfo(self, proxy_name: str) -> Mapping[str, HardwareMetadata]:
+        raise NotImplementedError
 
     @aiotools.actxmgr
     async def handle_kernel_exception(
