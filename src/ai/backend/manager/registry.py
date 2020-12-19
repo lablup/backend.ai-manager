@@ -1375,6 +1375,7 @@ class AgentRegistry:
                         kernels.c.cluster_role,
                         kernels.c.agent,
                         kernels.c.agent_addr,
+                        kernels.c.container_id,
                     ])
                     .select_from(kernels)
                     .where(kernels.c.session_id == session['id'])
@@ -1422,6 +1423,8 @@ class AgentRegistry:
                             )
                         log.warning('force-terminating kernel (k:{}, status:{})',
                                     kernel['id'], kernel['status'])
+                        if kernel['container_id'] is not None:
+                            destroyed_kernels.append(kernel)
                         async with self.dbpool.acquire() as conn, conn.begin():
                             if kernel['cluster_role'] == DEFAULT_ROLE:
                                 # The main session is terminated;
