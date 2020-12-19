@@ -16,6 +16,13 @@ Changes
 
 .. towncrier release notes start
 
+20.09.0b4 (2020-12-19)
+----------------------
+
+### Fixes
+* Fix a regression in image list graph queries due to a missing renaming of local_config ([#367](https://github.com/lablup/backend.ai-manager/issues/367))
+
+
 20.09.0b3 (2020-12-18)
 ----------------------
 

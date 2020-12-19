@@ -1,1 +1,0 @@
-Fix a regression in image list graph queries due to a missing renaming of local_config
