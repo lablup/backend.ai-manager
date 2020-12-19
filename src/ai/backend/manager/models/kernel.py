@@ -460,7 +460,7 @@ class ComputeContainer(graphene.ObjectType):
         if is_superadmin:
             hide_agents = False
         else:
-            hide_agents = context['config']['manager']['hide-agents']
+            hide_agents = context['local_config']['manager']['hide-agents']
         return {
             # identity
             'id': row['id'],
@@ -1096,7 +1096,7 @@ class LegacyComputeSession(graphene.ObjectType):
         if is_superadmin:
             hide_agents = False
         else:
-            hide_agents = context['config']['manager']['hide-agents']
+            hide_agents = context['local_config']['manager']['hide-agents']
         return {
             'id': row['id'],
             'sess_id': row['session_name'],         # legacy, will be deprecated
