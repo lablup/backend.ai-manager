@@ -1521,6 +1521,8 @@ class AgentRegistry:
                 'POST_DESTROY_SESSION',
                 (session['session_id'], session['session_name'], session['access_key']),
             )
+            if forced:
+                await self.recalc_resource_usage()
             return main_stat
 
     async def clean_session(
