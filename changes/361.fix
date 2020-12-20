@@ -1,1 +1,1 @@
-Fixed a bug that prevents purge users and/or groups due to access to vfroot filesystem from manager directly, instead of delegating the tasks to storage-proxy.
+Fix a bug that prevents purge users and/or groups due to access to vfroot filesystem from manager directly, instead of delegating the tasks to storage-proxy.
