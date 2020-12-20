@@ -174,14 +174,17 @@ class StorageVolume(graphene.ObjectType):
             proxy_info = storage_manager._proxies[proxy_name]
         except KeyError:
             raise ValueError(f"no such storage proxy: {proxy_name!r}")
-        async with proxy_info.session.request(
-            'GET', proxy_info.manager_api_url / 'volume/performance-metric',
-            json={'volume': volume_name},
-            raise_for_status=True,
-            headers={AUTH_TOKEN_HDR: proxy_info.secret},
-        ) as resp:
-            reply = await resp.json()
-            return reply['metric']
+        try:
+            async with proxy_info.session.request(
+                'GET', proxy_info.manager_api_url / 'volume/performance-metric',
+                json={'volume': volume_name},
+                raise_for_status=True,
+                headers={AUTH_TOKEN_HDR: proxy_info.secret},
+            ) as resp:
+                reply = await resp.json()
+                return reply['metric']
+        except aiohttp.ClientResponseError:
+            return {}
 
     @classmethod
     def from_info(cls, proxy_name: str, volume_info: VolumeInfo) -> StorageVolume:
