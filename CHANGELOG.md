@@ -16,9 +16,15 @@ Changes
 
 .. towncrier release notes start
 
-20.03.13 (2020-12-18)
+20.03.14 (2020-12-20)
 ---------------------
 
+### Fixes
+* Fix a race condition that sometimes corrupts the kernel status to be stuck at PREPARING even when kernels are successfully created ([#369](https://github.com/lablup/backend.ai-manager/issues/369))
+
+
+20.03.13 (2020-12-18)
+---------------------
 
 ### Fixes
 * Fix a hang-up issue when shutting down the gateway daemon with running service-port streaming sessions ([#365](https://github.com/lablup/backend.ai-manager/issues/365))
