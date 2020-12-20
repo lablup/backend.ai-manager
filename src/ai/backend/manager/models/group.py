@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from pathlib import Path
 import re
 from typing import (
     Any, Optional, Union,
@@ -13,8 +12,8 @@ from typing import (
     TypedDict,
 )
 import uuid
-import shutil
 
+import aiohttp
 from aiopg.sa.connection import SAConnection
 from aiopg.sa.result import RowProxy
 import graphene
@@ -25,7 +24,6 @@ from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
-from ai.backend.common.utils import current_loop
 from .base import (
     metadata, GUID, IDColumn, ResourceSlotColumn,
     privileged_mutation,
@@ -34,6 +32,8 @@ from .base import (
     simple_db_mutate_returning_item,
     batch_result,
 )
+from ai.backend.gateway.exceptions import VFolderOperationFailed
+from .storage import StorageSessionManager
 from .user import UserRole
 from ..defs import RESERVED_DOTFILES
 from ai.backend.common import msgpack
@@ -385,7 +385,7 @@ class PurgeGroup(graphene.Mutation):
                                    'Terminate those kernels first')
             if await cls.group_has_active_kernels(conn, gid):
                 raise RuntimeError('Group has some active kernels. Terminate them first.')
-            await cls.delete_vfolders(conn, gid, info.context['shared_config'])
+            await cls.delete_vfolders(conn, gid, info.context['storage_manager'])
             await cls.delete_kernels(conn, gid)
         query = groups.delete().where(groups.c.id == gid)
         return simple_db_mutate(cls, info.context, query)
@@ -395,7 +395,7 @@ class PurgeGroup(graphene.Mutation):
         cls,
         conn: SAConnection,
         group_id: uuid.UUID,
-        config_server,
+        storage_manager: StorageSessionManager,
     ) -> int:
         """
         Delete group's all virtual folders as well as their physical data.
@@ -406,30 +406,29 @@ class PurgeGroup(graphene.Mutation):
         :return: number of deleted rows
         """
         from . import vfolders
-        mount_prefix = Path(await config_server.get('volumes/_mount'))
-        fs_prefix = await config_server.get('volumes/_fsprefix')
-        fs_prefix = Path(fs_prefix.lstrip('/'))
         query = (
-            sa.select([vfolders.c.id, vfolders.c.host, vfolders.c.unmanaged_path])
+            sa.select([vfolders.c.id, vfolders.c.host])
             .select_from(vfolders)
             .where(vfolders.c.group == group_id)
         )
-        async for row in conn.execute(query):
-            if row['unmanaged_path']:
-                folder_path = Path(row['unmanaged_path'])
-            else:
-                folder_path = (mount_prefix / row['host'] / fs_prefix / row['id'].hex)
-            log.info('deleting physical files: {0}', folder_path)
-            try:
-                loop = current_loop()
-                await loop.run_in_executor(None, lambda: shutil.rmtree(folder_path))  # type: ignore
-            except IOError:
-                pass
-        query = (
-            vfolders.delete()
-            .where(vfolders.c.group == group_id)
-        )
         result = await conn.execute(query)
+        target_vfs = await result.fetchall()
+        query = (vfolders.delete().where(vfolders.c.group == group_id))
+        result = await conn.execute(query)
+        for row in target_vfs:
+            try:
+                async with storage_manager.request(
+                    row['host'], 'POST', 'folder/delete',
+                    json={
+                        'volume': storage_manager.split_host(row['host'])[1],
+                        'vfid': str(row['id']),
+                    },
+                    raise_for_status=True,
+                ):
+                    pass
+            except aiohttp.ClientResponseError:
+                log.error('error on deleting vfolder filesystem directory: {0}', row['id'])
+                raise VFolderOperationFailed
         if result.rowcount > 0:
             log.info('deleted {0} group\'s virtual folders ({1})', result.rowcount, group_id)
         return result.rowcount

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import enum
 import logging
-from pathlib import Path
 from typing import (
     Any,
     Iterable,
@@ -12,8 +11,8 @@ from typing import (
     Sequence,
 )
 import uuid
-import shutil
 
+import aiohttp
 from aiopg.sa.connection import SAConnection
 from aiopg.sa.result import RowProxy
 import graphene
@@ -24,7 +23,6 @@ import sqlalchemy as sa
 from sqlalchemy.types import TypeDecorator, VARCHAR
 
 from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.utils import current_loop
 from .base import (
     EnumValueType,
     IDColumn,
@@ -35,6 +33,8 @@ from .base import (
     batch_result,
     batch_multiresult,
 )
+from ai.backend.gateway.exceptions import VFolderOperationFailed
+from .storage import StorageSessionManager
 
 log = BraceStyleAdapter(logging.getLogger(__file__))
 
@@ -728,7 +728,7 @@ class PurgeUser(graphene.Mutation):
                         target_user_uuid=info.context['user']['uuid'],
                         target_user_email=info.context['user']['email'],
                     )
-                await cls.delete_vfolders(conn, user_uuid, info.context['shared_config'])
+                await cls.delete_vfolders(conn, user_uuid, info.context['storage_manager'])
                 await cls.delete_kernels(conn, user_uuid)
                 await cls.delete_keypairs(conn, user_uuid)
 
@@ -838,7 +838,7 @@ class PurgeUser(graphene.Mutation):
         cls,
         conn: SAConnection,
         user_uuid: uuid.UUID,
-        config_server,
+        storage_manager: StorageSessionManager,
     ) -> int:
         """
         Delete user's all virtual folders as well as their physical data.
@@ -848,31 +848,35 @@ class PurgeUser(graphene.Mutation):
 
         :return: number of deleted rows
         """
-        from . import vfolders
-        mount_prefix = Path(await config_server.get('volumes/_mount'))
-        fs_prefix = await config_server.get('volumes/_fsprefix')
-        fs_prefix = Path(fs_prefix.lstrip('/'))
+        from . import vfolders, vfolder_permissions
         query = (
-            sa.select([vfolders.c.id, vfolders.c.host, vfolders.c.unmanaged_path])
+            vfolder_permissions.delete()
+            .where(vfolder_permissions.c.user == user_uuid)
+        )
+        await conn.execute(query)
+        query = (
+            sa.select([vfolders.c.id, vfolders.c.host])
             .select_from(vfolders)
             .where(vfolders.c.user == user_uuid)
         )
-        async for row in conn.execute(query):
-            if row['unmanaged_path']:
-                folder_path = Path(row['unmanaged_path'])
-            else:
-                folder_path = (mount_prefix / row['host'] / fs_prefix / row['id'].hex)
-            log.info('deleting physical files: {0}', folder_path)
-            try:
-                loop = current_loop()
-                await loop.run_in_executor(None, lambda: shutil.rmtree(folder_path))  # type: ignore
-            except IOError:
-                pass
-        query = (
-            vfolders.delete()
-            .where(vfolders.c.user == user_uuid)
-        )
         result = await conn.execute(query)
+        target_vfs = await result.fetchall()
+        query = (vfolders.delete().where(vfolders.c.user == user_uuid))
+        result = await conn.execute(query)
+        for row in target_vfs:
+            try:
+                async with storage_manager.request(
+                    row['host'], 'POST', 'folder/delete',
+                    json={
+                        'volume': storage_manager.split_host(row['host'])[1],
+                        'vfid': str(row['id']),
+                    },
+                    raise_for_status=True,
+                ):
+                    pass
+            except aiohttp.ClientResponseError:
+                log.error('error on deleting vfolder filesystem directory: {0}', row['id'])
+                raise VFolderOperationFailed
         if result.rowcount > 0:
             log.info('deleted {0} user\'s virtual folders ({1})', result.rowcount, user_uuid)
         return result.rowcount
