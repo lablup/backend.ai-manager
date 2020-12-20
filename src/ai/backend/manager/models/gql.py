@@ -47,6 +47,9 @@ from .scaling_group import (
     DisassociateAllScalingGroupsWithGroup,
     AssociateScalingGroupWithKeyPair,   DisassociateScalingGroupWithKeyPair,
 )
+from .storage import (
+    StorageVolume, StorageVolumeList,
+)
 from .user import (
     User, UserList,
     CreateUser, ModifyUser, DeleteUser, PurgeUser,
@@ -278,6 +281,19 @@ class Queries(graphene.ObjectType):
         ScalingGroup,
         access_key=graphene.String(required=True),
         is_active=graphene.Boolean())
+
+    # super-admin only
+    storage_volume = graphene.Field(
+        StorageVolume,
+        id=graphene.String(),
+    )
+
+    # super-admin only
+    storage_volume_list = graphene.Field(
+        StorageVolumeList,
+        limit=graphene.Int(required=True),
+        offset=graphene.Int(required=True),
+    )
 
     vfolder_list = graphene.Field(  # legacy non-paginated list
         VirtualFolderList,
@@ -680,6 +696,18 @@ class Queries(graphene.ObjectType):
     async def resolve_scaling_groups_for_keypair(executor, info, access_key, is_active=None):
         return await ScalingGroup.load_by_keypair(
             info.context, access_key, is_active=is_active)
+
+    @staticmethod
+    @privileged_query(UserRole.SUPERADMIN)
+    async def resolve_storage_volume(executor, info, id: str):
+        return await StorageVolume.load_by_id(info.context, id)
+
+    @staticmethod
+    @privileged_query(UserRole.SUPERADMIN)
+    async def resolve_storage_volume_list(executor, info, limit, offset):
+        total_count = await StorageVolume.load_count(info.context)
+        items = await StorageVolume.load_slice(info.context, limit, offset)
+        return StorageVolumeList(items, total_count)
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='user_id')

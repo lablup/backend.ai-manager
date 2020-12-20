@@ -227,7 +227,10 @@ class AgentRegistry:
 
     async def get_instance(self, inst_id: AgentId, field=None):
         async with self.dbpool.acquire() as conn, conn.begin():
-            query = (sa.select(['id', field] if field else None)
+            cols = [agents.c.id]
+            if field is not None:
+                cols.append(field)
+            query = (sa.select(cols)
                        .select_from(agents)
                        .where(agents.c.id == inst_id))
             result = await conn.execute(query)

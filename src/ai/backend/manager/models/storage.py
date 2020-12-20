@@ -1,21 +1,41 @@
+from __future__ import annotations
+
 import asyncio
 from contextlib import asynccontextmanager as actxmgr
+from contextvars import ContextVar
 import itertools
 from typing import (
     Any,
     AsyncIterator,
     Final,
     Iterable,
+    List,
     Mapping,
+    Sequence,
     Tuple,
+    TypedDict,
+    TYPE_CHECKING,
 )
 from uuid import UUID
 
 import aiohttp
 import attr
+import graphene
 import yarl
 
+from .base import (
+    Item, PaginatedList,
+)
 from ..exceptions import InvalidArgument
+if TYPE_CHECKING:
+    from ..registry import AgentRegistry
+
+__all__ = (
+    'StorageProxyInfo',
+    'VolumeInfo',
+    'StorageSessionManager',
+    'StorageVolume',
+)
 
 
 @attr.s(auto_attribs=True, slots=True, frozen=True)
@@ -27,6 +47,16 @@ class StorageProxyInfo:
 
 
 AUTH_TOKEN_HDR: Final = 'X-BackendAI-Storage-Auth-Token'
+
+_ctx_volumes_cache: ContextVar[List[Tuple[str, VolumeInfo]]] = ContextVar('_ctx_volumes')
+
+
+class VolumeInfo(TypedDict):
+    name: str
+    backend: str
+    path: str
+    fsprefix: str
+    capabilities: List[str]
 
 
 class StorageSessionManager:
@@ -57,13 +87,18 @@ class StorageSessionManager:
         proxy_name, _, volume_name = vfolder_host.partition(':')
         return proxy_name, volume_name
 
-    async def get_all_volumes(self) -> Iterable[Tuple[str, Mapping[str, Any]]]:
+    async def get_all_volumes(self) -> Iterable[Tuple[str, VolumeInfo]]:
+        try:
+            # per-asyncio-task cache
+            return _ctx_volumes_cache.get()
+        except LookupError:
+            pass
         fetch_aws = []
 
         async def _fetch(
             proxy_name: str,
             proxy_info: StorageProxyInfo,
-        ) -> Iterable[Tuple[str, Mapping[str, Any]]]:
+        ) -> Iterable[Tuple[str, VolumeInfo]]:
             async with proxy_info.session.request(
                 'GET', proxy_info.manager_api_url / 'volumes',
                 raise_for_status=True,
@@ -75,7 +110,8 @@ class StorageSessionManager:
         for proxy_name, proxy_info in self._proxies.items():
             fetch_aws.append(_fetch(proxy_name, proxy_info))
         results = await asyncio.gather(*fetch_aws)
-        return itertools.chain(*results)
+        _ctx_volumes_cache.set(results)
+        return results
 
     async def get_mount_path(self, vfolder_host: str, vfolder_id: UUID) -> str:
         async with self.request(
@@ -112,3 +148,83 @@ class StorageSessionManager:
             **kwargs,
         ) as client_resp:
             yield proxy_info.client_api_url, client_resp
+
+
+class StorageVolume(graphene.ObjectType):
+
+    class Meta:
+        interfaces = (Item, )
+
+    # id: {proxy_name}:{name}
+    name = graphene.String()
+    backend = graphene.String()
+    fsprefix = graphene.String()
+    path = graphene.String()
+    capabilities = graphene.List(graphene.String)
+    hardware_metadata = graphene.JSONString()
+
+    async def resolve_hardware_metadata(self, info):
+        registry: AgentRegistry = info.context['registry']
+        return await registry.gather_storage_hwinfo(self.id)
+
+    @classmethod
+    def from_info(cls, proxy_name: str, volume_info: VolumeInfo) -> StorageVolume:
+        return cls(
+            id=f"{proxy_name}:{volume_info['name']}",
+            name=volume_info['name'],
+            backend=volume_info['backend'],
+            path=volume_info['path'],
+            fsprefix=volume_info['fsprefix'],
+            capabilities=volume_info['capabilities'],
+        )
+
+    @classmethod
+    async def load_count(
+        cls,
+        context,
+    ) -> int:
+        storage_manager: StorageSessionManager = context['storage_manager']
+        volumes = [*await storage_manager.get_all_volumes()]
+        return len(volumes)
+
+    @classmethod
+    async def load_slice(
+        cls, context, limit: int, offset: int,
+    ) -> Sequence[StorageVolume]:
+        storage_manager: StorageSessionManager = context['storage_manager']
+        volumes = [*await storage_manager.get_all_volumes()]
+        return [
+            cls.from_info(proxy_name, volume_info)
+            for proxy_name, volume_info in volumes[offset:offset + limit]
+        ]
+
+    @classmethod
+    async def load_by_id(
+        cls, context, id: str,
+    ) -> StorageVolume:
+        storage_manager: StorageSessionManager = context['storage_manager']
+        proxy_name, volume_name = storage_manager.split_host(id)
+        try:
+            proxy_info = storage_manager._proxies[proxy_name]
+        except KeyError:
+            raise ValueError(f"no such storage proxy: {proxy_name!r}")
+        async with proxy_info.session.request(
+            'GET', proxy_info.manager_api_url / 'volumes',
+            raise_for_status=True,
+            headers={AUTH_TOKEN_HDR: proxy_info.secret},
+        ) as resp:
+            reply = await resp.json()
+            for volume_data in reply['volumes']:
+                if volume_data['name'] == volume_name:
+                    return volume_data
+            else:
+                raise ValueError(
+                    f"no such volume in the storage proxy {proxy_name!r}: {volume_name!r}"
+                )
+
+
+class StorageVolumeList(graphene.ObjectType):
+    class Meta:
+        interfaces = (PaginatedList, )
+
+    items = graphene.List(StorageVolume, required=True)
