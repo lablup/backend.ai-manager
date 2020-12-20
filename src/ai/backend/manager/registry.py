@@ -70,7 +70,7 @@ from ai.backend.common.types import (
     SessionTypes,
     SlotName,
     SlotTypes,
-    check_hardware_metadata,
+    check_typed_dict,
 )
 
 from ai.backend.gateway.config import SharedConfig
@@ -254,18 +254,20 @@ class AgentRegistry:
     async def gather_agent_hwinfo(self, instance_id: AgentId) -> Mapping[str, HardwareMetadata]:
         agent = await self.get_instance(instance_id, agents.c.addr)
         async with RPCContext(agent['addr'], None) as rpc:
-            try:
-                result = await rpc.call.gather_hwinfo()
-                return {
-                    k: check_hardware_metadata(v)
-                    for k, v in result.items()
-                }
-            except Exception:
-                log.exception("Failed to fetch hardware metadata from {}", instance_id)
-                raise
+            result = await rpc.call.gather_hwinfo()
+            return {
+                k: check_typed_dict(v, HardwareMetadata)
+                for k, v in result.items()
+            }
 
-    async def gather_storage_hwinfo(self, proxy_name: str) -> Mapping[str, HardwareMetadata]:
-        raise NotImplementedError
+    async def gather_storage_hwinfo(self, vfolder_host: str) -> HardwareMetadata:
+        proxy_name, volume_name = self.storage_manager.split_host(vfolder_host)
+        async with self.storage_manager.request(
+            proxy_name, 'GET', 'volumes/hwinfo',
+            query={'volume': volume_name},
+            raise_for_status=True,
+        ) as (_, storage_resp):
+            return check_typed_dict(await storage_resp.json(), HardwareMetadata)
 
     @aiotools.actxmgr
     async def handle_kernel_exception(
