@@ -256,7 +256,7 @@ class AgentRegistry:
         async with RPCContext(agent['addr'], None) as rpc:
             result = await rpc.call.gather_hwinfo()
             return {
-                k: check_typed_dict(v, HardwareMetadata)
+                k: check_typed_dict(v, HardwareMetadata)  # type: ignore  # (python/mypy#9827)
                 for k, v in result.items()
             }
 
@@ -267,7 +267,9 @@ class AgentRegistry:
             query={'volume': volume_name},
             raise_for_status=True,
         ) as (_, storage_resp):
-            return check_typed_dict(await storage_resp.json(), HardwareMetadata)
+            return check_typed_dict(
+                await storage_resp.json(), HardwareMetadata,  # type: ignore  # (python/mypy#9827)
+            )
 
     @aiotools.actxmgr
     async def handle_kernel_exception(
