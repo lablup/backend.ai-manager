@@ -1,1 +1,0 @@
-Fix a race condition that sometimes corrupts the kernel status to be stuck at PREPARING even when kernels are successfully created
