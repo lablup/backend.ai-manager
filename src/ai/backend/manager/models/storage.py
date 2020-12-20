@@ -109,7 +109,7 @@ class StorageSessionManager:
 
         for proxy_name, proxy_info in self._proxies.items():
             fetch_aws.append(_fetch(proxy_name, proxy_info))
-        results = await asyncio.gather(*fetch_aws)
+        results = [*itertools.chain(*await asyncio.gather(*fetch_aws))]
         _ctx_volumes_cache.set(results)
         return results
 
@@ -156,22 +156,37 @@ class StorageVolume(graphene.ObjectType):
         interfaces = (Item, )
 
     # id: {proxy_name}:{name}
-    name = graphene.String()
     backend = graphene.String()
     fsprefix = graphene.String()
     path = graphene.String()
     capabilities = graphene.List(graphene.String)
     hardware_metadata = graphene.JSONString()
+    performance_metric = graphene.JSONString()
 
-    async def resolve_hardware_metadata(self, info):
+    async def resolve_hardware_metadata(self, info: graphene.ResolveInfo):
         registry: AgentRegistry = info.context['registry']
         return await registry.gather_storage_hwinfo(self.id)
+
+    async def resolve_performance_metric(self, info: graphene.ResolveInfo):
+        storage_manager: StorageSessionManager = info.context['storage_manager']
+        proxy_name, volume_name = storage_manager.split_host(self.id)
+        try:
+            proxy_info = storage_manager._proxies[proxy_name]
+        except KeyError:
+            raise ValueError(f"no such storage proxy: {proxy_name!r}")
+        async with proxy_info.session.request(
+            'GET', proxy_info.manager_api_url / 'volume/performance-metric',
+            json={'volume': volume_name},
+            raise_for_status=True,
+            headers={AUTH_TOKEN_HDR: proxy_info.secret},
+        ) as resp:
+            reply = await resp.json()
+            return reply['metric']
 
     @classmethod
     def from_info(cls, proxy_name: str, volume_info: VolumeInfo) -> StorageVolume:
         return cls(
             id=f"{proxy_name}:{volume_info['name']}",
-            name=volume_info['name'],
             backend=volume_info['backend'],
             path=volume_info['path'],
             fsprefix=volume_info['fsprefix'],
@@ -216,7 +231,7 @@ class StorageVolume(graphene.ObjectType):
             reply = await resp.json()
             for volume_data in reply['volumes']:
                 if volume_data['name'] == volume_name:
-                    return volume_data
+                    return cls.from_info(proxy_name, volume_data)
             else:
                 raise ValueError(
                     f"no such volume in the storage proxy {proxy_name!r}: {volume_name!r}"
