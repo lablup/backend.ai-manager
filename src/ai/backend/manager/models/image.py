@@ -47,7 +47,7 @@ class Image(graphene.ObjectType):
     @classmethod
     def _convert_from_dict(cls, context, data):
         is_superadmin = (context['user']['role'] == UserRole.SUPERADMIN)
-        hide_agents = False if is_superadmin else context['config']['manager']['hide-agents']
+        hide_agents = False if is_superadmin else context['local_config']['manager']['hide-agents']
         return cls(
             name=data['name'],
             humanized_name=data['humanized_name'],

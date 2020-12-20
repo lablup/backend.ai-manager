@@ -16,6 +16,36 @@ Changes
 
 .. towncrier release notes start
 
+20.09.0b5 (2020-12-20)
+----------------------
+
+### Features
+* Support destroying PREPARING/TERMINATING/ERROR sessions when forced parameter is delivered as True. ([#363](https://github.com/lablup/backend.ai-manager/issues/363))
+
+### Fixes
+* Fix a bug that prevents purge users and/or groups due to access to vfroot filesystem from manager directly, instead of delegating the tasks to storage-proxy. ([#361](https://github.com/lablup/backend.ai-manager/issues/361))
+* Fix a race condition that sometimes corrupts the kernel status to be stuck at PREPARING even when kernels are successfully created ([#368](https://github.com/lablup/backend.ai-manager/issues/368))
+
+
+20.09.0b4 (2020-12-19)
+----------------------
+
+### Fixes
+* Fix a regression in image list graph queries due to a missing renaming of local_config ([#367](https://github.com/lablup/backend.ai-manager/issues/367))
+
+
+20.09.0b3 (2020-12-18)
+----------------------
+
+### Fixes
+* Update aiotools to v1.1.1 to fix a potential memory leak in long-lived taskgroup instances ([#362](https://github.com/lablup/backend.ai-manager/issues/362))
+* Fix a hang-up issue when shutting down the gateway daemon with running service-port streaming sessions ([#365](https://github.com/lablup/backend.ai-manager/issues/365))
+
+### Miscellaneous
+* Update dependencies and adapt with the new pip resolver ([#359](https://github.com/lablup/backend.ai-manager/issues/359))
+* Migrate to GitHub Actions completely for all CI jobs including tests and PyPI deployment ([#364](https://github.com/lablup/backend.ai-manager/issues/364))
+
+
 20.09.0b2 (2020-12-07)
 ----------------------
 

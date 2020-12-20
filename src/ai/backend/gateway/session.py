@@ -1000,7 +1000,7 @@ async def handle_kernel_lifecycle(
     published by the agents and the manager.
     """
     kernel_id = uuid.UUID(raw_kernel_id)
-    registry = app['registry']
+    registry: AgentRegistry = app['registry']
     if event_name == 'kernel_preparing':
         await registry.set_kernel_status(kernel_id, KernelStatus.PREPARING, reason)
     elif event_name == 'kernel_pulling':
