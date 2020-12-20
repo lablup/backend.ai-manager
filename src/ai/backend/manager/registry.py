@@ -47,6 +47,7 @@ from ai.backend.common.plugin.hook import (
 )
 from ai.backend.common.types import (
     AccessKey,
+    AgentId,
     BinarySize,
     KernelCreationConfig,
     KernelId,
@@ -759,48 +760,76 @@ class AgentRegistry:
         if hook_result.status != PASSED:
             raise RejectedByHook(hook_result.src_plugin, hook_result.reason)
 
-        # Create the kernel by invoking the agent
-        async with self.handle_kernel_exception(
-            'create_session', sess_ctx.kernel_id, sess_ctx.access_key,
-        ):
-            created_info = None
-            async with RPCContext(
-                agent_ctx.agent_addr, None, order_key=sess_ctx.session_name,
-            ) as rpc:
-                config: KernelCreationConfig = {
-                    'image': {
-                        'registry': {
-                            'name': sess_ctx.image_ref.registry,
-                            'url': str(registry_url),
-                            **registry_creds,   # type: ignore
-                        },
-                        'digest': image_info['digest'],
-                        'repo_digest': None,
-                        'canonical': sess_ctx.image_ref.canonical,
-                        'labels': image_info['labels'],
-                    },
-                    'session_type': sess_ctx.session_type.value,
-                    'resource_slots': sess_ctx.requested_slots.to_json(),
-                    'idle_timeout': resource_policy['idle_timeout'],
-                    'mounts': sess_ctx.mounts,
-                    'mount_map': sess_ctx.mount_map,
-                    'environ': sess_ctx.environ,
-                    'resource_opts': sess_ctx.resource_opts,
-                    'bootstrap_script': sess_ctx.bootstrap_script,
-                    'startup_command': sess_ctx.startup_command,
-                    'internal_data': sess_ctx.internal_data,
-                    'auto_pull': auto_pull,
-                    'preopen_ports': sess_ctx.preopen_ports,
-                }
-                created_info = await rpc.call.create_kernel(str(sess_ctx.kernel_id),
-                                                            config)
-            if created_info is None:
-                raise KernelCreationFailed('ooops')
+        async def interrupt_wait(
+            ctx: Any,
+            event_name: str,
+            agent_id: AgentId,
+            started_kernel_id: str,
+            *args,
+            start_event: asyncio.Event,
+            waiting_kernel_id: KernelId,
+            **kwargs,
+        ) -> None:
+            if KernelId(uuid.UUID(started_kernel_id)) == waiting_kernel_id:
+                start_event.set()
 
-        log.debug('start_session(s:{}, ak:{}, k:{}) -> created on ag:{}\n{!r}',
-                  sess_ctx.session_name, sess_ctx.access_key, sess_ctx.kernel_id,
-                  agent_ctx.agent_id, created_info)
-        assert str(sess_ctx.kernel_id) == created_info['id']
+        start_event = asyncio.Event()
+        start_handler = self.event_dispatcher.subscribe(
+            'kernel_started', None,
+            aiotools.apartial(
+                interrupt_wait,
+                start_event=start_event,
+                waiting_kernel_id=sess_ctx.kernel_id,
+            )
+        )
+        try:
+            # Create the kernel by invoking the agent
+            async with self.handle_kernel_exception(
+                'create_session', sess_ctx.kernel_id, sess_ctx.access_key,
+            ):
+                created_info = None
+                async with RPCContext(
+                    agent_ctx.agent_addr, None, order_key=sess_ctx.session_name,
+                ) as rpc:
+                    config: KernelCreationConfig = {
+                        'image': {
+                            'registry': {
+                                'name': sess_ctx.image_ref.registry,
+                                'url': str(registry_url),
+                                **registry_creds,   # type: ignore
+                            },
+                            'digest': image_info['digest'],
+                            'repo_digest': None,
+                            'canonical': sess_ctx.image_ref.canonical,
+                            'labels': image_info['labels'],
+                        },
+                        'session_type': sess_ctx.session_type.value,
+                        'resource_slots': sess_ctx.requested_slots.to_json(),
+                        'idle_timeout': resource_policy['idle_timeout'],
+                        'mounts': sess_ctx.mounts,
+                        'mount_map': sess_ctx.mount_map,
+                        'environ': sess_ctx.environ,
+                        'resource_opts': sess_ctx.resource_opts,
+                        'bootstrap_script': sess_ctx.bootstrap_script,
+                        'startup_command': sess_ctx.startup_command,
+                        'internal_data': sess_ctx.internal_data,
+                        'auto_pull': auto_pull,
+                        'preopen_ports': sess_ctx.preopen_ports,
+                    }
+                    created_info = await rpc.call.create_kernel(str(sess_ctx.kernel_id),
+                                                                config)
+                if created_info is None:
+                    raise KernelCreationFailed('ooops')
+
+            log.debug('start_session(s:{}, ak:{}, k:{}) -> created on ag:{}\n{!r}',
+                      sess_ctx.session_name, sess_ctx.access_key, sess_ctx.kernel_id,
+                      agent_ctx.agent_id, created_info)
+            assert str(sess_ctx.kernel_id) == created_info['id']
+
+            # Wait until the kernel_started event.
+            await start_event.wait()
+        finally:
+            self.event_dispatcher.unsubscribe('kernel_started', start_handler)
 
         await self.hook_plugin_ctx.notify(
             'POST_START_SESSION',
