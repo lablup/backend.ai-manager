@@ -1377,66 +1377,18 @@ class AgentRegistry:
         forced: bool = False,
         reason: str = 'user-requested',
     ) -> Mapping[str, Any]:
+        """
+        Destroy session kernels. Do not destroy
+        PREPARING/TERMINATING/ERROR and PULLING sessions.
+
+        :param forced: If True, destroy PREPARING/TERMINATING/ERROR session.
+                       However, PULLING session still cannot be destroyed.
+        :param reason: Reason to destroy a session if client wants to specify it manually.
+        """
         async with self.dbpool.acquire() as conn:
             session = await session_getter(db_connection=conn)
-            if forced:
-                # This is for emergency (e.g., when agents are not responding).
-                # Regardless of the container's real status, it marks the session terminated
-                # and recalculate the resource usage.
-                query = (
-                    sa.select([
-                        kernels.c.id,
-                        kernels.c.session_id,
-                        kernels.c.status,
-                        kernels.c.access_key,
-                        kernels.c.cluster_role,
-                        kernels.c.agent,
-                        kernels.c.agent_addr,
-                    ])
-                    .select_from(kernels)
-                    .where(kernels.c.session_id == session['id'])
-                )
-                result = await conn.execute(query)
-                kernel_list = await result.fetchall()
-                for kernel in kernel_list:
-                    if kernel['status'] == KernelStatus.PENDING:
-                        await conn.execute(
-                            sa.update(kernels)
-                            .values({
-                                'status': KernelStatus.CANCELLED,
-                                'status_info': 'force-terminated',
-                            })
-                            .where(kernels.c.id == kernel['id'])
-                        )
-                        await self.event_dispatcher.produce_event(
-                            'session_cancelled',
-                            (str(session['session_id']), 'force-terminated'),
-                        )
-                        return {'status': 'cancelled'}
-                    elif kernel['status'] in (KernelStatus.PREPARING, KernelStatus.PULLING):
-                        raise GenericForbidden('Cannot destory kernels in preparing/pulling status')
-                    if kernel['status'] not in (KernelStatus.ERROR, KernelStatus.TERMINATING):
-                        # This is allowed, but if agents are working normally,
-                        # the session will become invisible and unaccessible but STILL occupy the actual
-                        # resources until the super-admin manually kills & deletes the container.
-                        log.warning('force-terminating kernel in normal status! (k:{}, status:{})',
-                                    kernel['id'], kernel['status'])
-                    await conn.execute(
-                        sa.update(kernels)
-                        .values({
-                            'status': KernelStatus.TERMINATED,
-                            'status_info': 'force-terminated',
-                        })
-                        .where(kernels.c.id == kernel['id'])
-                    )
-                    await self.event_dispatcher.produce_event(
-                        'kernel_terminated',
-                        (str(session['id']), 'terminated'),
-                    )
-                # We intentionally skip the agent RPC call!
-                await self.recalc_resource_usage()
-                return {'status': 'terminated'}
-
+        if forced:
+            reason = 'force-terminated'
         hook_result = await self.hook_plugin_ctx.dispatch(
             'PRE_DESTROY_SESSION',
             (session['session_id'], session['session_name'], session['access_key']),
@@ -1458,6 +1410,7 @@ class AgentRegistry:
                         kernels.c.cluster_role,
                         kernels.c.agent,
                         kernels.c.agent_addr,
+                        kernels.c.container_id,
                     ])
                     .select_from(kernels)
                     .where(kernels.c.session_id == session['id'])
@@ -1494,8 +1447,42 @@ class AgentRegistry:
                                 'session_cancelled',
                                 (str(kernel['session_id']), reason),
                             )
-                    elif kernel['status'] in (KernelStatus.PREPARING, KernelStatus.PULLING):
-                        raise GenericForbidden('Cannot destory kernels in preparing/pulling status')
+                    elif kernel['status'] == KernelStatus.PULLING:
+                        raise GenericForbidden('Cannot destory kernels in pulling status')
+                    elif kernel['status'] in (
+                        KernelStatus.PREPARING, KernelStatus.TERMINATING, KernelStatus.ERROR,
+                    ):
+                        if not forced:
+                            raise GenericForbidden(
+                                'Cannot destory kernels in preparing/terminating/error status'
+                            )
+                        log.warning('force-terminating kernel (k:{}, status:{})',
+                                    kernel['id'], kernel['status'])
+                        if kernel['container_id'] is not None:
+                            destroyed_kernels.append(kernel)
+                        async with self.dbpool.acquire() as conn, conn.begin():
+                            if kernel['cluster_role'] == DEFAULT_ROLE:
+                                # The main session is terminated;
+                                # decrement the user's concurrency counter
+                                await conn.execute(
+                                    sa.update(keypairs)
+                                    .values({
+                                        'concurrency_used': keypairs.c.concurrency_used - 1,
+                                    })
+                                    .where(keypairs.c.access_key == kernel['access_key'])
+                                )
+                            await conn.execute(
+                                sa.update(kernels)
+                                .values({
+                                    'status': KernelStatus.TERMINATED,
+                                    'status_info': reason,
+                                })
+                                .where(kernels.c.id == kernel['id'])
+                            )
+                            await self.event_dispatcher.produce_event(
+                                'kernel_terminated',
+                                (str(kernel['id']), reason),
+                            )
                     else:
                         async with self.dbpool.acquire() as conn, conn.begin():
                             if kernel['cluster_role'] == DEFAULT_ROLE:
@@ -1569,6 +1556,8 @@ class AgentRegistry:
                 'POST_DESTROY_SESSION',
                 (session['session_id'], session['session_name'], session['access_key']),
             )
+            if forced:
+                await self.recalc_resource_usage()
             return main_stat
 
     async def clean_session(
