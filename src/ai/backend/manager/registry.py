@@ -56,6 +56,7 @@ from ai.backend.common.plugin.hook import (
 from ai.backend.common.service_ports import parse_service_ports
 from ai.backend.common.types import (
     AccessKey,
+    AgentId,
     BinarySize,
     ClusterInfo,
     ClusterMode,
@@ -1095,6 +1096,46 @@ class AgentRegistry:
             # Within a group, agent_alloc_ctx are same.
             agent_alloc_ctx = items[0].agent_alloc_ctx
 
+            async def interrupt_wait(
+                ctx: Any,
+                event_name: str,
+                agent_id: AgentId,
+                started_kernel_id: str,
+                *args,
+                start_event: asyncio.Event,
+                waiting_kernel_id: KernelId,
+                **kwargs,
+            ) -> None:
+                if KernelId(uuid.UUID(started_kernel_id)) == waiting_kernel_id:
+                    start_event.set()
+
+            async def _post_create_kernel(created_info, start_event):
+                # Wait until the kernel_started event.
+                await start_event.wait()
+                # Record kernel access information
+                async with self.dbpool.acquire() as conn, conn.begin():
+                    agent_host = URL(agent_alloc_ctx.agent_addr).host
+                    kernel_host = created_info.get('kernel_host', agent_host)
+                    service_ports = created_info.get('service_ports', [])
+                    # NOTE: created_info contains resource_spec
+                    query = (
+                        kernels.update()
+                        .values({
+                            'scaling_group': agent_alloc_ctx.scaling_group,
+                            'status': KernelStatus.RUNNING,
+                            'container_id': created_info['container_id'],
+                            'occupied_shares': {},
+                            'attached_devices': created_info.get('attached_devices', {}),
+                            'kernel_host': kernel_host,
+                            'repl_in_port': created_info['repl_in_port'],
+                            'repl_out_port': created_info['repl_out_port'],
+                            'stdin_port': created_info['stdin_port'],
+                            'stdout_port': created_info['stdout_port'],
+                            'service_ports': service_ports,
+                        })
+                        .where(kernels.c.id == created_info['id']))
+                    await conn.execute(query)
+
             async def _create_kernels_in_one_agent(
                 agent_alloc_ctx: AgentAllocationContext,
                 items: Sequence[KernelAgentBinding],
@@ -1104,87 +1145,81 @@ class AgentRegistry:
                     None,
                     order_key=pending_session.session_id,
                 ) as rpc:
-                    created_infos = await rpc.call.create_kernels(
-                        str(pending_session.session_id),
-                        [str(binding.kernel.kernel_id) for binding in items],
-                        [
-                            {
-                                'image': {
-                                    'registry': {
-                                        'name': binding.kernel.image_ref.registry,
-                                        'url': str(registry_url),
-                                        **registry_creds,   # type: ignore
-                                    },
-                                    'digest': image_infos[binding.kernel.image_ref]['digest'],
-                                    'repo_digest': None,
-                                    'canonical': binding.kernel.image_ref.canonical,
-                                    'labels': image_infos[binding.kernel.image_ref]['labels'],
-                                },
-                                'session_type': pending_session.session_type.value,
-                                'cluster_role': binding.kernel.cluster_role,
-                                'cluster_idx': binding.kernel.cluster_idx,
-                                'cluster_hostname': binding.kernel.cluster_hostname,
-                                'idle_timeout': resource_policy['idle_timeout'],
-                                'mounts': pending_session.mounts,
-                                'mount_map': pending_session.mount_map,
-                                'environ': {
-                                    **pending_session.environ,
-                                    'BACKENDAI_KERNEL_ID': str(binding.kernel.kernel_id),
-                                    'BACKENDAI_CLUSTER_ROLE': binding.kernel.cluster_role,
-                                    'BACKENDAI_CLUSTER_IDX': str(binding.kernel.cluster_idx),
-                                    'BACKENDAI_CLUSTER_HOST': str(binding.kernel.cluster_hostname),
-                                },
-                                'resource_slots': binding.kernel.requested_slots.to_json(),
-                                'resource_opts': binding.kernel.resource_opts,
-                                'bootstrap_script': binding.kernel.bootstrap_script,
-                                'startup_command': binding.kernel.startup_command,
-                                'internal_data': pending_session.internal_data,
-                                'auto_pull': auto_pull,
-                                'preopen_ports': pending_session.preopen_ports,
-                            }
-                            for binding in items
-                        ],
-                        cluster_info,
-                    )
-                    log.debug(
-                        'start_session(s:{}, ak:{}, k:{}) -> created on ag:{}',
-                        pending_session.session_name,
-                        pending_session.access_key,
-                        [binding.kernel.kernel_id for binding in items],
-                        agent_alloc_ctx.agent_id,
-                    )
-
-                    async with self.dbpool.acquire() as conn, conn.begin():
-                        # Return and record kernel access information
-                        for created_info in created_infos:
-                            agent_host = URL(agent_alloc_ctx.agent_addr).host
-                            kernel_host = created_info.get('kernel_host', agent_host)
-                            service_ports = created_info.get('service_ports', [])
-                            # NOTE: created_info contains resource_spec
-                            query = (
-                                kernels.update()
-                                .values({
-                                    'scaling_group': agent_alloc_ctx.scaling_group,
-                                    'status': KernelStatus.RUNNING,
-                                    'container_id': created_info['container_id'],
-                                    'occupied_shares': {},
-                                    'attached_devices': created_info.get('attached_devices', {}),
-                                    'kernel_host': kernel_host,
-                                    'repl_in_port': created_info['repl_in_port'],
-                                    'repl_out_port': created_info['repl_out_port'],
-                                    'stdin_port': created_info['stdin_port'],
-                                    'stdout_port': created_info['stdout_port'],
-                                    'service_ports': service_ports,
-                                })
-                                .where(kernels.c.id == created_info['id']))
-                            await conn.execute(query)
-
+                    start_events = {}
+                    start_handlers = []
+                    # Prepare kernel_started event handling
                     for binding in items:
-                        await self.event_dispatcher.produce_event(
-                            'kernel_started',
-                            (str(binding.kernel.kernel_id), ),
-                            agent_id=binding.agent_alloc_ctx.agent_id,
+                        start_event = asyncio.Event()
+                        start_events[binding.kernel.kernel_id] = start_event
+                        start_handlers.append(self.event_dispatcher.subscribe(
+                            'kernel_started', None,
+                            aiotools.apartial(
+                                interrupt_wait,
+                                start_event=start_event,
+                                waiting_kernel_id=binding.kernel.kernel_id,
+                            )
+                        ))
+                    try:
+                        # Issue a batched RPC call to create kernels on this agent
+                        created_infos = await rpc.call.create_kernels(
+                            str(pending_session.session_id),
+                            [str(binding.kernel.kernel_id) for binding in items],
+                            [
+                                {
+                                    'image': {
+                                        'registry': {
+                                            'name': binding.kernel.image_ref.registry,
+                                            'url': str(registry_url),
+                                            **registry_creds,   # type: ignore
+                                        },
+                                        'digest': image_infos[binding.kernel.image_ref]['digest'],
+                                        'repo_digest': None,
+                                        'canonical': binding.kernel.image_ref.canonical,
+                                        'labels': image_infos[binding.kernel.image_ref]['labels'],
+                                    },
+                                    'session_type': pending_session.session_type.value,
+                                    'cluster_role': binding.kernel.cluster_role,
+                                    'cluster_idx': binding.kernel.cluster_idx,
+                                    'cluster_hostname': binding.kernel.cluster_hostname,
+                                    'idle_timeout': resource_policy['idle_timeout'],
+                                    'mounts': pending_session.mounts,
+                                    'mount_map': pending_session.mount_map,
+                                    'environ': {
+                                        **pending_session.environ,
+                                        'BACKENDAI_KERNEL_ID': str(binding.kernel.kernel_id),
+                                        'BACKENDAI_CLUSTER_ROLE': binding.kernel.cluster_role,
+                                        'BACKENDAI_CLUSTER_IDX': str(binding.kernel.cluster_idx),
+                                        'BACKENDAI_CLUSTER_HOST': str(binding.kernel.cluster_hostname),
+                                    },
+                                    'resource_slots': binding.kernel.requested_slots.to_json(),
+                                    'resource_opts': binding.kernel.resource_opts,
+                                    'bootstrap_script': binding.kernel.bootstrap_script,
+                                    'startup_command': binding.kernel.startup_command,
+                                    'internal_data': pending_session.internal_data,
+                                    'auto_pull': auto_pull,
+                                    'preopen_ports': pending_session.preopen_ports,
+                                }
+                                for binding in items
+                            ],
+                            cluster_info,
                         )
+                        log.debug(
+                            'start_session(s:{}, ak:{}, k:{}) -> created on ag:{}',
+                            pending_session.session_name,
+                            pending_session.access_key,
+                            [binding.kernel.kernel_id for binding in items],
+                            agent_alloc_ctx.agent_id,
+                        )
+                        # Post-process kernel creation
+                        async with aiotools.TaskGroup() as tg:
+                            for created_info in created_infos:
+                                tg.create_task(_post_create_kernel(
+                                    created_info,
+                                    start_events[KernelId(uuid.UUID(created_info['id']))]
+                                ))
+                    finally:
+                        for start_handler in start_handlers:
+                            self.event_dispatcher.unsubscribe('kernel_started', start_handler)
 
             per_agent_tasks.append(_create_kernels_in_one_agent(agent_alloc_ctx, items))
 
