@@ -613,9 +613,10 @@ async def get_watcher_info(request: web.Request, agent_id: str) -> dict:
     token = request.app['shared_config']['watcher']['token']
     if token is None:
         token = 'insecure'
-    agent_ip = await request.app['shared_config'].get(f'nodes/agents/{agent_id}/ip')
-    watcher_port = await request.app['shared_config'].get(
-        f'nodes/agents/{agent_id}/watcher_port')
+    agent_ip = await request.app['shared_config'].etcd.get(f'nodes/agents/{agent_id}/ip')
+    watcher_port = await request.app['shared_config'].etcd.get(
+        f'nodes/agents/{agent_id}/watcher_port'
+    )
     if watcher_port is None:
         watcher_port = 6009
     # TODO: watcher scheme is assumed to be http
