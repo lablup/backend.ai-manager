@@ -16,6 +16,13 @@ Changes
 
 .. towncrier release notes start
 
+20.09.0b6 (2020-12-21)
+----------------------
+
+### Features
+* Add a new API path for per-agent hardware metadata queries ([#366](https://github.com/lablup/backend.ai-manager/issues/366))
+
+
 20.09.0b5 (2020-12-20)
 ----------------------
 
