@@ -6,6 +6,7 @@ from typing import (
     Optional,
     Mapping,
     Sequence,
+    TYPE_CHECKING,
 )
 
 from aiopg.sa.result import RowProxy
@@ -23,6 +24,8 @@ from .base import (
     EnumType, Item, PaginatedList,
     ResourceSlotColumn,
 )
+if TYPE_CHECKING:
+    from ..registry import AgentRegistry
 
 __all__: Sequence[str] = (
     'agents', 'AgentStatus',
@@ -81,6 +84,7 @@ class Agent(graphene.ObjectType):
     live_stat = graphene.JSONString()
     version = graphene.String()
     compute_plugins = graphene.JSONString()
+    hardware_metadata = graphene.JSONString()
 
     # Legacy fields
     mem_slots = graphene.Int()
@@ -170,6 +174,10 @@ class Agent(graphene.ObjectType):
         manager = info.context['dlmgr']
         loader = manager.get_loader('Computation.by_agent_id', status=status)
         return await loader.load(self.id)
+
+    async def resolve_hardware_metadata(self, info):
+        registry: AgentRegistry = info.context['registry']
+        return await registry.gather_agent_hwinfo(self.id)
 
     @staticmethod
     async def load_count(
