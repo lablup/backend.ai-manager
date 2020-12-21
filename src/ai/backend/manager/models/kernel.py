@@ -1103,7 +1103,7 @@ class LegacyComputeSession(graphene.ObjectType):
             'sess_type': row['session_type'].name,  # legacy, will be deprecated
             'session_name': row['session_name'],
             'session_type': row['session_type'].name,
-            'role': row['role'],
+            'role': row['cluster_role'],
             'tag': row['tag'],
             'image': row['image'],
             'registry': row['registry'],
