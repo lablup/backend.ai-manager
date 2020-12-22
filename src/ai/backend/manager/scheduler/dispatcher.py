@@ -631,6 +631,8 @@ async def _reserve_agent(
     if extra_conds is not None:
         query = query.where(extra_conds)
     current_occupied_slots = await db_conn.scalar(query)
+    if current_occupied_slots is None:
+        current_occupied_slots = ResourceSlot()
     query = (sa.update(agents)
                .values({
                    'occupied_slots': current_occupied_slots + requested_slots
