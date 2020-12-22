@@ -66,6 +66,7 @@ from .predicates import (
     check_domain_resource_limit,
     check_scaling_group,
 )
+from .utils import prettify_agent_error
 
 __all__ = (
     'load_scheduler',
@@ -372,12 +373,15 @@ class SchedulerDispatcher(aobject):
                 # TODO: handle exception as "multi-error" and rollback only the agents that are affected
                 log.error(log_fmt + 'failed-starting', *log_args, exc_info=e)
                 async with self.dbpool.acquire(), db_conn.begin():
+                    rich_exc_info = prettify_agent_error(e, self.local_config['debug']['enabled'])
                     await _unreserve_agent_slots(db_conn, session_agent_binding)
                     await _invoke_failure_callbacks(db_conn, sched_ctx, sess_ctx, check_results)
+                    now = datetime.now(tzutc())
                     query = kernels.update().values({
                         'status': KernelStatus.CANCELLED,
-                        'status_info': 'failed-to-start',
-                        'status_changed': datetime.now(tzutc()),
+                        'status_info': f"failed-to-start\n{rich_exc_info}",
+                        'status_changed': now,
+                        'terminated_at': now,
                     }).where(kernels.c.session_id == sess_ctx.session_id)
                     await db_conn.execute(query)
                 await self.registry.event_dispatcher.produce_event(

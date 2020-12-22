@@ -157,7 +157,7 @@ class PeerInvoker(Peer):
 
 
 @aiotools.actxmgr
-async def RPCContext(addr, timeout=None, *, order_key: str = None):
+async def RPCContext(agent_id, addr, timeout=None, *, order_key: str = None):
     global agent_peers
     peer = agent_peers.get(addr, None)
     if peer is None:
@@ -177,7 +177,7 @@ async def RPCContext(addr, timeout=None, *, order_key: str = None):
             finally:
                 peer.call.order_key.reset(okey_token)
     except RPCUserError as orig_exc:
-        raise AgentError(orig_exc.name, orig_exc.args)
+        raise AgentError(agent_id, orig_exc.name, orig_exc.repr, orig_exc.args)
     except Exception:
         raise
 
@@ -256,7 +256,7 @@ class AgentRegistry:
 
     async def gather_agent_hwinfo(self, instance_id: AgentId) -> Mapping[str, HardwareMetadata]:
         agent = await self.get_instance(instance_id, agents.c.addr)
-        async with RPCContext(agent['addr'], None) as rpc:
+        async with RPCContext(agent['id'], agent['addr'], None) as rpc:
             result = await rpc.call.gather_hwinfo()
             return {
                 k: check_typed_dict(v, HardwareMetadata)  # type: ignore  # (python/mypy#9827)
@@ -1059,6 +1059,7 @@ class AgentRegistry:
             if pending_session.cluster_size > 1:
                 network_name = f'bai-singlenode-{pending_session.session_id}'
                 async with RPCContext(
+                    kernel_agent_bindings[0].agent_alloc_ctx.agent_id,
                     kernel_agent_bindings[0].agent_alloc_ctx.agent_addr,
                     None,
                     order_key=pending_session.session_id,
@@ -1074,6 +1075,7 @@ class AgentRegistry:
             # Create overlay network for multi-node sessions
             network_name = f'bai-multinode-{pending_session.session_id}'
             async with RPCContext(
+                kernel_agent_bindings[0].agent_alloc_ctx.agent_id,
                 kernel_agent_bindings[0].agent_alloc_ctx.agent_addr,
                 None,
                 order_key=pending_session.session_id,
@@ -1166,6 +1168,7 @@ class AgentRegistry:
                 items: Sequence[KernelAgentBinding],
             ) -> None:
                 async with RPCContext(
+                    agent_alloc_ctx.agent_id,
                     agent_alloc_ctx.agent_addr,
                     None,
                     order_key=pending_session.session_id,
@@ -1445,6 +1448,7 @@ class AgentRegistry:
 
             main_stat = {}
             per_agent_tasks = []
+            now = datetime.now(tzutc())
 
             keyfunc = lambda item: item['agent'] if item['agent'] is not None else ''
             for agent_id, group_iterator in itertools.groupby(
@@ -1459,6 +1463,8 @@ class AgentRegistry:
                             .values({
                                 'status': KernelStatus.CANCELLED,
                                 'status_info': reason,
+                                'status_changed': now,
+                                'terminated_at': now,
                             })
                             .where(kernels.c.id == kernel['id'])
                         )
@@ -1543,6 +1549,7 @@ class AgentRegistry:
                 async def _destroy_kernels_in_agent(destroyed_kernels) -> None:
                     nonlocal main_stat
                     async with RPCContext(
+                        grouped_kernels[0]['agent_id'],
                         grouped_kernels[0]['agent_addr'],
                         None,
                         order_key=session['session_id'],
@@ -1610,7 +1617,8 @@ class AgentRegistry:
         if session['cluster_mode'] == ClusterMode.SINGLE_NODE and session['cluster_size'] > 1:
             network_name = f'bai-singlenode-{session["session_id"]}'
             async with RPCContext(
-                session['agent_addr'],  # the main-container's agent
+                session['agent'],       # the main-container's agent
+                session['agent_addr'],
                 None,
                 order_key=session['session_id'],
             ) as rpc:
@@ -1621,7 +1629,8 @@ class AgentRegistry:
         elif session['cluster_mode'] == ClusterMode.MULTI_NODE:
             network_name = f'bai-multinode-{session["session_id"]}'
             async with RPCContext(
-                session['agent_addr'],  # the main-container's agent
+                session['agent'],       # the main-container's agent
+                session['agent_addr'],
                 None,
                 order_key=session['session_id'],
             ) as rpc:
@@ -1666,7 +1675,10 @@ class AgentRegistry:
                     )
                     await conn.execute(query)
                 async with RPCContext(
-                    kernel['agent_addr'], None, order_key=None,
+                    kernel['agent'],       # the main-container's agent
+                    kernel['agent_addr'],
+                    None,
+                    order_key=None,
                 ) as rpc:
                     updated_config: Dict[str, Any] = {
                         # TODO: support resacling of sub-containers
@@ -1743,7 +1755,12 @@ class AgentRegistry:
             major_api_version = api_version[0]
             if major_api_version == 4:  # manager-agent protocol is same.
                 major_api_version = 3
-            async with RPCContext(kernel['agent_addr'], 30, order_key=kernel['id']) as rpc:
+            async with RPCContext(
+                kernel['agent'],
+                kernel['agent_addr'],
+                30,
+                order_key=kernel['id'],
+            ) as rpc:
                 return await rpc.call.execute(
                     str(kernel['id']),
                     major_api_version,
@@ -1775,7 +1792,12 @@ class AgentRegistry:
             kernel = await result.first()
             if kernel is None:
                 return
-            async with RPCContext(kernel['agent_addr'], 30, order_key=str(session_id)) as rpc:
+            async with RPCContext(
+                kernel['agent'],
+                kernel['agent_addr'],
+                30,
+                order_key=str(session_id),
+            ) as rpc:
                 return await rpc.call.execute_batch(str(kernel['id']), kernel['startup_command'])
 
     async def interrupt_session(
@@ -1785,7 +1807,12 @@ class AgentRegistry:
     ) -> Mapping[str, Any]:
         kernel = await self.get_session(session_name_or_id, access_key)
         async with self.handle_kernel_exception('execute', kernel['id'], access_key):
-            async with RPCContext(kernel['agent_addr'], 30, order_key=kernel['id']) as rpc:
+            async with RPCContext(
+                kernel['agent'],
+                kernel['agent_addr'],
+                30,
+                order_key=kernel['id'],
+            ) as rpc:
                 return await rpc.call.interrupt_kernel(str(kernel['id']))
 
     async def get_completions(
@@ -1798,7 +1825,12 @@ class AgentRegistry:
     ) -> Mapping[str, Any]:
         kernel = await self.get_session(session_name_or_id, access_key)
         async with self.handle_kernel_exception('execute', kernel['id'], access_key):
-            async with RPCContext(kernel['agent_addr'], 10, order_key=kernel['id']) as rpc:
+            async with RPCContext(
+                kernel['agent'],
+                kernel['agent_addr'],
+                10,
+                order_key=kernel['id'],
+            ) as rpc:
                 return await rpc.call.get_completions(str(kernel['id']), mode, text, opts)
 
     async def start_service(
@@ -1810,7 +1842,12 @@ class AgentRegistry:
     ) -> Mapping[str, Any]:
         kernel = await self.get_session(session_name_or_id, access_key)
         async with self.handle_kernel_exception('execute', kernel['id'], access_key):
-            async with RPCContext(kernel['agent_addr'], None, order_key=kernel['id']) as rpc:
+            async with RPCContext(
+                kernel['agent'],
+                kernel['agent_addr'],
+                None,
+                order_key=kernel['id'],
+            ) as rpc:
                 return await rpc.call.start_service(str(kernel['id']), service, opts)
 
     async def shutdown_service(
@@ -1821,7 +1858,12 @@ class AgentRegistry:
     ) -> None:
         kernel = await self.get_session(session_name_or_id, access_key)
         async with self.handle_kernel_exception('shutdown_service', kernel['id'], access_key):
-            async with RPCContext(kernel['agent_addr'], None, order_key=kernel['id']) as rpc:
+            async with RPCContext(
+                kernel['agent'],
+                kernel['agent_addr'],
+                None,
+                order_key=kernel['id'],
+            ) as rpc:
                 return await rpc.call.shutdown_service(str(kernel['id']), service)
 
     async def upload_file(
@@ -1833,7 +1875,12 @@ class AgentRegistry:
     ) -> Mapping[str, Any]:
         kernel = await self.get_session(session_name_or_id, access_key)
         async with self.handle_kernel_exception('upload_file', kernel['id'], access_key):
-            async with RPCContext(kernel['agent_addr'], None, order_key=kernel['id']) as rpc:
+            async with RPCContext(
+                kernel['agent'],
+                kernel['agent_addr'],
+                None,
+                order_key=kernel['id'],
+            ) as rpc:
                 return await rpc.call.upload_file(str(kernel['id']), filename, payload)
 
     async def download_file(
@@ -1845,7 +1892,12 @@ class AgentRegistry:
         kernel = await self.get_session(session_name_or_id, access_key)
         async with self.handle_kernel_exception('download_file', kernel['id'],
                                                 access_key):
-            async with RPCContext(kernel['agent_addr'], None, order_key=kernel['id']) as rpc:
+            async with RPCContext(
+                kernel['agent'],
+                kernel['agent_addr'],
+                None,
+                order_key=kernel['id'],
+            ) as rpc:
                 return await rpc.call.download_file(str(kernel['id']), filepath)
 
     async def list_files(
@@ -1856,7 +1908,12 @@ class AgentRegistry:
     ) -> Mapping[str, Any]:
         kernel = await self.get_session(session_name_or_id, access_key)
         async with self.handle_kernel_exception('list_files', kernel['id'], access_key):
-            async with RPCContext(kernel['agent_addr'], 30, order_key=kernel['id']) as rpc:
+            async with RPCContext(
+                kernel['agent'],
+                kernel['agent_addr'],
+                30,
+                order_key=kernel['id'],
+            ) as rpc:
                 return await rpc.call.list_files(str(kernel['id']), path)
 
     async def get_logs_from_agent(
@@ -1866,7 +1923,12 @@ class AgentRegistry:
     ) -> Mapping[str, Any]:
         kernel = await self.get_session(session_name_or_id, access_key)
         async with self.handle_kernel_exception('get_logs_from_agent', kernel['id'], access_key):
-            async with RPCContext(kernel['agent_addr'], 30, order_key=kernel['id']) as rpc:
+            async with RPCContext(
+                kernel['agent'],
+                kernel['agent_addr'],
+                30,
+                order_key=kernel['id'],
+            ) as rpc:
                 return await rpc.call.get_logs(str(kernel['id']))
 
     async def increment_session_usage(
@@ -1887,24 +1949,23 @@ class AgentRegistry:
             )
             await conn.execute(query)
 
-    async def kill_all_sessions_in_agent(self, agent_addr):
-        async with RPCContext(agent_addr, None) as rpc:
+    async def kill_all_sessions_in_agent(self, agent_id, agent_addr):
+        async with RPCContext(agent_id, agent_addr, None) as rpc:
             coro = rpc.call.clean_all_kernels('manager-freeze-force-kill')
-            if coro is None:
-                log.warning('kill_all_sessions_in_agent cancelled')
-                return None
             return await coro
 
     async def kill_all_sessions(self, conn=None):
         async with reenter_txn(self.dbpool, conn) as conn:
-            query = (sa.select([agents.c.addr])
+            query = (sa.select([agents.c.id, agents.c.addr])
                        .where(agents.c.status == AgentStatus.ALIVE))
             result = await conn.execute(query)
-            alive_agent_addrs = [row.addr for row in result]
-            log.debug(str(alive_agent_addrs))
-            tasks = [self.kill_all_sessions_in_agent(agent_addr)
-                     for agent_addr in alive_agent_addrs]
-            await asyncio.gather(*tasks)
+            rows = await result.fetchall()
+            tasks = []
+            for row in rows:
+                tasks.append(
+                    self.kill_all_sessions_in_agent(row['id'], row['addr'])
+                )
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def handle_heartbeat(self, agent_id, agent_info):
         now = datetime.now(tzutc())
@@ -2078,11 +2139,14 @@ class AgentRegistry:
         db_connection: SAConnection = None,
         **extra_fields,
     ) -> None:
+        now = datetime.now(tzutc()),
         data = {
             'status': status,
             'status_info': reason,
-            'status_changed': datetime.now(tzutc()),
+            'status_changed': now,
         }
+        if status in (KernelStatus.CANCELLED, KernelStatus.TERMINATED):
+            data['terminated_at'] = now
         data.update(extra_fields)
         async with reenter_txn(self.dbpool, db_connection) as conn:
             query = (
@@ -2103,11 +2167,14 @@ class AgentRegistry:
         assert status != KernelStatus.TERMINATED, \
                'TERMINATED status update must be handled in ' \
                'mark_kernel_terminated()'
+        now = datetime.now(tzutc()),
         data = {
             'status': status,
             'status_info': reason,
-            'status_changed': datetime.now(tzutc()),
+            'status_changed': now,
         }
+        if status in (KernelStatus.CANCELLED, KernelStatus.TERMINATED):
+            data['terminated_at'] = now
         async with reenter_txn(self.dbpool, db_conn) as conn:
             query = (
                 sa.update(kernels)

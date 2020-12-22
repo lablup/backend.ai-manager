@@ -1,4 +1,4 @@
-'''
+"""
 This module defines a series of Backend.AI-specific errors based on HTTP Error
 classes from aiohttp.
 Raising a BackendError is automatically mapped to a corresponding HTTP error
@@ -7,7 +7,7 @@ response with RFC7807-style JSON-encoded description in its response body.
 In the client side, you should use "type" field in the body to distinguish
 canonical error types beacuse "title" field may change due to localization and
 future UX improvements.
-'''
+"""
 
 import json
 from typing import (
@@ -16,16 +16,19 @@ from typing import (
     Optional,
     Mapping,
     Union,
+    cast,
 )
 
 from aiohttp import web
 
+from ai.backend.common.types import AgentId
+
 
 class BackendError(web.HTTPError):
-    '''
+    """
     An RFC-7807 error class as a drop-in replacement of the original
     aiohttp.web.HTTPError subclasses.
-    '''
+    """
 
     error_type: str  = 'https://api.backend.ai/probs/general-error'
     error_title: str = 'General Backend API Error.'
@@ -299,23 +302,30 @@ class StorageProxyError(BackendError, web.HTTPError):
 
 
 class AgentError(RuntimeError):
-    '''
+    """
     A dummy exception class to distinguish agent-side errors passed via
     agent rpc calls.
 
     It carries two args tuple: the exception type and exception arguments from
     the agent.
-    '''
+    """
 
-    def __init__(self, *args, exc_repr: str = None):
-        super().__init__(*args)
+    __slots__ = (
+        'agent_id', 'exc_name', 'exc_repr', 'exc_tb',
+    )
+
+    def __init__(self, agent_id: AgentId, exc_name: str, exc_repr: str, exc_tb: str) -> None:
+        super().__init__(agent_id, exc_name, exc_repr, exc_tb)
+        self.agent_id = agent_id
+        self.exc_name = exc_name
         self.exc_repr = exc_repr
+        self.exc_tb = exc_tb
 
 
 class BackendAgentError(BackendError):
-    '''
+    """
     An RFC-7807 error class that wraps agent-side errors.
-    '''
+    """
 
     _short_type_map = {
         'TIMEOUT': 'https://api.backend.ai/probs/agent-timeout',
@@ -341,22 +351,11 @@ class BackendAgentError(BackendError):
                 'title': exc_info,
             }
         elif isinstance(exc_info, AgentError):
-            if exc_info.exc_repr:
-                exc_repr = exc_info.exc_repr
-            else:
-                if isinstance(exc_info.args[0], Exception):
-                    inner_name = type(exc_info.args[0]).__name__
-                elif (isinstance(exc_info.args[0], type) and
-                      issubclass(exc_info.args[0], Exception)):
-                    inner_name = exc_info.args[0].__name__
-                else:
-                    inner_name = str(exc_info.args[0])
-                inner_args = ', '.join(repr(a) for a in exc_info.args[1])
-                exc_repr = f'{inner_name}({inner_args})'
+            e = cast(AgentError, exc_info)
             agent_details = {
                 'type': agent_error_type,
                 'title': 'Agent-side exception occurred.',
-                'exception': exc_repr,
+                'exception': e.exc_repr,
             }
         elif isinstance(exc_info, Exception):
             agent_details = {
