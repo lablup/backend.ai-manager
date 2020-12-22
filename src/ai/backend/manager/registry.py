@@ -1446,7 +1446,7 @@ class AgentRegistry:
             main_stat = {}
             per_agent_tasks = []
 
-            keyfunc = lambda item: item['agent']
+            keyfunc = lambda item: item['agent'] if item['agent'] is not None else ''
             for agent_id, group_iterator in itertools.groupby(
                 sorted(kernel_list, key=keyfunc), key=keyfunc,
             ):
