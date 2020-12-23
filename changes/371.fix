@@ -1,1 +1,0 @@
-Replace deprecated reference of kernels.c.role with kernels.c.cluster_role in legacy compute session list query.

@@ -16,6 +16,15 @@ Changes
 
 .. towncrier release notes start
 
+20.09.0rc1 (2020-12-23)
+-----------------------
+
+### Fixes
+* Unable to request watcher API due to incorrect reference to watcher endpoint. ([#370](https://github.com/lablup/backend.ai-manager/issues/370))
+* Replace deprecated reference of kernels.c.role with kernels.c.cluster_role in legacy compute session list query. ([#371](https://github.com/lablup/backend.ai-manager/issues/371))
+* Fix various bugs related to multi-node execution paths and provide richer error information with agent-side errors as a new JSON column `status_data` in the kernels table ([#372](https://github.com/lablup/backend.ai-manager/issues/372))
+
+
 20.09.0b6 (2020-12-21)
 ----------------------
 
