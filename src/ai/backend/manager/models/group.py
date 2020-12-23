@@ -490,10 +490,10 @@ class PurgeGroup(graphene.Mutation):
             for _mount in row['mounts']:
                 try:
                     vfolder_id = uuid.UUID(_mount[2])
+                    if vfolder_id in group_vfolder_ids:
+                        return True
                 except Exception:
                     pass
-                if vfolder_id in group_vfolder_ids:
-                    return True
         return False
 
     @classmethod
