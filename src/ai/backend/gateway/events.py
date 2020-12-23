@@ -477,9 +477,9 @@ async def enqueue_session_status_update(
             ])
             .select_from(kernels)
             .where(
-                (kernels.c.session_id == session_id)
+                (kernels.c.id == session_id)
+                # for the main kernel, kernel ID == session ID
             )
-            .limit(1)
         )
         result = await conn.execute(query)
         row = await result.first()

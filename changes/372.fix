@@ -1,0 +1,1 @@
+Fix various bugs related to multi-node execution paths and provide richer error information with agent-side errors as a new JSON column `status_data` in the kernels table

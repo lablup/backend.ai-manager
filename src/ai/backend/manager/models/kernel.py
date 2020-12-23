@@ -203,6 +203,7 @@ kernels = sa.Table(
               nullable=False, index=True),
     sa.Column('status_changed', sa.DateTime(timezone=True), nullable=True, index=True),
     sa.Column('status_info', sa.Unicode(), nullable=True, default=sa.null()),
+    sa.Column('status_data', pgsql.JSONB(), nullable=True, default=sa.null()),
     sa.Column('startup_command', sa.Text, nullable=True),
     sa.Column('result', EnumType(SessionResult),
               default=SessionResult.UNDEFINED,
@@ -440,6 +441,7 @@ class ComputeContainer(graphene.ObjectType):
     status = graphene.String()
     status_changed = GQLDateTime()
     status_info = graphene.String()
+    status_data = graphene.JSONString()
     created_at = GQLDateTime()
     terminated_at = GQLDateTime()
     starts_at = GQLDateTime()
@@ -480,6 +482,7 @@ class ComputeContainer(graphene.ObjectType):
             'status': row['status'].name,
             'status_changed': row['status_changed'],
             'status_info': row['status_info'],
+            'status_data': row['status_data'],
             'created_at': row['created_at'],
             'terminated_at': row['terminated_at'],
             'starts_at': row['starts_at'],
@@ -669,6 +672,7 @@ class ComputeSession(graphene.ObjectType):
     status = graphene.String()
     status_changed = GQLDateTime()
     status_info = graphene.String()
+    status_data = graphene.JSONString()
     created_at = GQLDateTime()
     terminated_at = GQLDateTime()
     starts_at = GQLDateTime()
@@ -723,6 +727,7 @@ class ComputeSession(graphene.ObjectType):
             'status': row['status'].name,
             'status_changed': row['status_changed'],
             'status_info': row['status_info'],
+            'status_data': row['status_data'],
             'created_at': row['created_at'],
             'terminated_at': row['terminated_at'],
             'starts_at': row['starts_at'],
@@ -1116,6 +1121,7 @@ class LegacyComputeSession(graphene.ObjectType):
             'status': row['status'].name,
             'status_changed': row['status_changed'],
             'status_info': row['status_info'],
+            'status_data': row['status_data'],
             'created_at': row['created_at'],
             'terminated_at': row['terminated_at'],
             'startup_command': row['startup_command'],

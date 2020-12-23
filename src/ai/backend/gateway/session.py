@@ -1341,6 +1341,7 @@ async def get_info(request: web.Request) -> web.Response:
         # Lifecycle
         resp['status'] = kern['status'].name  # "e.g. 'KernelStatus.RUNNING' -> 'RUNNING' "
         resp['statusInfo'] = str(kern['status_info'])
+        resp['statusData'] = kern['status_data']
         age = datetime.now(tzutc()) - kern['created_at']
         resp['age'] = int(age.total_seconds() * 1000)  # age in milliseconds
         resp['creationTime'] = str(kern['created_at'])

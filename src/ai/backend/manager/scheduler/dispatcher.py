@@ -32,6 +32,8 @@ from ai.backend.common.types import (
     ClusterMode,
     ResourceSlot,
 )
+
+from ai.backend.manager.exceptions import convert_to_status_data
 if TYPE_CHECKING:
     from ai.backend.gateway.config import LocalConfig, SharedConfig
     from ai.backend.gateway.events import EventDispatcher
@@ -46,6 +48,7 @@ from ..models import (
     AgentStatus, KernelStatus,
     AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
 )
+from ..models.utils import sql_json_increment
 from . import (
     PredicateResult,
     PendingSession,
@@ -213,7 +216,7 @@ class SchedulerDispatcher(aobject):
                 log.debug(log_fmt + 'try-scheduling', *log_args)
                 session_agent_binding: Tuple[PendingSession, List[KernelAgentBinding]]
 
-                async with db_conn.begin():
+                async with db_conn.begin() as txn:
                     predicates: Sequence[Awaitable[PredicateResult]] = [
                         check_reserved_batch_session(db_conn, sched_ctx, sess_ctx),
                         check_concurrency(db_conn, sched_ctx, sess_ctx),
@@ -260,13 +263,31 @@ class SchedulerDispatcher(aobject):
                             await _invoke_failure_callbacks(
                                 db_conn, sched_ctx, sess_ctx, check_results,
                             )
+                            query = kernels.update().values({
+                                'status_info': "no-available-instances",
+                                'status_data': sql_json_increment(
+                                    kernels.c.status_data,
+                                    ('scheduler', 'retries'),
+                                    last_level_obj={
+                                        'last_try': datetime.now(tzutc()).isoformat(),
+                                    }
+                                ),
+                            }).where(kernels.c.id == sess_ctx.session_id)
+                            await db_conn.execute(query)
+                            await txn.commit()
                             raise
-                        except Exception:
+                        except Exception as e:
                             log.exception(log_fmt + 'unexpected-error, during agent allocation',
                                           *log_args)
                             await _invoke_failure_callbacks(
                                 db_conn, sched_ctx, sess_ctx, check_results,
                             )
+                            query = kernels.update().values({
+                                'status_info': "scheduler-error",
+                                'status_data': convert_to_status_data(e),
+                            }).where(kernels.c.id == sess_ctx.session_id)
+                            await db_conn.execute(query)
+                            await txn.commit()
                             raise
                         query = kernels.update().values({
                             'agent': agent_alloc_ctx.agent_id,
@@ -274,6 +295,7 @@ class SchedulerDispatcher(aobject):
                             'scaling_group': sgroup_name,
                             'status': KernelStatus.PREPARING,
                             'status_info': 'scheduled',
+                            'status_data': None,
                             'status_changed': datetime.now(tzutc()),
                         }).where(kernels.c.session_id == sess_ctx.session_id)
                         await db_conn.execute(query)
@@ -305,15 +327,31 @@ class SchedulerDispatcher(aobject):
                                 await _invoke_failure_callbacks(
                                     db_conn, sched_ctx, sess_ctx, check_results,
                                 )
-                                # continue
+                                query = kernels.update().values({
+                                    'status_info': "no-available-instances",
+                                    'status_data': sql_json_increment(
+                                        kernels.c.status_data,
+                                        ('scheduler', 'retries'),
+                                        last_level_obj={
+                                            'last_try': datetime.now(tzutc()).isoformat(),
+                                        }
+                                    ),
+                                }).where(kernels.c.id == kernel.kernel_id)
+                                await db_conn.execute(query)
+                                await txn.commit()
                                 raise
-                            except Exception:
+                            except Exception as e:
                                 log.exception(log_fmt + 'unexpected-error, during agent allocation',
                                               *log_args)
                                 await _invoke_failure_callbacks(
                                     db_conn, sched_ctx, sess_ctx, check_results,
                                 )
-                                # continue
+                                query = kernels.update().values({
+                                    'status_info': "scheduler-error",
+                                    'status_data': convert_to_status_data(e),
+                                }).where(kernels.c.id == kernel.kernel_id)
+                                await db_conn.execute(query)
+                                await txn.commit()
                                 raise
                             # TODO: if error occurs for one kernel, should we cancel all others?
                             query = kernels.update().values({
@@ -322,6 +360,7 @@ class SchedulerDispatcher(aobject):
                                 'scaling_group': sgroup_name,
                                 'status': KernelStatus.PREPARING,
                                 'status_info': 'scheduled',
+                                'status_data': None,
                                 'status_changed': datetime.now(tzutc()),
                             }).where(kernels.c.id == kernel.kernel_id)
                             await db_conn.execute(query)
@@ -372,12 +411,16 @@ class SchedulerDispatcher(aobject):
                 # TODO: handle exception as "multi-error" and rollback only the agents that are affected
                 log.error(log_fmt + 'failed-starting', *log_args, exc_info=e)
                 async with self.dbpool.acquire(), db_conn.begin():
+                    status_data = convert_to_status_data(e, self.local_config['debug']['enabled'])
                     await _unreserve_agent_slots(db_conn, session_agent_binding)
                     await _invoke_failure_callbacks(db_conn, sched_ctx, sess_ctx, check_results)
+                    now = datetime.now(tzutc())
                     query = kernels.update().values({
                         'status': KernelStatus.CANCELLED,
-                        'status_info': 'failed-to-start',
-                        'status_changed': datetime.now(tzutc()),
+                        'status_changed': now,
+                        'status_info': "failed-to-start",
+                        'status_data': status_data,
+                        'terminated_at': now,
                     }).where(kernels.c.session_id == sess_ctx.session_id)
                     await db_conn.execute(query)
                 await self.registry.event_dispatcher.produce_event(
@@ -631,6 +674,8 @@ async def _reserve_agent(
     if extra_conds is not None:
         query = query.where(extra_conds)
     current_occupied_slots = await db_conn.scalar(query)
+    if current_occupied_slots is None:
+        current_occupied_slots = ResourceSlot()
     query = (sa.update(agents)
                .values({
                    'occupied_slots': current_occupied_slots + requested_slots
