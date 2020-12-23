@@ -333,7 +333,7 @@ class SchedulerDispatcher(aobject):
                                         kernels.c.status_data,
                                         ('scheduler', 'retries'),
                                         last_level_obj={
-                                            'last_try': datetime.now(datetime.tzutc()).isoformat(),
+                                            'last_try': datetime.now(tzutc()).isoformat(),
                                         }
                                     ),
                                 }).where(kernels.c.id == kernel.kernel_id)

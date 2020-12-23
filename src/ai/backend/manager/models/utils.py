@@ -1,5 +1,4 @@
 from contextlib import asynccontextmanager as actxmgr
-import json
 from typing import Any, AsyncIterator, Mapping, Tuple
 
 import sqlalchemy as sa
