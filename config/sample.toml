@@ -31,6 +31,10 @@ password = "DB_PASSWORD"                    # env: BACKEND_DB_PASSWORD
 # If set zero, it uses the number of CPU cores in the system.
 num-proc = 4                                               # env: BACKEND_GATEWAY_NPROC
 
+# An arbitrary string used to salt when generating secret tokens (e.g., JWT)
+# Currently only some plugins use this configuration in the manager.
+secret = "XXXXXXXXXXXXXX"
+
 # Specify the user/group used for the manager daemon,
 # to which the manager changes after reading the daemon configuration and SSL certifiactes.
 # If not specified, it uses the file permission of ai/backend/gateway/server.py
