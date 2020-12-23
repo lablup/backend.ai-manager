@@ -21,7 +21,7 @@ from typing import (
 
 from aiohttp import web
 
-from ai.backend.common.types import AgentId
+from ..manager.exceptions import AgentError
 
 
 class BackendError(web.HTTPError):
@@ -299,27 +299,6 @@ class StorageProxyError(BackendError, web.HTTPError):
     def status(self) -> int:
         # override the status property again to refer the subclass' attribute.
         return self.status_code
-
-
-class AgentError(RuntimeError):
-    """
-    A dummy exception class to distinguish agent-side errors passed via
-    agent rpc calls.
-
-    It carries two args tuple: the exception type and exception arguments from
-    the agent.
-    """
-
-    __slots__ = (
-        'agent_id', 'exc_name', 'exc_repr', 'exc_tb',
-    )
-
-    def __init__(self, agent_id: AgentId, exc_name: str, exc_repr: str, exc_tb: str) -> None:
-        super().__init__(agent_id, exc_name, exc_repr, exc_tb)
-        self.agent_id = agent_id
-        self.exc_name = exc_name
-        self.exc_repr = exc_repr
-        self.exc_tb = exc_tb
 
 
 class BackendAgentError(BackendError):

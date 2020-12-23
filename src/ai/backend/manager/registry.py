@@ -316,13 +316,20 @@ class AgentRegistry:
                 await cancellation_callback()
             raise
         except AgentError as e:
-            # TODO: wrap some assertion errors as "invalid requests"
             if set_error:
                 await self.set_session_status(
                     session_id,
                     access_key,
                     KernelStatus.ERROR,
                     status_info=f'agent-error ({e!r})',
+                    status_data={
+                        "error": {
+                            "src": "agent",
+                            "agent_id": e.agent_id,
+                            "name": e.exc_name,
+                            "repr": e.exc_repr,
+                        }
+                    }
                 )
             if error_callback:
                 await error_callback()
@@ -337,6 +344,13 @@ class AgentRegistry:
                     access_key,
                     KernelStatus.ERROR,
                     status_info=f'other-error ({e!r})',
+                    status_data={
+                        "error": {
+                            "src": "other",
+                            "name": e.__class__.__name__,
+                            "repr": repr(e)
+                        }
+                    }
                 )
             if error_callback:
                 await error_callback()
