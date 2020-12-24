@@ -7,6 +7,7 @@ import copy
 from datetime import datetime
 import itertools
 import logging
+import secrets
 import time
 from typing import (
     Any,
@@ -199,6 +200,8 @@ class AgentRegistry:
     policy, such as the limitation of maximum number of kernels per instance.
     """
 
+    kernel_creation_tracker: Dict[Tuple[str, KernelId], asyncio.Event]
+
     def __init__(
         self,
         shared_config: SharedConfig,
@@ -218,6 +221,7 @@ class AgentRegistry:
         self.event_dispatcher = event_dispatcher
         self.storage_manager = storage_manager
         self.hook_plugin_ctx = hook_plugin_ctx
+        self.kernel_creation_tracker = {}
 
     async def init(self) -> None:
         self.heartbeat_lock = asyncio.Lock()
@@ -1137,21 +1141,10 @@ class AgentRegistry:
             # Within a group, agent_alloc_ctx are same.
             agent_alloc_ctx = items[0].agent_alloc_ctx
 
-            async def interrupt_wait(
-                ctx: Any,
-                event_name: str,
-                agent_id: AgentId,
-                started_kernel_id: str,
-                *args,
-                start_event: asyncio.Event,
-                waiting_kernel_id: KernelId,
-                **kwargs,
-            ) -> None:
-                if KernelId(uuid.UUID(started_kernel_id)) == waiting_kernel_id:
-                    start_event.set()
-
-            async def _post_create_kernel(created_info, start_event):
+            async def _post_create_kernel(creation_id: str, created_info):
                 # Wait until the kernel_started event.
+                kernel_id = KernelId(uuid.UUID(created_info['id']))
+                start_event = self.kernel_creation_tracker[(creation_id, kernel_id)]
                 await start_event.wait()
                 # Record kernel access information
                 async with self.dbpool.acquire() as conn, conn.begin():
@@ -1187,23 +1180,16 @@ class AgentRegistry:
                     None,
                     order_key=pending_session.session_id,
                 ) as rpc:
-                    start_events = {}
-                    start_handlers = []
+                    creation_id = secrets.token_urlsafe(16)
                     # Prepare kernel_started event handling
                     for binding in items:
-                        start_event = asyncio.Event()
-                        start_events[binding.kernel.kernel_id] = start_event
-                        start_handlers.append(self.event_dispatcher.subscribe(
-                            'kernel_started', None,
-                            aiotools.apartial(
-                                interrupt_wait,
-                                start_event=start_event,
-                                waiting_kernel_id=binding.kernel.kernel_id,
-                            )
-                        ))
+                        self.kernel_creation_tracker[
+                            (creation_id, binding.kernel.kernel_id)
+                        ] = asyncio.Event()
                     try:
                         # Issue a batched RPC call to create kernels on this agent
                         created_infos = await rpc.call.create_kernels(
+                            creation_id,
                             str(pending_session.session_id),
                             [str(binding.kernel.kernel_id) for binding in items],
                             [
@@ -1256,12 +1242,15 @@ class AgentRegistry:
                         async with aiotools.TaskGroup() as tg:
                             for created_info in created_infos:
                                 tg.create_task(_post_create_kernel(
+                                    creation_id,
                                     created_info,
-                                    start_events[KernelId(uuid.UUID(created_info['id']))]
                                 ))
                     finally:
-                        for start_handler in start_handlers:
-                            self.event_dispatcher.unsubscribe('kernel_started', start_handler)
+                        # clean up for sure
+                        for binding in items:
+                            self.kernel_creation_tracker.pop(
+                                (creation_id, binding.kernel.kernel_id)
+                            )
 
             per_agent_tasks.append(_create_kernels_in_one_agent(agent_alloc_ctx, items))
 
