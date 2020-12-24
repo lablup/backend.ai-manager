@@ -366,9 +366,6 @@ class SchedulerDispatcher(aobject):
                 elif sess_ctx.cluster_mode == ClusterMode.MULTI_NODE:
                     # Assign agent resource per kernel in the session.
                     agent_query_extra_conds = None
-                    # if len(sess_ctx.kernels) >= 2:
-                    #     # We should use agents that supports overlay networking.
-                    #     agent_query_extra_conds = (agents.c.clusterized)
                     kernel_agent_bindings = []
                     for kernel in sess_ctx.kernels:
                         try:

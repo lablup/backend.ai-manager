@@ -1999,7 +1999,6 @@ class AgentRegistry:
                         agents.c.addr,
                         agents.c.scaling_group,
                         agents.c.available_slots,
-                        agents.c.clusterized,
                     ], for_update=True)
                     .select_from(agents)
                     .where(agents.c.id == agent_id)
@@ -2032,7 +2031,6 @@ class AgentRegistry:
                         'lost_at': None,
                         'version': agent_info['version'],
                         'compute_plugins': agent_info['compute_plugins'],
-                        'clusterized': agent_info.get('swarm_enabled', False)
                     })
                     result = await conn.execute(query)
                     assert result.rowcount == 1
@@ -2042,8 +2040,6 @@ class AgentRegistry:
                         updates['available_slots'] = available_slots
                     if row['scaling_group'] != sgroup:
                         updates['scaling_group'] = sgroup
-                    if row['clusterized'] != agent_info.get('swarm_enabled', False):
-                        updates['clusterized'] = agent_info.get('swarm_enabled', False)
                     if row['addr'] != current_addr:
                         updates['addr'] = current_addr
                     updates['version'] = agent_info['version']
@@ -2069,7 +2065,6 @@ class AgentRegistry:
                             'available_slots': available_slots,
                             'version': agent_info['version'],
                             'compute_plugins': agent_info['compute_plugins'],
-                            'clusterized': agent_info.get('swarm_enabled', False)
                         })
                         .where(agents.c.id == agent_id)
                     )
