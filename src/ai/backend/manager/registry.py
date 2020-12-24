@@ -1100,25 +1100,19 @@ class AgentRegistry:
         elif pending_session.cluster_mode == ClusterMode.MULTI_NODE:
             # Create overlay network for multi-node sessions
             network_name = f'bai-multinode-{pending_session.session_id}'
-            async with RPCContext(
-                kernel_agent_bindings[0].agent_alloc_ctx.agent_id,
-                kernel_agent_bindings[0].agent_alloc_ctx.agent_addr,
-                None,
-                order_key=pending_session.session_id,
-            ) as rpc:
-                try:
-                    # await rpc.call.create_overlay_network(network_name)
-                    await self.docker.networks.create({
-                        'Name': network_name,
-                        'Driver': 'overlay',
-                        'Attachable': True,
-                        'Labels': {
-                            'ai.backend.cluster-network': '1'
-                        }
-                    })
-                except Exception:
-                    log.exception(f"Failed to create an overlay network {network_name}")
-                    raise
+            try:
+                # await rpc.call.create_overlay_network(network_name)
+                await self.docker.networks.create({
+                    'Name': network_name,
+                    'Driver': 'overlay',
+                    'Attachable': True,
+                    'Labels': {
+                        'ai.backend.cluster-network': '1'
+                    }
+                })
+            except Exception:
+                log.exception(f"Failed to create an overlay network {network_name}")
+                raise
         keyfunc = lambda item: item.kernel.cluster_role
         replicas = {
             cluster_role: len([*group_iterator])

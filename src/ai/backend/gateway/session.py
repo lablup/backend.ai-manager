@@ -1172,6 +1172,7 @@ async def handle_instance_stats(app: web.Application, agent_id: AgentId, event_n
 async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name: str,
                             raw_kernel_id: str, container_id: str):
     dbpool = app['dbpool']
+    kernel_id = KernelId(uuid.UUID(raw_kernel_id))
     redis_conn: aioredis.Redis = await redis.connect_with_retries(
         str(app['shared_config'].get_redis_url(db=REDIS_STREAM_DB)),
         encoding=None,
@@ -1197,7 +1198,7 @@ async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name:
             async with dbpool.acquire() as conn, conn.begin():
                 query = (sa.update(kernels)
                            .values(container_log=log_buffer.getvalue())
-                           .where(kernels.c.id == raw_kernel_id))
+                           .where(kernels.c.id == kernel_id))
                 await conn.execute(query)
         finally:
             # Clear the log data from Redis when done.
