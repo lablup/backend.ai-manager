@@ -217,34 +217,65 @@ class SchedulerDispatcher(aobject):
                 session_agent_binding: Tuple[PendingSession, List[KernelAgentBinding]]
 
                 async with db_conn.begin() as txn:
-                    predicates: Sequence[Awaitable[PredicateResult]] = [
-                        check_reserved_batch_session(db_conn, sched_ctx, sess_ctx),
-                        check_concurrency(db_conn, sched_ctx, sess_ctx),
-                        check_dependencies(db_conn, sched_ctx, sess_ctx),
-                        check_keypair_resource_limit(db_conn, sched_ctx, sess_ctx),
-                        check_group_resource_limit(db_conn, sched_ctx, sess_ctx),
-                        check_domain_resource_limit(db_conn, sched_ctx, sess_ctx),
-                        check_scaling_group(db_conn, sched_ctx, sess_ctx),
+                    predicates: Sequence[Tuple[str, Awaitable[PredicateResult]]] = [
+                        ('reserved_time', check_reserved_batch_session(db_conn, sched_ctx, sess_ctx)),
+                        ('concurrency', check_concurrency(db_conn, sched_ctx, sess_ctx)),
+                        ('dependencies', check_dependencies(db_conn, sched_ctx, sess_ctx)),
+                        (
+                            'keypair_resource_limit',
+                            check_keypair_resource_limit(db_conn, sched_ctx, sess_ctx),
+                        ),
+                        (
+                            'user_group_resource_limit',
+                            check_group_resource_limit(db_conn, sched_ctx, sess_ctx),
+                        ),
+                        (
+                            'domain_resource_limit',
+                            check_domain_resource_limit(db_conn, sched_ctx, sess_ctx),
+                        ),
+                        (
+                            'scaling_group_resource_limit',
+                            check_scaling_group(db_conn, sched_ctx, sess_ctx),
+                        ),
                     ]
-                    check_results: List[Union[Exception, PredicateResult]] = []
-                    for check in predicates:
+                    check_results: List[Tuple[str, Union[Exception, PredicateResult]]] = []
+                    for predicate_name, check_coro in predicates:
                         try:
-                            check_results.append(await check)
+                            check_results.append((predicate_name, await check_coro))
                         except Exception as e:
                             log.exception(log_fmt + 'predicate-error', *log_args)
-                            check_results.append(e)
+                            check_results.append((predicate_name, e))
                     has_failure = False
-                    for result in check_results:
+                    failed_predicates = []
+                    passed_predicates = []
+                    for predicate_name, result in check_results:
                         if isinstance(result, Exception):
                             has_failure = True
+                            failed_predicates.append(predicate_name)
                             continue
                         if not result.passed:
+                            failed_predicates.append(predicate_name)
                             has_failure = True
+                        passed_predicates.append(predicate_name)
                     if has_failure:
                         log.debug(log_fmt + 'predicate-checks-failed', *log_args)
                         await _invoke_failure_callbacks(
                             db_conn, sched_ctx, sess_ctx, check_results,
                         )
+                        query = kernels.update().values({
+                            'status_info': "predicate-checks-failed",
+                            'status_data': sql_json_increment(
+                                kernels.c.status_data,
+                                ('scheduler', 'retries'),
+                                last_level_obj={
+                                    'last_try': datetime.now(tzutc()).isoformat(),
+                                    'failed_predicates': failed_predicates,
+                                    'passed_predicates': passed_predicates,
+                                }
+                            ),
+                        }).where(kernels.c.id == sess_ctx.session_id)
+                        await db_conn.execute(query)
+                        await txn.commit()
                         # Predicate failures are *NOT* permanent errors.
                         # We need to retry the scheduling afterwards.
                         continue
