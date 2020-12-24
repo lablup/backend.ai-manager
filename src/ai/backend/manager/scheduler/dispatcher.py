@@ -259,7 +259,7 @@ class SchedulerDispatcher(aobject):
                     if not result.passed:
                         failed_predicates.append({
                             'name': predicate_name,
-                            'msg': result.message,
+                            'msg': result.message or "",
                         })
                         has_failure = True
                     passed_predicates.append({
