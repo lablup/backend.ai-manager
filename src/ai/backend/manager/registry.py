@@ -7,6 +7,7 @@ import copy
 from datetime import datetime
 import logging
 from pathlib import Path
+import secrets
 import time
 from typing import (
     Any,
@@ -184,6 +185,8 @@ class AgentRegistry:
     policy, such as the limitation of maximum number of kernels per instance.
     """
 
+    kernel_creation_tracker: Dict[Tuple[str, KernelId], asyncio.Event]
+
     def __init__(
         self,
         config_server,
@@ -201,6 +204,7 @@ class AgentRegistry:
         self.redis_image = redis_image
         self.event_dispatcher = event_dispatcher
         self.hook_plugin_ctx = hook_plugin_ctx
+        self.kernel_creation_tracker = {}
 
     async def init(self) -> None:
         self.heartbeat_lock = asyncio.Lock()
@@ -760,28 +764,11 @@ class AgentRegistry:
         if hook_result.status != PASSED:
             raise RejectedByHook(hook_result.src_plugin, hook_result.reason)
 
-        async def interrupt_wait(
-            ctx: Any,
-            event_name: str,
-            agent_id: AgentId,
-            started_kernel_id: str,
-            *args,
-            start_event: asyncio.Event,
-            waiting_kernel_id: KernelId,
-            **kwargs,
-        ) -> None:
-            if KernelId(uuid.UUID(started_kernel_id)) == waiting_kernel_id:
-                start_event.set()
-
+        kernel_creation_id = secrets.token_urlsafe(16)
         start_event = asyncio.Event()
-        start_handler = self.event_dispatcher.subscribe(
-            'kernel_started', None,
-            aiotools.apartial(
-                interrupt_wait,
-                start_event=start_event,
-                waiting_kernel_id=sess_ctx.kernel_id,
-            )
-        )
+        self.kernel_creation_tracker[
+            (kernel_creation_id, sess_ctx.kernel_id)
+        ] = start_event
         try:
             # Create the kernel by invoking the agent
             async with self.handle_kernel_exception(
@@ -816,8 +803,11 @@ class AgentRegistry:
                         'auto_pull': auto_pull,
                         'preopen_ports': sess_ctx.preopen_ports,
                     }
-                    created_info = await rpc.call.create_kernel(str(sess_ctx.kernel_id),
-                                                                config)
+                    created_info = await rpc.call.create_kernel(
+                        kernel_creation_id,
+                        str(sess_ctx.kernel_id),
+                        config,
+                    )
                 if created_info is None:
                     raise KernelCreationFailed('ooops')
 
@@ -825,11 +815,12 @@ class AgentRegistry:
                       sess_ctx.session_name, sess_ctx.access_key, sess_ctx.kernel_id,
                       agent_ctx.agent_id, created_info)
             assert str(sess_ctx.kernel_id) == created_info['id']
-
             # Wait until the kernel_started event.
             await start_event.wait()
         finally:
-            self.event_dispatcher.unsubscribe('kernel_started', start_handler)
+            del self.kernel_creation_tracker[
+                (kernel_creation_id, sess_ctx.kernel_id)
+            ]
 
         await self.hook_plugin_ctx.notify(
             'POST_START_SESSION',
@@ -1121,47 +1112,61 @@ class AgentRegistry:
                 db_connection=conn,
                 for_update=True,
             )
-            await self.set_session_status(
-                kernel['id'],
-                access_key,
-                KernelStatus.RESTARTING,
-                db_connection=conn,
+            query = (
+                kernels.update()
+                .values({
+                    'status': KernelStatus.RESTARTING,
+                })
+                .where(kernels.c.id == kernel['id'])
             )
-        async with self.handle_kernel_exception(
-            'restart_session', kernel['id'], access_key, set_error=True,
-        ):
-            registry_url, registry_creds = \
-                await get_registry_info(self.config_server.etcd,
-                                        kernel['registry'])
-            image_ref = ImageRef(kernel['image'], [kernel['registry']])
-            image_info = await self.config_server.inspect_image(image_ref)
-            async with RPCContext(
-                kernel['agent_addr'], None, order_key=kernel['id'],
-            ) as rpc:
-                environ = {
-                     k: v for k, v in
-                     map(lambda s: s.split('=', 1), kernel['environ'])
-                }
-                new_config = {
-                    'image': {
-                        'registry': {
-                            'name': image_ref.registry,
-                            'url': str(registry_url),
-                            **registry_creds,
+            await conn.execute(query)
+        kernel_creation_id = secrets.token_urlsafe(16)
+        start_event = asyncio.Event()
+        self.kernel_creation_tracker[
+            (kernel_creation_id, kernel['id'])
+        ] = start_event
+        try:
+            async with self.handle_kernel_exception(
+                'restart_session', kernel['id'], access_key, set_error=True,
+            ):
+                registry_url, registry_creds = \
+                    await get_registry_info(self.config_server.etcd,
+                                            kernel['registry'])
+                image_ref = ImageRef(kernel['image'], [kernel['registry']])
+                image_info = await self.config_server.inspect_image(image_ref)
+                async with RPCContext(
+                    kernel['agent_addr'], None, order_key=kernel['id'],
+                ) as rpc:
+                    environ = {
+                         k: v for k, v in
+                         map(lambda s: s.split('=', 1), kernel['environ'])
+                    }
+                    new_config = {
+                        'image': {
+                            'registry': {
+                                'name': image_ref.registry,
+                                'url': str(registry_url),
+                                **registry_creds,
+                            },
+                            'digest': image_info['digest'],
+                            'canonical': kernel['image'],
+                            'labels': image_info['labels'],
                         },
-                        'digest': image_info['digest'],
-                        'canonical': kernel['image'],
-                        'labels': image_info['labels'],
-                    },
-                    'environ': environ,
-                    'mounts': [],  # recovered from container config
-                    'resource_slots':
-                        kernel['occupied_slots'].to_json(),  # unused currently
-                }
-                kernel_info = await rpc.call.restart_kernel(str(kernel['id']),
-                                                            new_config)
-        # TODO: publish "kernel_started" event
-        # TODO: remove publishing "kernel_started" event from the agent
+                        'environ': environ,
+                        'mounts': [],  # recovered from container config
+                        'resource_slots':
+                            kernel['occupied_slots'].to_json(),  # unused currently
+                    }
+                    kernel_info = await rpc.call.restart_kernel(
+                        kernel_creation_id,
+                        str(kernel['id']),
+                        new_config,
+                    )
+            await start_event.wait()
+        finally:
+            del self.kernel_creation_tracker[
+                (kernel_creation_id, kernel['id'])
+            ]
         await self.set_session_status(
             kernel['id'],
             access_key,
@@ -1171,8 +1176,10 @@ class AgentRegistry:
             repl_out_port=kernel_info['repl_out_port'],
             stdin_port=kernel_info['stdin_port'],
             stdout_port=kernel_info['stdout_port'],
-            service_ports=kernel_info.get('service_ports', [])
+            service_ports=kernel_info.get('service_ports', []),
         )
+        # NOTE: If the restarted session is a batch-type one, then the startup command
+        #       will be executed again after restart.
 
     async def execute(
         self,
