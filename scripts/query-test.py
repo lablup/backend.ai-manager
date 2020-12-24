@@ -10,6 +10,10 @@ from ai.backend.manager.models import (
     kernels,
     users,
 )
+from ai.backend.manager.models.utils import (
+    sql_json_increment,
+    sql_json_merge,
+)
 
 
 def main():
@@ -26,6 +30,8 @@ def main():
             'keypairs': keypairs,
             'kernels': kernels,
             'users': users,
+            'sql_json_increment': sql_json_increment,
+            'sql_json_merge': sql_json_merge,
         })
 
 

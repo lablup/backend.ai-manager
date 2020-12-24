@@ -20,14 +20,15 @@ async def reenter_txn(pool: SAEngine, conn: SAConnection) -> AsyncIterator[SACon
 def sql_json_merge(
     col,
     key: Tuple[str, ...],
-    *,
-    last_level_obj: Mapping[str, Any] = None,
+    obj: Mapping[str, Any],
     _depth: int = 0,
 ):
     """
-    Generate an SQLAlchemy expression that increments a specific (nested) key of the given JSONB column,
-    with automatic creation of empty objects in each key pepth and population of the optional last-level
-    object at the same level with the target key.
+    Generate an SQLAlchemy expression that merges the given object with
+    the existing object of a specific (nested) key of the given JSONB column,
+    with automatic creation of empty objects in parents and the target level.
+
+    Note that the existing value must be also an object, not a primitive value.
     """
     expr = sa.func.coalesce(
         col if _depth == 0 else col[key[:_depth]],
@@ -37,13 +38,12 @@ def sql_json_merge(
             key[_depth],
             (
                 sa.func.coalesce(col[key], sa.text("'{}'::jsonb"))
+                .concat(sa.func.cast(obj, psql.JSONB))
                 if _depth == len(key) - 1
-                else sql_json_merge(col, key, last_level_obj=last_level_obj, _depth=_depth + 1)
+                else sql_json_merge(col, key, obj=obj, _depth=_depth + 1)
             )
         )
     )
-    if _depth == len(key) - 1 and last_level_obj is not None:
-        expr = expr.concat(sa.func.cast(last_level_obj, psql.JSONB))
     return expr
 
 
@@ -56,8 +56,10 @@ def sql_json_increment(
 ):
     """
     Generate an SQLAlchemy expression that increments a specific (nested) key of the given JSONB column,
-    with automatic creation of empty objects in each key pepth and population of the optional last-level
+    with automatic creation of empty objects in parents and population of the optional last-level
     object at the same level with the target key.
+
+    Note that the existing value of the parent key must be also an object, not a primitive value.
     """
     expr = sa.func.coalesce(
         col if _depth == 0 else col[key[:_depth]],

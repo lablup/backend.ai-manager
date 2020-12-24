@@ -283,8 +283,8 @@ class SchedulerDispatcher(aobject):
                         query = kernels.update().values({
                             'status_data': sql_json_merge(
                                 kernels.c.status_data,
-                                ('scheduler', 'retries'),
-                                last_level_obj={
+                                ('scheduler',),
+                                {
                                     'failed_predicates': failed_predicates,
                                     'passed_predicates': passed_predicates,
                                 }
