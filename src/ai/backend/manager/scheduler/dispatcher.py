@@ -267,7 +267,7 @@ class SchedulerDispatcher(aobject):
                             'status_data': sql_json_increment(
                                 kernels.c.status_data,
                                 ('scheduler', 'retries'),
-                                last_level_obj={
+                                parent_updates={
                                     'last_try': datetime.now(tzutc()).isoformat(),
                                     'failed_predicates': failed_predicates,
                                     'passed_predicates': passed_predicates,
@@ -285,6 +285,7 @@ class SchedulerDispatcher(aobject):
                                 kernels.c.status_data,
                                 ('scheduler',),
                                 {
+                                    'last_try': datetime.now(tzutc()).isoformat(),
                                     'failed_predicates': failed_predicates,
                                     'passed_predicates': passed_predicates,
                                 }
@@ -312,7 +313,7 @@ class SchedulerDispatcher(aobject):
                                 'status_data': sql_json_increment(
                                     kernels.c.status_data,
                                     ('scheduler', 'retries'),
-                                    last_level_obj={
+                                    parent_updates={
                                         'last_try': datetime.now(tzutc()).isoformat(),
                                     }
                                 ),
@@ -376,7 +377,7 @@ class SchedulerDispatcher(aobject):
                                     'status_data': sql_json_increment(
                                         kernels.c.status_data,
                                         ('scheduler', 'retries'),
-                                        last_level_obj={
+                                        parent_updates={
                                             'last_try': datetime.now(tzutc()).isoformat(),
                                         }
                                     ),

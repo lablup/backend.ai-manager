@@ -24,8 +24,8 @@ def sql_json_merge(
     _depth: int = 0,
 ):
     """
-    Generate an SQLAlchemy expression that merges the given object with
-    the existing object of a specific (nested) key of the given JSONB column,
+    Generate an SQLAlchemy column update expression that merges the given object with
+    the existing object at a specific (nested) key of the given JSONB column,
     with automatic creation of empty objects in parents and the target level.
 
     Note that the existing value must be also an object, not a primitive value.
@@ -51,13 +51,14 @@ def sql_json_increment(
     col,
     key: Tuple[str, ...],
     *,
-    last_level_obj: Mapping[str, Any] = None,
+    parent_updates: Mapping[str, Any] = None,
     _depth: int = 0,
 ):
     """
-    Generate an SQLAlchemy expression that increments a specific (nested) key of the given JSONB column,
-    with automatic creation of empty objects in parents and population of the optional last-level
-    object at the same level with the target key.
+    Generate an SQLAlchemy column update expression that increments the value at a specific
+    (nested) key of the given JSONB column,
+    with automatic creation of empty objects in parents and population of the
+    optional parent_updates object to the target key's parent.
 
     Note that the existing value of the parent key must be also an object, not a primitive value.
     """
@@ -70,10 +71,10 @@ def sql_json_increment(
             (
                 sa.func.coalesce(col[key].as_integer(), 0) + 1
                 if _depth == len(key) - 1
-                else sql_json_increment(col, key, last_level_obj=last_level_obj, _depth=_depth + 1)
+                else sql_json_increment(col, key, parent_updates=parent_updates, _depth=_depth + 1)
             )
         )
     )
-    if _depth == len(key) - 1 and last_level_obj is not None:
-        expr = expr.concat(sa.func.cast(last_level_obj, psql.JSONB))
+    if _depth == len(key) - 1 and parent_updates is not None:
+        expr = expr.concat(sa.func.cast(parent_updates, psql.JSONB))
     return expr
