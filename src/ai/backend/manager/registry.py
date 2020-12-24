@@ -7,6 +7,7 @@ import copy
 from datetime import datetime
 import itertools
 import logging
+import secrets
 import time
 from typing import (
     Any,
@@ -199,6 +200,8 @@ class AgentRegistry:
     policy, such as the limitation of maximum number of kernels per instance.
     """
 
+    kernel_creation_tracker: Dict[Tuple[str, KernelId], asyncio.Event]
+
     def __init__(
         self,
         shared_config: SharedConfig,
@@ -218,6 +221,7 @@ class AgentRegistry:
         self.event_dispatcher = event_dispatcher
         self.storage_manager = storage_manager
         self.hook_plugin_ctx = hook_plugin_ctx
+        self.kernel_creation_tracker = {}
 
     async def init(self) -> None:
         self.heartbeat_lock = asyncio.Lock()
@@ -1137,21 +1141,10 @@ class AgentRegistry:
             # Within a group, agent_alloc_ctx are same.
             agent_alloc_ctx = items[0].agent_alloc_ctx
 
-            async def interrupt_wait(
-                ctx: Any,
-                event_name: str,
-                agent_id: AgentId,
-                started_kernel_id: str,
-                *args,
-                start_event: asyncio.Event,
-                waiting_kernel_id: KernelId,
-                **kwargs,
-            ) -> None:
-                if KernelId(uuid.UUID(started_kernel_id)) == waiting_kernel_id:
-                    start_event.set()
-
-            async def _post_create_kernel(created_info, start_event):
+            async def _post_create_kernel(creation_id: str, created_info):
                 # Wait until the kernel_started event.
+                kernel_id = KernelId(uuid.UUID(created_info['id']))
+                start_event = self.kernel_creation_tracker[(creation_id, kernel_id)]
                 await start_event.wait()
                 # Record kernel access information
                 async with self.dbpool.acquire() as conn, conn.begin():
@@ -1187,23 +1180,16 @@ class AgentRegistry:
                     None,
                     order_key=pending_session.session_id,
                 ) as rpc:
-                    start_events = {}
-                    start_handlers = []
+                    creation_id = secrets.token_urlsafe(16)
                     # Prepare kernel_started event handling
                     for binding in items:
-                        start_event = asyncio.Event()
-                        start_events[binding.kernel.kernel_id] = start_event
-                        start_handlers.append(self.event_dispatcher.subscribe(
-                            'kernel_started', None,
-                            aiotools.apartial(
-                                interrupt_wait,
-                                start_event=start_event,
-                                waiting_kernel_id=binding.kernel.kernel_id,
-                            )
-                        ))
+                        self.kernel_creation_tracker[
+                            (creation_id, binding.kernel.kernel_id)
+                        ] = asyncio.Event()
                     try:
                         # Issue a batched RPC call to create kernels on this agent
                         created_infos = await rpc.call.create_kernels(
+                            creation_id,
                             str(pending_session.session_id),
                             [str(binding.kernel.kernel_id) for binding in items],
                             [
@@ -1256,12 +1242,15 @@ class AgentRegistry:
                         async with aiotools.TaskGroup() as tg:
                             for created_info in created_infos:
                                 tg.create_task(_post_create_kernel(
+                                    creation_id,
                                     created_info,
-                                    start_events[KernelId(uuid.UUID(created_info['id']))]
                                 ))
                     finally:
-                        for start_handler in start_handlers:
-                            self.event_dispatcher.unsubscribe('kernel_started', start_handler)
+                        # clean up for sure
+                        for binding in items:
+                            del self.kernel_creation_tracker[
+                                (creation_id, binding.kernel.kernel_id)
+                            ]
 
             per_agent_tasks.append(_create_kernels_in_one_agent(agent_alloc_ctx, items))
 
@@ -1679,76 +1668,73 @@ class AgentRegistry:
 
         async def _restart_kernel(kernel) -> None:
             try:
-                async with self.dbpool.acquire() as conn, conn.begin():
-                    query = (
-                        kernels.update()
-                        .values({
-                            'status': KernelStatus.RESTARTING,
-                        })
-                        .where(kernels.c.id == kernel['id'])
-                    )
-                    await conn.execute(query)
-                async with RPCContext(
-                    kernel['agent'],       # the main-container's agent
-                    kernel['agent_addr'],
-                    None,
-                    order_key=None,
-                ) as rpc:
-                    updated_config: Dict[str, Any] = {
-                        # TODO: support resacling of sub-containers
-                    }
-                    kernel_info = await rpc.call.restart_kernel(
-                        str(kernel['session_id']),
-                        str(kernel['id']),
-                        updated_config,
-                    )
-                async with self.dbpool.acquire() as conn, conn.begin():
-                    query = (
-                        kernels.update()
-                        .values({
-                            'status': KernelStatus.RUNNING,
-                            'container_id': kernel_info['container_id'],
-                            'repl_in_port': kernel_info['repl_in_port'],
-                            'repl_out_port': kernel_info['repl_out_port'],
-                            'stdin_port': kernel_info['stdin_port'],
-                            'stdout_port': kernel_info['stdout_port'],
-                            'service_ports': kernel_info.get('service_ports', []),
-                        })
-                        .where(kernels.c.id == kernel['id'])
-                    )
-                    await conn.execute(query)
-                await self.event_dispatcher.produce_event(
-                    'kernel_started',
-                    (str(kernel['id']), ),
-                    agent_id=kernel['agent'],
-                )
+                creation_id = secrets.token_urlsafe(16)
+                start_event = asyncio.Event()
+                self.kernel_creation_tracker[
+                    (creation_id, kernel['id'])
+                ] = start_event
+                try:
+                    async with self.dbpool.acquire() as conn, conn.begin():
+                        query = (
+                            kernels.update()
+                            .values({
+                                'status': KernelStatus.RESTARTING,
+                            })
+                            .where(kernels.c.id == kernel['id'])
+                        )
+                        await conn.execute(query)
+                    async with RPCContext(
+                        kernel['agent'],       # the main-container's agent
+                        kernel['agent_addr'],
+                        None,
+                        order_key=None,
+                    ) as rpc:
+                        updated_config: Dict[str, Any] = {
+                            # TODO: support resacling of sub-containers
+                        }
+                        kernel_info = await rpc.call.restart_kernel(
+                            creation_id,
+                            str(kernel['session_id']),
+                            str(kernel['id']),
+                            updated_config,
+                        )
+                    await start_event.wait()
+                    async with self.dbpool.acquire() as conn, conn.begin():
+                        query = (
+                            kernels.update()
+                            .values({
+                                'status': KernelStatus.RUNNING,
+                                'container_id': kernel_info['container_id'],
+                                'repl_in_port': kernel_info['repl_in_port'],
+                                'repl_out_port': kernel_info['repl_out_port'],
+                                'stdin_port': kernel_info['stdin_port'],
+                                'stdout_port': kernel_info['stdout_port'],
+                                'service_ports': kernel_info.get('service_ports', []),
+                            })
+                            .where(kernels.c.id == kernel['id'])
+                        )
+                        await conn.execute(query)
+                finally:
+                    del self.kernel_creation_tracker[
+                        (creation_id, kernel['id'])
+                    ]
             except Exception:
                 log.exception('unexpected-error in _restart_kerenl()')
 
-        # TODO: debug restarting multiple kernels
-        for idx, kernel in enumerate(kernel_list):
-            try:
-                # print(f"restart({idx}, {kernel['id']} begin")
-                await _restart_kernel(kernel)
-                # print(f"restart({idx}, {kernel['id']} done")
-            finally:
-                # print(f"restart({idx}, {kernel['id']} finally")
-                pass
-        """
         restart_coros = []
         for kernel in kernel_list:
             restart_coros.append(_restart_kernel(kernel))
-
-        # session_started event will be fired by our kernel_started event handler
-        # when all kernels become RUNNING.
-        # NOTE: If the restarted session is a batch-type one, then the startup command
-        #       will be executed again after restart.
-
         async with self.handle_kernel_exception(
             'restart_session', session_name_or_id, access_key, set_error=True,
         ):
             await asyncio.gather(*restart_coros)
-        """
+
+        # NOTE: If the restarted session is a batch-type one, then the startup command
+        #       will be executed again after restart.
+        await self.event_dispatcher.produce_event(
+            'session_started',
+            (str(session_id), ),
+        )
 
     async def execute(
         self,
