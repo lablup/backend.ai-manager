@@ -48,7 +48,7 @@ from ..models import (
     AgentStatus, KernelStatus,
     AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
 )
-from ..models.utils import sql_json_increment
+from ..models.utils import sql_json_increment, sql_json_merge
 from . import (
     PredicateResult,
     PendingSession,
@@ -172,7 +172,7 @@ class SchedulerDispatcher(aobject):
             Tuple[Any, ...],
             SchedulingContext,
             Tuple[PendingSession, List[KernelAgentBinding]],
-            List[Union[Exception, PredicateResult]],
+            List[Tuple[str, Union[Exception, PredicateResult]]],
         ]]
         start_task_args = []
 
@@ -279,6 +279,19 @@ class SchedulerDispatcher(aobject):
                         # Predicate failures are *NOT* permanent errors.
                         # We need to retry the scheduling afterwards.
                         continue
+                    else:
+                        query = kernels.update().values({
+                            'status_data': sql_json_merge(
+                                kernels.c.status_data,
+                                ('scheduler', 'retries'),
+                                last_level_obj={
+                                    'failed_predicates': failed_predicates,
+                                    'passed_predicates': passed_predicates,
+                                }
+                            ),
+                        }).where(kernels.c.id == sess_ctx.session_id)
+                        await db_conn.execute(query)
+                        await txn.commit()
 
                     if sess_ctx.cluster_mode == ClusterMode.SINGLE_NODE:
                         # Assign agent resource per session.
@@ -397,6 +410,10 @@ class SchedulerDispatcher(aobject):
                             await db_conn.execute(query)
                             kernel_agent_bindings.append(KernelAgentBinding(kernel, agent_alloc_ctx))
                         session_agent_binding = (sess_ctx, kernel_agent_bindings)
+                    else:
+                        raise RuntimeError(
+                            f"should not reach here; unknown cluster_mode: {sess_ctx.cluster_mode}"
+                        )
                     start_task_args.append(
                         (
                             log_args,
@@ -426,7 +443,7 @@ class SchedulerDispatcher(aobject):
             log_args,
             sched_ctx: SchedulingContext,
             session_agent_binding: Tuple[PendingSession, List[KernelAgentBinding]],
-            check_results,
+            check_results: List[Tuple[str, Union[Exception, PredicateResult]]],
         ) -> None:
             log.debug(log_fmt + 'try-starting', *log_args)
             sess_ctx = session_agent_binding[0]
@@ -754,7 +771,7 @@ async def _invoke_success_callbacks(
     db_conn: SAConnection,
     sched_ctx: SchedulingContext,
     sess_ctx: PendingSession,
-    results: List[Union[Exception, PredicateResult]],
+    results: List[Tuple[str, Union[Exception, PredicateResult]]],
     *,
     use_new_txn: bool = False,
 ) -> None:
@@ -762,7 +779,7 @@ async def _invoke_success_callbacks(
     Give predicates chances to finalize/add DB changes.
     """
     callbacks: List[Awaitable[None]] = []
-    for result in results:
+    for predicate_name, result in results:
         if isinstance(result, Exception):
             # This won't happen but this code is required to pass static check.
             continue
@@ -776,7 +793,7 @@ async def _invoke_failure_callbacks(
     db_conn: SAConnection,
     sched_ctx: SchedulingContext,
     sess_ctx: PendingSession,
-    results: List[Union[Exception, PredicateResult]],
+    results: List[Tuple[str, Union[Exception, PredicateResult]]],
     *,
     use_new_txn: bool = False,
 ) -> None:
@@ -787,7 +804,7 @@ async def _invoke_failure_callbacks(
     store the "ERROR" status to corresponding rows in the kernels table.
     """
     callbacks: List[Awaitable[None]] = []
-    for result in results:
+    for predicate_name, result in results:
         if isinstance(result, Exception):
             # This won't happen but this code is required to pass static check.
             continue
