@@ -1605,6 +1605,7 @@ class AgentRegistry:
                     kernels.c.session_id,
                     kernels.c.cluster_mode,
                     kernels.c.cluster_size,
+                    kernels.c.agent,
                     kernels.c.agent_addr,
                 ])
                 .select_from(kernels)
