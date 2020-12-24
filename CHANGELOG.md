@@ -16,6 +16,13 @@ Changes
 
 .. towncrier release notes start
 
+20.09.0rc2 (2020-12-24)
+-----------------------
+
+### Fixes
+* Fix races of kernel creation events by attaching a unique creation request ID to distinguish and catch the events by the caller manager instance ([#374](https://github.com/lablup/backend.ai-manager/issues/374))
+
+
 20.09.0rc1 (2020-12-23)
 -----------------------
 
