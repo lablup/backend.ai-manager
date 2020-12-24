@@ -1,0 +1,3 @@
+Stabilize multi-container sessions further.
+ - Include predicate check results in `kernels.status_data` for better user-side diagnosis
+ - Fix further race condition in the session-level creation routines, just like the kernel-level creation routines in #374.
