@@ -450,7 +450,7 @@ class SchedulerDispatcher(aobject):
             sess_ctx = session_agent_binding[0]
             await self.registry.event_dispatcher.produce_event(
                 'session_scheduled',
-                (str(sess_ctx.session_id), ),
+                (str(sess_ctx.session_id), sess_ctx.session_creation_id, ),
             )
             try:
                 assert len(session_agent_binding[1]) > 0
@@ -474,7 +474,7 @@ class SchedulerDispatcher(aobject):
                     await db_conn.execute(query)
                 await self.registry.event_dispatcher.produce_event(
                     'session_cancelled',
-                    (str(sess_ctx.session_id), 'failed-to-start'),
+                    (str(sess_ctx.session_id), sess_ctx.session_creation_id, 'failed-to-start'),
                 )
             else:
                 log.info(log_fmt + 'started', *log_args)
@@ -508,6 +508,7 @@ async def _list_pending_sessions(
     query = (
         sa.select([
             kernels.c.id,
+            kernels.c.session_creation_id,
             kernels.c.status,
             kernels.c.image,
             kernels.c.cluster_mode,
@@ -557,6 +558,7 @@ async def _list_pending_sessions(
                 kernels=[],
                 access_key=row['access_key'],
                 session_id=row['session_id'],
+                session_creation_id=row['session_creation_id'],
                 session_type=row['session_type'],
                 session_name=row['session_name'],
                 cluster_mode=row['cluster_mode'],

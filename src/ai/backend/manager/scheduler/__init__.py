@@ -95,6 +95,7 @@ class PendingSession:
     kernels: List[KernelInfo]
     access_key: AccessKey
     session_id: uuid.UUID
+    session_creation_id: str
     session_type: SessionTypes
     session_name: str
     cluster_mode: ClusterMode

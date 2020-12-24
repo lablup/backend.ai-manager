@@ -416,6 +416,44 @@ async def push_background_task_events(
         return resp
 
 
+async def enqueue_kernel_status_update_with_creation_id(
+    app: web.Application,
+    agent_id: AgentId,
+    event_name: str,
+    raw_kernel_id: str,
+    kernel_creation_id: str,
+    reason: str = None,
+    exit_code: int = None,
+) -> None:
+    if raw_kernel_id is None:
+        return
+    kernel_id = uuid.UUID(raw_kernel_id)
+    async with app['dbpool'].acquire() as conn, conn.begin():
+        query = (
+            sa.select([
+                kernels.c.id,
+                kernels.c.session_id,
+                kernels.c.session_name,
+                kernels.c.access_key,
+                kernels.c.cluster_role,
+                kernels.c.cluster_idx,
+                kernels.c.domain_name,
+                kernels.c.group_id,
+                kernels.c.user_uuid,
+            ])
+            .select_from(kernels)
+            .where(
+                (kernels.c.id == kernel_id)
+            )
+        )
+        result = await conn.execute(query)
+        row = await result.first()
+        if row is None:
+            return
+    for q in app['session_event_queues']:
+        q.put_nowait((event_name, row, reason))
+
+
 async def enqueue_kernel_status_update(
     app: web.Application,
     agent_id: AgentId,
@@ -443,6 +481,43 @@ async def enqueue_kernel_status_update(
             .select_from(kernels)
             .where(
                 (kernels.c.id == kernel_id)
+            )
+        )
+        result = await conn.execute(query)
+        row = await result.first()
+        if row is None:
+            return
+    for q in app['session_event_queues']:
+        q.put_nowait((event_name, row, reason))
+
+
+async def enqueue_session_status_update_with_creation_id(
+    app: web.Application,
+    agent_id: AgentId,
+    event_name: str,
+    raw_session_id: str,
+    session_creation_id: str,
+    reason: str = None,
+    exit_code: int = None,
+) -> None:
+    if raw_session_id is None:
+        return
+    session_id = uuid.UUID(raw_session_id)
+    async with app['dbpool'].acquire() as conn:
+        query = (
+            sa.select([
+                kernels.c.id,
+                kernels.c.session_id,
+                kernels.c.session_name,
+                kernels.c.access_key,
+                kernels.c.domain_name,
+                kernels.c.group_id,
+                kernels.c.user_uuid,
+            ])
+            .select_from(kernels)
+            .where(
+                (kernels.c.id == session_id)
+                # for the main kernel, kernel ID == session ID
             )
         )
         result = await conn.execute(query)
@@ -543,18 +618,18 @@ async def events_app_ctx(app: web.Application) -> AsyncIterator[None]:
     app['session_event_queues'] = set()
     app['task_update_queues'] = set()
     event_dispatcher = app['event_dispatcher']
-    event_dispatcher.subscribe('session_enqueued', app, enqueue_kernel_status_update)
-    event_dispatcher.subscribe('session_scheduled', app, enqueue_session_status_update)
-    event_dispatcher.subscribe('kernel_preparing', app, enqueue_kernel_status_update)
-    event_dispatcher.subscribe('kernel_pulling', app, enqueue_kernel_status_update)
-    event_dispatcher.subscribe('kernel_creating', app, enqueue_kernel_status_update)
-    event_dispatcher.subscribe('kernel_started', app, enqueue_kernel_status_update)
-    event_dispatcher.subscribe('session_started', app, enqueue_session_status_update)
+    event_dispatcher.subscribe('session_enqueued', app, enqueue_session_status_update_with_creation_id)
+    event_dispatcher.subscribe('session_scheduled', app, enqueue_session_status_update_with_creation_id)
+    event_dispatcher.subscribe('kernel_preparing', app, enqueue_kernel_status_update_with_creation_id)
+    event_dispatcher.subscribe('kernel_pulling', app, enqueue_kernel_status_update_with_creation_id)
+    event_dispatcher.subscribe('kernel_creating', app, enqueue_kernel_status_update_with_creation_id)
+    event_dispatcher.subscribe('kernel_started', app, enqueue_kernel_status_update_with_creation_id)
+    event_dispatcher.subscribe('session_started', app, enqueue_session_status_update_with_creation_id)
     event_dispatcher.subscribe('kernel_terminating', app, enqueue_kernel_status_update)
     event_dispatcher.subscribe('kernel_terminated', app, enqueue_kernel_status_update)
     event_dispatcher.subscribe('session_terminated', app, enqueue_session_status_update)
     event_dispatcher.subscribe('kernel_cancelled', app, enqueue_kernel_status_update)
-    event_dispatcher.subscribe('session_cancelled', app, enqueue_session_status_update)
+    event_dispatcher.subscribe('session_cancelled', app, enqueue_session_status_update_with_creation_id)
     event_dispatcher.subscribe('session_success', app, enqueue_batch_task_result_update)
     event_dispatcher.subscribe('session_failure', app, enqueue_batch_task_result_update)
     event_dispatcher.subscribe('task_updated', app, enqueue_task_status_update)
