@@ -62,7 +62,6 @@ agents = sa.Table(
 
     sa.Column('version', sa.String(length=64), nullable=False),
     sa.Column('compute_plugins', pgsql.JSONB(), nullable=False, default={}),
-    sa.Column('clusterized', sa.Boolean, default=False),
 )
 
 

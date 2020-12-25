@@ -147,6 +147,7 @@ kernels = sa.Table(
     # single-container session.
     # Otherwise, it refers the kernel ID of the main contaienr of the belonged multi-container session.
     sa.Column('session_id', SessionIDColumnType, unique=False, index=True, nullable=False),
+    sa.Column('session_creation_id', sa.String(length=32), unique=False, index=False),
     sa.Column('session_name', sa.String(length=64), unique=False, index=True),     # previously sess_id
     sa.Column('session_type', EnumType(SessionTypes), index=True, nullable=False,  # previously sess_type
               default=SessionTypes.INTERACTIVE, server_default=SessionTypes.INTERACTIVE.name),

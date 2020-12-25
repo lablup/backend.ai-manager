@@ -76,6 +76,7 @@ async def check_concurrency(
             "You cannot run more than "
             f"{resource_policy['max_concurrent_sessions']} concurrent sessions"
         )
+
     # Increment concurrency usage of keypair.
     query = (sa.update(keypairs)
                .values(concurrency_used=keypairs.c.concurrency_used + 1)
@@ -123,25 +124,14 @@ async def check_keypair_resource_limit(
     log.debug('keypair:{} current-occupancy: {}', sess_ctx.access_key, key_occupied)
     log.debug('keypair:{} total-allowed: {}', sess_ctx.access_key, total_keypair_allowed)
     if not (key_occupied + sess_ctx.requested_slots <= total_keypair_allowed):
-
-        async def update_status_info(
-            db_conn: SAConnection,
-            sched_ctx: SchedulingContext,
-            sess_ctx: PendingSession,
-        ) -> None:
-            query = (sa.update(kernels)
-                       .values(status_info='out-of-resource (keypair resource quota exceeded)')
-                       .where(kernels.c.session_id == sess_ctx.session_id))
-            await db_conn.execute(query)
-
         return PredicateResult(
             False,
-            'Your keypair resource quota is exceeded. ({})'
+            "Your keypair resource quota is exceeded. ({})"
             .format(' '.join(
                 f'{k}={v}' for k, v in
                 total_keypair_allowed.to_humanized(sched_ctx.known_slot_types).items()
             )),
-            failure_cb=update_status_info)
+        )
     return PredicateResult(True)
 
 
@@ -162,25 +152,14 @@ async def check_group_resource_limit(
     log.debug('group:{} current-occupancy: {}', sess_ctx.group_id, group_occupied)
     log.debug('group:{} total-allowed: {}', sess_ctx.group_id, total_group_allowed)
     if not (group_occupied + sess_ctx.requested_slots <= total_group_allowed):
-
-        async def update_status_info(
-            db_conn: SAConnection,
-            sched_ctx: SchedulingContext,
-            sess_ctx: PendingSession,
-        ) -> None:
-            query = (sa.update(kernels)
-                       .values(status_info='out-of-resource (group resource quota exceeded)')
-                       .where(kernels.c.session_id == sess_ctx.session_id))
-            await db_conn.execute(query)
-
         return PredicateResult(
             False,
-            'Your group resource quota is exceeded. ({})'
+            "Your group resource quota is exceeded. ({})"
             .format(' '.join(
                 f'{k}={v}' for k, v in
                 total_group_allowed.to_humanized(sched_ctx.known_slot_types).items()
-            )),
-            failure_cb=update_status_info)
+            ))
+        )
     return PredicateResult(True)
 
 
@@ -203,17 +182,6 @@ async def check_domain_resource_limit(
     log.debug('domain:{} current-occupancy: {}', sess_ctx.domain_name, domain_occupied)
     log.debug('domain:{} total-allowed: {}', sess_ctx.domain_name, total_domain_allowed)
     if not (domain_occupied + sess_ctx.requested_slots <= total_domain_allowed):
-
-        async def update_status_info(
-            db_conn: SAConnection,
-            sched_ctx: SchedulingContext,
-            sess_ctx: PendingSession,
-        ) -> None:
-            query = (sa.update(kernels)
-                       .values(status_info='out-of-resource (domain resource quota exceeded)')
-                       .where(kernels.c.session_id == sess_ctx.session_id))
-            await db_conn.execute(query)
-
         return PredicateResult(
             False,
             'Your domain resource quota is exceeded. ({})'
@@ -221,7 +189,7 @@ async def check_domain_resource_limit(
                 f'{k}={v}' for k, v in
                 total_domain_allowed.to_humanized(sched_ctx.known_slot_types).items()
             )),
-            failure_cb=update_status_info)
+        )
     return PredicateResult(True)
 
 
@@ -244,8 +212,8 @@ async def check_scaling_group(
         else:
             return PredicateResult(
                 False,
-                'The given preferred scaling group is not available. ({})'
-                .format(preferred_sgroup_name)
+                f"The given preferred scaling group is not available. "
+                f"({preferred_sgroup_name})"
             )
         # Consider agents only in the preferred scaling group.
         target_sgroup_names = [preferred_sgroup_name]
@@ -254,18 +222,9 @@ async def check_scaling_group(
         target_sgroup_names = [sgroup['name'] for sgroup in sgroups]
     log.debug('considered scaling groups: {}', target_sgroup_names)
     if not target_sgroup_names:
-
-        async def update_status_info(
-            db_conn: SAConnection,
-            sched_ctx: SchedulingContext,
-            sess_ctx: PendingSession,
-        ) -> None:
-            query = (sa.update(kernels)
-                       .values(status_info='out-of-resource (no scaling groups available)')
-                       .where(kernels.c.session_id == sess_ctx.session_id))
-            await db_conn.execute(query)
-
-        return PredicateResult(False, 'No available resource in scaling groups.',
-                               failure_cb=update_status_info)
+        return PredicateResult(
+            False,
+            "No available resource in scaling groups.",
+        )
     sess_ctx.target_sgroup_names.extend(target_sgroup_names)
     return PredicateResult(True)

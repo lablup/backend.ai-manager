@@ -27,6 +27,7 @@ from typing import (
 )
 import uuid
 
+import aiodocker
 import aiohttp
 if TYPE_CHECKING:
     from aiopg.sa.connection import SAConnection
@@ -214,6 +215,7 @@ class AgentRegistry:
         hook_plugin_ctx: HookPluginContext,
     ) -> None:
         self.shared_config = shared_config
+        self.docker = aiodocker.Docker()
         self.dbpool = dbpool
         self.redis_stat = redis_stat
         self.redis_live = redis_live
@@ -692,6 +694,7 @@ class AgentRegistry:
 
     async def enqueue_session(
         self,
+        session_creation_id: str,
         session_name: str,
         access_key: str,
         kernel_enqueue_configs: List[KernelEnqueueingConfig],
@@ -992,6 +995,7 @@ class AgentRegistry:
                 query = kernels.insert().values({
                     'id': kernel_id,
                     'status': KernelStatus.PENDING,
+                    'session_creation_id': session_creation_id,
                     'session_id': session_id,
                     'session_name': session_name,
                     'session_type': session_type,
@@ -1031,7 +1035,10 @@ class AgentRegistry:
             'POST_ENQUEUE_SESSION',
             (session_id, session_name, access_key),
         )
-        await self.event_dispatcher.produce_event('session_enqueued', (str(session_id), ))
+        await self.event_dispatcher.produce_event(
+            'session_enqueued',
+            (str(session_id), session_creation_id, ),
+        )
         return session_id
 
     async def start_session(
@@ -1041,6 +1048,7 @@ class AgentRegistry:
     ) -> None:
 
         pending_session, kernel_agent_bindings = session_agent_binding
+        session_creation_id = pending_session.session_creation_id
 
         hook_result = await self.hook_plugin_ctx.dispatch(
             'PRE_START_SESSION',
@@ -1092,17 +1100,19 @@ class AgentRegistry:
         elif pending_session.cluster_mode == ClusterMode.MULTI_NODE:
             # Create overlay network for multi-node sessions
             network_name = f'bai-multinode-{pending_session.session_id}'
-            async with RPCContext(
-                kernel_agent_bindings[0].agent_alloc_ctx.agent_id,
-                kernel_agent_bindings[0].agent_alloc_ctx.agent_addr,
-                None,
-                order_key=pending_session.session_id,
-            ) as rpc:
-                try:
-                    await rpc.call.create_overlay_network(network_name)
-                except Exception:
-                    log.exception(f"Failed to create an overlay network {network_name}")
-                    raise
+            try:
+                # await rpc.call.create_overlay_network(network_name)
+                await self.docker.networks.create({
+                    'Name': network_name,
+                    'Driver': 'overlay',
+                    'Attachable': True,
+                    'Labels': {
+                        'ai.backend.cluster-network': '1'
+                    }
+                })
+            except Exception:
+                log.exception(f"Failed to create an overlay network {network_name}")
+                raise
         keyfunc = lambda item: item.kernel.cluster_role
         replicas = {
             cluster_role: len([*group_iterator])
@@ -1180,16 +1190,16 @@ class AgentRegistry:
                     None,
                     order_key=pending_session.session_id,
                 ) as rpc:
-                    creation_id = secrets.token_urlsafe(16)
+                    kernel_creation_id = secrets.token_urlsafe(16)
                     # Prepare kernel_started event handling
                     for binding in items:
                         self.kernel_creation_tracker[
-                            (creation_id, binding.kernel.kernel_id)
+                            (kernel_creation_id, binding.kernel.kernel_id)
                         ] = asyncio.Event()
                     try:
                         # Issue a batched RPC call to create kernels on this agent
                         created_infos = await rpc.call.create_kernels(
-                            creation_id,
+                            kernel_creation_id,
                             str(pending_session.session_id),
                             [str(binding.kernel.kernel_id) for binding in items],
                             [
@@ -1242,23 +1252,32 @@ class AgentRegistry:
                         async with aiotools.TaskGroup() as tg:
                             for created_info in created_infos:
                                 tg.create_task(_post_create_kernel(
-                                    creation_id,
+                                    kernel_creation_id,
                                     created_info,
                                 ))
+                    except Exception:
+                        # The agent has already cancelled or issued the destruction lifecycle event
+                        # for this batch of kernels.
+                        raise
                     finally:
                         # clean up for sure
                         for binding in items:
                             del self.kernel_creation_tracker[
-                                (creation_id, binding.kernel.kernel_id)
+                                (kernel_creation_id, binding.kernel.kernel_id)
                             ]
 
             per_agent_tasks.append(_create_kernels_in_one_agent(agent_alloc_ctx, items))
 
         if per_agent_tasks:
             await asyncio.gather(*per_agent_tasks)
+            # When a particular container creation fails, this will raise an error,
+            # while other containers continue to be created.
+            # TODO: We need to cancel/rollback the successful batches of kernels in other agents.
+
+        # If all is well, let's say the session is ready.
         await self.event_dispatcher.produce_event(
             'session_started',
-            (str(pending_session.session_id), ),
+            (str(pending_session.session_id), session_creation_id, ),
         )
         await self.hook_plugin_ctx.notify(
             'POST_START_SESSION',
@@ -1436,6 +1455,7 @@ class AgentRegistry:
                     sa.select([
                         kernels.c.id,
                         kernels.c.session_id,
+                        kernels.c.session_creation_id,
                         kernels.c.status,
                         kernels.c.access_key,
                         kernels.c.cluster_role,
@@ -1479,7 +1499,7 @@ class AgentRegistry:
                             main_stat = {'status': 'cancelled'}
                             await self.event_dispatcher.produce_event(
                                 'session_cancelled',
-                                (str(kernel['session_id']), reason),
+                                (str(kernel['session_id']), kernel['session_creation_id'], reason),
                             )
                     elif kernel['status'] == KernelStatus.PULLING:
                         raise GenericForbidden('Cannot destory kernels in pulling status')
@@ -1632,21 +1652,26 @@ class AgentRegistry:
                     log.exception(f"Failed to destroy the agent-local network {network_name}")
         elif session['cluster_mode'] == ClusterMode.MULTI_NODE:
             network_name = f'bai-multinode-{session["session_id"]}'
-            async with RPCContext(
-                session['agent'],       # the main-container's agent
-                session['agent_addr'],
-                None,
-                order_key=session['session_id'],
-            ) as rpc:
+            try:
                 try:
-                    await rpc.call.destroy_overlay_network(network_name)
-                except Exception:
-                    log.exception(f"Failed to destroy the overlay network {network_name}")
+                    # await rpc.call.destroy_overlay_network(network_name)
+                    await asyncio.sleep(2.0)
+                    network = await self.docker.networks.get(network_name)
+                    await network.delete()
+                except aiodocker.DockerError as e:
+                    if e.status == 404:
+                        # It may have been auto-destructed when the last container was detached.
+                        pass
+                    else:
+                        raise
+            except Exception:
+                log.exception(f"Failed to destroy the overlay network {network_name}")
         else:
             pass
 
     async def restart_session(
         self,
+        session_creation_id: str,
         session_name_or_id: Union[str, SessionId],
         access_key: AccessKey,
     ) -> None:
@@ -1669,10 +1694,10 @@ class AgentRegistry:
 
         async def _restart_kernel(kernel) -> None:
             try:
-                creation_id = secrets.token_urlsafe(16)
+                kernel_creation_id = secrets.token_urlsafe(16)
                 start_event = asyncio.Event()
                 self.kernel_creation_tracker[
-                    (creation_id, kernel['id'])
+                    (kernel_creation_id, kernel['id'])
                 ] = start_event
                 try:
                     async with self.dbpool.acquire() as conn, conn.begin():
@@ -1694,7 +1719,7 @@ class AgentRegistry:
                             # TODO: support resacling of sub-containers
                         }
                         kernel_info = await rpc.call.restart_kernel(
-                            creation_id,
+                            kernel_creation_id,
                             str(kernel['session_id']),
                             str(kernel['id']),
                             updated_config,
@@ -1717,7 +1742,7 @@ class AgentRegistry:
                         await conn.execute(query)
                 finally:
                     del self.kernel_creation_tracker[
-                        (creation_id, kernel['id'])
+                        (kernel_creation_id, kernel['id'])
                     ]
             except Exception:
                 log.exception('unexpected-error in _restart_kerenl()')
@@ -1734,7 +1759,7 @@ class AgentRegistry:
         #       will be executed again after restart.
         await self.event_dispatcher.produce_event(
             'session_started',
-            (str(session_id), ),
+            (str(session_id), session_creation_id, ),
         )
 
     async def execute(
@@ -1769,7 +1794,7 @@ class AgentRegistry:
                     flush_timeout,
                 )
 
-    async def trigger_execute_batch(
+    async def execute_batch(
         self,
         session_id: SessionId,
     ) -> None:
@@ -1985,7 +2010,6 @@ class AgentRegistry:
                         agents.c.addr,
                         agents.c.scaling_group,
                         agents.c.available_slots,
-                        agents.c.clusterized,
                     ], for_update=True)
                     .select_from(agents)
                     .where(agents.c.id == agent_id)
@@ -2018,7 +2042,6 @@ class AgentRegistry:
                         'lost_at': None,
                         'version': agent_info['version'],
                         'compute_plugins': agent_info['compute_plugins'],
-                        'clusterized': agent_info.get('swarm_enabled', False)
                     })
                     result = await conn.execute(query)
                     assert result.rowcount == 1
@@ -2028,8 +2051,6 @@ class AgentRegistry:
                         updates['available_slots'] = available_slots
                     if row['scaling_group'] != sgroup:
                         updates['scaling_group'] = sgroup
-                    if row['clusterized'] != agent_info.get('swarm_enabled', False):
-                        updates['clusterized'] = agent_info.get('swarm_enabled', False)
                     if row['addr'] != current_addr:
                         updates['addr'] = current_addr
                     updates['version'] = agent_info['version']
@@ -2055,7 +2076,6 @@ class AgentRegistry:
                             'available_slots': available_slots,
                             'version': agent_info['version'],
                             'compute_plugins': agent_info['compute_plugins'],
-                            'clusterized': agent_info.get('swarm_enabled', False)
                         })
                         .where(agents.c.id == agent_id)
                     )

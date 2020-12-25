@@ -24,6 +24,7 @@ from typing import (
     Tuple,
     Union,
     TYPE_CHECKING,
+    cast,
 )
 import uuid
 
@@ -53,6 +54,7 @@ from ai.backend.common.types import (
     AgentId,
     KernelId,
     ClusterMode,
+    SessionId,
     SessionTypes,
 )
 from ai.backend.common.plugin.monitor import GAUGE
@@ -422,23 +424,13 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     if params['cluster_size'] > 1:
         log.debug(" -> cluster_mode:{} (replicate)", params['cluster_mode'])
 
+    session_creation_id = secrets.token_urlsafe(16)
+    start_event = asyncio.Event()
+    kernel_id: Optional[KernelId] = None
+    session_creation_tracker = request.app['session_creation_tracker']
+    session_creation_tracker[session_creation_id] = start_event
+
     try:
-        start_event = asyncio.Event()
-        kernel_id: Optional[KernelId] = None
-
-        def interrupt_wait(ctx: Any, event_name: str, agent_id: AgentId,
-                           started_kernel_id: str, *args, **kwargs) -> None:
-            nonlocal start_event, kernel_id
-            if kernel_id is not None and started_kernel_id == str(kernel_id):
-                start_event.set()
-
-        start_handler = request.app['event_dispatcher'].subscribe('kernel_started', None,
-                                                                  interrupt_wait)
-        term_handler = request.app['event_dispatcher'].subscribe('kernel_terminated', None,
-                                                                 interrupt_wait)
-        cancel_handler = request.app['event_dispatcher'].subscribe('kernel_cancelled', None,
-                                                                   interrupt_wait)
-
         async with dbpool.acquire() as conn, conn.begin():
             owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
 
@@ -449,6 +441,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
                 params['bootstrap_script'] = script
 
         kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
+            session_creation_id,
             params['session_name'], owner_access_key,
             [{
                 'image_ref': requested_image_ref,
@@ -471,6 +464,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             session_tag=params['tag'],
             starts_at=starts_at,
         ))
+        session_id = cast(SessionId, kernel_id)  # the main kernel's ID is the session ID
         resp['sessionId'] = str(kernel_id)  # changed since API v5
         resp['sessionName'] = str(params['session_name'])
         resp['status'] = 'PENDING'
@@ -501,24 +495,25 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
                     )
                     result = await conn.execute(query)
                     row = await result.first()
-                    if row['status'] == KernelStatus.RUNNING:
-                        resp['status'] = 'RUNNING'
-                        for item in row['service_ports']:
-                            response_dict = {
-                                'name': item['name'],
-                                'protocol': item['protocol'],
-                                'ports': item['container_ports'],
-                            }
-                            if 'url_template' in item.keys():
-                                response_dict['url_template'] = item['url_template']
-                            if 'allowed_arguments' in item.keys():
-                                response_dict['allowed_arguments'] = item['allowed_arguments']
-                            if 'allowed_envs' in item.keys():
-                                response_dict['allowed_envs'] = item['allowed_envs']
-                            resp['servicePorts'].append(response_dict)
-                    else:
-                        resp['status'] = row['status'].name
-
+                if row['status'] == KernelStatus.RUNNING:
+                    resp['status'] = 'RUNNING'
+                    for item in row['service_ports']:
+                        response_dict = {
+                            'name': item['name'],
+                            'protocol': item['protocol'],
+                            'ports': item['container_ports'],
+                        }
+                        if 'url_template' in item.keys():
+                            response_dict['url_template'] = item['url_template']
+                        if 'allowed_arguments' in item.keys():
+                            response_dict['allowed_arguments'] = item['allowed_arguments']
+                        if 'allowed_envs' in item.keys():
+                            response_dict['allowed_envs'] = item['allowed_envs']
+                        resp['servicePorts'].append(response_dict)
+                    # TODO: handle shutdown of dangling tasks
+                    asyncio.create_task(registry.execute_batch(session_id))
+                else:
+                    resp['status'] = row['status'].name
     except asyncio.CancelledError:
         raise
     except BackendError:
@@ -532,9 +527,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
         raise InternalServerError
     finally:
         request.app['pending_waits'].discard(asyncio.current_task())
-        request.app['event_dispatcher'].unsubscribe('kernel_cancelled', cancel_handler)
-        request.app['event_dispatcher'].unsubscribe('kernel_terminated', term_handler)
-        request.app['event_dispatcher'].unsubscribe('kernel_started', start_handler)
+        del session_creation_tracker[session_creation_id]
     return web.json_response(resp, status=201)
 
 
@@ -763,7 +756,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*',
              params['session_name'])
 
-    registry = request.app['registry']
+    registry: AgentRegistry = request.app['registry']
     resp: MutableMapping[str, Any] = {}
 
     # Check existing (owner_access_key, session) kernel instance
@@ -892,27 +885,18 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                 kernel_config['cluster_idx'] = i + 1
                 kernel_configs.append(kernel_config)
 
+    session_creation_id = secrets.token_urlsafe(16)
+    start_event = asyncio.Event()
+    kernel_id: Optional[KernelId] = None
+    session_creation_tracker = request.app['session_creation_tracker']
+    session_creation_tracker[session_creation_id] = start_event
+
     try:
-        start_event = asyncio.Event()
-        kernel_id: Optional[KernelId] = None
-
-        def interrupt_wait(ctx: Any, event_name: str, agent_id: AgentId,
-                           started_kernel_id: str, *args, **kwargs) -> None:
-            nonlocal start_event, kernel_id
-            if kernel_id is not None and started_kernel_id == str(kernel_id):
-                start_event.set()
-
-        start_handler = request.app['event_dispatcher'].subscribe('session_started', None,
-                                                                  interrupt_wait)
-        term_handler = request.app['event_dispatcher'].subscribe('session_terminated', None,
-                                                                 interrupt_wait)
-        cancel_handler = request.app['event_dispatcher'].subscribe('session_cancelled', None,
-                                                                   interrupt_wait)
-
         async with dbpool.acquire() as conn, conn.begin():
             owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
 
-        kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
+        kernel_id = await asyncio.shield(registry.enqueue_session(
+            session_creation_id,
             params['session_name'], owner_access_key,
             kernel_configs,
             params['scaling_group'],
@@ -923,6 +907,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
             user_uuid=owner_uuid,
             user_role=request['user']['role'],
             session_tag=params['tag']))
+        session_id = cast(SessionId, kernel_id)  # the main kernel's ID is the session ID.
         resp['kernelId'] = str(kernel_id)
         resp['status'] = 'PENDING'
         resp['servicePorts'] = []
@@ -952,23 +937,25 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                     )
                     result = await conn.execute(query)
                     row = await result.first()
-                    if row['status'] == KernelStatus.RUNNING:
-                        resp['status'] = 'RUNNING'
-                        for item in row['service_ports']:
-                            response_dict = {
-                                'name': item['name'],
-                                'protocol': item['protocol'],
-                                'ports': item['container_ports'],
-                            }
-                            if 'url_template' in item.keys():
-                                response_dict['url_template'] = item['url_template']
-                            if 'allowed_arguments' in item.keys():
-                                response_dict['allowed_arguments'] = item['allowed_arguments']
-                            if 'allowed_envs' in item.keys():
-                                response_dict['allowed_envs'] = item['allowed_envs']
-                            resp['servicePorts'].append(response_dict)
-                    else:
-                        resp['status'] = row['status'].name
+                if row['status'] == KernelStatus.RUNNING:
+                    resp['status'] = 'RUNNING'
+                    for item in row['service_ports']:
+                        response_dict = {
+                            'name': item['name'],
+                            'protocol': item['protocol'],
+                            'ports': item['container_ports'],
+                        }
+                        if 'url_template' in item.keys():
+                            response_dict['url_template'] = item['url_template']
+                        if 'allowed_arguments' in item.keys():
+                            response_dict['allowed_arguments'] = item['allowed_arguments']
+                        if 'allowed_envs' in item.keys():
+                            response_dict['allowed_envs'] = item['allowed_envs']
+                        resp['servicePorts'].append(response_dict)
+                    # TODO: handle shutdown of dangling tasks
+                    asyncio.create_task(registry.execute_batch(session_id))
+                else:
+                    resp['status'] = row['status'].name
 
     except asyncio.CancelledError:
         raise
@@ -983,9 +970,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
         raise InternalServerError
     finally:
         request.app['pending_waits'].discard(asyncio.Task.current_task())
-        request.app['event_dispatcher'].unsubscribe('session_cancelled', cancel_handler)
-        request.app['event_dispatcher'].unsubscribe('session_terminated', term_handler)
-        request.app['event_dispatcher'].unsubscribe('session_started', start_handler)
+        del session_creation_tracker[session_creation_id]
     return web.json_response(resp, status=201)
 
 
@@ -1009,6 +994,7 @@ async def handle_kernel_creation_lifecycle(
     registry: AgentRegistry = app['registry']
     if ck_id not in registry.kernel_creation_tracker:
         return
+    log.debug('handle_kernel_creation_lifecycle: ev:{} k:{}', event_name, kernel_id)
     if event_name == 'kernel_preparing':
         await registry.set_kernel_status(kernel_id, KernelStatus.PREPARING, reason)
     elif event_name == 'kernel_pulling':
@@ -1036,7 +1022,30 @@ async def handle_kernel_termination_lifecycle(
         await registry.check_session_terminated(kernel_id, reason)
 
 
-async def handle_session_lifecycle(
+async def handle_session_creation_lifecycle(
+    app: web.Application,
+    agent_id: AgentId,
+    event_name: str,
+    raw_session_id: str,
+    creation_id: str,
+    reason: str = None,
+) -> None:
+    """
+    Update the database according to the session-level lifecycle events
+    published by the manager.
+    """
+    session_id = SessionId(uuid.UUID(raw_session_id))
+    session_creation_tracker = app['session_creation_tracker']
+    if creation_id not in session_creation_tracker:
+        return
+    log.debug('handle_session_creation_lifecycle: ev:{} s:{}', event_name, session_id)
+    if event_name == 'session_started':
+        session_creation_tracker[creation_id].set()
+    elif event_name == 'session_cancelled':
+        session_creation_tracker[creation_id].set()
+
+
+async def handle_session_termination_lifecycle(
     app: web.Application,
     agent_id: AgentId,
     event_name: str,
@@ -1048,12 +1057,8 @@ async def handle_session_lifecycle(
     published by the manager.
     """
     session_id = uuid.UUID(raw_session_id)
-    registry = app['registry']
-    if event_name == 'session_scheduled':
-        pass
-    elif event_name == 'session_started':
-        await registry.trigger_execute_batch(session_id)
-    elif event_name == 'session_terminated':
+    registry: AgentRegistry = app['registry']
+    if event_name == 'session_terminated':
         await registry.mark_session_terminated(session_id, reason)
 
 
@@ -1167,6 +1172,7 @@ async def handle_instance_stats(app: web.Application, agent_id: AgentId, event_n
 async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name: str,
                             raw_kernel_id: str, container_id: str):
     dbpool = app['dbpool']
+    kernel_id = KernelId(uuid.UUID(raw_kernel_id))
     redis_conn: aioredis.Redis = await redis.connect_with_retries(
         str(app['shared_config'].get_redis_url(db=REDIS_STREAM_DB)),
         encoding=None,
@@ -1192,7 +1198,7 @@ async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name:
             async with dbpool.acquire() as conn, conn.begin():
                 query = (sa.update(kernels)
                            .values(container_log=log_buffer.getvalue())
-                           .where(kernels.c.id == raw_kernel_id))
+                           .where(kernels.c.id == kernel_id))
                 await conn.execute(query)
         finally:
             # Clear the log data from Redis when done.
@@ -1805,16 +1811,18 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
 async def init(app: web.Application) -> None:
     event_dispatcher = app['event_dispatcher']
 
+    app['session_creation_tracker'] = {}
+
     # passive events
-    event_dispatcher.consume('session_scheduled', app, handle_session_lifecycle)
     event_dispatcher.subscribe('kernel_preparing', app, handle_kernel_creation_lifecycle)
     event_dispatcher.subscribe('kernel_pulling', app, handle_kernel_creation_lifecycle)
     event_dispatcher.subscribe('kernel_creating', app, handle_kernel_creation_lifecycle)
     event_dispatcher.subscribe('kernel_started', app, handle_kernel_creation_lifecycle)
-    event_dispatcher.consume('session_started', app, handle_session_lifecycle)
+    event_dispatcher.subscribe('session_started', app, handle_session_creation_lifecycle)
+    event_dispatcher.subscribe('session_cancelled', app, handle_session_creation_lifecycle)
     event_dispatcher.consume('kernel_terminating', app, handle_kernel_termination_lifecycle)
     event_dispatcher.consume('kernel_terminated', app, handle_kernel_termination_lifecycle)
-    event_dispatcher.consume('session_terminated', app, handle_session_lifecycle)
+    event_dispatcher.consume('session_terminated', app, handle_session_termination_lifecycle)
     event_dispatcher.consume('session_success', app, handle_batch_result)
     event_dispatcher.consume('session_failure', app, handle_batch_result)
     event_dispatcher.consume('kernel_stat_sync', app, handle_kernel_stat_sync)
