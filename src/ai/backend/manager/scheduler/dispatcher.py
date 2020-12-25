@@ -499,7 +499,7 @@ class SchedulerDispatcher(aobject):
             except Exception as e:
                 # TODO: handle exception as "multi-error" and rollback only the agents that are affected
                 log.error(log_fmt + 'failed-starting', *log_args, exc_info=e)
-                async with self.dbpool.acquire(), db_conn.begin():
+                async with self.dbpool.acquire() as db_conn, db_conn.begin():
                     status_data = convert_to_status_data(e, self.local_config['debug']['enabled'])
                     await _unreserve_agent_slots(db_conn, session_agent_binding)
                     await _invoke_failure_callbacks(db_conn, sched_ctx, sess_ctx, check_results)
@@ -519,7 +519,7 @@ class SchedulerDispatcher(aobject):
                 )
             else:
                 log.info(log_fmt + 'started', *log_args)
-                async with self.dbpool.acquire(), db_conn.begin():
+                async with self.dbpool.acquire() as db_conn, db_conn.begin():
                     await _invoke_success_callbacks(db_conn, sched_ctx, sess_ctx, check_results)
 
         start_coros = []
