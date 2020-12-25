@@ -1655,6 +1655,7 @@ class AgentRegistry:
             try:
                 try:
                     # await rpc.call.destroy_overlay_network(network_name)
+                    await asyncio.sleep(2.0)
                     network = await self.docker.networks.get(network_name)
                     await network.delete()
                 except aiodocker.DockerError as e:
