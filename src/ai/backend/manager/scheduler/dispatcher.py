@@ -235,7 +235,7 @@ class SchedulerDispatcher(aobject):
                     'scaling_group': sgroup_name,
                     'status': KernelStatus.PREPARING,
                     'status_info': 'scheduled',
-                    'status_data': None,
+                    'status_data': {},
                     'status_changed': datetime.now(tzutc()),
                 }).where(kernels.c.session_id == sess_ctx.session_id)
                 await kernel_db_conn.execute(query)
@@ -275,6 +275,7 @@ class SchedulerDispatcher(aobject):
                                 sgroup_name, agent_id, kernel.requested_slots,
                                 extra_conds=agent_query_extra_conds,
                             )
+                            candidate_agents = await _list_agents_by_sgroup(agent_db_conn, sgroup_name)
                     except InstanceNotAvailable:
                         log.debug(log_fmt + 'no-available-instances', *log_args)
                         async with kernel_db_conn.begin():
@@ -316,7 +317,7 @@ class SchedulerDispatcher(aobject):
                             'scaling_group': sgroup_name,
                             'status': KernelStatus.PREPARING,
                             'status_info': 'scheduled',
-                            'status_data': None,
+                            'status_data': {},
                             'status_changed': datetime.now(tzutc()),
                         }).where(kernels.c.id == kernel.kernel_id)
                         await kernel_db_conn.execute(query)
@@ -746,7 +747,7 @@ async def _list_agents_by_sgroup(
             agents.c.scaling_group,
             agents.c.available_slots,
             agents.c.occupied_slots,
-        ], for_update=True)
+        ])
         .select_from(agents)
         .where(
             (agents.c.status == AgentStatus.ALIVE) &

@@ -21,6 +21,7 @@ def sql_json_merge(
     col,
     key: Tuple[str, ...],
     obj: Mapping[str, Any],
+    *,
     _depth: int = 0,
 ):
     """
