@@ -8,6 +8,7 @@ import json
 from typing import (
     Any,
     AsyncIterator,
+    Awaitable,
     Final,
     Iterable,
     Mapping,
@@ -18,18 +19,16 @@ from typing import (
     Tuple,
     Union,
     TYPE_CHECKING,
+    cast,
 )
 import uuid
+import weakref
 
 from aiohttp import web
 import aiohttp_cors
 from aiohttp_sse import sse_response
 import aioredis
 from aiotools import adefer
-from aiotools.taskgroup import (
-    TaskGroup,
-    TaskGroupError,
-)
 import attr
 import sqlalchemy as sa
 import trafaret as t
@@ -92,9 +91,11 @@ class EventDispatcher(aobject):
     redis_producer: aioredis.Redis
     redis_consumer: aioredis.Redis
     redis_subscriber: aioredis.Redis
-    consumer_task: asyncio.Task
-    subscriber_task: asyncio.Task
+    consumer_loop_task: asyncio.Task
+    subscriber_loop_task: asyncio.Task
     producer_lock: asyncio.Lock
+    consumer_taskset: weakref.WeakSet[asyncio.Task]
+    subscriber_taskset: weakref.WeakSet[asyncio.Task]
 
     def __init__(self, local_config: LocalConfig, shared_config: SharedConfig) -> None:
         self.local_config = local_config
@@ -106,19 +107,31 @@ class EventDispatcher(aobject):
         self.redis_producer = await self._create_redis()
         self.redis_consumer = await self._create_redis()
         self.redis_subscriber = await self._create_redis()
-        self.consumer_task = asyncio.create_task(self._consume())
-        self.subscriber_task = asyncio.create_task(self._subscribe())
+        self.consumer_loop_task = asyncio.create_task(self._consume_loop())
+        self.subscriber_loop_task = asyncio.create_task(self._subscribe_loop())
         self.producer_lock = asyncio.Lock()
+        self.consumer_taskset = weakref.WeakSet()
+        self.subscriber_taskset = weakref.WeakSet()
 
     async def _create_redis(self):
         redis_url = self.shared_config.get_redis_url(db=REDIS_STREAM_DB)
         return await redis.connect_with_retries(str(redis_url), encoding=None)
 
     async def close(self) -> None:
-        self.consumer_task.cancel()
-        await self.consumer_task
-        self.subscriber_task.cancel()
-        await self.subscriber_task
+        cancelled_tasks = []
+        for task in self.consumer_taskset:
+            if not task.done():
+                task.cancel()
+                cancelled_tasks.append(task)
+        for task in self.subscriber_taskset:
+            if not task.done():
+                task.cancel()
+                cancelled_tasks.append(task)
+        self.consumer_loop_task.cancel()
+        self.subscriber_loop_task.cancel()
+        cancelled_tasks.append(self.consumer_loop_task)
+        cancelled_tasks.append(self.subscriber_loop_task)
+        await asyncio.gather(*cancelled_tasks, return_exceptions=True)
         self.redis_producer.close()
         self.redis_consumer.close()
         self.redis_subscriber.close()
@@ -165,21 +178,17 @@ class EventDispatcher(aobject):
         if self.local_config['debug']['log-events']:
             log.debug(log_fmt, *log_args)
         loop = asyncio.get_running_loop()
-        async with TaskGroup(name='event-consume-handlers') as task_group:
-            for consumer in self.consumers[event_name]:
-                cb = consumer.callback
-                try:
-                    if asyncio.iscoroutine(cb):
-                        task_group.create_task(cb)
-                    elif asyncio.iscoroutinefunction(cb):
-                        task_group.create_task(cb(consumer.context, agent_id, event_name, *args))
-                    else:
-                        cb = functools.partial(cb, consumer.context, agent_id, event_name, *args)
-                        loop.call_soon(cb)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    log.exception(log_fmt + ': unexpected-error', *log_args)
+        for consumer in self.consumers[event_name]:
+            cb = consumer.callback
+            if asyncio.iscoroutine(cb):
+                self.consumer_taskset.add(asyncio.create_task(cast(Awaitable, cb)))
+            elif asyncio.iscoroutinefunction(cb):
+                self.consumer_taskset.add(asyncio.create_task(
+                    cb(consumer.context, agent_id, event_name, *args)
+                ))
+            else:
+                cb = functools.partial(cb, consumer.context, agent_id, event_name, *args)
+                loop.call_soon(cb)
 
     async def dispatch_subscribers(self, event_name: str, agent_id: AgentId,
                                    args: Tuple[Any, ...] = tuple()) -> None:
@@ -188,24 +197,19 @@ class EventDispatcher(aobject):
         if self.local_config['debug']['log-events']:
             log.debug(log_fmt, *log_args)
         loop = asyncio.get_running_loop()
-        async with TaskGroup(name='event-subscribe-handlers') as task_group:
-            for subscriber in self.subscribers[event_name]:
-                cb = subscriber.callback
-                try:
-                    if asyncio.iscoroutine(cb):
-                        task_group.create_task(cb)
-                    elif asyncio.iscoroutinefunction(cb):
-                        task_group.create_task(cb(subscriber.context, agent_id, event_name, *args))
-                    else:
-                        cb = functools.partial(cb, subscriber.context, agent_id, event_name, *args)
-                        loop.call_soon(cb)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    log.exception(log_fmt + ': unexpected-error', *log_args)
+        for subscriber in self.subscribers[event_name]:
+            cb = subscriber.callback
+            if asyncio.iscoroutine(cb):
+                self.subscriber_taskset.add(asyncio.create_task(cast(Awaitable, cb)))
+            elif asyncio.iscoroutinefunction(cb):
+                self.subscriber_taskset.add(asyncio.create_task(
+                    cb(subscriber.context, agent_id, event_name, *args)
+                ))
+            else:
+                cb = functools.partial(cb, subscriber.context, agent_id, event_name, *args)
+                loop.call_soon(cb)
 
-    async def _consume(self) -> None:
-        loop = asyncio.get_running_loop()
+    async def _consume_loop(self) -> None:
         while True:
             try:
                 key, raw_msg = await redis.execute_with_retries(
@@ -214,17 +218,12 @@ class EventDispatcher(aobject):
                 await self.dispatch_consumers(msg['event_name'],
                                               msg['agent_id'],
                                               msg['args'])
-            except TaskGroupError as e:
-                for sub_error in e.__errors__:
-                    loop.call_exception_handler({
-                        'exception': sub_error,
-                    })
             except asyncio.CancelledError:
                 break
             except Exception:
                 log.exception('EventDispatcher.consume(): unexpected-error')
 
-    async def _subscribe(self) -> None:
+    async def _subscribe_loop(self) -> None:
 
         async def _subscribe_impl():
             channels = await self.redis_subscriber.subscribe('events.pubsub')
@@ -234,15 +233,9 @@ class EventDispatcher(aobject):
                                                 msg['agent_id'],
                                                 msg['args'])
 
-        loop = asyncio.get_running_loop()
         while True:
             try:
                 await redis.execute_with_retries(lambda: _subscribe_impl())
-            except TaskGroupError as e:
-                for sub_error in e.__errors__:
-                    loop.call_exception_handler({
-                        'exception': sub_error,
-                    })
             except asyncio.CancelledError:
                 break
             except Exception:
@@ -428,28 +421,32 @@ async def enqueue_kernel_status_update_with_creation_id(
     if raw_kernel_id is None:
         return
     kernel_id = uuid.UUID(raw_kernel_id)
-    async with app['dbpool'].acquire() as conn, conn.begin():
-        query = (
-            sa.select([
-                kernels.c.id,
-                kernels.c.session_id,
-                kernels.c.session_name,
-                kernels.c.access_key,
-                kernels.c.cluster_role,
-                kernels.c.cluster_idx,
-                kernels.c.domain_name,
-                kernels.c.group_id,
-                kernels.c.user_uuid,
-            ])
-            .select_from(kernels)
-            .where(
-                (kernels.c.id == kernel_id)
+
+    async def _fetch():
+        async with app['dbpool'].acquire() as conn, conn.begin():
+            query = (
+                sa.select([
+                    kernels.c.id,
+                    kernels.c.session_id,
+                    kernels.c.session_name,
+                    kernels.c.access_key,
+                    kernels.c.cluster_role,
+                    kernels.c.cluster_idx,
+                    kernels.c.domain_name,
+                    kernels.c.group_id,
+                    kernels.c.user_uuid,
+                ])
+                .select_from(kernels)
+                .where(
+                    (kernels.c.id == kernel_id)
+                )
             )
-        )
-        result = await conn.execute(query)
-        row = await result.first()
-        if row is None:
-            return
+            result = await conn.execute(query)
+            return await result.first()
+
+    row = await asyncio.shield(_fetch())
+    if row is None:
+        return
     for q in app['session_event_queues']:
         q.put_nowait((event_name, row, reason))
 
@@ -465,28 +462,32 @@ async def enqueue_kernel_status_update(
     if raw_kernel_id is None:
         return
     kernel_id = uuid.UUID(raw_kernel_id)
-    async with app['dbpool'].acquire() as conn, conn.begin():
-        query = (
-            sa.select([
-                kernels.c.id,
-                kernels.c.session_id,
-                kernels.c.session_name,
-                kernels.c.access_key,
-                kernels.c.cluster_role,
-                kernels.c.cluster_idx,
-                kernels.c.domain_name,
-                kernels.c.group_id,
-                kernels.c.user_uuid,
-            ])
-            .select_from(kernels)
-            .where(
-                (kernels.c.id == kernel_id)
+
+    async def _fetch():
+        async with app['dbpool'].acquire() as conn, conn.begin():
+            query = (
+                sa.select([
+                    kernels.c.id,
+                    kernels.c.session_id,
+                    kernels.c.session_name,
+                    kernels.c.access_key,
+                    kernels.c.cluster_role,
+                    kernels.c.cluster_idx,
+                    kernels.c.domain_name,
+                    kernels.c.group_id,
+                    kernels.c.user_uuid,
+                ])
+                .select_from(kernels)
+                .where(
+                    (kernels.c.id == kernel_id)
+                )
             )
-        )
-        result = await conn.execute(query)
-        row = await result.first()
-        if row is None:
-            return
+            result = await conn.execute(query)
+            return await result.first()
+
+    row = await asyncio.shield(_fetch())
+    if row is None:
+        return
     for q in app['session_event_queues']:
         q.put_nowait((event_name, row, reason))
 
@@ -503,27 +504,31 @@ async def enqueue_session_status_update_with_creation_id(
     if raw_session_id is None:
         return
     session_id = uuid.UUID(raw_session_id)
-    async with app['dbpool'].acquire() as conn:
-        query = (
-            sa.select([
-                kernels.c.id,
-                kernels.c.session_id,
-                kernels.c.session_name,
-                kernels.c.access_key,
-                kernels.c.domain_name,
-                kernels.c.group_id,
-                kernels.c.user_uuid,
-            ])
-            .select_from(kernels)
-            .where(
-                (kernels.c.id == session_id)
-                # for the main kernel, kernel ID == session ID
+
+    async def _fetch():
+        async with app['dbpool'].acquire() as conn:
+            query = (
+                sa.select([
+                    kernels.c.id,
+                    kernels.c.session_id,
+                    kernels.c.session_name,
+                    kernels.c.access_key,
+                    kernels.c.domain_name,
+                    kernels.c.group_id,
+                    kernels.c.user_uuid,
+                ])
+                .select_from(kernels)
+                .where(
+                    (kernels.c.id == session_id)
+                    # for the main kernel, kernel ID == session ID
+                )
             )
-        )
-        result = await conn.execute(query)
-        row = await result.first()
-        if row is None:
-            return
+            result = await conn.execute(query)
+            return await result.first()
+
+    row = await asyncio.shield(_fetch())
+    if row is None:
+        return
     for q in app['session_event_queues']:
         q.put_nowait((event_name, row, reason))
 
@@ -539,27 +544,31 @@ async def enqueue_session_status_update(
     if raw_session_id is None:
         return
     session_id = uuid.UUID(raw_session_id)
-    async with app['dbpool'].acquire() as conn:
-        query = (
-            sa.select([
-                kernels.c.id,
-                kernels.c.session_id,
-                kernels.c.session_name,
-                kernels.c.access_key,
-                kernels.c.domain_name,
-                kernels.c.group_id,
-                kernels.c.user_uuid,
-            ])
-            .select_from(kernels)
-            .where(
-                (kernels.c.id == session_id)
-                # for the main kernel, kernel ID == session ID
+
+    async def _fetch():
+        async with app['dbpool'].acquire() as conn:
+            query = (
+                sa.select([
+                    kernels.c.id,
+                    kernels.c.session_id,
+                    kernels.c.session_name,
+                    kernels.c.access_key,
+                    kernels.c.domain_name,
+                    kernels.c.group_id,
+                    kernels.c.user_uuid,
+                ])
+                .select_from(kernels)
+                .where(
+                    (kernels.c.id == session_id)
+                    # for the main kernel, kernel ID == session ID
+                )
             )
-        )
-        result = await conn.execute(query)
-        row = await result.first()
-        if row is None:
-            return
+            result = await conn.execute(query)
+            return await result.first()
+
+    row = await asyncio.shield(_fetch())
+    if row is None:
+        return
     for q in app['session_event_queues']:
         q.put_nowait((event_name, row, reason))
 
@@ -573,26 +582,30 @@ async def enqueue_batch_task_result_update(
     exit_reason: str = None,
 ) -> None:
     kernel_id = uuid.UUID(raw_kernel_id)
-    async with app['dbpool'].acquire() as conn:
-        query = (
-            sa.select([
-                kernels.c.id,
-                kernels.c.session_id,
-                kernels.c.session_name,
-                kernels.c.access_key,
-                kernels.c.domain_name,
-                kernels.c.group_id,
-                kernels.c.user_uuid,
-            ])
-            .select_from(kernels)
-            .where(
-                (kernels.c.id == kernel_id)
+
+    async def _fetch():
+        async with app['dbpool'].acquire() as conn:
+            query = (
+                sa.select([
+                    kernels.c.id,
+                    kernels.c.session_id,
+                    kernels.c.session_name,
+                    kernels.c.access_key,
+                    kernels.c.domain_name,
+                    kernels.c.group_id,
+                    kernels.c.user_uuid,
+                ])
+                .select_from(kernels)
+                .where(
+                    (kernels.c.id == kernel_id)
+                )
             )
-        )
-        result = await conn.execute(query)
-        row = await result.first()
-        if row is None:
-            return
+            result = await conn.execute(query)
+            return await result.first()
+
+    row = await asyncio.shield(_fetch())
+    if row is None:
+        return
     if event_name == 'session_success':
         reason = 'task-success'
     else:
@@ -647,6 +660,7 @@ async def events_shutdown(app: web.Application) -> None:
         q.put_nowait(sentinel)
     for q in app['task_update_queues']:
         q.put_nowait(sentinel)
+    await asyncio.sleep(0)
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
