@@ -377,7 +377,10 @@ class SchedulerDispatcher(aobject):
 
                 async with kernel_db_conn.begin():
                     predicates: Sequence[Tuple[str, Awaitable[PredicateResult]]] = [
-                        ('reserved_time', check_reserved_batch_session(kernel_db_conn, sched_ctx, sess_ctx)),
+                        (
+                            'reserved_time',
+                            check_reserved_batch_session(kernel_db_conn, sched_ctx, sess_ctx),
+                        ),
                         ('concurrency', check_concurrency(kernel_db_conn, sched_ctx, sess_ctx)),
                         ('dependencies', check_dependencies(kernel_db_conn, sched_ctx, sess_ctx)),
                         (
@@ -650,10 +653,7 @@ async def _list_pending_sessions(
             )
             items[row['session_id']] = session
     for row in rows:
-        session = items.get(row['session_id'], None)
-        if session is None:
-            # the main kernel is not available for scheduling.
-            continue
+        session = items[row['session_id']]
         session.kernels.append(KernelInfo(
             kernel_id=row['id'],
             session_id=row['session_id'],

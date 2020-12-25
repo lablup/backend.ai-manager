@@ -94,7 +94,7 @@ class PendingSession:
     """
     kernels: List[KernelInfo]
     access_key: AccessKey
-    session_id: uuid.UUID
+    session_id: SessionId
     session_creation_id: str
     session_type: SessionTypes
     session_name: str
