@@ -1653,9 +1653,16 @@ class AgentRegistry:
         elif session['cluster_mode'] == ClusterMode.MULTI_NODE:
             network_name = f'bai-multinode-{session["session_id"]}'
             try:
-                # await rpc.call.destroy_overlay_network(network_name)
-                network = await self.docker.networks.get(network_name)
-                await network.delete()
+                try:
+                    # await rpc.call.destroy_overlay_network(network_name)
+                    network = await self.docker.networks.get(network_name)
+                    await network.delete()
+                except aiodocker.DockerError as e:
+                    if e.status == 404:
+                        # It may have been auto-destructed when the last container was detached.
+                        pass
+                    else:
+                        raise
             except Exception:
                 log.exception(f"Failed to destroy the overlay network {network_name}")
         else:
