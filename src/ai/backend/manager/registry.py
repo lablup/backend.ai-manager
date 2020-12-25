@@ -1255,6 +1255,10 @@ class AgentRegistry:
                                     kernel_creation_id,
                                     created_info,
                                 ))
+                    except Exception:
+                        # The agent has already cancelled or issued the destruction lifecycle event
+                        # for this batch of kernels.
+                        raise
                     finally:
                         # clean up for sure
                         for binding in items:
@@ -1266,6 +1270,11 @@ class AgentRegistry:
 
         if per_agent_tasks:
             await asyncio.gather(*per_agent_tasks)
+            # When a particular container creation fails, this will raise an error,
+            # while other containers continue to be created.
+            # TODO: We need to cancel/rollback the successful batches of kernels in other agents.
+
+        # If all is well, let's say the session is ready.
         await self.event_dispatcher.produce_event(
             'session_started',
             (str(pending_session.session_id), session_creation_id, ),
@@ -1643,18 +1652,12 @@ class AgentRegistry:
                     log.exception(f"Failed to destroy the agent-local network {network_name}")
         elif session['cluster_mode'] == ClusterMode.MULTI_NODE:
             network_name = f'bai-multinode-{session["session_id"]}'
-            async with RPCContext(
-                session['agent'],       # the main-container's agent
-                session['agent_addr'],
-                None,
-                order_key=session['session_id'],
-            ) as rpc:
-                try:
-                    # await rpc.call.destroy_overlay_network(network_name)
-                    network = await self.docker.networks.get(network_name)
-                    await network.delete()
-                except Exception:
-                    log.exception(f"Failed to destroy the overlay network {network_name}")
+            try:
+                # await rpc.call.destroy_overlay_network(network_name)
+                network = await self.docker.networks.get(network_name)
+                await network.delete()
+            except Exception:
+                log.exception(f"Failed to destroy the overlay network {network_name}")
         else:
             pass
 
