@@ -260,7 +260,7 @@ class SchedulerDispatcher(aobject):
         ) -> Tuple[PendingSession, List[KernelAgentBinding]]:
             # Assign agent resource per kernel in the session.
             agent_query_extra_conds = None
-            kernel_agent_bindings = []
+            kernel_agent_bindings: List[KernelAgentBinding] = []
             async with agent_db_conn.begin(isolation_level="REPEATABLE READ"):
                 # This outer transaction is rolled back when any exception occurs inside,
                 # including scheduling failures of a kernel.
@@ -317,16 +317,16 @@ class SchedulerDispatcher(aobject):
             if len(kernel_agent_bindings) == len(sess_ctx.kernels):
                 # Proceed to PREPARING only when all kernels are successfully scheduled.
                 async with kernel_db_conn.begin():
-                    for kernel, agent_alloc_ctx in kernel_agent_bindings:
+                    for binding in kernel_agent_bindings:
                         query = kernels.update().values({
-                            'agent': agent_alloc_ctx.agent_id,
-                            'agent_addr': agent_alloc_ctx.agent_addr,
+                            'agent': binding.agent_alloc_ctx.agent_id,
+                            'agent_addr': binding.agent_alloc_ctx.agent_addr,
                             'scaling_group': sgroup_name,
                             'status': KernelStatus.PREPARING,
                             'status_info': 'scheduled',
                             'status_data': {},
                             'status_changed': datetime.now(tzutc()),
-                        }).where(kernels.c.id == kernel.kernel_id)
+                        }).where(kernels.c.id == binding.kernel.kernel_id)
                         await kernel_db_conn.execute(query)
 
             return (sess_ctx, kernel_agent_bindings)
