@@ -168,6 +168,7 @@ class PredicateResult:
     message: Optional[str] = None
     success_cb: Optional[PredicateCallback] = None
     failure_cb: Optional[PredicateCallback] = None
+    permanent: bool = False
 
 
 class SchedulingPredicate(Protocol):

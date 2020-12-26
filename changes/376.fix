@@ -1,0 +1,1 @@
+Fix destruction of multi-container sessions when using multiple nodes

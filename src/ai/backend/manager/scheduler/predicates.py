@@ -117,6 +117,13 @@ async def check_keypair_resource_limit(
     )
     result = await db_conn.execute(query)
     resource_policy = await result.first()
+    if len(sess_ctx.kernels) > resource_policy['max_containers_per_session']:
+        return PredicateResult(
+            False,
+            f"You cannot create session with more than "
+            f"{resource_policy['max_containers_per_session']} containers.",
+            permanent=True,
+        )
     total_keypair_allowed = ResourceSlot.from_policy(resource_policy,
                                                      sched_ctx.known_slot_types)
     key_occupied = await sched_ctx.registry.get_keypair_occupancy(
@@ -212,8 +219,9 @@ async def check_scaling_group(
         else:
             return PredicateResult(
                 False,
-                f"The given preferred scaling group is not available. "
-                f"({preferred_sgroup_name})"
+                f"The given preferred scaling group is not allowed to use. "
+                f"({preferred_sgroup_name})",
+                permanent=True,
             )
         # Consider agents only in the preferred scaling group.
         target_sgroup_names = [preferred_sgroup_name]
