@@ -242,7 +242,7 @@ class SchedulerDispatcher(aobject):
         log.debug('running scheduler (sgroup:{}, pending:{}, existing:{})',
                     sgroup_name, len(pending_sessions), len(existing_sessions))
         zero = ResourceSlot()
-        args_list = []
+        args_list: List[StartTaskArgs] = []
         while len(pending_sessions) > 0:
             async with agent_db_conn.begin():
                 candidate_agents = await _list_agents_by_sgroup(agent_db_conn, sgroup_name)
@@ -256,7 +256,7 @@ class SchedulerDispatcher(aobject):
             if picked_session_id is None:
                 # no session is picked.
                 # continue to next sgroup.
-                return
+                return []
             for picked_idx, sess_ctx in enumerate(pending_sessions):
                 if sess_ctx.session_id == picked_session_id:
                     break

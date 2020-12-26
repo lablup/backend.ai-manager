@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pprint import pprint
-
 from typing import (
     Any,
     List,
@@ -10,7 +8,6 @@ from typing import (
 )
 
 from aiotools import MultiError
-from sqlalchemy.sql.selectable import Join
 
 if TYPE_CHECKING:
     from ai.backend.common.types import AgentId
@@ -45,7 +42,7 @@ class AgentError(RuntimeError):
         self.exc_tb = exc_tb
 
 
-class MultiAgentError(MultiError, RuntimeError):
+class MultiAgentError(MultiError):
     """
     An exception that is a collection of multiple errors from multiple agents.
     """
