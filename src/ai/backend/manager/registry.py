@@ -1572,8 +1572,8 @@ class AgentRegistry:
                 async def _destroy_kernels_in_agent(destroyed_kernels) -> None:
                     nonlocal main_stat
                     async with RPCContext(
-                        grouped_kernels[0]['agent'],
-                        grouped_kernels[0]['agent_addr'],
+                        destroyed_kernels[0]['agent'],
+                        destroyed_kernels[0]['agent_addr'],
                         None,
                         order_key=session['session_id'],
                     ) as rpc:
