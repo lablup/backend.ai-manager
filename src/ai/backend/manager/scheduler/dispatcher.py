@@ -208,6 +208,9 @@ class SchedulerDispatcher(aobject):
                     pass
                 except Exception:
                     pass
+
+        # At this point, all scheduling decisions are made, but the resource
+        # reservation in agents are not done yet.
         if start_task_args:
             start_coros = []
             for args in start_task_args:
@@ -311,6 +314,7 @@ class SchedulerDispatcher(aobject):
                         log.exception(log_fmt + 'predicate-error', *log_args)
                         check_results.append((predicate_name, e))
             has_failure = False
+            # has_permanent_failure = False
             failed_predicates = []
             passed_predicates = []
             for predicate_name, result in check_results:
@@ -327,11 +331,17 @@ class SchedulerDispatcher(aobject):
                         'msg': result.message or "",
                     })
                     has_failure = True
+                    # if result.permanent:
+                    #     has_permanent_failure = True
                 passed_predicates.append({
                     'name': predicate_name,
                 })
             if has_failure:
-                log.debug(log_fmt + 'predicate-checks-failed', *log_args)
+                log.debug(log_fmt + 'predicate-checks-failed (temporary)', *log_args)
+                # TODO: handle has_permanent_failure as cancellation
+                #  - An early implementation of it has caused DB query blocking due to
+                #    the inclusion of the kernels.status field. :(
+                #    Let's fix it.
                 async with kernel_db_conn.begin():
                     await _invoke_failure_callbacks(
                         kernel_db_conn, sched_ctx, sess_ctx, check_results,
