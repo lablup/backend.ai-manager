@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+from pprint import pprint
+
 from typing import (
+    Any,
+    List,
     TypedDict,
     TYPE_CHECKING,
 )
+
+from aiotools import MultiError
+from sqlalchemy.sql.selectable import Join
 
 if TYPE_CHECKING:
     from ai.backend.common.types import AgentId
@@ -38,11 +45,18 @@ class AgentError(RuntimeError):
         self.exc_tb = exc_tb
 
 
+class MultiAgentError(MultiError, RuntimeError):
+    """
+    An exception that is a collection of multiple errors from multiple agents.
+    """
+
+
 class ErrorDetail(TypedDict, total=False):
     src: str
     name: str
     repr: str
-    agent_id: str  # optional
+    agent_id: str          # optional
+    collection: List[Any]  # optional; currently mypy cannot handle recursive types
 
 
 class ErrorStatusInfo(TypedDict):
@@ -50,7 +64,21 @@ class ErrorStatusInfo(TypedDict):
 
 
 def convert_to_status_data(e: Exception, is_debug: bool = False) -> ErrorStatusInfo:
-    if isinstance(e, AgentError):
+    if isinstance(e, MultiAgentError):
+        data = ErrorStatusInfo(
+            error={
+                "src": "agent",
+                "name": "MultiAgentError",
+                "repr": f"MultiAgentError({len(e.__errors__)})",
+                "collection": [
+                    convert_to_status_data(sub_error, is_debug)['error']
+                    for sub_error in
+                    e.__errors__
+                ],
+            }
+        )
+        return data
+    elif isinstance(e, AgentError):
         data = ErrorStatusInfo(
             error={
                 "src": "agent",

@@ -32,6 +32,7 @@ import aiohttp
 if TYPE_CHECKING:
     from aiopg.sa.connection import SAConnection
     from aiopg.sa.engine import _PoolAcquireContextManager as SAPool
+    from aiopg.sa.result import RowProxy
 import aiotools
 from aioredis import Redis
 from async_timeout import timeout as _timeout
@@ -76,6 +77,7 @@ from ai.backend.common.types import (
 )
 
 from ai.backend.gateway.config import SharedConfig
+from .exceptions import MultiAgentError
 from .defs import DEFAULT_ROLE, INTRINSIC_SLOTS
 from .types import SessionGetter
 from ..gateway.exceptions import (
@@ -1101,7 +1103,7 @@ class AgentRegistry:
             # Create overlay network for multi-node sessions
             network_name = f'bai-multinode-{pending_session.session_id}'
             try:
-                # await rpc.call.create_overlay_network(network_name)
+                # Overlay networks can only be created at the Swarm manager.
                 await self.docker.networks.create({
                     'Name': network_name,
                     'Driver': 'overlay',
@@ -1151,10 +1153,10 @@ class AgentRegistry:
             # Within a group, agent_alloc_ctx are same.
             agent_alloc_ctx = items[0].agent_alloc_ctx
 
-            async def _post_create_kernel(creation_id: str, created_info):
+            async def _post_create_kernel(kernel_creation_id: str, created_info):
                 # Wait until the kernel_started event.
                 kernel_id = KernelId(uuid.UUID(created_info['id']))
-                start_event = self.kernel_creation_tracker[(creation_id, kernel_id)]
+                start_event = self.kernel_creation_tracker[(kernel_creation_id, kernel_id)]
                 await start_event.wait()
                 # Record kernel access information
                 async with self.dbpool.acquire() as conn, conn.begin():
@@ -1266,13 +1268,25 @@ class AgentRegistry:
                                 (kernel_creation_id, binding.kernel.kernel_id)
                             ]
 
-            per_agent_tasks.append(_create_kernels_in_one_agent(agent_alloc_ctx, items))
+            per_agent_tasks.append(
+                (agent_alloc_ctx, _create_kernels_in_one_agent(agent_alloc_ctx, items))
+            )
 
         if per_agent_tasks:
-            await asyncio.gather(*per_agent_tasks)
-            # When a particular container creation fails, this will raise an error,
-            # while other containers continue to be created.
-            # TODO: We need to cancel/rollback the successful batches of kernels in other agents.
+            agent_errors = []
+            results = await asyncio.gather(
+                *[item[1] for item in per_agent_tasks],
+                return_exceptions=True,
+            )
+            for agent_alloc_tx, result in zip((item[0] for item in per_agent_tasks), results):
+                if isinstance(result, Exception):
+                    # mark to be destroyed afterwards
+                    agent_errors.append(result)
+            if agent_errors:
+                raise MultiAgentError(
+                    "agent(s) raise errors during kernel creation",
+                    errors=agent_errors,
+                )
 
         # If all is well, let's say the session is ready.
         await self.event_dispatcher.produce_event(
@@ -1419,6 +1433,44 @@ class AgentRegistry:
                            .values(occupied_slots=ResourceSlot({}))
                            .where(agents.c.status == AgentStatus.ALIVE))
                 await conn.execute(query)
+
+    async def destroy_session_lowlevel(
+        self,
+        session_id: SessionId,
+        kernels: Sequence[RowProxy],  # should have (id, agent, agent_addr, container_id) columns
+    ) -> None:
+        """
+        Destroy the kernels that belongs the to given session unconditionally
+        and without generation of any relevant events nor invocation of plugin hooks.
+        """
+        keyfunc = lambda item: item['agent'] if item['agent'] is not None else ''
+        for agent_id, group_iterator in itertools.groupby(
+            sorted(kernels, key=keyfunc), key=keyfunc,
+        ):
+            rpc_coros = []
+            destroyed_kernels = []
+            grouped_kernels = [*group_iterator]
+            for kernel in grouped_kernels:
+                if kernel['container_id'] is not None and kernel['agent_addr'] is not None:
+                    destroyed_kernels.append(kernel)
+            if not destroyed_kernels:
+                return
+            async with RPCContext(
+                destroyed_kernels[0]['agent'],
+                destroyed_kernels[0]['agent_addr'],
+                None,
+                order_key=session_id,
+            ) as rpc:
+                for kernel in destroyed_kernels:
+                    # internally it enqueues a "destroy" lifecycle event.
+                    rpc_coros.append(
+                        rpc.call.destroy_kernel(
+                            str(kernel['id']),
+                            "failed-to-start",
+                            suppress_events=True,
+                        )
+                    )
+                await asyncio.gather(*rpc_coros)
 
     async def destroy_session(
         self,
