@@ -16,21 +16,33 @@ Changes
 
 .. towncrier release notes start
 
+20.09.0 (2020-12-27)
+--------------------
+
+### Features
+* Implement `max_container_per_session` keypair resource policy as a part of predicate checks ([#376](https://github.com/lablup/backend.ai-manager/issues/376))
+
+### Fixes
+* Additional stabilization of multi-node multi-container support ([#376](https://github.com/lablup/backend.ai-manager/issues/376))
+  - Fix destruction of multi-container sessions when using multiple nodes
+  - Adopt `MultiAgentError` to represent and handle partial failures of multi-container session creation
+
+
 20.09.0rc3 (2020-12-26)
 -----------------------
 
 ### Fixes
 * Stabilize multi-container sessions further. ([#373](https://github.com/lablup/backend.ai-manager/issues/373))
-   - Include predicate check results in `kernels.status_data` for better user-side diagnosis
-   - Fix further race condition in the session-level creation routines, by adopting `session_creation_id` like the `kernel_creation_id` introduced in #374.
-   - Remove the no longer used `agents.clusterized` column as it is no longer included in agent heartbeats after k8s branch refactoring.
-   - Use dual DB connections to rollback agent-specific (resource) updates but to keep kernel-specific (status) updates when scheduling failures occur.
-   - Fix a potential duplicate of DB cursors because use-after-free of a DB connection in the manager scheduler.
-   - Relax row-level locks in scheduler in favor of the `REPEATABLE READ` isolation level.
-   - Synchronize the candidate agent list when iterating over multiple kernels for a session in the multi-node mode, because they should now be updated
-     according to the transaction savepoints.
-   - Fix blocked proceeding to the next scaling group when a scheduling failure occurs in a scaling group.
-   - Shield the DB queries in the events queue handlers and now interrupting the manager service works better.
+  - Include predicate check results in `kernels.status_data` for better user-side diagnosis
+  - Fix further race condition in the session-level creation routines, by adopting `session_creation_id` like the `kernel_creation_id` introduced in #374.
+  - Remove the no longer used `agents.clusterized` column as it is no longer included in agent heartbeats after k8s branch refactoring.
+  - Use dual DB connections to rollback agent-specific (resource) updates but to keep kernel-specific (status) updates when scheduling failures occur.
+  - Fix a potential duplicate of DB cursors because use-after-free of a DB connection in the manager scheduler.
+  - Relax row-level locks in scheduler in favor of the `REPEATABLE READ` isolation level.
+  - Synchronize the candidate agent list when iterating over multiple kernels for a session in the multi-node mode, because they should now be updated
+    according to the transaction savepoints.
+  - Fix blocked proceeding to the next scaling group when a scheduling failure occurs in a scaling group.
+  - Shield the DB queries in the events queue handlers and now interrupting the manager service works better.
 
 
 20.09.0rc2 (2020-12-24)
