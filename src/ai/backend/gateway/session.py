@@ -791,7 +791,7 @@ async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name:
 async def report_stats(app: web.Application) -> None:
     stats_monitor = app['stats_monitor']
     await stats_monitor.report_metric(
-        GAUGE, 'ai.backend.gateway.coroutines', len(asyncio.Task.all_tasks()))
+        GAUGE, 'ai.backend.gateway.coroutines', len(asyncio.all_tasks()))
 
     all_inst_ids = [
         inst_id async for inst_id
