@@ -93,7 +93,7 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
     ws = web.WebSocketResponse(max_msg_size=local_config['manager']['max-wsmsg-size'])
     await ws.prepare(request)
 
-    myself = asyncio.Task.current_task()
+    myself = asyncio.current_task()
     app['stream_pty_handlers'][stream_key].add(myself)
     defer(lambda: app['stream_pty_handlers'][stream_key].discard(myself))
 
@@ -262,7 +262,7 @@ async def stream_execute(defer, request: web.Request) -> web.StreamResponse:
     ws = web.WebSocketResponse(max_msg_size=local_config['manager']['max-wsmsg-size'])
     await ws.prepare(request)
 
-    myself = asyncio.Task.current_task()
+    myself = asyncio.current_task()
     app['stream_execute_handlers'][stream_key].add(myself)
     defer(lambda: app['stream_execute_handlers'][stream_key].discard(myself))
 
@@ -365,7 +365,7 @@ async def stream_proxy(defer, request: web.Request, params: Mapping[str, Any]) -
     access_key: AccessKey = request['keypair']['access_key']
     service: str = params['app']
     local_config: LocalConfig = request.app['local_config']
-    myself = asyncio.Task.current_task()
+    myself = asyncio.current_task()
     try:
         kernel = await asyncio.shield(registry.get_session(session_name, access_key))
     except (SessionNotFound, TooManySessionsMatched):

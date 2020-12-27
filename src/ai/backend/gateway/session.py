@@ -914,7 +914,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
         resp['created'] = True
 
         if not params['enqueue_only']:
-            request.app['pending_waits'].add(asyncio.Task.current_task())
+            request.app['pending_waits'].add(asyncio.current_task())
             max_wait = params['max_wait_seconds']
             try:
                 if max_wait > 0:
@@ -969,7 +969,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
         log.exception('GET_OR_CREATE: unexpected error!')
         raise InternalServerError
     finally:
-        request.app['pending_waits'].discard(asyncio.Task.current_task())
+        request.app['pending_waits'].discard(asyncio.current_task())
         del session_creation_tracker[session_creation_id]
     return web.json_response(resp, status=201)
 
@@ -1214,7 +1214,7 @@ async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name:
 async def report_stats(app: web.Application) -> None:
     stats_monitor = app['stats_monitor']
     await stats_monitor.report_metric(
-        GAUGE, 'ai.backend.gateway.coroutines', len(asyncio.Task.all_tasks()))
+        GAUGE, 'ai.backend.gateway.coroutines', len(asyncio.all_tasks()))
 
     all_inst_ids = [
         inst_id async for inst_id
