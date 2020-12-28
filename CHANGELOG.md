@@ -16,6 +16,14 @@ Changes
 
 .. towncrier release notes start
 
+20.09.1 (2020-12-28)
+--------------------
+
+### Fixes
+* Put aiodocker in the default dependency, not testing. ([#377](https://github.com/lablup/backend.ai-manager/issues/377))
+* Remove use of deprecated asyncio API (`asyncio.Task.{all_tasks,current_task}` -> `asyncio.{all_tasks,current_task}`) to run with Python 3.9 ([#378](https://github.com/lablup/backend.ai-manager/issues/378))
+
+
 20.09.0 (2020-12-27)
 --------------------
 
