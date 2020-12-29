@@ -325,7 +325,11 @@ class SchedulerDispatcher(aobject):
                         'msg': repr(result),
                     })
                     continue
-                if not result.passed:
+                if result.passed:
+                    passed_predicates.append({
+                        'name': predicate_name,
+                    })
+                else:
                     failed_predicates.append({
                         'name': predicate_name,
                         'msg': result.message or "",
@@ -333,9 +337,6 @@ class SchedulerDispatcher(aobject):
                     has_failure = True
                     # if result.permanent:
                     #     has_permanent_failure = True
-                passed_predicates.append({
-                    'name': predicate_name,
-                })
             if has_failure:
                 log.debug(log_fmt + 'predicate-checks-failed (temporary)', *log_args)
                 # TODO: handle has_permanent_failure as cancellation
