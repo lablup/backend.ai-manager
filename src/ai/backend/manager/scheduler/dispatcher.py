@@ -608,6 +608,7 @@ class SchedulerDispatcher(aobject):
                     {
                         "agent": binding.agent_alloc_ctx.agent_id,
                         "agent_addr": binding.agent_alloc_ctx.agent_addr,
+                        "id": binding.kernel.kernel_id,
                         "container_id": cid_map[binding.kernel.kernel_id],
                     }
                     for binding in session_agent_binding[1]
