@@ -1,1 +1,0 @@
-Fix a missing kernel ID field during cancel-termination upon failed creation of multi-container sessions

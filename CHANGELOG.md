@@ -16,6 +16,14 @@ Changes
 
 .. towncrier release notes start
 
+20.09.2 (2020-12-30)
+--------------------
+
+### Fixes
+* Fix the duplicate passed/failed predicate list in `status_data` ([#379](https://github.com/lablup/backend.ai-manager/issues/379))
+* Fix a missing kernel ID field during cancel-termination upon failed creation of multi-container sessions ([#380](https://github.com/lablup/backend.ai-manager/issues/380))
+
+
 20.09.1 (2020-12-28)
 --------------------
 
