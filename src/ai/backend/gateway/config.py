@@ -638,6 +638,7 @@ class SharedConfig(AbstractConfig):
             await self.etcd.get_prefix('config/docker/registry')
         )
         self['docker']['registry'] = latest_registry_config
+        # TODO: delete images from registries removed from the previous config?
         if registry is None:
             # scan all configured registries
             registries = self['docker']['registry']
