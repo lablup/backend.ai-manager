@@ -633,6 +633,12 @@ class SharedConfig(AbstractConfig):
         *,
         reporter: ProgressReporter = None,
     ) -> None:
+        registry_config_iv = t.Mapping(t.String, container_registry_iv)
+        latest_registry_config = registry_config_iv.check(
+            await self.etcd.get_prefix('config/docker/registry')
+        )
+        self['docker']['registry'] = latest_registry_config
+        # TODO: delete images from registries removed from the previous config?
         if registry is None:
             # scan all configured registries
             registries = self['docker']['registry']
@@ -688,25 +694,6 @@ class SharedConfig(AbstractConfig):
             configured_slots = await self._get_resource_slots()
             ret = {**INTRINSIC_SLOTS, **configured_slots}
             current_resource_slots.set(ret)
-        return ret
-
-    @aiotools.lru_cache(maxsize=1, expire_after=2.0)
-    async def _get_vfolder_types(self):
-        return await self.etcd.get_prefix_dict('volumes/_types')
-
-    async def get_vfolder_types(self) -> Sequence[str]:
-        '''
-        Returns the vfolder types currently set. One of "user" and/or "group".
-        If none is specified, "user" type is implicitly assumed.
-        '''
-        try:
-            ret = current_vfolder_types.get()
-        except LookupError:
-            vf_types = await self._get_vfolder_types()
-            if not vf_types:
-                vf_types = {'user': ''}
-            ret = list(vf_types.keys())
-            current_vfolder_types.set(ret)
         return ret
 
     @aiotools.lru_cache(maxsize=1, expire_after=5.0)
