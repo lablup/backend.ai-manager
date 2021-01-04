@@ -446,7 +446,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             [{
                 'image_ref': requested_image_ref,
                 'cluster_role': DEFAULT_ROLE,
-                'cluster_idx': 0,
+                'cluster_idx': 1,
                 'creation_config': params['config'],
                 'bootstrap_script': params['bootstrap_script'],
                 'startup_command': params['startup_command'],
