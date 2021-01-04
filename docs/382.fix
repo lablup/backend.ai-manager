@@ -1,0 +1,1 @@
+Revert accidental code removal in #381 due to missing type annotations
