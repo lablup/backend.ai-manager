@@ -1,1 +1,0 @@
-Fix reloading of new container registry configs when rescanning, which is a regression due to registry abstraction for Harbor v2 support

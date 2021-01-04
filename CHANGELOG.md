@@ -16,6 +16,14 @@ Changes
 
 .. towncrier release notes start
 
+20.09.3 (2021-01-04)
+--------------------
+
+### Fixes
+* Fix reloading of new container registry configs when rescanning, which is a regression due to registry abstraction for Harbor v2 support ([#382](https://github.com/lablup/backend.ai-manager/issues/382))
+* Fix `cluster_idx` for single-node sessions with only one container (`main0` should be `main1` to be consistent with multi-node sessions) ([#383](https://github.com/lablup/backend.ai-manager/issues/383))
+
+
 20.09.2 (2020-12-30)
 --------------------
 

@@ -1,1 +1,0 @@
-Fix `cluster_idx` for single-node sessions with only one container (`main0` should be `main1` to be consistent with multi-node sessions)
