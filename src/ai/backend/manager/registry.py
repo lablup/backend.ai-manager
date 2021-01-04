@@ -1554,13 +1554,13 @@ class AgentRegistry:
                                 (str(kernel['session_id']), kernel['session_creation_id'], reason),
                             )
                     elif kernel['status'] == KernelStatus.PULLING:
-                        raise GenericForbidden('Cannot destory kernels in pulling status')
+                        raise GenericForbidden('Cannot destroy kernels in pulling status')
                     elif kernel['status'] in (
                         KernelStatus.PREPARING, KernelStatus.TERMINATING, KernelStatus.ERROR,
                     ):
                         if not forced:
                             raise GenericForbidden(
-                                'Cannot destory kernels in preparing/terminating/error status'
+                                'Cannot destroy kernels in preparing/terminating/error status'
                             )
                         log.warning('force-terminating kernel (k:{}, status:{})',
                                     kernel['id'], kernel['status'])
