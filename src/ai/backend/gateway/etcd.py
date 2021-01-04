@@ -6,6 +6,7 @@ from typing import (
     AsyncGenerator,
     Iterable,
     Mapping,
+    TYPE_CHECKING,
     Tuple,
 )
 
@@ -20,6 +21,8 @@ from .auth import superadmin_required
 from .exceptions import InvalidAPIParameters
 from .utils import check_api_params
 from .types import CORSOptions, WebMiddleware
+if TYPE_CHECKING:
+    from .config import SharedConfig
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
 
@@ -27,14 +30,16 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
 @atomic
 async def get_resource_slots(request: web.Request) -> web.Response:
     log.info('ETCD.GET_RESOURCE_SLOTS ()')
-    known_slots = await request.app['shared_config'].get_resource_slots()
+    shared_config: SharedConfig = request.app['shared_config']
+    known_slots = await shared_config.get_resource_slots()
     return web.json_response(known_slots, status=200)
 
 
 @atomic
 async def get_vfolder_types(request: web.Request) -> web.Response:
     log.info('ETCD.GET_VFOLDER_TYPES ()')
-    vfolder_types = await request.app['shared_config'].get_vfolder_types()
+    shared_config: SharedConfig = request.app['shared_config']
+    vfolder_types = await shared_config.get_vfolder_types()
     return web.json_response(vfolder_types, status=200)
 
 
