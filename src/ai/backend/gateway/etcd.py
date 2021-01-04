@@ -46,9 +46,9 @@ async def get_vfolder_types(request: web.Request) -> web.Response:
 @atomic
 @superadmin_required
 async def get_docker_registries(request: web.Request) -> web.Response:
-    '''
+    """
     Returns the list of all registered docker registries.
-    '''
+    """
     log.info('ETCD.GET_DOCKER_REGISTRIES ()')
     etcd = request.app['shared_config'].etcd
     _registries = await get_known_registries(etcd)
@@ -65,7 +65,8 @@ async def get_docker_registries(request: web.Request) -> web.Response:
         t.Key('prefix', default=False): t.Bool,
     }))
 async def get_config(request: web.Request, params: Any) -> web.Response:
-    etcd = request.app['shared_config'].etcd
+    shared_config: SharedConfig = request.app['shared_config']
+    etcd = shared_config.etcd
     log.info('ETCD.GET_CONFIG (ak:{}, key:{}, prefix:{})',
              request['keypair']['access_key'], params['key'], params['prefix'])
     if params['prefix']:
@@ -85,7 +86,8 @@ async def get_config(request: web.Request, params: Any) -> web.Response:
                          t.Mapping(t.String(allow_blank=True), t.Any)),
     }))
 async def set_config(request: web.Request, params: Any) -> web.Response:
-    etcd = request.app['shared_config'].etcd
+    shared_config: SharedConfig = request.app['shared_config']
+    etcd = shared_config.etcd
     log.info('ETCD.SET_CONFIG (ak:{}, key:{}, val:{})',
              request['keypair']['access_key'], params['key'], params['value'])
     if isinstance(params['value'], Mapping):
@@ -118,7 +120,8 @@ async def set_config(request: web.Request, params: Any) -> web.Response:
         t.Key('prefix', default=False): t.Bool,
     }))
 async def delete_config(request: web.Request, params: Any) -> web.Response:
-    etcd = request.app['shared_config'].etcd
+    shared_config: SharedConfig = request.app['shared_config']
+    etcd = shared_config.etcd
     log.info('ETCD.DELETE_CONFIG (ak:{}, key:{}, prefix:{})',
              request['keypair']['access_key'], params['key'], params['prefix'])
     if params['prefix']:
