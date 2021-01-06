@@ -1,0 +1,1 @@
+Backported critical bug fixes including DB connection mis-reuse, continuation of scheduling to next scaling groups upon errors and the `gateway.events` module enhancements from [#373](https://github.com/lablup/backend.ai-manager/pull/373)
