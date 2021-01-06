@@ -48,7 +48,6 @@ from ai.backend.common.plugin.hook import (
 )
 from ai.backend.common.types import (
     AccessKey,
-    AgentId,
     BinarySize,
     KernelCreationConfig,
     KernelId,
