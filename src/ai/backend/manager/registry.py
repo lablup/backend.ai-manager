@@ -804,8 +804,8 @@ class AgentRegistry:
                         'preopen_ports': sess_ctx.preopen_ports,
                     }
                     created_info = await rpc.call.create_kernel(
-                        kernel_creation_id,
                         str(sess_ctx.kernel_id),
+                        kernel_creation_id,
                         config,
                     )
                 if created_info is None:
