@@ -17,7 +17,9 @@ from typing import (
     Any, Optional,
     Iterable,
     Tuple,
-    Mapping, MutableMapping,
+    TYPE_CHECKING,
+    Mapping,
+    MutableMapping,
     Union,
 )
 import uuid
@@ -82,6 +84,8 @@ from ..manager.models import (
     verify_vfolder_name,
     DEAD_KERNEL_STATUSES,
 )
+if TYPE_CHECKING:
+    from ..manager.registry import AgentRegistry
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.session'))
 
@@ -655,12 +659,26 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
     return await _create(request, params, request.app['dbpool'])
 
 
-async def handle_kernel_lifecycle(app: web.Application, agent_id: AgentId, event_name: str,
-                                  raw_kernel_id: str,
-                                  reason: str = None,
-                                  exit_code: int = None) -> None:
-    kernel_id = uuid.UUID(raw_kernel_id)
-    registry = app['registry']
+async def handle_kernel_creation_lifecycle(
+    app: web.Application, agent_id: AgentId, event_name: str,
+    raw_kernel_id: str,
+    creation_id: str,
+    reason: str = None,
+) -> None:
+    """
+    Update the database and perform post_create_kernel() upon
+    the events for each step of kernel creation.
+
+    To avoid race condition between consumer and subscriber event handlers,
+    we only have this handler to subscribe all kernel creation events,
+    but distinguish which one to process using a unique creation_id
+    generated when initiating the create_kernels() agent RPC call.
+    """
+    kernel_id = KernelId(uuid.UUID(raw_kernel_id))
+    ck_id = (creation_id, kernel_id)
+    registry: AgentRegistry = app['registry']
+    if ck_id not in registry.kernel_creation_tracker:
+        return
     if event_name == 'kernel_preparing':
         await registry.set_kernel_status(kernel_id, KernelStatus.PREPARING, reason)
     elif event_name == 'kernel_pulling':
@@ -668,9 +686,19 @@ async def handle_kernel_lifecycle(app: web.Application, agent_id: AgentId, event
     elif event_name == 'kernel_creating':
         await registry.set_kernel_status(kernel_id, KernelStatus.PREPARING, reason)
     elif event_name == 'kernel_started':
-        # The create_kernel() RPC caller will set the "RUNNING" status.
-        pass
-    elif event_name == 'kernel_terminating':
+        # post_create_kernel() coroutines are waiting for the creation tracker events to be set.
+        registry.kernel_creation_tracker[ck_id].set()
+
+
+async def handle_kernel_termination_lifecycle(
+    app: web.Application, agent_id: AgentId, event_name: str,
+    raw_kernel_id: str,
+    reason: str = None,
+    exit_code: int = None,
+) -> None:
+    kernel_id = KernelId(uuid.UUID(raw_kernel_id))
+    registry: AgentRegistry = app['registry']
+    if event_name == 'kernel_terminating':
         # The destroy_kernel() API handler will set the "TERMINATING" status.
         pass
     elif event_name == 'kernel_terminated':
@@ -1347,12 +1375,14 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
 
 async def init(app: web.Application) -> None:
     event_dispatcher = app['event_dispatcher']
-    event_dispatcher.consume('kernel_preparing', app, handle_kernel_lifecycle)
-    event_dispatcher.consume('kernel_pulling', app, handle_kernel_lifecycle)
-    event_dispatcher.consume('kernel_creating', app, handle_kernel_lifecycle)
-    event_dispatcher.consume('kernel_started', app, handle_kernel_lifecycle)
-    event_dispatcher.consume('kernel_terminating', app, handle_kernel_lifecycle)
-    event_dispatcher.consume('kernel_terminated', app, handle_kernel_lifecycle)
+
+    # passive events
+    event_dispatcher.subscribe('kernel_preparing', app, handle_kernel_creation_lifecycle)
+    event_dispatcher.subscribe('kernel_pulling', app, handle_kernel_creation_lifecycle)
+    event_dispatcher.subscribe('kernel_creating', app, handle_kernel_creation_lifecycle)
+    event_dispatcher.subscribe('kernel_started', app, handle_kernel_creation_lifecycle)
+    event_dispatcher.consume('kernel_terminating', app, handle_kernel_termination_lifecycle)
+    event_dispatcher.consume('kernel_terminated', app, handle_kernel_termination_lifecycle)
     event_dispatcher.consume('kernel_success', app, handle_batch_result)
     event_dispatcher.consume('kernel_failure', app, handle_batch_result)
     event_dispatcher.consume('kernel_stat_sync', app, handle_kernel_stat_sync)

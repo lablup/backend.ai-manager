@@ -329,7 +329,13 @@ class SchedulerDispatcher(aobject):
                 row.scaling_group async for row in db_conn.execute(query)
             ]
             for sgroup_name in schedulable_scaling_groups:
-                await _schedule_in_sgroup(db_conn, sgroup_name)
+                try:
+                    await _schedule_in_sgroup(db_conn, sgroup_name)
+                except InstanceNotAvailable:
+                    # continue to next scaling group
+                    pass
+                except Exception:
+                    pass
 
         async def start_session(log_args, sched_ctx, sess_ctx, agent_alloc_ctx, check_results):
             log.debug(log_fmt + 'try-starting', *log_args)
@@ -337,7 +343,7 @@ class SchedulerDispatcher(aobject):
                 await self.registry.start_session(sched_ctx, sess_ctx, agent_alloc_ctx)
             except Exception as e:
                 log.error(log_fmt + 'failed-starting', *log_args, exc_info=e)
-                async with self.dbpool.acquire(), db_conn.begin():
+                async with self.dbpool.acquire() as db_conn, db_conn.begin():
                     await _unreserve_agent_slots(db_conn, sess_ctx, agent_alloc_ctx)
                     await _invoke_failure_callbacks(db_conn, sched_ctx, sess_ctx, check_results)
                     query = kernels.update().values({
@@ -352,7 +358,7 @@ class SchedulerDispatcher(aobject):
                 )
             else:
                 log.info(log_fmt + 'started', *log_args)
-                async with self.dbpool.acquire(), db_conn.begin():
+                async with self.dbpool.acquire() as db_conn, db_conn.begin():
                     await _invoke_success_callbacks(db_conn, sched_ctx, sess_ctx, check_results)
 
         start_coros = []
