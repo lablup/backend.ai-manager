@@ -16,6 +16,18 @@ Changes
 
 .. towncrier release notes start
 
+20.03.15 (2021-01-06)
+---------------------
+
+### Breaking Changes
+* From this release, Manager v20.03.15, requires the Agent release v20.03.10 or higher, due to changes of the manager-to-agent RPC protocol. ([#384](https://github.com/lablup/backend.ai-manager/issues/384))
+
+### Fixes
+* Backported critical bug fixes including DB connection mis-reuse, continuation of scheduling to next scaling groups upon errors and the `gateway.events` module enhancements from [#373](https://github.com/lablup/backend.ai-manager/pull/373)
+* Fix races of kernel creation events by attaching a unique creation request ID to distinguish and catch the events by the caller manager instance ([#374](https://github.com/lablup/backend.ai-manager/issues/374))
+* Remove use of deprecated asyncio API (`asyncio.Task.{all_tasks,current_task}` -> `asyncio.{all_tasks,current_task}`) ([#378](https://github.com/lablup/backend.ai-manager/issues/378))
+
+
 20.03.14 (2020-12-20)
 ---------------------
 

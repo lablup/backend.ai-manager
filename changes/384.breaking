@@ -1,1 +1,0 @@
-From this release, Manager v20.03.15, requires the Agent release v20.03.10 or higher, due to changes of the manager-to-agent RPC protocol.
