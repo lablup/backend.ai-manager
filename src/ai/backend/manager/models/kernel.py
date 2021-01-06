@@ -154,7 +154,7 @@ kernels = sa.Table(
     sa.Column('cluster_mode', sa.String(length=16), nullable=False,
               default=ClusterMode.SINGLE_NODE, server_default=ClusterMode.SINGLE_NODE.name),
     sa.Column('cluster_size', sa.Integer, nullable=False, default=1),
-    sa.Column('cluster_role', sa.String(length=16), nullable=False, default=DEFAULT_ROLE),
+    sa.Column('cluster_role', sa.String(length=16), nullable=False, default=DEFAULT_ROLE, index=True),
     sa.Column('cluster_idx', sa.Integer, nullable=False, default=0),
     sa.Column('cluster_hostname', sa.String(length=64), nullable=False, default=default_hostname),
 
@@ -217,6 +217,7 @@ kernels = sa.Table(
     sa.Column('last_stat', pgsql.JSONB(), nullable=True, default=sa.null()),
 
     sa.Index('ix_kernels_sess_id_role', 'session_id', 'cluster_role', unique=False),
+    sa.Index('ix_kernels_status_role', 'status', 'cluster_role'),
     sa.Index('ix_kernels_updated_order',
              sa.func.greatest('created_at', 'terminated_at', 'status_changed'),
              unique=False),
@@ -570,14 +571,9 @@ class ComputeContainer(graphene.ObjectType):
             else:
                 _order_func = sa.asc if order_asc else sa.desc
                 _ordering = [_order_func(getattr(kernels.c, order_key))]
-            j = (
-                kernels
-                .join(groups, groups.c.id == kernels.c.group_id)
-                .join(users, users.c.uuid == kernels.c.user_uuid)
-            )
             query = (
                 sa.select([kernels])
-                .select_from(j)
+                .select_from(kernels)
                 .where(kernels.c.session_id == session_id)
                 .order_by(*_ordering)
                 .limit(limit)
