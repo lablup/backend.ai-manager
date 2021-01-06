@@ -6,20 +6,27 @@ import functools
 import logging
 import json
 from typing import (
-    Any, Union, Final,
-    Iterable, AsyncIterator,
-    Sequence, Tuple,
-    Mapping, MutableMapping,
-    Set,
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Final,
+    Iterable,
+    Mapping,
+    MutableMapping,
     Protocol,
+    Sequence,
+    Set,
+    Tuple,
+    Union,
+    cast,
 )
 import uuid
+import weakref
 
 from aiohttp import web
 import aiohttp_cors
 from aiohttp_sse import sse_response
 import aioredis
-from aiojobs.aiohttp import get_scheduler_from_app
 from aiotools import adefer
 import attr
 import sqlalchemy as sa
@@ -87,6 +94,8 @@ class EventDispatcher(aobject):
     consumer_task: asyncio.Task
     subscriber_task: asyncio.Task
     producer_lock: asyncio.Lock
+    consumer_taskset: weakref.WeakSet[asyncio.Task]
+    subscriber_taskset: weakref.WeakSet[asyncio.Task]
 
     def __init__(self, app: web.Application) -> None:
         self.loop = current_loop()
@@ -98,9 +107,11 @@ class EventDispatcher(aobject):
         self.redis_producer = await self._create_redis()
         self.redis_consumer = await self._create_redis()
         self.redis_subscriber = await self._create_redis()
-        self.consumer_task = self.loop.create_task(self._consume())
-        self.subscriber_task = self.loop.create_task(self._subscribe())
+        self.consumer_loop_task = asyncio.create_task(self._consume_loop())
+        self.subscriber_loop_task = asyncio.create_task(self._subscribe_loop())
         self.producer_lock = asyncio.Lock()
+        self.consumer_taskset = weakref.WeakSet()
+        self.subscriber_taskset = weakref.WeakSet()
 
     async def _create_redis(self):
         config = self.root_app['config']
@@ -113,10 +124,20 @@ class EventDispatcher(aobject):
         )
 
     async def close(self) -> None:
-        self.consumer_task.cancel()
-        await self.consumer_task
-        self.subscriber_task.cancel()
-        await self.subscriber_task
+        cancelled_tasks = []
+        for task in self.consumer_taskset:
+            if not task.done():
+                task.cancel()
+                cancelled_tasks.append(task)
+        for task in self.subscriber_taskset:
+            if not task.done():
+                task.cancel()
+                cancelled_tasks.append(task)
+        self.consumer_loop_task.cancel()
+        self.subscriber_loop_task.cancel()
+        cancelled_tasks.append(self.consumer_loop_task)
+        cancelled_tasks.append(self.subscriber_loop_task)
+        await asyncio.gather(*cancelled_tasks, return_exceptions=True)
         self.redis_producer.close()
         self.redis_consumer.close()
         self.redis_subscriber.close()
@@ -162,21 +183,18 @@ class EventDispatcher(aobject):
         log_args = (event_name, agent_id)
         if self.root_app['config']['debug']['log-events']:
             log.debug(log_fmt, *log_args)
-        scheduler = get_scheduler_from_app(self.root_app)
+        loop = asyncio.get_running_loop()
         for consumer in self.consumers[event_name]:
             cb = consumer.callback
-            try:
-                if asyncio.iscoroutine(cb):
-                    await scheduler.spawn(cb)
-                elif asyncio.iscoroutinefunction(cb):
-                    await scheduler.spawn(cb(consumer.context, agent_id, event_name, *args))
-                else:
-                    cb = functools.partial(cb, consumer.context, agent_id, event_name, *args)
-                    self.loop.call_soon(cb)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                log.exception(log_fmt + ': unexpected-error', *log_args)
+            if asyncio.iscoroutine(cb):
+                self.consumer_taskset.add(asyncio.create_task(cast(Awaitable, cb)))
+            elif asyncio.iscoroutinefunction(cb):
+                self.consumer_taskset.add(asyncio.create_task(
+                    cb(consumer.context, agent_id, event_name, *args)
+                ))
+            else:
+                cb = functools.partial(cb, consumer.context, agent_id, event_name, *args)
+                loop.call_soon(cb)
 
     async def dispatch_subscribers(self, event_name: str, agent_id: AgentId,
                                    args: Tuple[Any, ...] = tuple()) -> None:
@@ -184,23 +202,20 @@ class EventDispatcher(aobject):
         log_args = (event_name, agent_id)
         if self.root_app['config']['debug']['log-events']:
             log.debug(log_fmt, *log_args)
-        scheduler = get_scheduler_from_app(self.root_app)
+        loop = asyncio.get_running_loop()
         for subscriber in self.subscribers[event_name]:
             cb = subscriber.callback
-            try:
-                if asyncio.iscoroutine(cb):
-                    await scheduler.spawn(cb)
-                elif asyncio.iscoroutinefunction(cb):
-                    await scheduler.spawn(cb(subscriber.context, agent_id, event_name, *args))
-                else:
-                    cb = functools.partial(cb, subscriber.context, agent_id, event_name, *args)
-                    self.loop.call_soon(cb)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                log.exception(log_fmt + ': unexpected-error', *log_args)
+            if asyncio.iscoroutine(cb):
+                self.subscriber_taskset.add(asyncio.create_task(cast(Awaitable, cb)))
+            elif asyncio.iscoroutinefunction(cb):
+                self.subscriber_taskset.add(asyncio.create_task(
+                    cb(subscriber.context, agent_id, event_name, *args)
+                ))
+            else:
+                cb = functools.partial(cb, subscriber.context, agent_id, event_name, *args)
+                loop.call_soon(cb)
 
-    async def _consume(self) -> None:
+    async def _consume_loop(self) -> None:
         while True:
             try:
                 key, raw_msg = await redis.execute_with_retries(
@@ -214,7 +229,7 @@ class EventDispatcher(aobject):
             except Exception:
                 log.exception('EventDispatcher.consume(): unexpected-error')
 
-    async def _subscribe(self) -> None:
+    async def _subscribe_loop(self) -> None:
 
         async def _subscribe_impl():
             channels = await self.redis_subscriber.subscribe('events.pubsub')
@@ -379,7 +394,46 @@ async def push_background_task_events(
         return resp
 
 
-async def enqueue_session_status_update(
+async def enqueue_kernel_status_update_with_creation_id(
+    app: web.Application,
+    agent_id: AgentId,
+    event_name: str,
+    raw_kernel_id: str,
+    kernel_creation_id: str,
+    reason: str = None,
+    exit_code: int = None,
+) -> None:
+    if raw_kernel_id is None:
+        return
+    kernel_id = uuid.UUID(raw_kernel_id)
+
+    async def _fetch():
+        async with app['dbpool'].acquire() as conn, conn.begin():
+            query = (
+                sa.select([
+                    kernels.c.id,
+                    kernels.c.sess_id,
+                    kernels.c.access_key,
+                    kernels.c.domain_name,
+                    kernels.c.group_id,
+                    kernels.c.user_uuid,
+                ])
+                .select_from(kernels)
+                .where(
+                    (kernels.c.id == kernel_id)
+                )
+            )
+            result = await conn.execute(query)
+            return await result.first()
+
+    row = await asyncio.shield(_fetch())
+    if row is None:
+        return
+    for q in app['session_event_queues']:
+        q.put_nowait((event_name, row, reason))
+
+
+async def enqueue_kernel_status_update(
     app: web.Application,
     agent_id: AgentId,
     event_name: str,
@@ -471,14 +525,14 @@ async def events_app_ctx(app: web.Application) -> AsyncIterator[None]:
     app['session_event_queues'] = set()
     app['task_update_queues'] = set()
     event_dispatcher = app['event_dispatcher']
-    event_dispatcher.subscribe('kernel_enqueued', app, enqueue_session_status_update)
-    event_dispatcher.subscribe('kernel_preparing', app, enqueue_session_status_update)
-    event_dispatcher.subscribe('kernel_pulling', app, enqueue_session_status_update)
-    event_dispatcher.subscribe('kernel_creating', app, enqueue_session_status_update)
-    event_dispatcher.subscribe('kernel_started', app, enqueue_session_status_update)
-    event_dispatcher.subscribe('kernel_terminating', app, enqueue_session_status_update)
-    event_dispatcher.subscribe('kernel_terminated', app, enqueue_session_status_update)
-    event_dispatcher.subscribe('kernel_cancelled', app, enqueue_session_status_update)
+    event_dispatcher.subscribe('kernel_enqueued', app, enqueue_kernel_status_update)
+    event_dispatcher.subscribe('kernel_preparing', app, enqueue_kernel_status_update_with_creation_id)
+    event_dispatcher.subscribe('kernel_pulling', app, enqueue_kernel_status_update_with_creation_id)
+    event_dispatcher.subscribe('kernel_creating', app, enqueue_kernel_status_update_with_creation_id)
+    event_dispatcher.subscribe('kernel_started', app, enqueue_kernel_status_update_with_creation_id)
+    event_dispatcher.subscribe('kernel_terminating', app, enqueue_kernel_status_update)
+    event_dispatcher.subscribe('kernel_terminated', app, enqueue_kernel_status_update)
+    event_dispatcher.subscribe('kernel_cancelled', app, enqueue_kernel_status_update)
     event_dispatcher.subscribe('kernel_success', app, enqueue_batch_session_result_update)
     event_dispatcher.subscribe('kernel_failure', app, enqueue_batch_session_result_update)
     event_dispatcher.subscribe('task_updated', app, enqueue_task_status_update)
