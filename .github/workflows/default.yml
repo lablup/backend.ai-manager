@@ -22,6 +22,7 @@ jobs:
       run: |
         sudo apt-get install libsnappy-dev
         python -m pip install -U pip setuptools
+        FALLBACK_BRANCH=20.09
         if [ -n "$GITHUB_HEAD_REF" ]; then
           export GHBRANCH="${GITHUB_HEAD_REF#refs/heads/}"
         else
@@ -32,7 +33,7 @@ jobs:
         set +e
         git ls-remote --heads 'https://github.com/lablup/backend.ai-common' | grep -q "refs/heads/${GHBRANCH}"
         if [ $? -eq 0 ]; then
-          sed -i "s%\(backend.ai-common\)@master%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
+          sed -i "s%\(backend.ai-common\)@${FALLBACK_BRANCH}%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
         fi
         set -e
         python -m pip install -U -r requirements/${REQUIREMENTS_FILE}.txt
@@ -64,6 +65,7 @@ jobs:
       run: |
         sudo apt-get install libsnappy-dev
         python -m pip install -U pip setuptools
+        FALLBACK_BRANCH=20.09
         if [ -n "$GITHUB_HEAD_REF" ]; then
           export GHBRANCH="${GITHUB_HEAD_REF#refs/heads/}"
         else
@@ -74,7 +76,7 @@ jobs:
         set +e
         git ls-remote --heads 'https://github.com/lablup/backend.ai-common' | grep -q "refs/heads/${GHBRANCH}"
         if [ $? -eq 0 ]; then
-          sed -i "s%\(backend.ai-common\)@master%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
+          sed -i "s%\(backend.ai-common\)@${FALLBACK_BRANCH}%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
         fi
         set -e
         python -m pip install -U -r requirements/${REQUIREMENTS_FILE}.txt
@@ -126,6 +128,7 @@ jobs:
       run: |
         sudo apt-get install libsnappy-dev
         python -m pip install -U pip setuptools
+        FALLBACK_BRANCH=20.09
         if [ -n "$GITHUB_HEAD_REF" ]; then
           export GHBRANCH="${GITHUB_HEAD_REF#refs/heads/}"
         else
@@ -136,7 +139,7 @@ jobs:
         set +e
         git ls-remote --heads 'https://github.com/lablup/backend.ai-common' | grep -q "refs/heads/${GHBRANCH}"
         if [ $? -eq 0 ]; then
-          sed -i "s%\(backend.ai-common\)@master%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
+          sed -i "s%\(backend.ai-common\)@${FALLBACK_BRANCH}%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
         fi
         set -e
         python -m pip install -U -r requirements/${REQUIREMENTS_FILE}.txt
@@ -189,6 +192,7 @@ jobs:
       run: |
         sudo apt-get install libsnappy-dev
         python -m pip install -U pip setuptools
+        FALLBACK_BRANCH=20.09
         if [ -n "$GITHUB_HEAD_REF" ]; then
           export GHBRANCH="${GITHUB_HEAD_REF#refs/heads/}"
         else
@@ -199,7 +203,7 @@ jobs:
         set +e
         git ls-remote --heads 'https://github.com/lablup/backend.ai-common' | grep -q "refs/heads/${GHBRANCH}"
         if [ $? -eq 0 ]; then
-          sed -i "s%\(backend.ai-common\)@master%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
+          sed -i "s%\(backend.ai-common\)@${FALLBACK_BRANCH}%\1@${GHBRANCH}%" requirements/${REQUIREMENTS_FILE}.txt
         fi
         set -e
         python -m pip install -U -r requirements/${REQUIREMENTS_FILE}.txt
