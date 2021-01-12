@@ -22,7 +22,7 @@ jobs:
       run: |
         sudo apt-get install libsnappy-dev
         python -m pip install -U pip setuptools
-        python -m pip install -U -r requirements/build.txt
+        python -m pip install -U towncrier
     - name: Check existence of news fragment
       run: |
         git fetch --no-tags origin +refs/heads/${BASE_BRANCH}:refs/remotes/origin/${BASE_BRANCH}

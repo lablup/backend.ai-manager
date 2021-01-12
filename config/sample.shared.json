@@ -9,8 +9,9 @@
   "docker": {
     "registry": {
       "index.docker.io": {
-        "": "https://registry-1.docker.io",
-        "username": "lablup"
+        "": "https://cr.backend.ai",
+        "type": "harbor2",
+        "project": "stable,ngc"
       }
     }
   },
