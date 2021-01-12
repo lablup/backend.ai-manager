@@ -8,7 +8,6 @@ import functools
 import importlib
 import json
 import logging
-import multiprocessing
 import os
 import pwd, grp
 import ssl
@@ -594,7 +593,6 @@ async def server_main_logwrapper(loop: asyncio.AbstractEventLoop,
 def main(ctx: click.Context, config_path: Path, debug: bool) -> None:
 
     cfg = load_config(config_path, debug)
-    multiprocessing.set_start_method('spawn')
 
     if ctx.invoked_subcommand is None:
         cfg['manager']['pid-file'].write_text(str(os.getpid()))
@@ -616,9 +614,11 @@ def main(ctx: click.Context, config_path: Path, debug: bool) -> None:
                     uvloop.install()
                     log.info('Using uvloop as the event loop backend')
                 try:
-                    aiotools.start_server(server_main_logwrapper,
-                                          num_workers=cfg['manager']['num-proc'],
-                                          args=(cfg, log_endpoint))
+                    aiotools.start_server(
+                        server_main_logwrapper,
+                        num_workers=cfg['manager']['num-proc'],
+                        args=(cfg, log_endpoint),
+                    )
                 finally:
                     log.info('terminated.')
         finally:
