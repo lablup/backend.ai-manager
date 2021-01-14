@@ -193,6 +193,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
         agent_id: AgentId,
         event_name: str,
         session_id: SessionId,
+        creation_id: str,
     ) -> None:
         await self._update_timeout(session_id)
 
