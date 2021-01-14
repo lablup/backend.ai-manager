@@ -1086,17 +1086,17 @@ class AgentRegistry:
         if pending_session.cluster_mode == ClusterMode.SINGLE_NODE:
             if pending_session.cluster_size > 1:
                 network_name = f'bai-singlenode-{pending_session.session_id}'
-                async with RPCContext(
-                    kernel_agent_bindings[0].agent_alloc_ctx.agent_id,
-                    kernel_agent_bindings[0].agent_alloc_ctx.agent_addr,
-                    None,
-                    order_key=pending_session.session_id,
-                ) as rpc:
-                    try:
+                try:
+                    async with RPCContext(
+                        kernel_agent_bindings[0].agent_alloc_ctx.agent_id,
+                        kernel_agent_bindings[0].agent_alloc_ctx.agent_addr,
+                        None,
+                        order_key=pending_session.session_id,
+                    ) as rpc:
                         await rpc.call.create_local_network(network_name)
-                    except Exception:
-                        log.exception(f"Failed to create an agent-local network {network_name}")
-                        raise
+                except Exception:
+                    log.exception(f"Failed to create an agent-local network {network_name}")
+                    raise
             else:
                 network_name = None
         elif pending_session.cluster_mode == ClusterMode.MULTI_NODE:
@@ -1692,16 +1692,16 @@ class AgentRegistry:
                 return
         if session['cluster_mode'] == ClusterMode.SINGLE_NODE and session['cluster_size'] > 1:
             network_name = f'bai-singlenode-{session["session_id"]}'
-            async with RPCContext(
-                session['agent'],       # the main-container's agent
-                session['agent_addr'],
-                None,
-                order_key=session['session_id'],
-            ) as rpc:
-                try:
+            try:
+                async with RPCContext(
+                    session['agent'],       # the main-container's agent
+                    session['agent_addr'],
+                    None,
+                    order_key=session['session_id'],
+                ) as rpc:
                     await rpc.call.destroy_local_network(network_name)
-                except Exception:
-                    log.exception(f"Failed to destroy the agent-local network {network_name}")
+            except Exception:
+                log.exception(f"Failed to destroy the agent-local network {network_name}")
         elif session['cluster_mode'] == ClusterMode.MULTI_NODE:
             network_name = f'bai-multinode-{session["session_id"]}'
             try:
