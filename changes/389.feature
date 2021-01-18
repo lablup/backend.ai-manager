@@ -1,0 +1,1 @@
+Provide API function about the total amount and usage of Flashblade volume.
