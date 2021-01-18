@@ -16,6 +16,13 @@ Changes
 
 .. towncrier release notes start
 
+20.09.4 (2021-01-08)
+--------------------
+
+### Features
+* Add more indexes to reduce the latency for `kernels.cluster_role` involving queries ([#385](https://github.com/lablup/backend.ai-manager/issues/385))
+
+
 20.09.3 (2021-01-04)
 --------------------
 
