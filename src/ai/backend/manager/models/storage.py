@@ -162,7 +162,7 @@ class StorageVolume(graphene.ObjectType):
     capabilities = graphene.List(graphene.String)
     hardware_metadata = graphene.JSONString()
     performance_metric = graphene.JSONString()
-    statistics = graphene.JSONString()
+    usage = graphene.JSONString()
 
     async def resolve_hardware_metadata(self, info: graphene.ResolveInfo):
         registry: AgentRegistry = info.context['registry']
@@ -187,7 +187,7 @@ class StorageVolume(graphene.ObjectType):
         except aiohttp.ClientResponseError:
             return {}
 
-    async def resolve_statistics(self, info: graphene.ResolveInfo):
+    async def resolve_usage(self, info: graphene.ResolveInfo):
         storage_manager: StorageSessionManager = info.context['storage_manager']
         proxy_name, volume_name = storage_manager.split_host(self.id)
         try:
@@ -196,13 +196,13 @@ class StorageVolume(graphene.ObjectType):
             raise ValueError(f"no such storage proxy: {proxy_name!r}")
         try:
             async with proxy_info.session.request(
-                'GET', proxy_info.manager_api_url / 'volume/statistics',
+                'GET', proxy_info.manager_api_url / 'folder/fs-usage',
                 json={'volume': volume_name},
                 raise_for_status=True,
                 headers={AUTH_TOKEN_HDR: proxy_info.secret},
             ) as resp:
                 reply = await resp.json()
-                return reply['statistics']
+                return reply
         except aiohttp.ClientResponseError:
             return {}
 
