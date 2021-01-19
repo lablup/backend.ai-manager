@@ -29,6 +29,7 @@ import uuid
 
 import aiodocker
 import aiohttp
+
 if TYPE_CHECKING:
     from aiopg.sa.connection import SAConnection
     from aiopg.sa.engine import _PoolAcquireContextManager as SAPool
@@ -98,6 +99,7 @@ from .models import (
     keypair_resource_policies,
     AgentStatus, KernelStatus,
     query_accessible_vfolders, query_allowed_sgroups,
+    recalc_agent_resource_occupancy,
     recalc_concurrency_used,
     AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
     USER_RESOURCE_OCCUPYING_KERNEL_STATUSES,
@@ -204,6 +206,7 @@ class AgentRegistry:
     """
 
     kernel_creation_tracker: Dict[Tuple[str, KernelId], asyncio.Event]
+    _post_kernel_creation_tasks: Dict[KernelId, asyncio.Task]
 
     def __init__(
         self,
@@ -226,6 +229,7 @@ class AgentRegistry:
         self.storage_manager = storage_manager
         self.hook_plugin_ctx = hook_plugin_ctx
         self.kernel_creation_tracker = {}
+        self._post_kernel_creation_tasks = {}
 
     async def init(self) -> None:
         self.heartbeat_lock = asyncio.Lock()
@@ -1086,17 +1090,17 @@ class AgentRegistry:
         if pending_session.cluster_mode == ClusterMode.SINGLE_NODE:
             if pending_session.cluster_size > 1:
                 network_name = f'bai-singlenode-{pending_session.session_id}'
-                async with RPCContext(
-                    kernel_agent_bindings[0].agent_alloc_ctx.agent_id,
-                    kernel_agent_bindings[0].agent_alloc_ctx.agent_addr,
-                    None,
-                    order_key=pending_session.session_id,
-                ) as rpc:
-                    try:
+                try:
+                    async with RPCContext(
+                        kernel_agent_bindings[0].agent_alloc_ctx.agent_id,
+                        kernel_agent_bindings[0].agent_alloc_ctx.agent_addr,
+                        None,
+                        order_key=pending_session.session_id,
+                    ) as rpc:
                         await rpc.call.create_local_network(network_name)
-                    except Exception:
-                        log.exception(f"Failed to create an agent-local network {network_name}")
-                        raise
+                except Exception:
+                    log.exception(f"Failed to create an agent-local network {network_name}")
+                    raise
             else:
                 network_name = None
         elif pending_session.cluster_mode == ClusterMode.MULTI_NODE:
@@ -1251,12 +1255,17 @@ class AgentRegistry:
                             agent_alloc_ctx.agent_id,
                         )
                         # Post-process kernel creation
-                        async with aiotools.TaskGroup() as tg:
-                            for created_info in created_infos:
-                                tg.create_task(_post_create_kernel(
-                                    kernel_creation_id,
-                                    created_info,
-                                ))
+                        try:
+                            async with aiotools.TaskGroup() as tg:
+                                for created_info in created_infos:
+                                    post_task = tg.create_task(_post_create_kernel(
+                                        kernel_creation_id,
+                                        created_info,
+                                    ))
+                                    self._post_kernel_creation_tasks[created_info['id']] = post_task
+                        finally:
+                            for binding in items:
+                                self._post_kernel_creation_tasks.pop(binding.kernel.kernel_id, None)
                     except Exception:
                         # The agent has already cancelled or issued the destruction lifecycle event
                         # for this batch of kernels.
@@ -1692,16 +1701,16 @@ class AgentRegistry:
                 return
         if session['cluster_mode'] == ClusterMode.SINGLE_NODE and session['cluster_size'] > 1:
             network_name = f'bai-singlenode-{session["session_id"]}'
-            async with RPCContext(
-                session['agent'],       # the main-container's agent
-                session['agent_addr'],
-                None,
-                order_key=session['session_id'],
-            ) as rpc:
-                try:
+            try:
+                async with RPCContext(
+                    session['agent'],       # the main-container's agent
+                    session['agent_addr'],
+                    None,
+                    order_key=session['session_id'],
+                ) as rpc:
                     await rpc.call.destroy_local_network(network_name)
-                except Exception:
-                    log.exception(f"Failed to destroy the agent-local network {network_name}")
+            except Exception:
+                log.exception(f"Failed to destroy the agent-local network {network_name}")
         elif session['cluster_mode'] == ClusterMode.MULTI_NODE:
             network_name = f'bai-multinode-{session["session_id"]}'
             try:
@@ -2332,6 +2341,10 @@ class AgentRegistry:
         Mark the kernel (individual worker) terminated and release
         the resource slots occupied by it.
         """
+        post_task = self._post_kernel_creation_tasks.get(kernel_id, None)
+        if post_task is not None:
+            post_task.cancel()
+
         async with self.dbpool.acquire() as conn, conn.begin():
             # Check the current status.
             query = (
@@ -2373,29 +2386,7 @@ class AgentRegistry:
             )
             await conn.execute(query)
             await recalc_concurrency_used(conn, kernel['access_key'])
-
-            # Release agent resource slots.
-            query = (
-                sa.select([
-                    agents.c.occupied_slots,
-                ], for_update=True)
-                .select_from(agents)
-                .where(agents.c.id == kernel['agent'])
-            )
-            result = await conn.execute(query)
-            agent = await result.first()
-            if agent is None:
-                return
-            updated_occupied_slots = \
-                agent['occupied_slots'] - kernel['occupied_slots']
-            query = (
-                sa.update(agents)
-                .values({
-                    'occupied_slots': updated_occupied_slots,
-                })
-                .where(agents.c.id == kernel['agent'])
-            )
-            await conn.execute(query)
+            await recalc_agent_resource_occupancy(conn, kernel['agent'])
 
         # Perform statistics sync in a separate transaction block, since
         # it may take a while to fetch stats from Redis.
