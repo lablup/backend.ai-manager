@@ -1263,7 +1263,6 @@ class AgentRegistry:
                                         created_info,
                                     ))
                                     self._post_kernel_creation_tasks[created_info['id']] = post_task
-                                    print(f"post_creation_task[{created_info['id']}] added")
                         finally:
                             for binding in items:
                                 self._post_kernel_creation_tasks.pop(binding.kernel.kernel_id, None)
@@ -2344,7 +2343,6 @@ class AgentRegistry:
         """
         post_task = self._post_kernel_creation_tasks.get(kernel_id, None)
         if post_task is not None:
-            print(f"post_creation_task[{kernel_id}] cancelled")
             post_task.cancel()
 
         async with self.dbpool.acquire() as conn, conn.begin(isolation_level="REPEATABLE READ"):
