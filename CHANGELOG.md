@@ -16,6 +16,13 @@ Changes
 
 .. towncrier release notes start
 
+20.03.17 (2021-01-20)
+---------------------
+
+### Fixes
+* Prevent indefinite hang of the scheduler while handling agent/container launch failures and fix resource calculation when processing multiple asynchronous errors ([#388](https://github.com/lablup/backend.ai-manager/issues/388))
+
+
 20.03.16 (2021-01-15)
 ---------------------
 
