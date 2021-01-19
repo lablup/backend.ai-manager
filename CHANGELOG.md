@@ -16,6 +16,18 @@ Changes
 
 .. towncrier release notes start
 
+20.09.5 (2021-01-20)
+--------------------
+
+### Features
+* Add `usage` field to the `StorageVolume` graph object schema to provide the total capacity and usage ([#389](https://github.com/lablup/backend.ai-manager/issues/389))
+
+### Fixes
+* Improve daemon shutdown stability using aiotools v1.2 ([#386](https://github.com/lablup/backend.ai-manager/issues/386))
+* Fix a regression in the idle timeout checker with session creation race fixes ([#387](https://github.com/lablup/backend.ai-manager/issues/387))
+* Prevent indefinite hang of the scheduler while handling agent/container launch failures and fix resource calculation when processing multiple asynchronous errors ([#388](https://github.com/lablup/backend.ai-manager/issues/388))
+
+
 20.09.4 (2021-01-08)
 --------------------
 
