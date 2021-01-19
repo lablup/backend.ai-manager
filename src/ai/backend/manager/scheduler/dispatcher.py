@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from ..registry import AgentRegistry
 from ..models import (
     agents, kernels, keypairs, scaling_groups,
+    recalc_agent_resource_occupancy,
     AgentStatus, KernelStatus,
     AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
 )
@@ -134,6 +135,7 @@ class SchedulerDispatcher(aobject):
         self.event_dispatcher = event_dispatcher
         self.registry = registry
         self.dbpool = registry.dbpool
+        self.schedule_lock_timeout = 120.0
 
     async def __ainit__(self) -> None:
         log.info('Session scheduler started')
@@ -163,10 +165,18 @@ class SchedulerDispatcher(aobject):
         self.timer_redis.close()
         await self.timer_redis.wait_closed()
 
-    async def schedule(self, ctx: object, agent_id: AgentId, event_name: str,
-                       *args, **kwargs) -> None:
+    async def schedule(
+        self,
+        ctx: object,
+        agent_id: AgentId,
+        event_name: str,
+        *args, **kwargs,
+    ) -> None:
         try:
-            lock = await self.lock_manager.lock('manager.scheduler')
+            lock = await self.lock_manager.lock(
+                'manager.scheduler',
+                lock_timeout=self.schedule_lock_timeout,
+            )
             async with lock:
                 await self.schedule_impl()
         except aioredlock.LockError:
@@ -209,8 +219,8 @@ class SchedulerDispatcher(aobject):
                 except Exception:
                     pass
 
-        # At this point, all scheduling decisions are made, but the resource
-        # reservation in agents are not done yet.
+        # At this point, all scheduling decisions are made
+        # and the resource occupation is committed to the database.
         if start_task_args:
             start_coros = []
             for args in start_task_args:
@@ -243,7 +253,7 @@ class SchedulerDispatcher(aobject):
             pending_sessions = await _list_pending_sessions(kernel_db_conn, sgroup_name)
             existing_sessions = await _list_existing_sessions(kernel_db_conn, sgroup_name)
         log.debug('running scheduler (sgroup:{}, pending:{}, existing:{})',
-                    sgroup_name, len(pending_sessions), len(existing_sessions))
+                  sgroup_name, len(pending_sessions), len(existing_sessions))
         zero = ResourceSlot()
         args_list: List[StartTaskArgs] = []
         while len(pending_sessions) > 0:
@@ -617,7 +627,8 @@ class SchedulerDispatcher(aobject):
             except Exception as destroy_err:
                 log.error(log_fmt + 'failed-starting.cleanup', *log_args, exc_info=destroy_err)
             async with self.dbpool.acquire() as db_conn, db_conn.begin():
-                await _unreserve_agent_slots(db_conn, session_agent_binding)
+                for binding in session_agent_binding[1]:
+                    await recalc_agent_resource_occupancy(db_conn, binding.agent_alloc_ctx.agent_id)
                 await _invoke_failure_callbacks(db_conn, sched_ctx, sess_ctx, check_results)
                 now = datetime.now(tzutc())
                 query = kernels.update().values({
