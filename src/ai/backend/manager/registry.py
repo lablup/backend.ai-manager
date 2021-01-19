@@ -2345,7 +2345,7 @@ class AgentRegistry:
         if post_task is not None:
             post_task.cancel()
 
-        async with self.dbpool.acquire() as conn, conn.begin(isolation_level="REPEATABLE READ"):
+        async with self.dbpool.acquire() as conn, conn.begin():
             # Check the current status.
             query = (
                 sa.select([
