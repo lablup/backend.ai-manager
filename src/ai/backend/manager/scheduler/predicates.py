@@ -90,6 +90,11 @@ async def check_concurrency(
         sched_ctx: SchedulingContext,
         sess_ctx: PendingSession,
     ) -> None:
+        # Instead of subtraction, we recalculate the access_key's usage,
+        # because asynchronous container launch failures and agent failures
+        # (especially with multi-node multi-container cluster sessions)
+        # may accumulate up multiple subtractions, resulting in
+        # negative concurrency_occupied values.
         await recalc_concurrency_used(db_conn, sess_ctx.access_key)
 
     return PredicateResult(True, failure_cb=rollback)
