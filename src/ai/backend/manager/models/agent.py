@@ -8,6 +8,7 @@ from typing import (
     Sequence,
 )
 
+from aiopg.sa.connection import SAConnection
 from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
@@ -16,7 +17,8 @@ from sqlalchemy.sql.expression import true
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common import msgpack, redis
-from ai.backend.common.types import BinarySize
+from ai.backend.common.types import AgentId, BinarySize, ResourceSlot
+from .kernel import AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES, kernels
 from .base import (
     metadata,
     batch_result,
@@ -27,6 +29,7 @@ from .base import (
 __all__: Sequence[str] = (
     'agents', 'AgentStatus',
     'AgentList', 'Agent',
+    'recalc_agent_resource_occupancy',
 )
 
 
@@ -266,3 +269,28 @@ class AgentList(graphene.ObjectType):
         interfaces = (PaginatedList, )
 
     items = graphene.List(Agent, required=True)
+
+
+async def recalc_agent_resource_occupancy(db_conn: SAConnection, agent_id: AgentId) -> None:
+    query = (
+        sa.select([
+            kernels.c.occupied_slots,
+        ])
+        .select_from(kernels)
+        .where(
+            (kernels.c.agent == agent_id) &
+            (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))
+        )
+    )
+    occupied_slots = ResourceSlot()
+    result = await db_conn.execute(query)
+    async for row in result:
+        occupied_slots += row['occupied_slots']
+    query = (
+        sa.update(agents)
+        .values({
+            'occupied_slots': occupied_slots,
+        })
+        .where(agents.c.id == agent_id)
+    )
+    await db_conn.execute(query)

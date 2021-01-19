@@ -25,8 +25,9 @@ from typing import (
 )
 import uuid
 
-from aiopg.sa.connection import SAConnection
-from aiopg.sa.engine import Engine as SAEngine
+if TYPE_CHECKING:
+    from aiopg.sa.connection import SAConnection
+    from aiopg.sa.engine import Engine as SAEngine
 import aiotools
 from async_timeout import timeout as _timeout
 from callosum.rpc import Peer, RPCUserError
@@ -77,6 +78,7 @@ from .models import (
     keypair_resource_policies,
     AgentStatus, KernelStatus,
     query_accessible_vfolders, query_allowed_sgroups,
+    recalc_agent_resource_occupancy,
     recalc_concurrency_used,
     AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES,
     USER_RESOURCE_OCCUPYING_KERNEL_STATUSES,
@@ -1604,10 +1606,11 @@ class AgentRegistry:
     async def mark_kernel_terminated(self, kernel_id: KernelId,
                                      reason: str,
                                      exit_code: int = None) -> None:
-        '''
+        """
         Mark the kernel (individual worker) terminated and release
         the resource slots occupied by it.
-        '''
+        """
+
         async with self.dbpool.acquire() as conn, conn.begin():
             # Check the current status.
             query = (
@@ -1648,29 +1651,7 @@ class AgentRegistry:
             )
             await conn.execute(query)
             await recalc_concurrency_used(conn, kernel['access_key'])
-
-            # Release agent resource slots.
-            query = (
-                sa.select([
-                    agents.c.occupied_slots,
-                ], for_update=True)
-                .select_from(agents)
-                .where(agents.c.id == kernel['agent'])
-            )
-            result = await conn.execute(query)
-            agent = await result.first()
-            if agent is None:
-                return
-            updated_occupied_slots = \
-                agent['occupied_slots'] - kernel['occupied_slots']
-            query = (
-                sa.update(agents)
-                .values({
-                    'occupied_slots': updated_occupied_slots,
-                })
-                .where(agents.c.id == kernel['agent'])
-            )
-            await conn.execute(query)
+            await recalc_agent_resource_occupancy(conn, kernel['agent'])
 
         # Perform statistics sync in a separate transaction block, since
         # it may take a while to fetch stats from Redis.
