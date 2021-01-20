@@ -293,7 +293,6 @@ async def recalc_agent_resource_occupancy(db_conn: SAConnection, agent_id: Agent
     result = await db_conn.execute(query)
     async for row in result:
         occupied_slots += row['occupied_slots']
-    print(f"ag:{agent_id}'s new occupied_slots:{occupied_slots}")
     query = (
         sa.update(agents)
         .values({
