@@ -550,9 +550,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         return_when=FIRST_COMPLETED,
     )
     if hook_result.status != PASSED:
-        # Did not pass AUTHORIZED hook
-        reason = hook_result.reason
-        raise RejectedByHook(extra_msg=reason)
+        raise RejectedByHook.from_hook_result(hook_result)
     elif hook_result.result:
         # Passed one of AUTHORIZED hook
         user = hook_result.result
@@ -615,8 +613,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
         return_when=ALL_COMPLETED,
     )
     if hook_result.status != PASSED:
-        reason = hook_result.reason
-        raise RejectedByHook(extra_msg=reason)
+        raise RejectedByHook.from_hook_result(hook_result)
     else:
         # Merge the hook results as a single map.
         user_data_overriden = ChainMap(*hook_result.result)
@@ -775,8 +772,8 @@ async def update_password(request: web.Request, params: Any) -> web.Response:
         return_when=ALL_COMPLETED,
     )
     if hook_result.status != PASSED:
-        reason = hook_result.reason or 'invalid password format'
-        raise RejectedByHook(reason=reason)
+        hook_result.reason = hook_result.reason or 'invalid password format'
+        raise RejectedByHook.from_hook_result(hook_result)
 
     async with dbpool.acquire() as conn:
         # Update user password.
