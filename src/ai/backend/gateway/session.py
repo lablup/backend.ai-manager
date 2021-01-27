@@ -680,11 +680,11 @@ async def handle_kernel_creation_lifecycle(
     if ck_id not in registry.kernel_creation_tracker:
         return
     if event_name == 'kernel_preparing':
-        await registry.set_kernel_status(kernel_id, KernelStatus.PREPARING, reason)
+        await registry.set_kernel_status(kernel_id, KernelStatus.PREPARING, reason or '')
     elif event_name == 'kernel_pulling':
-        await registry.set_kernel_status(kernel_id, KernelStatus.PULLING, reason)
+        await registry.set_kernel_status(kernel_id, KernelStatus.PULLING, reason or '')
     elif event_name == 'kernel_creating':
-        await registry.set_kernel_status(kernel_id, KernelStatus.PREPARING, reason)
+        await registry.set_kernel_status(kernel_id, KernelStatus.PREPARING, reason or '')
     elif event_name == 'kernel_started':
         # post_create_kernel() coroutines are waiting for the creation tracker events to be set.
         registry.kernel_creation_tracker[ck_id].set()
@@ -702,7 +702,7 @@ async def handle_kernel_termination_lifecycle(
         # The destroy_kernel() API handler will set the "TERMINATING" status.
         pass
     elif event_name == 'kernel_terminated':
-        await registry.mark_kernel_terminated(kernel_id, reason, exit_code)
+        await registry.mark_kernel_terminated(kernel_id, reason or 'self-terminated', exit_code)
 
 
 async def handle_kernel_stat_sync(app: web.Application, agent_id: AgentId, event_name: str,

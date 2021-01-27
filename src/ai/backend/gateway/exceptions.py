@@ -9,6 +9,8 @@ canonical error types beacuse "title" field may change due to localization and
 future UX improvements.
 '''
 
+from __future__ import annotations
+
 import json
 from typing import (
     Any,
@@ -19,6 +21,8 @@ from typing import (
 )
 
 from aiohttp import web
+
+from ai.backend.common.plugin.hook import HookResult
 
 
 class BackendError(web.HTTPError):
@@ -92,6 +96,15 @@ class GenericBadRequest(BackendError, web.HTTPBadRequest):
 class RejectedByHook(BackendError, web.HTTPBadRequest):
     error_type  = 'https://api.backend.ai/probs/rejected-by-hook'
     error_title = 'Operation rejected by a hook plugin.'
+
+    @classmethod
+    def from_hook_result(cls, result: HookResult) -> RejectedByHook:
+        return cls(
+            extra_msg=result.reason,
+            extra_data={
+                'plugins': result.src_plugin,
+            },
+        )
 
 
 class InvalidCredentials(BackendError, web.HTTPBadRequest):

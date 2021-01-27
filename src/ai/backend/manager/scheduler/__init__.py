@@ -20,6 +20,7 @@ from ai.backend.common.docker import (
 from ai.backend.common.types import (
     AgentId, KernelId, AccessKey, SessionTypes,
     ResourceSlot,
+    SlotName, SlotTypes,
 )
 from ..registry import AgentRegistry
 
@@ -54,7 +55,7 @@ class SchedulingContext:
     Context for each scheduling decision.
     '''
     registry: AgentRegistry
-    known_slot_types: Mapping[str, str]
+    known_slot_types: Mapping[SlotName, SlotTypes]
 
 
 @attr.s(auto_attribs=True, slots=True)

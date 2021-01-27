@@ -60,6 +60,7 @@ class VFolderPermission(str, enum.Enum):
     READ_ONLY = 'ro'
     READ_WRITE = 'rw'
     RW_DELETE = 'wd'
+    OWNER_PERM = 'wd'  # resolved as RW_DELETE
 
 
 class VFolderPermissionValidator(t.Trafaret):
@@ -77,15 +78,6 @@ class VFolderInvitationState(str, enum.Enum):
     CANCELED = 'canceled'  # canceled by inviter
     ACCEPTED = 'accepted'
     REJECTED = 'rejected'  # rejected by invitee
-
-
-'''
-This is the default permission when the vfolder is owned by the requesting user.
-(In such cases there is no explicit vfolder_permissions table entry!)
-It is added after creation of the VFolderPermission class to avoid becoming
-one of the regular enumeration entries.
-'''
-setattr(VFolderPermission, 'OWNER_PERM', VFolderPermission.RW_DELETE)
 
 
 vfolders = sa.Table(

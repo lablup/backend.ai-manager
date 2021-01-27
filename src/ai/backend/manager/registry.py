@@ -678,7 +678,7 @@ class AgentRegistry:
             return_when=ALL_COMPLETED,
         )
         if hook_result.status != PASSED:
-            raise RejectedByHook(hook_result.src_plugin, hook_result.reason)
+            raise RejectedByHook.from_hook_result(hook_result)
 
         # Create kernel object in PENDING state.
         async with self.dbpool.acquire() as conn, conn.begin():
@@ -764,7 +764,7 @@ class AgentRegistry:
             return_when=ALL_COMPLETED,
         )
         if hook_result.status != PASSED:
-            raise RejectedByHook(hook_result.src_plugin, hook_result.reason)
+            raise RejectedByHook.from_hook_result(hook_result)
 
         kernel_creation_id = secrets.token_urlsafe(16)
         start_event = asyncio.Event()
@@ -1033,7 +1033,7 @@ class AgentRegistry:
             return_when=ALL_COMPLETED,
         )
         if hook_result.status != PASSED:
-            raise RejectedByHook(hook_result.src_plugin, hook_result.reason)
+            raise RejectedByHook.from_hook_result(hook_result)
 
         async with self.handle_kernel_exception(
             'destroy_session', kernel.id, access_key, set_error=True,
