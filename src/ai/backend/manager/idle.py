@@ -15,7 +15,6 @@ from typing import (
     Sequence,
     Type,
     TYPE_CHECKING,
-    cast,
 )
 
 if TYPE_CHECKING:
@@ -38,7 +37,7 @@ from .models.kernel import LIVE_STATUS
 from ..gateway.defs import REDIS_LIVE_DB
 if TYPE_CHECKING:
     from ..gateway.config import SharedConfig
-    from ..gateway.events import EventCallback, EventDispatcher
+    from ..gateway.events import EventDispatcher
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.idle'))
 
