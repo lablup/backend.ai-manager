@@ -828,7 +828,7 @@ class AgentRegistry:
             return_when=ALL_COMPLETED,
         )
         if hook_result.status != PASSED:
-            raise RejectedByHook(hook_result.src_plugin, hook_result.reason)
+            raise RejectedByHook.from_hook_result(hook_result)
 
         for kernel in kernel_enqueue_configs:
             kernel_id: KernelId
@@ -1062,7 +1062,7 @@ class AgentRegistry:
             return_when=ALL_COMPLETED,
         )
         if hook_result.status != PASSED:
-            raise RejectedByHook(hook_result.src_plugin, hook_result.reason)
+            raise RejectedByHook.from_hook_result(hook_result)
 
         # Get resource policy for the session
         # TODO: memoize with TTL
@@ -1506,7 +1506,7 @@ class AgentRegistry:
             return_when=ALL_COMPLETED,
         )
         if hook_result.status != PASSED:
-            raise RejectedByHook(hook_result.src_plugin, hook_result.reason)
+            raise RejectedByHook.from_hook_result(hook_result)
 
         async with self.handle_kernel_exception(
             'destroy_session', session['id'], session['access_key'], set_error=True,

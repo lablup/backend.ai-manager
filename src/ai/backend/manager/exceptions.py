@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import (
     Any,
     List,
+    Tuple,
     TypedDict,
     TYPE_CHECKING,
 )
@@ -34,11 +35,19 @@ class AgentError(RuntimeError):
         'agent_id', 'exc_name', 'exc_repr', 'exc_tb',
     )
 
-    def __init__(self, agent_id: AgentId, exc_name: str, exc_repr: str, exc_tb: str) -> None:
-        super().__init__(agent_id, exc_name, exc_repr, exc_tb)
+    def __init__(
+        self,
+        agent_id: AgentId,
+        exc_name: str,
+        exc_repr: str,
+        exc_args: Tuple[Any, ...],
+        exc_tb: str = None,
+    ) -> None:
+        super().__init__(agent_id, exc_name, exc_repr, exc_args, exc_tb)
         self.agent_id = agent_id
         self.exc_name = exc_name
         self.exc_repr = exc_repr
+        self.exc_args = exc_args
         self.exc_tb = exc_tb
 
 

@@ -167,10 +167,10 @@ class SchedulerDispatcher(aobject):
 
     async def schedule(
         self,
-        ctx: object,
+        context: None,
         agent_id: AgentId,
         event_name: str,
-        *args, **kwargs,
+        *args,
     ) -> None:
         try:
             lock = await self.lock_manager.lock(
