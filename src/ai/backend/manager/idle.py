@@ -15,6 +15,7 @@ from typing import (
     Sequence,
     Type,
     TYPE_CHECKING,
+    cast,
 )
 
 if TYPE_CHECKING:
@@ -37,7 +38,7 @@ from .models.kernel import LIVE_STATUS
 from ..gateway.defs import REDIS_LIVE_DB
 if TYPE_CHECKING:
     from ..gateway.config import SharedConfig
-    from ..gateway.events import EventDispatcher
+    from ..gateway.events import EventCallback, EventDispatcher
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.idle'))
 
@@ -89,7 +90,13 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
     ) -> None:
         pass
 
-    async def _do_idle_check(self, context: Any, agent_id: AgentId, event_name: str) -> None:
+    async def _do_idle_check(
+        self,
+        context: None,
+        agent_id: AgentId,
+        event_name: str,
+        *args,
+    ) -> None:
         log.debug('do_idle_check(): triggered')
         async with self._dbpool.acquire() as conn:
             query = (
@@ -137,16 +144,16 @@ class TimeoutIdleChecker(BaseIdleChecker):
     async def __ainit__(self) -> None:
         await super().__ainit__()
         self._policy_cache = ContextVar('_policy_cache')
-        self._evh_session_started = \
-            self._event_dispatcher.consume("session_started", None, self._session_started_cb)
-        self._evh_execution_started = \
-            self._event_dispatcher.consume("execution_started", None, self._execution_started_cb)
-        self._evh_execution_finished = \
-            self._event_dispatcher.consume("execution_finished", None, self._execution_exited_cb)
-        self._evh_execution_timeout = \
-            self._event_dispatcher.consume("execution_timeout", None, self._execution_exited_cb)
-        self._evh_execution_cancelled = \
-            self._event_dispatcher.consume("execution_cancelled", None, self._execution_exited_cb)
+        self._evh_session_started = self._event_dispatcher.consume(
+            "session_started", None, self._session_started_cb)
+        self._evh_execution_started = self._event_dispatcher.consume(
+            "execution_started", None, self._execution_started_cb)
+        self._evh_execution_finished = self._event_dispatcher.consume(
+            "execution_finished", None, self._execution_exited_cb)
+        self._evh_execution_timeout = self._event_dispatcher.consume(
+            "execution_timeout", None, self._execution_exited_cb)
+        self._evh_execution_cancelled = self._event_dispatcher.consume(
+            "execution_cancelled", None, self._execution_exited_cb)
 
     async def aclose(self) -> None:
         self._event_dispatcher.unconsume("session_started", self._evh_session_started)
@@ -189,33 +196,41 @@ class TimeoutIdleChecker(BaseIdleChecker):
 
     async def _session_started_cb(
         self,
-        context: Any,
+        context: None,
         agent_id: AgentId,
         event_name: str,
-        session_id: SessionId,
-        creation_id: str,
+        *args,
     ) -> None:
+        session_id: SessionId = args[0]
         await self._update_timeout(session_id)
 
     async def _execution_started_cb(
         self,
-        context: Any,
+        context: None,
         agent_id: AgentId,
         event_name: str,
-        session_id: SessionId,
+        *args,
     ) -> None:
+        session_id: SessionId = args[0]
         await self._disable_timeout(session_id)
 
     async def _execution_exited_cb(
         self,
-        context: Any,
+        context: None,
         agent_id: AgentId,
         event_name: str,
-        session_id: SessionId,
+        *args,
     ) -> None:
+        session_id: SessionId = args[0]
         await self._update_timeout(session_id)
 
-    async def _do_idle_check(self, context: Any, agent_id: AgentId, event_name: str) -> None:
+    async def _do_idle_check(
+        self,
+        context: None,
+        agent_id: AgentId,
+        event_name: str,
+        *args,
+    ) -> None:
         cache_token = self._policy_cache.set(dict())
         try:
             return await super()._do_idle_check(context, agent_id, event_name)
