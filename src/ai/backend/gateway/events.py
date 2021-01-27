@@ -10,6 +10,7 @@ from typing import (
     AsyncIterator,
     Awaitable,
     Final,
+    Generic,
     Iterable,
     Mapping,
     MutableMapping,
@@ -18,6 +19,7 @@ from typing import (
     Set,
     Tuple,
     Union,
+    TypeVar,
     TYPE_CHECKING,
     cast,
 )
@@ -55,20 +57,24 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.events'))
 
 sentinel: Final = Sentinel.token
 
+C = TypeVar('C', contravariant=True)
 
-class EventCallback(Protocol):
-    async def __call__(self,
-                       context: Any,
-                       agent_id: AgentId,
-                       event_name: str,
-                       *args) -> None:
+
+class EventCallback(Protocol[C]):
+    async def __call__(
+        self,
+        context: C,
+        agent_id: AgentId,
+        event_name: str,
+        *args: Any,
+    ) -> None:
         ...
 
 
 @attr.s(auto_attribs=True, slots=True, frozen=True, eq=False, order=False)
-class EventHandler:
-    context: Any
-    callback: EventCallback
+class EventHandler(Generic[C]):
+    context: C
+    callback: EventCallback[C]
 
 
 class EventDispatcher(aobject):
@@ -86,8 +92,8 @@ class EventDispatcher(aobject):
     Subscriber example: enqueuing events to the queues for event streaming API handlers
     '''
 
-    consumers: MutableMapping[str, Set[EventHandler]]
-    subscribers: MutableMapping[str, Set[EventHandler]]
+    consumers: MutableMapping[str, Set[EventHandler[Any]]]
+    subscribers: MutableMapping[str, Set[EventHandler[Any]]]
     redis_producer: aioredis.Redis
     redis_consumer: aioredis.Redis
     redis_subscriber: aioredis.Redis
@@ -139,20 +145,20 @@ class EventDispatcher(aobject):
         await self.redis_consumer.wait_closed()
         await self.redis_subscriber.wait_closed()
 
-    def consume(self, event_name: str, context: Any, callback: EventCallback) -> EventHandler:
+    def consume(self, event_name: str, context: C, callback: EventCallback[C]) -> EventHandler[C]:
         handler = EventHandler(context, callback)
         self.consumers[event_name].add(handler)
         return handler
 
-    def unconsume(self, event_name: str, handler: EventHandler) -> None:
+    def unconsume(self, event_name: str, handler: EventHandler[Any]) -> None:
         self.consumers[event_name].discard(handler)
 
-    def subscribe(self, event_name: str, context: Any, callback: EventCallback) -> EventHandler:
+    def subscribe(self, event_name: str, context: C, callback: EventCallback[C]) -> EventHandler[C]:
         handler = EventHandler(context, callback)
         self.subscribers[event_name].add(handler)
         return handler
 
-    def unsubscribe(self, event_name: str, handler: EventHandler) -> None:
+    def unsubscribe(self, event_name: str, handler: EventHandler[Any]) -> None:
         self.subscribers[event_name].discard(handler)
 
     async def produce_event(self, event_name: str,

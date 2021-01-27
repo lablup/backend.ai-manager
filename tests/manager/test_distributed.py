@@ -92,7 +92,7 @@ class TimerNode(threading.Thread):
 
 
 def test_global_timer(test_id, local_config, shared_config) -> None:
-    event_records = queue.Queue()
+    event_records: queue.Queue[float] = queue.Queue()
     num_threads = 7
     num_records = 0
     q = Decimal('0.00')
@@ -129,7 +129,7 @@ def test_global_timer(test_id, local_config, shared_config) -> None:
 
     threads = []
     for thread_idx in range(num_threads):
-        t = TimerNode(
+        timer_node = TimerNode(
             float(join_delays[thread_idx]),
             float(leave_delays[thread_idx]),
             float(interval),
@@ -139,10 +139,10 @@ def test_global_timer(test_id, local_config, shared_config) -> None:
             shared_config,
             event_records,
         )
-        threads.append(t)
-        t.start()
-    for t in threads:
-        t.join()
+        threads.append(timer_node)
+        timer_node.start()
+    for timer_node in threads:
+        timer_node.join()
     prev_record: Optional[float] = None
     while True:
         try:

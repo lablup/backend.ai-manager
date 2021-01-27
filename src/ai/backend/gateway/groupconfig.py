@@ -248,6 +248,8 @@ async def delete(request: web.Request, params: Any) -> web.Response:
             raise GenericForbidden('Admins cannot delete dotfiles of other domains')
 
         dotfiles, _ = await query_group_dotfiles(conn, group_id)
+        if dotfiles is None:
+            raise DotfileNotFound
         new_dotfiles = [x for x in dotfiles if x['path'] != params['path']]
         if len(new_dotfiles) == len(dotfiles):
             raise DotfileNotFound
