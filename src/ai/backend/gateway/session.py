@@ -41,6 +41,8 @@ import multidict
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import true, null
 import trafaret as t
+if TYPE_CHECKING:
+    from aiopg.sa.connection import SAConnection
 
 from ai.backend.common import redis, validators as tx
 from ai.backend.common.docker import ImageRef
@@ -48,14 +50,25 @@ from ai.backend.common.exception import (
     UnknownImageReference,
     AliasResolutionFailed,
 )
+from ai.backend.common.events import (
+    EventDispatcher,
+    KernelCreationEventArgs,
+    KernelStatSyncEventArgs,
+    KernelTerminationEventArgs,
+    SessionCreationEventArgs,
+    SessionTerminationEventArgs,
+)
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.utils import str_to_timedelta
 from ai.backend.common.types import (
     AgentId,
     KernelId,
     ClusterMode,
+    KernelEnqueueingConfig,
     SessionId,
     SessionTypes,
+    check_typed_dict,
+    check_typed_tuple,
 )
 from ai.backend.common.plugin.monitor import GAUGE
 
@@ -233,7 +246,11 @@ def drop(d, dropval):
     return newd
 
 
-async def _query_userinfo(request: web.Request, params: Any, conn: Any) -> Tuple[str, str, str]:
+async def _query_userinfo(
+    request: web.Request,
+    params: Any,
+    conn: SAConnection,
+) -> Tuple[uuid.UUID, uuid.UUID, str]:
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
     scopes_param = {
@@ -243,9 +260,9 @@ async def _query_userinfo(request: web.Request, params: Any, conn: Any) -> Tuple
     requester_access_key, owner_access_key = await get_access_key_scopes(request, scopes_param)
     requester_uuid = request['user']['uuid']
 
-    owner_uuid = ''
-    group_id = ''
-    resource_policy = ''
+    owner_uuid = None
+    group_id = None
+    resource_policy = None
 
     if requester_access_key != owner_access_key:
         # Admin or superadmin is creating sessions for another user.
@@ -797,7 +814,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
 
         log.debug('cluster template: {}', template)
 
-        kernel_configs = []
+        kernel_configs: List[KernelEnqueueingConfig] = []
         for node in template['spec']['nodes']:
             # Resolve session template.
             query = (sa.select([session_templates.c.template])
@@ -815,7 +832,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                     'mount': mounts,
                     'mount_map': mount_map,
                     'environ': environ
-                }
+                },
             }
 
             if session_template['spec']['sess_type'] == 'interactive':
@@ -827,15 +844,15 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
             # Check https://github.com/python/mypy/issues/7316
             # TODO: remove `NOQA` when flake8 supports Python 3.8 and walrus operator
             # Check https://gitlab.com/pycqa/flake8/issues/599
-            if tag := session_template['metadata'].get('tag'):  # noqa
+            if tag := session_template['metadata'].get('tag', None):
                 kernel_config['tag'] = tag
-            if runtime_opt := session_template['spec']['kernel']['run']:  # noqa
-                if bootstrap := runtime_opt['bootstrap']:  # noqa
+            if runtime_opt := session_template['spec']['kernel']['run']:
+                if bootstrap := runtime_opt['bootstrap']:
                     kernel_config['bootstrap_script'] = bootstrap
-                if startup := runtime_opt['startup_command']:  # noqa
+                if startup := runtime_opt['startup_command']:
                     kernel_config['startup_command'] = startup
 
-            if resources := template['spec'].get('resources'):  # noqa
+            if resources := template['spec'].get('resources'):
                 kernel_config['creation_config']['resources'] = resources
 
             if git := session_template['spec']['kernel']['git']:  # noqa
@@ -883,7 +900,9 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
 
             for i in range(node['replicas']):
                 kernel_config['cluster_idx'] = i + 1
-                kernel_configs.append(kernel_config)
+                kernel_configs.append(
+                    check_typed_dict(kernel_config, KernelEnqueueingConfig)  # type: ignore
+                )
 
     session_creation_id = secrets.token_urlsafe(16)
     start_event = asyncio.Event()
@@ -897,7 +916,8 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
 
         kernel_id = await asyncio.shield(registry.enqueue_session(
             session_creation_id,
-            params['session_name'], owner_access_key,
+            params['session_name'],
+            owner_access_key,
             kernel_configs,
             params['scaling_group'],
             params['sess_type'],
@@ -906,7 +926,8 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
             group_id=group_id,
             user_uuid=owner_uuid,
             user_role=request['user']['role'],
-            session_tag=params['tag']))
+            session_tag=params['tag'],
+        ))
         session_id = cast(SessionId, kernel_id)  # the main kernel's ID is the session ID.
         resp['kernelId'] = str(kernel_id)
         resp['status'] = 'PENDING'
@@ -975,10 +996,10 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
 
 
 async def handle_kernel_creation_lifecycle(
-    app: web.Application, agent_id: AgentId, event_name: str,
-    raw_kernel_id: str,
-    creation_id: str,
-    reason: str = None,
+    app: web.Application,
+    agent_id: AgentId,
+    event_name: str,
+    args: KernelCreationEventArgs,
 ) -> None:
     """
     Update the database and perform post_create_kernel() upon
@@ -989,95 +1010,86 @@ async def handle_kernel_creation_lifecycle(
     but distinguish which one to process using a unique creation_id
     generated when initiating the create_kernels() agent RPC call.
     """
-    kernel_id = KernelId(uuid.UUID(raw_kernel_id))
-    ck_id = (creation_id, kernel_id)
+    ck_id = (args.creation_id, args.kernel_id)
     registry: AgentRegistry = app['registry']
     if ck_id not in registry.kernel_creation_tracker:
         return
-    log.debug('handle_kernel_creation_lifecycle: ev:{} k:{}', event_name, kernel_id)
+    log.debug('handle_kernel_creation_lifecycle: ev:{} k:{}', event_name, args.kernel_id)
     if event_name == 'kernel_preparing':
-        await registry.set_kernel_status(kernel_id, KernelStatus.PREPARING, reason)
+        await registry.set_kernel_status(args.kernel_id, KernelStatus.PREPARING, args.reason)
     elif event_name == 'kernel_pulling':
-        await registry.set_kernel_status(kernel_id, KernelStatus.PULLING, reason)
+        await registry.set_kernel_status(args.kernel_id, KernelStatus.PULLING, args.reason)
     elif event_name == 'kernel_creating':
-        await registry.set_kernel_status(kernel_id, KernelStatus.PREPARING, reason)
+        await registry.set_kernel_status(args.kernel_id, KernelStatus.PREPARING, args.reason)
     elif event_name == 'kernel_started':
         # post_create_kernel() coroutines are waiting for the creation tracker events to be set.
         registry.kernel_creation_tracker[ck_id].set()
 
 
 async def handle_kernel_termination_lifecycle(
-    app: web.Application, agent_id: AgentId, event_name: str,
-    raw_kernel_id: str,
-    reason: str = None,
-    exit_code: int = None,
+    app: web.Application,
+    agent_id: AgentId,
+    event_name: str,
+    args: KernelTerminationEventArgs,
 ) -> None:
-    kernel_id = KernelId(uuid.UUID(raw_kernel_id))
     registry: AgentRegistry = app['registry']
     if event_name == 'kernel_terminating':
         # The destroy_kernel() API handler will set the "TERMINATING" status.
         pass
     elif event_name == 'kernel_terminated':
-        await registry.mark_kernel_terminated(kernel_id, reason, exit_code)
-        await registry.check_session_terminated(kernel_id, reason)
+        await registry.mark_kernel_terminated(args.kernel_id, args.reason, args.exit_code)
+        await registry.check_session_terminated(args.kernel_id, args.reason)
 
 
 async def handle_session_creation_lifecycle(
     app: web.Application,
     agent_id: AgentId,
     event_name: str,
-    raw_session_id: str,
-    creation_id: str,
-    reason: str = None,
+    args: SessionCreationEventArgs,
 ) -> None:
     """
     Update the database according to the session-level lifecycle events
     published by the manager.
     """
-    session_id = SessionId(uuid.UUID(raw_session_id))
     session_creation_tracker = app['session_creation_tracker']
-    if creation_id not in session_creation_tracker:
+    if args.creation_id not in session_creation_tracker:
         return
-    log.debug('handle_session_creation_lifecycle: ev:{} s:{}', event_name, session_id)
+    log.debug('handle_session_creation_lifecycle: ev:{} s:{}', event_name, args.session_id)
     if event_name == 'session_started':
-        session_creation_tracker[creation_id].set()
+        session_creation_tracker[args.creation_id].set()
     elif event_name == 'session_cancelled':
-        session_creation_tracker[creation_id].set()
+        session_creation_tracker[args.creation_id].set()
 
 
 async def handle_session_termination_lifecycle(
     app: web.Application,
     agent_id: AgentId,
     event_name: str,
-    raw_session_id: str,
-    reason: str = None,
+    args: SessionTerminationEventArgs,
 ) -> None:
     """
     Update the database according to the session-level lifecycle events
     published by the manager.
     """
-    session_id = uuid.UUID(raw_session_id)
     registry: AgentRegistry = app['registry']
     if event_name == 'session_terminated':
-        await registry.mark_session_terminated(session_id, reason)
+        await registry.mark_session_terminated(args.session_id, args.reason)
 
 
 async def handle_destroy_session(
     app: web.Application,
     agent_id: AgentId,
     event_name: str,
-    raw_session_id: str,
-    reason: str = None,
+    args: SessionTerminationEventArgs,
 ) -> None:
-    session_id = uuid.UUID(raw_session_id)
     registry: AgentRegistry = app['registry']
     await registry.destroy_session(
         functools.partial(
             registry.get_session_by_session_id,
-            session_id,
+            args.session_id,
         ),
         forced=False,
-        reason=reason or 'killed-by-event',
+        reason=args.reason or 'killed-by-event',
     )
 
 
@@ -1085,25 +1097,27 @@ async def handle_kernel_stat_sync(
     app: web.Application,
     agent_id: AgentId,
     event_name: str,
-    raw_kernel_ids: str,
+    args: KernelStatSyncEventArgs,
 ) -> None:
-    kernel_ids = [*map(uuid.UUID, raw_kernel_ids.split(','))]
-    await app['registry'].sync_kernel_stats(kernel_ids)
+    registry: AgentRegistry = app['registry']
+    await registry.sync_kernel_stats(args.kernel_ids)
 
 
 async def handle_batch_result(
     app: web.Application,
     agent_id: AgentId,
     event_name: str,
-    raw_kernel_id: str,
-    exit_code: int,
-    exit_reason: str,
+    *args,
 ) -> None:
     """
     Update the database according to the batch-job completion results
     """
-    kernel_id = uuid.UUID(raw_kernel_id)
-    registry = app['registry']
+    raw_kernel_id, exit_code, exit_reason = check_typed_tuple(
+        cast(Tuple[Any, Any, Any], args),
+        (str, int, str),
+    )
+    kernel_id = KernelId(uuid.UUID(raw_kernel_id))
+    registry: AgentRegistry = app['registry']
     if event_name == 'session_success':
         await registry.set_session_result(kernel_id, True, exit_code)
     elif event_name == 'session_failure':
@@ -1118,7 +1132,9 @@ async def handle_instance_lifecycle(
     app: web.Application,
     agent_id: AgentId,
     event_name: str,
+    # additional args
     reason: str = None,
+    *args,
 ) -> None:
     if event_name == 'instance_started':
         log.info('instance_lifecycle: ag:{0} joined ({1})', agent_id, reason)
@@ -1164,13 +1180,26 @@ async def check_agent_lost(app, interval):
 
 
 # NOTE: This event is ignored during the grace period.
-async def handle_instance_stats(app: web.Application, agent_id: AgentId, event_name: str,
-                                kern_stats) -> None:
+async def handle_instance_stats(
+    app: web.Application,
+    agent_id: AgentId,
+    event_name: str,
+    # additional args
+    kern_stats,
+    *args,
+) -> None:
     await app['registry'].handle_stats(agent_id, kern_stats)
 
 
-async def handle_kernel_log(app: web.Application, agent_id: AgentId, event_name: str,
-                            raw_kernel_id: str, container_id: str):
+async def handle_kernel_log(
+    app: web.Application,
+    agent_id: AgentId,
+    event_name: str,
+    # additional args
+    raw_kernel_id: str,
+    container_id: str,
+    *args
+) -> None:
     dbpool = app['dbpool']
     kernel_id = KernelId(uuid.UUID(raw_kernel_id))
     redis_conn: aioredis.Redis = await redis.connect_with_retries(
@@ -1809,23 +1838,28 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
 
 
 async def init(app: web.Application) -> None:
-    event_dispatcher = app['event_dispatcher']
+    event_dispatcher: EventDispatcher = app['event_dispatcher']
 
     app['session_creation_tracker'] = {}
 
+    _kc = KernelCreationEventArgs
+    _kt = KernelTerminationEventArgs
+    _sc = SessionCreationEventArgs
+    _st = SessionTerminationEventArgs
+
     # passive events
-    event_dispatcher.subscribe('kernel_preparing', app, handle_kernel_creation_lifecycle)
-    event_dispatcher.subscribe('kernel_pulling', app, handle_kernel_creation_lifecycle)
-    event_dispatcher.subscribe('kernel_creating', app, handle_kernel_creation_lifecycle)
-    event_dispatcher.subscribe('kernel_started', app, handle_kernel_creation_lifecycle)
-    event_dispatcher.subscribe('session_started', app, handle_session_creation_lifecycle)
-    event_dispatcher.subscribe('session_cancelled', app, handle_session_creation_lifecycle)
-    event_dispatcher.consume('kernel_terminating', app, handle_kernel_termination_lifecycle)
-    event_dispatcher.consume('kernel_terminated', app, handle_kernel_termination_lifecycle)
-    event_dispatcher.consume('session_terminated', app, handle_session_termination_lifecycle)
+    event_dispatcher.subscribe('kernel_preparing', app, handle_kernel_creation_lifecycle, _kc)
+    event_dispatcher.subscribe('kernel_pulling', app, handle_kernel_creation_lifecycle, _kc)
+    event_dispatcher.subscribe('kernel_creating', app, handle_kernel_creation_lifecycle, _kc)
+    event_dispatcher.subscribe('kernel_started', app, handle_kernel_creation_lifecycle, _kc)
+    event_dispatcher.subscribe('session_started', app, handle_session_creation_lifecycle, _sc)
+    event_dispatcher.subscribe('session_cancelled', app, handle_session_creation_lifecycle, _st)
+    event_dispatcher.consume('kernel_terminating', app, handle_kernel_termination_lifecycle, _kt)
+    event_dispatcher.consume('kernel_terminated', app, handle_kernel_termination_lifecycle, _kt)
+    event_dispatcher.consume('session_terminated', app, handle_session_termination_lifecycle, _st)
     event_dispatcher.consume('session_success', app, handle_batch_result)
     event_dispatcher.consume('session_failure', app, handle_batch_result)
-    event_dispatcher.consume('kernel_stat_sync', app, handle_kernel_stat_sync)
+    event_dispatcher.consume('kernel_stat_sync', app, handle_kernel_stat_sync, KernelStatSyncEventArgs)
     event_dispatcher.consume('kernel_log', app, handle_kernel_log)
     event_dispatcher.consume('instance_started', app, handle_instance_lifecycle)
     event_dispatcher.consume('instance_terminated', app, handle_instance_lifecycle)

@@ -706,12 +706,13 @@ class AgentRegistry:
         kernel_enqueue_configs: List[KernelEnqueueingConfig],
         scaling_group: str,
         session_type: SessionTypes,
-        resource_policy: dict, *,
+        resource_policy: str,
+        *,
         domain_name: str,
         group_id: uuid.UUID,
         user_uuid: uuid.UUID,
         user_role: str,
-        cluster_mode: ClusterMode,
+        cluster_mode: ClusterMode = ClusterMode.SINGLE_NODE,
         cluster_size: int = 1,
         startup_command: str = None,
         session_tag: str = None,
@@ -2242,10 +2243,12 @@ class AgentRegistry:
             )
             await conn.execute(query)
 
-    async def set_kernel_status(self, kernel_id: KernelId,
-                                status: KernelStatus,
-                                reason: str = '', *,
-                                db_conn: SAConnection = None):
+    async def set_kernel_status(
+        self, kernel_id: KernelId,
+        status: KernelStatus,
+        reason: str = '', *,
+        db_conn: SAConnection = None,
+    ) -> None:
         assert status != KernelStatus.TERMINATED, \
                'TERMINATED status update must be handled in ' \
                'mark_kernel_terminated()'
