@@ -16,6 +16,13 @@ Changes
 
 .. towncrier release notes start
 
+20.03.18 (2021-02-01)
+---------------------
+
+### Fixes
+* Update dependencies including aiojobs, pytest, mypy, pyzmq, python-snappy, and PyYAML. ([#390](https://github.com/lablup/backend.ai-manager/issues/390))
+
+
 20.03.17 (2021-01-20)
 ---------------------
 
