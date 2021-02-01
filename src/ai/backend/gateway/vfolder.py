@@ -406,7 +406,8 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                     'group_name': row.groups_name,
                     'ownership_type': row.vfolders_ownership_type,
                     'type': row.vfolders_ownership_type,  # legacy
-                    'unmanaged_path': row.vfolders_unmanaged_path
+                    'unmanaged_path': row.vfolders_unmanaged_path,
+                    'cloneable': row.cloneable if row.cloneable else False
                 })
         else:
             extra_vf_conds = None
@@ -436,6 +437,7 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                 'group_name': entry['group_name'],
                 'ownership_type': entry['ownership_type'].value,
                 'type': entry['ownership_type'].value,  # legacy
+                'cloneable': entry['cloneable']
             })
     return web.json_response(resp, status=200)
 
@@ -1318,10 +1320,11 @@ async def leave(request: web.Request, row: VFolderRow) -> web.Response:
 @vfolder_permission_required(VFolderPermission.READ_ONLY)
 @check_api_params(
     t.Dict({
+        t.Key('cloneable', default=False): t.Bool,
         t.Key('target_name'): tx.Slug(allow_dot=True),
         t.Key('target_host', default=None) >> 'folder_host': t.String | t.Null,
         t.Key('usage_mode', default='general'): tx.Enum(VFolderUsageMode) | t.Null,
-        t.Key('permission', default='rw'): tx.Enum(VFolderPermission) | t.Null
+        t.Key('permission', default='rw'): tx.Enum(VFolderPermission) | t.Null,
     })
 )
 async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
@@ -1433,7 +1436,7 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
             'user': user_uuid,
             'group': group_uuid,
             'unmanaged_path': '',
-            'cloneable': False
+            'cloneable': params['cloneable']
         }
         resp = {
             'id': folder_id.hex,
@@ -1445,6 +1448,7 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
             'ownership_type': ownership_type,
             'user': user_uuid,
             'group': group_uuid,
+            'cloneable': params['cloneable']
         }
         query = (vfolders.insert().values(insert_values))
         try:
