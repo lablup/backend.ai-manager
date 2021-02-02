@@ -1,6 +1,7 @@
 """
 REST-style session management APIs.
 """
+from __future__ import annotations
 
 import asyncio
 import base64
@@ -51,12 +52,25 @@ from ai.backend.common.exception import (
     AliasResolutionFailed,
 )
 from ai.backend.common.events import (
+    AgentHeartbeatEvent,
+    AgentStartedEvent,
+    AgentStatsEvent,
+    AgentTerminatedEvent,
+    DoSyncKernelLogsEvent,
+    DoSyncKernelStatsEvent,
+    DoTerminateSessionEvent,
     EventDispatcher,
-    KernelCreationEventArgs,
-    KernelStatSyncEventArgs,
-    KernelTerminationEventArgs,
-    SessionCreationEventArgs,
-    SessionTerminationEventArgs,
+    KernelCreatingEvent,
+    KernelPreparingEvent,
+    KernelPullingEvent,
+    KernelStartedEvent,
+    KernelTerminatedEvent,
+    KernelTerminatingEvent,
+    SessionCancelledEvent,
+    SessionFailureEvent,
+    SessionStartedEvent,
+    SessionSuccessEvent,
+    SessionTerminatedEvent,
 )
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.utils import str_to_timedelta
@@ -68,7 +82,6 @@ from ai.backend.common.types import (
     SessionId,
     SessionTypes,
     check_typed_dict,
-    check_typed_tuple,
 )
 from ai.backend.common.plugin.monitor import GAUGE
 
@@ -914,7 +927,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
         async with dbpool.acquire() as conn, conn.begin():
             owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
 
-        kernel_id = await asyncio.shield(registry.enqueue_session(
+        session_id = await asyncio.shield(registry.enqueue_session(
             session_creation_id,
             params['session_name'],
             owner_access_key,
@@ -922,13 +935,13 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
             params['scaling_group'],
             params['sess_type'],
             resource_policy,
-            domain_name=params['domain'],
+            domain_name=params['domain'],  # type: ignore
             group_id=group_id,
             user_uuid=owner_uuid,
             user_role=request['user']['role'],
             session_tag=params['tag'],
         ))
-        session_id = cast(SessionId, kernel_id)  # the main kernel's ID is the session ID.
+        kernel_id = cast(KernelId, session_id)  # the main kernel's ID is the session ID.
         resp['kernelId'] = str(kernel_id)
         resp['status'] = 'PENDING'
         resp['servicePorts'] = []
@@ -997,9 +1010,8 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
 
 async def handle_kernel_creation_lifecycle(
     app: web.Application,
-    agent_id: AgentId,
-    event_name: str,
-    args: KernelCreationEventArgs,
+    source: AgentId,
+    event: KernelPreparingEvent | KernelPullingEvent | KernelCreatingEvent | KernelStartedEvent,
 ) -> None:
     """
     Update the database and perform post_create_kernel() upon
@@ -1010,154 +1022,146 @@ async def handle_kernel_creation_lifecycle(
     but distinguish which one to process using a unique creation_id
     generated when initiating the create_kernels() agent RPC call.
     """
-    ck_id = (args.creation_id, args.kernel_id)
+    ck_id = (event.creation_id, event.kernel_id)
     registry: AgentRegistry = app['registry']
     if ck_id not in registry.kernel_creation_tracker:
         return
-    log.debug('handle_kernel_creation_lifecycle: ev:{} k:{}', event_name, args.kernel_id)
-    if event_name == 'kernel_preparing':
-        await registry.set_kernel_status(args.kernel_id, KernelStatus.PREPARING, args.reason)
-    elif event_name == 'kernel_pulling':
-        await registry.set_kernel_status(args.kernel_id, KernelStatus.PULLING, args.reason)
-    elif event_name == 'kernel_creating':
-        await registry.set_kernel_status(args.kernel_id, KernelStatus.PREPARING, args.reason)
-    elif event_name == 'kernel_started':
+    log.debug('handle_kernel_creation_lifecycle: ev:{} k:{}', event.name, event.kernel_id)
+    if event.name == 'kernel_preparing':
+        await registry.set_kernel_status(event.kernel_id, KernelStatus.PREPARING, event.reason)
+    elif event.name == 'kernel_pulling':
+        await registry.set_kernel_status(event.kernel_id, KernelStatus.PULLING, event.reason)
+    elif event.name == 'kernel_creating':
+        await registry.set_kernel_status(event.kernel_id, KernelStatus.PREPARING, event.reason)
+    elif event.name == 'kernel_started':
         # post_create_kernel() coroutines are waiting for the creation tracker events to be set.
         registry.kernel_creation_tracker[ck_id].set()
 
 
 async def handle_kernel_termination_lifecycle(
     app: web.Application,
-    agent_id: AgentId,
-    event_name: str,
-    args: KernelTerminationEventArgs,
+    source: AgentId,
+    event: KernelTerminatingEvent | KernelTerminatedEvent,
 ) -> None:
     registry: AgentRegistry = app['registry']
-    if event_name == 'kernel_terminating':
+    if event.name == 'kernel_terminating':
         # The destroy_kernel() API handler will set the "TERMINATING" status.
         pass
-    elif event_name == 'kernel_terminated':
-        await registry.mark_kernel_terminated(args.kernel_id, args.reason, args.exit_code)
-        await registry.check_session_terminated(args.kernel_id, args.reason)
+    elif event.name == 'kernel_terminated':
+        await registry.mark_kernel_terminated(event.kernel_id, event.reason, event.exit_code)
+        await registry.check_session_terminated(event.kernel_id, event.reason)
 
 
 async def handle_session_creation_lifecycle(
     app: web.Application,
-    agent_id: AgentId,
-    event_name: str,
-    args: SessionCreationEventArgs,
+    source: AgentId,
+    event: SessionStartedEvent | SessionCancelledEvent,
 ) -> None:
     """
     Update the database according to the session-level lifecycle events
     published by the manager.
     """
     session_creation_tracker = app['session_creation_tracker']
-    if args.creation_id not in session_creation_tracker:
+    if event.creation_id not in session_creation_tracker:
         return
-    log.debug('handle_session_creation_lifecycle: ev:{} s:{}', event_name, args.session_id)
-    if event_name == 'session_started':
-        session_creation_tracker[args.creation_id].set()
-    elif event_name == 'session_cancelled':
-        session_creation_tracker[args.creation_id].set()
+    log.debug('handle_session_creation_lifecycle: ev:{} s:{}', event.name, event.session_id)
+    if event.name == 'session_started':
+        session_creation_tracker[event.creation_id].set()
+    elif event.name == 'session_cancelled':
+        session_creation_tracker[event.creation_id].set()
 
 
 async def handle_session_termination_lifecycle(
     app: web.Application,
     agent_id: AgentId,
-    event_name: str,
-    args: SessionTerminationEventArgs,
+    event: SessionTerminatedEvent,
 ) -> None:
     """
     Update the database according to the session-level lifecycle events
     published by the manager.
     """
     registry: AgentRegistry = app['registry']
-    if event_name == 'session_terminated':
-        await registry.mark_session_terminated(args.session_id, args.reason)
+    if event.name == 'session_terminated':
+        await registry.mark_session_terminated(event.session_id, event.reason)
 
 
 async def handle_destroy_session(
     app: web.Application,
-    agent_id: AgentId,
-    event_name: str,
-    args: SessionTerminationEventArgs,
+    source: AgentId,
+    event: DoTerminateSessionEvent,
 ) -> None:
     registry: AgentRegistry = app['registry']
     await registry.destroy_session(
         functools.partial(
             registry.get_session_by_session_id,
-            args.session_id,
+            event.session_id,
         ),
         forced=False,
-        reason=args.reason or 'killed-by-event',
+        reason=event.reason or 'killed-by-event',
     )
 
 
 async def handle_kernel_stat_sync(
     app: web.Application,
     agent_id: AgentId,
-    event_name: str,
-    args: KernelStatSyncEventArgs,
+    event: DoSyncKernelStatsEvent,
 ) -> None:
     registry: AgentRegistry = app['registry']
-    await registry.sync_kernel_stats(args.kernel_ids)
+    await registry.sync_kernel_stats(event.kernel_ids)
 
 
 async def handle_batch_result(
     app: web.Application,
-    agent_id: AgentId,
-    event_name: str,
-    *args,
+    source: AgentId,
+    event: SessionSuccessEvent | SessionFailureEvent,
 ) -> None:
     """
     Update the database according to the batch-job completion results
     """
-    raw_kernel_id, exit_code, exit_reason = check_typed_tuple(
-        cast(Tuple[Any, Any, Any], args),
-        (str, int, str),
-    )
-    kernel_id = KernelId(uuid.UUID(raw_kernel_id))
     registry: AgentRegistry = app['registry']
-    if event_name == 'session_success':
-        await registry.set_session_result(kernel_id, True, exit_code)
-    elif event_name == 'session_failure':
-        await registry.set_session_result(kernel_id, False, exit_code)
+    if event.name == 'session_success':
+        await registry.set_session_result(event.session_id, True, event.exit_code)
+    elif event.name == 'session_failure':
+        await registry.set_session_result(event.session_id, False, event.exit_code)
     await registry.destroy_session(
-        functools.partial(registry.get_session_by_kernel_id, kernel_id),
+        functools.partial(
+            registry.get_session_by_session_id,
+            event.session_id,
+        ),
         reason='task-finished',
     )
 
 
-async def handle_instance_lifecycle(
+async def handle_agent_lifecycle(
     app: web.Application,
-    agent_id: AgentId,
-    event_name: str,
-    # additional args
-    reason: str = None,
-    *args,
+    source: AgentId,
+    event: AgentStartedEvent | AgentTerminatedEvent,
 ) -> None:
-    if event_name == 'instance_started':
-        log.info('instance_lifecycle: ag:{0} joined ({1})', agent_id, reason)
-        await app['registry'].update_instance(agent_id, {
+    if event.name == 'agent_started':
+        log.info('instance_lifecycle: ag:{0} joined ({1})', source, event.reason)
+        await app['registry'].update_instance(source, {
             'status': AgentStatus.ALIVE,
         })
-    elif event_name == 'instance_terminated':
-        if reason == 'agent-lost':
-            await app['registry'].mark_agent_terminated(agent_id, AgentStatus.LOST)
-        elif reason == 'agent-restart':
-            log.info('agent@{0} restarting for maintenance.', agent_id)
-            await app['registry'].update_instance(agent_id, {
+    elif event.name == 'agent_terminated':
+        if event.reason == 'agent-lost':
+            await app['registry'].mark_agent_terminated(source, AgentStatus.LOST)
+        elif event.reason == 'agent-restart':
+            log.info('agent@{0} restarting for maintenance.', source)
+            await app['registry'].update_instance(source, {
                 'status': AgentStatus.RESTARTING,
             })
         else:
             # On normal instance termination, kernel_terminated events were already
             # triggered by the agent.
-            await app['registry'].mark_agent_terminated(agent_id, AgentStatus.TERMINATED)
+            await app['registry'].mark_agent_terminated(source, AgentStatus.TERMINATED)
 
 
-async def handle_instance_heartbeat(app: web.Application, agent_id: AgentId, event_name: str,
-                                    agent_info: Mapping[str, Any]) -> None:
-    await app['registry'].handle_heartbeat(agent_id, agent_info)
+async def handle_agent_heartbeat(
+    app: web.Application,
+    source: AgentId,
+    event: AgentHeartbeatEvent,
+) -> None:
+    await app['registry'].handle_heartbeat(source, event.agent_info)
 
 
 @catch_unexpected(log)
@@ -1170,7 +1174,7 @@ async def check_agent_lost(app, interval):
             async for agent_id, prev in app['redis_live'].ihscan('agent.last_seen'):
                 prev = datetime.fromtimestamp(float(prev), tzutc())
                 if now - prev > timeout:
-                    await app['event_dispatcher'].produce_event(
+                    await app['event_producer'].produce_event(
                         'instance_terminated', ('agent-lost', ),
                         agent_id=agent_id)
 
@@ -1180,35 +1184,27 @@ async def check_agent_lost(app, interval):
 
 
 # NOTE: This event is ignored during the grace period.
-async def handle_instance_stats(
+async def handle_agent_stats(
     app: web.Application,
-    agent_id: AgentId,
-    event_name: str,
-    # additional args
-    kern_stats,
-    *args,
+    source: AgentId,
+    event: AgentStatsEvent,
 ) -> None:
-    await app['registry'].handle_stats(agent_id, kern_stats)
+    await app['registry'].handle_stats(source, event.stats)
 
 
 async def handle_kernel_log(
     app: web.Application,
-    agent_id: AgentId,
-    event_name: str,
-    # additional args
-    raw_kernel_id: str,
-    container_id: str,
-    *args
+    source: AgentId,
+    event: DoSyncKernelLogsEvent
 ) -> None:
     dbpool = app['dbpool']
-    kernel_id = KernelId(uuid.UUID(raw_kernel_id))
     redis_conn: aioredis.Redis = await redis.connect_with_retries(
         str(app['shared_config'].get_redis_url(db=REDIS_STREAM_DB)),
         encoding=None,
     )
     # The log data is at most 10 MiB.
     log_buffer = BytesIO()
-    log_key = f'containerlog.{container_id}'
+    log_key = f'containerlog.{event.container_id}'
     try:
         list_size = await redis.execute_with_retries(
             lambda: redis_conn.llen(log_key)
@@ -1217,7 +1213,7 @@ async def handle_kernel_log(
             # The log data is expired due to a very slow event delivery.
             # (should never happen!)
             log.warning('tried to store console logs for cid:{}, but the data is expired',
-                        container_id)
+                        event.container_id)
             return
         for _ in range(list_size):
             # Read chunk-by-chunk to allow interleaving with other Redis operations.
@@ -1227,7 +1223,7 @@ async def handle_kernel_log(
             async with dbpool.acquire() as conn, conn.begin():
                 query = (sa.update(kernels)
                            .values(container_log=log_buffer.getvalue())
-                           .where(kernels.c.id == kernel_id))
+                           .where(kernels.c.id == event.kernel_id))
                 await conn.execute(query)
         finally:
             # Clear the log data from Redis when done.
@@ -1770,7 +1766,7 @@ async def get_container_logs(request: web.Request, params: Any) -> web.Response:
             return web.json_response(resp, status=200)
     try:
         await registry.increment_session_usage(session_name, owner_access_key)
-        resp['result'] = await registry.get_logs_from_agent(session_name, owner_access_key)
+        resp['result']['logs'] = await registry.get_logs_from_agent(session_name, owner_access_key)
         log.debug('returning log from agent')
     except BackendError:
         log.exception('GET_CONTAINER_LOG(ak:{}/{}, s:{}): unexpected error',
@@ -1842,32 +1838,27 @@ async def init(app: web.Application) -> None:
 
     app['session_creation_tracker'] = {}
 
-    _kc = KernelCreationEventArgs
-    _kt = KernelTerminationEventArgs
-    _sc = SessionCreationEventArgs
-    _st = SessionTerminationEventArgs
-
     # passive events
-    event_dispatcher.subscribe('kernel_preparing', app, handle_kernel_creation_lifecycle, _kc)
-    event_dispatcher.subscribe('kernel_pulling', app, handle_kernel_creation_lifecycle, _kc)
-    event_dispatcher.subscribe('kernel_creating', app, handle_kernel_creation_lifecycle, _kc)
-    event_dispatcher.subscribe('kernel_started', app, handle_kernel_creation_lifecycle, _kc)
-    event_dispatcher.subscribe('session_started', app, handle_session_creation_lifecycle, _sc)
-    event_dispatcher.subscribe('session_cancelled', app, handle_session_creation_lifecycle, _st)
-    event_dispatcher.consume('kernel_terminating', app, handle_kernel_termination_lifecycle, _kt)
-    event_dispatcher.consume('kernel_terminated', app, handle_kernel_termination_lifecycle, _kt)
-    event_dispatcher.consume('session_terminated', app, handle_session_termination_lifecycle, _st)
-    event_dispatcher.consume('session_success', app, handle_batch_result)
-    event_dispatcher.consume('session_failure', app, handle_batch_result)
-    event_dispatcher.consume('kernel_stat_sync', app, handle_kernel_stat_sync, KernelStatSyncEventArgs)
-    event_dispatcher.consume('kernel_log', app, handle_kernel_log)
-    event_dispatcher.consume('instance_started', app, handle_instance_lifecycle)
-    event_dispatcher.consume('instance_terminated', app, handle_instance_lifecycle)
-    event_dispatcher.consume('instance_heartbeat', app, handle_instance_heartbeat)
-    event_dispatcher.consume('instance_stats', app, handle_instance_stats)
+    event_dispatcher.subscribe(KernelPreparingEvent, app, handle_kernel_creation_lifecycle)
+    event_dispatcher.subscribe(KernelPullingEvent, app, handle_kernel_creation_lifecycle)
+    event_dispatcher.subscribe(KernelCreatingEvent, app, handle_kernel_creation_lifecycle)
+    event_dispatcher.subscribe(KernelStartedEvent, app, handle_kernel_creation_lifecycle)
+    event_dispatcher.subscribe(SessionStartedEvent, app, handle_session_creation_lifecycle)
+    event_dispatcher.subscribe(SessionCancelledEvent, app, handle_session_creation_lifecycle)
+    event_dispatcher.consume(KernelTerminatingEvent, app, handle_kernel_termination_lifecycle)
+    event_dispatcher.consume(KernelTerminatedEvent, app, handle_kernel_termination_lifecycle)
+    event_dispatcher.consume(SessionTerminatedEvent, app, handle_session_termination_lifecycle)
+    event_dispatcher.consume(SessionSuccessEvent, app, handle_batch_result)
+    event_dispatcher.consume(SessionFailureEvent, app, handle_batch_result)
+    event_dispatcher.consume(AgentStartedEvent, app, handle_agent_lifecycle)
+    event_dispatcher.consume(AgentTerminatedEvent, app, handle_agent_lifecycle)
+    event_dispatcher.consume(AgentHeartbeatEvent, app, handle_agent_heartbeat)
+    event_dispatcher.consume(AgentStatsEvent, app, handle_agent_stats)
 
     # action-trigerring events
-    event_dispatcher.consume('do_terminate_session', app, handle_destroy_session)
+    event_dispatcher.consume(DoSyncKernelStatsEvent, app, handle_kernel_stat_sync)
+    event_dispatcher.consume(DoSyncKernelLogsEvent, app, handle_kernel_log)
+    event_dispatcher.consume(DoTerminateSessionEvent, app, handle_destroy_session)
 
     app['pending_waits'] = set()
 

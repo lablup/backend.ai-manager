@@ -6,18 +6,12 @@ import json
 from typing import (
     Any,
     AsyncIterator,
-    Awaitable,
     Final,
-    Generic,
     Iterable,
     Mapping,
-    MutableMapping,
-    Protocol,
-    Sequence,
     Set,
     Tuple,
     Union,
-    TypeVar,
     TYPE_CHECKING,
 )
 import uuid
@@ -30,11 +24,30 @@ import sqlalchemy as sa
 import trafaret as t
 
 from ai.backend.common import validators as tx
-from ai.backend.common.events import EventDispatcher
+from ai.backend.common.events import (
+    BgtaskCancelledEvent,
+    BgtaskDoneEvent,
+    BgtaskFailedEvent,
+    BgtaskUpdatedEvent,
+    EventDispatcher,
+    KernelCancelledEvent,
+    KernelCreatingEvent,
+    KernelPreparingEvent,
+    KernelPullingEvent,
+    KernelStartedEvent,
+    KernelTerminatedEvent,
+    KernelTerminatingEvent,
+    SessionCancelledEvent,
+    SessionEnqueuedEvent,
+    SessionFailureEvent,
+    SessionScheduledEvent,
+    SessionStartedEvent,
+    SessionSuccessEvent,
+    SessionTerminatedEvent,
+)
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import AgentId
 from .auth import auth_required
-from .defs import REDIS_STREAM_DB
 from .exceptions import GenericNotFound, GenericForbidden, GroupNotFound
 from .manager import READ_ALLOWED, server_status_required
 from .utils import check_api_params
@@ -42,16 +55,10 @@ from ..manager.models import kernels, groups, UserRole
 from ..manager.types import BackgroundTaskEventArgs, Sentinel
 if TYPE_CHECKING:
     from .types import CORSOptions, WebMiddleware
-    from ..gateway.config import LocalConfig, SharedConfig
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.events'))
 
 sentinel: Final = Sentinel.token
-
-
-##     async def _create_redis(self):
-##         redis_url = self.shared_config.get_redis_url(db=REDIS_STREAM_DB)
-##         return await redis.connect_with_retries(str(redis_url), encoding=None)
 
 
 @server_status_required(READ_ALLOWED)
@@ -221,18 +228,11 @@ async def push_background_task_events(
         return resp
 
 
-async def enqueue_kernel_status_update_with_creation_id(
+async def enqueue_kernel_creation_status_update(
     app: web.Application,
-    agent_id: AgentId,
-    event_name: str,
-    raw_kernel_id: str,
-    kernel_creation_id: str,
-    reason: str = None,
-    exit_code: int = None,
+    source: AgentId,
+    event: KernelPreparingEvent | KernelPullingEvent | KernelCreatingEvent | KernelStartedEvent,
 ) -> None:
-    if raw_kernel_id is None:
-        return
-    kernel_id = uuid.UUID(raw_kernel_id)
 
     async def _fetch():
         async with app['dbpool'].acquire() as conn, conn.begin():
@@ -250,7 +250,7 @@ async def enqueue_kernel_status_update_with_creation_id(
                 ])
                 .select_from(kernels)
                 .where(
-                    (kernels.c.id == kernel_id)
+                    (kernels.c.id == event.kernel_id)
                 )
             )
             result = await conn.execute(query)
@@ -260,20 +260,14 @@ async def enqueue_kernel_status_update_with_creation_id(
     if row is None:
         return
     for q in app['session_event_queues']:
-        q.put_nowait((event_name, row, reason))
+        q.put_nowait((event.name, row, event.reason))
 
 
-async def enqueue_kernel_status_update(
+async def enqueue_kernel_termination_status_update(
     app: web.Application,
     agent_id: AgentId,
-    event_name: str,
-    raw_kernel_id: str,
-    reason: str = None,
-    exit_code: int = None,
+    event: KernelCancelledEvent | KernelTerminatingEvent | KernelTerminatedEvent,
 ) -> None:
-    if raw_kernel_id is None:
-        return
-    kernel_id = uuid.UUID(raw_kernel_id)
 
     async def _fetch():
         async with app['dbpool'].acquire() as conn, conn.begin():
@@ -291,7 +285,7 @@ async def enqueue_kernel_status_update(
                 ])
                 .select_from(kernels)
                 .where(
-                    (kernels.c.id == kernel_id)
+                    (kernels.c.id == event.kernel_id)
                 )
             )
             result = await conn.execute(query)
@@ -301,21 +295,14 @@ async def enqueue_kernel_status_update(
     if row is None:
         return
     for q in app['session_event_queues']:
-        q.put_nowait((event_name, row, reason))
+        q.put_nowait((event.name, row, event.reason))
 
 
-async def enqueue_session_status_update_with_creation_id(
+async def enqueue_session_creation_status_update(
     app: web.Application,
-    agent_id: AgentId,
-    event_name: str,
-    raw_session_id: str,
-    session_creation_id: str,
-    reason: str = None,
-    exit_code: int = None,
+    source: AgentId,
+    event: SessionEnqueuedEvent | SessionScheduledEvent | SessionStartedEvent | SessionCancelledEvent,
 ) -> None:
-    if raw_session_id is None:
-        return
-    session_id = uuid.UUID(raw_session_id)
 
     async def _fetch():
         async with app['dbpool'].acquire() as conn:
@@ -331,7 +318,7 @@ async def enqueue_session_status_update_with_creation_id(
                 ])
                 .select_from(kernels)
                 .where(
-                    (kernels.c.id == session_id)
+                    (kernels.c.id == event.session_id)
                     # for the main kernel, kernel ID == session ID
                 )
             )
@@ -342,20 +329,14 @@ async def enqueue_session_status_update_with_creation_id(
     if row is None:
         return
     for q in app['session_event_queues']:
-        q.put_nowait((event_name, row, reason))
+        q.put_nowait((event.name, row, event.reason))
 
 
-async def enqueue_session_status_update(
+async def enqueue_session_termination_status_update(
     app: web.Application,
     agent_id: AgentId,
-    event_name: str,
-    raw_session_id: str,
-    reason: str = None,
-    exit_code: int = None,
+    event: SessionTerminatedEvent,
 ) -> None:
-    if raw_session_id is None:
-        return
-    session_id = uuid.UUID(raw_session_id)
 
     async def _fetch():
         async with app['dbpool'].acquire() as conn:
@@ -371,7 +352,7 @@ async def enqueue_session_status_update(
                 ])
                 .select_from(kernels)
                 .where(
-                    (kernels.c.id == session_id)
+                    (kernels.c.id == event.session_id)
                     # for the main kernel, kernel ID == session ID
                 )
             )
@@ -382,18 +363,14 @@ async def enqueue_session_status_update(
     if row is None:
         return
     for q in app['session_event_queues']:
-        q.put_nowait((event_name, row, reason))
+        q.put_nowait((event.name, row, event.reason))
 
 
 async def enqueue_batch_task_result_update(
     app: web.Application,
     agent_id: AgentId,
-    event_name: str,
-    raw_kernel_id: str,
-    exit_code: int = None,
-    exit_reason: str = None,
+    event: SessionSuccessEvent | SessionFailureEvent,
 ) -> None:
-    kernel_id = uuid.UUID(raw_kernel_id)
 
     async def _fetch():
         async with app['dbpool'].acquire() as conn:
@@ -409,7 +386,7 @@ async def enqueue_batch_task_result_update(
                 ])
                 .select_from(kernels)
                 .where(
-                    (kernels.c.id == kernel_id)
+                    (kernels.c.id == event.session_id)
                 )
             )
             result = await conn.execute(query)
@@ -418,49 +395,45 @@ async def enqueue_batch_task_result_update(
     row = await asyncio.shield(_fetch())
     if row is None:
         return
-    if event_name == 'session_success':
-        reason = 'task-success'
-    else:
-        reason = 'task-failure'
     for q in app['session_event_queues']:
-        q.put_nowait((event_name, row, reason))
+        q.put_nowait((event.name, row, event.reason))
 
 
-async def enqueue_task_status_update(
+async def enqueue_bgtask_status_update(
     app: web.Application,
-    agent_id: AgentId,
-    event_name: str,
-    raw_task_id: str,
-    current_progress: Union[int, float] = None,
-    total_progress: Union[int, float] = None,
-    message: str = None,
+    source: AgentId,
+    event: BgtaskUpdatedEvent | BgtaskDoneEvent | BgtaskCancelledEvent | BgtaskFailedEvent,
 ) -> None:
     for q in app['task_update_queues']:
-        q.put_nowait((event_name, raw_task_id, current_progress, total_progress, message, ))
+        q.put_nowait(
+            (event.name, event.task_id,
+             event.current_progress, event.total_progress,
+             event.message,)
+        )
 
 
 async def events_app_ctx(app: web.Application) -> AsyncIterator[None]:
     app['session_event_queues'] = set()
     app['task_update_queues'] = set()
     event_dispatcher: EventDispatcher = app['event_dispatcher']
-    event_dispatcher.subscribe('session_enqueued', app, enqueue_session_status_update_with_creation_id)
-    event_dispatcher.subscribe('session_scheduled', app, enqueue_session_status_update_with_creation_id)
-    event_dispatcher.subscribe('kernel_preparing', app, enqueue_kernel_status_update_with_creation_id)
-    event_dispatcher.subscribe('kernel_pulling', app, enqueue_kernel_status_update_with_creation_id)
-    event_dispatcher.subscribe('kernel_creating', app, enqueue_kernel_status_update_with_creation_id)
-    event_dispatcher.subscribe('kernel_started', app, enqueue_kernel_status_update_with_creation_id)
-    event_dispatcher.subscribe('session_started', app, enqueue_session_status_update_with_creation_id)
-    event_dispatcher.subscribe('kernel_terminating', app, enqueue_kernel_status_update)
-    event_dispatcher.subscribe('kernel_terminated', app, enqueue_kernel_status_update)
-    event_dispatcher.subscribe('session_terminated', app, enqueue_session_status_update)
-    event_dispatcher.subscribe('kernel_cancelled', app, enqueue_kernel_status_update)
-    event_dispatcher.subscribe('session_cancelled', app, enqueue_session_status_update_with_creation_id)
-    event_dispatcher.subscribe('session_success', app, enqueue_batch_task_result_update)
-    event_dispatcher.subscribe('session_failure', app, enqueue_batch_task_result_update)
-    event_dispatcher.subscribe('task_updated', app, enqueue_task_status_update)
-    event_dispatcher.subscribe('task_done', app, enqueue_task_status_update)
-    event_dispatcher.subscribe('task_cancelled', app, enqueue_task_status_update)
-    event_dispatcher.subscribe('task_failed', app, enqueue_task_status_update)
+    event_dispatcher.subscribe(SessionEnqueuedEvent, app, enqueue_session_creation_status_update)
+    event_dispatcher.subscribe(SessionScheduledEvent, app, enqueue_session_creation_status_update)
+    event_dispatcher.subscribe(KernelPreparingEvent, app, enqueue_kernel_creation_status_update)
+    event_dispatcher.subscribe(KernelPullingEvent, app, enqueue_kernel_creation_status_update)
+    event_dispatcher.subscribe(KernelCreatingEvent, app, enqueue_kernel_creation_status_update)
+    event_dispatcher.subscribe(KernelStartedEvent, app, enqueue_kernel_creation_status_update)
+    event_dispatcher.subscribe(SessionStartedEvent, app, enqueue_session_creation_status_update)
+    event_dispatcher.subscribe(KernelTerminatingEvent, app, enqueue_kernel_termination_status_update)
+    event_dispatcher.subscribe(KernelTerminatedEvent, app, enqueue_kernel_termination_status_update)
+    event_dispatcher.subscribe(KernelCancelledEvent, app, enqueue_kernel_termination_status_update)
+    event_dispatcher.subscribe(SessionTerminatedEvent, app, enqueue_session_termination_status_update)
+    event_dispatcher.subscribe(SessionCancelledEvent, app, enqueue_session_creation_status_update)
+    event_dispatcher.subscribe(SessionSuccessEvent, app, enqueue_batch_task_result_update)
+    event_dispatcher.subscribe(SessionFailureEvent, app, enqueue_batch_task_result_update)
+    event_dispatcher.subscribe(BgtaskUpdatedEvent, app, enqueue_bgtask_status_update)
+    event_dispatcher.subscribe(BgtaskDoneEvent, app, enqueue_bgtask_status_update)
+    event_dispatcher.subscribe(BgtaskCancelledEvent, app, enqueue_bgtask_status_update)
+    event_dispatcher.subscribe(BgtaskFailedEvent, app, enqueue_bgtask_status_update)
 
     yield
 
