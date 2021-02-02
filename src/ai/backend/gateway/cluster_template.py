@@ -292,7 +292,7 @@ async def put(request: web.Request, params: Any) -> web.Response:
             body = yaml.load(params['payload'], Loader=yaml.BaseLoader)
         except (yaml.YAMLError, yaml.MarkedYAMLError):
             raise InvalidAPIParameters('Malformed payload')
-        template_data = check_cluster_template.check(body)
+        template_data = check_cluster_template(body)
         query = (sa.update(session_templates)
                    .values(template=template_data, name=template_data['metadata']['name'])
                    .where((session_templates.c.id == template_id)))

@@ -10,6 +10,7 @@ from typing import (
     Any,
     ClassVar,
     Dict,
+    List,
     Mapping,
     Optional,
     Sequence,
@@ -17,6 +18,8 @@ from typing import (
     TYPE_CHECKING,
 )
 from ai.backend.common.events import (
+    AbstractEvent,
+    EventHandler,
     DoIdleCheckEvent,
     DoTerminateSessionEvent,
     EventDispatcher,
@@ -162,16 +165,18 @@ class TimeoutIdleChecker(BaseIdleChecker):
 
     idle_timeout: timedelta
     _policy_cache: ContextVar[Dict[AccessKey, Optional[Mapping[str, Any]]]]
+    _evhandlers: List[EventHandler[None, AbstractEvent]]
 
     async def __ainit__(self) -> None:
         await super().__ainit__()
         self._policy_cache = ContextVar('_policy_cache')
+        d = self._event_dispatcher
         self._evhandlers = [
-            self._event_dispatcher.consume(SessionStartedEvent, None, self._session_started_cb),
-            self._event_dispatcher.consume(ExecutionStartedEvent, None, self._execution_started_cb),
-            self._event_dispatcher.consume(ExecutionFinishedEvent, None, self._execution_exited_cb),
-            self._event_dispatcher.consume(ExecutionTimeoutEvent, None, self._execution_exited_cb),
-            self._event_dispatcher.consume(ExecutionCancelledEvent, None, self._execution_exited_cb),
+            d.consume(SessionStartedEvent, None, self._session_started_cb),      # type: ignore
+            d.consume(ExecutionStartedEvent, None, self._execution_started_cb),  # type: ignore
+            d.consume(ExecutionFinishedEvent, None, self._execution_exited_cb),  # type: ignore
+            d.consume(ExecutionTimeoutEvent, None, self._execution_exited_cb),   # type: ignore
+            d.consume(ExecutionCancelledEvent, None, self._execution_exited_cb), # type: ignore
         ]
 
     async def aclose(self) -> None:

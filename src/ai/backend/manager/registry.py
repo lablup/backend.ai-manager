@@ -26,7 +26,16 @@ from typing import (
     cast,
 )
 import uuid
-from ai.backend.common.events import SessionTerminationEventArgs
+from ai.backend.common.events import (
+    AgentStartedEvent,
+    KernelCancelledEvent,
+    KernelTerminatedEvent,
+    KernelTerminatingEvent,
+    SessionCancelledEvent,
+    SessionEnqueuedEvent,
+    SessionStartedEvent,
+    SessionTerminatedEvent,
+)
 
 import aiodocker
 import aiohttp
@@ -1047,8 +1056,7 @@ class AgentRegistry:
             (session_id, session_name, access_key),
         )
         await self.event_producer.produce_event(
-            'session_enqueued',
-            (str(session_id), session_creation_id, ),
+            SessionEnqueuedEvent(session_id, session_creation_id)
         )
         return session_id
 
@@ -1304,8 +1312,7 @@ class AgentRegistry:
 
         # If all is well, let's say the session is ready.
         await self.event_producer.produce_event(
-            'session_started',
-            (str(pending_session.session_id), session_creation_id, ),
+            SessionStartedEvent(pending_session.session_id, session_creation_id)
         )
         await self.hook_plugin_ctx.notify(
             'POST_START_SESSION',
@@ -1558,14 +1565,16 @@ class AgentRegistry:
                             .where(kernels.c.id == kernel['id'])
                         )
                         await self.event_producer.produce_event(
-                            'kernel_cancelled',
-                            (str(kernel['id']), reason),
+                            KernelCancelledEvent(kernel['id'], reason)
                         )
                         if kernel['cluster_role'] == DEFAULT_ROLE:
                             main_stat = {'status': 'cancelled'}
                             await self.event_producer.produce_event(
-                                'session_cancelled',
-                                (str(kernel['session_id']), kernel['session_creation_id'], reason),
+                                SessionCancelledEvent(
+                                    kernel['session_id'],
+                                    kernel['session_creation_id'],
+                                    reason,
+                                )
                             )
                     elif kernel['status'] == KernelStatus.PULLING:
                         raise GenericForbidden('Cannot destroy kernels in pulling status')
@@ -1600,8 +1609,7 @@ class AgentRegistry:
                                 .where(kernels.c.id == kernel['id'])
                             )
                             await self.event_producer.produce_event(
-                                'kernel_terminated',
-                                (str(kernel['id']), reason),
+                                KernelTerminatedEvent(kernel['id'], reason)
                             )
                     else:
                         async with self.dbpool.acquire() as conn, conn.begin():
@@ -1624,8 +1632,7 @@ class AgentRegistry:
                                 .where(kernels.c.id == kernel['id'])
                             )
                         await self.event_producer.produce_event(
-                            'kernel_terminating',
-                            (str(kernel['id']), reason),
+                            KernelTerminatingEvent(kernel['id'], reason),
                         )
 
                     if kernel['agent_addr'] is None:
@@ -1824,8 +1831,7 @@ class AgentRegistry:
         # NOTE: If the restarted session is a batch-type one, then the startup command
         #       will be executed again after restart.
         await self.event_producer.produce_event(
-            'session_started',
-            (str(session_id), session_creation_id, ),
+            SessionStartedEvent(session_id, session_creation_id)
         )
 
     async def execute(
@@ -2152,8 +2158,9 @@ class AgentRegistry:
 
             if instance_rejoin:
                 await self.event_producer.produce_event(
-                    'instance_started', ('revived', ),
-                    agent_id=agent_id)
+                    AgentStartedEvent('revived'),
+                    source=agent_id,
+                )
 
             # Update the mapping of kernel images to agents.
             known_registries = await get_known_registries(self.shared_config.etcd)
@@ -2430,8 +2437,7 @@ class AgentRegistry:
             ))
         if all_terminated:
             await self.event_producer.produce_event(
-                'session_terminated',
-                SessionTerminationEventArgs(session_id, reason),
+                SessionTerminatedEvent(session_id, reason)
             )
 
     async def mark_session_terminated(

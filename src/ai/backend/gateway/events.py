@@ -14,7 +14,6 @@ from typing import (
     Union,
     TYPE_CHECKING,
 )
-import uuid
 
 from aiohttp import web
 import aiohttp_cors
@@ -52,13 +51,15 @@ from .exceptions import GenericNotFound, GenericForbidden, GroupNotFound
 from .manager import READ_ALLOWED, server_status_required
 from .utils import check_api_params
 from ..manager.models import kernels, groups, UserRole
-from ..manager.types import BackgroundTaskEventArgs, Sentinel
+from ..manager.types import Sentinel
 if TYPE_CHECKING:
     from .types import CORSOptions, WebMiddleware
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.events'))
 
 sentinel: Final = Sentinel.token
+
+BgtaskEvents = Union[BgtaskUpdatedEvent, BgtaskDoneEvent, BgtaskCancelledEvent, BgtaskFailedEvent]
 
 
 @server_status_required(READ_ALLOWED)
@@ -195,31 +196,28 @@ async def push_background_task_events(
         return resp
 
     # It is an ongoing task.
-    task_update_queues = app['task_update_queues']  # type: Set[asyncio.Queue]
-    my_queue = asyncio.Queue()  # type: asyncio.Queue[Union[Sentinel, Tuple[str, Any]]]
+    task_update_queues: Set[asyncio.Queue] = app['task_update_queues']
+    my_queue: asyncio.Queue[BgtaskEvents | Sentinel] = asyncio.Queue()
     task_update_queues.add(my_queue)
     defer(lambda: task_update_queues.remove(my_queue))
     try:
         async with sse_response(request) as resp:
             while True:
-                event_args = await my_queue.get()
+                event = await my_queue.get()
                 try:
-                    if event_args is sentinel:
+                    if event is sentinel:
                         break
-                    event_name = event_args[0]
-                    event_data = BackgroundTaskEventArgs(**event_args[1])
-                    if task_id != uuid.UUID(event_data.task_id):
+                    if task_id != event.task_id:
                         continue
                     body = {
                         'task_id': str(task_id),
-                        'message': event_data.message,
+                        'message': event.message,
                     }
-                    if event_data.current_progress is not None:
-                        body['current_progress'] = event_data.current_progress
-                    if event_data.total_progress is not None:
-                        body['total_progress'] = event_data.total_progress
-                    await resp.send(json.dumps(body), event=event_name, retry=5)
-                    if event_name in ('task_done', 'task_failed', 'task_cancelled'):
+                    if isinstance(event, BgtaskUpdatedEvent):
+                        body['current_progress'] = event.current_progress
+                        body['total_progress'] = event.total_progress
+                    await resp.send(json.dumps(body), event=event.name, retry=5)
+                    if event.name in ('bgtask_done', 'bgtask_failed', 'bgtask_cancelled'):
                         await resp.send('{}', event="server_close")
                         break
                 finally:
@@ -405,11 +403,7 @@ async def enqueue_bgtask_status_update(
     event: BgtaskUpdatedEvent | BgtaskDoneEvent | BgtaskCancelledEvent | BgtaskFailedEvent,
 ) -> None:
     for q in app['task_update_queues']:
-        q.put_nowait(
-            (event.name, event.task_id,
-             event.current_progress, event.total_progress,
-             event.message,)
-        )
+        q.put_nowait(event)
 
 
 async def events_app_ctx(app: web.Application) -> AsyncIterator[None]:
