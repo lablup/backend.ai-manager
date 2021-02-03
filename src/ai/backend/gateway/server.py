@@ -334,7 +334,7 @@ async def database_ctx(app: web.Application) -> AsyncIterator[None]:
 
 async def event_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
     local_config: LocalConfig = app['local_config']
-    shared_config: LocalConfig = app['shared_config']
+    shared_config: SharedConfig = app['shared_config']
 
     async def redis_connector():
         redis_url = shared_config.get_redis_url(db=REDIS_STREAM_DB)
@@ -429,7 +429,7 @@ async def monitoring_ctx(app: web.Application) -> AsyncIterator[None]:
 
 
 async def background_task_ctx(app: web.Application) -> AsyncIterator[None]:
-    app['background_task_manager'] = BackgroundTaskManager(app['event_dispatcher'])
+    app['background_task_manager'] = BackgroundTaskManager(app['event_producer'])
     _update_public_interface_objs(app)
     yield
 

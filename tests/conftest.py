@@ -7,10 +7,13 @@ import re
 import secrets
 import shutil
 import subprocess
+import sys
 import tempfile
 from typing import (
     Any,
     AsyncContextManager,
+    AsyncIterator,
+    Iterator,
     List,
     Mapping,
     Optional,
@@ -82,7 +85,7 @@ def vfolder_host():
 
 
 @pytest.fixture(scope='session')
-def local_config(test_id, test_db):
+def local_config(test_id, test_db) -> LocalConfig:
     cfg = load_config()
     assert isinstance(cfg, LocalConfig)
     cfg['db']['name'] = test_db
@@ -96,8 +99,9 @@ def local_config(test_id, test_db):
 
 
 @pytest.fixture(scope='session')
-def etcd_fixture(test_id, local_config, vfolder_mount, vfolder_fsprefix, vfolder_host):
+def etcd_fixture(test_id, local_config, vfolder_mount, vfolder_fsprefix, vfolder_host) -> Iterator[None]:
     # Clear and reset etcd namespace using CLI functions.
+    print("NOTE: This test suite uses a local Redis daemon running at 127.0.0.1:6379!", file=sys.stderr)
     with tempfile.NamedTemporaryFile(mode='w', suffix='.etcd.json') as f:
         etcd_fixture = {
             'volumes': {
@@ -132,12 +136,17 @@ def etcd_fixture(test_id, local_config, vfolder_mount, vfolder_fsprefix, vfolder
         json.dump(etcd_fixture, f)
         f.flush()
         subprocess.call([
-            'python', '-m', 'ai.backend.manager.cli',
+            sys.executable,
+            '-m', 'ai.backend.manager.cli',
             'etcd', 'put-json', '', f.name,
         ])
     yield
-    subprocess.call(['python', '-m', 'ai.backend.manager.cli', 'etcd', 'delete',
-                     '', '--prefix'])
+    subprocess.call([
+        sys.executable,
+        '-m', 'ai.backend.manager.cli',
+        'etcd', 'delete',
+        '--prefix', '',
+    ])
 
 
 @pytest.fixture
@@ -308,7 +317,7 @@ async def app(local_config, event_loop):
 
 
 @pytest.fixture
-async def create_app_and_client(local_config, event_loop):
+async def create_app_and_client(local_config, event_loop) -> AsyncIterator:
     client: Optional[Client] = None
     client_session: Optional[aiohttp.ClientSession] = None
     runner: Optional[web.BaseRunner] = None
@@ -341,7 +350,7 @@ async def create_app_and_client(local_config, event_loop):
             octx = octx_cls(app)  # type: ignore
             _outer_ctxs.append(octx)
             await octx.__aenter__()
-        runner = web.AppRunner(app)
+        runner = web.AppRunner(app, handle_signals=False)
         await runner.setup()
         site = web.TCPSite(
             runner,

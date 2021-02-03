@@ -172,11 +172,11 @@ class TimeoutIdleChecker(BaseIdleChecker):
         self._policy_cache = ContextVar('_policy_cache')
         d = self._event_dispatcher
         self._evhandlers = [
-            d.consume(SessionStartedEvent, None, self._session_started_cb),      # type: ignore
-            d.consume(ExecutionStartedEvent, None, self._execution_started_cb),  # type: ignore
-            d.consume(ExecutionFinishedEvent, None, self._execution_exited_cb),  # type: ignore
-            d.consume(ExecutionTimeoutEvent, None, self._execution_exited_cb),   # type: ignore
-            d.consume(ExecutionCancelledEvent, None, self._execution_exited_cb), # type: ignore
+            d.consume(SessionStartedEvent, None, self._session_started_cb),       # type: ignore
+            d.consume(ExecutionStartedEvent, None, self._execution_started_cb),   # type: ignore
+            d.consume(ExecutionFinishedEvent, None, self._execution_exited_cb),   # type: ignore
+            d.consume(ExecutionTimeoutEvent, None, self._execution_exited_cb),    # type: ignore
+            d.consume(ExecutionCancelledEvent, None, self._execution_exited_cb),  # type: ignore
         ]
 
     async def aclose(self) -> None:

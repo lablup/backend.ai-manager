@@ -37,11 +37,11 @@ import trafaret as t
 import zmq, zmq.asyncio
 
 from ai.backend.common import validators as tx
+from ai.backend.common.events import EventDispatcher, KernelTerminatingEvent
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     AccessKey,
     AgentId,
-    KernelId,
 )
 from ai.backend.gateway.config import SharedConfig
 
@@ -519,12 +519,17 @@ async def get_stream_apps(request: web.Request) -> web.Response:
     return web.json_response(resp)
 
 
-async def kernel_terminated(app: web.Application, agent_id: AgentId, event_name: str,
-                            kernel_id: KernelId, reason: str,
-                            exit_code: int = None) -> None:
+async def handle_kernel_terminating(
+    app: web.Application,
+    source: AgentId,
+    event: KernelTerminatingEvent,
+) -> None:
     try:
         kernel = await app['registry'].get_kernel(
-            kernel_id, (kernels.c.cluster_role, kernels.c.status), allow_stale=True)
+            event.kernel_id,
+            (kernels.c.cluster_role, kernels.c.status),
+            allow_stale=True,
+        )
     except SessionNotFound:
         return
     if kernel['cluster_role'] == DEFAULT_ROLE:
@@ -585,8 +590,8 @@ async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
     app['active_session_ids'] = defaultdict(int)  # multiset[int]
     app['conn_tracker_gc_task'] = asyncio.create_task(stream_conn_tracker_gc(app))
 
-    event_dispatcher = app['event_dispatcher']
-    event_dispatcher.subscribe('kernel_terminated', app, kernel_terminated)
+    event_dispatcher: EventDispatcher = app['event_dispatcher']
+    event_dispatcher.subscribe(KernelTerminatingEvent, app, handle_kernel_terminating)
 
     yield
 

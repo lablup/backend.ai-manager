@@ -14,6 +14,7 @@ from typing import Any, Tuple, MutableMapping
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.types import LogSeverity
 
 from .auth import auth_required
 from .manager import READ_ALLOWED, server_status_required
@@ -21,7 +22,7 @@ from .types import CORSOptions, Iterable, WebMiddleware
 from .utils import check_api_params, get_access_key_scopes
 
 from ..manager.models import (
-    error_logs, LogSeverity, UserRole, groups,
+    error_logs, UserRole, groups,
     association_groups_users as agus
 )
 
