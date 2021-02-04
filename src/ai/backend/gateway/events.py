@@ -378,7 +378,7 @@ async def push_background_task_events(
                 }
                 await resp.send(json.dumps(body), event=f"task_{task_info['status']}")
             finally:
-                await resp.send(b'{}', event="server_close")
+                await resp.send('{}', event="server_close")
         return resp
 
     # It is an ongoing task.
