@@ -19,7 +19,7 @@ class DummyEtcd:
         return {}
 
 
-async def test_handle_heartbeat(mocker):
+async def test_handle_heartbeat(mocker) -> None:
     mock_shared_config = MagicMock()
     mock_shared_config.update_resource_slots = AsyncMock()
     mock_shared_config.etcd = None
@@ -41,7 +41,8 @@ async def test_handle_heartbeat(mocker):
     mock_redis_live.hset = AsyncMock()
     mock_redis_image = MagicMock()
     mock_event_dispatcher = MagicMock()
-    mock_event_dispatcher.produce_event = AsyncMock()
+    mock_event_producer = MagicMock()
+    mock_event_producer.produce_event = AsyncMock()
     mock_get_known_registries = AsyncMock(return_value=[
         {'index.docker.io': 'https://registry-1.docker.io'},
     ])
@@ -59,7 +60,7 @@ async def test_handle_heartbeat(mocker):
     mocker.patch('ai.backend.common.plugin.pkg_resources.iter_entry_points', mocked_entrypoints)
     mocked_etcd = DummyEtcd()
     # mocker.object.patch(mocked_etcd, 'get_prefix', AsyncMock(return_value={}))
-    hook_plugin_ctx = HookPluginContext(mocked_etcd, {})
+    hook_plugin_ctx = HookPluginContext(mocked_etcd, {})  # type: ignore
 
     registry = AgentRegistry(
         shared_config=mock_shared_config,
@@ -68,7 +69,8 @@ async def test_handle_heartbeat(mocker):
         redis_live=mock_redis_live,
         redis_image=mock_redis_image,
         event_dispatcher=mock_event_dispatcher,
-        storage_manager=None,
+        event_producer=mock_event_producer,
+        storage_manager=None,  # type: ignore
         hook_plugin_ctx=hook_plugin_ctx,
     )
     await registry.init()
