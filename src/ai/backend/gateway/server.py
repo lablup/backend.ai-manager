@@ -37,6 +37,7 @@ from setproctitle import setproctitle
 
 from ai.backend.common import redis
 from ai.backend.common.cli import LazyGroup
+from ai.backend.common.events import EventDispatcher, EventProducer
 from ai.backend.common.utils import env_info, current_loop
 from ai.backend.common.json import ExtendedJSONEncoder
 from ai.backend.common.logging import Logger, BraceStyleAdapter
@@ -62,7 +63,6 @@ from .config import (
     volume_config_iv,
 )
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB, REDIS_STREAM_DB
-from .events import EventDispatcher
 from .exceptions import (
     BackendError,
     MethodNotAllowed,
@@ -128,6 +128,7 @@ PUBLIC_INTERFACES: Final = [
     'redis_image',
     'redis_stream',
     'event_dispatcher',
+    'event_producer',
     'idle_checkers',
     'storage_manager',
     'stats_monitor',
@@ -332,15 +333,27 @@ async def database_ctx(app: web.Application) -> AsyncIterator[None]:
 
 
 async def event_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
-    app['event_dispatcher'] = await EventDispatcher.new(app['local_config'], app['shared_config'])
+    local_config: LocalConfig = app['local_config']
+    shared_config: SharedConfig = app['shared_config']
+
+    async def redis_connector():
+        redis_url = shared_config.get_redis_url(db=REDIS_STREAM_DB)
+        return await redis.connect_with_retries(str(redis_url), encoding=None)
+
+    app['event_producer'] = await EventProducer.new(redis_connector)
+    app['event_dispatcher'] = await EventDispatcher.new(
+        redis_connector,
+        log_events=local_config['debug']['log-events'],
+    )
     _update_public_interface_objs(app)
     yield
     await app['event_dispatcher'].close()
+    await app['event_producer'].close()
 
 
 async def idle_checker_ctx(app: web.Application) -> AsyncIterator[None]:
     app['idle_checkers'] = await create_idle_checkers(
-        app['dbpool'], app['shared_config'], app['event_dispatcher'],
+        app['dbpool'], app['shared_config'], app['event_dispatcher'], app['event_producer'],
     )
     _update_public_interface_objs(app)
     yield
@@ -382,6 +395,7 @@ async def agent_registry_ctx(app: web.Application) -> AsyncIterator[None]:
         app['redis_live'],
         app['redis_image'],
         app['event_dispatcher'],
+        app['event_producer'],
         app['storage_manager'],
         app['hook_plugin_ctx'],
     )
@@ -393,7 +407,10 @@ async def agent_registry_ctx(app: web.Application) -> AsyncIterator[None]:
 
 async def sched_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
     sched_dispatcher = await SchedulerDispatcher.new(
-        app['local_config'], app['shared_config'], app['event_dispatcher'], app['registry'])
+        app['local_config'], app['shared_config'],
+        app['event_dispatcher'], app['event_producer'],
+        app['registry'],
+    )
     yield
     await sched_dispatcher.close()
 
@@ -412,7 +429,7 @@ async def monitoring_ctx(app: web.Application) -> AsyncIterator[None]:
 
 
 async def background_task_ctx(app: web.Application) -> AsyncIterator[None]:
-    app['background_task_manager'] = BackgroundTaskManager(app['event_dispatcher'])
+    app['background_task_manager'] = BackgroundTaskManager(app['event_producer'])
     _update_public_interface_objs(app)
     yield
 

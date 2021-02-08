@@ -1,0 +1,1 @@
+Refactor out `gateway.events` and move common facilities to `common.events` to improve static typing of events and reduce possibility of serialization/deserialization bugs

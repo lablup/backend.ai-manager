@@ -14,9 +14,11 @@ from typing import (
 )
 
 import aioredis
+import attr
+
+from ai.backend.common.events import AbstractEvent, EventDispatcher, EventProducer
 
 from ai.backend.gateway.defs import REDIS_STREAM_DB
-from ai.backend.gateway.events import EventDispatcher
 from ai.backend.manager.distributed import GlobalTimer
 if TYPE_CHECKING:
     from ai.backend.common.types import AgentId
@@ -36,6 +38,20 @@ def dslice(start: Decimal, stop: Decimal, num: int):
     delta = stop - start
     step = delta / (num - 1)
     yield from (start + step * Decimal(tick) for tick in range(0, num))
+
+
+@attr.s(slots=True, frozen=True)
+class NoopEvent(AbstractEvent):
+    name = "_noop"
+
+    test_id: str = attr.ib()
+
+    def serialize(self) -> tuple:
+        return (self.test_id, )
+
+    @classmethod
+    def deserialize(cls, value: tuple):
+        return cls(value[0])
 
 
 class TimerNode(threading.Thread):
@@ -62,20 +78,25 @@ class TimerNode(threading.Thread):
         self.event_records = event_records
 
     async def timer_node_async(self) -> None:
-        redis_url = self.shared_config.get_redis_url(db=REDIS_STREAM_DB)
-        redis = await aioredis.create_redis(str(redis_url))
-        event_dispatcher = await EventDispatcher.new(self.local_config, self.shared_config)
 
-        async def _tick(context: Any, agent_id: AgentId, event_name: str, *args) -> None:
+        async def redis_connector():
+            redis_url = self.shared_config.get_redis_url(db=REDIS_STREAM_DB)
+            return await aioredis.create_redis(str(redis_url))
+
+        async def _tick(context: Any, source: AgentId, event: NoopEvent) -> None:
             self.event_records.put(time.monotonic())
 
-        event_dispatcher.consume(self.test_id, None, _tick)
+        redis = await redis_connector()
+        event_dispatcher = await EventDispatcher.new(redis_connector)
+        event_producer = await EventProducer.new(redis_connector)
+        event_dispatcher.consume(NoopEvent, None, _tick)
 
         await asyncio.sleep(self.join_delay)
         timer = GlobalTimer(
             redis,
-            event_dispatcher,
-            self.test_id,
+            "testing",
+            event_producer,
+            lambda: NoopEvent(self.test_id),
             self.interval,
         )
         try:
@@ -85,6 +106,7 @@ class TimerNode(threading.Thread):
             await timer.leave()
             redis.close()
             await redis.wait_closed()
+            await event_producer.close()
             await event_dispatcher.close()
 
     def run(self) -> None:
