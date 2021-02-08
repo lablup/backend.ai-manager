@@ -26,8 +26,18 @@ from dateutil.tz import tzutc
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import true
 
-from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.docker import ImageRef
+from ai.backend.common.events import (
+    AgentStartedEvent,
+    DoScheduleEvent,
+    SessionCancelledEvent,
+    SessionEnqueuedEvent,
+    SessionScheduledEvent,
+    SessionTerminatedEvent,
+    EventDispatcher,
+    EventProducer,
+)
+from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     aobject,
     AgentId,
@@ -39,7 +49,6 @@ from ai.backend.common.types import (
 from ai.backend.manager.exceptions import convert_to_status_data
 if TYPE_CHECKING:
     from ai.backend.gateway.config import LocalConfig, SharedConfig
-    from ai.backend.gateway.events import EventDispatcher
 
 from ai.backend.manager.distributed import GlobalTimer
 from ...gateway.defs import REDIS_STREAM_DB
@@ -121,6 +130,7 @@ class SchedulerDispatcher(aobject):
     lock_manager: aioredlock.Aioredlock
     timer_redis: aioredis.Redis
     event_dispatcher: EventDispatcher
+    event_producer: EventProducer
     schedule_timer: GlobalTimer
 
     def __init__(
@@ -128,21 +138,23 @@ class SchedulerDispatcher(aobject):
         local_config: LocalConfig,
         shared_config: SharedConfig,
         event_dispatcher: EventDispatcher,
+        event_producer: EventProducer,
         registry: AgentRegistry,
     ) -> None:
         self.local_config = local_config
         self.shared_config = shared_config
         self.event_dispatcher = event_dispatcher
+        self.event_producer = event_producer
         self.registry = registry
         self.dbpool = registry.dbpool
         self.schedule_lock_timeout = 120.0
 
     async def __ainit__(self) -> None:
         log.info('Session scheduler started')
-        self.registry.event_dispatcher.consume('session_enqueued', None, self.schedule)
-        self.registry.event_dispatcher.consume('session_terminated', None, self.schedule)
-        self.registry.event_dispatcher.consume('instance_started', None, self.schedule)
-        self.registry.event_dispatcher.consume('do_schedule', None, self.schedule)
+        self.registry.event_dispatcher.consume(SessionEnqueuedEvent, None, self.schedule)
+        self.registry.event_dispatcher.consume(SessionTerminatedEvent, None, self.schedule)
+        self.registry.event_dispatcher.consume(AgentStartedEvent, None, self.schedule)
+        self.registry.event_dispatcher.consume(DoScheduleEvent, None, self.schedule)
         redis_url = self.shared_config.get_redis_url(db=REDIS_STREAM_DB)
         self.lock_manager = aioredlock.Aioredlock(
             [str(redis_url)],
@@ -153,8 +165,9 @@ class SchedulerDispatcher(aobject):
         self.timer_redis = await aioredis.create_redis(str(redis_url))
         self.schedule_timer = GlobalTimer(
             self.timer_redis,
-            self.event_dispatcher,
-            'do_schedule',
+            "scheduler_tick",
+            self.event_producer,
+            lambda: DoScheduleEvent(),
             interval=10.0,
         )
         await self.schedule_timer.join()
@@ -168,9 +181,8 @@ class SchedulerDispatcher(aobject):
     async def schedule(
         self,
         context: None,
-        agent_id: AgentId,
-        event_name: str,
-        *args,
+        source: AgentId,
+        event: SessionEnqueuedEvent | SessionTerminatedEvent | AgentStartedEvent | DoScheduleEvent,
     ) -> None:
         try:
             lock = await self.lock_manager.lock(
@@ -594,9 +606,8 @@ class SchedulerDispatcher(aobject):
         log_fmt = _log_fmt.get()
         log.debug(log_fmt + 'try-starting', *log_args)
         sess_ctx = session_agent_binding[0]
-        await self.registry.event_dispatcher.produce_event(
-            'session_scheduled',
-            (str(sess_ctx.session_id), sess_ctx.session_creation_id, ),
+        await self.registry.event_producer.produce_event(
+            SessionScheduledEvent(sess_ctx.session_id, sess_ctx.session_creation_id)
         )
         try:
             assert len(session_agent_binding[1]) > 0
@@ -639,9 +650,10 @@ class SchedulerDispatcher(aobject):
                     'terminated_at': now,
                 }).where(kernels.c.session_id == sess_ctx.session_id)
                 await db_conn.execute(query)
-            await self.registry.event_dispatcher.produce_event(
-                'session_cancelled',
-                (str(sess_ctx.session_id), sess_ctx.session_creation_id, 'failed-to-start'),
+            await self.registry.event_producer.produce_event(
+                SessionCancelledEvent(
+                    sess_ctx.session_id, sess_ctx.session_creation_id, "failed-to-start",
+                )
             )
         else:
             log.info(log_fmt + 'started', *log_args)

@@ -4,42 +4,51 @@ import asyncio
 import logging
 import time
 from typing import (
-    Awaitable, Callable, Final, Optional,
-    Literal, Union,
+    Awaitable,
+    Callable,
+    Final,
+    Literal,
+    Optional,
+    Union,
     Set,
+    Type,
 )
 import uuid
 
 from aiojobs import Scheduler
-import attr
 
 from ai.backend.common import redis
+from ai.backend.common.events import (
+    BgtaskCancelledEvent,
+    BgtaskDoneEvent,
+    BgtaskFailedEvent,
+    BgtaskUpdatedEvent,
+    EventProducer,
+)
 from ai.backend.common.logging import BraceStyleAdapter
 
-from ..gateway.events import EventDispatcher
-from .types import BackgroundTaskEventArgs
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.background'))
 
 MAX_BGTASK_ARCHIVE_PERIOD = 86400  # 24  hours
 
-TaskResult = Literal['task_done', 'task_cancelled', 'task_failed']
+TaskResult = Literal['bgtask_done', 'bgtask_cancelled', 'bgtask_failed']
 
 
 class ProgressReporter:
-    event_dispatcher: Final[EventDispatcher]
+    event_producer: Final[EventProducer]
     task_id: Final[uuid.UUID]
     total_progress: Union[int, float]
     current_progress: Union[int, float]
 
     def __init__(
         self,
-        event_dispatcher: EventDispatcher,
+        event_dispatcher: EventProducer,
         task_id: uuid.UUID,
         current_progress: int = 0,
         total_progress: int = 0,
     ) -> None:
-        self.event_dispatcher = event_dispatcher
+        self.event_producer = event_dispatcher
         self.task_id = task_id
         self.current_progress = current_progress
         self.total_progress = total_progress
@@ -49,7 +58,7 @@ class ProgressReporter:
         # keep the state as local variables because they might be changed
         # due to interleaving at await statements below.
         current, total = self.current_progress, self.total_progress
-        redis_producer = self.event_dispatcher.redis_producer
+        redis_producer = self.event_producer.redis_producer
 
         def _pipe_builder():
             pipe = redis_producer.pipeline()
@@ -64,14 +73,12 @@ class ProgressReporter:
             return pipe
 
         await redis.execute_with_retries(_pipe_builder, max_retries=2)
-        await self.event_dispatcher.produce_event(
-            'task_updated', (
-                attr.asdict(BackgroundTaskEventArgs(
-                    str(self.task_id),
-                    message=message,
-                    current_progress=current,
-                    total_progress=total,
-                )),
+        await self.event_producer.produce_event(
+            BgtaskUpdatedEvent(
+                self.task_id,
+                message=message,
+                current_progress=current,
+                total_progress=total,
             )
         )
 
@@ -80,11 +87,11 @@ BackgroundTask = Callable[[ProgressReporter], Awaitable[Optional[str]]]
 
 
 class BackgroundTaskManager:
-    event_dispatcher: EventDispatcher
+    event_producer: EventProducer
     ongoing_tasks: Set[asyncio.Task]
 
-    def __init__(self, event_dispatcher: EventDispatcher) -> None:
-        self.event_dispatcher = event_dispatcher
+    def __init__(self, event_producer: EventProducer) -> None:
+        self.event_producer = event_producer
         self.ongoing_tasks = set()
 
     async def start(
@@ -95,7 +102,7 @@ class BackgroundTaskManager:
         sched: Scheduler = None,
     ) -> uuid.UUID:
         task_id = uuid.uuid4()
-        redis_producer = self.event_dispatcher.redis_producer
+        redis_producer = self.event_producer.redis_producer
 
         def _pipe_builder():
             pipe = redis_producer.pipeline()
@@ -130,25 +137,29 @@ class BackgroundTaskManager:
         task_name: Optional[str],
     ) -> None:
         task_result: TaskResult
-        reporter = ProgressReporter(self.event_dispatcher, task_id)
+        reporter = ProgressReporter(self.event_producer, task_id)
         message = ''
+        event_cls: Type[BgtaskDoneEvent] | Type[BgtaskCancelledEvent] | Type[BgtaskFailedEvent]
         try:
             message = await func(reporter) or ''
-            task_result = 'task_done'
+            task_result = 'bgtask_done'
+            event_cls = BgtaskDoneEvent
         except asyncio.CancelledError:
-            task_result = 'task_cancelled'
+            task_result = 'bgtask_cancelled'
+            event_cls = BgtaskCancelledEvent
         except Exception as e:
-            task_result = 'task_failed'
+            task_result = 'bgtask_failed'
+            event_cls = BgtaskFailedEvent
             message = repr(e)
             log.exception("Task {} ({}): unhandled error", task_id, task_name)
         finally:
-            redis_producer = self.event_dispatcher.redis_producer
+            redis_producer = self.event_producer.redis_producer
 
             def _pipe_builder():
                 pipe = redis_producer.pipeline()
                 tracker_key = f'bgtask.{task_id}'
                 pipe.hmset_dict(tracker_key, {
-                    'status': task_result[5:],  # strip "task_"
+                    'status': task_result[7:],  # strip "bgtask_"
                     'msg': message,
                     'last_update': str(time.time()),
                 })
@@ -156,12 +167,10 @@ class BackgroundTaskManager:
                 return pipe
 
             await redis.execute_with_retries(_pipe_builder, max_retries=2)
-            await self.event_dispatcher.produce_event(
-                task_result, (
-                    attr.asdict(BackgroundTaskEventArgs(
-                        str(task_id),
-                        message=message,
-                    )),
+            await self.event_producer.produce_event(
+                event_cls(
+                    task_id,
+                    message=message,
                 )
             )
             log.info('Task {} ({}): {}', task_id, task_name or '', task_result)

@@ -1,22 +1,10 @@
-import enum
-
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 from .base import metadata, IDColumn, GUID
 __all__ = [
     'error_logs',
-    'LogSeverity'
 ]
-
-
-class LogSeverity(str, enum.Enum):
-    CRITICAL = 'critical'
-    ERROR = 'error'
-    WARNING = 'warning'
-    INFO = 'info'
-    DEBUG = 'debug'
-
 
 error_logs = sa.Table(
     'error_logs', metadata,

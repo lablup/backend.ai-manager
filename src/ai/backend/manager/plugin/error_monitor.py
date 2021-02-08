@@ -5,27 +5,33 @@ from typing import Any, Mapping
 
 from aiohttp import web
 
+from ai.backend.common.events import AgentErrorEvent, EventDispatcher
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
-    AgentId
+    AgentId,
+    LogSeverity,
 )
 from ai.backend.common.plugin.monitor import AbstractErrorReporterPlugin
-from ..models import error_logs, LogSeverity
+from ..models import error_logs
 from .exceptions import PluginError
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
 
 class ErrorMonitor(AbstractErrorReporterPlugin):
+
+    event_dispatcher: EventDispatcher
+
     async def init(self, context: Any = None) -> None:
         if context is None or 'app' not in context:
             raise PluginError('App was not passed in to ErrorMonitor plugin')
         app = context['app']
-        app['event_dispatcher'].consume('agent_error', app, self.handle_agent_error)
+        self.event_dispatcher = app['event_dispatcher']
+        self._evh = self.event_dispatcher.consume(AgentErrorEvent, app, self.handle_agent_error)
         self.dbpool = app['dbpool']
 
     async def cleanup(self) -> None:
-        pass
+        self.event_dispatcher.unconsume(self._evh)
 
     async def update_plugin_config(self, plugin_config: Mapping[str, Any]) -> None:
         pass
@@ -77,26 +83,21 @@ class ErrorMonitor(AbstractErrorReporterPlugin):
     async def handle_agent_error(
         self,
         app: web.Application,
-        agent_id: AgentId,
-        event_name: str,
-        # additional event args
-        message: str,
-        traceback: str = None,
-        user: Any = None,
-        context_env: Mapping[str, Any] = None,
-        severity: LogSeverity = None,
+        source: AgentId,
+        event: AgentErrorEvent,
     ) -> None:
-        if severity is None:
-            severity = LogSeverity.ERROR
         async with self.dbpool.acquire() as conn, conn.begin():
             query = error_logs.insert().values({
-                'severity': severity,
-                'source': 'agent',
-                'user': user,
-                'message': message,
+                'severity': event.severity,
+                'source': source,
+                'user': event.user,
+                'message': event.message,
                 'context_lang': 'python',
-                'context_env': context_env,
-                'traceback': traceback
+                'context_env': event.context_env,
+                'traceback': event.traceback
             })
             await conn.execute(query)
-        log.debug('Agent log collected: {}', message)
+        log.debug(
+            'collected AgentErrorEvent: [{}:{}] {}',
+            source, event.severity, event.message,
+        )

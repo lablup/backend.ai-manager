@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import (
+    Callable,
     Final,
     TYPE_CHECKING,
 )
@@ -10,7 +11,7 @@ from aioredis import Redis
 from aioredlock import Aioredlock, LockError
 
 if TYPE_CHECKING:
-    from ..gateway.events import EventDispatcher
+    from ai.backend.common.events import AbstractEvent, EventProducer
 
 
 class GlobalTimer:
@@ -21,19 +22,20 @@ class GlobalTimer:
     """
 
     _lock_manager: Final[Aioredlock]
-    _event_dispatcher: Final[EventDispatcher]
+    _event_producer: Final[EventProducer]
 
     def __init__(
         self,
         redis: Redis,
-        event_dispatcher: EventDispatcher,
-        event_name: str,
+        timer_name: str,
+        event_producer: EventProducer,
+        event_factory: Callable[[], AbstractEvent],
         interval: float = 10.0,
     ) -> None:
         self._lock_manager = Aioredlock([redis])
-        self._event_dispatcher = event_dispatcher
-        self.event_name = event_name
-        self.lock_key = f"timer.{event_name}.lock"
+        self._event_producer = event_producer
+        self._event_factory = event_factory
+        self.lock_key = f"timer.{timer_name}.lock"
         self.interval = interval
 
     async def generate_tick(self) -> None:
@@ -43,7 +45,7 @@ class GlobalTimer:
                     async with (
                         await self._lock_manager.lock(self.lock_key, lock_timeout=self.interval)
                     ) as lock:
-                        await self._event_dispatcher.produce_event(self.event_name)
+                        await self._event_producer.produce_event(self._event_factory())
                         await self._lock_manager.extend(lock, lock_timeout=self.interval)
                         await asyncio.sleep(self.interval)
                 except LockError:

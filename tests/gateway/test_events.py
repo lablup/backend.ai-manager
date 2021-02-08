@@ -1,56 +1,85 @@
+from __future__ import annotations
+
 import asyncio
 
 from aiohttp import web
+import attr
 import pytest
 
+from ai.backend.common.events import (
+    AbstractEvent,
+    BgtaskDoneEvent,
+    BgtaskFailedEvent,
+    BgtaskUpdatedEvent,
+    EventDispatcher,
+    EventProducer,
+)
+from ai.backend.manager.background import BackgroundTaskManager
 from ai.backend.gateway.server import (
     shared_config_ctx, event_dispatcher_ctx, background_task_ctx,
 )
-from ai.backend.manager.types import BackgroundTaskEventArgs
 from ai.backend.common.types import (
     AgentId,
 )
 
 
+@attr.s(slots=True, frozen=True)
+class TestEvent(AbstractEvent):
+    name = "testing"
+
+    value: int = attr.ib()
+
+    def serialize(self) -> tuple:
+        return (self.value + 1, )
+
+    @classmethod
+    def deserialize(cls, value: tuple):
+        return cls(value[0] + 1)
+
+
 @pytest.mark.asyncio
-async def test_dispatch(etcd_fixture, create_app_and_client):
+async def test_dispatch(etcd_fixture, create_app_and_client) -> None:
     app, client = await create_app_and_client(
         [shared_config_ctx, event_dispatcher_ctx],
         ['.events'],
     )
-    dispatcher = app['event_dispatcher']
+    producer: EventProducer = app['event_producer']
+    dispatcher: EventDispatcher = app['event_dispatcher']
 
-    records = {'test-var': set()}
-    event_name = 'test-event-01'
+    records = set()
 
-    async def acb(app_ctx: web.Application, agent_id: AgentId, event_name: str):
-        assert app_ctx is app
-        assert agent_id == AgentId('i-test')
-        assert event_name == 'test-event-01'
-        records['test-var'].add('async')
+    async def acb(context: web.Application, source: AgentId, event: TestEvent) -> None:
+        assert context is app
+        assert source == AgentId('i-test')
+        assert isinstance(event, TestEvent)
+        assert event.name == "testing"
+        assert event.value == 1001
+        await asyncio.sleep(0.01)
+        records.add('async')
 
-    def scb(app_ctx: web.Application, agent_id: AgentId, event_name: str):
-        assert app_ctx is app
-        assert agent_id == AgentId('i-test')
-        assert event_name == 'test-event-01'
-        records['test-var'].add('sync')
+    def scb(context: web.Application, source: AgentId, event: TestEvent) -> None:
+        assert context is app
+        assert source == AgentId('i-test')
+        assert isinstance(event, TestEvent)
+        assert event.name == "testing"
+        assert event.value == 1001
+        records.add('sync')
 
-    dispatcher.subscribe(event_name, app, acb)
-    dispatcher.subscribe(event_name, app, scb)
+    dispatcher.subscribe(TestEvent, app, acb)
+    dispatcher.subscribe(TestEvent, app, scb)
 
     # Dispatch the event
-    await dispatcher.produce_event(event_name, agent_id='i-test')
+    await producer.produce_event(TestEvent(999), source='i-test')
     await asyncio.sleep(0.2)
-    assert len(records['test-var']) == 2
-    assert 'async' in records['test-var']
-    assert 'sync' in records['test-var']
+    assert records == {'async', 'sync'}
 
-    await dispatcher.redis_producer.flushdb()
+    await producer.redis_producer.flushdb()
+    await producer.close()
     await dispatcher.close()
 
 
 @pytest.mark.asyncio
-async def test_error_on_dispatch(etcd_fixture, create_app_and_client, event_loop):
+async def test_error_on_dispatch(etcd_fixture, create_app_and_client, event_loop) -> None:
 
     def handle_exception(loop, context):
         exc = context['exception']
@@ -61,28 +90,28 @@ async def test_error_on_dispatch(etcd_fixture, create_app_and_client, event_loop
         ['.events'],
         scheduler_opts={'exception_handler': handle_exception},
     )
-    dispatcher = app['event_dispatcher']
+    producer: EventProducer = app['event_producer']
+    dispatcher: EventDispatcher = app['event_dispatcher']
     old_handler = event_loop.get_exception_handler()
     event_loop.set_exception_handler(handle_exception)
 
-    exception_log = []
-    event_name = 'test-event-02'
+    exception_log: list[str] = []
 
-    async def acb(app_ctx: web.Application, agent_id: AgentId, event_name: str):
-        assert app_ctx is app
-        assert agent_id == AgentId('i-test')
-        assert event_name == 'test-event-02'
+    async def acb(context: web.Application, source: AgentId, event: TestEvent) -> None:
+        assert context is app
+        assert source == AgentId('i-test')
+        assert isinstance(event, TestEvent)
         raise ZeroDivisionError
 
-    def scb(app_ctx: web.Application, agent_id: AgentId, event_name: str):
-        assert app_ctx is app
-        assert agent_id == AgentId('i-test')
-        assert event_name == 'test-event-02'
+    def scb(context: web.Application, source: AgentId, event: TestEvent) -> None:
+        assert context is app
+        assert source == AgentId('i-test')
+        assert isinstance(event, TestEvent)
         raise OverflowError
 
-    dispatcher.subscribe(event_name, app, scb)
-    dispatcher.subscribe(event_name, app, acb)
-    await dispatcher.produce_event(event_name, agent_id='i-test')
+    dispatcher.subscribe(TestEvent, app, scb)
+    dispatcher.subscribe(TestEvent, app, acb)
+    await producer.produce_event(TestEvent(0), source='i-test')
     await asyncio.sleep(0.2)
     assert len(exception_log) == 2
     assert 'ZeroDivisionError' in exception_log
@@ -90,32 +119,40 @@ async def test_error_on_dispatch(etcd_fixture, create_app_and_client, event_loop
 
     event_loop.set_exception_handler(old_handler)
 
-    await dispatcher.redis_producer.flushdb()
+    await producer.redis_producer.flushdb()
+    await producer.close()
     await dispatcher.close()
 
 
 @pytest.mark.asyncio
-async def test_background_task(etcd_fixture, create_app_and_client):
+async def test_background_task(etcd_fixture, create_app_and_client) -> None:
     app, client = await create_app_and_client(
         [shared_config_ctx, event_dispatcher_ctx, background_task_ctx],
         ['.events'],
     )
-    dispatcher = app['event_dispatcher']
+    producer: EventProducer = app['event_producer']
+    dispatcher: EventDispatcher = app['event_dispatcher']
     update_handler_ctx = {}
     done_handler_ctx = {}
 
-    async def update_sub(app_ctx: web.Application, agent_id: AgentId, event_name: str,
-                         args: BackgroundTaskEventArgs) -> None:
+    async def update_sub(
+        context: web.Application,
+        source: AgentId,
+        event: BgtaskUpdatedEvent,
+    ) -> None:
         # Copy the arguments to the uppser scope
         # since assertions inside the handler does not affect the test result
         # because the handlers are executed inside a separate asyncio task.
-        update_handler_ctx['event_name'] = event_name
-        update_handler_ctx.update(**args)
+        update_handler_ctx['event_name'] = event.name
+        update_handler_ctx.update(**attr.asdict(event))
 
-    async def done_sub(app_ctx: web.Application, agent_id: AgentId, event_name: str,
-                       args: BackgroundTaskEventArgs) -> None:
-        done_handler_ctx['event_name'] = event_name
-        done_handler_ctx.update(**args)
+    async def done_sub(
+        context: web.Application,
+        source: AgentId,
+        event: BgtaskDoneEvent,
+    ) -> None:
+        done_handler_ctx['event_name'] = event.name
+        done_handler_ctx.update(**attr.asdict(event))
 
     async def _mock_task(reporter):
         reporter.total_progress = 2
@@ -125,41 +162,47 @@ async def test_background_task(etcd_fixture, create_app_and_client):
         await reporter.update(1, message='BGTask ex2')
         return 'hooray'
 
-    dispatcher.subscribe('task_updated', app, update_sub)
-    dispatcher.subscribe('task_done', app, done_sub)
-    task_id = await app['background_task_manager'].start(_mock_task, name='MockTask1234')
+    dispatcher.subscribe(BgtaskUpdatedEvent, app, update_sub)
+    dispatcher.subscribe(BgtaskDoneEvent, app, done_sub)
+    bgtask_manager: BackgroundTaskManager = app['background_task_manager']
+    task_id = await bgtask_manager.start(_mock_task, name='MockTask1234')
     await asyncio.sleep(2)
 
     try:
-        assert update_handler_ctx['task_id'] == str(task_id)
-        assert update_handler_ctx['event_name'] == 'task_updated'
+        assert update_handler_ctx['task_id'] == task_id
+        assert update_handler_ctx['event_name'] == 'bgtask_updated'
         assert update_handler_ctx['total_progress'] == 2
         assert update_handler_ctx['message'] in ['BGTask ex1', 'BGTask ex2']
         if update_handler_ctx['message'] == 'BGTask ex1':
             assert update_handler_ctx['current_progress'] == 1
         else:
             assert update_handler_ctx['current_progress'] == 2
-        assert done_handler_ctx['task_id'] == str(task_id)
-        assert done_handler_ctx['event_name'] == 'task_done'
+        assert done_handler_ctx['task_id'] == task_id
+        assert done_handler_ctx['event_name'] == 'bgtask_done'
         assert done_handler_ctx['message'] == 'hooray'
     finally:
-        await dispatcher.redis_producer.flushdb()
+        await producer.redis_producer.flushdb()
+        await producer.close()
         await dispatcher.close()
 
 
 @pytest.mark.asyncio
-async def test_background_task_fail(etcd_fixture, create_app_and_client):
+async def test_background_task_fail(etcd_fixture, create_app_and_client) -> None:
     app, client = await create_app_and_client(
         [shared_config_ctx, event_dispatcher_ctx, background_task_ctx],
         ['.events'],
     )
-    dispatcher = app['event_dispatcher']
+    producer: EventProducer = app['event_producer']
+    dispatcher: EventDispatcher = app['event_dispatcher']
     fail_handler_ctx = {}
 
-    async def fail_sub(app_ctx: web.Application, agent_id: AgentId, event_name: str,
-                       args: BackgroundTaskEventArgs) -> None:
-        fail_handler_ctx['event_name'] = event_name
-        fail_handler_ctx.update(**args)
+    async def fail_sub(
+        context: web.Application,
+        source: AgentId,
+        event: BgtaskFailedEvent,
+    ) -> None:
+        fail_handler_ctx['event_name'] = event.name
+        fail_handler_ctx.update(**attr.asdict(event))
 
     async def _mock_task(reporter):
         reporter.total_progress = 2
@@ -167,14 +210,16 @@ async def test_background_task_fail(etcd_fixture, create_app_and_client):
         await reporter.update(1, message='BGTask ex1')
         raise ZeroDivisionError('oops')
 
-    dispatcher.subscribe('task_failed', app, fail_sub)
-    task_id = await app['background_task_manager'].start(_mock_task, name='MockTask1234')
+    dispatcher.subscribe(BgtaskFailedEvent, app, fail_sub)
+    bgtask_manager: BackgroundTaskManager = app['background_task_manager']
+    task_id = await bgtask_manager.start(_mock_task, name='MockTask1234')
     await asyncio.sleep(2)
     try:
-        assert fail_handler_ctx['task_id'] == str(task_id)
-        assert fail_handler_ctx['event_name'] == 'task_failed'
+        assert fail_handler_ctx['task_id'] == task_id
+        assert fail_handler_ctx['event_name'] == 'bgtask_failed'
         assert fail_handler_ctx['message'] is not None
         assert 'ZeroDivisionError' in fail_handler_ctx['message']
     finally:
-        await dispatcher.redis_producer.flushdb()
+        await producer.redis_producer.flushdb()
+        await producer.close()
         await dispatcher.close()

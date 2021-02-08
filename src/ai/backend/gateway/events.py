@@ -1,251 +1,65 @@
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict
-import functools
 import logging
 import json
 from typing import (
     Any,
     AsyncIterator,
-    Awaitable,
     Final,
-    Generic,
     Iterable,
     Mapping,
-    MutableMapping,
-    Protocol,
-    Sequence,
     Set,
     Tuple,
     Union,
-    TypeVar,
     TYPE_CHECKING,
-    cast,
 )
-import uuid
-import weakref
 
 from aiohttp import web
 import aiohttp_cors
 from aiohttp_sse import sse_response
-import aioredis
 from aiotools import adefer
-import attr
 import sqlalchemy as sa
 import trafaret as t
 
-from ai.backend.common import msgpack, redis
 from ai.backend.common import validators as tx
-from ai.backend.common.logging import BraceStyleAdapter
-from ai.backend.common.types import (
-    aobject,
-    AgentId,
+from ai.backend.common.events import (
+    BgtaskCancelledEvent,
+    BgtaskDoneEvent,
+    BgtaskFailedEvent,
+    BgtaskUpdatedEvent,
+    EventDispatcher,
+    KernelCancelledEvent,
+    KernelCreatingEvent,
+    KernelPreparingEvent,
+    KernelPullingEvent,
+    KernelStartedEvent,
+    KernelTerminatedEvent,
+    KernelTerminatingEvent,
+    SessionCancelledEvent,
+    SessionEnqueuedEvent,
+    SessionFailureEvent,
+    SessionScheduledEvent,
+    SessionStartedEvent,
+    SessionSuccessEvent,
+    SessionTerminatedEvent,
 )
+from ai.backend.common.logging import BraceStyleAdapter
+from ai.backend.common.types import AgentId
 from .auth import auth_required
-from .defs import REDIS_STREAM_DB
 from .exceptions import GenericNotFound, GenericForbidden, GroupNotFound
 from .manager import READ_ALLOWED, server_status_required
 from .utils import check_api_params
 from ..manager.models import kernels, groups, UserRole
-from ..manager.types import BackgroundTaskEventArgs, Sentinel
+from ..manager.types import Sentinel
 if TYPE_CHECKING:
     from .types import CORSOptions, WebMiddleware
-    from ..gateway.config import LocalConfig, SharedConfig
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.events'))
 
 sentinel: Final = Sentinel.token
 
-C = TypeVar('C', contravariant=True)
-
-
-class EventCallback(Protocol[C]):
-    async def __call__(
-        self,
-        context: C,
-        agent_id: AgentId,
-        event_name: str,
-        *args: Any,
-    ) -> None:
-        ...
-
-
-@attr.s(auto_attribs=True, slots=True, frozen=True, eq=False, order=False)
-class EventHandler(Generic[C]):
-    context: C
-    callback: EventCallback[C]
-
-
-class EventDispatcher(aobject):
-    '''
-    We have two types of event handlers: consumer and subscriber.
-
-    Consumers use the distribution pattern. Only one consumer among many manager worker processes
-    receives the event.
-
-    Consumer example: database updates upon specific events.
-
-    Subscribers use the broadcast pattern. All subscribers in many manager worker processes
-    receive the same event.
-
-    Subscriber example: enqueuing events to the queues for event streaming API handlers
-    '''
-
-    consumers: MutableMapping[str, Set[EventHandler[Any]]]
-    subscribers: MutableMapping[str, Set[EventHandler[Any]]]
-    redis_producer: aioredis.Redis
-    redis_consumer: aioredis.Redis
-    redis_subscriber: aioredis.Redis
-    consumer_loop_task: asyncio.Task
-    subscriber_loop_task: asyncio.Task
-    producer_lock: asyncio.Lock
-    consumer_taskset: weakref.WeakSet[asyncio.Task]
-    subscriber_taskset: weakref.WeakSet[asyncio.Task]
-
-    def __init__(self, local_config: LocalConfig, shared_config: SharedConfig) -> None:
-        self.local_config = local_config
-        self.shared_config = shared_config
-        self.consumers = defaultdict(set)
-        self.subscribers = defaultdict(set)
-
-    async def __ainit__(self) -> None:
-        self.redis_producer = await self._create_redis()
-        self.redis_consumer = await self._create_redis()
-        self.redis_subscriber = await self._create_redis()
-        self.consumer_loop_task = asyncio.create_task(self._consume_loop())
-        self.subscriber_loop_task = asyncio.create_task(self._subscribe_loop())
-        self.producer_lock = asyncio.Lock()
-        self.consumer_taskset = weakref.WeakSet()
-        self.subscriber_taskset = weakref.WeakSet()
-
-    async def _create_redis(self):
-        redis_url = self.shared_config.get_redis_url(db=REDIS_STREAM_DB)
-        return await redis.connect_with_retries(str(redis_url), encoding=None)
-
-    async def close(self) -> None:
-        cancelled_tasks = []
-        for task in self.consumer_taskset:
-            if not task.done():
-                task.cancel()
-                cancelled_tasks.append(task)
-        for task in self.subscriber_taskset:
-            if not task.done():
-                task.cancel()
-                cancelled_tasks.append(task)
-        self.consumer_loop_task.cancel()
-        self.subscriber_loop_task.cancel()
-        cancelled_tasks.append(self.consumer_loop_task)
-        cancelled_tasks.append(self.subscriber_loop_task)
-        await asyncio.gather(*cancelled_tasks, return_exceptions=True)
-        self.redis_producer.close()
-        self.redis_consumer.close()
-        self.redis_subscriber.close()
-        await self.redis_producer.wait_closed()
-        await self.redis_consumer.wait_closed()
-        await self.redis_subscriber.wait_closed()
-
-    def consume(self, event_name: str, context: C, callback: EventCallback[C]) -> EventHandler[C]:
-        handler = EventHandler(context, callback)
-        self.consumers[event_name].add(handler)
-        return handler
-
-    def unconsume(self, event_name: str, handler: EventHandler[Any]) -> None:
-        self.consumers[event_name].discard(handler)
-
-    def subscribe(self, event_name: str, context: C, callback: EventCallback[C]) -> EventHandler[C]:
-        handler = EventHandler(context, callback)
-        self.subscribers[event_name].add(handler)
-        return handler
-
-    def unsubscribe(self, event_name: str, handler: EventHandler[Any]) -> None:
-        self.subscribers[event_name].discard(handler)
-
-    async def produce_event(self, event_name: str,
-                            args: Sequence[Any] = tuple(), *,
-                            agent_id: str = 'manager') -> None:
-        raw_msg = msgpack.packb({
-            'event_name': event_name,
-            'agent_id': agent_id,
-            'args': args,
-        })
-        async with self.producer_lock:
-            def _pipe_builder():
-                pipe = self.redis_producer.pipeline()
-                pipe.rpush('events.prodcons', raw_msg)
-                pipe.publish('events.pubsub', raw_msg)
-                return pipe
-            await redis.execute_with_retries(_pipe_builder)
-
-    async def dispatch_consumers(self, event_name: str, agent_id: AgentId,
-                                 args: Tuple[Any, ...] = tuple()) -> None:
-        log_fmt = 'DISPATCH_CONSUMERS(ev:{}, ag:{})'
-        log_args = (event_name, agent_id)
-        if self.local_config['debug']['log-events']:
-            log.debug(log_fmt, *log_args)
-        loop = asyncio.get_running_loop()
-        for consumer in self.consumers[event_name]:
-            cb = consumer.callback
-            if asyncio.iscoroutine(cb):
-                self.consumer_taskset.add(asyncio.create_task(cast(Awaitable, cb)))
-            elif asyncio.iscoroutinefunction(cb):
-                self.consumer_taskset.add(asyncio.create_task(
-                    cb(consumer.context, agent_id, event_name, *args)
-                ))
-            else:
-                cb = functools.partial(cb, consumer.context, agent_id, event_name, *args)
-                loop.call_soon(cb)
-
-    async def dispatch_subscribers(self, event_name: str, agent_id: AgentId,
-                                   args: Tuple[Any, ...] = tuple()) -> None:
-        log_fmt = 'DISPATCH_SUBSCRIBERS(ev:{}, ag:{})'
-        log_args = (event_name, agent_id)
-        if self.local_config['debug']['log-events']:
-            log.debug(log_fmt, *log_args)
-        loop = asyncio.get_running_loop()
-        for subscriber in self.subscribers[event_name]:
-            cb = subscriber.callback
-            if asyncio.iscoroutine(cb):
-                self.subscriber_taskset.add(asyncio.create_task(cast(Awaitable, cb)))
-            elif asyncio.iscoroutinefunction(cb):
-                self.subscriber_taskset.add(asyncio.create_task(
-                    cb(subscriber.context, agent_id, event_name, *args)
-                ))
-            else:
-                cb = functools.partial(cb, subscriber.context, agent_id, event_name, *args)
-                loop.call_soon(cb)
-
-    async def _consume_loop(self) -> None:
-        while True:
-            try:
-                key, raw_msg = await redis.execute_with_retries(
-                    lambda: self.redis_consumer.blpop('events.prodcons'))
-                msg = msgpack.unpackb(raw_msg)
-                await self.dispatch_consumers(msg['event_name'],
-                                              msg['agent_id'],
-                                              msg['args'])
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                log.exception('EventDispatcher.consume(): unexpected-error')
-
-    async def _subscribe_loop(self) -> None:
-
-        async def _subscribe_impl():
-            channels = await self.redis_subscriber.subscribe('events.pubsub')
-            async for raw_msg in channels[0].iter():
-                msg = msgpack.unpackb(raw_msg)
-                await self.dispatch_subscribers(msg['event_name'],
-                                                msg['agent_id'],
-                                                msg['args'])
-
-        while True:
-            try:
-                await redis.execute_with_retries(lambda: _subscribe_impl())
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                log.exception('EventDispatcher.subscribe(): unexpected-error')
+BgtaskEvents = Union[BgtaskUpdatedEvent, BgtaskDoneEvent, BgtaskCancelledEvent, BgtaskFailedEvent]
 
 
 @server_status_required(READ_ALLOWED)
@@ -382,31 +196,28 @@ async def push_background_task_events(
         return resp
 
     # It is an ongoing task.
-    task_update_queues = app['task_update_queues']  # type: Set[asyncio.Queue]
-    my_queue = asyncio.Queue()  # type: asyncio.Queue[Union[Sentinel, Tuple[str, Any]]]
+    task_update_queues: Set[asyncio.Queue] = app['task_update_queues']
+    my_queue: asyncio.Queue[BgtaskEvents | Sentinel] = asyncio.Queue()
     task_update_queues.add(my_queue)
     defer(lambda: task_update_queues.remove(my_queue))
     try:
         async with sse_response(request) as resp:
             while True:
-                event_args = await my_queue.get()
+                event = await my_queue.get()
                 try:
-                    if event_args is sentinel:
+                    if event is sentinel:
                         break
-                    event_name = event_args[0]
-                    event_data = BackgroundTaskEventArgs(**event_args[1])
-                    if task_id != uuid.UUID(event_data.task_id):
+                    if task_id != event.task_id:
                         continue
                     body = {
                         'task_id': str(task_id),
-                        'message': event_data.message,
+                        'message': event.message,
                     }
-                    if event_data.current_progress is not None:
-                        body['current_progress'] = event_data.current_progress
-                    if event_data.total_progress is not None:
-                        body['total_progress'] = event_data.total_progress
-                    await resp.send(json.dumps(body), event=event_name, retry=5)
-                    if event_name in ('task_done', 'task_failed', 'task_cancelled'):
+                    if isinstance(event, BgtaskUpdatedEvent):
+                        body['current_progress'] = event.current_progress
+                        body['total_progress'] = event.total_progress
+                    await resp.send(json.dumps(body), event=event.name, retry=5)
+                    if event.name in ('bgtask_done', 'bgtask_failed', 'bgtask_cancelled'):
                         await resp.send('{}', event="server_close")
                         break
                 finally:
@@ -415,18 +226,11 @@ async def push_background_task_events(
         return resp
 
 
-async def enqueue_kernel_status_update_with_creation_id(
+async def enqueue_kernel_creation_status_update(
     app: web.Application,
-    agent_id: AgentId,
-    event_name: str,
-    raw_kernel_id: str,
-    kernel_creation_id: str,
-    reason: str = None,
-    exit_code: int = None,
+    source: AgentId,
+    event: KernelPreparingEvent | KernelPullingEvent | KernelCreatingEvent | KernelStartedEvent,
 ) -> None:
-    if raw_kernel_id is None:
-        return
-    kernel_id = uuid.UUID(raw_kernel_id)
 
     async def _fetch():
         async with app['dbpool'].acquire() as conn, conn.begin():
@@ -444,7 +248,7 @@ async def enqueue_kernel_status_update_with_creation_id(
                 ])
                 .select_from(kernels)
                 .where(
-                    (kernels.c.id == kernel_id)
+                    (kernels.c.id == event.kernel_id)
                 )
             )
             result = await conn.execute(query)
@@ -454,20 +258,14 @@ async def enqueue_kernel_status_update_with_creation_id(
     if row is None:
         return
     for q in app['session_event_queues']:
-        q.put_nowait((event_name, row, reason))
+        q.put_nowait((event.name, row, event.reason))
 
 
-async def enqueue_kernel_status_update(
+async def enqueue_kernel_termination_status_update(
     app: web.Application,
     agent_id: AgentId,
-    event_name: str,
-    raw_kernel_id: str,
-    reason: str = None,
-    exit_code: int = None,
+    event: KernelCancelledEvent | KernelTerminatingEvent | KernelTerminatedEvent,
 ) -> None:
-    if raw_kernel_id is None:
-        return
-    kernel_id = uuid.UUID(raw_kernel_id)
 
     async def _fetch():
         async with app['dbpool'].acquire() as conn, conn.begin():
@@ -485,7 +283,7 @@ async def enqueue_kernel_status_update(
                 ])
                 .select_from(kernels)
                 .where(
-                    (kernels.c.id == kernel_id)
+                    (kernels.c.id == event.kernel_id)
                 )
             )
             result = await conn.execute(query)
@@ -495,21 +293,14 @@ async def enqueue_kernel_status_update(
     if row is None:
         return
     for q in app['session_event_queues']:
-        q.put_nowait((event_name, row, reason))
+        q.put_nowait((event.name, row, event.reason))
 
 
-async def enqueue_session_status_update_with_creation_id(
+async def enqueue_session_creation_status_update(
     app: web.Application,
-    agent_id: AgentId,
-    event_name: str,
-    raw_session_id: str,
-    session_creation_id: str,
-    reason: str = None,
-    exit_code: int = None,
+    source: AgentId,
+    event: SessionEnqueuedEvent | SessionScheduledEvent | SessionStartedEvent | SessionCancelledEvent,
 ) -> None:
-    if raw_session_id is None:
-        return
-    session_id = uuid.UUID(raw_session_id)
 
     async def _fetch():
         async with app['dbpool'].acquire() as conn:
@@ -525,7 +316,7 @@ async def enqueue_session_status_update_with_creation_id(
                 ])
                 .select_from(kernels)
                 .where(
-                    (kernels.c.id == session_id)
+                    (kernels.c.id == event.session_id)
                     # for the main kernel, kernel ID == session ID
                 )
             )
@@ -536,20 +327,14 @@ async def enqueue_session_status_update_with_creation_id(
     if row is None:
         return
     for q in app['session_event_queues']:
-        q.put_nowait((event_name, row, reason))
+        q.put_nowait((event.name, row, event.reason))
 
 
-async def enqueue_session_status_update(
+async def enqueue_session_termination_status_update(
     app: web.Application,
     agent_id: AgentId,
-    event_name: str,
-    raw_session_id: str,
-    reason: str = None,
-    exit_code: int = None,
+    event: SessionTerminatedEvent,
 ) -> None:
-    if raw_session_id is None:
-        return
-    session_id = uuid.UUID(raw_session_id)
 
     async def _fetch():
         async with app['dbpool'].acquire() as conn:
@@ -565,7 +350,7 @@ async def enqueue_session_status_update(
                 ])
                 .select_from(kernels)
                 .where(
-                    (kernels.c.id == session_id)
+                    (kernels.c.id == event.session_id)
                     # for the main kernel, kernel ID == session ID
                 )
             )
@@ -576,18 +361,14 @@ async def enqueue_session_status_update(
     if row is None:
         return
     for q in app['session_event_queues']:
-        q.put_nowait((event_name, row, reason))
+        q.put_nowait((event.name, row, event.reason))
 
 
 async def enqueue_batch_task_result_update(
     app: web.Application,
     agent_id: AgentId,
-    event_name: str,
-    raw_kernel_id: str,
-    exit_code: int = None,
-    exit_reason: str = None,
+    event: SessionSuccessEvent | SessionFailureEvent,
 ) -> None:
-    kernel_id = uuid.UUID(raw_kernel_id)
 
     async def _fetch():
         async with app['dbpool'].acquire() as conn:
@@ -603,7 +384,7 @@ async def enqueue_batch_task_result_update(
                 ])
                 .select_from(kernels)
                 .where(
-                    (kernels.c.id == kernel_id)
+                    (kernels.c.id == event.session_id)
                 )
             )
             result = await conn.execute(query)
@@ -612,49 +393,41 @@ async def enqueue_batch_task_result_update(
     row = await asyncio.shield(_fetch())
     if row is None:
         return
-    if event_name == 'session_success':
-        reason = 'task-success'
-    else:
-        reason = 'task-failure'
     for q in app['session_event_queues']:
-        q.put_nowait((event_name, row, reason))
+        q.put_nowait((event.name, row, event.reason))
 
 
-async def enqueue_task_status_update(
+async def enqueue_bgtask_status_update(
     app: web.Application,
-    agent_id: AgentId,
-    event_name: str,
-    raw_task_id: str,
-    current_progress: Union[int, float] = None,
-    total_progress: Union[int, float] = None,
-    message: str = None,
+    source: AgentId,
+    event: BgtaskUpdatedEvent | BgtaskDoneEvent | BgtaskCancelledEvent | BgtaskFailedEvent,
 ) -> None:
     for q in app['task_update_queues']:
-        q.put_nowait((event_name, raw_task_id, current_progress, total_progress, message, ))
+        q.put_nowait(event)
 
 
 async def events_app_ctx(app: web.Application) -> AsyncIterator[None]:
     app['session_event_queues'] = set()
     app['task_update_queues'] = set()
-    event_dispatcher = app['event_dispatcher']
-    event_dispatcher.subscribe('session_enqueued', app, enqueue_session_status_update_with_creation_id)
-    event_dispatcher.subscribe('session_scheduled', app, enqueue_session_status_update_with_creation_id)
-    event_dispatcher.subscribe('kernel_preparing', app, enqueue_kernel_status_update_with_creation_id)
-    event_dispatcher.subscribe('kernel_pulling', app, enqueue_kernel_status_update_with_creation_id)
-    event_dispatcher.subscribe('kernel_creating', app, enqueue_kernel_status_update_with_creation_id)
-    event_dispatcher.subscribe('kernel_started', app, enqueue_kernel_status_update_with_creation_id)
-    event_dispatcher.subscribe('session_started', app, enqueue_session_status_update_with_creation_id)
-    event_dispatcher.subscribe('kernel_terminating', app, enqueue_kernel_status_update)
-    event_dispatcher.subscribe('kernel_terminated', app, enqueue_kernel_status_update)
-    event_dispatcher.subscribe('session_terminated', app, enqueue_session_status_update)
-    event_dispatcher.subscribe('kernel_cancelled', app, enqueue_kernel_status_update)
-    event_dispatcher.subscribe('session_cancelled', app, enqueue_session_status_update_with_creation_id)
-    event_dispatcher.subscribe('session_success', app, enqueue_batch_task_result_update)
-    event_dispatcher.subscribe('session_failure', app, enqueue_batch_task_result_update)
-    event_dispatcher.subscribe('task_updated', app, enqueue_task_status_update)
-    event_dispatcher.subscribe('task_done', app, enqueue_task_status_update)
-    event_dispatcher.subscribe('task_cancelled', app, enqueue_task_status_update)
-    event_dispatcher.subscribe('task_failed', app, enqueue_task_status_update)
+    event_dispatcher: EventDispatcher = app['event_dispatcher']
+    event_dispatcher.subscribe(SessionEnqueuedEvent, app, enqueue_session_creation_status_update)
+    event_dispatcher.subscribe(SessionScheduledEvent, app, enqueue_session_creation_status_update)
+    event_dispatcher.subscribe(KernelPreparingEvent, app, enqueue_kernel_creation_status_update)
+    event_dispatcher.subscribe(KernelPullingEvent, app, enqueue_kernel_creation_status_update)
+    event_dispatcher.subscribe(KernelCreatingEvent, app, enqueue_kernel_creation_status_update)
+    event_dispatcher.subscribe(KernelStartedEvent, app, enqueue_kernel_creation_status_update)
+    event_dispatcher.subscribe(SessionStartedEvent, app, enqueue_session_creation_status_update)
+    event_dispatcher.subscribe(KernelTerminatingEvent, app, enqueue_kernel_termination_status_update)
+    event_dispatcher.subscribe(KernelTerminatedEvent, app, enqueue_kernel_termination_status_update)
+    event_dispatcher.subscribe(KernelCancelledEvent, app, enqueue_kernel_termination_status_update)
+    event_dispatcher.subscribe(SessionTerminatedEvent, app, enqueue_session_termination_status_update)
+    event_dispatcher.subscribe(SessionCancelledEvent, app, enqueue_session_creation_status_update)
+    event_dispatcher.subscribe(SessionSuccessEvent, app, enqueue_batch_task_result_update)
+    event_dispatcher.subscribe(SessionFailureEvent, app, enqueue_batch_task_result_update)
+    event_dispatcher.subscribe(BgtaskUpdatedEvent, app, enqueue_bgtask_status_update)
+    event_dispatcher.subscribe(BgtaskDoneEvent, app, enqueue_bgtask_status_update)
+    event_dispatcher.subscribe(BgtaskCancelledEvent, app, enqueue_bgtask_status_update)
+    event_dispatcher.subscribe(BgtaskFailedEvent, app, enqueue_bgtask_status_update)
 
     yield
 

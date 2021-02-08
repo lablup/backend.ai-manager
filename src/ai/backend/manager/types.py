@@ -1,21 +1,10 @@
 import enum
 from typing import (
-    Optional,
     Protocol,
-    Union,
 )
 
-import attr
 import sqlalchemy as sa
 from aiopg.sa.connection import SAConnection
-
-
-@attr.s(auto_attribs=True, slots=True, frozen=True)
-class BackgroundTaskEventArgs:
-    task_id: str
-    message: Optional[str] = None
-    current_progress: Optional[Union[int, float]] = None
-    total_progress: Optional[Union[int, float]] = None
 
 
 class SessionGetter(Protocol):

@@ -10,11 +10,25 @@ from typing import (
     Any,
     ClassVar,
     Dict,
+    List,
     Mapping,
     Optional,
     Sequence,
     Type,
     TYPE_CHECKING,
+)
+from ai.backend.common.events import (
+    AbstractEvent,
+    EventHandler,
+    DoIdleCheckEvent,
+    DoTerminateSessionEvent,
+    EventDispatcher,
+    EventProducer,
+    ExecutionStartedEvent,
+    ExecutionCancelledEvent,
+    ExecutionFinishedEvent,
+    ExecutionTimeoutEvent,
+    SessionStartedEvent,
 )
 
 if TYPE_CHECKING:
@@ -37,7 +51,6 @@ from .models.kernel import LIVE_STATUS
 from ..gateway.defs import REDIS_LIVE_DB
 if TYPE_CHECKING:
     from ..gateway.config import SharedConfig
-    from ..gateway.events import EventDispatcher
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.idle'))
 
@@ -51,15 +64,22 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
 
     name: ClassVar[str] = "base"
 
+    _dbpool: SAPool
+    _shared_config: SharedConfig
+    _event_dispatcher: EventDispatcher
+    _event_producer: EventProducer
+
     def __init__(
         self,
         dbpool: SAPool,
         shared_config: SharedConfig,
         event_dispatcher: EventDispatcher,
+        event_producer: EventProducer,
     ) -> None:
         self._dbpool = dbpool
         self._shared_config = shared_config
         self._event_dispatcher = event_dispatcher
+        self._event_producer = event_producer
 
     async def __ainit__(self) -> None:
         self._redis = await aioredis.create_redis(
@@ -67,13 +87,21 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
         )
         raw_config = await self._shared_config.etcd.get_prefix_dict(f"config/idle/checkers/{self.name}")
         await self.populate_config(raw_config or {})
-        self.timer = GlobalTimer(self._redis, self._event_dispatcher, 'do_idle_check', 10.0)
-        self._evh_idle_check = self._event_dispatcher.consume('do_idle_check', None, self._do_idle_check)
+        self.timer = GlobalTimer(
+            self._redis,
+            "idle_check",
+            self._event_producer,
+            lambda: DoIdleCheckEvent(),
+            10.0,
+        )
+        self._evh_idle_check = self._event_dispatcher.consume(
+            DoIdleCheckEvent, None, self._do_idle_check,
+        )
         await self.timer.join()
 
     async def aclose(self) -> None:
         await self.timer.leave()
-        self._event_dispatcher.unconsume('do_idle_check', self._evh_idle_check)
+        self._event_dispatcher.unconsume(self._evh_idle_check)
         self._redis.close()
         await self._redis.wait_closed()
 
@@ -92,9 +120,8 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
     async def _do_idle_check(
         self,
         context: None,
-        agent_id: AgentId,
-        event_name: str,
-        *args,
+        source: AgentId,
+        event: DoIdleCheckEvent,
     ) -> None:
         log.debug('do_idle_check(): triggered')
         async with self._dbpool.acquire() as conn:
@@ -110,9 +137,8 @@ class BaseIdleChecker(aobject, metaclass=ABCMeta):
             for row in rows:
                 if not (await self.check_session(row, conn)):
                     log.info(f"The {self.name} idle checker triggered termination of s:{row['id']}")
-                    await self._event_dispatcher.produce_event(
-                        "do_terminate_session",
-                        (str(row['id']), "idle-timeout"),
+                    await self._event_producer.produce_event(
+                        DoTerminateSessionEvent(row['id'], "idle-timeout")
                     )
 
     @abstractmethod
@@ -139,27 +165,23 @@ class TimeoutIdleChecker(BaseIdleChecker):
 
     idle_timeout: timedelta
     _policy_cache: ContextVar[Dict[AccessKey, Optional[Mapping[str, Any]]]]
+    _evhandlers: List[EventHandler[None, AbstractEvent]]
 
     async def __ainit__(self) -> None:
         await super().__ainit__()
         self._policy_cache = ContextVar('_policy_cache')
-        self._evh_session_started = self._event_dispatcher.consume(
-            "session_started", None, self._session_started_cb)
-        self._evh_execution_started = self._event_dispatcher.consume(
-            "execution_started", None, self._execution_started_cb)
-        self._evh_execution_finished = self._event_dispatcher.consume(
-            "execution_finished", None, self._execution_exited_cb)
-        self._evh_execution_timeout = self._event_dispatcher.consume(
-            "execution_timeout", None, self._execution_exited_cb)
-        self._evh_execution_cancelled = self._event_dispatcher.consume(
-            "execution_cancelled", None, self._execution_exited_cb)
+        d = self._event_dispatcher
+        self._evhandlers = [
+            d.consume(SessionStartedEvent, None, self._session_started_cb),       # type: ignore
+            d.consume(ExecutionStartedEvent, None, self._execution_started_cb),   # type: ignore
+            d.consume(ExecutionFinishedEvent, None, self._execution_exited_cb),   # type: ignore
+            d.consume(ExecutionTimeoutEvent, None, self._execution_exited_cb),    # type: ignore
+            d.consume(ExecutionCancelledEvent, None, self._execution_exited_cb),  # type: ignore
+        ]
 
     async def aclose(self) -> None:
-        self._event_dispatcher.unconsume("session_started", self._evh_session_started)
-        self._event_dispatcher.unconsume("execution_started", self._evh_execution_started)
-        self._event_dispatcher.unconsume("execution_finished", self._evh_execution_finished)
-        self._event_dispatcher.unconsume("execution_timeout", self._evh_execution_timeout)
-        self._event_dispatcher.unconsume("execution_cancelled", self._evh_execution_cancelled)
+        for _evh in self._evhandlers:
+            self._event_dispatcher.unconsume(_evh)
         await super().aclose()
 
     async def populate_config(self, raw_config: Mapping[str, Any]) -> None:
@@ -196,43 +218,36 @@ class TimeoutIdleChecker(BaseIdleChecker):
     async def _session_started_cb(
         self,
         context: None,
-        agent_id: AgentId,
-        event_name: str,
-        *args,
+        source: AgentId,
+        event: SessionStartedEvent,
     ) -> None:
-        session_id: SessionId = args[0]
-        await self._update_timeout(session_id)
+        await self._update_timeout(event.session_id)
 
     async def _execution_started_cb(
         self,
         context: None,
-        agent_id: AgentId,
-        event_name: str,
-        *args,
+        source: AgentId,
+        event: ExecutionStartedEvent,
     ) -> None:
-        session_id: SessionId = args[0]
-        await self._disable_timeout(session_id)
+        await self._disable_timeout(event.session_id)
 
     async def _execution_exited_cb(
         self,
         context: None,
-        agent_id: AgentId,
-        event_name: str,
-        *args,
+        source: AgentId,
+        event: ExecutionFinishedEvent | ExecutionTimeoutEvent | ExecutionCancelledEvent,
     ) -> None:
-        session_id: SessionId = args[0]
-        await self._update_timeout(session_id)
+        await self._update_timeout(event.session_id)
 
     async def _do_idle_check(
         self,
         context: None,
-        agent_id: AgentId,
-        event_name: str,
-        *args,
+        source: AgentId,
+        event: DoIdleCheckEvent,
     ) -> None:
         cache_token = self._policy_cache.set(dict())
         try:
-            return await super()._do_idle_check(context, agent_id, event_name)
+            return await super()._do_idle_check(context, source, event)
         finally:
             self._policy_cache.reset(cache_token)
 
@@ -319,6 +334,7 @@ async def create_idle_checkers(
     dbpool: SAPool,
     shared_config: SharedConfig,
     event_dispatcher: EventDispatcher,
+    event_producer: EventProducer,
 ) -> Sequence[BaseIdleChecker]:
     """
     Create an instance of session idleness checker
@@ -334,6 +350,6 @@ async def create_idle_checkers(
             log.warning("ignoring an unknown idle checker name: {checker_name}")
             continue
         log.info(f"Initializing idle checker: {checker_name}")
-        checker_instance = await checker_cls.new(dbpool, shared_config, event_dispatcher)
+        checker_instance = await checker_cls.new(dbpool, shared_config, event_dispatcher, event_producer)
         instances.append(checker_instance)
     return instances
