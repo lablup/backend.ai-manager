@@ -1,0 +1,1 @@
+Explicitly use `yaml.safe_load()` for all YAML loader invocations to prevent potential future mistakes to set an unsafe loader, whcih may allow remote code execution

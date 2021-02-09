@@ -131,7 +131,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
             body = json.loads(params['payload'])
         except json.JSONDecodeError:
             try:
-                body = yaml.load(params['payload'], Loader=yaml.BaseLoader)
+                body = yaml.safe_load(params['payload'])
             except (yaml.YAMLError, yaml.MarkedYAMLError):
                 raise InvalidAPIParameters('Malformed payload')
         template_data = check_task_template(body)
@@ -285,7 +285,7 @@ async def put(request: web.Request, params: Any) -> web.Response:
         try:
             body = json.loads(params['payload'])
         except json.JSONDecodeError:
-            body = yaml.load(params['payload'], Loader=yaml.BaseLoader)
+            body = yaml.safe_load(params['payload'])
         except (yaml.YAMLError, yaml.MarkedYAMLError):
             raise InvalidAPIParameters('Malformed payload')
         template_data = check_task_template(body)
