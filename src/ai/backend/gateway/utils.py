@@ -97,7 +97,7 @@ def check_api_params(checker: t.Trafaret, loads: Callable[[str], Any] = None,
                 if body_exists:
                     body = await request.text()
                     if request.content_type == 'text/yaml':
-                        orig_params = yaml.load(body, Loader=yaml.BaseLoader)
+                        orig_params = yaml.safe_load(body)
                     else:
                         orig_params = (loads or json.loads)(body)
                 else:
