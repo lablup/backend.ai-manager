@@ -512,7 +512,7 @@ class SharedConfig(AbstractConfig):
     async def update_aliases_from_file(self, file: Path) -> None:
         log.info('Updating image aliases from "{0}"', file)
         try:
-            data = yaml.load(open(file, 'r', encoding='utf-8'))
+            data = yaml.safe_load(open(file, 'r', encoding='utf-8'))
         except IOError:
             log.error('Cannot open "{0}".', file)
             return
