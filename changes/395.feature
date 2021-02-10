@@ -1,0 +1,1 @@
+Add `INACTIVE` field to the `AgentStatus` graph object schema to give a certain mark for excluding those agents in `INACTIVE` status from scheduling
