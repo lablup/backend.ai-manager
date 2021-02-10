@@ -19,10 +19,13 @@ from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common import msgpack, redis
 from ai.backend.common.types import AgentId, BinarySize, ResourceSlot
+from .user import UserRole
 from .kernel import AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES, kernels
 from .base import (
     metadata,
     batch_result,
+    set_if_set,
+    simple_db_mutate,
     EnumType, Item, PaginatedList,
     ResourceSlotColumn,
 )
@@ -41,6 +44,7 @@ class AgentStatus(enum.Enum):
     LOST = 1
     RESTARTING = 2
     TERMINATED = 3
+    INACTIVE = 4
 
 
 agents = sa.Table(
@@ -276,6 +280,37 @@ class AgentList(graphene.ObjectType):
         interfaces = (PaginatedList, )
 
     items = graphene.List(Agent, required=True)
+
+
+class ModifyAgentInput(graphene.InputObjectType):
+    status = graphene.String(required=False)
+    schedulable = graphene.Boolean(required=False)
+
+
+class ModifyAgent(graphene.Mutation):
+
+    allowed_roles = (UserRole.SUPERADMIN,)
+
+    class Arguments:
+        agent_id = graphene.String(required=True)
+        props = ModifyAgentInput(required=True)
+
+    ok = graphene.Boolean()
+    msg = graphene.String()
+
+    @classmethod
+    async def mutate(cls, root, info, agent_id, props):
+        data = {}
+        set_if_set(props, data, 'status')
+        set_if_set(props, data, 'schedulable')
+        if 'status' in data:
+            data['status'] = AgentStatus[data['status']]
+        update_query = (
+            agents.update()
+            .values(data)
+            .where(agents.c.id == agent_id)
+        )
+        return await simple_db_mutate(cls, info.context, update_query)
 
 
 async def recalc_agent_resource_occupancy(db_conn: SAConnection, agent_id: AgentId) -> None:

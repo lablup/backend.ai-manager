@@ -4,7 +4,7 @@ import graphene
 
 from .base import privileged_query, scoped_query
 from .agent import (
-    Agent, AgentList,
+    Agent, AgentList, ModifyAgent
 )
 from .domain import (
     Domain,
@@ -71,6 +71,9 @@ class Mutations(graphene.ObjectType):
     '''
     All available GraphQL mutations.
     '''
+
+    # super-admin only
+    modify_agent = ModifyAgent.Field()
 
     # super-admin only
     create_domain = CreateDomain.Field()
