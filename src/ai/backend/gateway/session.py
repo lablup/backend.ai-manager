@@ -1175,8 +1175,8 @@ async def check_agent_lost(app, interval):
                 prev = datetime.fromtimestamp(float(prev), tzutc())
                 if now - prev > timeout:
                     await app['event_producer'].produce_event(
-                        'instance_terminated', ('agent-lost', ),
-                        agent_id=agent_id)
+                        AgentTerminatedEvent("agent-lost"),
+                        source=agent_id)
 
         await redis.execute_with_retries(lambda: _check_impl())
     except asyncio.CancelledError:
