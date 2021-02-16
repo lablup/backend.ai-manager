@@ -811,6 +811,7 @@ async def create_upload_session(request: web.Request, params: Any, row: VFolderR
     t.Dict({
         t.Key('target_path'): t.String,
         t.Key('new_name'): t.String,
+        t.Key('is_dir'): t.ToBool
     }))
 async def rename_file(request: web.Request, params: Any, row: VFolderRow) -> web.Response:
     folder_name = request.match_info['name']
@@ -827,6 +828,7 @@ async def rename_file(request: web.Request, params: Any, row: VFolderRow) -> web
                 'vfid': str(row['id']),
                 'relpath': params['target_path'],
                 'new_name': params['new_name'],
+                'is_dir': params['is_dir']
             },
             raise_for_status=True,
         ):
