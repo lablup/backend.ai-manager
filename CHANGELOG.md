@@ -16,6 +16,23 @@ Changes
 
 .. towncrier release notes start
 
+20.09.7 (2021-02-16)
+--------------------
+
+### BREAKING
+* You must upgrade manager to 20.09.7+, agent to 20.09.5+, and common to 20.09.4+ altogether at once to make your cluster running correctly!
+
+### Features
+* Add `cloneable` parameter in list_folders, update_vfolder_options and clone function in class vfolder ([#393](https://github.com/lablup/backend.ai-manager/issues/393))
+* Add `is_dir` parameter to the rename_file API function to provide renaming directories in Vfolders ([#397](https://github.com/lablup/backend.ai-manager/issues/397))
+
+### Fixes
+* Refactor out `gateway.events` and move common facilities to `common.events` to improve static typing of events and reduce possibility of serialization/deserialization bugs ([#392](https://github.com/lablup/backend.ai-manager/issues/392))
+* Remove b-prefix in "push_background_task_events" function ([#394](https://github.com/lablup/backend.ai-manager/issues/394))
+* Explicitly use `yaml.safe_load()` for all YAML loader invocations to prevent potential future mistakes to set an unsafe loader, whcih may allow remote code execution ([#395](https://github.com/lablup/backend.ai-manager/issues/395))
+* Update uvloop to 0.15.1 for better Python 3.8/3.9 support (and drop Python 3.5/3.6 support) ([#398](https://github.com/lablup/backend.ai-manager/issues/398))
+
+
 20.09.6 (2021-02-01)
 --------------------
 
