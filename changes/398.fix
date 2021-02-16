@@ -1,0 +1,1 @@
+Update uvloop to 0.15.1 for better Python 3.8/3.9 support (and drop Python 3.5/3.6 support)
