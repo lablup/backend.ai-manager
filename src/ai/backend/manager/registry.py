@@ -37,7 +37,6 @@ import snappy
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import true
 from yarl import URL
-import zmq.asyncio
 
 from ai.backend.common import msgpack, redis
 from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
@@ -92,7 +91,7 @@ __all__ = ['AgentRegistry', 'InstanceNotFound']
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.registry'))
 
-agent_peers: MutableMapping[str, zmq.asyncio.Socket] = {}  # agent-addr to socket
+agent_peers: MutableMapping[str, PeerInvoker] = {}  # agent-addr to socket
 
 
 class PeerInvoker(Peer):
