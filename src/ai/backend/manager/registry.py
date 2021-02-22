@@ -132,7 +132,7 @@ __all__ = ['AgentRegistry', 'InstanceNotFound']
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.registry'))
 
-agent_peers: MutableMapping[str, zmq.asyncio.Socket] = {}  # agent-addr to socket
+agent_peers: MutableMapping[str, PeerInvoker] = {}  # agent-addr to socket
 
 
 class PeerInvoker(Peer):
