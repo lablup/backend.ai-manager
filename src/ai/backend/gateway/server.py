@@ -62,6 +62,7 @@ from .config import (
     load as load_config,
     volume_config_iv,
 )
+from .context import RootContext
 from .defs import REDIS_STAT_DB, REDIS_LIVE_DB, REDIS_IMAGE_DB, REDIS_STREAM_DB
 from .exceptions import (
     BackendError,
@@ -239,142 +240,138 @@ async def exception_middleware(request: web.Request,
 
 
 @aiotools.actxmgr
-async def shared_config_ctx(app: web.Application) -> AsyncIterator[None]:
+async def shared_config_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     # populate public interfaces
-    app['shared_config'] = SharedConfig(
-        app,
-        app['local_config']['etcd']['addr'],
-        app['local_config']['etcd']['user'],
-        app['local_config']['etcd']['password'],
-        app['local_config']['etcd']['namespace'],
+    root_ctx.shared_config = SharedConfig(
+        root_ctx,
+        root_ctx.local_config['etcd']['addr'],
+        root_ctx.local_config['etcd']['user'],
+        root_ctx.local_config['etcd']['password'],
+        root_ctx.local_config['etcd']['namespace'],
     )
-    await app['shared_config'].reload()
-    _update_public_interface_objs(app)
+    await root_ctx.shared_config.reload()
     yield
-    await app['shared_config'].close()
+    await root_ctx.shared_config.close()
 
+
+# TODO: _init_subapp에 들어가는 root_app을 root_ctx로 대체. aiojobs scheduler는 모든 app에서 공유?
 
 @aiotools.actxmgr
 async def webapp_plugin_ctx(root_app: web.Application) -> AsyncIterator[None]:
-    ctx = WebappPluginContext(root_app['shared_config'].etcd, root_app['local_config'])
-    await ctx.init()
-    root_app['webapp_plugin_ctx'] = ctx
-    for plugin_name, plugin_instance in ctx.plugins.items():
-        if root_app['pidx'] == 0:
+    root_ctx: RootContext = root_app['root_context']
+    plugin_ctx = WebappPluginContext(root_ctx.shared_config.etcd, root_ctx.local_config)
+    await plugin_ctx.init()
+    root_ctx.webapp_plugin_ctx = plugin_ctx
+    for plugin_name, plugin_instance in plugin_ctx.plugins.items():
+        if root_ctx.pidx == 0:
             log.info('Loading webapp plugin: {0}', plugin_name)
-        subapp, global_middlewares = await plugin_instance.create_app(root_app['cors_opts'])
+        subapp, global_middlewares = await plugin_instance.create_app(root_ctx.cors_options)
         _init_subapp(plugin_name, root_app, subapp, global_middlewares)
     yield
-    await ctx.cleanup()
+    await root_ctx.cleanup()
 
 
-async def manager_status_ctx(app: web.Application) -> AsyncIterator[None]:
-    if app['pidx'] == 0:
-        mgr_status = await app['shared_config'].get_manager_status()
+async def manager_status_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
+    if root_ctx.pidx == 0:
+        mgr_status = await root_ctx.shared_config.get_manager_status()
         if mgr_status is None or mgr_status not in (ManagerStatus.RUNNING, ManagerStatus.FROZEN):
             # legacy transition: we now have only RUNNING or FROZEN for HA setup.
-            await app['shared_config'].update_manager_status(ManagerStatus.RUNNING)
+            await root_ctx.shared_config.update_manager_status(ManagerStatus.RUNNING)
             mgr_status = ManagerStatus.RUNNING
         log.info('Manager status: {}', mgr_status)
-        tz = app['shared_config']['system']['timezone']
+        tz = root_ctx.shared_config['system']['timezone']
         log.info('Configured timezone: {}', tz.tzname(datetime.now()))
     yield
 
 
-async def redis_ctx(app: web.Application) -> AsyncIterator[None]:
-    app['redis_live'] = await redis.connect_with_retries(
-        str(app['shared_config'].get_redis_url(db=REDIS_LIVE_DB)),
+async def redis_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
+    root_ctx.redis_live = await redis.connect_with_retries(
+        str(root_ctx.shared_config.get_redis_url(db=REDIS_LIVE_DB)),
         timeout=3.0,
         encoding='utf8',
     )
-    app['redis_stat'] = await redis.connect_with_retries(
-        str(app['shared_config'].get_redis_url(db=REDIS_STAT_DB)),
+    root_ctx.redis_stat = await redis.connect_with_retries(
+        str(root_ctx.shared_config.get_redis_url(db=REDIS_STAT_DB)),
         timeout=3.0,
         encoding='utf8',
     )
-    app['redis_image'] = await redis.connect_with_retries(
-        str(app['shared_config'].get_redis_url(db=REDIS_IMAGE_DB)),
+    root_ctx.redis_image = await redis.connect_with_retries(
+        str(root_ctx.shared_config.get_redis_url(db=REDIS_IMAGE_DB)),
         timeout=3.0,
         encoding='utf8',
     )
-    app['redis_stream'] = await redis.connect_with_retries(
-        str(app['shared_config'].get_redis_url(db=REDIS_STREAM_DB)),
+    root_ctx.redis_stream = await redis.connect_with_retries(
+        str(root_ctx.shared_config.get_redis_url(db=REDIS_STREAM_DB)),
         timeout=3.0,
         encoding='utf8',
     )
-    _update_public_interface_objs(app)
     yield
-    app['redis_image'].close()
-    await app['redis_image'].wait_closed()
-    app['redis_stat'].close()
-    await app['redis_stat'].wait_closed()
-    app['redis_live'].close()
-    await app['redis_live'].wait_closed()
-    app['redis_stream'].close()
-    await app['redis_stream'].wait_closed()
+    root_ctx.redis_image.close()
+    await root_ctx.redis_image.wait_closed()
+    root_ctx.redis_stat.close()
+    await root_ctx.redis_stat.wait_closed()
+    root_ctx.redis_live.close()
+    await root_ctx.redis_live.wait_closed()
+    root_ctx.redis_stream.close()
+    await root_ctx.redis_stream.wait_closed()
 
 
-async def database_ctx(app: web.Application) -> AsyncIterator[None]:
-    app['dbpool'] = await create_engine(
-        host=app['local_config']['db']['addr'].host, port=app['local_config']['db']['addr'].port,
-        user=app['local_config']['db']['user'], password=app['local_config']['db']['password'],
-        dbname=app['local_config']['db']['name'],
-        echo=bool(app['local_config']['logging']['level'] == 'DEBUG'),
+async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
+    root_ctx.dbpool = await create_engine(
+        host=root_ctx.local_config['db']['addr'].host, port=root_ctx['local_config']['db']['addr'].port,
+        user=root_ctx.local_config['db']['user'], password=root_ctx['local_config']['db']['password'],
+        dbname=root_ctx.local_config['db']['name'],
+        echo=bool(root_ctx.local_config['logging']['level'] == 'DEBUG'),
         minsize=8, maxsize=256,
         timeout=60, pool_recycle=120,
         dialect=get_dialect(
             json_serializer=functools.partial(json.dumps, cls=ExtendedJSONEncoder),
         ),
     )
-    _update_public_interface_objs(app)
     yield
-    app['dbpool'].close()
-    await app['dbpool'].wait_closed()
+    root_ctx.dbpool.close()
+    await root_ctx.dbpool.wait_closed()
 
 
-async def event_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
-    local_config: LocalConfig = app['local_config']
-    shared_config: SharedConfig = app['shared_config']
+async def event_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 
     async def redis_connector():
-        redis_url = shared_config.get_redis_url(db=REDIS_STREAM_DB)
+        redis_url = root_ctx.shared_config.get_redis_url(db=REDIS_STREAM_DB)
         return await redis.connect_with_retries(str(redis_url), encoding=None)
 
-    app['event_producer'] = await EventProducer.new(redis_connector)
-    app['event_dispatcher'] = await EventDispatcher.new(
+    root_ctx.event_producer = await EventProducer.new(redis_connector)
+    root_ctx.event_dispatcher = await EventDispatcher.new(
         redis_connector,
-        log_events=local_config['debug']['log-events'],
+        log_events=root_ctx.local_config['debug']['log-events'],
     )
-    _update_public_interface_objs(app)
     yield
-    await app['event_dispatcher'].close()
-    await app['event_producer'].close()
+    await root_ctx.event_dispatcher.close()
+    await root_ctx.event_producer.close()
 
 
-async def idle_checker_ctx(app: web.Application) -> AsyncIterator[None]:
-    app['idle_checkers'] = await create_idle_checkers(
-        app['dbpool'], app['shared_config'], app['event_dispatcher'], app['event_producer'],
+async def idle_checker_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
+    root_ctx.idle_checkers = await create_idle_checkers(
+        root_ctx.dbpool,
+        root_ctx.shared_config,
+        root_ctx.event_dispatcher,
+        root_ctx.event_producer,
     )
-    _update_public_interface_objs(app)
     yield
-    for instance in app['idle_checkers']:
+    for instance in root_ctx.idle_checkers:
         await instance.aclose()
 
 
-async def storage_manager_ctx(app: web.Application) -> AsyncIterator[None]:
-    shared_config: SharedConfig = app['shared_config']
-    raw_vol_config = await shared_config.etcd.get_prefix('volumes')
+async def storage_manager_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
+    raw_vol_config = await root_ctx.shared_config.etcd.get_prefix('volumes')
     config = volume_config_iv.check(raw_vol_config)
-    app['storage_manager'] = StorageSessionManager(config)
-    _update_public_interface_objs(app)
+    root_ctx.storage_manager = StorageSessionManager(config)
     yield
-    await app['storage_manager'].aclose()
+    await root_ctx.storage_manager.aclose()
 
 
-async def hook_plugin_ctx(app: web.Application) -> AsyncIterator[None]:
-    ctx = HookPluginContext(app['shared_config'].etcd, app['local_config'])
-    app['hook_plugin_ctx'] = ctx
-    _update_public_interface_objs(app)
+async def hook_plugin_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
+    ctx = HookPluginContext(root_ctx.shared_config.etcd, root_ctx.local_config)
+    root_ctx.hook_plugin_ctx = ctx
     await ctx.init()
     hook_result = await ctx.dispatch(
         'ACTIVATE_MANAGER',
@@ -387,59 +384,59 @@ async def hook_plugin_ctx(app: web.Application) -> AsyncIterator[None]:
     await ctx.cleanup()
 
 
-async def agent_registry_ctx(app: web.Application) -> AsyncIterator[None]:
-    app['registry'] = AgentRegistry(
-        app['shared_config'],
-        app['dbpool'],
-        app['redis_stat'],
-        app['redis_live'],
-        app['redis_image'],
-        app['event_dispatcher'],
-        app['event_producer'],
-        app['storage_manager'],
-        app['hook_plugin_ctx'],
+async def agent_registry_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
+    root_ctx.registry = AgentRegistry(
+        root_ctx.shared_config,
+        root_ctx.dbpool,
+        root_ctx.redis_stat,
+        root_ctx.redis_live,
+        root_ctx.redis_image,
+        root_ctx.event_dispatcher,
+        root_ctx.event_producer,
+        root_ctx.storage_manager,
+        root_ctx.hook_plugin_ctx,
     )
-    await app['registry'].init()
-    _update_public_interface_objs(app)
+    await root_ctx.registry.init()
     yield
-    await app['registry'].shutdown()
+    await root_ctx.registry.shutdown()
 
 
-async def sched_dispatcher_ctx(app: web.Application) -> AsyncIterator[None]:
+async def sched_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     sched_dispatcher = await SchedulerDispatcher.new(
-        app['local_config'], app['shared_config'],
-        app['event_dispatcher'], app['event_producer'],
-        app['registry'],
+        root_ctx.local_config, root_ctx.shared_config,
+        root_ctx.event_dispatcher, root_ctx.event_producer,
+        root_ctx.registry,
     )
     yield
     await sched_dispatcher.close()
 
 
-async def monitoring_ctx(app: web.Application) -> AsyncIterator[None]:
-    ectx = ErrorPluginContext(app['shared_config'].etcd, app['local_config'])
-    sctx = StatsPluginContext(app['shared_config'].etcd, app['local_config'])
-    await ectx.init(context={'app': app})
+async def monitoring_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
+    ectx = ErrorPluginContext(root_ctx.shared_config.etcd, root_ctx.local_config)
+    sctx = StatsPluginContext(root_ctx.shared_config.etcd, root_ctx.local_config)
+    await ectx.init(context={'app': root_ctx})
     await sctx.init()
-    app['error_monitor'] = ectx
-    app['stats_monitor'] = sctx
-    _update_public_interface_objs(app)
+    root_ctx.error_monitor = ectx
+    root_ctx.stats_monitor = sctx
     yield
     await sctx.cleanup()
     await ectx.cleanup()
 
 
-async def background_task_ctx(app: web.Application) -> AsyncIterator[None]:
-    app['background_task_manager'] = BackgroundTaskManager(app['event_producer'])
-    _update_public_interface_objs(app)
-    yield
+class background_task_ctx:
 
+    def __init__(self, root_ctx: RootContext) -> None:
+        self.root_ctx = root_ctx
 
-async def background_task_ctx_shutdown(app: web.Application) -> None:
-    if 'background_task_manager' in app:
-        await app['background_task_manager'].shutdown()
+    async def __aenter__(self) -> None:
+        self.root_ctx.background_task_manager = BackgroundTaskManager(self.root_ctx.event_producer)
+    
+    async def __aexit__(self, *exc_info) -> None:
+        pass
 
-
-setattr(background_task_ctx, 'shutdown', background_task_ctx_shutdown)
+    async def shutdown(self) -> None:
+        if hasattr(self.root_ctx, 'background_task_manager'):
+            await self.root_ctx.background_task_manager.shutdown()
 
 
 def handle_loop_error(
@@ -463,20 +460,21 @@ def handle_loop_error(
                 loop.create_task(root_app['error_monitor'].capture_exception(exc_instance=exception))
 
 
-def _init_subapp(pkg_name: str,
-                 root_app: web.Application,
-                 subapp: web.Application,
-                 global_middlewares: Iterable[WebMiddleware]) -> None:
+def _init_subapp(
+    pkg_name: str,
+    root_app: web.Application,
+    subapp: web.Application,
+    global_middlewares: Iterable[WebMiddleware],
+) -> None:
     subapp.on_response_prepare.append(on_prepare)
 
-    async def _copy_public_interface_objs(subapp: web.Application):
+    async def _set_root_ctx(subapp: web.Application):
         # Allow subapp's access to the root app properties.
         # These are the public APIs exposed to plugins as well.
-        for key, obj in public_interface_objs.items():
-            subapp[key] = obj
+        subapp['root_context'] = root_app['root_context']
 
     # We must copy the public interface prior to all user-defined startup signal handlers.
-    subapp.on_startup.insert(0, _copy_public_interface_objs)
+    subapp.on_startup.insert(0, _set_root_ctx)
     prefix = subapp.get('prefix', pkg_name.split('.')[-1].replace('_', '-'))
     aiojobs.aiohttp.setup(subapp, **root_app['scheduler_opts'])
     root_app.add_subapp('/' + prefix, subapp)
@@ -486,14 +484,6 @@ def _init_subapp(pkg_name: str,
 def init_subapp(pkg_name: str, root_app: web.Application, create_subapp: AppCreator) -> None:
     subapp, global_middlewares = create_subapp(root_app['cors_opts'])
     _init_subapp(pkg_name, root_app, subapp, global_middlewares)
-
-
-def _update_public_interface_objs(root_app: web.Application) -> None:
-    # This must be called in clean_ctx functions so that
-    # we keep the public interface up-to-date.
-    for key in PUBLIC_INTERFACES:
-        if key in root_app and key not in public_interface_objs:
-            public_interface_objs[key] = root_app[key]
 
 
 def build_root_app(
@@ -511,8 +501,11 @@ def build_root_app(
     global_exception_handler = functools.partial(handle_loop_error, app)
     loop = asyncio.get_running_loop()
     loop.set_exception_handler(global_exception_handler)
-    app['local_config'] = local_config
-    app['cors_opts'] = {
+    root_ctx = RootContext()
+    app['root_context'] = root_ctx
+    root_ctx.local_config = local_config
+    root_ctx.pidx = pidx
+    root_ctx.cors_options = {
         '*': aiohttp_cors.ResourceOptions(
             allow_credentials=False,
             expose_headers="*", allow_headers="*"),
@@ -526,8 +519,6 @@ def build_root_app(
         **default_scheduler_opts,
         **(scheduler_opts if scheduler_opts is not None else {}),
     }
-    app['pidx'] = pidx
-    _update_public_interface_objs(app)
     app.on_response_prepare.append(on_prepare)
 
     if cleanup_contexts is None:
@@ -549,7 +540,7 @@ def build_root_app(
             app.on_shutdown.append(shutdown_cb)
     app.cleanup_ctx.extend(cleanup_contexts)
     aiojobs.aiohttp.setup(app, **app['scheduler_opts'])
-    cors = aiohttp_cors.setup(app, defaults=app['cors_opts'])
+    cors = aiohttp_cors.setup(app, defaults=root_ctx.cors_options)
     # should be done in create_app() in other modules.
     cors.add(app.router.add_route('GET', r'', hello))
     cors.add(app.router.add_route('GET', r'/', hello))
@@ -584,22 +575,23 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         '.groupconfig',
         '.logs',
     ]
-    app = build_root_app(pidx, _args[0], subapp_pkgs=subapp_pkgs)
+    root_app = build_root_app(pidx, _args[0], subapp_pkgs=subapp_pkgs)
+    root_ctx: RootContext = root_app['root_context']
 
     # Plugin webapps should be loaded before runner.setup(),
     # which freezes on_startup event.
-    async with shared_config_ctx(app), \
-               webapp_plugin_ctx(app):
+    async with shared_config_ctx(root_ctx), \
+               webapp_plugin_ctx(root_ctx):
         ssl_ctx = None
-        if app['local_config']['manager']['ssl-enabled']:
+        if root_ctx.local_config['manager']['ssl-enabled']:
             ssl_ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
             ssl_ctx.load_cert_chain(
-                str(app['local_config']['manager']['ssl-cert']),
-                str(app['local_config']['manager']['ssl-privkey']),
+                str(root_ctx.local_config['manager']['ssl-cert']),
+                str(root_ctx.local_config['manager']['ssl-privkey']),
             )
-        runner = web.AppRunner(app)
+        runner = web.AppRunner(root_app)
         await runner.setup()
-        service_addr = app['local_config']['manager']['service-addr']
+        service_addr = root_ctx.local_config['manager']['service-addr']
         site = web.TCPSite(
             runner,
             str(service_addr.host),
@@ -611,8 +603,8 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         await site.start()
 
         if os.geteuid() == 0:
-            uid = app['local_config']['manager']['user']
-            gid = app['local_config']['manager']['group']
+            uid = root_ctx.local_config['manager']['user']
+            gid = root_ctx.local_config['manager']['group']
             os.setgroups([
                 g.gr_gid for g in grp.getgrall()
                 if pwd.getpwuid(uid).pw_name in g.gr_mem

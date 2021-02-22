@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ai.backend.gateway.context import RootContext
+
 """
 Configuration Schema on etcd
 ----------------------------
@@ -450,14 +452,14 @@ def load(config_path: Path = None, debug: bool = False) -> LocalConfig:
 
 class SharedConfig(AbstractConfig):
 
-    def __init__(self, app_ctx: Mapping[str, Any],
+    def __init__(self, root_ctx: RootContext,
                  etcd_addr: HostPortPair,
                  etcd_user: Optional[str],
                  etcd_password: Optional[str],
                  namespace: str) -> None:
         # WARNING: importing etcd3/grpc must be done after forks.
         super().__init__()
-        self.context = app_ctx
+        self.context = root_ctx
         credentials = None
         if etcd_user:
             credentials = {

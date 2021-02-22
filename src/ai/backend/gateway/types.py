@@ -10,6 +10,8 @@ from typing import (
 from aiohttp import web
 import aiohttp_cors
 
+from ai.backend.gateway.context import RootContext
+
 
 WebRequestHandler = Callable[
     [web.Request],
@@ -26,4 +28,4 @@ AppCreator = Callable[
     Tuple[web.Application, Iterable[WebMiddleware]]
 ]
 
-CleanupContext = Callable[[web.Application], AsyncIterator[None]]
+CleanupContext = Callable[[RootContext], AsyncIterator[None]]
