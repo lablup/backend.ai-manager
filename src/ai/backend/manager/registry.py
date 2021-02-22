@@ -57,7 +57,6 @@ import snappy
 import sqlalchemy as sa
 from sqlalchemy.sql.expression import true
 from yarl import URL
-import zmq.asyncio
 
 from ai.backend.common import msgpack, redis
 from ai.backend.common.docker import get_registry_info, get_known_registries, ImageRef
