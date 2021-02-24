@@ -1243,6 +1243,7 @@ class AgentRegistry:
                                     'environ': {
                                         **pending_session.environ,
                                         'BACKENDAI_KERNEL_ID': str(binding.kernel.kernel_id),
+                                        'BACKENDAI_KERNEL_IMAGE': str(binding.kernel.image_ref),
                                         'BACKENDAI_CLUSTER_ROLE': binding.kernel.cluster_role,
                                         'BACKENDAI_CLUSTER_IDX': str(binding.kernel.cluster_idx),
                                         'BACKENDAI_CLUSTER_HOST': str(binding.kernel.cluster_hostname),
