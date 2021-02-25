@@ -271,6 +271,7 @@ async def webapp_plugin_ctx(root_app: web.Application) -> AsyncIterator[None]:
     await root_ctx.cleanup()
 
 
+@aiotools.actxmgr
 async def manager_status_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     if root_ctx.pidx == 0:
         mgr_status = await root_ctx.shared_config.get_manager_status()
@@ -284,6 +285,7 @@ async def manager_status_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     yield
 
 
+@aiotools.actxmgr
 async def redis_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     root_ctx.redis_live = await redis.connect_with_retries(
         str(root_ctx.shared_config.get_redis_url(db=REDIS_LIVE_DB)),
@@ -316,10 +318,11 @@ async def redis_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     await root_ctx.redis_stream.wait_closed()
 
 
+@aiotools.actxmgr
 async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     root_ctx.dbpool = await create_engine(
-        host=root_ctx.local_config['db']['addr'].host, port=root_ctx['local_config']['db']['addr'].port,
-        user=root_ctx.local_config['db']['user'], password=root_ctx['local_config']['db']['password'],
+        host=root_ctx.local_config['db']['addr'].host, port=root_ctx.local_config['db']['addr'].port,
+        user=root_ctx.local_config['db']['user'], password=root_ctx.local_config['db']['password'],
         dbname=root_ctx.local_config['db']['name'],
         echo=bool(root_ctx.local_config['logging']['level'] == 'DEBUG'),
         minsize=8, maxsize=256,
@@ -333,6 +336,7 @@ async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     await root_ctx.dbpool.wait_closed()
 
 
+@aiotools.actxmgr
 async def event_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 
     async def redis_connector():
@@ -349,6 +353,7 @@ async def event_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     await root_ctx.event_producer.close()
 
 
+@aiotools.actxmgr
 async def idle_checker_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     root_ctx.idle_checkers = await create_idle_checkers(
         root_ctx.dbpool,
@@ -361,6 +366,7 @@ async def idle_checker_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
         await instance.aclose()
 
 
+@aiotools.actxmgr
 async def storage_manager_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     raw_vol_config = await root_ctx.shared_config.etcd.get_prefix('volumes')
     config = volume_config_iv.check(raw_vol_config)
@@ -369,6 +375,7 @@ async def storage_manager_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     await root_ctx.storage_manager.aclose()
 
 
+@aiotools.actxmgr
 async def hook_plugin_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     ctx = HookPluginContext(root_ctx.shared_config.etcd, root_ctx.local_config)
     root_ctx.hook_plugin_ctx = ctx
@@ -384,6 +391,7 @@ async def hook_plugin_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     await ctx.cleanup()
 
 
+@aiotools.actxmgr
 async def agent_registry_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     root_ctx.registry = AgentRegistry(
         root_ctx.shared_config,
@@ -401,6 +409,7 @@ async def agent_registry_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     await root_ctx.registry.shutdown()
 
 
+@aiotools.actxmgr
 async def sched_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     sched_dispatcher = await SchedulerDispatcher.new(
         root_ctx.local_config, root_ctx.shared_config,
@@ -411,6 +420,7 @@ async def sched_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     await sched_dispatcher.close()
 
 
+@aiotools.actxmgr
 async def monitoring_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     ectx = ErrorPluginContext(root_ctx.shared_config.etcd, root_ctx.local_config)
     sctx = StatsPluginContext(root_ctx.shared_config.etcd, root_ctx.local_config)
@@ -482,7 +492,8 @@ def _init_subapp(
 
 
 def init_subapp(pkg_name: str, root_app: web.Application, create_subapp: AppCreator) -> None:
-    subapp, global_middlewares = create_subapp(root_app['cors_opts'])
+    root_ctx: RootContext = root_app['root_context']
+    subapp, global_middlewares = create_subapp(root_ctx.cors_options)
     _init_subapp(pkg_name, root_app, subapp, global_middlewares)
 
 
@@ -535,10 +546,18 @@ def build_root_app(
             sched_dispatcher_ctx,
             background_task_ctx,
         ]
+
+    async def _cleanup_context_wrapper(cctx, app: web.Application) -> AsyncIterator[None]:
+        # aiohttp's cleanup contexts are just async generators, not async context managers.
+        async with cctx(app['root_context']):
+            yield
+
     for cleanup_ctx in cleanup_contexts:
         if shutdown_cb := getattr(cleanup_ctx, 'shutdown', None):
             app.on_shutdown.append(shutdown_cb)
-    app.cleanup_ctx.extend(cleanup_contexts)
+        app.cleanup_ctx.append(
+            functools.partial(_cleanup_context_wrapper, cleanup_ctx)
+        )
     aiojobs.aiohttp.setup(app, **app['scheduler_opts'])
     cors = aiohttp_cors.setup(app, defaults=root_ctx.cors_options)
     # should be done in create_app() in other modules.
@@ -581,7 +600,7 @@ async def server_main(loop: asyncio.AbstractEventLoop,
     # Plugin webapps should be loaded before runner.setup(),
     # which freezes on_startup event.
     async with shared_config_ctx(root_ctx), \
-               webapp_plugin_ctx(root_ctx):
+               webapp_plugin_ctx(root_app):
         ssl_ctx = None
         if root_ctx.local_config['manager']['ssl-enabled']:
             ssl_ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
