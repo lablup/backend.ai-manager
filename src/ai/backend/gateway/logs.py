@@ -229,8 +229,8 @@ async def log_cleanup_task(app: web.Application, interval):
 
 @attr.s(slots=True, auto_attribs=True, init=False)
 class PrivateContext:
-    log_cleanup_task: asyncio.Task
     log_cleanup_lock: aioredlock.Aioredlock
+    log_cleanup_task: asyncio.Task
 
 
 async def init(app: web.Application) -> None:
@@ -243,8 +243,9 @@ async def init(app: web.Application) -> None:
 
 
 async def shutdown(app: web.Application) -> None:
-    app['log_cleanup_task'].cancel()
-    await app['log_cleanup_task']
+    ctx: PrivateContext = app['logs.context']
+    ctx.log_cleanup_task.cancel()
+    await ctx.log_cleanup_task
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:

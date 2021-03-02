@@ -252,6 +252,7 @@ async def shared_config_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 
 
 # TODO: _init_subapp에 들어가는 root_app을 root_ctx로 대체. aiojobs scheduler는 모든 app에서 공유?
+# TODO: shutdown handler
 
 @aiotools.actxmgr
 async def webapp_plugin_ctx(root_app: web.Application) -> AsyncIterator[None]:
@@ -546,12 +547,19 @@ def build_root_app(
 
     async def _cleanup_context_wrapper(cctx, app: web.Application) -> AsyncIterator[None]:
         # aiohttp's cleanup contexts are just async generators, not async context managers.
-        async with cctx(app['root_context']):
+        cctx_instance = cctx(app['root_context'])
+        app['_cctx_instances'].append(cctx_instance)
+        async with cctx_instance:
             yield
 
+    async def _call_shutdown_handlers(app: web.Application) -> None:
+        for cctx in app['_cctx_instances']:
+            if hasattr(cctx, 'shutdown'):
+                await cctx.shutdown()
+
+    app['_cctx_instances'] = []
+    app.on_shutdown.append(_call_shutdown_handlers)
     for cleanup_ctx in cleanup_contexts:
-        if shutdown_cb := getattr(cleanup_ctx, 'shutdown', None):
-            app.on_shutdown.append(shutdown_cb)
         app.cleanup_ctx.append(
             functools.partial(_cleanup_context_wrapper, cleanup_ctx)
         )

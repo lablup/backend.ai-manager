@@ -1,25 +1,31 @@
+from __future__ import annotations
+
 import asyncio
 import enum
 import functools
 import json
 import logging
-from typing import FrozenSet
 import sqlalchemy as sa
 import trafaret as t
 from typing import (
     Any,
     Final,
+    FrozenSet,
     Iterable,
     Tuple,
+    TYPE_CHECKING,
 )
 
 from aiohttp import web
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
 from aiotools import aclosing
+import attr
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common import validators as tx
+if TYPE_CHECKING:
+    from ai.backend.gateway.context import RootContext
 
 from . import ManagerStatus
 from .auth import superadmin_required
@@ -49,7 +55,8 @@ def server_status_required(allowed_status: FrozenSet[ManagerStatus]):
 
         @functools.wraps(handler)
         async def wrapped(request, *args, **kwargs):
-            status = await request.app['shared_config'].get_manager_status()
+            root_ctx: RootContext = request.app['root_ctx']
+            status = await root_ctx.shared_config.get_manager_status()
             if status not in allowed_status:
                 if status == ManagerStatus.FROZEN:
                     raise ServerFrozen
@@ -75,28 +82,29 @@ class GQLMutationUnfrozenRequiredMiddleware:
         return next(root, info, **args)
 
 
-async def detect_status_update(app):
+async def detect_status_update(root_ctx: RootContext) -> None:
     try:
-        async with aclosing(app['shared_config'].watch_manager_status()) as agen:
+        async with aclosing(root_ctx.shared_config.watch_manager_status()) as agen:
             async for ev in agen:
                 if ev.event == 'put':
-                    app['shared_config'].get_manager_status.cache_clear()
-                    updated_status = await app['shared_config'].get_manager_status()
+                    root_ctx.shared_config.get_manager_status.cache_clear()
+                    updated_status = await root_ctx.shared_config.get_manager_status()
                     log.debug('Process-{0} detected manager status update: {1}',
-                              app['pidx'], updated_status)
+                              root_ctx.pidx, updated_status)
     except asyncio.CancelledError:
         pass
 
 
 @atomic
 async def fetch_manager_status(request: web.Request) -> web.Response:
+    root_ctx: RootContext = request.app['root_context']
     log.info('MANAGER.FETCH_MANAGER_STATUS ()')
     try:
-        status = await request.app['shared_config'].get_manager_status()
-        etcd_info = await request.app['shared_config'].get_manager_nodes_info()
-        configs = request.app['local_config']['manager']
+        status = await root_ctx.shared_config.get_manager_status()
+        etcd_info = await root_ctx.shared_config.get_manager_nodes_info()
+        configs = root_ctx.local_config['manager']
 
-        async with request.app['dbpool'].acquire() as conn, conn.begin():
+        async with root_ctx.dbpool.acquire() as conn, conn.begin():
             query = (sa.select([sa.func.count(kernels.c.id)])
                        .select_from(kernels)
                        .where((kernels.c.cluster_role == DEFAULT_ROLE) &
@@ -139,6 +147,7 @@ async def fetch_manager_status(request: web.Request) -> web.Response:
         t.Key('force_kill', default=False): t.ToBool,
     }))
 async def update_manager_status(request: web.Request, params: Any) -> web.Response:
+    root_ctx: RootContext = request.app['root_ctx']
     log.info('MANAGER.UPDATE_MANAGER_STATUS (status:{}, force_kill:{})',
              params['status'], params['force_kill'])
     try:
@@ -151,15 +160,16 @@ async def update_manager_status(request: web.Request, params: Any) -> web.Respon
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
 
     if force_kill:
-        await request.app['registry'].kill_all_sessions()
-    await request.app['shared_config'].update_manager_status(status)
+        await root_ctx.registry.kill_all_sessions()
+    await root_ctx.shared_config.update_manager_status(status)
 
     return web.Response(status=204)
 
 
 @atomic
 async def get_announcement(request: web.Request) -> web.Response:
-    data = await request.app['shared_config'].etcd.get('manager/announcement')
+    root_ctx: RootContext = request.app['root_ctx']
+    data = await root_ctx.shared_config.etcd.get('manager/announcement')
     if data is None:
         ret = {'enabled': False, 'message': ''}
     else:
@@ -175,12 +185,13 @@ async def get_announcement(request: web.Request) -> web.Response:
         t.Key('message', default=None): t.Null | t.String,
     }))
 async def update_announcement(request: web.Request, params: Any) -> web.Response:
+    root_ctx: RootContext = request.app['root_ctx']
     if params['enabled']:
         if not params['message']:
             raise InvalidAPIParameters(extra_msg='Empty message not allowed to enable announcement')
-        await request.app['shared_config'].etcd.put('manager/announcement', params['message'])
+        await root_ctx.shared_config.etcd.put('manager/announcement', params['message'])
     else:
-        await request.app['shared_config'].etcd.delete('manager/announcement')
+        await root_ctx.shared_config.etcd.delete('manager/announcement')
     return web.Response(status=204)
 
 
@@ -198,6 +209,7 @@ iv_scheduler_ops_args = {
         t.Key('args'): t.Any,
     }))
 async def perform_scheduler_ops(request: web.Request, params: Any) -> web.Response:
+    root_ctx: RootContext = request.app['root_ctx']
     try:
         args = iv_scheduler_ops_args[params['op']].check(params['args'])
     except t.DataError as e:
@@ -207,7 +219,7 @@ async def perform_scheduler_ops(request: web.Request, params: Any) -> web.Respon
         )
     if params['op'] in (SchedulerOps.INCLUDE_AGENTS, SchedulerOps.EXCLUDE_AGENTS):
         schedulable = (params['op'] == SchedulerOps.INCLUDE_AGENTS)
-        async with request.app['dbpool'].acquire() as conn, conn.begin():
+        async with root_ctx.dbpool.acquire() as conn, conn.begin():
             query = (
                 agents.update()
                 .values(schedulable=schedulable)
@@ -224,19 +236,28 @@ async def perform_scheduler_ops(request: web.Request, params: Any) -> web.Respon
     return web.Response(status=204)
 
 
+@attr.s(slots=True, auto_attribs=True, init=False)
+class PrivateContext:
+    status_watch_task: asyncio.Task
+
+
 async def init(app: web.Application) -> None:
-    app['status_watch_task'] = asyncio.create_task(detect_status_update(app))
+    root_ctx: RootContext = app['root_context']
+    ctx: PrivateContext = app['manager.context']
+    ctx.status_watch_task = asyncio.create_task(detect_status_update(root_ctx))
 
 
 async def shutdown(app: web.Application) -> None:
-    if app['status_watch_task'] is not None:
-        app['status_watch_task'].cancel()
-        await app['status_watch_task']
+    ctx: PrivateContext = app['manager.context']
+    if ctx.status_watch_task is not None:
+        ctx.status_watch_task.cancel()
+        await ctx.status_watch_task
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
     app = web.Application()
     app['api_versions'] = (2, 3, 4)
+    app['manager.context'] = PrivateContext()
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     status_resource = cors.add(app.router.add_resource('/status'))
     cors.add(status_resource.add_route('GET', fetch_manager_status))

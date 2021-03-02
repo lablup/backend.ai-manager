@@ -25,7 +25,7 @@ import trafaret as t
 
 from ai.backend.common import validators as tx
 from ai.backend.common.events import (
-    AbstractEvent, BgtaskCancelledEvent,
+    BgtaskCancelledEvent,
     BgtaskDoneEvent,
     BgtaskFailedEvent,
     BgtaskUpdatedEvent,

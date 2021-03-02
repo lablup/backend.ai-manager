@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from ai.backend.gateway.context import RootContext
-
 """
 Configuration Schema on etcd
 ----------------------------

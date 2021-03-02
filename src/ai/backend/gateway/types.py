@@ -12,8 +12,6 @@ from typing import (
 from aiohttp import web
 import aiohttp_cors
 
-from ai.backend.gateway.context import RootContext
-
 
 WebRequestHandler = Callable[
     [web.Request],

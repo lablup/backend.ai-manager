@@ -40,7 +40,7 @@ import trafaret as t
 import zmq, zmq.asyncio
 
 from ai.backend.common import validators as tx
-from ai.backend.common.events import EventDispatcher, KernelTerminatingEvent
+from ai.backend.common.events import KernelTerminatingEvent
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     AccessKey,
@@ -144,7 +144,6 @@ async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
                                 root_ctx.registry.get_session(
                                     session_name,
                                     access_key,
-                                    field=extra_fields,
                                 )
                             )
                             stdin_sock, stdout_sock = await connect_streams(kernel)
