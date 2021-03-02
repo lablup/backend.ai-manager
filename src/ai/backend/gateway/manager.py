@@ -97,7 +97,7 @@ async def detect_status_update(root_ctx: RootContext) -> None:
 
 @atomic
 async def fetch_manager_status(request: web.Request) -> web.Response:
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     log.info('MANAGER.FETCH_MANAGER_STATUS ()')
     try:
         status = await root_ctx.shared_config.get_manager_status()
@@ -242,7 +242,7 @@ class PrivateContext:
 
 
 async def init(app: web.Application) -> None:
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     ctx: PrivateContext = app['manager.context']
     ctx.status_watch_task = asyncio.create_task(detect_status_update(root_ctx))
 

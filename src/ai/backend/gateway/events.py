@@ -83,7 +83,7 @@ async def push_session_events(
     request: web.Request,
     params: Mapping[str, Any],
 ) -> web.StreamResponse:
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     ctx: PrivateContext = request.app['events.context']
     session_name = params['session_name']
     session_id = params['session_id']
@@ -172,7 +172,7 @@ async def push_background_task_events(
     request: web.Request,
     params: Mapping[str, Any],
 ) -> web.StreamResponse:
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     ctx: PrivateContext = request.app['events.context']
     task_id = params['task_id']
     access_key = request['keypair']['access_key']
@@ -235,7 +235,7 @@ async def enqueue_kernel_creation_status_update(
     source: AgentId,
     event: KernelPreparingEvent | KernelPullingEvent | KernelCreatingEvent | KernelStartedEvent,
 ) -> None:
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     ctx: PrivateContext = app['events.context']
 
     async def _fetch():
@@ -272,7 +272,7 @@ async def enqueue_kernel_termination_status_update(
     agent_id: AgentId,
     event: KernelCancelledEvent | KernelTerminatingEvent | KernelTerminatedEvent,
 ) -> None:
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     ctx: PrivateContext = app['events.context']
 
     async def _fetch():
@@ -309,7 +309,7 @@ async def enqueue_session_creation_status_update(
     source: AgentId,
     event: SessionEnqueuedEvent | SessionScheduledEvent | SessionStartedEvent | SessionCancelledEvent,
 ) -> None:
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     ctx: PrivateContext = app['events.context']
 
     async def _fetch():
@@ -345,7 +345,7 @@ async def enqueue_session_termination_status_update(
     agent_id: AgentId,
     event: SessionTerminatedEvent,
 ) -> None:
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     ctx: PrivateContext = app['events.context']
 
     async def _fetch():
@@ -381,7 +381,7 @@ async def enqueue_batch_task_result_update(
     agent_id: AgentId,
     event: SessionSuccessEvent | SessionFailureEvent,
 ) -> None:
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     ctx: PrivateContext = app['events.context']
 
     async def _fetch():
@@ -428,7 +428,7 @@ class PrivateContext:
 
 
 async def events_app_ctx(app: web.Application) -> AsyncIterator[None]:
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     ctx: PrivateContext = app['events.context']
     ctx.session_event_queues = set()
     ctx.task_update_queues = set()

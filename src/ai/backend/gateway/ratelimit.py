@@ -91,7 +91,7 @@ class PrivateContext:
 
 
 async def init(app: web.Application) -> None:
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     ctx: PrivateContext = app['ratelimit.context']
     rr = await redis.connect_with_retries(
         str(root_ctx.shared_config.get_redis_url(db=REDIS_RLIM_DB)),

@@ -50,7 +50,7 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.logs'))
     }
 ))
 async def append(request: web.Request, params: Any) -> web.Response:
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     params['domain'] = request['user']['domain_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     requester_uuid = request['user']['uuid']
@@ -87,7 +87,7 @@ async def append(request: web.Request, params: Any) -> web.Response:
     }),
 )
 async def list_logs(request: web.Request, params: Any) -> web.Response:
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     resp: MutableMapping[str, Any] = {'logs': []}
     domain_name = request['user']['domain_name']
     user_role = request['user']['role']
@@ -159,7 +159,7 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
 @auth_required
 @server_status_required(READ_ALLOWED)
 async def mark_cleared(request: web.Request) -> web.Response:
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     domain_name = request['user']['domain_name']
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
@@ -192,7 +192,7 @@ async def mark_cleared(request: web.Request) -> web.Response:
 
 
 async def log_cleanup_task(app: web.Application, interval):
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     ctx: PrivateContext = app['logs.context']
     etcd = root_ctx.shared_config.etcd
     raw_lifetime = await etcd.get('config/logs/error/retention')
@@ -234,7 +234,7 @@ class PrivateContext:
 
 
 async def init(app: web.Application) -> None:
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     ctx: PrivateContext = app['logs.context']
     redis_url = root_ctx.shared_config.get_redis_url()
     ctx.log_cleanup_lock = aioredlock.Aioredlock([str(redis_url)])

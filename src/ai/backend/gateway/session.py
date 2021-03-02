@@ -379,7 +379,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*',
              params['image'], params['session_name'])
 
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     resp: MutableMapping[str, Any] = {}
 
     if mount_map := params['config'].get('mount_map'):
@@ -593,7 +593,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     }
 ), loads=_json_loads)
 async def create_from_template(request: web.Request, params: Any) -> web.Response:
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
 
     if params['image'] is None and params['template_id'] is None:
         raise InvalidAPIParameters('Both image and template_id can\'t be None!')
@@ -739,7 +739,7 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
     if params['session_name'] in ['from-template']:
         raise InvalidAPIParameters(f'Requested session ID {params["session_name"]} is reserved word')
 
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     api_version = request['api_version']
     if 6 <= api_version[0]:
         creation_config = creation_config_v5.check(params['config'])
@@ -777,7 +777,7 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
     }),
     loads=_json_loads)
 async def create_cluster(request: web.Request, params: Any) -> web.Response:
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
     scopes_param = {
@@ -1025,7 +1025,7 @@ async def handle_kernel_creation_lifecycle(
     but distinguish which one to process using a unique creation_id
     generated when initiating the create_kernels() agent RPC call.
     """
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     ck_id = (event.creation_id, event.kernel_id)
     if ck_id not in root_ctx.registry.kernel_creation_tracker:
         return
@@ -1046,7 +1046,7 @@ async def handle_kernel_termination_lifecycle(
     source: AgentId,
     event: KernelTerminatingEvent | KernelTerminatedEvent,
 ) -> None:
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     if event.name == 'kernel_terminating':
         # The destroy_kernel() API handler will set the "TERMINATING" status.
         pass
@@ -1083,7 +1083,7 @@ async def handle_session_termination_lifecycle(
     Update the database according to the session-level lifecycle events
     published by the manager.
     """
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     if event.name == 'session_terminated':
         await root_ctx.registry.mark_session_terminated(event.session_id, event.reason)
 
@@ -1093,7 +1093,7 @@ async def handle_destroy_session(
     source: AgentId,
     event: DoTerminateSessionEvent,
 ) -> None:
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     await root_ctx.registry.destroy_session(
         functools.partial(
             root_ctx.registry.get_session_by_session_id,
@@ -1109,7 +1109,7 @@ async def handle_kernel_stat_sync(
     agent_id: AgentId,
     event: DoSyncKernelStatsEvent,
 ) -> None:
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     await root_ctx.registry.sync_kernel_stats(event.kernel_ids)
 
 
@@ -1121,7 +1121,7 @@ async def handle_batch_result(
     """
     Update the database according to the batch-job completion results
     """
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     if event.name == 'session_success':
         await root_ctx.registry.set_session_result(event.session_id, True, event.exit_code)
     elif event.name == 'session_failure':
@@ -1140,7 +1140,7 @@ async def handle_agent_lifecycle(
     source: AgentId,
     event: AgentStartedEvent | AgentTerminatedEvent,
 ) -> None:
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     if event.name == 'agent_started':
         log.info('instance_lifecycle: ag:{0} joined ({1})', source, event.reason)
         await root_ctx.registry.update_instance(source, {
@@ -1165,7 +1165,7 @@ async def handle_agent_heartbeat(
     source: AgentId,
     event: AgentHeartbeatEvent,
 ) -> None:
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     await root_ctx.registry.handle_heartbeat(source, event.agent_info)
 
 
@@ -1194,7 +1194,7 @@ async def handle_agent_stats(
     source: AgentId,
     event: AgentStatsEvent,
 ) -> None:
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     await root_ctx.registry.handle_stats(source, event.stats)
 
 
@@ -1203,7 +1203,7 @@ async def handle_kernel_log(
     source: AgentId,
     event: DoSyncKernelLogsEvent
 ) -> None:
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     redis_conn: aioredis.Redis = await redis.connect_with_retries(
         str(root_ctx.shared_config.get_redis_url(db=REDIS_STREAM_DB)),
         encoding=None,
@@ -1305,7 +1305,7 @@ async def stats_report_timer(root_ctx: RootContext):
         t.Key('forced', default='false'): t.ToBool(),
     }))
 async def destroy(request: web.Request, params: Any) -> web.Response:
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     session_name = request.match_info['session_name']
     if params['forced'] and request['user']['role'] not in (UserRole.ADMIN, UserRole.SUPERADMIN):
         raise InsufficientPrivilege('You are not allowed to force-terminate')
@@ -1341,7 +1341,7 @@ async def match_sessions(request: web.Request, params: Any) -> web.Response:
     """
     A quick session-ID matcher API for use with auto-completion in CLI.
     """
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     id_or_name_prefix = params['id']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('MATCH_SESSIONS(ak:{0}/{1}, prefix:{2})',
@@ -1370,7 +1370,7 @@ async def match_sessions(request: web.Request, params: Any) -> web.Response:
 async def get_info(request: web.Request) -> web.Response:
     # NOTE: This API should be replaced with GraphQL version.
     resp = {}
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('GET_INFO (ak:{0}/{1}, s:{2})',
@@ -1418,7 +1418,7 @@ async def get_info(request: web.Request) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def restart(request: web.Request) -> web.Response:
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     session_creation_id = secrets.token_urlsafe(16)
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
@@ -1441,7 +1441,7 @@ async def restart(request: web.Request) -> web.Response:
 @auth_required
 async def execute(request: web.Request) -> web.Response:
     resp = {}
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     try:
@@ -1523,7 +1523,7 @@ async def execute(request: web.Request) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def interrupt(request: web.Request) -> web.Response:
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('INTERRUPT(ak:{0}/{1}, s:{2})',
@@ -1547,7 +1547,7 @@ async def complete(request: web.Request) -> web.Response:
             'completions': [],
         }
     }
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     try:
@@ -1578,7 +1578,7 @@ async def complete(request: web.Request) -> web.Response:
         t.Key('service_name'): t.String,
     }))
 async def shutdown_service(request: web.Request, params: Any) -> web.Response:
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('SHUTDOWN_SERVICE (ak:{0}/{1}, s:{2})',
@@ -1597,7 +1597,7 @@ async def shutdown_service(request: web.Request, params: Any) -> web.Response:
 async def upload_files(request: web.Request) -> web.Response:
     loop = asyncio.get_event_loop()
     reader = await request.multipart()
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('UPLOAD_FILE (ak:{0}/{1}, s:{2})',
@@ -1642,7 +1642,7 @@ async def upload_files(request: web.Request) -> web.Response:
         tx.MultiKey('files'): t.List(t.String),
     }))
 async def download_files(request: web.Request, params: Any) -> web.Response:
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     files = params.get('files')
@@ -1686,7 +1686,7 @@ async def download_single(request: web.Request, params: Any) -> web.Response:
     """
     Download a single file from the scratch root. Only for small files.
     """
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     file = params['file']
@@ -1713,7 +1713,7 @@ async def download_single(request: web.Request, params: Any) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def list_files(request: web.Request) -> web.Response:
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     try:
         session_name = request.match_info['session_name']
         requester_access_key, owner_access_key = await get_access_key_scopes(request)
@@ -1751,7 +1751,7 @@ async def list_files(request: web.Request) -> web.Response:
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }))
 async def get_container_logs(request: web.Request, params: Any) -> web.Response:
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     session_name: str = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('GET_CONTAINER_LOG (ak:{}/{}, s:{})',
@@ -1791,7 +1791,7 @@ async def get_container_logs(request: web.Request, params: Any) -> web.Response:
 async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse:
     log.info('GET_TASK_LOG (ak:{}, k:{})',
              request['keypair']['access_key'], params['kernel_id'])
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     domain_name = request['user']['domain_name']
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
@@ -1849,7 +1849,7 @@ class PrivateContext:
 
 
 async def init(app: web.Application) -> None:
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     ctx: PrivateContext = app['session.context']
 
     ctx.session_creation_tracker = {}

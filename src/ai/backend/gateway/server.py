@@ -190,7 +190,7 @@ async def api_middleware(request: web.Request,
 @web.middleware
 async def exception_middleware(request: web.Request,
                                handler: WebRequestHandler) -> web.StreamResponse:
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     error_monitor = root_ctx.error_monitor
     stats_monitor = root_ctx.stats_monitor
     try:
@@ -255,7 +255,7 @@ async def shared_config_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 
 @aiotools.actxmgr
 async def webapp_plugin_ctx(root_app: web.Application) -> AsyncIterator[None]:
-    root_ctx: RootContext = root_app['root_context']
+    root_ctx: RootContext = root_app['_root.context']
     plugin_ctx = WebappPluginContext(root_ctx.shared_config.etcd, root_ctx.local_config)
     await plugin_ctx.init()
     root_ctx.webapp_plugin_ctx = plugin_ctx
@@ -421,7 +421,7 @@ async def sched_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 async def monitoring_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     ectx = ErrorPluginContext(root_ctx.shared_config.etcd, root_ctx.local_config)
     sctx = StatsPluginContext(root_ctx.shared_config.etcd, root_ctx.local_config)
-    await ectx.init(context={'root_context': root_ctx})
+    await ectx.init(context={'_root.context': root_ctx})
     await sctx.init()
     root_ctx.error_monitor = ectx
     root_ctx.stats_monitor = sctx
@@ -478,7 +478,7 @@ def _init_subapp(
     async def _set_root_ctx(subapp: web.Application):
         # Allow subapp's access to the root app properties.
         # These are the public APIs exposed to plugins as well.
-        subapp['root_context'] = root_app['root_context']
+        subapp['_root.context'] = root_app['_root.context']
 
     # We must copy the public interface prior to all user-defined startup signal handlers.
     subapp.on_startup.insert(0, _set_root_ctx)
@@ -489,7 +489,7 @@ def _init_subapp(
 
 
 def init_subapp(pkg_name: str, root_app: web.Application, create_subapp: AppCreator) -> None:
-    root_ctx: RootContext = root_app['root_context']
+    root_ctx: RootContext = root_app['_root.context']
     subapp, global_middlewares = create_subapp(root_ctx.cors_options)
     _init_subapp(pkg_name, root_app, subapp, global_middlewares)
 
@@ -510,7 +510,7 @@ def build_root_app(
     loop = asyncio.get_running_loop()
     loop.set_exception_handler(global_exception_handler)
     root_ctx = RootContext()
-    app['root_context'] = root_ctx
+    app['_root.context'] = root_ctx
     root_ctx.local_config = local_config
     root_ctx.pidx = pidx
     root_ctx.cors_options = {
@@ -546,7 +546,7 @@ def build_root_app(
 
     async def _cleanup_context_wrapper(cctx, app: web.Application) -> AsyncIterator[None]:
         # aiohttp's cleanup contexts are just async generators, not async context managers.
-        cctx_instance = cctx(app['root_context'])
+        cctx_instance = cctx(app['_root.context'])
         app['_cctx_instances'].append(cctx_instance)
         async with cctx_instance:
             yield
@@ -599,7 +599,7 @@ async def server_main(loop: asyncio.AbstractEventLoop,
         '.logs',
     ]
     root_app = build_root_app(pidx, _args[0], subapp_pkgs=subapp_pkgs)
-    root_ctx: RootContext = root_app['root_context']
+    root_ctx: RootContext = root_app['_root.context']
 
     # Plugin webapps should be loaded before runner.setup(),
     # which freezes on_startup event.

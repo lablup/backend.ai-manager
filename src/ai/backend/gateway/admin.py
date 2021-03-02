@@ -56,7 +56,7 @@ class GQLLoggingMiddleware:
         tx.AliasedKey(['operation_name', 'operationName'], default=None): t.Null | t.String,
     }))
 async def handle_gql(request: web.Request, params: Any) -> web.Response:
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     ctx: PrivateContext = request.app['admin.context']
     manager_status = await root_ctx.shared_config.get_manager_status()
     known_slot_types = await root_ctx.shared_config.get_resource_slots()

@@ -78,7 +78,7 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.stream'))
 @auth_required
 @adefer
 async def stream_pty(defer, request: web.Request) -> web.StreamResponse:
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     ctx: PrivateContext = request.app['stream.context']
     session_name = request.match_info['session_name']
     access_key = request['keypair']['access_key']
@@ -254,7 +254,7 @@ async def stream_execute(defer, request: web.Request) -> web.StreamResponse:
     '''
     WebSocket-version of gateway.kernel.execute().
     '''
-    root_ctx: RootContext = request.app['root_context']
+    root_ctx: RootContext = request.app['_root.context']
     ctx: PrivateContext = request.app['stream.context']
     local_config = root_ctx.local_config
     registry = root_ctx.registry
@@ -537,7 +537,7 @@ async def handle_kernel_terminating(
     source: AgentId,
     event: KernelTerminatingEvent,
 ) -> None:
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     ctx: PrivateContext = app['stream.context']
     try:
         kernel = await root_ctx.registry.get_kernel(
@@ -608,7 +608,7 @@ class PrivateContext:
 
 
 async def stream_app_ctx(app: web.Application) -> AsyncIterator[None]:
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     ctx: PrivateContext = app['stream.context']
 
     ctx.stream_pty_handlers = defaultdict(weakref.WeakSet)

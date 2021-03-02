@@ -22,7 +22,7 @@ log = BraceStyleAdapter(logging.getLogger(__name__))
 class ErrorMonitor(AbstractErrorReporterPlugin):
 
     async def init(self, context: Any = None) -> None:
-        root_ctx: RootContext = context['root_context']  # type: ignore
+        root_ctx: RootContext = context['_root.context']  # type: ignore
         self.event_dispatcher = root_ctx.event_dispatcher
         self._evh = self.event_dispatcher.consume(AgentErrorEvent, None, self.handle_agent_error)
         self.dbpool = root_ctx.dbpool

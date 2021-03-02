@@ -133,7 +133,7 @@ async def delete_config(request: web.Request, params: Any) -> web.Response:
 
 
 async def app_ctx(app: web.Application) -> AsyncGenerator[None, None]:
-    root_ctx: RootContext = app['root_context']
+    root_ctx: RootContext = app['_root.context']
     if root_ctx.pidx == 0:
         await root_ctx.shared_config.register_myself()
     yield
