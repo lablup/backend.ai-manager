@@ -23,6 +23,7 @@ from .utils import check_api_params
 from .types import CORSOptions, WebMiddleware
 if TYPE_CHECKING:
     from .config import SharedConfig
+    from .context import RootContext
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
 
@@ -132,11 +133,12 @@ async def delete_config(request: web.Request, params: Any) -> web.Response:
 
 
 async def app_ctx(app: web.Application) -> AsyncGenerator[None, None]:
-    if app['pidx'] == 0:
-        await app['shared_config'].register_myself()
+    root_ctx: RootContext = app['root_context']
+    if root_ctx.pidx == 0:
+        await root_ctx.shared_config.register_myself()
     yield
-    if app['pidx'] == 0:
-        await app['shared_config'].deregister_myself()
+    if root_ctx.pidx == 0:
+        await root_ctx.shared_config.deregister_myself()
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:

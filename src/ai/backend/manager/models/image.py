@@ -45,7 +45,13 @@ class Image(graphene.ObjectType):
     hash = graphene.String()
 
     @classmethod
-    def _convert_from_dict(cls, context, data):
+    async def _convert_from_dict(cls, context, data):
+        installed = (
+            await context['redis_image'].scard(data['canonical_ref'])
+        ) > 0
+        installed_agents = await context['redis_image'].smembers(data['canonical_ref'])
+        if installed_agents is None:
+            installed_agents = []
         is_superadmin = (context['user']['role'] == UserRole.SUPERADMIN)
         hide_agents = False if is_superadmin else context['local_config']['manager']['hide-agents']
         return cls(
@@ -63,8 +69,8 @@ class Image(graphene.ObjectType):
                 ResourceLimit(key=v['key'], min=v['min'], max=v['max'])
                 for v in data['resource_limits']],
             supported_accelerators=data['supported_accelerators'],
-            installed=data['installed'],
-            installed_agents=data.get('installed_agents', []) if not hide_agents else None,
+            installed=installed,
+            installed_agents=installed_agents if not hide_agents else None,
             # legacy
             hash=data['digest'],
         )
@@ -72,7 +78,7 @@ class Image(graphene.ObjectType):
     @classmethod
     async def load_item(cls, context, reference):
         r = await context['shared_config'].inspect_image(reference)
-        return cls._convert_from_dict(context, r)
+        return await cls._convert_from_dict(context, r)
 
     @classmethod
     async def load_all(cls, context, is_installed=None, is_operation=None):
@@ -80,7 +86,7 @@ class Image(graphene.ObjectType):
         items = []
         # Convert to GQL objects
         for r in raw_items:
-            item = cls._convert_from_dict(context, r)
+            item = await cls._convert_from_dict(context, r)
             items.append(item)
         if is_installed is not None:
             items = [*filter(lambda item: item.installed == is_installed, items)]

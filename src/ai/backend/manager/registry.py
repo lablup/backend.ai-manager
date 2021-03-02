@@ -1916,7 +1916,6 @@ class AgentRegistry:
         self,
         session_name_or_id: Union[str, SessionId],
         access_key: AccessKey,
-        mode: str,
         text: str,
         opts: Mapping[str, Any],
     ) -> Mapping[str, Any]:
@@ -1928,7 +1927,7 @@ class AgentRegistry:
                 10,
                 order_key=kernel['id'],
             ) as rpc:
-                return await rpc.call.get_completions(str(kernel['id']), mode, text, opts)
+                return await rpc.call.get_completions(str(kernel['id']), text, opts)
 
     async def start_service(
         self,

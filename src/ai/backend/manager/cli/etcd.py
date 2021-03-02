@@ -5,10 +5,9 @@ import contextlib
 import json
 import logging
 from pprint import pprint
-from typing import Any, AsyncIterator, Dict, TYPE_CHECKING
+from typing import AsyncIterator, TYPE_CHECKING
 import sys
 
-import aioredis
 import click
 from tabulate import tabulate
 
@@ -22,7 +21,6 @@ from ai.backend.common.etcd import (
 )
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.gateway.config import SharedConfig
-from ai.backend.gateway.defs import REDIS_IMAGE_DB
 if TYPE_CHECKING:
     from .__main__ import CLIContext
 
@@ -58,11 +56,8 @@ async def etcd_ctx(cli_ctx: CLIContext) -> AsyncIterator[AsyncEtcd]:
 @contextlib.asynccontextmanager
 async def config_ctx(cli_ctx: CLIContext) -> AsyncIterator[SharedConfig]:
     local_config = cli_ctx.local_config
-    ctx: Dict[str, Any] = {}
-    ctx['config'] = local_config
     # scope_prefix_map is created inside ConfigServer
     shared_config = SharedConfig(
-        ctx,
         local_config['etcd']['addr'],
         local_config['etcd']['user'],
         local_config['etcd']['password'],
@@ -71,18 +66,9 @@ async def config_ctx(cli_ctx: CLIContext) -> AsyncIterator[SharedConfig]:
     await shared_config.reload()
     raw_redis_config = await shared_config.etcd.get_prefix('config/redis')
     local_config['redis'] = redis_config_iv.check(raw_redis_config)
-    redis_image = await aioredis.create_redis(
-        local_config['redis']['addr'].as_sockaddr(),
-        password=local_config['redis']['password'] if local_config['redis']['password'] else None,
-        timeout=3.0,
-        encoding='utf8',
-        db=REDIS_IMAGE_DB)
-    ctx['redis_image'] = redis_image
     try:
         yield shared_config
     finally:
-        redis_image.close()
-        await redis_image.wait_closed()
         await shared_config.close()
 
 
@@ -218,6 +204,8 @@ def list_images(cli_ctx: CLIContext, short, installed) -> None:
             displayed_items = []
             try:
                 items = await shared_config.list_images()
+                # NOTE: installed/installed_agents fields are no longer provided in CLI,
+                #       until we finish the epic refactoring of image metadata db.
                 for item in items:
                     if installed and not item['installed']:
                         continue

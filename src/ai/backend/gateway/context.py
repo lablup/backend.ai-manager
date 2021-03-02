@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Sequence, TYPE_CHECKING
 
+import attr
+
 if TYPE_CHECKING:
     from aiopg.sa.engine import _PoolAcquireContextManager as SAPool
     from aioredis import Redis
@@ -23,6 +25,7 @@ class BaseContext:
     pass
 
 
+@attr.s(slots=True, auto_attribs=True, init=False)
 class RootContext(BaseContext):
     pidx: int
     dbpool: SAPool

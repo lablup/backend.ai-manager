@@ -1,6 +1,4 @@
-'''
-The main web / websocket server
-'''
+from __future__ import annotations
 
 import asyncio
 from datetime import datetime
@@ -192,9 +190,9 @@ async def api_middleware(request: web.Request,
 @web.middleware
 async def exception_middleware(request: web.Request,
                                handler: WebRequestHandler) -> web.StreamResponse:
-    app = request.app
-    error_monitor = app['error_monitor']
-    stats_monitor = app['stats_monitor']
+    root_ctx: RootContext = request.app['root_context']
+    error_monitor = root_ctx.error_monitor
+    stats_monitor = root_ctx.stats_monitor
     try:
         await stats_monitor.report_metric(INCREMENT, 'ai.backend.gateway.api.requests')
         resp = (await handler(request))
@@ -230,7 +228,7 @@ async def exception_middleware(request: web.Request,
     except Exception as e:
         await error_monitor.capture_exception()
         log.exception('Uncaught exception in HTTP request handlers {0!r}', e)
-        if app['local_config']['debug']['enabled']:
+        if root_ctx.local_config['debug']['enabled']:
             raise InternalServerError(traceback.format_exc())
         else:
             raise InternalServerError()
@@ -243,7 +241,6 @@ async def exception_middleware(request: web.Request,
 async def shared_config_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     # populate public interfaces
     root_ctx.shared_config = SharedConfig(
-        root_ctx,
         root_ctx.local_config['etcd']['addr'],
         root_ctx.local_config['etcd']['user'],
         root_ctx.local_config['etcd']['password'],
@@ -268,7 +265,7 @@ async def webapp_plugin_ctx(root_app: web.Application) -> AsyncIterator[None]:
         subapp, global_middlewares = await plugin_instance.create_app(root_ctx.cors_options)
         _init_subapp(plugin_name, root_app, subapp, global_middlewares)
     yield
-    await root_ctx.cleanup()
+    await plugin_ctx.cleanup()
 
 
 @aiotools.actxmgr
@@ -424,7 +421,7 @@ async def sched_dispatcher_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 async def monitoring_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
     ectx = ErrorPluginContext(root_ctx.shared_config.etcd, root_ctx.local_config)
     sctx = StatsPluginContext(root_ctx.shared_config.etcd, root_ctx.local_config)
-    await ectx.init(context={'app': root_ctx})
+    await ectx.init(context={'root_context': root_ctx})
     await sctx.init()
     root_ctx.error_monitor = ectx
     root_ctx.stats_monitor = sctx
@@ -440,7 +437,7 @@ class background_task_ctx:
 
     async def __aenter__(self) -> None:
         self.root_ctx.background_task_manager = BackgroundTaskManager(self.root_ctx.event_producer)
-    
+
     async def __aexit__(self, *exc_info) -> None:
         pass
 

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from typing import (
     Awaitable, Callable, Iterable,
-    AsyncIterator,
+    AsyncContextManager,
+    # AsyncIterator,
     Tuple,
+    Type,
     Mapping,
 )
 
@@ -28,4 +30,5 @@ AppCreator = Callable[
     Tuple[web.Application, Iterable[WebMiddleware]]
 ]
 
-CleanupContext = Callable[[RootContext], AsyncIterator[None]]
+# CleanupContext = Callable[[RootContext], AsyncIterator[None]]
+CleanupContext = Type[AsyncContextManager]

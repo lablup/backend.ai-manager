@@ -152,7 +152,6 @@ def etcd_fixture(test_id, local_config, vfolder_mount, vfolder_fsprefix, vfolder
 @pytest.fixture
 async def shared_config(app, etcd_fixture):
     shared_config = SharedConfig(
-        app,
         app['local_config']['etcd']['addr'],
         app['local_config']['etcd']['user'],
         app['local_config']['etcd']['password'],
