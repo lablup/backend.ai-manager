@@ -2,7 +2,8 @@ import inspect
 import logging
 from typing import (
     Any,
-    Iterable, TYPE_CHECKING,
+    Iterable,
+    TYPE_CHECKING,
     Tuple,
 )
 
@@ -37,10 +38,11 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
 
 class GQLLoggingMiddleware:
 
-    def resolve(self, next, root, info, **args):
+    def resolve(self, next, root, info: graphene.ResolveInfo, **args) -> Any:
+        graph_ctx: GraphQueryContext = info.context['gql.context']
         if len(info.path) == 1:
             log.info('ADMIN.GQL (ak:{}, {}:{}, op:{})',
-                     info.context['access_key'],
+                     graph_ctx.access_key,
                      info.operation.operation,
                      info.field_name,
                      info.operation.name)

@@ -21,9 +21,12 @@ import aiohttp_cors
 from aiojobs.aiohttp import atomic
 from aiotools import aclosing
 import attr
+import graphene
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common import validators as tx
+
+from ai.backend.manager.models.gql import GraphQueryContext
 if TYPE_CHECKING:
     from ai.backend.gateway.context import RootContext
 
@@ -75,9 +78,10 @@ ALL_ALLOWED: Final = frozenset({ManagerStatus.RUNNING})
 
 class GQLMutationUnfrozenRequiredMiddleware:
 
-    def resolve(self, next, root, info, **args):
+    def resolve(self, next, root, info: graphene.ResolveInfo, **args) -> Any:
+        graph_ctx: GraphQueryContext = info.context['gql.context']
         if info.operation.operation == 'mutation' and \
-                info.context['manager_status'] == ManagerStatus.FROZEN:
+                graph_ctx.manager_status == ManagerStatus.FROZEN:
             raise ServerFrozen
         return next(root, info, **args)
 

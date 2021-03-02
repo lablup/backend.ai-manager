@@ -903,11 +903,12 @@ class Queries(graphene.ObjectType):
 
 class GQLMutationPrivilegeCheckMiddleware:
 
-    def resolve(self, next, root, info, **args):
+    def resolve(self, next, root, info: graphene.ResolveInfo, **args) -> Any:
+        graph_ctx: GraphQueryContext = info.context['gql.context']
         if info.operation.operation == 'mutation' and len(info.path) == 1:
             mutation_cls = getattr(Mutations, info.path[0]).type
             # default is allow nobody.
             allowed_roles = getattr(mutation_cls, 'allowed_roles', [])
-            if info.context['user']['role'] not in allowed_roles:
+            if graph_ctx.user['role'] not in allowed_roles:
                 return mutation_cls(False, f"no permission to execute {info.path[0]}")
         return next(root, info, **args)
