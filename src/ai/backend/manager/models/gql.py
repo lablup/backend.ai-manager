@@ -1,6 +1,23 @@
+from __future__ import annotations
+
+from typing import Any, Mapping, TYPE_CHECKING
 import uuid
 
+import attr
 import graphene
+
+if TYPE_CHECKING:
+    from aiopg.sa.engine import _PoolAcquireContextManager as SAPool
+    from aioredis import Redis
+
+    from ai.backend.common.etcd import AsyncEtcd
+    from ai.backend.common.types import SlotName, SlotTypes
+
+    from ai.backend.gateway.config import LocalConfig, SharedConfig
+    from ai.backend.gateway.manager import ManagerStatus
+    from ..registry import AgentRegistry
+    from ..background import BackgroundTaskManager
+    from .storage import StorageSessionManager
 
 from .base import privileged_query, scoped_query
 from .agent import (
@@ -67,10 +84,26 @@ from ...gateway.exceptions import (
 )
 
 
+@attr.s(auto_attribs=True, slots=True)
+class GraphQueryContext:
+    local_config: LocalConfig
+    shared_config: SharedConfig
+    etcd: AsyncEtcd
+    user: Mapping[str, Any]  # TODO: express using typed dict
+    access_key: str
+    dbpool: SAPool
+    redis_stat: Redis
+    manager_status: ManagerStatus
+    known_slot_types: Mapping[SlotName, SlotTypes]
+    background_task_manager: BackgroundTaskManager
+    storage_manager: StorageSessionManager
+    registry: AgentRegistry
+
+
 class Mutations(graphene.ObjectType):
-    '''
+    """
     All available GraphQL mutations.
-    '''
+    """
 
     # super-admin only
     create_domain = CreateDomain.Field()
@@ -128,9 +161,9 @@ class Mutations(graphene.ObjectType):
 
 
 class Queries(graphene.ObjectType):
-    '''
+    """
     All available GraphQL queries.
-    '''
+    """
 
     # super-admin only
     agent = graphene.Field(

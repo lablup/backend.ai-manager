@@ -2,14 +2,14 @@ import inspect
 import logging
 from typing import (
     Any,
-    Iterable,
+    Iterable, TYPE_CHECKING,
     Tuple,
 )
-import re
 
 from aiohttp import web
 import aiohttp_cors
 from aiojobs.aiohttp import atomic
+import attr
 import graphene
 from graphql.execution.executors.asyncio import AsyncioExecutor
 from graphql.error import GraphQLError, format_error
@@ -26,12 +26,13 @@ from .utils import check_api_params
 from ..manager.models.base import DataLoaderManager
 from ..manager.models.gql import (
     Mutations, Queries,
+    GraphQueryContext,
     GQLMutationPrivilegeCheckMiddleware,
 )
+if TYPE_CHECKING:
+    from ..gateway.context import RootContext
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
-
-_rx_qname = re.compile(r'{\s*(\w+)\b')
 
 
 class GQLLoggingMiddleware:
@@ -55,32 +56,32 @@ class GQLLoggingMiddleware:
         tx.AliasedKey(['operation_name', 'operationName'], default=None): t.Null | t.String,
     }))
 async def handle_gql(request: web.Request, params: Any) -> web.Response:
-    executor = request.app['admin.gql_executor']
-    schema = request.app['admin.gql_schema']
-    manager_status = await request.app['shared_config'].get_manager_status()
-    known_slot_types = await request.app['shared_config'].get_resource_slots()
-    context = {
-        'local_config': request.app['local_config'],
-        'shared_config': request.app['shared_config'],
-        'etcd': request.app['shared_config'].etcd,
-        'user': request['user'],
-        'access_key': request['keypair']['access_key'],
-        'dbpool': request.app['dbpool'],
-        'redis_stat': request.app['redis_stat'],
-        'manager_status': manager_status,
-        'known_slot_types': known_slot_types,
-        'background_task_manager': request.app['background_task_manager'],
-        'storage_manager': request.app['storage_manager'],
-        'registry': request.app['registry'],
-    }
-    dlmanager = DataLoaderManager(context)
-    result = schema.execute(
-        params['query'], executor,
+    root_ctx: RootContext = request.app['root_context']
+    ctx: PrivateContext = request.app['admin.context']
+    manager_status = await root_ctx.shared_config.get_manager_status()
+    known_slot_types = await root_ctx.shared_config.get_resource_slots()
+    graph_ctx = GraphQueryContext(
+        local_config=root_ctx.local_config,
+        shared_config=root_ctx.shared_config,
+        etcd=root_ctx.shared_config.etcd,
+        user=request['user'],
+        access_key=request['keypair']['access_key'],
+        dbpool=root_ctx.dbpool,
+        redis_stat=root_ctx.redis_stat,
+        manager_status=manager_status,
+        known_slot_types=known_slot_types,
+        background_task_manager=root_ctx.background_task_manager,
+        storage_manager=root_ctx.storage_manager,
+        registry=root_ctx.registry,
+    )
+    dlmanager = DataLoaderManager(graph_ctx)
+    result = ctx.gql_schema.execute(
+        params['query'], ctx.gql_executor,
         variable_values=params['variables'],
         operation_name=params['operation_name'],
         context_value={
             'dlmgr': dlmanager,
-            **context,
+            'gql.context': graph_ctx,
         },
         middleware=[
             GQLLoggingMiddleware(),
@@ -104,12 +105,20 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
     return web.json_response(result.data, status=200)
 
 
+@attr.s(auto_attribs=True, slots=True, init=False)
+class PrivateContext:
+    gql_executor: AsyncioExecutor
+    gql_schema: graphene.Schema
+
+
 async def init(app: web.Application) -> None:
-    app['admin.gql_executor'] = AsyncioExecutor()
-    app['admin.gql_schema'] = graphene.Schema(
+    ctx: PrivateContext = app['admin.context']
+    ctx.gql_executor = AsyncioExecutor()
+    ctx.gql_schema = graphene.Schema(
         query=Queries,
         mutation=Mutations,
-        auto_camelcase=False)
+        auto_camelcase=False,
+    )
 
 
 async def shutdown(app: web.Application) -> None:
@@ -121,6 +130,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     app['api_versions'] = (2, 3, 4)
+    app['admin.context'] = PrivateContext()
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     cors.add(app.router.add_route('POST', r'/graphql', handle_gql))
     return app, []

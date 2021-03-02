@@ -252,7 +252,6 @@ async def shared_config_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
 
 
 # TODO: _init_subapp에 들어가는 root_app을 root_ctx로 대체. aiojobs scheduler는 모든 app에서 공유?
-# TODO: shutdown handler
 
 @aiotools.actxmgr
 async def webapp_plugin_ctx(root_app: web.Application) -> AsyncIterator[None]:

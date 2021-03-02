@@ -715,7 +715,7 @@ class SharedConfig(AbstractConfig):
         return await self.etcd.get_prefix_dict('nodes/manager')
 
     @aiotools.lru_cache(maxsize=1, expire_after=2.0)
-    async def get_manager_status(self):
+    async def get_manager_status(self) -> Optional[ManagerStatus]:
         status = await self.etcd.get('manager/status')
         if status is None:
             return None
