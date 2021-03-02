@@ -552,13 +552,13 @@ def build_root_app(
         async with cctx_instance:
             yield
 
-    async def _call_shutdown_handlers(app: web.Application) -> None:
+    async def _call_cleanup_context_shutdown_handlers(app: web.Application) -> None:
         for cctx in app['_cctx_instances']:
             if hasattr(cctx, 'shutdown'):
                 await cctx.shutdown()
 
     app['_cctx_instances'] = []
-    app.on_shutdown.append(_call_shutdown_handlers)
+    app.on_shutdown.append(_call_cleanup_context_shutdown_handlers)
     for cleanup_ctx in cleanup_contexts:
         app.cleanup_ctx.append(
             functools.partial(_cleanup_context_wrapper, cleanup_ctx)
