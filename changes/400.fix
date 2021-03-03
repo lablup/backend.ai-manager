@@ -1,0 +1,1 @@
+Refactor internal dict-based state variables to be statically typed using explicitly defined attr classes, including the nested `aiohttp.web.Application` objects, the context object of Graphene resolvers, and the context object of Click.
