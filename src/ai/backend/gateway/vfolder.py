@@ -407,7 +407,7 @@ async def list_folders(request: web.Request, params: Any) -> web.Response:
                     'ownership_type': row.vfolders_ownership_type,
                     'type': row.vfolders_ownership_type,  # legacy
                     'unmanaged_path': row.vfolders_unmanaged_path,
-                    'cloneable': row.cloneable if row.cloneable else False
+                    'cloneable': row.vfolders_cloneable if row.vfolders_cloneable else False
                 })
         else:
             extra_vf_conds = None
