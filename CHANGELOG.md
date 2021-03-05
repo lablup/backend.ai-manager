@@ -16,6 +16,16 @@ Changes
 
 .. towncrier release notes start
 
+20.09.9 (2021-03-05)
+--------------------
+
+### Features
+* Add BACKENDAI_KERNEL_IMAGE environment variable inside a compute container. ([#401](https://github.com/lablup/backend.ai-manager/issues/401))
+
+### Fixes
+* Unable to fetch virtual folders list for superadmins. ([#402](https://github.com/lablup/backend.ai-manager/issues/402))
+
+
 20.09.8 (2021-02-22)
 --------------------
 
