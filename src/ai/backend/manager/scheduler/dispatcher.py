@@ -821,7 +821,7 @@ async def _list_existing_sessions(
             )
             items[row['session_id']] = session
     for row in rows:
-        session_id: uuid.UUID = row['session_id']
+        session_id = row['session_id']
         if session_id not in items:
             # In some cases, sub containers are still RUNNING even though main container is TERMINATED.
             # To circumvent this edge case, we skip if main container is not registered in `items`.
