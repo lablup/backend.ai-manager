@@ -18,7 +18,6 @@ from typing import (
     Union,
     TYPE_CHECKING,
 )
-import uuid
 
 from aiopg.sa.connection import SAConnection
 import aioredis
