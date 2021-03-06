@@ -18,6 +18,7 @@ from typing import (
     Union,
     TYPE_CHECKING,
 )
+import uuid
 
 from aiopg.sa.connection import SAConnection
 import aioredis
@@ -820,11 +821,12 @@ async def _list_existing_sessions(
             )
             items[row['session_id']] = session
     for row in rows:
-        session = items.get(row['session_id'])
-        if not session:
+        session_id: uuid.UUID = row['session_id']
+        if session_id not in items:
             # In some cases, sub containers are still RUNNING even though main container is TERMINATED.
             # To circumvent this edge case, we skip if main container is not registered in `items`.
             continue
+        session = items[session_id]
         session.kernels.append(KernelInfo(  # type: ignore
             kernel_id=row['id'],
             session_id=row['session_id'],
