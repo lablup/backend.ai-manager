@@ -227,9 +227,9 @@ class SchedulerDispatcher(aobject):
                     start_task_args.extend(args_list)
                 except InstanceNotAvailable:
                     # Proceed to the next scaling group and come back later.
-                    pass
-                except Exception:
-                    pass
+                    log.debug('schedule({}): instance not available', sgroup_name)
+                except Exception as e:
+                    log.error('schedule({}): scheculing error!\n{}', sgroup_name, repr(e))
 
         # At this point, all scheduling decisions are made
         # and the resource occupation is committed to the database.
@@ -820,7 +820,12 @@ async def _list_existing_sessions(
             )
             items[row['session_id']] = session
     for row in rows:
-        session = items[row['session_id']]
+        session_id = row['session_id']
+        if session_id not in items:
+            # In some cases, sub containers are still RUNNING even though main container is TERMINATED.
+            # To circumvent this edge case, we skip if main container is not registered in `items`.
+            continue
+        session = items[session_id]
         session.kernels.append(KernelInfo(  # type: ignore
             kernel_id=row['id'],
             session_id=row['session_id'],
