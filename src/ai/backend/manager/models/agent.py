@@ -19,6 +19,8 @@ from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common import msgpack, redis
 from ai.backend.common.types import AgentId, BinarySize, ResourceSlot
+
+from ai.backend.manager.models.gql import GraphQueryContext
 from .kernel import AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES, kernels
 from .base import (
     metadata,
@@ -183,9 +185,9 @@ class Agent(graphene.ObjectType):
 
     @staticmethod
     async def load_count(
-        context, *,
-        scaling_group=None,
-        status=None,
+        context: GraphQueryContext, *,
+        scaling_group: str = None,
+        status: AgentStatus = None,
     ) -> int:
         async with context['dbpool'].acquire() as conn:
             query = (
@@ -203,11 +205,13 @@ class Agent(graphene.ObjectType):
 
     @classmethod
     async def load_slice(
-        cls, context, limit, offset, *,
-        scaling_group=None,
-        status=None,
-        order_key=None,
-        order_asc=True,
+        cls,
+        context: GraphQueryContext,
+        limit: int, offset: int, *,
+        scaling_group: str = None,
+        status: AgentStatus = None,
+        order_key: str = None,
+        order_asc: bool = True,
     ) -> Sequence[Agent]:
         async with context['dbpool'].acquire() as conn:
             # TODO: optimization for pagination using subquery, join
@@ -234,9 +238,10 @@ class Agent(graphene.ObjectType):
 
     @classmethod
     async def load_all(
-        cls, context, *,
-        scaling_group=None,
-        status=None,
+        cls,
+        context: GraphQueryContext, *,
+        scaling_group: str = None,
+        status: AgentStatus = None,
     ) -> Sequence[Agent]:
         async with context['dbpool'].acquire() as conn:
             query = (
@@ -254,8 +259,10 @@ class Agent(graphene.ObjectType):
 
     @classmethod
     async def batch_load(
-        cls, context, agent_ids, *,
-        status=None,
+        cls,
+        context: GraphQueryContext,
+        agent_ids: Sequence[AgentId], *,
+        status: AgentStatus = None,
     ) -> Sequence[Optional[Agent]]:
         async with context['dbpool'].acquire() as conn:
             query = (sa.select([agents])

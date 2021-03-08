@@ -65,6 +65,7 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
     manager_status = await root_ctx.shared_config.get_manager_status()
     known_slot_types = await root_ctx.shared_config.get_resource_slots()
     graph_ctx = GraphQueryContext(
+        dataloader_manager=DataLoaderManager(),
         local_config=root_ctx.local_config,
         shared_config=root_ctx.shared_config,
         etcd=root_ctx.shared_config.etcd,
@@ -78,15 +79,12 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
         storage_manager=root_ctx.storage_manager,
         registry=root_ctx.registry,
     )
-    dlmanager = DataLoaderManager(graph_ctx)
     result = ctx.gql_schema.execute(
-        params['query'], ctx.gql_executor,
+        params['query'],
+        ctx.gql_executor,
         variable_values=params['variables'],
         operation_name=params['operation_name'],
-        context_value={
-            'dlmgr': dlmanager,
-            'gql.context': graph_ctx,
-        },
+        context_value=graph_ctx,
         middleware=[
             GQLLoggingMiddleware(),
             GQLMutationUnfrozenRequiredMiddleware(),

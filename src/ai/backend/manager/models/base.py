@@ -16,7 +16,7 @@ from typing import (
     Mapping,
     Optional,
     Protocol,
-    Sequence,
+    Sequence, TYPE_CHECKING,
     Type,
     TypeVar,
     Union,
@@ -48,10 +48,14 @@ from ai.backend.common.types import (
     ResourceSlot,
     SessionId,
 )
+
 from .. import models
 from ...gateway.exceptions import (
     GenericForbidden, InvalidAPIParameters,
 )
+if TYPE_CHECKING:
+    from .gql import GraphQueryContext
+    from .user import UserRole
 
 SAFE_MIN_INT = -9007199254740991
 SAFE_MAX_INT = 9007199254740991
@@ -254,13 +258,14 @@ class DataLoaderManager:
     for every incoming API request.
     """
 
-    def __init__(self, *common_args):
+    cache: Dict[int, DataLoader]
+
+    def __init__(self) -> None:
         self.cache = {}
-        self.common_args = common_args
         self.mod = sys.modules['ai.backend.manager.models']
 
     @staticmethod
-    def _get_key(otname, args, kwargs):
+    def _get_key(otname: str, args, kwargs) -> int:
         """
         Calculate the hash of the all arguments and keyword arguments.
         """
@@ -269,7 +274,7 @@ class DataLoaderManager:
             key += item
         return hash(key)
 
-    def get_loader(self, objtype_name, *args, **kwargs):
+    def get_loader(self, context: GraphQueryContext, objtype_name: str, *args, **kwargs) -> DataLoader:
         k = self._get_key(objtype_name, args, kwargs)
         loader = self.cache.get(k)
         if loader is None:
@@ -280,8 +285,9 @@ class DataLoaderManager:
             else:
                 batch_load_fn = objtype.batch_load
             loader = DataLoader(
-                apartial(batch_load_fn, *self.common_args, *args, **kwargs),
-                max_batch_size=16)
+                apartial(batch_load_fn, context, *args, **kwargs),
+                max_batch_size=16,
+            )
             self.cache[k] = loader
         return loader
 
@@ -340,8 +346,7 @@ class PaginatedList(graphene.Interface):
 
 
 # ref: https://github.com/python/mypy/issues/1212
-_GenericSQLBasedGQLObject = TypeVar('_GenericSQLBasedGQLObject',
-                                    bound='_SQLBasedGQLObject')
+_GenericSQLBasedGQLObject = TypeVar('_GenericSQLBasedGQLObject', bound='_SQLBasedGQLObject')
 _Key = TypeVar('_Key')
 
 
@@ -397,7 +402,7 @@ async def batch_multiresult(
     return [*objs_per_key.values()]
 
 
-def privileged_query(required_role):
+def privileged_query(required_role: UserRole):
 
     def wrap(func):
 
@@ -413,9 +418,11 @@ def privileged_query(required_role):
     return wrap
 
 
-def scoped_query(*,
-                 autofill_user: bool = False,
-                 user_key: str = 'access_key'):
+def scoped_query(
+    *,
+    autofill_user: bool = False,
+    user_key: str = 'access_key',
+):
     """
     Prepends checks for domain/group/user access rights depending
     on the client's user and keypair information.
