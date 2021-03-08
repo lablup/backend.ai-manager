@@ -286,7 +286,7 @@ class DataLoaderManager:
                 batch_load_fn = objtype.batch_load
             loader = DataLoader(
                 apartial(batch_load_fn, context, *args, **kwargs),
-                max_batch_size=16,
+                max_batch_size=128,
             )
             self.cache[k] = loader
         return loader
