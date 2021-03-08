@@ -1,0 +1,1 @@
+Scheduler for scaling group was entirely broken if only sub containers are running with main container is terminated.
