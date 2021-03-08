@@ -16,6 +16,13 @@ Changes
 
 .. towncrier release notes start
 
+20.09.10 (2021-03-08)
+---------------------
+
+### Fixes
+* Scheduler for scaling group was entirely broken if only sub containers are running with main container is terminated. ([#403](https://github.com/lablup/backend.ai-manager/issues/403))
+
+
 20.09.9 (2021-03-05)
 --------------------
 
