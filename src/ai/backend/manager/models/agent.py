@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import enum
 from typing import (
-    Any,
     Optional,
-    Mapping,
     Sequence,
     TYPE_CHECKING,
 )
@@ -20,7 +18,6 @@ from sqlalchemy.dialects import postgresql as pgsql
 from ai.backend.common import msgpack, redis
 from ai.backend.common.types import AgentId, BinarySize, ResourceSlot
 
-from ai.backend.manager.models.gql import GraphQueryContext
 from .kernel import AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES, kernels
 from .base import (
     metadata,
@@ -29,6 +26,8 @@ from .base import (
     ResourceSlotColumn,
 )
 if TYPE_CHECKING:
+    from ai.backend.manager.models.gql import GraphQueryContext
+
     from ..registry import AgentRegistry
 
 __all__: Sequence[str] = (
@@ -109,7 +108,7 @@ class Agent(graphene.ObjectType):
     @classmethod
     def from_row(
         cls,
-        context: Mapping[str, Any],
+        ctx: GraphQueryContext,
         row: RowProxy,
     ) -> Agent:
         mega = 2 ** 20
@@ -140,17 +139,17 @@ class Agent(graphene.ObjectType):
         )
 
     async def resolve_live_stat(self, info):
-        rs = info.context['redis_stat']
-        live_stat = await redis.execute_with_retries(
-            lambda: rs.get(str(self.id), encoding=None))
+        ctx: GraphQueryContext = info.context
+        rs = ctx.redis_stat
+        live_stat = await redis.execute_with_retries(lambda: rs.get(str(self.id), encoding=None))
         if live_stat is not None:
             live_stat = msgpack.unpackb(live_stat)
         return live_stat
 
     async def resolve_cpu_cur_pct(self, info):
-        rs = info.context['redis_stat']
-        live_stat = await redis.execute_with_retries(
-            lambda: rs.get(str(self.id), encoding=None))
+        ctx: GraphQueryContext = info.context
+        rs = ctx.redis_stat
+        live_stat = await redis.execute_with_retries(lambda: rs.get(str(self.id), encoding=None))
         if live_stat is not None:
             live_stat = msgpack.unpackb(live_stat)
             try:
@@ -160,9 +159,9 @@ class Agent(graphene.ObjectType):
         return 0.0
 
     async def resolve_mem_cur_bytes(self, info):
-        rs = info.context['redis_stat']
-        live_stat = await redis.execute_with_retries(
-            lambda: rs.get(str(self.id), encoding=None))
+        ctx: GraphQueryContext = info.context
+        rs = ctx.redis_stat
+        live_stat = await redis.execute_with_retries(lambda: rs.get(str(self.id), encoding=None))
         if live_stat is not None:
             live_stat = msgpack.unpackb(live_stat)
             try:
@@ -175,8 +174,10 @@ class Agent(graphene.ObjectType):
         '''
         Retrieves all children worker sessions run by this agent.
         '''
-        manager = info.context['dlmgr']
-        loader = manager.get_loader('Computation.by_agent_id', status=status)
+        ctx: GraphQueryContext = info.context
+        loader = ctx.dataloader_manager.get_loader(
+            ctx.dataloader_manager, 'Computation.by_agent_id', status=status
+        )
         return await loader.load(self.id)
 
     async def resolve_hardware_metadata(self, info):
@@ -185,11 +186,11 @@ class Agent(graphene.ObjectType):
 
     @staticmethod
     async def load_count(
-        context: GraphQueryContext, *,
+        ctx: GraphQueryContext, *,
         scaling_group: str = None,
-        status: AgentStatus = None,
+        raw_status: str = None,
     ) -> int:
-        async with context['dbpool'].acquire() as conn:
+        async with ctx.dbpool.acquire() as conn:
             query = (
                 sa.select([sa.func.count(agents.c.id)])
                 .select_from(agents)
@@ -197,8 +198,8 @@ class Agent(graphene.ObjectType):
             )
             if scaling_group is not None:
                 query = query.where(agents.c.scaling_group == scaling_group)
-            if status is not None:
-                status = AgentStatus[status]
+            if raw_status is not None:
+                status = AgentStatus[raw_status]
                 query = query.where(agents.c.status == status)
             result = await conn.execute(query)
             return await result.scalar()
@@ -206,14 +207,14 @@ class Agent(graphene.ObjectType):
     @classmethod
     async def load_slice(
         cls,
-        context: GraphQueryContext,
+        ctx: GraphQueryContext,
         limit: int, offset: int, *,
         scaling_group: str = None,
-        status: AgentStatus = None,
+        raw_status: str = None,
         order_key: str = None,
         order_asc: bool = True,
     ) -> Sequence[Agent]:
-        async with context['dbpool'].acquire() as conn:
+        async with ctx.dbpool.acquire() as conn:
             # TODO: optimization for pagination using subquery, join
             if order_key is None:
                 _ordering = agents.c.id
@@ -229,51 +230,55 @@ class Agent(graphene.ObjectType):
             )
             if scaling_group is not None:
                 query = query.where(agents.c.scaling_group == scaling_group)
-            if status is not None:
-                status = AgentStatus[status]
+            if raw_status is not None:
+                status = AgentStatus[raw_status]
                 query = query.where(agents.c.status == status)
             return [
-                cls.from_row(context, row) async for row in conn.execute(query)
+                cls.from_row(ctx, row) async for row in conn.execute(query)
             ]
 
     @classmethod
     async def load_all(
         cls,
-        context: GraphQueryContext, *,
+        ctx: GraphQueryContext, *,
         scaling_group: str = None,
-        status: AgentStatus = None,
+        raw_status: str = None,
     ) -> Sequence[Agent]:
-        async with context['dbpool'].acquire() as conn:
+        async with ctx.dbpool.acquire() as conn:
             query = (
                 sa.select([agents])
                 .select_from(agents)
             )
             if scaling_group is not None:
                 query = query.where(agents.c.scaling_group == scaling_group)
-            if status is not None:
-                status = AgentStatus[status]
+            if raw_status is not None:
+                status = AgentStatus[raw_status]
                 query = query.where(agents.c.status == status)
             return [
-                cls.from_row(context, row) async for row in conn.execute(query)
+                cls.from_row(ctx, row) async for row in conn.execute(query)
             ]
 
     @classmethod
     async def batch_load(
         cls,
-        context: GraphQueryContext,
+        ctx: GraphQueryContext,
         agent_ids: Sequence[AgentId], *,
-        status: AgentStatus = None,
+        raw_status: str = None,
     ) -> Sequence[Optional[Agent]]:
-        async with context['dbpool'].acquire() as conn:
-            query = (sa.select([agents])
-                       .select_from(agents)
-                       .where(agents.c.id.in_(agent_ids))
-                       .order_by(agents.c.id))
-            if status is not None:
-                status = AgentStatus[status]
+        async with ctx.dbpool.acquire() as conn:
+            query = (
+                sa.select([agents])
+                .select_from(agents)
+                .where(agents.c.id.in_(agent_ids))
+                .order_by(
+                    agents.c.id
+                )
+            )
+            if raw_status is not None:
+                status = AgentStatus[raw_status]
                 query = query.where(agents.c.status == status)
             return await batch_result(
-                context, conn, query, cls,
+                ctx, conn, query, cls,
                 agent_ids, lambda row: row['id'],
             )
 

@@ -14,9 +14,11 @@ from typing import (
     Iterable,
     List,
     Mapping,
+    MutableMapping,
     Optional,
     Protocol,
-    Sequence, TYPE_CHECKING,
+    Sequence,
+    TYPE_CHECKING,
     Type,
     TypeVar,
     Union,
@@ -54,6 +56,8 @@ from ...gateway.exceptions import (
     GenericForbidden, InvalidAPIParameters,
 )
 if TYPE_CHECKING:
+    from graphql.execution.executors.asyncio import AsyncioExecutor
+
     from .gql import GraphQueryContext
     from .user import UserRole
 
@@ -354,14 +358,14 @@ class _SQLBasedGQLObject(Protocol):
     @classmethod
     def from_row(
         cls: Type[_GenericSQLBasedGQLObject],
-        context: Mapping[str, Any],
+        ctx: GraphQueryContext,
         row: RowProxy,
     ) -> _GenericSQLBasedGQLObject:
         ...
 
 
 async def batch_result(
-    context: Mapping[str, Any],
+    ctx: GraphQueryContext,
     conn: SAConnection,
     query: sa.sql.Select,
     obj_type: Type[_GenericSQLBasedGQLObject],
@@ -376,12 +380,12 @@ async def batch_result(
     for key in key_list:
         objs_per_key[key] = None
     async for row in conn.execute(query):
-        objs_per_key[key_getter(row)] = obj_type.from_row(context, row)
+        objs_per_key[key_getter(row)] = obj_type.from_row(ctx, row)
     return [*objs_per_key.values()]
 
 
 async def batch_multiresult(
-    context: Mapping[str, Any],
+    ctx: GraphQueryContext,
     conn: SAConnection,
     query: sa.sql.Select,
     obj_type: Type[_GenericSQLBasedGQLObject],
@@ -397,7 +401,7 @@ async def batch_multiresult(
         objs_per_key[key] = list()
     async for row in conn.execute(query):
         objs_per_key[key_getter(row)].append(
-            obj_type.from_row(context, row)
+            obj_type.from_row(ctx, row)
         )
     return [*objs_per_key.values()]
 
@@ -407,9 +411,10 @@ def privileged_query(required_role: UserRole):
     def wrap(func):
 
         @functools.wraps(func)
-        async def wrapped(executor, info, *args, **kwargs):
+        async def wrapped(executor: AsyncioExecutor, info: graphene.ResolveInfo, *args, **kwargs) -> Any:
             from .user import UserRole
-            if info.context['user']['role'] != UserRole.SUPERADMIN:
+            ctx: GraphQueryContext = info.context
+            if ctx.user['role'] != UserRole.SUPERADMIN:
                 raise GenericForbidden('superadmin privilege required')
             return await func(executor, info, *args, **kwargs)
 
@@ -437,16 +442,17 @@ def scoped_query(
     def wrap(resolve_func):
 
         @functools.wraps(resolve_func)
-        async def wrapped(executor, info: graphene.ResolveInfo, *args, **kwargs):
+        async def wrapped(executor: AsyncioExecutor, info: graphene.ResolveInfo, *args, **kwargs) -> Any:
             from .user import UserRole
-            client_role = info.context['user']['role']
+            ctx: GraphQueryContext = info.context
+            client_role = ctx.user['role']
             if user_key == 'access_key':
-                client_user_id = info.context['access_key']
+                client_user_id = ctx.access_key
             elif user_key == 'email':
-                client_user_id = info.context['user']['email']
+                client_user_id = ctx.user['email']
             else:
-                client_user_id = info.context['user']['uuid']
-            client_domain = info.context['user']['domain_name']
+                client_user_id = ctx.user['uuid']
+            client_domain = ctx.user['domain_name']
             domain_name = kwargs.get('domain_name', None)
             group_id = kwargs.get('group_id', None)
             user_id = kwargs.get(user_key, None)
@@ -493,18 +499,18 @@ def privileged_mutation(required_role, target_func=None):
     def wrap(func):
 
         @functools.wraps(func)
-        async def wrapped(cls, root, info, *args, **kwargs):
+        async def wrapped(cls, root, info: graphene.ResolveInfo, *args, **kwargs) -> Any:
             from .user import UserRole
             from .group import groups  # , association_groups_users
-            user = info.context['user']
+            ctx: GraphQueryContext = info.context
             permitted = False
             if required_role == UserRole.SUPERADMIN:
-                if user['role'] == required_role:
+                if ctx.user['role'] == required_role:
                     permitted = True
             elif required_role == UserRole.ADMIN:
-                if user['role'] == UserRole.SUPERADMIN:
+                if ctx.user['role'] == UserRole.SUPERADMIN:
                     permitted = True
-                elif user['role'] == UserRole.USER:
+                elif ctx.user['role'] == UserRole.USER:
                     permitted = False
                 else:
                     if target_func is None:
@@ -515,16 +521,16 @@ def privileged_mutation(required_role, target_func=None):
                                           'both target_domain and target_group missing', None)
                     permit_chains = []
                     if target_domain is not None:
-                        if user['domain_name'] == target_domain:
+                        if ctx.user['domain_name'] == target_domain:
                             permit_chains.append(True)
                     if target_group is not None:
-                        async with info.context['dbpool'].acquire() as conn, conn.begin():
+                        async with ctx.dbpool.acquire() as conn, conn.begin():
                             # check if the group is part of the requester's domain.
                             query = (
                                 groups.select()
                                 .where(
                                     (groups.c.id == target_group) &
-                                    (groups.c.domain_name == user['domain_name'])
+                                    (groups.c.domain_name == ctx.user['domain_name'])
                                 )
                             )
                             result = await conn.execute(query)
@@ -553,8 +559,16 @@ def privileged_mutation(required_role, target_func=None):
     return wrap
 
 
-async def simple_db_mutate(result_cls, context, mutation_query):
-    async with context['dbpool'].acquire() as conn, conn.begin():
+ResultType = TypeVar('ResultType', bound=graphene.ObjectType)
+ItemType = TypeVar('ItemType', bound=graphene.ObjectType)
+
+
+async def simple_db_mutate(
+    result_cls: Type[ResultType],
+    ctx: GraphQueryContext,
+    mutation_query: sa.sql.Update | sa.sql.Insert,
+) -> ResultType:
+    async with ctx.dbpool.acquire() as conn, conn.begin():
         try:
             result = await conn.execute(mutation_query)
             if result.rowcount > 0:
@@ -569,15 +583,21 @@ async def simple_db_mutate(result_cls, context, mutation_query):
             return result_cls(False, f'unexpected error: {e}')
 
 
-async def simple_db_mutate_returning_item(result_cls, context, mutation_query, *,
-                                          item_query, item_cls):
-    async with context['dbpool'].acquire() as conn, conn.begin():
+async def simple_db_mutate_returning_item(
+    result_cls: Type[ResultType],
+    ctx: GraphQueryContext,
+    mutation_query: sa.sql.Update | sa.sql.Insert,
+    *,
+    item_query: sa.sql.Select,
+    item_cls: Type[ItemType],
+) -> ResultType:
+    async with ctx.dbpool.acquire() as conn, conn.begin():
         try:
             result = await conn.execute(mutation_query)
             if result.rowcount > 0:
                 result = await conn.execute(item_query)
                 item = await result.first()
-                return result_cls(True, 'success', item_cls.from_row(context, item))
+                return result_cls(True, 'success', item_cls.from_row(ctx, item))
             else:
                 return result_cls(False, 'no matching record', None)
         except (pg.IntegrityError, sa.exc.IntegrityError) as e:
@@ -588,7 +608,7 @@ async def simple_db_mutate_returning_item(result_cls, context, mutation_query, *
             return result_cls(False, f'unexpected error: {e}', None)
 
 
-def set_if_set(src, target, name, *, clean_func=None):
+def set_if_set(src: object, target: MutableMapping[str, Any], name: str, *, clean_func=None) -> None:
     v = getattr(src, name)
     # NOTE: unset optional fields are passed as null.
     if v is not None:

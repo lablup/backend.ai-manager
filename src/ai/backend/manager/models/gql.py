@@ -30,7 +30,6 @@ from .base import DataLoaderManager, privileged_query, scoped_query
 from .agent import (
     Agent,
     AgentList,
-    AgentStatus,
 )
 from .domain import (
     Domain,
@@ -451,8 +450,8 @@ class Queries(graphene.ObjectType):
         info: graphene.ResolveInfo,
         agent_id: AgentId,
     ) -> Agent:
-        gql_context: GraphQueryContext = info.context
-        loader = gql_context.dataloader_manager.get_loader(gql_context, 'Agent', status=None)
+        ctx: GraphQueryContext = info.context
+        loader = ctx.dataloader_manager.get_loader(ctx, 'Agent', status=None)
         return await loader.load(agent_id)
 
     @staticmethod
@@ -462,12 +461,12 @@ class Queries(graphene.ObjectType):
         info: graphene.ResolveInfo,
         *,
         scaling_group: str = None,
-        status: AgentStatus = None,
+        status: str = None,
     ) -> Sequence[Agent]:
         return await Agent.load_all(
             info.context,
             scaling_group=scaling_group,
-            status=status,
+            raw_status=status,
         )
 
     @staticmethod
@@ -478,20 +477,20 @@ class Queries(graphene.ObjectType):
         limit: int,
         offset: int,
         *,
-        scaling_group=None,
-        status=None,
+        scaling_group: str = None,
+        status: str = None,
         order_key: str = None,
         order_asc: bool = True,
     ) -> AgentList:
         total_count = await Agent.load_count(
             info.context,
             scaling_group=scaling_group,
-            status=status,
+            raw_status=status,
         )
         agent_list = await Agent.load_slice(
             info.context, limit, offset,
             scaling_group=scaling_group,
-            status=status,
+            raw_status=status,
             order_key=order_key,
             order_asc=order_asc,
         )
@@ -503,13 +502,13 @@ class Queries(graphene.ObjectType):
         info: graphene.ResolveInfo, *,
         name: str = None,
     ) -> Domain:
-        gql_context: GraphQueryContext = info.context
-        name = gql_context.user['domain_name'] if name is None else name
-        if gql_context.user['role'] != UserRole.SUPERADMIN:
-            if name != gql_context.user['domain_name']:
+        ctx: GraphQueryContext = info.context
+        name = ctx.user['domain_name'] if name is None else name
+        if ctx.user['role'] != UserRole.SUPERADMIN:
+            if name != ctx.user['domain_name']:
                 # prevent querying other domains if not superadmin
                 raise GenericNotFound('no such domain')
-        loader = gql_context.dataloader_manager.get_loader(gql_context, 'Domain.by_name')
+        loader = ctx.dataloader_manager.get_loader(ctx, 'Domain.by_name')
         return await loader.load(name)
 
     @staticmethod
@@ -528,11 +527,11 @@ class Queries(graphene.ObjectType):
         info: graphene.ResolveInfo,
         id: uuid.UUID,
     ) -> Group:
-        gql_context: GraphQueryContext = info.context
-        client_role = gql_context.user['role']
-        client_domain = gql_context.user['domain_name']
-        client_user_id = gql_context.user['uuid']
-        loader = gql_context.dataloader_manager.get_loader(gql_context, 'Group.by_id')
+        ctx: GraphQueryContext = info.context
+        client_role = ctx.user['role']
+        client_domain = ctx.user['domain_name']
+        client_user_id = ctx.user['uuid']
+        loader = ctx.dataloader_manager.get_loader(ctx, 'Group.by_id')
         group = await loader.load(id)
         if client_role == UserRole.SUPERADMIN:
             pass
@@ -555,10 +554,10 @@ class Queries(graphene.ObjectType):
         domain_name: str = None,
         is_active: bool = None,
     ) -> Sequence[Group]:
-        gql_context: GraphQueryContext = info.context
-        client_role = gql_context.user['role']
-        client_domain = gql_context.user['domain_name']
-        client_user_id = gql_context.user['uuid']
+        ctx: GraphQueryContext = info.context
+        client_role = ctx.user['role']
+        client_domain = ctx.user['domain_name']
+        client_user_id = ctx.user['uuid']
         if client_role == UserRole.SUPERADMIN:
             pass
         elif client_role == UserRole.ADMIN:
@@ -580,9 +579,9 @@ class Queries(graphene.ObjectType):
         info: graphene.ResolveInfo,
         reference: str,
     ) -> Image:
-        gql_context: GraphQueryContext = info.context
-        client_role = gql_context.user['role']
-        client_domain = gql_context.user['domain_name']
+        ctx: GraphQueryContext = info.context
+        client_role = ctx.user['role']
+        client_domain = ctx.user['domain_name']
         item = await Image.load_item(info.context, reference)
         if client_role == UserRole.SUPERADMIN:
             pass
@@ -603,9 +602,9 @@ class Queries(graphene.ObjectType):
         is_installed=None,
         is_operation=False,
     ) -> Sequence[Image]:
-        gql_context: GraphQueryContext = info.context
-        client_role = gql_context.user['role']
-        client_domain = gql_context.user['domain_name']
+        ctx: GraphQueryContext = info.context
+        client_role = ctx.user['role']
+        client_domain = ctx.user['domain_name']
         items = await Image.load_all(info.context,
                                      is_installed=is_installed,
                                      is_operation=is_operation)
@@ -628,9 +627,9 @@ class Queries(graphene.ObjectType):
         domain_name: str = None,
         email: str = None,
     ) -> User:
-        gql_context: GraphQueryContext = info.context
-        loader = gql_context.dataloader_manager.get_loader(
-            gql_context, 'User.by_email', domain_name=domain_name,
+        ctx: GraphQueryContext = info.context
+        loader = ctx.dataloader_manager.get_loader(
+            ctx, 'User.by_email', domain_name=domain_name,
         )
         return await loader.load(email)
 
@@ -643,9 +642,9 @@ class Queries(graphene.ObjectType):
         domain_name: str = None,
         user_id: uuid.UUID | str | None = None,
     ) -> User:
-        gql_context: GraphQueryContext = info.context
-        loader = gql_context.dataloader_manager.get_loader(
-            gql_context, 'User.by_uuid', domain_name=domain_name,
+        ctx: GraphQueryContext = info.context
+        loader = ctx.dataloader_manager.get_loader(
+            ctx, 'User.by_uuid', domain_name=domain_name,
         )
         # user_id is retrieved as string since it's a GraphQL's generic ID field
         user_uuid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
@@ -662,9 +661,9 @@ class Queries(graphene.ObjectType):
         status: UserStatus = None,
     ) -> Sequence[User]:
         from .user import UserRole
-        gql_context: GraphQueryContext = info.context
-        client_role = gql_context.user['role']
-        client_domain = gql_context.user['domain_name']
+        ctx: GraphQueryContext = info.context
+        client_role = ctx.user['role']
+        client_domain = ctx.user['domain_name']
         if client_role == UserRole.SUPERADMIN:
             pass
         elif client_role == UserRole.ADMIN:
@@ -699,9 +698,9 @@ class Queries(graphene.ObjectType):
         order_asc: bool = True,
     ) -> UserList:
         from .user import UserRole
-        gql_context: GraphQueryContext = info.context
-        client_role = gql_context.user['role']
-        client_domain = gql_context.user['domain_name']
+        ctx: GraphQueryContext = info.context
+        client_role = ctx.user['role']
+        client_domain = ctx.user['domain_name']
         if client_role == UserRole.SUPERADMIN:
             pass
         elif client_role == UserRole.ADMIN:
@@ -742,9 +741,9 @@ class Queries(graphene.ObjectType):
         domain_name: str = None,
         access_key: AccessKey = None,
     ) -> KeyPair:
-        gql_context: GraphQueryContext = info.context
-        loader = gql_context.dataloader_manager.get_loader(
-            gql_context,
+        ctx: GraphQueryContext = info.context
+        loader = ctx.dataloader_manager.get_loader(
+            ctx,
             'KeyPair.by_ak',
             domain_name=domain_name,
         )
@@ -760,7 +759,7 @@ class Queries(graphene.ObjectType):
         email: str = None,
         is_active: bool = None,
     ) -> Sequence[KeyPair]:
-        gql_context: GraphQueryContext = info.context
+        ctx: GraphQueryContext = info.context
         if email is None:
             return await KeyPair.load_all(
                 info.context,
@@ -769,8 +768,8 @@ class Queries(graphene.ObjectType):
                 limit=100,
             )
         else:
-            loader = gql_context.dataloader_manager.get_loader(
-                gql_context,
+            loader = ctx.dataloader_manager.get_loader(
+                ctx,
                 'KeyPair.by_email',
                 domain_name=domain_name,
                 is_active=is_active,
@@ -815,16 +814,16 @@ class Queries(graphene.ObjectType):
         info: graphene.ResolveInfo,
         name: str = None,
     ) -> KeyPairResourcePolicy:
-        gql_context: GraphQueryContext = info.context
-        client_access_key = gql_context.access_key
+        ctx: GraphQueryContext = info.context
+        client_access_key = ctx.access_key
         if name is None:
-            loader = gql_context.dataloader_manager.get_loader(
-                gql_context, 'KeyPairResourcePolicy.by_ak',
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'KeyPairResourcePolicy.by_ak',
             )
             return await loader.load(client_access_key)
         else:
-            loader = gql_context.dataloader_manager.get_loader(
-                gql_context, 'KeyPairResourcePolicy.by_name',
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'KeyPairResourcePolicy.by_name',
             )
             return await loader.load(name)
 
@@ -833,9 +832,9 @@ class Queries(graphene.ObjectType):
         executor: AsyncioExecutor,
         info: graphene.ResolveInfo,
     ) -> Sequence[KeyPairResourcePolicy]:
-        gql_context: GraphQueryContext = info.context
-        client_role = gql_context.user['role']
-        client_access_key = gql_context.access_key
+        ctx: GraphQueryContext = info.context
+        client_role = ctx.user['role']
+        client_access_key = ctx.access_key
         if client_role == UserRole.SUPERADMIN:
             return await KeyPairResourcePolicy.load_all(info.context)
         elif client_role == UserRole.ADMIN:
@@ -854,8 +853,8 @@ class Queries(graphene.ObjectType):
         info: graphene.ResolveInfo,
         name: str,
     ) -> ResourcePreset:
-        gql_context: GraphQueryContext = info.context
-        loader = gql_context.dataloader_manager.get_loader(gql_context, 'ResourcePreset.by_name')
+        ctx: GraphQueryContext = info.context
+        loader = ctx.dataloader_manager.get_loader(ctx, 'ResourcePreset.by_name')
         return await loader.load(name)
 
     @staticmethod
@@ -872,9 +871,9 @@ class Queries(graphene.ObjectType):
         info: graphene.ResolveInfo,
         name: str,
     ) -> ScalingGroup:
-        gql_context: GraphQueryContext = info.context
-        loader = gql_context.dataloader_manager.get_loader(
-            gql_context, 'ScalingGroup.by_name'
+        ctx: GraphQueryContext = info.context
+        loader = ctx.dataloader_manager.get_loader(
+            ctx, 'ScalingGroup.by_name'
         )
         return await loader.load(name)
 
