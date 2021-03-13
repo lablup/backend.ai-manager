@@ -61,10 +61,10 @@ class GQLLoggingMiddleware:
     }))
 async def handle_gql(request: web.Request, params: Any) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
-    ctx: PrivateContext = request.app['admin.context']
+    app_ctx: PrivateContext = request.app['admin.context']
     manager_status = await root_ctx.shared_config.get_manager_status()
     known_slot_types = await root_ctx.shared_config.get_resource_slots()
-    graph_ctx = GraphQueryContext(
+    gql_ctx = GraphQueryContext(
         dataloader_manager=DataLoaderManager(),
         local_config=root_ctx.local_config,
         shared_config=root_ctx.shared_config,
@@ -79,12 +79,12 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
         storage_manager=root_ctx.storage_manager,
         registry=root_ctx.registry,
     )
-    result = ctx.gql_schema.execute(
+    result = app_ctx.gql_schema.execute(
         params['query'],
-        ctx.gql_executor,
+        app_ctx.gql_executor,
         variable_values=params['variables'],
         operation_name=params['operation_name'],
-        context_value=graph_ctx,
+        context_value=gql_ctx,
         middleware=[
             GQLLoggingMiddleware(),
             GQLMutationUnfrozenRequiredMiddleware(),
@@ -114,9 +114,9 @@ class PrivateContext:
 
 
 async def init(app: web.Application) -> None:
-    ctx: PrivateContext = app['admin.context']
-    ctx.gql_executor = AsyncioExecutor()
-    ctx.gql_schema = graphene.Schema(
+    app_ctx: PrivateContext = app['admin.context']
+    app_ctx.gql_executor = AsyncioExecutor()
+    app_ctx.gql_schema = graphene.Schema(
         query=Queries,
         mutation=Mutations,
         auto_camelcase=False,

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import enum
 from typing import (
+    Any,
+    Mapping,
     Optional,
     Sequence,
     TYPE_CHECKING,
@@ -16,7 +18,12 @@ from sqlalchemy.sql.expression import true
 from sqlalchemy.dialects import postgresql as pgsql
 
 from ai.backend.common import msgpack, redis
-from ai.backend.common.types import AgentId, BinarySize, ResourceSlot
+from ai.backend.common.types import (
+    AgentId,
+    BinarySize,
+    HardwareMetadata,
+    ResourceSlot,
+)
 
 from .kernel import AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES, kernels
 from .base import (
@@ -138,7 +145,7 @@ class Agent(graphene.ObjectType):
             used_tpu_slots=float(row['occupied_slots'].get('tpu.device', 0)),
         )
 
-    async def resolve_live_stat(self, info):
+    async def resolve_live_stat(self, info: graphene.ResolveInfo) -> Any:
         ctx: GraphQueryContext = info.context
         rs = ctx.redis_stat
         live_stat = await redis.execute_with_retries(lambda: rs.get(str(self.id), encoding=None))
@@ -146,7 +153,7 @@ class Agent(graphene.ObjectType):
             live_stat = msgpack.unpackb(live_stat)
         return live_stat
 
-    async def resolve_cpu_cur_pct(self, info):
+    async def resolve_cpu_cur_pct(self, info: graphene.ResolveInfo) -> Any:
         ctx: GraphQueryContext = info.context
         rs = ctx.redis_stat
         live_stat = await redis.execute_with_retries(lambda: rs.get(str(self.id), encoding=None))
@@ -158,7 +165,7 @@ class Agent(graphene.ObjectType):
                 return 0.0
         return 0.0
 
-    async def resolve_mem_cur_bytes(self, info):
+    async def resolve_mem_cur_bytes(self, info: graphene.ResolveInfo) -> Any:
         ctx: GraphQueryContext = info.context
         rs = ctx.redis_stat
         live_stat = await redis.execute_with_retries(lambda: rs.get(str(self.id), encoding=None))
@@ -170,17 +177,7 @@ class Agent(graphene.ObjectType):
                 return 0
         return 0
 
-    async def resolve_computations(self, info, status=None):
-        '''
-        Retrieves all children worker sessions run by this agent.
-        '''
-        ctx: GraphQueryContext = info.context
-        loader = ctx.dataloader_manager.get_loader(
-            ctx.dataloader_manager, 'Computation.by_agent_id', status=status
-        )
-        return await loader.load(self.id)
-
-    async def resolve_hardware_metadata(self, info):
+    async def resolve_hardware_metadata(self, info: graphene.ResolveInfo) -> Mapping[str, HardwareMetadata]:
         registry: AgentRegistry = info.context['registry']
         return await registry.gather_agent_hwinfo(self.id)
 
