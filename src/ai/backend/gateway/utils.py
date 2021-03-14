@@ -17,7 +17,7 @@ from typing import (
     Hashable,
     Mapping,
     MutableMapping,
-    Optional,
+    Optional, TYPE_CHECKING,
     Tuple,
     Union,
     cast,
@@ -35,6 +35,9 @@ from ai.backend.common.types import AccessKey
 from .exceptions import InvalidAPIParameters, GenericForbidden, QueryNotImplemented
 from ..manager.models import keypairs, users, UserRole
 
+if TYPE_CHECKING:
+    from ai.backend.gateway.context import RootContext
+
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.utils'))
 
 _rx_sitepkg_path = re.compile(r'^.+/site-packages/')
@@ -49,12 +52,13 @@ def method_placeholder(orig_method):
 async def get_access_key_scopes(request: web.Request, params: Any = None) -> Tuple[AccessKey, AccessKey]:
     if not request['is_authorized']:
         raise GenericForbidden('Only authorized requests may have access key scopes.')
+    root_ctx: RootContext = request.app['_root.context']
     requester_access_key: AccessKey = request['keypair']['access_key']
     owner_access_key = cast(Optional[AccessKey], request.query.get('owner_access_key', None))
     if owner_access_key is None and params is not None:
         owner_access_key = params.get('owner_access_key', None)
     if owner_access_key is not None and owner_access_key != requester_access_key:
-        async with request.app['dbpool'].acquire() as conn:
+        async with root_ctx.dbpool.acquire() as conn:
             query = (
                 sa.select([users.c.domain_name, users.c.role])
                 .select_from(

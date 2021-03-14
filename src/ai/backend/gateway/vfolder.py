@@ -92,7 +92,7 @@ def vfolder_permission_required(perm: VFolderPermission):
             user_role = request['user']['role']
             user_uuid = request['user']['uuid']
             folder_name = request.match_info['name']
-            allowed_vfolder_types = await request.app['shared_config'].get_vfolder_types()
+            allowed_vfolder_types = await root_ctx.shared_config.get_vfolder_types()
             vf_user_cond = None
             vf_group_cond = None
             if perm == VFolderPermission.READ_ONLY:
@@ -1655,14 +1655,12 @@ async def list_mounts(request: web.Request) -> web.Response:
     root_ctx: RootContext = request.app['_root.context']
     access_key = request['keypair']['access_key']
     log.info('VFOLDER.LIST_MOUNTS(ak:{})', access_key)
-    config = request.app['shared_config']
-    mount_prefix = await config.get_raw('volumes/_mount')
+    mount_prefix = await root_ctx.shared_config.get_raw('volumes/_mount')
     if mount_prefix is None:
         mount_prefix = '/mnt'
 
     # NOTE: Changed in 20.09: the manager instances no longer have mountpoints.
-    storage_manager: StorageSessionManager = request.app['storage_manager']
-    all_volumes = [*await storage_manager.get_all_volumes()]
+    all_volumes = [*await root_ctx.storage_manager.get_all_volumes()]
     all_mounts = [
         volume_data['path']
         for proxy_name, volume_data in all_volumes
@@ -1772,8 +1770,7 @@ async def mount_host(request: web.Request, params: Any) -> web.Response:
     log_fmt = 'VFOLDER.MOUNT_HOST(ak:{}, name:{}, fs:{}, sg:{})'
     log_args = (access_key, params['name'], params['fs_location'], params['scaling_group'])
     log.info(log_fmt, *log_args)
-    config = request.app['shared_config']
-    mount_prefix = await config.get_raw('volumes/_mount')
+    mount_prefix = await root_ctx.shared_config.get_raw('volumes/_mount')
     if mount_prefix is None:
         mount_prefix = '/mnt'
 
@@ -1870,8 +1867,7 @@ async def umount_host(request: web.Request, params: Any) -> web.Response:
     log_fmt = 'VFOLDER.UMOUNT_HOST(ak:{}, name:{}, sg:{})'
     log_args = (access_key, params['name'], params['scaling_group'])
     log.info(log_fmt, *log_args)
-    config = request.app['shared_config']
-    mount_prefix = await config.get_raw('volumes/_mount')
+    mount_prefix = await root_ctx.shared_config.get_raw('volumes/_mount')
     if mount_prefix is None:
         mount_prefix = '/mnt'
     mountpoint = Path(mount_prefix) / params['name']

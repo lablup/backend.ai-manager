@@ -749,7 +749,7 @@ class AgentRegistry:
 
         # sanity check for vfolders
         allowed_vfolder_types = ['user', 'group']
-        # allowed_vfolder_types = await request.app['shared_config'].etcd.get('path-to-vfolder-type')
+        # allowed_vfolder_types = await root_ctx.shared_config.etcd.get('path-to-vfolder-type')
         determined_mounts = []
         matched_mounts = set()
         async with self.dbpool.acquire() as conn, conn.begin():
