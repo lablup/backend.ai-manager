@@ -1094,15 +1094,15 @@ class LegacyComputeSession(graphene.ObjectType):
         return await self._resolve_legacy_metric(info, 'io_scratch_size', 'current', int)
 
     @classmethod
-    def parse_row(cls, context: Any, row: RowProxy) -> Mapping[str, Any]:
+    def parse_row(cls, ctx: GraphQueryContext, row: RowProxy) -> Mapping[str, Any]:
         assert row is not None
         from .user import UserRole
         mega = 2 ** 20
-        is_superadmin = (context['user']['role'] == UserRole.SUPERADMIN)
+        is_superadmin = (ctx.user['role'] == UserRole.SUPERADMIN)
         if is_superadmin:
             hide_agents = False
         else:
-            hide_agents = context['local_config']['manager']['hide-agents']
+            hide_agents = ctx.local_config['manager']['hide-agents']
         return {
             'id': row['id'],
             'sess_id': row['session_name'],         # legacy, will be deprecated
@@ -1159,21 +1159,27 @@ class LegacyComputeSession(graphene.ObjectType):
         }
 
     @classmethod
-    def from_row(cls, context: Any, row: RowProxy) -> Optional[LegacyComputeSession]:
+    def from_row(cls, context: GraphQueryContext, row: RowProxy) -> Optional[LegacyComputeSession]:
         if row is None:
             return None
         props = cls.parse_row(context, row)
         return cls(**props)
 
     @classmethod
-    async def load_count(cls, context, *,
-                         domain_name=None, group_id=None, access_key=None,
-                         status=None):
+    async def load_count(
+        cls,
+        ctx: GraphQueryContext,
+        *,
+        domain_name: str = None,
+        group_id: uuid.UUID = None,
+        access_key: AccessKey = None,
+        status: str = None,
+    ) -> int:
         if isinstance(status, str):
             status_list = [KernelStatus[s] for s in status.split(',')]
         elif isinstance(status, KernelStatus):
             status_list = [status]
-        async with context['dbpool'].acquire() as conn:
+        async with ctx.dbpool.acquire() as conn:
             query = (
                 sa.select([sa.func.count(kernels.c.session_id)])
                 .select_from(kernels)
@@ -1192,15 +1198,24 @@ class LegacyComputeSession(graphene.ObjectType):
             return await result.scalar()
 
     @classmethod
-    async def load_slice(cls, context, limit, offset, *,
-                         domain_name=None, group_id=None, access_key=None,
-                         status=None,
-                         order_key=None, order_asc=None):
+    async def load_slice(
+        cls,
+        ctx: GraphQueryContext,
+        limit: int,
+        offset: int,
+        *,
+        domain_name: str = None,
+        group_id: uuid.UUID = None,
+        access_key: AccessKey = None,
+        status: str = None,
+        order_key: str = None,
+        order_asc: bool = True
+    ) -> Sequence[LegacyComputeSession]:
         if isinstance(status, str):
             status_list = [KernelStatus[s] for s in status.split(',')]
         elif isinstance(status, KernelStatus):
             status_list = [status]
-        async with context['dbpool'].acquire() as conn:
+        async with ctx.dbpool.acquire() as conn:
             if order_key is None:
                 _ordering = DEFAULT_SESSION_ORDERING
             else:
@@ -1224,13 +1239,22 @@ class LegacyComputeSession(graphene.ObjectType):
                 query = query.where(kernels.c.access_key == access_key)
             if status is not None:
                 query = query.where(kernels.c.status.in_(status_list))
-            return [cls.from_row(context, r) async for r in conn.execute(query)]
+            return [
+                obj async for r in conn.execute(query)
+                if (obj := cls.from_row(ctx, r)) is not None
+            ]
 
     @classmethod
-    async def batch_load(cls, context, access_keys, *,
-                         domain_name=None, group_id=None,
-                         status=None):
-        async with context['dbpool'].acquire() as conn:
+    async def batch_load(
+        cls,
+        ctx: GraphQueryContext,
+        access_keys: AccessKey,
+        *,
+        domain_name: str = None,
+        group_id: uuid.UUID = None,
+        status: str = None,
+    ) -> Sequence[Optional[LegacyComputeSession]]:
+        async with ctx.dbpool.acquire() as conn:
             j = (kernels.join(groups, groups.c.id == kernels.c.group_id)
                         .join(users, users.c.uuid == kernels.c.user_uuid))
             query = (
@@ -1255,15 +1279,21 @@ class LegacyComputeSession(graphene.ObjectType):
             if status is not None:
                 query = query.where(kernels.c.status == status)
             return await batch_result(
-                context, conn, query, cls,
+                ctx, conn, query, cls,
                 access_keys, lambda row: row['access_key'],
             )
 
     @classmethod
-    async def batch_load_detail(cls, context, sess_ids, *,
-                                domain_name=None, access_key=None,
-                                status=None):
-        async with context['dbpool'].acquire() as conn:
+    async def batch_load_detail(
+        cls,
+        ctx: GraphQueryContext,
+        sess_ids: Sequence[SessionId],
+        *,
+        domain_name: str = None,
+        access_key: AccessKey = None,
+        status: str = None,
+    ) -> Sequence[Sequence[LegacyComputeSession]]:
+        async with ctx.dbpool.acquire() as conn:
             status_list = []
             if isinstance(status, str):
                 status_list = [KernelStatus[s] for s in status.split(',')]
@@ -1284,8 +1314,8 @@ class LegacyComputeSession(graphene.ObjectType):
             if status_list:
                 query = query.where(kernels.c.status.in_(status_list))
             return await batch_multiresult(
-                context, conn, query, cls,
-                sess_ids, lambda row: row['sess_id'],
+                ctx, conn, query, cls,
+                sess_ids, lambda row: row['session_name'],
             )
 
 

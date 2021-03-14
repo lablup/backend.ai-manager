@@ -177,7 +177,10 @@ class Agent(graphene.ObjectType):
                 return 0
         return 0
 
-    async def resolve_hardware_metadata(self, info: graphene.ResolveInfo) -> Mapping[str, HardwareMetadata]:
+    async def resolve_hardware_metadata(
+        self,
+        info: graphene.ResolveInfo,
+    ) -> Mapping[str, HardwareMetadata]:
         registry: AgentRegistry = info.context['registry']
         return await registry.gather_agent_hwinfo(self.id)
 

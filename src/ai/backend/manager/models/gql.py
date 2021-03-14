@@ -133,6 +133,7 @@ class GraphQueryContext:
     access_key: str
     dbpool: SAPool
     redis_stat: Redis
+    redis_image: Redis
     manager_status: ManagerStatus
     known_slot_types: Mapping[SlotName, SlotTypes]
     background_task_manager: BackgroundTaskManager
@@ -605,15 +606,17 @@ class Queries(graphene.ObjectType):
         ctx: GraphQueryContext = info.context
         client_role = ctx.user['role']
         client_domain = ctx.user['domain_name']
-        items = await Image.load_all(info.context,
-                                     is_installed=is_installed,
-                                     is_operation=is_operation)
+        items = await Image.load_all(ctx, is_installed=is_installed, is_operation=is_operation)
         if client_role == UserRole.SUPERADMIN:
             pass
         elif client_role in (UserRole.ADMIN, UserRole.USER):
             items = await Image.filter_allowed(
-                info.context, items, client_domain,
-                is_installed=is_installed, is_operation=is_operation)
+                info.context,
+                items,
+                client_domain,
+                is_installed=is_installed,
+                is_operation=is_operation,
+            )
         else:
             raise InvalidAPIParameters('Unknown client role')
         return items
@@ -1096,7 +1099,7 @@ class Queries(graphene.ObjectType):
         domain_name: str = None,
         group_id: uuid.UUID = None,
         access_key: AccessKey = None,
-        status: KernelStatus = None,
+        status: str = None,
         order_key: str = None,
         order_asc: bool = True,
     ) -> LegacyComputeSessionList:
@@ -1129,7 +1132,7 @@ class Queries(graphene.ObjectType):
         *,
         domain_name: str = None,
         access_key: AccessKey = None,
-        status: KernelStatus = None,
+        status: str = None,
     ) -> Optional[LegacyComputeSession]:
         # We need to check the group membership of the designated kernel,
         # but practically a user cannot guess the IDs of kernels launched

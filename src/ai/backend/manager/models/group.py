@@ -4,12 +4,14 @@ import asyncio
 import logging
 import re
 from typing import (
-    Any, Optional, Union,
-    Mapping,
-    Sequence,
+    Any,
+    Dict,
     List,
+    Optional,
+    Sequence, TYPE_CHECKING,
     Tuple,
     TypedDict,
+    Union,
 )
 import uuid
 
@@ -22,8 +24,10 @@ import psycopg2 as pg
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
+from ai.backend.common import msgpack
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
+
 from .base import (
     metadata, GUID, IDColumn, ResourceSlotColumn,
     privileged_mutation,
@@ -34,9 +38,11 @@ from .base import (
 )
 from ai.backend.gateway.exceptions import VFolderOperationFailed
 from .storage import StorageSessionManager
-from .user import UserRole
+from .user import ModifyUserInput, UserRole
 from ..defs import RESERVED_DOTFILES
-from ai.backend.common import msgpack
+if TYPE_CHECKING:
+    from ai.backend.manager.models.gql import GraphQueryContext
+    from .scaling_group import ScalingGroup
 
 log = BraceStyleAdapter(logging.getLogger(__file__))
 
@@ -91,9 +97,11 @@ groups = sa.Table(
 )
 
 
-async def resolve_group_name_or_id(db_conn: SAConnection,
-                                   domain_name: str,
-                                   value: Union[str, uuid.UUID]) -> Optional[uuid.UUID]:
+async def resolve_group_name_or_id(
+    db_conn: SAConnection,
+    domain_name: str,
+    value: Union[str, uuid.UUID],
+) -> Optional[uuid.UUID]:
     if isinstance(value, str):
         query = (
             sa.select([groups.c.id])
@@ -133,7 +141,7 @@ class Group(graphene.ObjectType):
     scaling_groups = graphene.List(lambda: graphene.String)
 
     @classmethod
-    def from_row(cls, context: Mapping[str, Any], row: RowProxy) -> Optional[Group]:
+    def from_row(cls, context: GraphQueryContext, row: RowProxy) -> Optional[Group]:
         if row is None:
             return None
         return cls(
@@ -149,16 +157,21 @@ class Group(graphene.ObjectType):
             integration_id=row['integration_id'],
         )
 
-    async def resolve_scaling_groups(self, info):
+    async def resolve_scaling_groups(self, info: graphene.ResolveInfo) -> Sequence[ScalingGroup]:
         from .scaling_group import ScalingGroup
-        sgroups = await ScalingGroup.load_by_group(info.context, self.id)
+        ctx: GraphQueryContext = info.context
+        sgroups = await ScalingGroup.load_by_group(ctx, self.id)
         return [sg.name for sg in sgroups]
 
     @classmethod
-    async def load_all(cls, context, *,
-                       domain_name=None,
-                       is_active=None):
-        async with context['dbpool'].acquire() as conn:
+    async def load_all(
+        cls,
+        ctx: GraphQueryContext,
+        *,
+        domain_name: str = None,
+        is_active: bool = None,
+    ) -> Sequence[Group]:
+        async with ctx.dbpool.acquire() as conn:
             query = (
                 sa.select([groups])
                 .select_from(groups)
@@ -168,13 +181,19 @@ class Group(graphene.ObjectType):
             if is_active is not None:
                 query = query.where(groups.c.is_active == is_active)
             return [
-                cls.from_row(context, row) async for row in conn.execute(query)
+                obj async for row in conn.execute(query)
+                if (obj := cls.from_row(ctx, row)) is not None
             ]
 
     @classmethod
-    async def batch_load_by_id(cls, context, group_ids, *,
-                               domain_name=None):
-        async with context['dbpool'].acquire() as conn:
+    async def batch_load_by_id(
+        cls,
+        ctx: GraphQueryContext,
+        group_ids: Sequence[uuid.UUID],
+        *,
+        domain_name: str = None
+    ) -> Sequence[Optional[Group]]:
+        async with ctx.dbpool.acquire() as conn:
             query = (
                 sa.select([groups])
                 .select_from(groups)
@@ -183,22 +202,29 @@ class Group(graphene.ObjectType):
             if domain_name is not None:
                 query = query.where(groups.c.domain_name == domain_name)
             return await batch_result(
-                context, conn, query, cls,
+                ctx, conn, query, cls,
                 group_ids, lambda row: row['id'],
             )
 
     @classmethod
-    async def get_groups_for_user(cls, context, user_id):
-        async with context['dbpool'].acquire() as conn:
-            j = sa.join(groups, association_groups_users,
-                        groups.c.id == association_groups_users.c.group_id)
+    async def get_groups_for_user(
+        cls,
+        ctx: GraphQueryContext,
+        user_id: uuid.UUID,
+    ) -> Sequence[Group]:
+        async with ctx.dbpool.acquire() as conn:
+            j = sa.join(
+                groups, association_groups_users,
+                groups.c.id == association_groups_users.c.group_id,
+            )
             query = (
                 sa.select([groups])
                 .select_from(j)
                 .where(association_groups_users.c.user_id == user_id)
             )
             return [
-                cls.from_row(context, row) async for row in conn.execute(query)
+                obj async for row in conn.execute(query)
+                if (obj := cls.from_row(ctx, row)) is not None
             ]
 
 
@@ -240,9 +266,16 @@ class CreateGroup(graphene.Mutation):
         UserRole.ADMIN,
         lambda name, props, **kwargs: (props.domain_name, None)
     )
-    async def mutate(cls, root, info, name, props):
+    async def mutate(
+        cls,
+        root,
+        info: graphene.ResolveInfo,
+        name: str,
+        props: GroupInput,
+    ) -> CreateGroup:
         if _rx_slug.search(name) is None:
             raise ValueError('invalid name format. slug format required.')
+        ctx: GraphQueryContext = info.context
         data = {
             'name': name,
             'description': props.description,
@@ -260,7 +293,7 @@ class CreateGroup(graphene.Mutation):
                    (groups.c.domain_name == props.domain_name))
         )
         return await simple_db_mutate_returning_item(
-            cls, info.context, insert_query,
+            cls, ctx, insert_query,
             item_query=item_query, item_cls=Group)
 
 
@@ -281,8 +314,15 @@ class ModifyGroup(graphene.Mutation):
         UserRole.ADMIN,
         lambda gid, **kwargs: (None, gid)
     )
-    async def mutate(cls, root, info, gid, props):
-        data = {}
+    async def mutate(
+        cls,
+        root,
+        info: graphene.ResolveInfo,
+        gid: uuid.UUID,
+        props: ModifyUserInput,
+    ) -> ModifyGroup:
+        ctx: GraphQueryContext = info.context
+        data: Dict[str, Any] = {}
         set_if_set(props, data, 'name')
         set_if_set(props, data, 'description')
         set_if_set(props, data, 'is_active')
@@ -300,7 +340,7 @@ class ModifyGroup(graphene.Mutation):
             props.user_update_mode = None
         if not data and props.user_update_mode is None:
             return cls(ok=False, msg='nothing to update', group=None)
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
+        async with ctx.dbpool.acquire() as conn, conn.begin():
             try:
                 if props.user_update_mode == 'add':
                     values = [{'user_id': uuid, 'group_id': gid} for uuid in props.user_uuids]
@@ -319,7 +359,7 @@ class ModifyGroup(graphene.Mutation):
                     if result.rowcount > 0:
                         checkq = groups.select().where(groups.c.id == gid)
                         result = await conn.execute(checkq)
-                        o = Group.from_row(info.context, await result.first())
+                        o = Group.from_row(ctx, await result.first())
                         return cls(ok=True, msg='success', group=o)
                     return cls(ok=False, msg='no such group', group=None)
                 else:  # updated association_groups_users table
@@ -349,12 +389,13 @@ class DeleteGroup(graphene.Mutation):
         UserRole.ADMIN,
         lambda gid, **kwargs: (None, gid)
     )
-    async def mutate(cls, root, info, gid):
+    async def mutate(cls, root, info: graphene.ResolveInfo, gid: uuid.UUID) -> DeleteGroup:
+        ctx: GraphQueryContext = info.context
         query = groups.update().values(
             is_active=False,
             integration_id=None
         ).where(groups.c.id == gid)
-        return simple_db_mutate(cls, info.context, query)
+        return await simple_db_mutate(cls, ctx, query)
 
 
 class PurgeGroup(graphene.Mutation):
@@ -378,8 +419,9 @@ class PurgeGroup(graphene.Mutation):
         UserRole.ADMIN,
         lambda gid, **kwargs: (None, gid)
     )
-    async def mutate(cls, root, info, gid):
-        async with info.context['dbpool'].acquire() as conn:
+    async def mutate(cls, root, info: graphene.ResolveInfo, gid: uuid.UUID) -> PurgeGroup:
+        ctx: GraphQueryContext = info.context
+        async with ctx.dbpool.acquire() as conn:
             if await cls.group_vfolder_mounted_to_active_kernels(conn, gid):
                 raise RuntimeError('Some of group\'s virtual folders are mounted to active kernels. '
                                    'Terminate those kernels first')
@@ -388,7 +430,7 @@ class PurgeGroup(graphene.Mutation):
             await cls.delete_vfolders(conn, gid, info.context['storage_manager'])
             await cls.delete_kernels(conn, gid)
         query = groups.delete().where(groups.c.id == gid)
-        return simple_db_mutate(cls, info.context, query)
+        return await simple_db_mutate(cls, ctx, query)
 
     @classmethod
     async def delete_vfolders(
@@ -479,7 +521,7 @@ class PurgeGroup(graphene.Mutation):
         )
         result = await conn.execute(query)
         rows = await result.fetchall()
-        group_vfolder_ids = [row.id for row in rows]
+        group_vfolder_ids = [row['id'] for row in rows]
         query = (
             sa.select([kernels.c.mounts])
             .select_from(kernels)

@@ -17,6 +17,7 @@ from typing import (
     TYPE_CHECKING,
 )
 from uuid import UUID
+from ai.backend.common.types import HardwareMetadata
 
 import aiohttp
 import attr
@@ -28,7 +29,7 @@ from .base import (
 )
 from ..exceptions import InvalidArgument
 if TYPE_CHECKING:
-    from ..registry import AgentRegistry
+    from .gql import GraphQueryContext
 
 __all__ = (
     'StorageProxyInfo',
@@ -164,15 +165,15 @@ class StorageVolume(graphene.ObjectType):
     performance_metric = graphene.JSONString()
     usage = graphene.JSONString()
 
-    async def resolve_hardware_metadata(self, info: graphene.ResolveInfo):
-        registry: AgentRegistry = info.context['registry']
-        return await registry.gather_storage_hwinfo(self.id)
+    async def resolve_hardware_metadata(self, info: graphene.ResolveInfo) -> HardwareMetadata:
+        ctx: GraphQueryContext = info.context
+        return await ctx.registry.gather_storage_hwinfo(self.id)
 
-    async def resolve_performance_metric(self, info: graphene.ResolveInfo):
-        storage_manager: StorageSessionManager = info.context['storage_manager']
-        proxy_name, volume_name = storage_manager.split_host(self.id)
+    async def resolve_performance_metric(self, info: graphene.ResolveInfo) -> Mapping[str, Any]:
+        ctx: GraphQueryContext = info.context
+        proxy_name, volume_name = ctx.storage_manager.split_host(self.id)
         try:
-            proxy_info = storage_manager._proxies[proxy_name]
+            proxy_info = ctx.storage_manager._proxies[proxy_name]
         except KeyError:
             raise ValueError(f"no such storage proxy: {proxy_name!r}")
         try:
@@ -187,11 +188,11 @@ class StorageVolume(graphene.ObjectType):
         except aiohttp.ClientResponseError:
             return {}
 
-    async def resolve_usage(self, info: graphene.ResolveInfo):
-        storage_manager: StorageSessionManager = info.context['storage_manager']
-        proxy_name, volume_name = storage_manager.split_host(self.id)
+    async def resolve_usage(self, info: graphene.ResolveInfo) -> Mapping[str, Any]:
+        ctx: GraphQueryContext = info.context
+        proxy_name, volume_name = ctx.storage_manager.split_host(self.id)
         try:
-            proxy_info = storage_manager._proxies[proxy_name]
+            proxy_info = ctx.storage_manager._proxies[proxy_name]
         except KeyError:
             raise ValueError(f"no such storage proxy: {proxy_name!r}")
         try:
@@ -219,18 +220,19 @@ class StorageVolume(graphene.ObjectType):
     @classmethod
     async def load_count(
         cls,
-        context,
+        ctx: GraphQueryContext,
     ) -> int:
-        storage_manager: StorageSessionManager = context['storage_manager']
-        volumes = [*await storage_manager.get_all_volumes()]
+        volumes = [*await ctx.storage_manager.get_all_volumes()]
         return len(volumes)
 
     @classmethod
     async def load_slice(
-        cls, context, limit: int, offset: int,
+        cls,
+        ctx: GraphQueryContext,
+        limit: int,
+        offset: int,
     ) -> Sequence[StorageVolume]:
-        storage_manager: StorageSessionManager = context['storage_manager']
-        volumes = [*await storage_manager.get_all_volumes()]
+        volumes = [*await ctx.storage_manager.get_all_volumes()]
         return [
             cls.from_info(proxy_name, volume_info)
             for proxy_name, volume_info in volumes[offset:offset + limit]
@@ -238,12 +240,13 @@ class StorageVolume(graphene.ObjectType):
 
     @classmethod
     async def load_by_id(
-        cls, context, id: str,
+        cls,
+        ctx: GraphQueryContext,
+        id: str,
     ) -> StorageVolume:
-        storage_manager: StorageSessionManager = context['storage_manager']
-        proxy_name, volume_name = storage_manager.split_host(id)
+        proxy_name, volume_name = ctx.storage_manager.split_host(id)
         try:
-            proxy_info = storage_manager._proxies[proxy_name]
+            proxy_info = ctx.storage_manager._proxies[proxy_name]
         except KeyError:
             raise ValueError(f"no such storage proxy: {proxy_name!r}")
         async with proxy_info.session.request(

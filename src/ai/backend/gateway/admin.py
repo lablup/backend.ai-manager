@@ -73,6 +73,7 @@ async def handle_gql(request: web.Request, params: Any) -> web.Response:
         access_key=request['keypair']['access_key'],
         dbpool=root_ctx.dbpool,
         redis_stat=root_ctx.redis_stat,
+        redis_image=root_ctx.redis_image,
         manager_status=manager_status,
         known_slot_types=known_slot_types,
         background_task_manager=root_ctx.background_task_manager,
