@@ -58,7 +58,7 @@ def server_status_required(allowed_status: FrozenSet[ManagerStatus]):
 
         @functools.wraps(handler)
         async def wrapped(request, *args, **kwargs):
-            root_ctx: RootContext = request.app['root_ctx']
+            root_ctx: RootContext = request.app['_root.context']
             status = await root_ctx.shared_config.get_manager_status()
             if status not in allowed_status:
                 if status == ManagerStatus.FROZEN:
@@ -151,7 +151,7 @@ async def fetch_manager_status(request: web.Request) -> web.Response:
         t.Key('force_kill', default=False): t.ToBool,
     }))
 async def update_manager_status(request: web.Request, params: Any) -> web.Response:
-    root_ctx: RootContext = request.app['root_ctx']
+    root_ctx: RootContext = request.app['_root.context']
     log.info('MANAGER.UPDATE_MANAGER_STATUS (status:{}, force_kill:{})',
              params['status'], params['force_kill'])
     try:
@@ -172,7 +172,7 @@ async def update_manager_status(request: web.Request, params: Any) -> web.Respon
 
 @atomic
 async def get_announcement(request: web.Request) -> web.Response:
-    root_ctx: RootContext = request.app['root_ctx']
+    root_ctx: RootContext = request.app['_root.context']
     data = await root_ctx.shared_config.etcd.get('manager/announcement')
     if data is None:
         ret = {'enabled': False, 'message': ''}
@@ -189,7 +189,7 @@ async def get_announcement(request: web.Request) -> web.Response:
         t.Key('message', default=None): t.Null | t.String,
     }))
 async def update_announcement(request: web.Request, params: Any) -> web.Response:
-    root_ctx: RootContext = request.app['root_ctx']
+    root_ctx: RootContext = request.app['_root.context']
     if params['enabled']:
         if not params['message']:
             raise InvalidAPIParameters(extra_msg='Empty message not allowed to enable announcement')
@@ -213,7 +213,7 @@ iv_scheduler_ops_args = {
         t.Key('args'): t.Any,
     }))
 async def perform_scheduler_ops(request: web.Request, params: Any) -> web.Response:
-    root_ctx: RootContext = request.app['root_ctx']
+    root_ctx: RootContext = request.app['_root.context']
     try:
         args = iv_scheduler_ops_args[params['op']].check(params['args'])
     except t.DataError as e:
