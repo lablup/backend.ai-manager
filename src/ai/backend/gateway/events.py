@@ -84,7 +84,7 @@ async def push_session_events(
     params: Mapping[str, Any],
 ) -> web.StreamResponse:
     root_ctx: RootContext = request.app['_root.context']
-    ctx: PrivateContext = request.app['events.context']
+    app_ctx: PrivateContext = request.app['events.context']
     session_name = params['session_name']
     session_id = params['session_id']
     scope = params['scope']
@@ -112,8 +112,8 @@ async def push_session_events(
             if row is None:
                 raise GroupNotFound
             group_id = row['id']
-    ctx.session_event_queues.add(my_queue)
-    defer(lambda: ctx.session_event_queues.remove(my_queue))
+    app_ctx.session_event_queues.add(my_queue)
+    defer(lambda: app_ctx.session_event_queues.remove(my_queue))
     try:
         async with sse_response(request) as resp:
             while True:
@@ -173,7 +173,7 @@ async def push_background_task_events(
     params: Mapping[str, Any],
 ) -> web.StreamResponse:
     root_ctx: RootContext = request.app['_root.context']
-    ctx: PrivateContext = request.app['events.context']
+    app_ctx: PrivateContext = request.app['events.context']
     task_id = params['task_id']
     access_key = request['keypair']['access_key']
     log.info('PUSH_BACKGROUND_TASK_EVENTS (ak:{}, t:{})', access_key, task_id)
@@ -202,8 +202,8 @@ async def push_background_task_events(
 
     # It is an ongoing task.
     my_queue: asyncio.Queue[BgtaskEvents | Sentinel] = asyncio.Queue()
-    ctx.task_update_queues.add(my_queue)
-    defer(lambda: ctx.task_update_queues.remove(my_queue))
+    app_ctx.task_update_queues.add(my_queue)
+    defer(lambda: app_ctx.task_update_queues.remove(my_queue))
     try:
         async with sse_response(request) as resp:
             while True:
@@ -236,7 +236,7 @@ async def enqueue_kernel_creation_status_update(
     event: KernelPreparingEvent | KernelPullingEvent | KernelCreatingEvent | KernelStartedEvent,
 ) -> None:
     root_ctx: RootContext = app['_root.context']
-    ctx: PrivateContext = app['events.context']
+    app_ctx: PrivateContext = app['events.context']
 
     async def _fetch():
         async with root_ctx.dbpool.acquire() as conn, conn.begin():
@@ -263,7 +263,7 @@ async def enqueue_kernel_creation_status_update(
     row = await asyncio.shield(_fetch())
     if row is None:
         return
-    for q in ctx.session_event_queues:
+    for q in app_ctx.session_event_queues:
         q.put_nowait((event.name, row, event.reason))
 
 
@@ -273,7 +273,7 @@ async def enqueue_kernel_termination_status_update(
     event: KernelCancelledEvent | KernelTerminatingEvent | KernelTerminatedEvent,
 ) -> None:
     root_ctx: RootContext = app['_root.context']
-    ctx: PrivateContext = app['events.context']
+    app_ctx: PrivateContext = app['events.context']
 
     async def _fetch():
         async with root_ctx.dbpool.acquire() as conn, conn.begin():
@@ -300,7 +300,7 @@ async def enqueue_kernel_termination_status_update(
     row = await asyncio.shield(_fetch())
     if row is None:
         return
-    for q in ctx.session_event_queues:
+    for q in app_ctx.session_event_queues:
         q.put_nowait((event.name, row, event.reason))
 
 
@@ -310,7 +310,7 @@ async def enqueue_session_creation_status_update(
     event: SessionEnqueuedEvent | SessionScheduledEvent | SessionStartedEvent | SessionCancelledEvent,
 ) -> None:
     root_ctx: RootContext = app['_root.context']
-    ctx: PrivateContext = app['events.context']
+    app_ctx: PrivateContext = app['events.context']
 
     async def _fetch():
         async with root_ctx.dbpool.acquire() as conn:
@@ -336,7 +336,7 @@ async def enqueue_session_creation_status_update(
     row = await asyncio.shield(_fetch())
     if row is None:
         return
-    for q in ctx.session_event_queues:
+    for q in app_ctx.session_event_queues:
         q.put_nowait((event.name, row, event.reason))
 
 
@@ -346,7 +346,7 @@ async def enqueue_session_termination_status_update(
     event: SessionTerminatedEvent,
 ) -> None:
     root_ctx: RootContext = app['_root.context']
-    ctx: PrivateContext = app['events.context']
+    app_ctx: PrivateContext = app['events.context']
 
     async def _fetch():
         async with root_ctx.dbpool.acquire() as conn:
@@ -372,7 +372,7 @@ async def enqueue_session_termination_status_update(
     row = await asyncio.shield(_fetch())
     if row is None:
         return
-    for q in ctx.session_event_queues:
+    for q in app_ctx.session_event_queues:
         q.put_nowait((event.name, row, event.reason))
 
 
@@ -382,7 +382,7 @@ async def enqueue_batch_task_result_update(
     event: SessionSuccessEvent | SessionFailureEvent,
 ) -> None:
     root_ctx: RootContext = app['_root.context']
-    ctx: PrivateContext = app['events.context']
+    app_ctx: PrivateContext = app['events.context']
 
     async def _fetch():
         async with root_ctx.dbpool.acquire() as conn:
@@ -407,7 +407,7 @@ async def enqueue_batch_task_result_update(
     row = await asyncio.shield(_fetch())
     if row is None:
         return
-    for q in ctx.session_event_queues:
+    for q in app_ctx.session_event_queues:
         q.put_nowait((event.name, row, event.reason))
 
 
@@ -416,8 +416,8 @@ async def enqueue_bgtask_status_update(
     source: AgentId,
     event: BgtaskUpdatedEvent | BgtaskDoneEvent | BgtaskCancelledEvent | BgtaskFailedEvent,
 ) -> None:
-    ctx: PrivateContext = app['events.context']
-    for q in ctx.task_update_queues:
+    app_ctx: PrivateContext = app['events.context']
+    for q in app_ctx.task_update_queues:
         q.put_nowait(event)
 
 
@@ -429,9 +429,9 @@ class PrivateContext:
 
 async def events_app_ctx(app: web.Application) -> AsyncIterator[None]:
     root_ctx: RootContext = app['_root.context']
-    ctx: PrivateContext = app['events.context']
-    ctx.session_event_queues = set()
-    ctx.task_update_queues = set()
+    app_ctx: PrivateContext = app['events.context']
+    app_ctx.session_event_queues = set()
+    app_ctx.task_update_queues = set()
     event_dispatcher: EventDispatcher = root_ctx.event_dispatcher
     event_dispatcher.subscribe(SessionEnqueuedEvent, app, enqueue_session_creation_status_update)
     event_dispatcher.subscribe(SessionScheduledEvent, app, enqueue_session_creation_status_update)
@@ -458,10 +458,10 @@ async def events_app_ctx(app: web.Application) -> AsyncIterator[None]:
 async def events_shutdown(app: web.Application) -> None:
     # shutdown handler is called before waiting for closing active connections.
     # We need to put sentinels here to ensure delivery of them to active SSE connections.
-    ctx: PrivateContext = app['events.context']
-    for sq in ctx.session_event_queues:
+    app_ctx: PrivateContext = app['events.context']
+    for sq in app_ctx.session_event_queues:
         sq.put_nowait(sentinel)
-    for tq in ctx.task_update_queues:
+    for tq in app_ctx.task_update_queues:
         tq.put_nowait(sentinel)
     await asyncio.sleep(0)
 

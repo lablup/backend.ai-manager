@@ -23,12 +23,11 @@ from aiotools import aclosing
 import attr
 import graphene
 
-from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common import validators as tx
+from ai.backend.common.events import DoScheduleEvent
+from ai.backend.common.logging import BraceStyleAdapter
 
 from ai.backend.manager.models.gql import GraphQueryContext
-if TYPE_CHECKING:
-    from ai.backend.gateway.context import RootContext
 
 from . import ManagerStatus
 from .auth import superadmin_required
@@ -43,6 +42,9 @@ from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params
 from ..manager.defs import DEFAULT_ROLE
 from ..manager.models import agents, kernels, AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES
+
+if TYPE_CHECKING:
+    from .context import RootContext
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.manager'))
 
@@ -109,10 +111,14 @@ async def fetch_manager_status(request: web.Request) -> web.Response:
         configs = root_ctx.local_config['manager']
 
         async with root_ctx.dbpool.acquire() as conn, conn.begin():
-            query = (sa.select([sa.func.count(kernels.c.id)])
-                       .select_from(kernels)
-                       .where((kernels.c.cluster_role == DEFAULT_ROLE) &
-                              (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))))
+            query = (
+                sa.select([sa.func.count(kernels.c.id)])
+                .select_from(kernels)
+                .where(
+                    (kernels.c.cluster_role == DEFAULT_ROLE) &
+                    (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES))
+                )
+            )
             active_sessions_num = await conn.scalar(query)
 
             # TODO: update logic to return information for multiple managers (HA)
@@ -234,7 +240,7 @@ async def perform_scheduler_ops(request: web.Request, params: Any) -> web.Respon
                 raise InstanceNotFound()
         if schedulable:
             # trigger scheduler
-            await request.app['event_dispatcher'].produce_event('do_schedule')
+            await root_ctx.event_producer.produce_event(DoScheduleEvent())
     else:
         raise GenericBadRequest('Unknown scheduler operation')
     return web.Response(status=204)
@@ -247,15 +253,15 @@ class PrivateContext:
 
 async def init(app: web.Application) -> None:
     root_ctx: RootContext = app['_root.context']
-    ctx: PrivateContext = app['manager.context']
-    ctx.status_watch_task = asyncio.create_task(detect_status_update(root_ctx))
+    app_ctx: PrivateContext = app['manager.context']
+    app_ctx.status_watch_task = asyncio.create_task(detect_status_update(root_ctx))
 
 
 async def shutdown(app: web.Application) -> None:
-    ctx: PrivateContext = app['manager.context']
-    if ctx.status_watch_task is not None:
-        ctx.status_watch_task.cancel()
-        await ctx.status_watch_task
+    app_ctx: PrivateContext = app['manager.context']
+    if app_ctx.status_watch_task is not None:
+        app_ctx.status_watch_task.cancel()
+        await app_ctx.status_watch_task
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:

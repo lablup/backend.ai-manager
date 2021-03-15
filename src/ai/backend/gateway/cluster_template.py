@@ -2,6 +2,7 @@ import json
 import logging
 from typing import (
     Any,
+    TYPE_CHECKING,
     Tuple,
 )
 import uuid
@@ -21,13 +22,15 @@ from .manager import READ_ALLOWED, server_status_required
 from .types import CORSOptions, Iterable, WebMiddleware
 from .utils import check_api_params, get_access_key_scopes
 
-
 from ..manager.models import (
     association_groups_users as agus, domains,
     groups, session_templates, keypairs, users, UserRole,
     query_accessible_session_templates, TemplateType
 )
 from ..manager.models.session_template import check_cluster_template
+
+if TYPE_CHECKING:
+    from .context import RootContext
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.cluster_template'))
 
@@ -47,13 +50,15 @@ async def create(request: web.Request, params: Any) -> web.Response:
         params['domain'] = request['user']['domain_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     requester_uuid = request['user']['uuid']
-    log.info('CREATE (ak:{0}/{1})',
-             requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
+    log.info(
+        'CLUSTER_TEMPLATE.CREATE (ak:{0}/{1})', requester_access_key,
+        owner_access_key if owner_access_key != requester_access_key else '*'
+    )
     user_uuid = request['user']['uuid']
 
-    dbpool = request.app['dbpool']
+    root_ctx: RootContext = request.app['_root.context']
 
-    async with dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         if requester_access_key != owner_access_key:
             # Admin or superadmin is creating sessions for another user.
             # The check for admin privileges is already done in get_access_key_scope().
@@ -168,14 +173,14 @@ async def create(request: web.Request, params: Any) -> web.Response:
 )
 async def list_template(request: web.Request, params: Any) -> web.Response:
     resp = []
-    dbpool = request.app['dbpool']
+    root_ctx: RootContext = request.app['_root.context']
     access_key = request['keypair']['access_key']
     domain_name = request['user']['domain_name']
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
 
-    log.info('LIST (ak:{})', access_key)
-    async with dbpool.acquire() as conn:
+    log.info('CLUSTER_TEMPLATE.LIST (ak:{})', access_key)
+    async with root_ctx.dbpool.acquire() as conn:
         if request['is_superadmin'] and params['all']:
             j = (session_templates
                     .join(users, session_templates.c.user_uuid == users.c.uuid, isouter=True)
@@ -236,13 +241,15 @@ async def get(request: web.Request, params: Any) -> web.Response:
     if params['format'] not in ['yaml', 'json']:
         raise InvalidAPIParameters('format should be "yaml" or "json"')
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
-    log.info('GET (ak:{0}/{1})',
-             requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
+    log.info(
+        'CLUSTER_TEMPLATE.GET (ak:{0}/{1})', requester_access_key,
+        owner_access_key if owner_access_key != requester_access_key else '*'
+    )
 
     template_id = request.match_info['template_id']
-    dbpool = request.app['dbpool']
+    root_ctx: RootContext = request.app['_root.context']
 
-    async with dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         query = (sa.select([session_templates.c.template])
                    .select_from(session_templates)
                    .where((session_templates.c.id == template_id) &
@@ -269,14 +276,16 @@ async def get(request: web.Request, params: Any) -> web.Response:
     })
 )
 async def put(request: web.Request, params: Any) -> web.Response:
-    dbpool = request.app['dbpool']
+    root_ctx: RootContext = request.app['_root.context']
     template_id = request.match_info['template_id']
 
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
-    log.info('PUT (ak:{0}/{1})',
-             requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
+    log.info(
+        'CLUSTER_TEMPLATE.PUT (ak:{0}/{1})', requester_access_key,
+        owner_access_key if owner_access_key != requester_access_key else '*'
+    )
 
-    async with dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         query = (sa.select([session_templates.c.id])
                    .select_from(session_templates)
                    .where((session_templates.c.id == template_id) &
@@ -310,14 +319,16 @@ async def put(request: web.Request, params: Any) -> web.Response:
     })
 )
 async def delete(request: web.Request, params: Any) -> web.Response:
-    dbpool = request.app['dbpool']
+    root_ctx: RootContext = request.app['_root.context']
     template_id = request.match_info['template_id']
 
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
-    log.info('DELETE (ak:{0}/{1})',
-             requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
+    log.info(
+        'CLUSTER_TEMPLATE.DELETE (ak:{0}/{1})', requester_access_key,
+        owner_access_key if owner_access_key != requester_access_key else '*'
+    )
 
-    async with dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         query = (sa.select([session_templates.c.id])
                    .select_from(session_templates)
                    .where((session_templates.c.id == template_id) &

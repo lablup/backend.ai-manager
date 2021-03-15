@@ -22,7 +22,6 @@ from .exceptions import InvalidAPIParameters
 from .utils import check_api_params
 from .types import CORSOptions, WebMiddleware
 if TYPE_CHECKING:
-    from .config import SharedConfig
     from .context import RootContext
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
@@ -31,16 +30,16 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.etcd'))
 @atomic
 async def get_resource_slots(request: web.Request) -> web.Response:
     log.info('ETCD.GET_RESOURCE_SLOTS ()')
-    shared_config: SharedConfig = request.app['shared_config']
-    known_slots = await shared_config.get_resource_slots()
+    root_ctx: RootContext = request.app['_root.context']
+    known_slots = await root_ctx.shared_config.get_resource_slots()
     return web.json_response(known_slots, status=200)
 
 
 @atomic
 async def get_vfolder_types(request: web.Request) -> web.Response:
     log.info('ETCD.GET_VFOLDER_TYPES ()')
-    shared_config: SharedConfig = request.app['shared_config']
-    vfolder_types = await shared_config.get_vfolder_types()
+    root_ctx: RootContext = request.app['_root.context']
+    vfolder_types = await root_ctx.shared_config.get_vfolder_types()
     return web.json_response(vfolder_types, status=200)
 
 
@@ -51,8 +50,8 @@ async def get_docker_registries(request: web.Request) -> web.Response:
     Returns the list of all registered docker registries.
     """
     log.info('ETCD.GET_DOCKER_REGISTRIES ()')
-    etcd = request.app['shared_config'].etcd
-    _registries = await get_known_registries(etcd)
+    root_ctx: RootContext = request.app['_root.context']
+    _registries = await get_known_registries(root_ctx.shared_config.etcd)
     # ``yarl.URL`` is not JSON-serializable, so we need to represent it as string.
     known_registries: Mapping[str, str] = {k: v.human_repr() for k, v in _registries.items()}
     return web.json_response(known_registries, status=200)
@@ -66,15 +65,16 @@ async def get_docker_registries(request: web.Request) -> web.Response:
         t.Key('prefix', default=False): t.Bool,
     }))
 async def get_config(request: web.Request, params: Any) -> web.Response:
-    shared_config: SharedConfig = request.app['shared_config']
-    etcd = shared_config.etcd
-    log.info('ETCD.GET_CONFIG (ak:{}, key:{}, prefix:{})',
-             request['keypair']['access_key'], params['key'], params['prefix'])
+    root_ctx: RootContext = request.app['_root.context']
+    log.info(
+        'ETCD.GET_CONFIG (ak:{}, key:{}, prefix:{})',
+        request['keypair']['access_key'], params['key'], params['prefix']
+    )
     if params['prefix']:
         # Flatten the returned ChainMap object for JSON serialization
-        value = dict(await etcd.get_prefix_dict(params['key']))
+        value = dict(await root_ctx.shared_config.etcd.get_prefix_dict(params['key']))
     else:
-        value = await etcd.get(params['key'])
+        value = await root_ctx.shared_config.etcd.get(params['key'])
     return web.json_response({'result': value})
 
 
@@ -87,10 +87,11 @@ async def get_config(request: web.Request, params: Any) -> web.Response:
                          t.Mapping(t.String(allow_blank=True), t.Any)),
     }))
 async def set_config(request: web.Request, params: Any) -> web.Response:
-    shared_config: SharedConfig = request.app['shared_config']
-    etcd = shared_config.etcd
-    log.info('ETCD.SET_CONFIG (ak:{}, key:{}, val:{})',
-             request['keypair']['access_key'], params['key'], params['value'])
+    root_ctx: RootContext = request.app['_root.context']
+    log.info(
+        'ETCD.SET_CONFIG (ak:{}, key:{}, val:{})',
+        request['keypair']['access_key'], params['key'], params['value'],
+    )
     if isinstance(params['value'], Mapping):
         updates = {}
 
@@ -107,9 +108,9 @@ async def set_config(request: web.Request, params: Any) -> web.Response:
         if len(updates) > 16:
             raise InvalidAPIParameters(
                 'Too large update! Split into smaller key-value pair sets.')
-        await etcd.put_dict(updates)
+        await root_ctx.shared_config.etcd.put_dict(updates)
     else:
-        await etcd.put(params['key'], params['value'])
+        await root_ctx.shared_config.etcd.put(params['key'], params['value'])
     return web.json_response({'result': 'ok'})
 
 
@@ -121,14 +122,15 @@ async def set_config(request: web.Request, params: Any) -> web.Response:
         t.Key('prefix', default=False): t.Bool,
     }))
 async def delete_config(request: web.Request, params: Any) -> web.Response:
-    shared_config: SharedConfig = request.app['shared_config']
-    etcd = shared_config.etcd
-    log.info('ETCD.DELETE_CONFIG (ak:{}, key:{}, prefix:{})',
-             request['keypair']['access_key'], params['key'], params['prefix'])
+    root_ctx: RootContext = request.app['_root.context']
+    log.info(
+        'ETCD.DELETE_CONFIG (ak:{}, key:{}, prefix:{})',
+        request['keypair']['access_key'], params['key'], params['prefix'],
+    )
     if params['prefix']:
-        await etcd.delete_prefix(params['key'])
+        await root_ctx.shared_config.etcd.delete_prefix(params['key'])
     else:
-        await etcd.delete(params['key'])
+        await root_ctx.shared_config.etcd.delete(params['key'])
     return web.json_response({'result': 'ok'})
 
 

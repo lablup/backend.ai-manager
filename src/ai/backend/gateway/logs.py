@@ -193,7 +193,7 @@ async def mark_cleared(request: web.Request) -> web.Response:
 
 async def log_cleanup_task(app: web.Application, interval):
     root_ctx: RootContext = app['_root.context']
-    ctx: PrivateContext = app['logs.context']
+    app_ctx: PrivateContext = app['logs.context']
     etcd = root_ctx.shared_config.etcd
     raw_lifetime = await etcd.get('config/logs/error/retention')
     if raw_lifetime is None:
@@ -207,7 +207,7 @@ async def log_cleanup_task(app: web.Application, interval):
                  'trafaret validator, falling back to 90 days')
     boundary = datetime.now() - lifetime
     try:
-        lock = await ctx.log_cleanup_lock.lock('gateway.logs')
+        lock = await app_ctx.log_cleanup_lock.lock('gateway.logs')
         async with lock:
             async with root_ctx.dbpool.acquire() as conn, conn.begin():
                 query = (sa.select([error_logs.c.id])
@@ -235,17 +235,17 @@ class PrivateContext:
 
 async def init(app: web.Application) -> None:
     root_ctx: RootContext = app['_root.context']
-    ctx: PrivateContext = app['logs.context']
+    app_ctx: PrivateContext = app['logs.context']
     redis_url = root_ctx.shared_config.get_redis_url()
-    ctx.log_cleanup_lock = aioredlock.Aioredlock([str(redis_url)])
-    ctx.log_cleanup_task = aiotools.create_timer(
+    app_ctx.log_cleanup_lock = aioredlock.Aioredlock([str(redis_url)])
+    app_ctx.log_cleanup_task = aiotools.create_timer(
         functools.partial(log_cleanup_task, app), 5.0)
 
 
 async def shutdown(app: web.Application) -> None:
-    ctx: PrivateContext = app['logs.context']
-    ctx.log_cleanup_task.cancel()
-    await ctx.log_cleanup_task
+    app_ctx: PrivateContext = app['logs.context']
+    app_ctx.log_cleanup_task.cancel()
+    await app_ctx.log_cleanup_task
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:

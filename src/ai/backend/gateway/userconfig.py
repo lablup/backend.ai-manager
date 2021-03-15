@@ -31,7 +31,7 @@ from ..manager.models import (
 if TYPE_CHECKING:
     from .context import RootContext
 
-log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.dotfile'))
+log = BraceStyleAdapter(logging.getLogger(__name__))
 
 
 @server_status_required(READ_ALLOWED)
