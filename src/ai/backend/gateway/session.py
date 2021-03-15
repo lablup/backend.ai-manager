@@ -56,7 +56,6 @@ from ai.backend.common.exception import (
 from ai.backend.common.events import (
     AgentHeartbeatEvent,
     AgentStartedEvent,
-    AgentStatsEvent,
     AgentTerminatedEvent,
     DoSyncKernelLogsEvent,
     DoSyncKernelStatsEvent,
@@ -1199,16 +1198,6 @@ async def check_agent_lost(root_ctx: RootContext, interval: float) -> None:
         pass
 
 
-# NOTE: This event is ignored during the grace period.
-async def handle_agent_stats(
-    app: web.Application,
-    source: AgentId,
-    event: AgentStatsEvent,
-) -> None:
-    root_ctx: RootContext = app['_root.context']
-    await root_ctx.registry.handle_stats(source, event.stats)
-
-
 async def handle_kernel_log(
     app: web.Application,
     source: AgentId,
@@ -1892,7 +1881,6 @@ async def init(app: web.Application) -> None:
     evd.consume(AgentStartedEvent, app, handle_agent_lifecycle)
     evd.consume(AgentTerminatedEvent, app, handle_agent_lifecycle)
     evd.consume(AgentHeartbeatEvent, app, handle_agent_heartbeat)
-    evd.consume(AgentStatsEvent, app, handle_agent_stats)
 
     # action-trigerring events
     evd.consume(DoSyncKernelStatsEvent, app, handle_kernel_stat_sync)
