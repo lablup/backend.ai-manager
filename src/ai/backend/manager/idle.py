@@ -212,7 +212,7 @@ class TimeoutIdleChecker(BaseIdleChecker):
         await self._redis.set(
             f"session.{session_id}.last_access",
             f"{t:.06f}",
-            expire=max(86400, self.idle_timeout.total_seconds() * 2),
+            expire=max(86400, int(self.idle_timeout.total_seconds() * 2)),
         )
 
     async def _session_started_cb(

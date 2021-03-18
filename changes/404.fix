@@ -1,0 +1,1 @@
+Idle timeout was not working since there was a type error on saving compute session's last_access time.
