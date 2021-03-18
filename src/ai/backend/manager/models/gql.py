@@ -1028,8 +1028,8 @@ class Queries(graphene.ObjectType):
         # but practically a user cannot guess the IDs of kernels launched
         # by other users and in other groups.
         # Let's just protect the domain/user boundary here.
-        manager = info.context['dlmgr']
-        loader = manager.get_loader('ComputeContainer.detail')
+        graph_ctx: GraphQueryContext = info.context
+        loader = graph_ctx.dataloader_manager.get_loader('ComputeContainer.detail')
         return await loader.load(container_id)
 
     @staticmethod
@@ -1080,8 +1080,8 @@ class Queries(graphene.ObjectType):
         # but practically a user cannot guess the IDs of kernels launched
         # by other users and in other groups.
         # Let's just protect the domain/user boundary here.
-        manager = info.context['dlmgr']
-        loader = manager.get_loader(
+        graph_ctx: GraphQueryContext = info.context
+        loader = graph_ctx.dataloader_manager.get_loader(
             'ComputeSession.detail',
             domain_name=domain_name,
             access_key=access_key
@@ -1138,8 +1138,8 @@ class Queries(graphene.ObjectType):
         # but practically a user cannot guess the IDs of kernels launched
         # by other users and in other groups.
         # Let's just protect the domain/user boundary here.
-        manager = info.context['dlmgr']
-        loader = manager.get_loader(
+        graph_ctx: GraphQueryContext = info.context
+        loader = graph_ctx.dataloader_manager.get_loader(
             'LegacyComputeSession.detail',
             domain_name=domain_name,
             access_key=access_key,

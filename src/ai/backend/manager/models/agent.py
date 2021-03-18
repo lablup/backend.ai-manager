@@ -181,8 +181,8 @@ class Agent(graphene.ObjectType):
         self,
         info: graphene.ResolveInfo,
     ) -> Mapping[str, HardwareMetadata]:
-        registry: AgentRegistry = info.context['registry']
-        return await registry.gather_agent_hwinfo(self.id)
+        graph_ctx: GraphQueryContext = info.context
+        return await graph_ctx.registry.gather_agent_hwinfo(self.id)
 
     @staticmethod
     async def load_count(

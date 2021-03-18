@@ -455,16 +455,17 @@ def handle_loop_error(
         loop = current_loop()
     exception = context.get('exception')
     msg = context.get('message', '(empty message)')
+    root_ctx: RootContext = root_app['_root.context']
     if exception is not None:
         if sys.exc_info()[0] is not None:
             log.exception('Error inside event loop: {0}', msg)
-            if 'error_monitor' in root_app:
-                loop.create_task(root_app['error_monitor'].capture_exception())
+            if root_ctx.error_monitor is not None:
+                loop.create_task(root_ctx.error_monitor.capture_exception())
         else:
             exc_info = (type(exception), exception, exception.__traceback__)
             log.error('Error inside event loop: {0}', msg, exc_info=exc_info)
-            if 'error_monitor' in root_app:
-                loop.create_task(root_app['error_monitor'].capture_exception(exc_instance=exception))
+            if root_ctx.error_monitor is not None:
+                loop.create_task(root_ctx.error_monitor.capture_exception(exc_instance=exception))
 
 
 def _init_subapp(

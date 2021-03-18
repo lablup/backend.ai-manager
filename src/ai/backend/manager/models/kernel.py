@@ -514,10 +514,10 @@ class ComputeContainer(graphene.ObjectType):
     async def resolve_live_stat(self, info: graphene.ResolveInfo) -> Optional[Mapping[str, Any]]:
         if not hasattr(self, 'status'):
             return None
-        rs = info.context['redis_stat']
+        graph_ctx: GraphQueryContext = info.context
         if KernelStatus[self.status] in LIVE_STATUS:
             raw_live_stat = await redis.execute_with_retries(
-                lambda: rs.get(str(self.id), encoding=None))
+                lambda: graph_ctx.redis_stat.get(str(self.id), encoding=None))
             if raw_live_stat is not None:
                 live_stat = msgpack.unpackb(raw_live_stat)
                 return live_stat
@@ -757,8 +757,8 @@ class ComputeSession(graphene.ObjectType):
         Calculate the sum of occupied resource slots of all sub-kernels,
         and return the JSON-serializable object from the sum result.
         """
-        manager = info.context['dlmgr']
-        loader = manager.get_loader('ComputeContainer.by_session')
+        graph_ctx: GraphQueryContext = info.context
+        loader = graph_ctx.dataloader_manager.get_loader('ComputeContainer.by_session')
         containers = await loader.load(self.session_id)
         zero = ResourceSlot()
         return sum(
@@ -772,16 +772,16 @@ class ComputeSession(graphene.ObjectType):
         self,
         info: graphene.ResolveInfo,
     ) -> Iterable[ComputeContainer]:
-        manager = info.context['dlmgr']
-        loader = manager.get_loader('ComputeContainer.by_session')
+        graph_ctx: GraphQueryContext = info.context
+        loader = graph_ctx.dataloader_manager.get_loader('ComputeContainer.by_session')
         return await loader.load(self.session_id)
 
     async def resolve_dependencies(
         self,
         info: graphene.ResolveInfo,
     ) -> Iterable[ComputeSession]:
-        manager = info.context['dlmgr']
-        loader = manager.get_loader('ComputeSession.by_dependency')
+        graph_ctx: GraphQueryContext = info.context
+        loader = graph_ctx.dataloader_manager.get_loader('ComputeSession.by_dependency')
         return await loader.load(self.id)
 
     @classmethod
@@ -1025,11 +1025,11 @@ class LegacyComputeSession(graphene.ObjectType):
     async def resolve_live_stat(self, info: graphene.ResolveInfo) -> Optional[Mapping[str, Any]]:
         if not hasattr(self, 'status'):
             return None
-        rs = info.context['redis_stat']
+        graph_ctx: GraphQueryContext = info.context
         if KernelStatus[self.status] not in LIVE_STATUS:
             return self.last_stat
         else:
-            return await type(self)._resolve_live_stat(rs, str(self.id))
+            return await type(self)._resolve_live_stat(graph_ctx.redis_stat, str(self.id))
 
     async def _resolve_legacy_metric(
         self,
@@ -1040,7 +1040,7 @@ class LegacyComputeSession(graphene.ObjectType):
     ) -> Optional[MetricValueType]:
         if not hasattr(self, 'status'):
             return None
-        rs = info.context['redis_stat']
+        graph_ctx: GraphQueryContext = info.context
         if KernelStatus[self.status] not in LIVE_STATUS:
             if self.last_stat is None:
                 return convert_type(0)
@@ -1052,7 +1052,7 @@ class LegacyComputeSession(graphene.ObjectType):
                 return convert_type(0)
             return convert_type(value)
         else:
-            kstat = await type(self)._resolve_live_stat(rs, str(self.id))
+            kstat = await type(self)._resolve_live_stat(graph_ctx.redis_stat, str(self.id))
             if kstat is None:
                 return convert_type(0)
             metric = kstat.get(metric_key)

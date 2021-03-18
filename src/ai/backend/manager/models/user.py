@@ -447,7 +447,8 @@ class CreateUser(graphene.Mutation):
         email: str,
         props: UserInput,
     ) -> CreateUser:
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
+        graph_ctx: GraphQueryContext = info.context
+        async with graph_ctx.dbpool.acquire() as conn, conn.begin():
             username = props.username if props.username else email
             if props.status is None and props.is_active is not None:
                 _status = UserStatus.ACTIVE if props.is_active else UserStatus.INACTIVE
@@ -689,7 +690,8 @@ class DeleteUser(graphene.Mutation):
         info: graphene.ResolveInfo,
         email: str,
     ) -> DeleteUser:
-        async with info.context['dbpool'].acquire() as conn, conn.begin():
+        graph_ctx: GraphQueryContext = info.context
+        async with graph_ctx.dbpool.acquire() as conn, conn.begin():
             try:
                 # Make all user keypairs inactive.
                 from ai.backend.manager.models import keypairs
