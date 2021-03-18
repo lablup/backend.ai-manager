@@ -90,9 +90,13 @@ async def test_authorize(etcd_fixture, database_fixture, create_app_and_client, 
         url = '/auth/test'
         req_data = {'echo': str(uuid.uuid4())}
         req_bytes = json.dumps(req_data).encode()
-        headers = get_headers('POST', url, req_bytes,
-                              hash_type=hash_type,
-                              api_version=api_version)
+        headers = get_headers(
+            'POST',
+            url,
+            req_bytes,
+            hash_type=hash_type,
+            api_version=api_version,
+        )
         resp = await client.post(url, data=req_bytes, headers=headers)
         assert resp.status == 200
         data = json.loads(await resp.text())

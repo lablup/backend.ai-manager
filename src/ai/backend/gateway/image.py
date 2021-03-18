@@ -3,6 +3,7 @@ import secrets
 from typing import (
     Any,
     Iterable,
+    TYPE_CHECKING,
     Tuple,
 )
 
@@ -34,8 +35,11 @@ from .utils import (
     check_api_params,
 )
 
+if TYPE_CHECKING:
+    from .context import RootContext
 
-DOCKERFILE_TEMPLATE = r'''# syntax = docker/dockerfile:1.0-experimental
+
+DOCKERFILE_TEMPLATE = r"""# syntax = docker/dockerfile:1.0-experimental
 FROM {{ src }}
 MAINTAINER Backend.AI Manager
 
@@ -86,13 +90,14 @@ LABEL ai.backend.kernelspec="1" \
 {%- endif %}
       ai.backend.runtime-type="{{ runtime_type }}" \
       ai.backend.runtime-path="{{ runtime_path }}"
-'''  # noqa
+"""  # noqa
 
 
 @server_status_required(READ_ALLOWED)
 @admin_required
 async def get_import_image_form(request: web.Request) -> web.Response:
-    async with request.app['dbpool'].acquire() as conn, conn.begin():
+    root_ctx: RootContext = request.app['_root.context']
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         query = (
             sa.select([groups.c.name])
             .select_from(
@@ -287,7 +292,7 @@ async def get_import_image_form(request: web.Request) -> web.Response:
         })),
     }).allow_extra('*'))
 async def import_image(request: web.Request, params: Any) -> web.Response:
-    '''
+    """
     Import a docker image and convert it to a Backend.AI-compatible one,
     by automatically installing a few packages and adding image labels.
 
@@ -306,11 +311,12 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
 
     This API returns immediately after launching the temporary kernel.
     The client may check the progress of the import task using session logs.
-    '''
+    """
 
     tpl = jinja2.Template(DOCKERFILE_TEMPLATE)
+    root_ctx: RootContext = request.app['_root.context']
 
-    async with request.app['dbpool'].acquire() as conn, conn.begin():
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         query = (
             sa.select([domains.c.allowed_docker_registries])
             .select_from(domains)
@@ -338,12 +344,12 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
         'has_ipykernel': True,  # TODO: in the future, we may allow import of service-port only kernels.
     })
 
-    sess_id = f'image-import-{secrets.token_urlsafe(8)}'
+    session_creation_id = secrets.token_urlsafe(32)
+    session_id = f'image-import-{secrets.token_urlsafe(8)}'
     access_key = request['keypair']['access_key']
-    registry = request.app['registry']
     resource_policy = request['keypair']['resource_policy']
 
-    async with request.app['dbpool'].acquire() as conn, conn.begin():
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         query = (
             sa.select([groups.c.id])
             .select_from(
@@ -376,24 +382,28 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
             raise InvalidAPIParameters("You do not belong to the given group.")
 
     importer_image = ImageRef(
-        request.app['local_config']['manager']['importer-image'],
+        root_ctx.local_config['manager']['importer-image'],
         allowed_docker_registries,
     )
 
     docker_creds = {}
     for img_ref in (source_image, target_image):
-        registry_info = await request.app['shared_config'].etcd.get_prefix_dict(
+        registry_info = await root_ctx.shared_config.etcd.get_prefix_dict(
             f'config/docker/registry/{etcd_quote(img_ref.registry)}')
         docker_creds[img_ref.registry] = {
             'username': registry_info.get('username'),
             'password': registry_info.get('password'),
         }
 
-    kernel_id = await registry.enqueue_session(
-        sess_id, access_key,
+    kernel_id = await root_ctx.registry.enqueue_session(
+        session_creation_id,
+        session_id,
+        access_key,
         [{
             'image_ref': importer_image,
             'cluster_role': DEFAULT_ROLE,
+            'cluster_idx': 1,
+            'cluster_hostname': f"{DEFAULT_ROLE}1",
             'creation_config': {
                 'resources': {'cpu': '1', 'mem': '2g'},
                 'scaling_group': params['launchOptions']['scalingGroup'],
@@ -425,7 +435,7 @@ async def import_image(request: web.Request, params: Any) -> web.Response:
     )
     return web.json_response({
         'importTask': {
-            'sessionId': sess_id,
+            'sessionId': session_id,
             'taskId': str(kernel_id),
         },
     }, status=200)

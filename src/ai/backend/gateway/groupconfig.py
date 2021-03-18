@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Any, Tuple
+from typing import Any, TYPE_CHECKING, Tuple
 
 import sqlalchemy as sa
 from aiohttp import web
@@ -30,7 +30,10 @@ from ..manager.models import (
     MAXIMUM_DOTFILE_SIZE,
 )
 
-log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.dotfile'))
+if TYPE_CHECKING:
+    from .context import RootContext
+
+log = BraceStyleAdapter(logging.getLogger(__name__))
 
 
 @server_status_required(READ_ALLOWED)
@@ -45,11 +48,10 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.dotfile'))
     }
 ))
 async def create(request: web.Request, params: Any) -> web.Response:
-    log.info('CREATE DOTFILE (group: {0})', params['group'])
-
-    dbpool = request.app['dbpool']
+    log.info('GROUPCONFIG.CREATE_DOTFILE (group: {0})', params['group'])
+    root_ctx: RootContext = request.app['_root.context']
     group_id_or_name = params['group']
-    async with dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         if isinstance(group_id_or_name, str):
             if params['domain'] is None:
                 raise InvalidAPIParameters('Missing parameter \'domain\'')
@@ -104,12 +106,11 @@ async def create(request: web.Request, params: Any) -> web.Response:
     t.Key('path', default=None): t.Null | t.String,
 }))
 async def list_or_get(request: web.Request, params: Any) -> web.Response:
-    log.info('LIST_OR_GET DOTFILE (group: {0})', params['group'])
-
+    log.info('GROUPCONFIG.LIST_OR_GET_DOTFILE (group: {0})', params['group'])
+    root_ctx: RootContext = request.app['_root.context']
     resp = []
     group_id_or_name = params['group']
-    dbpool = request.app['dbpool']
-    async with dbpool.acquire() as conn:
+    async with root_ctx.dbpool.acquire() as conn:
         if isinstance(group_id_or_name, str):
             if params['domain'] is None:
                 raise InvalidAPIParameters('Missing parameter \'domain\'')
@@ -173,11 +174,10 @@ async def list_or_get(request: web.Request, params: Any) -> web.Response:
     }
 ))
 async def update(request: web.Request, params: Any) -> web.Response:
-    log.info('UPDATE DOTFILE (domain:{0})', params['domain'])
-
-    dbpool = request.app['dbpool']
+    log.info('GROUPCONFIG.UPDATE_DOTFILE (domain:{0})', params['domain'])
+    root_ctx: RootContext = request.app['_root.context']
     group_id_or_name = params['group']
-    async with dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         if isinstance(group_id_or_name, str):
             if params['domain'] is None:
                 raise InvalidAPIParameters('Missing parameter \'domain\'')
@@ -225,11 +225,10 @@ async def update(request: web.Request, params: Any) -> web.Response:
     })
 )
 async def delete(request: web.Request, params: Any) -> web.Response:
-    log.info('DELETE DOTFILE (domain:{0})', params['domain'])
-
-    dbpool = request.app['dbpool']
+    log.info('GROUPCONFIG.DELETE_DOTFILE (domain:{0})', params['domain'])
+    root_ctx: RootContext = request.app['_root.context']
     group_id_or_name = params['group']
-    async with dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         if isinstance(group_id_or_name, str):
             if params['domain'] is None:
                 raise InvalidAPIParameters('Missing parameter \'domain\'')

@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Any, Tuple
+from typing import Any, TYPE_CHECKING, Tuple
 
 from aiohttp import web
 import aiohttp_cors
@@ -26,7 +26,10 @@ from ..manager.models import (
     MAXIMUM_DOTFILE_SIZE,
 )
 
-log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.dotfile'))
+if TYPE_CHECKING:
+    from .context import RootContext
+
+log = BraceStyleAdapter(logging.getLogger(__name__))
 
 
 @server_status_required(READ_ALLOWED)
@@ -40,12 +43,11 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.dotfile'))
     }
 ))
 async def create(request: web.Request, params: Any) -> web.Response:
-    log.info('CREATE DOTFILE (domain: {0})', params['domain'])
+    log.info('DOMAINCOFNIG.CREATE_DOTFILE (domain: {0})', params['domain'])
     if not request['is_superadmin'] and request['user']['domain_name'] != params['domain']:
         raise GenericForbidden('Domain admins cannot create dotfiles of other domains')
-
-    dbpool = request.app['dbpool']
-    async with dbpool.acquire() as conn, conn.begin():
+    root_ctx: RootContext = request.app['_root.context']
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         dotfiles, leftover_space = await query_domain_dotfiles(conn, params['domain'])
         if dotfiles is None:
             raise DomainNotFound('Input domain is not found')
@@ -80,13 +82,12 @@ async def create(request: web.Request, params: Any) -> web.Response:
     t.Key('path', default=None): t.Null | t.String,
 }))
 async def list_or_get(request: web.Request, params: Any) -> web.Response:
-    log.info('LIST_OR_GET DOTFILE (domain: {0})', params['domain'])
+    log.info('DOMAINCONFIG.LIST_OR_GET_DOTFILE (domain: {0})', params['domain'])
     if not request['is_superadmin'] and request['user']['domain_name'] != params['domain']:
         raise GenericForbidden('Users cannot access dotfiles of other domains')
-
     resp = []
-    dbpool = request.app['dbpool']
-    async with dbpool.acquire() as conn:
+    root_ctx: RootContext = request.app['_root.context']
+    async with root_ctx.dbpool.acquire() as conn:
         if params['path']:
             dotfiles, _ = await query_domain_dotfiles(conn, params['domain'])
             if dotfiles is None:
@@ -119,12 +120,11 @@ async def list_or_get(request: web.Request, params: Any) -> web.Response:
     }
 ))
 async def update(request: web.Request, params: Any) -> web.Response:
-    log.info('UPDATE DOTFILE (domain:{0})', params['domain'])
+    log.info('DOMAINCONFIG.UPDATE_DOTFILE (domain:{0})', params['domain'])
     if not request['is_superadmin'] and request['user']['domain_name'] != params['domain']:
         raise GenericForbidden('Domain admins cannot update dotfiles of other domains')
-
-    dbpool = request.app['dbpool']
-    async with dbpool.acquire() as conn, conn.begin():
+    root_ctx: RootContext = request.app['_root.context']
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         dotfiles, _ = await query_domain_dotfiles(conn, params['domain'])
         if dotfiles is None:
             raise DomainNotFound
@@ -154,12 +154,11 @@ async def update(request: web.Request, params: Any) -> web.Response:
     })
 )
 async def delete(request: web.Request, params: Any) -> web.Response:
-    log.info('DELETE DOTFILE (domain:{0})', params['domain'])
+    log.info('DOMAINCONFIG.DELETE_DOTFILE (domain:{0})', params['domain'])
     if not request['is_superadmin'] and request['user']['domain_name'] != params['domain']:
         raise GenericForbidden('Domain admins cannot delete dotfiles of other domains')
-
-    dbpool = request.app['dbpool']
-    async with dbpool.acquire() as conn, conn.begin():
+    root_ctx: RootContext = request.app['_root.context']
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         dotfiles, _ = await query_domain_dotfiles(conn, params['domain'])
         if dotfiles is None:
             raise DomainNotFound

@@ -1,19 +1,27 @@
+from __future__ import annotations
+
 import logging
 import re
 from typing import (
-    Sequence,
+    Any,
+    Dict,
     List,
+    Optional,
+    Sequence,
+    TYPE_CHECKING,
     Tuple,
     TypedDict,
     Union,
 )
 
 from aiopg.sa.connection import SAConnection
+from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
 
+from ai.backend.common import msgpack
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
 from .base import (
@@ -26,7 +34,9 @@ from .base import (
 from .scaling_group import ScalingGroup
 from .user import UserRole
 from ..defs import RESERVED_DOTFILES
-from ai.backend.common import msgpack
+
+if TYPE_CHECKING:
+    from .gql import GraphQueryContext
 
 log = BraceStyleAdapter(logging.getLogger(__file__))
 
@@ -76,12 +86,12 @@ class Domain(graphene.ObjectType):
     # Dynamic fields.
     scaling_groups = graphene.List(lambda: graphene.String)
 
-    async def resolve_scaling_groups(self, info):
+    async def resolve_scaling_groups(self, info: graphene.ResolveInfo) -> Sequence[str]:
         sgroups = await ScalingGroup.load_by_domain(info.context, self.name)
         return [sg.name for sg in sgroups]
 
     @classmethod
-    def from_row(cls, context, row):
+    def from_row(cls, ctx: GraphQueryContext, row: RowProxy) -> Optional[Domain]:
         if row is None:
             return None
         return cls(
@@ -97,24 +107,39 @@ class Domain(graphene.ObjectType):
         )
 
     @classmethod
-    async def load_all(cls, context, *, is_active=None):
-        async with context['dbpool'].acquire() as conn:
+    async def load_all(
+        cls,
+        ctx: GraphQueryContext,
+        *,
+        is_active: bool = None,
+    ) -> Sequence[Domain]:
+        async with ctx.dbpool.acquire() as conn:
             query = sa.select([domains]).select_from(domains)
             if is_active is not None:
                 query = query.where(domains.c.is_active == is_active)
             return [
-                cls.from_row(context, row) async for row in conn.execute(query)
+                obj async for row in conn.execute(query)
+                if (obj := cls.from_row(ctx, row)) is not None
             ]
 
     @classmethod
-    async def batch_load_by_name(cls, context, names=None, *,
-                                 is_active=None):
-        async with context['dbpool'].acquire() as conn:
-            query = (sa.select([domains])
-                       .select_from(domains)
-                       .where(domains.c.name.in_(names)))
+    async def batch_load_by_name(
+        cls,
+        ctx: GraphQueryContext,
+        names: Sequence[str],
+        *,
+        is_active: bool = None
+    ) -> Sequence[Optional[Domain]]:
+        async with ctx.dbpool.acquire() as conn:
+            query = (
+                sa.select([domains])
+                .select_from(domains)
+                .where(domains.c.name.in_(names))
+            )
+            if is_active is not None:
+                query = query.where(domains.c.is_active == is_active)
             return await batch_result(
-                context, conn, query, cls,
+                ctx, conn, query, cls,
                 names, lambda row: row['name'],
             )
 
@@ -151,9 +176,16 @@ class CreateDomain(graphene.Mutation):
     domain = graphene.Field(lambda: Domain, required=False)
 
     @classmethod
-    async def mutate(cls, root, info, name, props):
+    async def mutate(
+        cls,
+        root,
+        info: graphene.ResolveInfo,
+        name: str,
+        props: DomainInput,
+    ) -> CreateDomain:
         if _rx_slug.search(name) is None:
             return cls(False, 'invalid name format. slug format required.', None)
+        ctx: GraphQueryContext = info.context
         data = {
             'name': name,
             'description': props.description,
@@ -170,7 +202,7 @@ class CreateDomain(graphene.Mutation):
         )
         item_query = domains.select().where(domains.c.name == name)
         return await simple_db_mutate_returning_item(
-            cls, info.context, insert_query,
+            cls, ctx, insert_query,
             item_query=item_query, item_cls=Domain)
 
 
@@ -187,8 +219,15 @@ class ModifyDomain(graphene.Mutation):
     domain = graphene.Field(lambda: Domain, required=False)
 
     @classmethod
-    async def mutate(cls, root, info, name, props):
-        data = {}
+    async def mutate(
+        cls,
+        root,
+        info: graphene.ResolveInfo,
+        name: str,
+        props: ModifyDomainInput,
+    ) -> ModifyDomain:
+        ctx: GraphQueryContext = info.context
+        data: Dict[str, Any] = {}
         set_if_set(props, data, 'name')  # data['name'] is new domain name
         set_if_set(props, data, 'description')
         set_if_set(props, data, 'is_active')
@@ -209,7 +248,7 @@ class ModifyDomain(graphene.Mutation):
             name = data['name']
         item_query = domains.select().where(domains.c.name == name)
         return await simple_db_mutate_returning_item(
-            cls, info.context, update_query,
+            cls, ctx, update_query,
             item_query=item_query, item_cls=Domain)
 
 
@@ -226,13 +265,14 @@ class DeleteDomain(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    async def mutate(cls, root, info, name):
+    async def mutate(cls, root, info: graphene.ResolveInfo, name: str) -> DeleteDomain:
+        ctx: GraphQueryContext = info.context
         query = (
             domains.update()
             .values(is_active=False)
             .where(domains.c.name == name)
         )
-        return await simple_db_mutate(cls, info.context, query)
+        return await simple_db_mutate(cls, ctx, query)
 
 
 class PurgeDomain(graphene.Mutation):
@@ -251,9 +291,10 @@ class PurgeDomain(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    async def mutate(cls, root, info, name):
+    async def mutate(cls, root, info: graphene.ResolveInfo, name: str) -> PurgeDomain:
         from . import users, groups
-        async with info.context['dbpool'].acquire() as conn:
+        ctx: GraphQueryContext = info.context
+        async with ctx.dbpool.acquire() as conn:
             if await cls.domain_has_active_kernels(conn, name):
                 raise RuntimeError('Domain has some active kernels. Terminate them first.')
             query = (
@@ -273,7 +314,7 @@ class PurgeDomain(graphene.Mutation):
 
             await cls.delete_kernels(conn, name)
         query = domains.delete().where(domains.c.name == name)
-        return await simple_db_mutate(cls, info.context, query)
+        return await simple_db_mutate(cls, ctx, query)
 
     @classmethod
     async def delete_kernels(

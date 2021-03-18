@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import asyncio
 import datetime as dt
 from datetime import datetime
 import functools
@@ -8,13 +11,16 @@ from aiohttp import web
 import aiohttp_cors
 import aioredlock
 import aiotools
+import attr
 import sqlalchemy as sa
 import trafaret as t
-from typing import Any, Tuple, MutableMapping
+from typing import Any, TYPE_CHECKING, Tuple, MutableMapping
 
 from ai.backend.common import validators as tx
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import LogSeverity
+if TYPE_CHECKING:
+    from ai.backend.gateway.context import RootContext
 
 from .auth import auth_required
 from .manager import READ_ALLOWED, server_status_required
@@ -44,15 +50,14 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.logs'))
     }
 ))
 async def append(request: web.Request, params: Any) -> web.Response:
+    root_ctx: RootContext = request.app['_root.context']
     params['domain'] = request['user']['domain_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     requester_uuid = request['user']['uuid']
     log.info('CREATE (ak:{0}/{1})',
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
 
-    dbpool = request.app['dbpool']
-
-    async with dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         resp = {
             'success': True
         }
@@ -82,8 +87,8 @@ async def append(request: web.Request, params: Any) -> web.Response:
     }),
 )
 async def list_logs(request: web.Request, params: Any) -> web.Response:
+    root_ctx: RootContext = request.app['_root.context']
     resp: MutableMapping[str, Any] = {'logs': []}
-    dbpool = request.app['dbpool']
     domain_name = request['user']['domain_name']
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
@@ -91,7 +96,7 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
     requester_access_key, owner_access_key = await get_access_key_scopes(request, params)
     log.info('LIST (ak:{0}/{1})',
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*')
-    async with dbpool.acquire() as conn:
+    async with root_ctx.dbpool.acquire() as conn:
         is_admin = True
         query = (sa.select('*')
                    .select_from(error_logs)
@@ -154,14 +159,14 @@ async def list_logs(request: web.Request, params: Any) -> web.Response:
 @auth_required
 @server_status_required(READ_ALLOWED)
 async def mark_cleared(request: web.Request) -> web.Response:
-    dbpool = request.app['dbpool']
+    root_ctx: RootContext = request.app['_root.context']
     domain_name = request['user']['domain_name']
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
     log_id = uuid.UUID(request.match_info['log_id'])
 
     log.info('CLEAR')
-    async with dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         query = (sa.update(error_logs)
                    .values(is_cleared=True))
         if request['is_superadmin']:
@@ -187,8 +192,9 @@ async def mark_cleared(request: web.Request) -> web.Response:
 
 
 async def log_cleanup_task(app: web.Application, interval):
-    dbpool = app['dbpool']
-    etcd = app['shared_config'].etcd
+    root_ctx: RootContext = app['_root.context']
+    app_ctx: PrivateContext = app['logs.context']
+    etcd = root_ctx.shared_config.etcd
     raw_lifetime = await etcd.get('config/logs/error/retention')
     if raw_lifetime is None:
         raw_lifetime = '90d'
@@ -201,9 +207,9 @@ async def log_cleanup_task(app: web.Application, interval):
                  'trafaret validator, falling back to 90 days')
     boundary = datetime.now() - lifetime
     try:
-        lock = await app['log_cleanup_lock'].lock('gateway.logs')
+        lock = await app_ctx.log_cleanup_lock.lock('gateway.logs')
         async with lock:
-            async with dbpool.acquire() as conn, conn.begin():
+            async with root_ctx.dbpool.acquire() as conn, conn.begin():
                 query = (sa.select([error_logs.c.id])
                             .select_from(error_logs)
                             .where(error_logs.c.created_at < boundary))
@@ -221,16 +227,25 @@ async def log_cleanup_task(app: web.Application, interval):
         log.debug('schedule(): temporary locking failure; will be retried.')
 
 
+@attr.s(slots=True, auto_attribs=True, init=False)
+class PrivateContext:
+    log_cleanup_lock: aioredlock.Aioredlock
+    log_cleanup_task: asyncio.Task
+
+
 async def init(app: web.Application) -> None:
-    redis_url = app['shared_config'].get_redis_url()
-    app['log_cleanup_lock'] = aioredlock.Aioredlock([str(redis_url)])
-    app['log_cleanup_task'] = aiotools.create_timer(
+    root_ctx: RootContext = app['_root.context']
+    app_ctx: PrivateContext = app['logs.context']
+    redis_url = root_ctx.shared_config.get_redis_url()
+    app_ctx.log_cleanup_lock = aioredlock.Aioredlock([str(redis_url)])
+    app_ctx.log_cleanup_task = aiotools.create_timer(
         functools.partial(log_cleanup_task, app), 5.0)
 
 
 async def shutdown(app: web.Application) -> None:
-    app['log_cleanup_task'].cancel()
-    await app['log_cleanup_task']
+    app_ctx: PrivateContext = app['logs.context']
+    app_ctx.log_cleanup_task.cancel()
+    await app_ctx.log_cleanup_task
 
 
 def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iterable[WebMiddleware]]:
@@ -239,6 +254,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app.on_shutdown.append(shutdown)
     app['api_versions'] = (4, 5)
     app['prefix'] = 'logs/error'
+    app['logs.context'] = PrivateContext()
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     cors.add(app.router.add_route('POST', '', append))
     cors.add(app.router.add_route('GET', '', list_logs))

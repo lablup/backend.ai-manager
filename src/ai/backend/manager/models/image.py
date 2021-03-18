@@ -1,6 +1,10 @@
 from __future__ import annotations
+
 import logging
 from typing import (
+    Any,
+    List,
+    Mapping,
     Sequence,
     TYPE_CHECKING,
 )
@@ -10,11 +14,13 @@ import sqlalchemy as sa
 from graphql.execution.executors.asyncio import AsyncioExecutor
 
 from ai.backend.common.logging import BraceStyleAdapter
+
 from .user import UserRole
 from .base import BigInt, KVPair, ResourceLimit
 
 if TYPE_CHECKING:
     from ..background import ProgressReporter
+    from .gql import GraphQueryContext
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.admin'))
 
@@ -45,9 +51,19 @@ class Image(graphene.ObjectType):
     hash = graphene.String()
 
     @classmethod
-    def _convert_from_dict(cls, context, data):
-        is_superadmin = (context['user']['role'] == UserRole.SUPERADMIN)
-        hide_agents = False if is_superadmin else context['local_config']['manager']['hide-agents']
+    async def _convert_from_dict(
+        cls,
+        ctx: GraphQueryContext,
+        data: Mapping[str, Any],
+    ) -> Image:
+        installed = (
+            await ctx.redis_image.scard(data['canonical_ref'])
+        ) > 0
+        installed_agents = await ctx.redis_image.smembers(data['canonical_ref'])
+        if installed_agents is None:
+            installed_agents = []
+        is_superadmin = (ctx.user['role'] == UserRole.SUPERADMIN)
+        hide_agents = False if is_superadmin else ctx.local_config['manager']['hide-agents']
         return cls(
             name=data['name'],
             humanized_name=data['humanized_name'],
@@ -63,41 +79,55 @@ class Image(graphene.ObjectType):
                 ResourceLimit(key=v['key'], min=v['min'], max=v['max'])
                 for v in data['resource_limits']],
             supported_accelerators=data['supported_accelerators'],
-            installed=data['installed'],
-            installed_agents=data.get('installed_agents', []) if not hide_agents else None,
+            installed=installed,
+            installed_agents=installed_agents if not hide_agents else None,
             # legacy
             hash=data['digest'],
         )
 
     @classmethod
-    async def load_item(cls, context, reference):
-        r = await context['shared_config'].inspect_image(reference)
-        return cls._convert_from_dict(context, r)
+    async def load_item(cls, ctx: GraphQueryContext, reference: str) -> Image:
+        r = await ctx.shared_config.inspect_image(reference)
+        return await cls._convert_from_dict(ctx, r)
 
     @classmethod
-    async def load_all(cls, context, is_installed=None, is_operation=None):
-        raw_items = await context['shared_config'].list_images()
-        items = []
+    async def load_all(
+        cls,
+        ctx: GraphQueryContext,
+        *,
+        is_installed: bool = None,
+        is_operation: bool = None,
+    ) -> Sequence[Image]:
+        raw_items = await ctx.shared_config.list_images()
+        items: List[Image] = []
         # Convert to GQL objects
         for r in raw_items:
-            item = cls._convert_from_dict(context, r)
+            item = await cls._convert_from_dict(ctx, r)
             items.append(item)
         if is_installed is not None:
             items = [*filter(lambda item: item.installed == is_installed, items)]
         if is_operation is not None:
+
             def _filter_operation(item):
                 for label in item.labels:
                     if label.key == 'ai.backend.features' and 'operation' in label.value:
                         return not is_operation
                 return not is_operation
+
             items = [*filter(_filter_operation, items)]
         return items
 
     @staticmethod
-    async def filter_allowed(context, items, domain_name,
-                             is_installed=None, is_operation=None):
+    async def filter_allowed(
+        ctx: GraphQueryContext,
+        items: Sequence[Image],
+        domain_name: str,
+        *,
+        is_installed: bool = None,
+        is_operation: bool = None,
+    ) -> Sequence[Image]:
         from .domain import domains
-        async with context['dbpool'].acquire() as conn:
+        async with ctx.dbpool.acquire() as conn:
             query = (
                 sa.select([domains.c.allowed_docker_registries])
                 .select_from(domains)
@@ -112,11 +142,13 @@ class Image(graphene.ObjectType):
         if is_installed is not None:
             items = [*filter(lambda item: item.installed == is_installed, items)]
         if is_operation is not None:
+
             def _filter_operation(item):
                 for label in item.labels:
                     if label.key == 'ai.backend.features' and 'operation' in label.value:
                         return not is_operation
                 return not is_operation
+
             items = [*filter(_filter_operation, items)]
         return items
 
@@ -184,12 +216,12 @@ class RescanImages(graphene.Mutation):
     ) -> RescanImages:
         log.info('rescanning docker registry {0} by API request',
                  f'({registry})' if registry else '(all)')
-        config_server = info.context['shared_config']
+        ctx: GraphQueryContext = info.context
 
         async def _rescan_task(reporter: ProgressReporter) -> None:
-            await config_server.rescan_images(registry, reporter=reporter)
+            await ctx.shared_config.rescan_images(registry, reporter=reporter)
 
-        task_id = await info.context['background_task_manager'].start(_rescan_task)
+        task_id = await ctx.background_task_manager.start(_rescan_task)
         return RescanImages(ok=True, msg='', task_id=task_id)
 
 
@@ -210,8 +242,8 @@ class ForgetImage(graphene.Mutation):
         reference: str,
     ) -> ForgetImage:
         log.info('forget image {0} by API request', reference)
-        config_server = info.context['shared_config']
-        await config_server.forget_image(reference)
+        ctx: GraphQueryContext = info.context
+        await ctx.shared_config.forget_image(reference)
         return ForgetImage(ok=True, msg='')
 
 
@@ -234,9 +266,9 @@ class AliasImage(graphene.Mutation):
         target: str,
     ) -> AliasImage:
         log.info('alias image {0} -> {1} by API request', alias, target)
-        config_server = info.context['shared_config']
+        ctx: GraphQueryContext = info.context
         try:
-            await config_server.alias(alias, target)
+            await ctx.shared_config.alias(alias, target)
         except ValueError as e:
             return AliasImage(ok=False, msg=str(e))
         return AliasImage(ok=True, msg='')
@@ -259,6 +291,6 @@ class DealiasImage(graphene.Mutation):
         alias: str,
     ) -> DealiasImage:
         log.info('dealias image {0} by API request', alias)
-        config_server = info.context['shared_config']
-        await config_server.dealias(alias)
+        ctx: GraphQueryContext = info.context
+        await ctx.shared_config.dealias(alias)
         return DealiasImage(ok=True, msg='')

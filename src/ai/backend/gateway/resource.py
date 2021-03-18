@@ -1,6 +1,6 @@
-'''
+"""
 Resource preset APIs.
-'''
+"""
 
 import copy
 from datetime import datetime, timedelta
@@ -13,6 +13,7 @@ import re
 from typing import (
     Any,
     Iterable,
+    TYPE_CHECKING,
     Tuple,
     MutableMapping,
 )
@@ -48,6 +49,9 @@ from ..manager.models import (
 from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params
 
+if TYPE_CHECKING:
+    from .context import RootContext
+
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.kernel'))
 
 _json_loads = functools.partial(json.loads, parse_float=Decimal)
@@ -55,13 +59,14 @@ _json_loads = functools.partial(json.loads, parse_float=Decimal)
 
 @auth_required
 @atomic
-async def list_presets(request) -> web.Response:
-    '''
+async def list_presets(request: web.Request) -> web.Response:
+    """
     Returns the list of all resource presets.
-    '''
+    """
     log.info('LIST_PRESETS (ak:{})', request['keypair']['access_key'])
-    await request.app['shared_config'].get_resource_slots()
-    async with request.app['dbpool'].acquire() as conn, conn.begin():
+    root_ctx: RootContext = request.app['_root.context']
+    await root_ctx.shared_config.get_resource_slots()
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         query = (
             sa.select([resource_presets])
             .select_from(resource_presets)
@@ -90,11 +95,12 @@ async def list_presets(request) -> web.Response:
         t.Key('group', default='default'): t.String,
     }))
 async def check_presets(request: web.Request, params: Any) -> web.Response:
-    '''
+    """
     Returns the list of all resource presets in the current scaling group,
     with additional information including allocatability of each preset,
     amount of total remaining resources, and the current keypair resource limits.
-    '''
+    """
+    root_ctx: RootContext = request.app['_root.context']
     try:
         access_key = request['keypair']['access_key']
         resource_policy = request['keypair']['resource_policy']
@@ -104,8 +110,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
         # assert scaling_group is not None, 'scaling_group parameter is missing.'
     except (json.decoder.JSONDecodeError, AssertionError) as e:
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
-    registry = request.app['registry']
-    known_slot_types = await request.app['shared_config'].get_resource_slots()
+    known_slot_types = await root_ctx.shared_config.get_resource_slots()
     resp: MutableMapping[str, Any] = {
         'keypair_limits': None,
         'keypair_using': None,
@@ -117,21 +122,26 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
     log.info('CHECK_PRESETS (ak:{}, g:{}, sg:{})',
              request['keypair']['access_key'], params['group'], params['scaling_group'])
 
-    async with request.app['dbpool'].acquire() as conn, conn.begin():
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         # Check keypair resource limit.
         keypair_limits = ResourceSlot.from_policy(resource_policy, known_slot_types)
-        keypair_occupied = await registry.get_keypair_occupancy(access_key, conn=conn)
+        keypair_occupied = await root_ctx.registry.get_keypair_occupancy(access_key, conn=conn)
         keypair_remaining = keypair_limits - keypair_occupied
 
         # Check group resource limit and get group_id.
-        j = sa.join(groups, association_groups_users,
-                    association_groups_users.c.group_id == groups.c.id)
-        query = (sa.select([groups.c.id, groups.c.total_resource_slots])
-                   .select_from(j)
-                   .where(
-                       (association_groups_users.c.user_id == request['user']['uuid']) &
-                       (groups.c.name == params['group']) &
-                       (domains.c.name == domain_name)))
+        j = sa.join(
+            groups, association_groups_users,
+            association_groups_users.c.group_id == groups.c.id,
+        )
+        query = (
+            sa.select([groups.c.id, groups.c.total_resource_slots])
+            .select_from(j)
+            .where(
+                (association_groups_users.c.user_id == request['user']['uuid']) &
+                (groups.c.name == params['group']) &
+                (domains.c.name == domain_name)
+            )
+        )
         result = await conn.execute(query)
         row = await result.first()
         group_id = row['id']
@@ -143,7 +153,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             'default_for_unspecified': DefaultForUnspecified.UNLIMITED
         }
         group_limits = ResourceSlot.from_policy(group_resource_policy, known_slot_types)
-        group_occupied = await registry.get_group_occupancy(group_id, conn=conn)
+        group_occupied = await root_ctx.registry.get_group_occupancy(group_id, conn=conn)
         group_remaining = group_limits - group_occupied
 
         # Check domain resource limit.
@@ -155,7 +165,7 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             'default_for_unspecified': DefaultForUnspecified.UNLIMITED
         }
         domain_limits = ResourceSlot.from_policy(domain_resource_policy, known_slot_types)
-        domain_occupied = await registry.get_domain_occupancy(domain_name, conn=conn)
+        domain_occupied = await root_ctx.registry.get_domain_occupancy(domain_name, conn=conn)
         domain_remaining = domain_limits - domain_occupied
 
         # Take minimum remaining resources. There's no need to merge limits and occupied.
@@ -188,7 +198,9 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             .where(
                 (kernels.c.user_uuid == request['user']['uuid']) &
                 (kernels.c.status.in_(AGENT_RESOURCE_OCCUPYING_KERNEL_STATUSES)) &
-                (kernels.c.scaling_group.in_(sgroup_names))))
+                (kernels.c.scaling_group.in_(sgroup_names))
+            )
+        )
         async for row in conn.execute(query):
             per_sgroup[row['scaling_group']]['using'] += row['occupied_slots']
 
@@ -224,7 +236,8 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
         # Fetch all resource presets in the current scaling group.
         query = (
             sa.select([resource_presets])
-            .select_from(resource_presets))
+            .select_from(resource_presets)
+        )
         async for row in conn.execute(query):
             # Check if there are any agent that can allocate each preset.
             allocatable = False
@@ -241,8 +254,8 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
             })
 
         # Return group resource status as NaN if not allowed.
-        group_resource_visibility = await request.app['shared_config'].get_raw(
-                'config/api/resources/group_resource_visibility')
+        group_resource_visibility = \
+            await root_ctx.shared_config.get_raw('config/api/resources/group_resource_visibility')
         group_resource_visibility = t.ToBool().check(group_resource_visibility)
         if not group_resource_visibility:
             group_limits = ResourceSlot({k: Decimal('NaN') for k in known_slot_types.keys()})
@@ -263,22 +276,27 @@ async def check_presets(request: web.Request, params: Any) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @superadmin_required
 @atomic
-async def recalculate_usage(request) -> web.Response:
-    '''
+async def recalculate_usage(request: web.Request) -> web.Response:
+    """
     Update `keypairs.c.concurrency_used` and `agents.c.occupied_slots`.
 
     Those two values are sometimes out of sync. In that case, calling this API
     re-calculates the values for running containers and updates them in DB.
-    '''
+    """
     log.info('RECALCULATE_USAGE ()')
-    await request.app['registry'].recalc_resource_usage()
+    root_ctx: RootContext = request.app['_root.context']
+    await root_ctx.registry.recalc_resource_usage()
     return web.json_response({}, status=200)
 
 
-async def get_container_stats_for_period(request, start_date, end_date, group_ids=None):
-    async with request.app['dbpool'].acquire() as conn, conn.begin():
-        j = (kernels.join(groups, groups.c.id == kernels.c.group_id)
-                    .join(users, users.c.uuid == kernels.c.user_uuid))
+async def get_container_stats_for_period(request: web.Request, start_date, end_date, group_ids=None):
+    root_ctx: RootContext = request.app['_root.context']
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+        j = (
+            kernels
+            .join(groups, groups.c.id == kernels.c.group_id)
+            .join(users, users.c.uuid == kernels.c.user_uuid)
+        )
         query = (
             sa.select([kernels, groups.c.name, users.c.email])
             .select_from(j)
@@ -297,7 +315,7 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
         rows = await result.fetchall()
 
     objs_per_group = {}
-    local_tz = request.app['shared_config']['system']['timezone']
+    local_tz = root_ctx.shared_config['system']['timezone']
 
     for row in rows:
         group_id = str(row['group_id'])
@@ -410,16 +428,17 @@ async def get_container_stats_for_period(request, start_date, end_date, group_id
     }),
     loads=_json_loads)
 async def usage_per_month(request: web.Request, params: Any) -> web.Response:
-    '''
+    """
     Return usage statistics of terminated containers for a specified month.
     The date/time comparison is done using the configured timezone.
 
     :param group_ids: If not None, query containers only in those groups.
     :param month: The year-month to query usage statistics. ex) "202006" to query for Jun 2020
-    '''
+    """
     log.info('USAGE_PER_MONTH (g:[{}], month:{})',
              ','.join(params['group_ids']), params['month'])
-    local_tz = request.app['shared_config']['system']['timezone']
+    root_ctx: RootContext = request.app['_root.context']
+    local_tz = root_ctx.shared_config['system']['timezone']
     try:
         start_date = datetime.strptime(params['month'], '%Y%m').replace(tzinfo=local_tz)
         end_date = start_date + relativedelta(months=+1)
@@ -441,7 +460,7 @@ async def usage_per_month(request: web.Request, params: Any) -> web.Response:
     }),
     loads=_json_loads)
 async def usage_per_period(request: web.Request, params: Any) -> web.Response:
-    '''
+    """
     Return usage statistics of terminated containers belonged to the given group for a specified
     period in dates.
     The date/time comparison is done using the configured timezone.
@@ -449,9 +468,10 @@ async def usage_per_period(request: web.Request, params: Any) -> web.Response:
     :param group_id: If not None, query containers only in the group.
     :param start_date str: "yyyymmdd" format.
     :param end_date str: "yyyymmdd" format.
-    '''
+    """
+    root_ctx: RootContext = request.app['_root.context']
     group_id = params['group_id']
-    local_tz = request.app['shared_config']['system']['timezone']
+    local_tz = root_ctx.shared_config['system']['timezone']
     try:
         start_date = datetime.strptime(params['start_date'], '%Y%m%d').replace(tzinfo=local_tz)
         end_date = datetime.strptime(params['end_date'], '%Y%m%d').replace(tzinfo=local_tz)
@@ -470,8 +490,8 @@ async def usage_per_period(request: web.Request, params: Any) -> web.Response:
     return web.json_response(resp, status=200)
 
 
-async def get_time_binned_monthly_stats(request, user_uuid=None):
-    '''
+async def get_time_binned_monthly_stats(request: web.Request, user_uuid=None):
+    """
     Generate time-binned (15 min) stats for the last one month (2880 points).
     The structure of the result would be:
 
@@ -486,12 +506,13 @@ async def get_time_binned_monthly_stats(request, user_uuid=None):
         ]
 
     Note that the timestamp is in UNIX-timestamp.
-    '''
+    """
     # Get all or user kernels for the last month from DB.
     time_window = 900  # 15 min
     now = datetime.now(tzutc())
     start_date = now - timedelta(days=30)
-    async with request.app['dbpool'].acquire() as conn, conn.begin():
+    root_ctx: RootContext = request.app['_root.context']
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         query = (
             sa.select([kernels])
             .select_from(kernels)
@@ -508,18 +529,18 @@ async def get_time_binned_monthly_stats(request, user_uuid=None):
 
     # Build time-series of time-binned stats.
     rowcount = result.rowcount
-    now = now.timestamp()
-    start_date = start_date.timestamp()
-    ts = start_date
+    now_ts = now.timestamp()
+    start_date_ts = start_date.timestamp()
+    ts = start_date_ts
     idx = 0
     tseries = []
     # Iterate over each time window.
-    while ts < now:
+    while ts < now_ts:
         # Initialize the time-binned stats.
         num_sessions = 0
         cpu_allocated = 0
         mem_allocated = 0
-        gpu_allocated = 0
+        gpu_allocated = Decimal(0)
         io_read_bytes = 0
         io_write_bytes = 0
         disk_used = 0
@@ -530,12 +551,12 @@ async def get_time_binned_monthly_stats(request, user_uuid=None):
             # Accumulate stats for overlapping containers in this time window.
             row = rows[idx]
             num_sessions += 1
-            cpu_allocated += float(row.occupied_slots.get('cpu', 0))
-            mem_allocated += float(row.occupied_slots.get('mem', 0))
+            cpu_allocated += int(row.occupied_slots.get('cpu', 0))
+            mem_allocated += int(row.occupied_slots.get('mem', 0))
             if 'cuda.devices' in row.occupied_slots:
-                gpu_allocated += float(row.occupied_slots['cuda.devices'])
+                gpu_allocated += int(row.occupied_slots['cuda.devices'])
             if 'cuda.shares' in row.occupied_slots:
-                gpu_allocated += float(row.occupied_slots['cuda.shares'])
+                gpu_allocated += Decimal(row.occupied_slots['cuda.shares'])
             if row.last_stat:
                 io_read_bytes += int(nmget(row.last_stat, 'io_read.current', 0))
                 io_write_bytes += int(nmget(row.last_stat, 'io_write.current', 0))
@@ -556,7 +577,7 @@ async def get_time_binned_monthly_stats(request, user_uuid=None):
                 "unit_hint": "bytes"
             },
             "gpu_allocated": {
-                "value": gpu_allocated,
+                "value": float(gpu_allocated),
                 "unit_hint": "count"
             },
             "io_read_bytes": {
@@ -580,10 +601,10 @@ async def get_time_binned_monthly_stats(request, user_uuid=None):
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def user_month_stats(request: web.Request) -> web.Response:
-    '''
+    """
     Return time-binned (15 min) stats for terminated user sessions
     over last 30 days.
-    '''
+    """
     access_key = request['keypair']['access_key']
     user_uuid = request['user']['uuid']
     log.info('USER_LAST_MONTH_STATS (ak:{}, u:{})', access_key, user_uuid)
@@ -594,27 +615,28 @@ async def user_month_stats(request: web.Request) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @superadmin_required
 async def admin_month_stats(request: web.Request) -> web.Response:
-    '''
+    """
     Return time-binned (15 min) stats for all terminated sessions
     over last 30 days.
-    '''
+    """
     log.info('ADMIN_LAST_MONTH_STATS ()')
     stats = await get_time_binned_monthly_stats(request, user_uuid=None)
     return web.json_response(stats, status=200)
 
 
 async def get_watcher_info(request: web.Request, agent_id: str) -> dict:
-    '''
+    """
     Get watcher information.
 
     :return addr: address of agent watcher (eg: http://127.0.0.1:6009)
     :return token: agent watcher token ("insecure" if not set in config server)
-    '''
-    token = request.app['shared_config']['watcher']['token']
+    """
+    root_ctx: RootContext = request.app['_root.context']
+    token = root_ctx.shared_config['watcher']['token']
     if token is None:
         token = 'insecure'
-    agent_ip = await request.app['shared_config'].etcd.get(f'nodes/agents/{agent_id}/ip')
-    watcher_port = await request.app['shared_config'].etcd.get(
+    agent_ip = await root_ctx.shared_config.etcd.get(f'nodes/agents/{agent_id}/ip')
+    watcher_port = await root_ctx.shared_config.etcd.get(
         f'nodes/agents/{agent_id}/watcher_port'
     )
     if watcher_port is None:

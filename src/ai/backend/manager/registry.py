@@ -716,7 +716,7 @@ class AgentRegistry:
         session_name: str,
         access_key: str,
         kernel_enqueue_configs: List[KernelEnqueueingConfig],
-        scaling_group: str,
+        scaling_group: Optional[str],
         session_type: SessionTypes,
         resource_policy: str,
         *,
@@ -749,7 +749,7 @@ class AgentRegistry:
 
         # sanity check for vfolders
         allowed_vfolder_types = ['user', 'group']
-        # allowed_vfolder_types = await request.app['shared_config'].etcd.get('path-to-vfolder-type')
+        # allowed_vfolder_types = await root_ctx.shared_config.etcd.get('path-to-vfolder-type')
         determined_mounts = []
         matched_mounts = set()
         async with self.dbpool.acquire() as conn, conn.begin():
@@ -1917,7 +1917,6 @@ class AgentRegistry:
         self,
         session_name_or_id: Union[str, SessionId],
         access_key: AccessKey,
-        mode: str,
         text: str,
         opts: Mapping[str, Any],
     ) -> Mapping[str, Any]:
@@ -1929,7 +1928,7 @@ class AgentRegistry:
                 10,
                 order_key=kernel['id'],
             ) as rpc:
-                return await rpc.call.get_completions(str(kernel['id']), mode, text, opts)
+                return await rpc.call.get_completions(str(kernel['id']), text, opts)
 
     async def start_service(
         self,
