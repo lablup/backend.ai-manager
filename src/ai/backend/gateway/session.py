@@ -1074,7 +1074,7 @@ async def handle_session_creation_lifecycle(
     Update the database according to the session-level lifecycle events
     published by the manager.
     """
-    app_ctx: PrivateContext = app['private_context']
+    app_ctx: PrivateContext = app['session.context']
     if event.creation_id not in app_ctx.session_creation_tracker:
         return
     log.debug('handle_session_creation_lifecycle: ev:{} s:{}', event.name, event.session_id)

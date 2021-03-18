@@ -81,7 +81,7 @@ ALL_ALLOWED: Final = frozenset({ManagerStatus.RUNNING})
 class GQLMutationUnfrozenRequiredMiddleware:
 
     def resolve(self, next, root, info: graphene.ResolveInfo, **args) -> Any:
-        graph_ctx: GraphQueryContext = info.context['gql.context']
+        graph_ctx: GraphQueryContext = info.context
         if info.operation.operation == 'mutation' and \
                 graph_ctx.manager_status == ManagerStatus.FROZEN:
             raise ServerFrozen
