@@ -30,6 +30,7 @@ import psycopg2 as pg
 import pytest
 
 from ai.backend.gateway.config import LocalConfig, SharedConfig, load as load_config
+from ai.backend.gateway.context import RootContext
 from ai.backend.gateway.server import (
     build_root_app,
 )
@@ -151,23 +152,25 @@ def etcd_fixture(test_id, local_config, vfolder_mount, vfolder_fsprefix, vfolder
 
 @pytest.fixture
 async def shared_config(app, etcd_fixture):
+    root_ctx: RootContext = app['_root.context']
     shared_config = SharedConfig(
-        app['local_config']['etcd']['addr'],
-        app['local_config']['etcd']['user'],
-        app['local_config']['etcd']['password'],
-        app['local_config']['etcd']['namespace'],
+        root_ctx.local_config['etcd']['addr'],
+        root_ctx.local_config['etcd']['user'],
+        root_ctx.local_config['etcd']['password'],
+        root_ctx.local_config['etcd']['namespace'],
     )
     await shared_config.reload()
-    app['shared_config'] = shared_config
+    root_ctx: RootContext = app['_root.context']
+    root_ctx.shared_config = shared_config
     yield shared_config
 
 
 @pytest.fixture(scope='session')
 def database(request, local_config, test_db):
-    '''
+    """
     Create a new database for the current test session
     and install the table schema using alembic.
-    '''
+    """
     db_addr = local_config['db']['addr']
     db_user = local_config['db']['user']
     db_pass = local_config['db']['password']
@@ -216,10 +219,10 @@ def database(request, local_config, test_db):
 
 @pytest.fixture()
 def database_fixture(local_config, test_db, database):
-    '''
+    """
     Populate the example data as fixtures to the database
     and delete them after use.
-    '''
+    """
     db_addr = local_config['db']['addr']
     db_user = local_config['db']['user']
     db_pass = local_config['db']['password']
@@ -307,12 +310,15 @@ class Client:
 
 @pytest.fixture
 async def app(local_config, event_loop):
-    '''
+    """
     Create an empty application with the test configuration.
-    '''
-    return build_root_app(0, local_config,
-                          cleanup_contexts=[],
-                          subapp_pkgs=[])
+    """
+    return build_root_app(
+        0,
+        local_config,
+        cleanup_contexts=[],
+        subapp_pkgs=[],
+    )
 
 
 @pytest.fixture
@@ -341,24 +347,31 @@ async def create_app_and_client(local_config, event_loop) -> AsyncIterator:
                     _outer_ctx_classes.append(ctx)  # type: ignore
                 else:
                     _cleanup_ctxs.append(ctx)
-        app = build_root_app(0, local_config,
-                             cleanup_contexts=_cleanup_ctxs,
-                             subapp_pkgs=subapp_pkgs,
-                             scheduler_opts={'close_timeout': 10, **scheduler_opts})
+        app = build_root_app(
+            0,
+            local_config,
+            cleanup_contexts=_cleanup_ctxs,
+            subapp_pkgs=subapp_pkgs,
+            scheduler_opts={
+                'close_timeout': 10,
+                **scheduler_opts
+            },
+        )
+        root_ctx: RootContext = app['_root.context']
         for octx_cls in _outer_ctx_classes:
-            octx = octx_cls(app)  # type: ignore
+            octx = octx_cls(root_ctx)  # type: ignore
             _outer_ctxs.append(octx)
             await octx.__aenter__()
         runner = web.AppRunner(app, handle_signals=False)
         await runner.setup()
         site = web.TCPSite(
             runner,
-            str(app['local_config']['manager']['service-addr'].host),
-            app['local_config']['manager']['service-addr'].port,
+            str(root_ctx.local_config['manager']['service-addr'].host),
+            root_ctx.local_config['manager']['service-addr'].port,
             reuse_port=True,
         )
         await site.start()
-        port = app['local_config']['manager']['service-addr'].port
+        port = root_ctx.local_config['manager']['service-addr'].port
         client_session = aiohttp.ClientSession()
         client = Client(client_session, f'http://localhost:{port}')
         return app, client
@@ -412,7 +425,8 @@ def get_headers(app, default_keypair):
                       hash_type='sha256', api_version='v5.20191215',
                       keypair=default_keypair):
         now = datetime.now(tzutc())
-        hostname = f"localhost:{app['local_config']['manager']['service-addr'].port}"
+        root_ctx: RootContext = app['_root.context']
+        hostname = f"localhost:{root_ctx.local_config['manager']['service-addr'].port}"
         headers = {
             'Date': now.isoformat(),
             'Content-Type': ctype,
@@ -456,6 +470,7 @@ async def prepare_kernel(request, create_app_and_client,
         modules=['etcd', 'events', 'auth', 'vfolder',
                  'admin', 'ratelimit', 'kernel', 'stream', 'manager'],
         spawn_agent=True)
+    root_ctx: RootContext = app['_root.context']
 
     async def create_kernel(image='lua:5.3-alpine', tag=None):
         url = '/v3/kernel/'
@@ -472,6 +487,6 @@ async def prepare_kernel(request, create_app_and_client,
 
     access_key = default_keypair['access_key']
     try:
-        await app['registry'].destroy_session(sess_id, access_key)
+        await root_ctx.registry.destroy_session(sess_id, access_key)
     except Exception:
         pass

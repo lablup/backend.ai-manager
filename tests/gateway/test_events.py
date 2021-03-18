@@ -14,7 +14,7 @@ from ai.backend.common.events import (
     EventDispatcher,
     EventProducer,
 )
-from ai.backend.manager.background import BackgroundTaskManager
+from ai.backend.gateway.context import RootContext
 from ai.backend.gateway.server import (
     shared_config_ctx, event_dispatcher_ctx, background_task_ctx,
 )
@@ -43,8 +43,9 @@ async def test_dispatch(etcd_fixture, create_app_and_client) -> None:
         [shared_config_ctx, event_dispatcher_ctx],
         ['.events'],
     )
-    producer: EventProducer = app['event_producer']
-    dispatcher: EventDispatcher = app['event_dispatcher']
+    root_ctx: RootContext = app['_root.context']
+    producer: EventProducer = root_ctx.event_producer
+    dispatcher: EventDispatcher = root_ctx.event_dispatcher
 
     records = set()
 
@@ -90,8 +91,9 @@ async def test_error_on_dispatch(etcd_fixture, create_app_and_client, event_loop
         ['.events'],
         scheduler_opts={'exception_handler': handle_exception},
     )
-    producer: EventProducer = app['event_producer']
-    dispatcher: EventDispatcher = app['event_dispatcher']
+    root_ctx: RootContext = app['_root.context']
+    producer: EventProducer = root_ctx.event_producer
+    dispatcher: EventDispatcher = root_ctx.event_dispatcher
     old_handler = event_loop.get_exception_handler()
     event_loop.set_exception_handler(handle_exception)
 
@@ -130,8 +132,9 @@ async def test_background_task(etcd_fixture, create_app_and_client) -> None:
         [shared_config_ctx, event_dispatcher_ctx, background_task_ctx],
         ['.events'],
     )
-    producer: EventProducer = app['event_producer']
-    dispatcher: EventDispatcher = app['event_dispatcher']
+    root_ctx: RootContext = app['_root.context']
+    producer: EventProducer = root_ctx.event_producer
+    dispatcher: EventDispatcher = root_ctx.event_dispatcher
     update_handler_ctx = {}
     done_handler_ctx = {}
 
@@ -164,8 +167,7 @@ async def test_background_task(etcd_fixture, create_app_and_client) -> None:
 
     dispatcher.subscribe(BgtaskUpdatedEvent, app, update_sub)
     dispatcher.subscribe(BgtaskDoneEvent, app, done_sub)
-    bgtask_manager: BackgroundTaskManager = app['background_task_manager']
-    task_id = await bgtask_manager.start(_mock_task, name='MockTask1234')
+    task_id = await root_ctx.background_task_manager.start(_mock_task, name='MockTask1234')
     await asyncio.sleep(2)
 
     try:
@@ -192,8 +194,9 @@ async def test_background_task_fail(etcd_fixture, create_app_and_client) -> None
         [shared_config_ctx, event_dispatcher_ctx, background_task_ctx],
         ['.events'],
     )
-    producer: EventProducer = app['event_producer']
-    dispatcher: EventDispatcher = app['event_dispatcher']
+    root_ctx: RootContext = app['_root.context']
+    producer: EventProducer = root_ctx.event_producer
+    dispatcher: EventDispatcher = root_ctx.event_dispatcher
     fail_handler_ctx = {}
 
     async def fail_sub(
@@ -211,8 +214,7 @@ async def test_background_task_fail(etcd_fixture, create_app_and_client) -> None
         raise ZeroDivisionError('oops')
 
     dispatcher.subscribe(BgtaskFailedEvent, app, fail_sub)
-    bgtask_manager: BackgroundTaskManager = app['background_task_manager']
-    task_id = await bgtask_manager.start(_mock_task, name='MockTask1234')
+    task_id = await root_ctx.background_task_manager.start(_mock_task, name='MockTask1234')
     await asyncio.sleep(2)
     try:
         assert fail_handler_ctx['task_id'] == task_id

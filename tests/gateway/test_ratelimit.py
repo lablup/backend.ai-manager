@@ -9,8 +9,11 @@ import ai.backend.gateway.ratelimit as rlim
 
 
 @pytest.mark.asyncio
-async def test_check_rlim_for_anonymous_query(etcd_fixture, database_fixture,
-                                              create_app_and_client):
+async def test_check_rlim_for_anonymous_query(
+    etcd_fixture,
+    database_fixture,
+    create_app_and_client,
+):
     app, client = await create_app_and_client(
         [shared_config_ctx, redis_ctx, database_ctx, monitoring_ctx],
         ['.auth', '.ratelimit'],
@@ -23,9 +26,12 @@ async def test_check_rlim_for_anonymous_query(etcd_fixture, database_fixture,
 
 
 @pytest.mark.asyncio
-async def test_check_rlim_for_authorized_query(etcd_fixture, database_fixture,
-                                               create_app_and_client,
-                                               get_headers):
+async def test_check_rlim_for_authorized_query(
+    etcd_fixture,
+    database_fixture,
+    create_app_and_client,
+    get_headers,
+):
     app, client = await create_app_and_client(
         [shared_config_ctx, redis_ctx, database_ctx, monitoring_ctx],
         ['.auth', '.ratelimit'],
