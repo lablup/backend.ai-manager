@@ -2,6 +2,8 @@ import json
 import logging
 from typing import (
     Any,
+    List,
+    Mapping,
     TYPE_CHECKING,
     Tuple,
 )
@@ -181,14 +183,21 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
 
     log.info('CLUSTER_TEMPLATE.LIST (ak:{})', access_key)
     async with root_ctx.dbpool.acquire() as conn:
+        entries: List[Mapping[str, Any]]
         if request['is_superadmin'] and params['all']:
-            j = (session_templates
-                    .join(users, session_templates.c.user_uuid == users.c.uuid, isouter=True)
-                    .join(groups, session_templates.c.group_id == groups.c.id, isouter=True))
-            query = (sa.select([session_templates, users.c.email, groups.c.name], use_labels=True)
-                       .select_from(j)
-                       .where((session_templates.c.is_active) &
-                              (session_templates.c.type == TemplateType.CLUSTER)))
+            j = (
+                session_templates
+                .join(users, session_templates.c.user_uuid == users.c.uuid, isouter=True)
+                .join(groups, session_templates.c.group_id == groups.c.id, isouter=True)
+            )
+            query = (
+                sa.select([session_templates, users.c.email, groups.c.name], use_labels=True)
+                .select_from(j)
+                .where(
+                    (session_templates.c.is_active) &
+                    (session_templates.c.type == TemplateType.CLUSTER)
+                )
+            )
             result = await conn.execute(query)
             entries = []
             async for row in result:
@@ -210,9 +219,14 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
             if params['group_id'] is not None:
                 extra_conds = ((session_templates.c.group_id == params['group_id']))
             entries = await query_accessible_session_templates(
-                        conn, user_uuid, TemplateType.CLUSTER,
-                        user_role=user_role, domain_name=domain_name,
-                        allowed_types=['user', 'group'], extra_conds=extra_conds)
+                conn,
+                user_uuid,
+                TemplateType.CLUSTER,
+                user_role=user_role,
+                domain_name=domain_name,
+                allowed_types=['user', 'group'],
+                extra_conds=extra_conds,
+            )
 
         for entry in entries:
             resp.append({

@@ -4,7 +4,6 @@ import logging
 from typing import (
     Any,
     Dict,
-    Optional,
     Sequence,
     TYPE_CHECKING,
 )
@@ -76,7 +75,11 @@ class KeyPairResourcePolicy(graphene.ObjectType):
     allowed_vfolder_hosts = graphene.List(lambda: graphene.String)
 
     @classmethod
-    def from_row(cls, ctx: GraphQueryContext, row: RowProxy) -> Optional[KeyPairResourcePolicy]:
+    def from_row(
+        cls,
+        ctx: GraphQueryContext,
+        row: RowProxy | None,
+    ) -> KeyPairResourcePolicy | None:
         if row is None:
             return None
         return cls(
@@ -136,7 +139,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
         cls,
         ctx: GraphQueryContext,
         names: Sequence[str],
-    ) -> Sequence[Optional[KeyPairResourcePolicy]]:
+    ) -> Sequence[KeyPairResourcePolicy | None]:
         async with ctx.dbpool.acquire() as conn:
             query = (
                 sa.select([keypair_resource_policies])
@@ -154,7 +157,7 @@ class KeyPairResourcePolicy(graphene.ObjectType):
         cls,
         ctx: GraphQueryContext,
         names: Sequence[str],
-    ) -> Sequence[Optional[KeyPairResourcePolicy]]:
+    ) -> Sequence[KeyPairResourcePolicy | None]:
         async with ctx.dbpool.acquire() as conn:
             access_key = ctx.access_key
             j = sa.join(

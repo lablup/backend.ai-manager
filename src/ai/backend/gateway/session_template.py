@@ -1,12 +1,18 @@
 import json
 import logging
+from typing import (
+    Any,
+    List,
+    Mapping,
+    TYPE_CHECKING,
+    Tuple,
+)
 import uuid
 
 from aiohttp import web
 import aiohttp_cors
 import sqlalchemy as sa
 import trafaret as t
-from typing import Any, TYPE_CHECKING, Tuple
 import yaml
 
 from ai.backend.common import validators as tx
@@ -178,6 +184,7 @@ async def list_template(request: web.Request, params: Any) -> web.Response:
     log.info('SESSION_TEMPLATE.LIST (ak:{})', access_key)
     root_ctx: RootContext = request.app['_root.context']
     async with root_ctx.dbpool.acquire() as conn:
+        entries: List[Mapping[str, Any]]
         if request['is_superadmin'] and params['all']:
             j = (
                 session_templates

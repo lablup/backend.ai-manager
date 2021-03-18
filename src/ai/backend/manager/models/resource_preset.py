@@ -4,7 +4,6 @@ import logging
 from typing import (
     Any,
     Dict,
-    Optional,
     Sequence,
     TYPE_CHECKING,
 )
@@ -55,8 +54,8 @@ class ResourcePreset(graphene.ObjectType):
     def from_row(
         cls,
         ctx: GraphQueryContext,
-        row: RowProxy
-    ) -> Optional[ResourcePreset]:
+        row: RowProxy | None
+    ) -> ResourcePreset | None:
         if row is None:
             return None
         shared_memory = str(row['shared_memory']) if row['shared_memory'] else None
@@ -83,7 +82,7 @@ class ResourcePreset(graphene.ObjectType):
         cls,
         ctx: GraphQueryContext,
         names: Sequence[str],
-    ) -> Sequence[Optional[ResourcePreset]]:
+    ) -> Sequence[ResourcePreset | None]:
         async with ctx.dbpool.acquire() as conn:
             query = (
                 sa.select([resource_presets])
