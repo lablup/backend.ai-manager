@@ -16,6 +16,14 @@ Changes
 
 .. towncrier release notes start
 
+20.09.11 (2021-03-18)
+---------------------
+
+### Fixes
+* Refactor internal dict-based state variables to be statically typed using explicitly defined attr classes, including the nested `aiohttp.web.Application` objects, the context object of Graphene resolvers, and the context object of Click. ([#400](https://github.com/lablup/backend.ai-manager/issues/400))
+* Idle timeout was not working since there was a type error on saving compute session's last_access time. ([#404](https://github.com/lablup/backend.ai-manager/issues/404))
+
+
 20.09.10 (2021-03-08)
 ---------------------
 
