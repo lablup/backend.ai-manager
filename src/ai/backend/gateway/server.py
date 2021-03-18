@@ -447,7 +447,7 @@ class background_task_ctx:
 
 
 def handle_loop_error(
-    root_app: web.Application,
+    root_ctx: RootContext,
     loop: asyncio.AbstractEventLoop,
     context: Mapping[str, Any],
 ) -> None:
@@ -455,17 +455,16 @@ def handle_loop_error(
         loop = current_loop()
     exception = context.get('exception')
     msg = context.get('message', '(empty message)')
-    root_ctx: RootContext = root_app['_root.context']
     if exception is not None:
         if sys.exc_info()[0] is not None:
             log.exception('Error inside event loop: {0}', msg)
-            if root_ctx.error_monitor is not None:
-                loop.create_task(root_ctx.error_monitor.capture_exception())
+            if (error_monitor := getattr(root_ctx, 'error_monitor', None)) is not None:
+                loop.create_task(error_monitor.capture_exception())
         else:
             exc_info = (type(exception), exception, exception.__traceback__)
             log.error('Error inside event loop: {0}', msg, exc_info=exc_info)
-            if root_ctx.error_monitor is not None:
-                loop.create_task(root_ctx.error_monitor.capture_exception(exc_instance=exception))
+            if (error_monitor := getattr(root_ctx, 'error_monitor', None)) is not None:
+                loop.create_task(error_monitor.capture_exception(exc_instance=exception))
 
 
 def _init_subapp(
@@ -507,10 +506,10 @@ def build_root_app(
         exception_middleware,
         api_middleware,
     ])
-    global_exception_handler = functools.partial(handle_loop_error, app)
+    root_ctx = RootContext()
+    global_exception_handler = functools.partial(handle_loop_error, root_ctx)
     loop = asyncio.get_running_loop()
     loop.set_exception_handler(global_exception_handler)
-    root_ctx = RootContext()
     app['_root.context'] = root_ctx
     root_ctx.local_config = local_config
     root_ctx.pidx = pidx
