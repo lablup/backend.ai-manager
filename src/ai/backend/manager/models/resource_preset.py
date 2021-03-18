@@ -1,12 +1,20 @@
-import logging
-from typing import Any, Mapping, Sequence
+from __future__ import annotations
 
+import logging
+from typing import (
+    Any,
+    Dict,
+    Optional,
+    Sequence,
+    TYPE_CHECKING,
+)
+
+from aiopg.sa.result import RowProxy
 import graphene
 import sqlalchemy as sa
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import ResourceSlot
-from aiopg.sa.result import RowProxy
 from .base import (
     metadata, BigInt, BinarySize, ResourceSlotColumn,
     simple_db_mutate,
@@ -15,6 +23,9 @@ from .base import (
     batch_result,
 )
 from .user import UserRole
+
+if TYPE_CHECKING:
+    from .gql import GraphQueryContext
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.models'))
 
@@ -43,9 +54,9 @@ class ResourcePreset(graphene.ObjectType):
     @classmethod
     def from_row(
         cls,
-        context: Mapping[str, Any],
+        ctx: GraphQueryContext,
         row: RowProxy
-    ):
+    ) -> Optional[ResourcePreset]:
         if row is None:
             return None
         shared_memory = str(row['shared_memory']) if row['shared_memory'] else None
@@ -56,21 +67,32 @@ class ResourcePreset(graphene.ObjectType):
         )
 
     @classmethod
-    async def load_all(cls, context):
-        async with context['dbpool'].acquire() as conn:
-            query = (sa.select([resource_presets])
-                       .select_from(resource_presets))
-            return [cls.from_row(context, r) async for r in conn.execute(query)]
+    async def load_all(cls, ctx: GraphQueryContext) -> Sequence[ResourcePreset]:
+        async with ctx.dbpool.acquire() as conn:
+            query = (
+                sa.select([resource_presets])
+                .select_from(resource_presets)
+            )
+            return [
+                obj async for r in conn.execute(query)
+                if (obj := cls.from_row(ctx, r)) is not None
+            ]
 
     @classmethod
-    async def batch_load_by_name(cls, context, names):
-        async with context['dbpool'].acquire() as conn:
-            query = (sa.select([resource_presets])
-                       .select_from(resource_presets)
-                       .where(resource_presets.c.name.in_(names))
-                       .order_by(resource_presets.c.name))
+    async def batch_load_by_name(
+        cls,
+        ctx: GraphQueryContext,
+        names: Sequence[str],
+    ) -> Sequence[Optional[ResourcePreset]]:
+        async with ctx.dbpool.acquire() as conn:
+            query = (
+                sa.select([resource_presets])
+                .select_from(resource_presets)
+                .where(resource_presets.c.name.in_(names))
+                .order_by(resource_presets.c.name)
+            )
             return await batch_result(
-                context, conn, query, cls,
+                ctx, conn, query, cls,
                 names, lambda row: row['name'],
             )
 
@@ -98,7 +120,13 @@ class CreateResourcePreset(graphene.Mutation):
     resource_preset = graphene.Field(lambda: ResourcePreset, required=False)
 
     @classmethod
-    async def mutate(cls, root, info, name, props):
+    async def mutate(
+        cls,
+        root,
+        info: graphene.ResolveInfo,
+        name: str,
+        props: CreateResourcePresetInput,
+    ) -> CreateResourcePreset:
         data = {
             'name': name,
             'resource_slots': ResourceSlot.from_user_input(
@@ -108,7 +136,8 @@ class CreateResourcePreset(graphene.Mutation):
         insert_query = (resource_presets.insert().values(data))
         item_query = (
             resource_presets.select()
-            .where(resource_presets.c.name == name))
+            .where(resource_presets.c.name == name)
+        )
         return await simple_db_mutate_returning_item(
             cls, info.context, insert_query,
             item_query=item_query, item_cls=ResourcePreset)
@@ -126,8 +155,14 @@ class ModifyResourcePreset(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    async def mutate(cls, root, info, name, props):
-        data = {}
+    async def mutate(
+        cls,
+        root,
+        info: graphene.ResolveInfo,
+        name: str,
+        props: ModifyResourcePresetInput,
+    ) -> ModifyResourcePreset:
+        data: Dict[str, Any] = {}
         set_if_set(props, data, 'resource_slots',
                    clean_func=lambda v: ResourceSlot.from_user_input(v, None))
         set_if_set(props, data, 'shared_memory',
@@ -151,7 +186,12 @@ class DeleteResourcePreset(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    async def mutate(cls, root, info, name):
+    async def mutate(
+        cls,
+        root,
+        info: graphene.ResolveInfo,
+        name: str,
+    ) -> DeleteResourcePreset:
         delete_query = (
             resource_presets.delete()
             .where(resource_presets.c.name == name)
