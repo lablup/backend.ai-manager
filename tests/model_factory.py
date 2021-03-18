@@ -3,6 +3,7 @@ import sqlalchemy as sa
 import uuid
 
 import ai.backend.manager.models as models
+from ai.backend.gateway.context import RootContext
 
 
 def get_random_string(length=10):
@@ -32,7 +33,8 @@ class ModelFactory(ABC):
         self.defaults = self.get_creation_defaults()
         self.defaults.update(**kwargs)
         await self.before_creation()
-        async with self.app['dbpool'].acquire() as conn:
+        root_ctx: RootContext = self.app['_root.context']
+        async with root_ctx.dbpool.acquire() as conn:
             query = (self.model.insert().returning(self.model).values(self.defaults))
             result = await conn.execute(query)
             row = await result.first()
@@ -41,7 +43,8 @@ class ModelFactory(ABC):
         return row
 
     async def get(self, **kwargs):
-        async with self.app['dbpool'].acquire() as conn:
+        root_ctx: RootContext = self.app['_root.context']
+        async with root_ctx.dbpool.acquire() as conn:
             filters = [sa.sql.column(key) == value for key, value in kwargs.items()]
             query = sa.select([self.model]).where(sa.and_(*filters))
             result = await conn.execute(query)
@@ -50,7 +53,8 @@ class ModelFactory(ABC):
             return rows[0] if len(rows) == 1 else None
 
     async def list(self, **kwargs):
-        async with self.app['dbpool'].acquire() as conn:
+        root_ctx: RootContext = self.app['_root.context']
+        async with root_ctx.dbpool.acquire() as conn:
             filters = [sa.sql.column(key) == value for key, value in kwargs.items()]
             query = sa.select([self.model]).where(sa.and_(*filters))
             result = await conn.execute(query)

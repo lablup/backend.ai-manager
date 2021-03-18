@@ -14,9 +14,11 @@ from typing import (
     Iterable,
     List,
     Mapping,
+    MutableMapping,
     Optional,
     Protocol,
     Sequence,
+    TYPE_CHECKING,
     Type,
     TypeVar,
     Union,
@@ -48,10 +50,16 @@ from ai.backend.common.types import (
     ResourceSlot,
     SessionId,
 )
+
 from .. import models
 from ...gateway.exceptions import (
     GenericForbidden, InvalidAPIParameters,
 )
+if TYPE_CHECKING:
+    from graphql.execution.executors.asyncio import AsyncioExecutor
+
+    from .gql import GraphQueryContext
+    from .user import UserRole
 
 SAFE_MIN_INT = -9007199254740991
 SAFE_MAX_INT = 9007199254740991
@@ -254,13 +262,14 @@ class DataLoaderManager:
     for every incoming API request.
     """
 
-    def __init__(self, *common_args):
+    cache: Dict[int, DataLoader]
+
+    def __init__(self) -> None:
         self.cache = {}
-        self.common_args = common_args
         self.mod = sys.modules['ai.backend.manager.models']
 
     @staticmethod
-    def _get_key(otname, args, kwargs):
+    def _get_key(otname: str, args, kwargs) -> int:
         """
         Calculate the hash of the all arguments and keyword arguments.
         """
@@ -269,7 +278,7 @@ class DataLoaderManager:
             key += item
         return hash(key)
 
-    def get_loader(self, objtype_name, *args, **kwargs):
+    def get_loader(self, context: GraphQueryContext, objtype_name: str, *args, **kwargs) -> DataLoader:
         k = self._get_key(objtype_name, args, kwargs)
         loader = self.cache.get(k)
         if loader is None:
@@ -280,8 +289,9 @@ class DataLoaderManager:
             else:
                 batch_load_fn = objtype.batch_load
             loader = DataLoader(
-                apartial(batch_load_fn, *self.common_args, *args, **kwargs),
-                max_batch_size=16)
+                apartial(batch_load_fn, context, *args, **kwargs),
+                max_batch_size=128,
+            )
             self.cache[k] = loader
         return loader
 
@@ -340,8 +350,7 @@ class PaginatedList(graphene.Interface):
 
 
 # ref: https://github.com/python/mypy/issues/1212
-_GenericSQLBasedGQLObject = TypeVar('_GenericSQLBasedGQLObject',
-                                    bound='_SQLBasedGQLObject')
+_GenericSQLBasedGQLObject = TypeVar('_GenericSQLBasedGQLObject', bound='_SQLBasedGQLObject')
 _Key = TypeVar('_Key')
 
 
@@ -349,14 +358,14 @@ class _SQLBasedGQLObject(Protocol):
     @classmethod
     def from_row(
         cls: Type[_GenericSQLBasedGQLObject],
-        context: Mapping[str, Any],
+        ctx: GraphQueryContext,
         row: RowProxy,
     ) -> _GenericSQLBasedGQLObject:
         ...
 
 
 async def batch_result(
-    context: Mapping[str, Any],
+    ctx: GraphQueryContext,
     conn: SAConnection,
     query: sa.sql.Select,
     obj_type: Type[_GenericSQLBasedGQLObject],
@@ -371,12 +380,12 @@ async def batch_result(
     for key in key_list:
         objs_per_key[key] = None
     async for row in conn.execute(query):
-        objs_per_key[key_getter(row)] = obj_type.from_row(context, row)
+        objs_per_key[key_getter(row)] = obj_type.from_row(ctx, row)
     return [*objs_per_key.values()]
 
 
 async def batch_multiresult(
-    context: Mapping[str, Any],
+    ctx: GraphQueryContext,
     conn: SAConnection,
     query: sa.sql.Select,
     obj_type: Type[_GenericSQLBasedGQLObject],
@@ -392,19 +401,20 @@ async def batch_multiresult(
         objs_per_key[key] = list()
     async for row in conn.execute(query):
         objs_per_key[key_getter(row)].append(
-            obj_type.from_row(context, row)
+            obj_type.from_row(ctx, row)
         )
     return [*objs_per_key.values()]
 
 
-def privileged_query(required_role):
+def privileged_query(required_role: UserRole):
 
     def wrap(func):
 
         @functools.wraps(func)
-        async def wrapped(executor, info, *args, **kwargs):
+        async def wrapped(executor: AsyncioExecutor, info: graphene.ResolveInfo, *args, **kwargs) -> Any:
             from .user import UserRole
-            if info.context['user']['role'] != UserRole.SUPERADMIN:
+            ctx: GraphQueryContext = info.context
+            if ctx.user['role'] != UserRole.SUPERADMIN:
                 raise GenericForbidden('superadmin privilege required')
             return await func(executor, info, *args, **kwargs)
 
@@ -413,9 +423,11 @@ def privileged_query(required_role):
     return wrap
 
 
-def scoped_query(*,
-                 autofill_user: bool = False,
-                 user_key: str = 'access_key'):
+def scoped_query(
+    *,
+    autofill_user: bool = False,
+    user_key: str = 'access_key',
+):
     """
     Prepends checks for domain/group/user access rights depending
     on the client's user and keypair information.
@@ -430,16 +442,17 @@ def scoped_query(*,
     def wrap(resolve_func):
 
         @functools.wraps(resolve_func)
-        async def wrapped(executor, info: graphene.ResolveInfo, *args, **kwargs):
+        async def wrapped(executor: AsyncioExecutor, info: graphene.ResolveInfo, *args, **kwargs) -> Any:
             from .user import UserRole
-            client_role = info.context['user']['role']
+            ctx: GraphQueryContext = info.context
+            client_role = ctx.user['role']
             if user_key == 'access_key':
-                client_user_id = info.context['access_key']
+                client_user_id = ctx.access_key
             elif user_key == 'email':
-                client_user_id = info.context['user']['email']
+                client_user_id = ctx.user['email']
             else:
-                client_user_id = info.context['user']['uuid']
-            client_domain = info.context['user']['domain_name']
+                client_user_id = ctx.user['uuid']
+            client_domain = ctx.user['domain_name']
             domain_name = kwargs.get('domain_name', None)
             group_id = kwargs.get('group_id', None)
             user_id = kwargs.get(user_key, None)
@@ -486,18 +499,18 @@ def privileged_mutation(required_role, target_func=None):
     def wrap(func):
 
         @functools.wraps(func)
-        async def wrapped(cls, root, info, *args, **kwargs):
+        async def wrapped(cls, root, info: graphene.ResolveInfo, *args, **kwargs) -> Any:
             from .user import UserRole
             from .group import groups  # , association_groups_users
-            user = info.context['user']
+            ctx: GraphQueryContext = info.context
             permitted = False
             if required_role == UserRole.SUPERADMIN:
-                if user['role'] == required_role:
+                if ctx.user['role'] == required_role:
                     permitted = True
             elif required_role == UserRole.ADMIN:
-                if user['role'] == UserRole.SUPERADMIN:
+                if ctx.user['role'] == UserRole.SUPERADMIN:
                     permitted = True
-                elif user['role'] == UserRole.USER:
+                elif ctx.user['role'] == UserRole.USER:
                     permitted = False
                 else:
                     if target_func is None:
@@ -508,16 +521,16 @@ def privileged_mutation(required_role, target_func=None):
                                           'both target_domain and target_group missing', None)
                     permit_chains = []
                     if target_domain is not None:
-                        if user['domain_name'] == target_domain:
+                        if ctx.user['domain_name'] == target_domain:
                             permit_chains.append(True)
                     if target_group is not None:
-                        async with info.context['dbpool'].acquire() as conn, conn.begin():
+                        async with ctx.dbpool.acquire() as conn, conn.begin():
                             # check if the group is part of the requester's domain.
                             query = (
                                 groups.select()
                                 .where(
                                     (groups.c.id == target_group) &
-                                    (groups.c.domain_name == user['domain_name'])
+                                    (groups.c.domain_name == ctx.user['domain_name'])
                                 )
                             )
                             result = await conn.execute(query)
@@ -546,8 +559,16 @@ def privileged_mutation(required_role, target_func=None):
     return wrap
 
 
-async def simple_db_mutate(result_cls, context, mutation_query):
-    async with context['dbpool'].acquire() as conn, conn.begin():
+ResultType = TypeVar('ResultType', bound=graphene.ObjectType)
+ItemType = TypeVar('ItemType', bound=graphene.ObjectType)
+
+
+async def simple_db_mutate(
+    result_cls: Type[ResultType],
+    ctx: GraphQueryContext,
+    mutation_query: sa.sql.Update | sa.sql.Insert,
+) -> ResultType:
+    async with ctx.dbpool.acquire() as conn, conn.begin():
         try:
             result = await conn.execute(mutation_query)
             if result.rowcount > 0:
@@ -562,15 +583,21 @@ async def simple_db_mutate(result_cls, context, mutation_query):
             return result_cls(False, f'unexpected error: {e}')
 
 
-async def simple_db_mutate_returning_item(result_cls, context, mutation_query, *,
-                                          item_query, item_cls):
-    async with context['dbpool'].acquire() as conn, conn.begin():
+async def simple_db_mutate_returning_item(
+    result_cls: Type[ResultType],
+    ctx: GraphQueryContext,
+    mutation_query: sa.sql.Update | sa.sql.Insert,
+    *,
+    item_query: sa.sql.Select,
+    item_cls: Type[ItemType],
+) -> ResultType:
+    async with ctx.dbpool.acquire() as conn, conn.begin():
         try:
             result = await conn.execute(mutation_query)
             if result.rowcount > 0:
                 result = await conn.execute(item_query)
                 item = await result.first()
-                return result_cls(True, 'success', item_cls.from_row(context, item))
+                return result_cls(True, 'success', item_cls.from_row(ctx, item))
             else:
                 return result_cls(False, 'no matching record', None)
         except (pg.IntegrityError, sa.exc.IntegrityError) as e:
@@ -581,7 +608,7 @@ async def simple_db_mutate_returning_item(result_cls, context, mutation_query, *
             return result_cls(False, f'unexpected error: {e}', None)
 
 
-def set_if_set(src, target, name, *, clean_func=None):
+def set_if_set(src: object, target: MutableMapping[str, Any], name: str, *, clean_func=None) -> None:
     v = getattr(src, name)
     # NOTE: unset optional fields are passed as null.
     if v is not None:

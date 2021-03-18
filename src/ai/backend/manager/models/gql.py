@@ -1,62 +1,118 @@
+from __future__ import annotations
+
+from typing import Any, Optional, Mapping, Sequence, TYPE_CHECKING
 import uuid
 
+import attr
 import graphene
 
-from .base import privileged_query, scoped_query
+if TYPE_CHECKING:
+    from aiopg.sa.engine import _PoolAcquireContextManager as SAPool
+    from aioredis import Redis
+    from graphql.execution.executors.asyncio import AsyncioExecutor
+
+    from ai.backend.common.etcd import AsyncEtcd
+    from ai.backend.common.types import (
+        AccessKey,
+        AgentId,
+        SlotName,
+        SlotTypes,
+        SessionId,
+    )
+
+    from ai.backend.gateway.config import LocalConfig, SharedConfig
+    from ai.backend.gateway.manager import ManagerStatus
+    from ..registry import AgentRegistry
+    from ..background import BackgroundTaskManager
+    from .storage import StorageSessionManager
+
+from .base import DataLoaderManager, privileged_query, scoped_query
 from .agent import (
-    Agent, AgentList,
+    Agent,
+    AgentList,
 )
 from .domain import (
     Domain,
-    CreateDomain, ModifyDomain, DeleteDomain, PurgeDomain,
+    CreateDomain,
+    ModifyDomain,
+    DeleteDomain,
+    PurgeDomain,
 )
 from .group import (
     Group,
-    CreateGroup, ModifyGroup, DeleteGroup, PurgeGroup,
+    CreateGroup,
+    ModifyGroup,
+    DeleteGroup,
+    PurgeGroup,
 )
 from .image import (
     Image,
     RescanImages,
-    PreloadImage, UnloadImage,
+    PreloadImage,
+    UnloadImage,
     ForgetImage,
-    AliasImage, DealiasImage,
+    AliasImage,
+    DealiasImage,
 )
 from .kernel import (
-    ComputeSession, ComputeSessionList,
-    ComputeContainer, ComputeContainerList,
-    LegacyComputeSession, LegacyComputeSessionList,
+    ComputeSession,
+    ComputeSessionList,
+    ComputeContainer,
+    ComputeContainerList,
+    LegacyComputeSession,
+    LegacyComputeSessionList,
+    KernelStatus,
 )
 from .keypair import (
-    KeyPair, KeyPairList,
-    CreateKeyPair, ModifyKeyPair, DeleteKeyPair,
+    KeyPair,
+    KeyPairList,
+    CreateKeyPair,
+    ModifyKeyPair,
+    DeleteKeyPair,
 )
 from .resource_policy import (
     KeyPairResourcePolicy,
-    CreateKeyPairResourcePolicy, ModifyKeyPairResourcePolicy, DeleteKeyPairResourcePolicy,
+    CreateKeyPairResourcePolicy,
+    ModifyKeyPairResourcePolicy,
+    DeleteKeyPairResourcePolicy,
 )
 from .resource_preset import (
     ResourcePreset,
-    CreateResourcePreset, ModifyResourcePreset, DeleteResourcePreset,
+    CreateResourcePreset,
+    ModifyResourcePreset,
+    DeleteResourcePreset,
 )
 from .scaling_group import (
     ScalingGroup,
-    CreateScalingGroup, ModifyScalingGroup, DeleteScalingGroup,
-    AssociateScalingGroupWithDomain,    DisassociateScalingGroupWithDomain,
+    CreateScalingGroup,
+    ModifyScalingGroup,
+    DeleteScalingGroup,
+    AssociateScalingGroupWithDomain,
+    DisassociateScalingGroupWithDomain,
     DisassociateAllScalingGroupsWithDomain,
-    AssociateScalingGroupWithUserGroup, DisassociateScalingGroupWithUserGroup,
+    AssociateScalingGroupWithUserGroup,
+    DisassociateScalingGroupWithUserGroup,
     DisassociateAllScalingGroupsWithGroup,
-    AssociateScalingGroupWithKeyPair,   DisassociateScalingGroupWithKeyPair,
+    AssociateScalingGroupWithKeyPair,
+    DisassociateScalingGroupWithKeyPair,
 )
 from .storage import (
-    StorageVolume, StorageVolumeList,
+    StorageVolume,
+    StorageVolumeList,
 )
 from .user import (
-    User, UserList,
-    CreateUser, ModifyUser, DeleteUser, PurgeUser,
+    User,
+    UserList,
+    CreateUser,
+    ModifyUser,
+    DeleteUser,
+    PurgeUser,
     UserRole,
+    UserStatus,
 )
 from .vfolder import (
-    VirtualFolder, VirtualFolderList,
+    VirtualFolder,
+    VirtualFolderList,
 )
 from ...gateway.exceptions import (
     GenericNotFound,
@@ -67,10 +123,28 @@ from ...gateway.exceptions import (
 )
 
 
+@attr.s(auto_attribs=True, slots=True)
+class GraphQueryContext:
+    dataloader_manager: DataLoaderManager
+    local_config: LocalConfig
+    shared_config: SharedConfig
+    etcd: AsyncEtcd
+    user: Mapping[str, Any]  # TODO: express using typed dict
+    access_key: str
+    dbpool: SAPool
+    redis_stat: Redis
+    redis_image: Redis
+    manager_status: ManagerStatus
+    known_slot_types: Mapping[SlotName, SlotTypes]
+    background_task_manager: BackgroundTaskManager
+    storage_manager: StorageSessionManager
+    registry: AgentRegistry
+
+
 class Mutations(graphene.ObjectType):
-    '''
+    """
     All available GraphQL mutations.
-    '''
+    """
 
     # super-admin only
     create_domain = CreateDomain.Field()
@@ -117,20 +191,20 @@ class Mutations(graphene.ObjectType):
     create_scaling_group = CreateScalingGroup.Field()
     modify_scaling_group = ModifyScalingGroup.Field()
     delete_scaling_group = DeleteScalingGroup.Field()
-    associate_scaling_group_with_domain     = AssociateScalingGroupWithDomain.Field()
+    associate_scaling_group_with_domain = AssociateScalingGroupWithDomain.Field()
     associate_scaling_group_with_user_group = AssociateScalingGroupWithUserGroup.Field()
-    associate_scaling_group_with_keypair    = AssociateScalingGroupWithKeyPair.Field()
-    disassociate_scaling_group_with_domain     = DisassociateScalingGroupWithDomain.Field()
+    associate_scaling_group_with_keypair = AssociateScalingGroupWithKeyPair.Field()
+    disassociate_scaling_group_with_domain = DisassociateScalingGroupWithDomain.Field()
     disassociate_scaling_group_with_user_group = DisassociateScalingGroupWithUserGroup.Field()
-    disassociate_scaling_group_with_keypair    = DisassociateScalingGroupWithKeyPair.Field()
+    disassociate_scaling_group_with_keypair = DisassociateScalingGroupWithKeyPair.Field()
     disassociate_all_scaling_groups_with_domain = DisassociateAllScalingGroupsWithDomain.Field()
     disassociate_all_scaling_groups_with_group = DisassociateAllScalingGroupsWithGroup.Field()
 
 
 class Queries(graphene.ObjectType):
-    '''
+    """
     All available GraphQL queries.
-    '''
+    """
 
     # super-admin only
     agent = graphene.Field(
@@ -372,66 +446,93 @@ class Queries(graphene.ObjectType):
 
     @staticmethod
     @privileged_query(UserRole.SUPERADMIN)
-    async def resolve_agent(executor, info, agent_id):
-        manager = info.context['dlmgr']
-        loader = manager.get_loader('Agent', status=None)
+    async def resolve_agent(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        agent_id: AgentId,
+    ) -> Agent:
+        ctx: GraphQueryContext = info.context
+        loader = ctx.dataloader_manager.get_loader(ctx, 'Agent', status=None)
         return await loader.load(agent_id)
 
     @staticmethod
     @privileged_query(UserRole.SUPERADMIN)
-    async def resolve_agents(executor, info, *,
-                             scaling_group=None,
-                             status=None):
+    async def resolve_agents(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        *,
+        scaling_group: str = None,
+        status: str = None,
+    ) -> Sequence[Agent]:
         return await Agent.load_all(
             info.context,
             scaling_group=scaling_group,
-            status=status)
+            raw_status=status,
+        )
 
     @staticmethod
     @privileged_query(UserRole.SUPERADMIN)
     async def resolve_agent_list(
-        executor, info, limit, offset, *,
-        scaling_group=None,
-        status=None,
-        order_key=None, order_asc=None,
-    ):
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        limit: int,
+        offset: int,
+        *,
+        scaling_group: str = None,
+        status: str = None,
+        order_key: str = None,
+        order_asc: bool = True,
+    ) -> AgentList:
         total_count = await Agent.load_count(
             info.context,
             scaling_group=scaling_group,
-            status=status,
+            raw_status=status,
         )
         agent_list = await Agent.load_slice(
             info.context, limit, offset,
             scaling_group=scaling_group,
-            status=status,
+            raw_status=status,
             order_key=order_key,
             order_asc=order_asc,
         )
         return AgentList(agent_list, total_count)
 
     @staticmethod
-    async def resolve_domain(executor, info, *, name=None):
-        manager = info.context['dlmgr']
-        name = info.context['user']['domain_name'] if name is None else name
-        if info.context['user']['role'] != UserRole.SUPERADMIN:
-            if name != info.context['user']['domain_name']:
+    async def resolve_domain(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo, *,
+        name: str = None,
+    ) -> Domain:
+        ctx: GraphQueryContext = info.context
+        name = ctx.user['domain_name'] if name is None else name
+        if ctx.user['role'] != UserRole.SUPERADMIN:
+            if name != ctx.user['domain_name']:
                 # prevent querying other domains if not superadmin
                 raise GenericNotFound('no such domain')
-        loader = manager.get_loader('Domain.by_name')
+        loader = ctx.dataloader_manager.get_loader(ctx, 'Domain.by_name')
         return await loader.load(name)
 
     @staticmethod
     @privileged_query(UserRole.SUPERADMIN)
-    async def resolve_domains(executor, info, *, is_active=None):
+    async def resolve_domains(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        *,
+        is_active: bool = None,
+    ) -> Sequence[Domain]:
         return await Domain.load_all(info.context, is_active=is_active)
 
     @staticmethod
-    async def resolve_group(executor, info, id):
-        client_role = info.context['user']['role']
-        client_domain = info.context['user']['domain_name']
-        client_user_id = info.context['user']['uuid']
-        manager = info.context['dlmgr']
-        loader = manager.get_loader('Group.by_id')
+    async def resolve_group(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        id: uuid.UUID,
+    ) -> Group:
+        ctx: GraphQueryContext = info.context
+        client_role = ctx.user['role']
+        client_domain = ctx.user['domain_name']
+        client_user_id = ctx.user['uuid']
+        loader = ctx.dataloader_manager.get_loader(ctx, 'Group.by_id')
         group = await loader.load(id)
         if client_role == UserRole.SUPERADMIN:
             pass
@@ -447,10 +548,17 @@ class Queries(graphene.ObjectType):
         return group
 
     @staticmethod
-    async def resolve_groups(executor, info, *, domain_name=None, is_active=None):
-        client_role = info.context['user']['role']
-        client_domain = info.context['user']['domain_name']
-        client_user_id = info.context['user']['uuid']
+    async def resolve_groups(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        *,
+        domain_name: str = None,
+        is_active: bool = None,
+    ) -> Sequence[Group]:
+        ctx: GraphQueryContext = info.context
+        client_role = ctx.user['role']
+        client_domain = ctx.user['domain_name']
+        client_user_id = ctx.user['uuid']
         if client_role == UserRole.SUPERADMIN:
             pass
         elif client_role == UserRole.ADMIN:
@@ -467,9 +575,14 @@ class Queries(graphene.ObjectType):
             is_active=is_active)
 
     @staticmethod
-    async def resolve_image(executor, info, reference):
-        client_role = info.context['user']['role']
-        client_domain = info.context['user']['domain_name']
+    async def resolve_image(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        reference: str,
+    ) -> Image:
+        ctx: GraphQueryContext = info.context
+        client_role = ctx.user['role']
+        client_domain = ctx.user['domain_name']
         item = await Image.load_item(info.context, reference)
         if client_role == UserRole.SUPERADMIN:
             pass
@@ -483,47 +596,77 @@ class Queries(graphene.ObjectType):
         return item
 
     @staticmethod
-    async def resolve_images(executor, info, is_installed=None, is_operation=False):
-        client_role = info.context['user']['role']
-        client_domain = info.context['user']['domain_name']
-        items = await Image.load_all(info.context,
-                                     is_installed=is_installed,
-                                     is_operation=is_operation)
+    async def resolve_images(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        *,
+        is_installed=None,
+        is_operation=False,
+    ) -> Sequence[Image]:
+        ctx: GraphQueryContext = info.context
+        client_role = ctx.user['role']
+        client_domain = ctx.user['domain_name']
+        items = await Image.load_all(ctx, is_installed=is_installed, is_operation=is_operation)
         if client_role == UserRole.SUPERADMIN:
             pass
         elif client_role in (UserRole.ADMIN, UserRole.USER):
             items = await Image.filter_allowed(
-                info.context, items, client_domain,
-                is_installed=is_installed, is_operation=is_operation)
+                info.context,
+                items,
+                client_domain,
+                is_installed=is_installed,
+                is_operation=is_operation,
+            )
         else:
             raise InvalidAPIParameters('Unknown client role')
         return items
 
     @staticmethod
     @scoped_query(autofill_user=True, user_key='email')
-    async def resolve_user(executor, info, *,
-                           domain_name=None, email=None):
-        manager = info.context['dlmgr']
-        loader = manager.get_loader('User.by_email', domain_name=domain_name)
+    async def resolve_user(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        *,
+        domain_name: str = None,
+        email: str = None,
+    ) -> User:
+        ctx: GraphQueryContext = info.context
+        loader = ctx.dataloader_manager.get_loader(
+            ctx, 'User.by_email', domain_name=domain_name,
+        )
         return await loader.load(email)
 
     @staticmethod
     @scoped_query(autofill_user=True, user_key='user_id')
-    async def resolve_user_from_uuid(executor, info, *,
-                                     domain_name=None, user_id=None):
-        manager = info.context['dlmgr']
-        loader = manager.get_loader('User.by_uuid', domain_name=domain_name)
+    async def resolve_user_from_uuid(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        *,
+        domain_name: str = None,
+        user_id: uuid.UUID | str | None = None,
+    ) -> User:
+        ctx: GraphQueryContext = info.context
+        loader = ctx.dataloader_manager.get_loader(
+            ctx, 'User.by_uuid', domain_name=domain_name,
+        )
         # user_id is retrieved as string since it's a GraphQL's generic ID field
         user_uuid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
         return await loader.load(user_uuid)
 
     @staticmethod
-    async def resolve_users(executor, info, *,
-                            domain_name=None, group_id=None,
-                            is_active=None, status=None):
+    async def resolve_users(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        *,
+        domain_name: str = None,
+        group_id: uuid.UUID = None,
+        is_active: bool = None,
+        status: UserStatus = None,
+    ) -> Sequence[User]:
         from .user import UserRole
-        client_role = info.context['user']['role']
-        client_domain = info.context['user']['domain_name']
+        ctx: GraphQueryContext = info.context
+        client_role = ctx.user['role']
+        client_domain = ctx.user['domain_name']
         if client_role == UserRole.SUPERADMIN:
             pass
         elif client_role == UserRole.ADMIN:
@@ -545,14 +688,22 @@ class Queries(graphene.ObjectType):
 
     @staticmethod
     async def resolve_user_list(
-        executor, info, limit, offset, *,
-        domain_name=None, group_id=None,
-        is_active=None, status=None,
-        order_key=None, order_asc=None,
-    ):
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        limit: int,
+        offset: int,
+        *,
+        domain_name: str = None,
+        group_id: uuid.UUID = None,
+        is_active: bool = None,
+        status: UserStatus = None,
+        order_key: str = None,
+        order_asc: bool = True,
+    ) -> UserList:
         from .user import UserRole
-        client_role = info.context['user']['role']
-        client_domain = info.context['user']['domain_name']
+        ctx: GraphQueryContext = info.context
+        client_role = ctx.user['role']
+        client_domain = ctx.user['domain_name']
         if client_role == UserRole.SUPERADMIN:
             pass
         elif client_role == UserRole.ADMIN:
@@ -572,7 +723,9 @@ class Queries(graphene.ObjectType):
             status=status,
         )
         user_list = await User.load_slice(
-            info.context, limit, offset,
+            info.context,
+            limit,
+            offset,
             domain_name=domain_name,
             group_id=group_id,
             is_active=is_active,
@@ -584,38 +737,62 @@ class Queries(graphene.ObjectType):
 
     @staticmethod
     @scoped_query(autofill_user=True, user_key='access_key')
-    async def resolve_keypair(executor, info, *,
-                              domain_name=None, access_key=None):
-        manager = info.context['dlmgr']
-        loader = manager.get_loader('KeyPair.by_ak', domain_name=domain_name)
+    async def resolve_keypair(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        *,
+        domain_name: str = None,
+        access_key: AccessKey = None,
+    ) -> KeyPair:
+        ctx: GraphQueryContext = info.context
+        loader = ctx.dataloader_manager.get_loader(
+            ctx,
+            'KeyPair.by_ak',
+            domain_name=domain_name,
+        )
         return await loader.load(access_key)
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='email')
-    async def resolve_keypairs(executor, info, *,
-                               domain_name=None, email=None,
-                               is_active=None):
+    async def resolve_keypairs(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        *,
+        domain_name: str = None,
+        email: str = None,
+        is_active: bool = None,
+    ) -> Sequence[KeyPair]:
+        ctx: GraphQueryContext = info.context
         if email is None:
             return await KeyPair.load_all(
                 info.context,
                 domain_name=domain_name,
                 is_active=is_active,
-                limit=100)
+                limit=100,
+            )
         else:
-            manager = info.context['dlmgr']
-            loader = manager.get_loader('KeyPair.by_email',
-                                        domain_name=domain_name,
-                                        is_active=is_active)
+            loader = ctx.dataloader_manager.get_loader(
+                ctx,
+                'KeyPair.by_email',
+                domain_name=domain_name,
+                is_active=is_active,
+            )
             return await loader.load(email)
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='email')
     async def resolve_keypair_list(
-        executor, info, limit, offset, *,
-        domain_name=None, email=None,
-        is_active=None,
-        order_key=None, order_asc=None,
-    ):
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        limit: int,
+        offset: int,
+        *,
+        domain_name: str = None,
+        email: str = None,
+        is_active: bool = None,
+        order_key: str = None,
+        order_asc: bool = True,
+    ) -> KeyPairList:
         total_count = await KeyPair.load_count(
             info.context,
             domain_name=domain_name,
@@ -623,7 +800,9 @@ class Queries(graphene.ObjectType):
             is_active=is_active,
         )
         keypair_list = await KeyPair.load_slice(
-            info.context, limit, offset,
+            info.context,
+            limit,
+            offset,
             domain_name=domain_name,
             email=email,
             is_active=is_active,
@@ -633,87 +812,154 @@ class Queries(graphene.ObjectType):
         return KeyPairList(keypair_list, total_count)
 
     @staticmethod
-    async def resolve_keypair_resource_policy(executor, info, name=None):
-        manager = info.context['dlmgr']
-        client_access_key = info.context['access_key']
+    async def resolve_keypair_resource_policy(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        name: str = None,
+    ) -> KeyPairResourcePolicy:
+        ctx: GraphQueryContext = info.context
+        client_access_key = ctx.access_key
         if name is None:
-            loader = manager.get_loader('KeyPairResourcePolicy.by_ak')
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'KeyPairResourcePolicy.by_ak',
+            )
             return await loader.load(client_access_key)
         else:
-            loader = manager.get_loader('KeyPairResourcePolicy.by_name')
+            loader = ctx.dataloader_manager.get_loader(
+                ctx, 'KeyPairResourcePolicy.by_name',
+            )
             return await loader.load(name)
 
     @staticmethod
-    async def resolve_keypair_resource_policies(executor, info):
-        client_role = info.context['user']['role']
-        client_access_key = info.context['access_key']
+    async def resolve_keypair_resource_policies(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+    ) -> Sequence[KeyPairResourcePolicy]:
+        ctx: GraphQueryContext = info.context
+        client_role = ctx.user['role']
+        client_access_key = ctx.access_key
         if client_role == UserRole.SUPERADMIN:
             return await KeyPairResourcePolicy.load_all(info.context)
         elif client_role == UserRole.ADMIN:
             # TODO: filter resource policies by domains?
             return await KeyPairResourcePolicy.load_all(info.context)
         elif client_role == UserRole.USER:
-            return await KeyPairResourcePolicy.load_all_user(info.context, client_access_key)
+            return await KeyPairResourcePolicy.load_all_user(
+                info.context, client_access_key
+            )
         else:
             raise InvalidAPIParameters('Unknown client role')
 
     @staticmethod
-    async def resolve_resource_preset(executor, info, name):
-        manager = info.context['dlmgr']
-        loader = manager.get_loader('ResourcePreset.by_name')
+    async def resolve_resource_preset(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        name: str,
+    ) -> ResourcePreset:
+        ctx: GraphQueryContext = info.context
+        loader = ctx.dataloader_manager.get_loader(ctx, 'ResourcePreset.by_name')
         return await loader.load(name)
 
     @staticmethod
-    async def resolve_resource_presets(executor, info):
+    async def resolve_resource_presets(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+    ) -> Sequence[ResourcePreset]:
         return await ResourcePreset.load_all(info.context)
 
     @staticmethod
     @privileged_query(UserRole.SUPERADMIN)
-    async def resolve_scaling_group(executor, info, name):
-        manager = info.context['dlmgr']
-        loader = manager.get_loader('ScalingGroup.by_name')
+    async def resolve_scaling_group(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        name: str,
+    ) -> ScalingGroup:
+        ctx: GraphQueryContext = info.context
+        loader = ctx.dataloader_manager.get_loader(
+            ctx, 'ScalingGroup.by_name'
+        )
         return await loader.load(name)
 
     @staticmethod
     @privileged_query(UserRole.SUPERADMIN)
-    async def resolve_scaling_groups(executor, info, is_active=None):
+    async def resolve_scaling_groups(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        is_active: bool = None,
+    ) -> Sequence[ScalingGroup]:
         return await ScalingGroup.load_all(info.context, is_active=is_active)
 
     @staticmethod
     @privileged_query(UserRole.SUPERADMIN)
-    async def resolve_scaling_groups_for_domain(executor, info, domain, is_active=None):
+    async def resolve_scaling_groups_for_domain(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        domain: str,
+        is_active: bool = None,
+    ) -> Sequence[ScalingGroup]:
         return await ScalingGroup.load_by_domain(
-            info.context, domain, is_active=is_active)
+            info.context, domain, is_active=is_active
+        )
 
     @staticmethod
     @privileged_query(UserRole.SUPERADMIN)
-    async def resolve_scaling_groups_for_group(executor, info, user_group, is_active=None):
+    async def resolve_scaling_groups_for_group(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        user_group,
+        is_active: bool = None
+    ) -> Sequence[ScalingGroup]:
         return await ScalingGroup.load_by_group(
-            info.context, user_group, is_active=is_active)
+            info.context, user_group, is_active=is_active
+        )
 
     @staticmethod
     @privileged_query(UserRole.SUPERADMIN)
-    async def resolve_scaling_groups_for_keypair(executor, info, access_key, is_active=None):
+    async def resolve_scaling_groups_for_keypair(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        access_key: AccessKey,
+        is_active: bool = None
+    ) -> Sequence[ScalingGroup]:
         return await ScalingGroup.load_by_keypair(
-            info.context, access_key, is_active=is_active)
+            info.context, access_key, is_active=is_active
+        )
 
     @staticmethod
     @privileged_query(UserRole.SUPERADMIN)
-    async def resolve_storage_volume(executor, info, id: str):
+    async def resolve_storage_volume(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        id: str,
+    ) -> StorageVolume:
         return await StorageVolume.load_by_id(info.context, id)
 
     @staticmethod
     @privileged_query(UserRole.SUPERADMIN)
-    async def resolve_storage_volume_list(executor, info, limit, offset):
+    async def resolve_storage_volume_list(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        limit: int,
+        offset: int,
+    ) -> StorageVolumeList:
         total_count = await StorageVolume.load_count(info.context)
         items = await StorageVolume.load_slice(info.context, limit, offset)
         return StorageVolumeList(items, total_count)
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='user_id')
-    async def resolve_vfolder_list(executor, info, limit, offset, *,
-                                   domain_name=None, group_id=None, user_id=None,
-                                   order_key=None, order_asc=None):
+    async def resolve_vfolder_list(
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        limit: int,
+        offset: int,
+        *,
+        domain_name: str = None,
+        group_id: uuid.UUID = None,
+        user_id: uuid.UUID = None,
+        order_key: str = None,
+        order_asc: bool = True,
+    ) -> VirtualFolderList:
         # TODO: adopt the generic queryfilter language
         total_count = await VirtualFolder.load_count(
             info.context,
@@ -722,7 +968,9 @@ class Queries(graphene.ObjectType):
             user_id=user_id,          # scope
         )
         items = await VirtualFolder.load_slice(
-            info.context, limit, offset,
+            info.context,
+            limit,
+            offset,
             domain_name=domain_name,  # scope
             group_id=group_id,        # scope
             user_id=user_id,          # scope
@@ -734,11 +982,19 @@ class Queries(graphene.ObjectType):
     @staticmethod
     @scoped_query(autofill_user=False, user_key='access_key')
     async def resolve_compute_container_list(
-        executor, info, limit, offset, *,
-        session_id=None, role=None,
-        domain_name=None, group_id=None, access_key=None,
-        order_key=None, order_asc=None,
-    ):
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        limit: int,
+        offset: int,
+        *,
+        session_id: SessionId,
+        role: UserRole = None,
+        domain_name: str = None,
+        group_id: uuid.UUID = None,
+        access_key: AccessKey = None,
+        order_key: str = None,
+        order_asc: bool = True,
+    ) -> ComputeContainerList:
         # TODO: adopt the generic queryfilter language
         total_count = await ComputeContainer.load_count(
             info.context,
@@ -764,24 +1020,33 @@ class Queries(graphene.ObjectType):
     @staticmethod
     @scoped_query(autofill_user=False, user_key='access_key')
     async def resolve_compute_container(
-        executor, info, container_id,
-    ):
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        container_id: str,
+    ) -> ComputeContainer:
         # We need to check the group membership of the designated kernel,
         # but practically a user cannot guess the IDs of kernels launched
         # by other users and in other groups.
         # Let's just protect the domain/user boundary here.
-        manager = info.context['dlmgr']
-        loader = manager.get_loader('ComputeContainer.detail')
+        graph_ctx: GraphQueryContext = info.context
+        loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'ComputeContainer.detail')
         return await loader.load(container_id)
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='access_key')
     async def resolve_compute_session_list(
-        executor, info, limit, offset, *,
-        domain_name=None, group_id=None, access_key=None,
-        status=None,
-        order_key=None, order_asc=None,
-    ):
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        limit: int,
+        offset: int,
+        *,
+        domain_name: str = None,
+        group_id: uuid.UUID = None,
+        access_key: AccessKey = None,
+        status: KernelStatus = None,
+        order_key: str = None,
+        order_asc: bool = True,
+    ) -> ComputeSessionList:
         total_count = await ComputeSession.load_count(
             info.context,
             status=status,            # filter
@@ -804,61 +1069,84 @@ class Queries(graphene.ObjectType):
     @staticmethod
     @scoped_query(autofill_user=False, user_key='access_key')
     async def resolve_compute_session(
-        executor, info, id, *,
-        domain_name=None, access_key=None,
-    ):
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        id: SessionId,
+        *,
+        domain_name: str = None,
+        access_key: AccessKey = None,
+    ) -> ComputeSession:
         # We need to check the group membership of the designated kernel,
         # but practically a user cannot guess the IDs of kernels launched
         # by other users and in other groups.
         # Let's just protect the domain/user boundary here.
-        manager = info.context['dlmgr']
-        loader = manager.get_loader(
+        graph_ctx: GraphQueryContext = info.context
+        loader = graph_ctx.dataloader_manager.get_loader(
+            graph_ctx,
             'ComputeSession.detail',
             domain_name=domain_name,
-            access_key=access_key)
+            access_key=access_key
+        )
         return await loader.load(id)
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='access_key')
     async def resolve_legacy_compute_session_list(
-        executor, info, limit, offset, *,
-        domain_name=None, group_id=None, access_key=None,
-        status=None,
-        order_key=None, order_asc=None,
-    ):
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        limit: int,
+        offset: int,
+        *,
+        domain_name: str = None,
+        group_id: uuid.UUID = None,
+        access_key: AccessKey = None,
+        status: str = None,
+        order_key: str = None,
+        order_asc: bool = True,
+    ) -> LegacyComputeSessionList:
         total_count = await LegacyComputeSession.load_count(
             info.context,
             domain_name=domain_name,
             group_id=group_id,
             access_key=access_key,
-            status=status)
+            status=status
+        )
         items = await LegacyComputeSession.load_slice(
-            info.context, limit, offset,
+            info.context,
+            limit,
+            offset,
             domain_name=domain_name,
             group_id=group_id,
             access_key=access_key,
             status=status,
             order_key=order_key,
-            order_asc=order_asc)
+            order_asc=order_asc
+        )
         return LegacyComputeSessionList(items, total_count)
 
     @staticmethod
     @scoped_query(autofill_user=False, user_key='access_key')
     async def resolve_legacy_compute_session(
-        executor, info, sess_id, *,
-        domain_name=None, access_key=None,
-        status=None,
-    ):
+        executor: AsyncioExecutor,
+        info: graphene.ResolveInfo,
+        sess_id: str,
+        *,
+        domain_name: str = None,
+        access_key: AccessKey = None,
+        status: str = None,
+    ) -> Optional[LegacyComputeSession]:
         # We need to check the group membership of the designated kernel,
         # but practically a user cannot guess the IDs of kernels launched
         # by other users and in other groups.
         # Let's just protect the domain/user boundary here.
-        manager = info.context['dlmgr']
-        loader = manager.get_loader(
+        graph_ctx: GraphQueryContext = info.context
+        loader = graph_ctx.dataloader_manager.get_loader(
+            graph_ctx,
             'LegacyComputeSession.detail',
             domain_name=domain_name,
             access_key=access_key,
-            status=status)
+            status=status
+        )
         matches = await loader.load(sess_id)
         if len(matches) == 0:
             return None
@@ -870,11 +1158,12 @@ class Queries(graphene.ObjectType):
 
 class GQLMutationPrivilegeCheckMiddleware:
 
-    def resolve(self, next, root, info, **args):
+    def resolve(self, next, root, info: graphene.ResolveInfo, **args) -> Any:
+        graph_ctx: GraphQueryContext = info.context
         if info.operation.operation == 'mutation' and len(info.path) == 1:
             mutation_cls = getattr(Mutations, info.path[0]).type
             # default is allow nobody.
             allowed_roles = getattr(mutation_cls, 'allowed_roles', [])
-            if info.context['user']['role'] not in allowed_roles:
+            if graph_ctx.user['role'] not in allowed_roles:
                 return mutation_cls(False, f"no permission to execute {info.path[0]}")
         return next(root, info, **args)

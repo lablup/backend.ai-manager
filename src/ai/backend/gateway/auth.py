@@ -5,9 +5,13 @@ import hashlib, hmac
 import logging
 import secrets
 from typing import (
-    Any, Final,
+    Any,
+    Final,
     Iterable,
+    Mapping,
+    TYPE_CHECKING,
     Tuple,
+    cast,
 )
 
 from aiohttp import web
@@ -44,6 +48,9 @@ from ..manager.models.keypair import generate_keypair as _gen_keypair, generate_
 from ..manager.models.group import association_groups_users, groups
 from .types import CORSOptions, WebMiddleware
 from .utils import check_api_params, set_handler_attr, get_handler_attr
+
+if TYPE_CHECKING:
+    from .context import RootContext
 
 log: Final = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.auth'))
 
@@ -372,12 +379,13 @@ async def sign_request(sign_method, request, secret_key) -> str:
 
 
 @web.middleware
-async def auth_middleware(request, handler):
-    '''
+async def auth_middleware(request: web.Request, handler) -> web.StreamResponse:
+    """
     Fetches user information and sets up keypair, uesr, and is_authorized
     attributes.
-    '''
+    """
     # This is a global middleware: request.app is the root app.
+    root_ctx: RootContext = request.app['_root.context']
     request['is_authorized'] = False
     request['is_admin'] = False
     request['is_superadmin'] = False
@@ -390,14 +398,21 @@ async def auth_middleware(request, handler):
     params = _extract_auth_params(request)
     if params:
         sign_method, access_key, signature = params
-        async with request.app['dbpool'].acquire() as conn, conn.begin():
-            j = (keypairs.join(users, keypairs.c.user == users.c.uuid)
-                         .join(keypair_resource_policies,
-                               keypairs.c.resource_policy == keypair_resource_policies.c.name))
-            query = (sa.select([users, keypairs, keypair_resource_policies], use_labels=True)
-                       .select_from(j)
-                       .where((keypairs.c.access_key == access_key) &
-                              (keypairs.c.is_active.is_(True))))
+        async with root_ctx.dbpool.acquire() as conn, conn.begin():
+            j = (
+                keypairs
+                .join(users, keypairs.c.user == users.c.uuid)
+                .join(keypair_resource_policies,
+                      keypairs.c.resource_policy == keypair_resource_policies.c.name)
+            )
+            query = (
+                sa.select([users, keypairs, keypair_resource_policies], use_labels=True)
+                .select_from(j)
+                .where(
+                    (keypairs.c.access_key == access_key) &
+                    (keypairs.c.is_active.is_(True))
+                )
+            )
             result = await conn.execute(query)
             row = await result.first()
             if row is None:
@@ -405,10 +420,14 @@ async def auth_middleware(request, handler):
             my_signature = \
                 await sign_request(sign_method, request, row['keypairs_secret_key'])
             if secrets.compare_digest(my_signature, signature):
-                query = (keypairs.update()
-                                 .values(last_used=datetime.now(tzutc()),
-                                         num_queries=keypairs.c.num_queries + 1)
-                                 .where(keypairs.c.access_key == access_key))
+                query = (
+                    keypairs.update()
+                    .values(
+                        last_used=datetime.now(tzutc()),
+                        num_queries=keypairs.c.num_queries + 1,
+                    )
+                    .where(keypairs.c.access_key == access_key)
+                )
                 await conn.execute(query)
                 request['is_authorized'] = True
                 request['keypair'] = {
@@ -495,10 +514,13 @@ async def test(request: web.Request, params: Any) -> web.Response:
     }))
 async def get_role(request: web.Request, params: Any) -> web.Response:
     group_role = None
-    log.info('AUTH.ROLES(ak:{}, d:{}, g:{})',
-             request['keypair']['access_key'],
-             request['user']['domain_name'],
-             params['group'])
+    root_ctx: RootContext = request.app['_root.context']
+    log.info(
+        'AUTH.ROLES(ak:{}, d:{}, g:{})',
+        request['keypair']['access_key'],
+        request['user']['domain_name'],
+        params['group'],
+    )
     if params['group'] is not None:
         query = (
             # TODO: per-group role is not yet implemented.
@@ -509,7 +531,7 @@ async def get_role(request: web.Request, params: Any) -> web.Response:
                 (association_groups_users.c.user_id == request['user']['uuid'])
             )
         )
-        async with request.app['dbpool'].acquire() as conn:
+        async with root_ctx.dbpool.acquire() as conn:
             result = await conn.execute(query)
             row = await result.first()
             if row is None:
@@ -537,16 +559,16 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         # other types are not implemented yet.
         raise InvalidAPIParameters('Unsupported authorization type')
     log.info('AUTH.AUTHORIZE(d:{0[domain]}, u:{0[username]}, passwd:****, type:{0[type]})', params)
-    dbpool = request.app['dbpool']
+    root_ctx: RootContext = request.app['_root.context']
 
     # [Hooking point for AUTHORIZE with the FIRST_COMPLETED requirement]
     # The hook handlers should accept the whole ``params`` dict, and optional
     # ``dbpool`` parameter (if the hook needs to query to database).
     # They should return a corresponding Backend.AI user object after performing
     # their own authentication steps, like LDAP authentication, etc.
-    hook_result = await request.app['hook_plugin_ctx'].dispatch(
+    hook_result = await root_ctx.hook_plugin_ctx.dispatch(
         'AUTHORIZE',
-        (params, dbpool),
+        (params, root_ctx.dbpool),
         return_when=FIRST_COMPLETED,
     )
     if hook_result.status != PASSED:
@@ -557,7 +579,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
     else:
         # No AUTHORIZE hook is defined (proceed with normal login)
         user = await check_credential(
-            dbpool,
+            root_ctx.dbpool,
             params['domain'], params['username'], params['password']
         )
     if user is None:
@@ -566,7 +588,7 @@ async def authorize(request: web.Request, params: Any) -> web.Response:
         raise AuthorizationFailed('This account needs email verification.')
     if user.get('status') in INACTIVE_USER_STATUSES:
         raise AuthorizationFailed('User credential mismatch.')
-    async with dbpool.acquire() as conn:
+    async with root_ctx.dbpool.acquire() as conn:
         query = (sa.select([keypairs.c.access_key, keypairs.c.secret_key])
                    .select_from(keypairs)
                    .where(
@@ -599,7 +621,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
     log_fmt = 'AUTH.SIGNUP(d:{}, email:{}, passwd:****)'
     log_args = (params['domain'], params['email'])
     log.info(log_fmt, *log_args)
-    dbpool = request.app['dbpool']
+    root_ctx: RootContext = request.app['_root.context']
 
     # [Hooking point for PRE_SIGNUP with the ALL_COMPLETED requirement]
     # The hook handlers should accept the whole ``params`` dict.
@@ -607,7 +629,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
     # where the keys must be a valid field name of the users table,
     # with two exceptions: "resource_policy" (name) and "group" (name).
     # A plugin may return an empty dict if it has nothing to override.
-    hook_result = await request.app['hook_plugin_ctx'].dispatch(
+    hook_result = await root_ctx.hook_plugin_ctx.dispatch(
         'PRE_SIGNUP',
         (params, ),
         return_when=ALL_COMPLETED,
@@ -616,9 +638,9 @@ async def signup(request: web.Request, params: Any) -> web.Response:
         raise RejectedByHook.from_hook_result(hook_result)
     else:
         # Merge the hook results as a single map.
-        user_data_overriden = ChainMap(*hook_result.result)
+        user_data_overriden = ChainMap(*cast(Mapping, hook_result.result))
 
-    async with dbpool.acquire() as conn:
+    async with root_ctx.dbpool.acquire() as conn:
         # Check if email already exists.
         query = (sa.select([users])
                    .select_from(users)
@@ -698,7 +720,7 @@ async def signup(request: web.Request, params: Any) -> web.Response:
     initial_user_prefs = {
         'lang': request.headers.get('Accept-Language', 'en-us').split(',')[0].lower(),
     }
-    await request.app['hook_plugin_ctx'].notify(
+    await root_ctx.hook_plugin_ctx.notify(
         'POST_SIGNUP',
         (params['email'], user.uuid, initial_user_prefs)
     )
@@ -715,24 +737,28 @@ async def signup(request: web.Request, params: Any) -> web.Response:
 async def signout(request: web.Request, params: Any) -> web.Response:
     domain_name = request['user']['domain_name']
     log.info('AUTH.SIGNOUT(d:{}, email:{})', domain_name, params['email'])
-    dbpool = request.app['dbpool']
+    root_ctx: RootContext = request.app['_root.context']
     if request['user']['email'] != params['email']:
         raise GenericForbidden('Not the account owner')
     result = await check_credential(
-        dbpool,
+        root_ctx.dbpool,
         domain_name, params['email'], params['password'])
     if result is None:
         raise GenericBadRequest('Invalid email and/or password')
-    async with dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         # Inactivate the user.
-        query = (users.update()
-                      .values(status=UserStatus.INACTIVE)
-                      .where(users.c.email == params['email']))
+        query = (
+            users.update()
+            .values(status=UserStatus.INACTIVE)
+            .where(users.c.email == params['email'])
+        )
         await conn.execute(query)
         # Inactivate every keypairs of the user.
-        query = (keypairs.update()
-                         .values(is_active=False)
-                         .where(keypairs.c.user_id == params['email']))
+        query = (
+            keypairs.update()
+            .values(is_active=False)
+            .where(keypairs.c.user_id == params['email'])
+        )
         await conn.execute(query)
     return web.json_response({})
 
@@ -746,14 +772,14 @@ async def signout(request: web.Request, params: Any) -> web.Response:
         t.Key('new_password2'): t.String,
     }))
 async def update_password(request: web.Request, params: Any) -> web.Response:
+    root_ctx: RootContext = request.app['_root.context']
     domain_name = request['user']['domain_name']
     email = request['user']['email']
     log_fmt = 'AUTH.UDPATE_PASSWORD(d:{}, email:{})'
     log_args = (domain_name, email)
     log.info(log_fmt, *log_args)
-    dbpool = request.app['dbpool']
 
-    user = await check_credential(dbpool, domain_name, email, params['old_password'])
+    user = await check_credential(root_ctx.dbpool, domain_name, email, params['old_password'])
     if user is None:
         log.info(log_fmt + ': old password mismtach', *log_args)
         raise AuthorizationFailed('Old password mismatch')
@@ -766,7 +792,7 @@ async def update_password(request: web.Request, params: Any) -> web.Response:
     # own password validation rules.
     # They should return None if the validation is successful and raise the Reject error
     # otherwise.
-    hook_result = await request.app['hook_plugin_ctx'].dispatch(
+    hook_result = await root_ctx.hook_plugin_ctx.dispatch(
         'VERIFY_PASSWORD_FORMAT',
         (params['old_password'], params['new_password']),
         return_when=ALL_COMPLETED,
@@ -775,7 +801,7 @@ async def update_password(request: web.Request, params: Any) -> web.Response:
         hook_result.reason = hook_result.reason or 'invalid password format'
         raise RejectedByHook.from_hook_result(hook_result)
 
-    async with dbpool.acquire() as conn:
+    async with root_ctx.dbpool.acquire() as conn:
         # Update user password.
         data = {
             'password': params['new_password'],
@@ -789,16 +815,18 @@ async def update_password(request: web.Request, params: Any) -> web.Response:
 @atomic
 @auth_required
 async def get_ssh_keypair(request: web.Request) -> web.Response:
+    root_ctx: RootContext = request.app['_root.context']
     domain_name = request['user']['domain_name']
     access_key = request['keypair']['access_key']
     log_fmt = 'AUTH.GET_SSH_KEYPAIR(d:{}, ak:{})'
     log_args = (domain_name, access_key)
     log.info(log_fmt, *log_args)
-    dbpool = request.app['dbpool']
-    async with dbpool.acquire() as conn:
+    async with root_ctx.dbpool.acquire() as conn:
         # Get SSH public key. Return partial string from the public key just for checking.
-        query = (sa.select([keypairs.c.ssh_public_key])
-                   .where(keypairs.c.access_key == access_key))
+        query = (
+            sa.select([keypairs.c.ssh_public_key])
+            .where(keypairs.c.access_key == access_key)
+        )
         pubkey = await conn.scalar(query)
     return web.json_response({'ssh_public_key': pubkey}, status=200)
 
@@ -811,16 +839,18 @@ async def refresh_ssh_keypair(request: web.Request) -> web.Response:
     log_fmt = 'AUTH.REFRESH_SSH_KEYPAIR(d:{}, ak:{})'
     log_args = (domain_name, access_key)
     log.info(log_fmt, *log_args)
-    dbpool = request.app['dbpool']
-    async with dbpool.acquire() as conn:
+    root_ctx: RootContext = request.app['_root.context']
+    async with root_ctx.dbpool.acquire() as conn:
         pubkey, privkey = generate_ssh_keypair()
         data = {
             'ssh_public_key': pubkey,
             'ssh_private_key': privkey,
         }
-        query = (keypairs.update()
-                         .values(data)
-                         .where(keypairs.c.access_key == access_key))
+        query = (
+            keypairs.update()
+            .values(data)
+            .where(keypairs.c.access_key == access_key)
+        )
         await conn.execute(query)
     return web.json_response(data, status=200)
 

@@ -2,6 +2,7 @@ import logging
 from typing import (
     Any,
     Iterable,
+    TYPE_CHECKING,
     Tuple,
 )
 
@@ -22,6 +23,9 @@ from ..manager.models import (
     query_allowed_sgroups,
 )
 
+if TYPE_CHECKING:
+    from .context import RootContext
+
 log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.scaling_group'))
 
 
@@ -33,12 +37,12 @@ log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.scaling_group'))
     }),
 )
 async def list_available_sgroups(request: web.Request, params: Any) -> web.Response:
-    dbpool = request.app['dbpool']
+    root_ctx: RootContext = request.app['_root.context']
     access_key = request['keypair']['access_key']
     domain_name = request['user']['domain_name']
     group_id_or_name = params['group']
     log.info('SGROUPS.LIST(ak:{}, g:{}, d:{})', access_key, group_id_or_name, domain_name)
-    async with dbpool.acquire() as conn:
+    async with root_ctx.dbpool.acquire() as conn:
         sgroups = await query_allowed_sgroups(
             conn, domain_name, group_id_or_name, access_key)
         return web.json_response({

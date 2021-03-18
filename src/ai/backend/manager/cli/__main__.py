@@ -71,7 +71,7 @@ def main(ctx, config_path, debug):
                    'this dbshell command.')
 @click.argument('psql_args', nargs=-1, type=click.UNPROCESSED)
 @click.pass_obj
-def dbshell(cli_ctx, container_name, psql_help, psql_args):
+def dbshell(cli_ctx: CLIContext, container_name, psql_help, psql_args):
     """
     Run the database shell.
 

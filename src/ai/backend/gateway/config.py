@@ -450,14 +450,15 @@ def load(config_path: Path = None, debug: bool = False) -> LocalConfig:
 
 class SharedConfig(AbstractConfig):
 
-    def __init__(self, app_ctx: Mapping[str, Any],
-                 etcd_addr: HostPortPair,
-                 etcd_user: Optional[str],
-                 etcd_password: Optional[str],
-                 namespace: str) -> None:
+    def __init__(
+        self,
+        etcd_addr: HostPortPair,
+        etcd_user: Optional[str],
+        etcd_password: Optional[str],
+        namespace: str,
+    ) -> None:
         # WARNING: importing etcd3/grpc must be done after forks.
         super().__init__()
-        self.context = app_ctx
         credentials = None
         if etcd_user:
             credentials = {
@@ -530,12 +531,7 @@ class SharedConfig(AbstractConfig):
             result[value].append(etcd_unquote(key))
         return dict(result)
 
-    async def _parse_image(self, image_ref, item, reverse_aliases):
-        installed = (
-            await self.context['redis_image'].scard(image_ref.canonical)
-        ) > 0
-        installed_agents = await self.context['redis_image'].smembers(image_ref.canonical)
-
+    async def _parse_image(self, image_ref: ImageRef, item, reverse_aliases):
         res_limits = []
         for slot_key, slot_range in item['resource'].items():
             min_value = slot_range.get('min')
@@ -557,6 +553,7 @@ class SharedConfig(AbstractConfig):
             accels = accels.split(',')
 
         return {
+            'canonical_ref': image_ref.canonical,
             'name': image_ref.name,
             'humanized_name': image_ref.name,  # TODO: implement
             'tag': image_ref.tag,
@@ -567,8 +564,6 @@ class SharedConfig(AbstractConfig):
             'size_bytes': item.get('size_bytes', 0),
             'resource_limits': res_limits,
             'supported_accelerators': accels,
-            'installed': installed,
-            'installed_agents': installed_agents,
         }
 
     async def _check_image(self, reference: str) -> ImageRef:
@@ -720,7 +715,7 @@ class SharedConfig(AbstractConfig):
         return await self.etcd.get_prefix_dict('nodes/manager')
 
     @aiotools.lru_cache(maxsize=1, expire_after=2.0)
-    async def get_manager_status(self):
+    async def get_manager_status(self) -> Optional[ManagerStatus]:
         status = await self.etcd.get('manager/status')
         if status is None:
             return None

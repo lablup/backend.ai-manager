@@ -1,6 +1,14 @@
-import logging
-from typing import Sequence
+from __future__ import annotations
 
+import logging
+from typing import (
+    Any,
+    Dict,
+    Sequence,
+    TYPE_CHECKING,
+)
+
+from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
@@ -17,6 +25,9 @@ from .base import (
 )
 from .keypair import keypairs
 from .user import UserRole
+
+if TYPE_CHECKING:
+    from .gql import GraphQueryContext
 
 log = BraceStyleAdapter(logging.getLogger('ai.backend.manager.models'))
 
@@ -64,7 +75,11 @@ class KeyPairResourcePolicy(graphene.ObjectType):
     allowed_vfolder_hosts = graphene.List(lambda: graphene.String)
 
     @classmethod
-    def from_row(cls, context, row):
+    def from_row(
+        cls,
+        ctx: GraphQueryContext,
+        row: RowProxy | None,
+    ) -> KeyPairResourcePolicy | None:
         if row is None:
             return None
         return cls(
@@ -81,18 +96,27 @@ class KeyPairResourcePolicy(graphene.ObjectType):
         )
 
     @classmethod
-    async def load_all(cls, context):
-        async with context['dbpool'].acquire() as conn:
+    async def load_all(cls, ctx: GraphQueryContext) -> Sequence[KeyPairResourcePolicy]:
+        async with ctx.dbpool.acquire() as conn:
             query = (sa.select([keypair_resource_policies])
                        .select_from(keypair_resource_policies))
-            return [cls.from_row(context, r) async for r in conn.execute(query)]
+            return [
+                obj async for r in conn.execute(query)
+                if (obj := cls.from_row(ctx, r)) is not None
+            ]
 
     @classmethod
-    async def load_all_user(cls, context, access_key):
-        async with context['dbpool'].acquire() as conn:
-            query = (sa.select([keypairs.c.user_id])
-                       .select_from(keypairs)
-                       .where(keypairs.c.access_key == access_key))
+    async def load_all_user(
+        cls,
+        ctx: GraphQueryContext,
+        access_key: str,
+    ) -> Sequence[KeyPairResourcePolicy]:
+        async with ctx.dbpool.acquire() as conn:
+            query = (
+                sa.select([keypairs.c.user_id])
+                .select_from(keypairs)
+                .where(keypairs.c.access_key == access_key)
+            )
             result = await conn.execute(query)
             row = await result.first()
             user_id = row['user_id']
@@ -100,44 +124,66 @@ class KeyPairResourcePolicy(graphene.ObjectType):
                 keypairs, keypair_resource_policies,
                 keypairs.c.resource_policy == keypair_resource_policies.c.name
             )
-            query = (sa.select([keypair_resource_policies])
-                       .select_from(j)
-                       .where((keypairs.c.user_id == user_id)))
-            return [cls.from_row(context, r) async for r in conn.execute(query)]
+            query = (
+                sa.select([keypair_resource_policies])
+                .select_from(j)
+                .where((keypairs.c.user_id == user_id))
+            )
+            return [
+                obj async for r in conn.execute(query)
+                if (obj := cls.from_row(ctx, r)) is not None
+            ]
 
     @classmethod
-    async def batch_load_by_name(cls, context, names):
-        async with context['dbpool'].acquire() as conn:
-            query = (sa.select([keypair_resource_policies])
-                       .select_from(keypair_resource_policies)
-                       .where(keypair_resource_policies.c.name.in_(names))
-                       .order_by(keypair_resource_policies.c.name))
+    async def batch_load_by_name(
+        cls,
+        ctx: GraphQueryContext,
+        names: Sequence[str],
+    ) -> Sequence[KeyPairResourcePolicy | None]:
+        async with ctx.dbpool.acquire() as conn:
+            query = (
+                sa.select([keypair_resource_policies])
+                .select_from(keypair_resource_policies)
+                .where(keypair_resource_policies.c.name.in_(names))
+                .order_by(keypair_resource_policies.c.name)
+            )
             return await batch_result(
-                context, conn, query, cls,
+                ctx, conn, query, cls,
                 names, lambda row: row['name'],
             )
 
     @classmethod
-    async def batch_load_by_name_user(cls, context, names):
-        async with context['dbpool'].acquire() as conn:
-            access_key = context['access_key']
+    async def batch_load_by_name_user(
+        cls,
+        ctx: GraphQueryContext,
+        names: Sequence[str],
+    ) -> Sequence[KeyPairResourcePolicy | None]:
+        async with ctx.dbpool.acquire() as conn:
+            access_key = ctx.access_key
             j = sa.join(
                 keypairs, keypair_resource_policies,
                 keypairs.c.resource_policy == keypair_resource_policies.c.name
             )
-            query = (sa.select([keypair_resource_policies])
-                       .select_from(j)
-                       .where((keypair_resource_policies.c.name.in_(names)) &
-                              (keypairs.c.access_key == access_key))
-                       .order_by(keypair_resource_policies.c.name))
+            query = (
+                sa.select([keypair_resource_policies])
+                .select_from(j)
+                .where(
+                    (keypair_resource_policies.c.name.in_(names)) &
+                    (keypairs.c.access_key == access_key)
+                )
+                .order_by(keypair_resource_policies.c.name))
             return await batch_result(
-                context, conn, query, cls,
+                ctx, conn, query, cls,
                 names, lambda row: row['name'],
             )
 
     @classmethod
-    async def batch_load_by_ak(cls, context, access_keys):
-        async with context['dbpool'].acquire() as conn:
+    async def batch_load_by_ak(
+        cls,
+        ctx: GraphQueryContext,
+        access_keys: Sequence[str],
+    ) -> Sequence[KeyPairResourcePolicy]:
+        async with ctx.dbpool.acquire() as conn:
             j = sa.join(
                 keypairs, keypair_resource_policies,
                 keypairs.c.resource_policy == keypair_resource_policies.c.name
@@ -146,7 +192,10 @@ class KeyPairResourcePolicy(graphene.ObjectType):
                        .select_from(j)
                        .where((keypairs.c.access_key.in_(access_keys)))
                        .order_by(keypair_resource_policies.c.name))
-            return [cls.from_row(context, r) async for r in conn.execute(query)]
+            return [
+                obj async for r in conn.execute(query)
+                if (obj := cls.from_row(ctx, r)) is not None
+            ]
 
 
 class CreateKeyPairResourcePolicyInput(graphene.InputObjectType):
@@ -184,7 +233,13 @@ class CreateKeyPairResourcePolicy(graphene.Mutation):
     resource_policy = graphene.Field(lambda: KeyPairResourcePolicy, required=False)
 
     @classmethod
-    async def mutate(cls, root, info, name, props):
+    async def mutate(
+        cls,
+        root,
+        info: graphene.ResolveInfo,
+        name: str,
+        props: CreateKeyPairResourcePolicyInput,
+    ) -> CreateKeyPairResourcePolicy:
         data = {
             'name': name,
             'default_for_unspecified':
@@ -201,7 +256,8 @@ class CreateKeyPairResourcePolicy(graphene.Mutation):
         insert_query = (keypair_resource_policies.insert().values(data))
         item_query = (
             keypair_resource_policies.select()
-            .where(keypair_resource_policies.c.name == name))
+            .where(keypair_resource_policies.c.name == name)
+        )
         return await simple_db_mutate_returning_item(
             cls, info.context, insert_query,
             item_query=item_query, item_cls=KeyPairResourcePolicy)
@@ -219,8 +275,14 @@ class ModifyKeyPairResourcePolicy(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    async def mutate(cls, root, info, name, props):
-        data = {}
+    async def mutate(
+        cls,
+        root,
+        info: graphene.ResolveInfo,
+        name: str,
+        props: ModifyKeyPairResourcePolicyInput,
+    ) -> ModifyKeyPairResourcePolicy:
+        data: Dict[str, Any] = {}
         set_if_set(props, data, 'default_for_unspecified',
                    clean_func=lambda v: DefaultForUnspecified[v])
         set_if_set(props, data, 'total_resource_slots',
@@ -249,7 +311,12 @@ class DeleteKeyPairResourcePolicy(graphene.Mutation):
     msg = graphene.String()
 
     @classmethod
-    async def mutate(cls, root, info, name):
+    async def mutate(
+        cls,
+        root,
+        info: graphene.ResolveInfo,
+        name: str,
+    ) -> DeleteKeyPairResourcePolicy:
         delete_query = (
             keypair_resource_policies.delete()
             .where(keypair_resource_policies.c.name == name)

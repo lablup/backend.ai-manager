@@ -22,6 +22,7 @@ from typing import (
     Mapping,
     MutableMapping,
     Optional,
+    Set,
     Tuple,
     Union,
     TYPE_CHECKING,
@@ -36,6 +37,7 @@ from aiojobs.aiohttp import atomic
 import aioredis
 import aiotools
 from async_timeout import timeout
+import attr
 from dateutil.parser import isoparse
 from dateutil.tz import tzutc
 import multidict
@@ -54,12 +56,10 @@ from ai.backend.common.exception import (
 from ai.backend.common.events import (
     AgentHeartbeatEvent,
     AgentStartedEvent,
-    AgentStatsEvent,
     AgentTerminatedEvent,
     DoSyncKernelLogsEvent,
     DoSyncKernelStatsEvent,
     DoTerminateSessionEvent,
-    EventDispatcher,
     KernelCreatingEvent,
     KernelPreparingEvent,
     KernelPullingEvent,
@@ -122,9 +122,9 @@ from ..manager.models import (
 )
 from ..manager.models.kernel import match_session_ids
 if TYPE_CHECKING:
-    from ..manager.registry import AgentRegistry
+    from .context import RootContext
 
-log = BraceStyleAdapter(logging.getLogger('ai.backend.gateway.session'))
+log = BraceStyleAdapter(logging.getLogger(__name__))
 
 _json_loads = functools.partial(json.loads, parse_float=Decimal)
 
@@ -377,8 +377,11 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*',
              params['image'], params['session_name'])
 
-    registry = request.app['registry']
+    root_ctx: RootContext = request.app['_root.context']
+    app_ctx: PrivateContext = request.app['session.context']
     resp: MutableMapping[str, Any] = {}
+    current_task = asyncio.current_task()
+    assert current_task is not None
 
     if mount_map := params['config'].get('mount_map'):
         for p in mount_map.values():
@@ -402,7 +405,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     # Resolve the image reference.
     try:
         requested_image_ref = \
-            await ImageRef.resolve_alias(params['image'], request.app['shared_config'].etcd)
+            await ImageRef.resolve_alias(params['image'], root_ctx.shared_config.etcd)
         async with dbpool.acquire() as conn, conn.begin():
             query = (sa.select([domains.c.allowed_docker_registries])
                        .select_from(domains)
@@ -417,7 +420,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     try:
         # NOTE: We can reuse the session IDs of TERMINATED sessions only.
         # NOTE: Reusing a session in the PENDING status returns an empty value in service_ports.
-        kern = await registry.get_session(params['session_name'], owner_access_key)
+        kern = await root_ctx.registry.get_session(params['session_name'], owner_access_key)
         running_image_ref = ImageRef(kern['image'], [kern['registry']])
         if running_image_ref != requested_image_ref:
             # The image must be same if get_or_create() called multiple times
@@ -457,7 +460,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     session_creation_id = secrets.token_urlsafe(16)
     start_event = asyncio.Event()
     kernel_id: Optional[KernelId] = None
-    session_creation_tracker = request.app['session_creation_tracker']
+    session_creation_tracker = app_ctx.session_creation_tracker
     session_creation_tracker[session_creation_id] = start_event
 
     try:
@@ -470,13 +473,14 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
                 script, _ = await query_bootstrap_script(conn, owner_access_key)
                 params['bootstrap_script'] = script
 
-        kernel_id = await asyncio.shield(request.app['registry'].enqueue_session(
+        kernel_id = await asyncio.shield(root_ctx.registry.enqueue_session(
             session_creation_id,
             params['session_name'], owner_access_key,
             [{
                 'image_ref': requested_image_ref,
                 'cluster_role': DEFAULT_ROLE,
                 'cluster_idx': 1,
+                'cluster_hostname': f"{DEFAULT_ROLE}1",
                 'creation_config': params['config'],
                 'bootstrap_script': params['bootstrap_script'],
                 'startup_command': params['startup_command'],
@@ -484,7 +488,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
             params['config']['scaling_group'],
             params['session_type'],
             resource_policy,
-            domain_name=params['domain'],
+            domain_name=params['domain'],  # type: ignore  # params always have it
             group_id=group_id,
             user_uuid=owner_uuid,
             user_role=request['user']['role'],
@@ -502,7 +506,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
         resp['created'] = True
 
         if not params['enqueue_only']:
-            request.app['pending_waits'].add(asyncio.current_task())
+            app_ctx.pending_waits.add(current_task)
             max_wait = params['max_wait_seconds']
             try:
                 if max_wait > 0:
@@ -514,7 +518,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
                 resp['status'] = 'TIMEOUT'
             else:
                 await asyncio.sleep(0.5)
-                async with request.app['dbpool'].acquire() as conn, conn.begin():
+                async with root_ctx.dbpool.acquire() as conn, conn.begin():
                     query = (
                         sa.select([
                             kernels.c.status,
@@ -541,7 +545,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
                             response_dict['allowed_envs'] = item['allowed_envs']
                         resp['servicePorts'].append(response_dict)
                     # TODO: handle shutdown of dangling tasks
-                    asyncio.create_task(registry.execute_batch(session_id))
+                    asyncio.create_task(root_ctx.registry.execute_batch(session_id))
                 else:
                     resp['status'] = row['status'].name
     except asyncio.CancelledError:
@@ -552,11 +556,11 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     except UnknownImageReference:
         raise InvalidAPIParameters(f"Unknown image reference: {params['image']}")
     except Exception:
-        await request.app['error_monitor'].capture_exception(context={'user': owner_uuid})
+        await root_ctx.error_monitor.capture_exception(context={'user': owner_uuid})
         log.exception('GET_OR_CREATE: unexpected error!')
         raise InternalServerError
     finally:
-        request.app['pending_waits'].discard(asyncio.current_task())
+        app_ctx.pending_waits.discard(current_task)
         del session_creation_tracker[session_creation_id]
     return web.json_response(resp, status=201)
 
@@ -591,7 +595,7 @@ async def _create(request: web.Request, params: Any, dbpool) -> web.Response:
     }
 ), loads=_json_loads)
 async def create_from_template(request: web.Request, params: Any) -> web.Response:
-    dbpool = request.app['dbpool']
+    root_ctx: RootContext = request.app['_root.context']
 
     if params['image'] is None and params['template_id'] is None:
         raise InvalidAPIParameters('Both image and template_id can\'t be None!')
@@ -608,7 +612,7 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         log.debug('Validation error: {0}', e.as_dict())
         raise InvalidAPIParameters('Input validation error',
                                    extra_data=e.as_dict())
-    async with dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         query = (
                     sa.select([session_templates.c.template])
                       .select_from(session_templates)
@@ -704,7 +708,7 @@ async def create_from_template(request: web.Request, params: Any) -> web.Respons
         bootstrap += '\n'
         bootstrap += cmd_builder
         params['bootstrap_script'] = base64.b64encode(bootstrap.encode()).decode()
-    return await _create(request, params, dbpool)
+    return await _create(request, params, root_ctx.dbpool)
 
 
 @server_status_required(ALL_ALLOWED)
@@ -737,6 +741,7 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
     if params['session_name'] in ['from-template']:
         raise InvalidAPIParameters(f'Requested session ID {params["session_name"]} is reserved word')
 
+    root_ctx: RootContext = request.app['_root.context']
     api_version = request['api_version']
     if 6 <= api_version[0]:
         creation_config = creation_config_v5.check(params['config'])
@@ -752,7 +757,7 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
         raise InvalidAPIParameters('API version not supported')
     params['config'] = creation_config
 
-    return await _create(request, params, request.app['dbpool'])
+    return await _create(request, params, root_ctx.dbpool)
 
 
 @server_status_required(ALL_ALLOWED)
@@ -774,7 +779,8 @@ async def create_from_params(request: web.Request, params: Any) -> web.Response:
     }),
     loads=_json_loads)
 async def create_cluster(request: web.Request, params: Any) -> web.Response:
-    dbpool = request.app['dbpool']
+    root_ctx: RootContext = request.app['_root.context']
+    app_ctx: PrivateContext = request.app['session.context']
     if params['domain'] is None:
         params['domain'] = request['user']['domain_name']
     scopes_param = {
@@ -786,14 +792,13 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
              requester_access_key, owner_access_key if owner_access_key != requester_access_key else '*',
              params['session_name'])
 
-    registry: AgentRegistry = request.app['registry']
     resp: MutableMapping[str, Any] = {}
 
     # Check existing (owner_access_key, session) kernel instance
     try:
         # NOTE: We can reuse the session IDs of TERMINATED sessions only.
         # NOTE: Reusing a session in the PENDING status returns an empty value in service_ports.
-        await registry.get_session(params['session_name'], owner_access_key)
+        await root_ctx.registry.get_session(params['session_name'], owner_access_key)
     except SessionNotFound:
         pass
     except TooManySessionsMatched:
@@ -801,13 +806,15 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
     else:
         raise SessionAlreadyExists
 
-    async with dbpool.acquire() as conn, conn.begin():
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         query = (
-                    sa.select([session_templates.c.template])
-                      .select_from(session_templates)
-                      .where((session_templates.c.id == params['template_id']) &
-                             session_templates.c.is_active)
-                )
+            sa.select([session_templates.c.template])
+            .select_from(session_templates)
+            .where(
+                (session_templates.c.id == params['template_id']) &
+                session_templates.c.is_active
+            )
+        )
         template = await conn.scalar(query)
         if not template:
             raise TaskTemplateNotFound
@@ -830,10 +837,14 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
         kernel_configs: List[KernelEnqueueingConfig] = []
         for node in template['spec']['nodes']:
             # Resolve session template.
-            query = (sa.select([session_templates.c.template])
-                       .select_from(session_templates)
-                       .where((session_templates.c.id == node['session_template']) &
-                              session_templates.c.is_active))
+            query = (
+                sa.select([session_templates.c.template])
+                .select_from(session_templates)
+                .where(
+                    (session_templates.c.id == node['session_template']) &
+                    session_templates.c.is_active
+                )
+            )
             session_template = await conn.scalar(query)
             if not template:
                 raise TaskTemplateNotFound
@@ -899,8 +910,8 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
             try:
                 requested_image_ref = \
                     await ImageRef.resolve_alias(kernel_config['image_ref'],
-                                                 request.app['shared_config'].etcd)
-                async with dbpool.acquire() as conn, conn.begin():
+                                                 root_ctx.shared_config.etcd)
+                async with root_ctx.dbpool.acquire() as conn, conn.begin():
                     query = (sa.select([domains.c.allowed_docker_registries])
                              .select_from(domains)
                              .where(domains.c.name == params['domain']))
@@ -920,14 +931,16 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
     session_creation_id = secrets.token_urlsafe(16)
     start_event = asyncio.Event()
     kernel_id: Optional[KernelId] = None
-    session_creation_tracker = request.app['session_creation_tracker']
+    session_creation_tracker = app_ctx.session_creation_tracker
     session_creation_tracker[session_creation_id] = start_event
+    current_task = asyncio.current_task()
+    assert current_task is not None
 
     try:
-        async with dbpool.acquire() as conn, conn.begin():
+        async with root_ctx.dbpool.acquire() as conn, conn.begin():
             owner_uuid, group_id, resource_policy = await _query_userinfo(request, params, conn)
 
-        session_id = await asyncio.shield(registry.enqueue_session(
+        session_id = await asyncio.shield(root_ctx.registry.enqueue_session(
             session_creation_id,
             params['session_name'],
             owner_access_key,
@@ -948,7 +961,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
         resp['created'] = True
 
         if not params['enqueue_only']:
-            request.app['pending_waits'].add(asyncio.current_task())
+            app_ctx.pending_waits.add(current_task)
             max_wait = params['max_wait_seconds']
             try:
                 if max_wait > 0:
@@ -960,7 +973,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                 resp['status'] = 'TIMEOUT'
             else:
                 await asyncio.sleep(0.5)
-                async with request.app['dbpool'].acquire() as conn, conn.begin():
+                async with root_ctx.dbpool.acquire() as conn, conn.begin():
                     query = (
                         sa.select([
                             kernels.c.status,
@@ -987,7 +1000,7 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
                             response_dict['allowed_envs'] = item['allowed_envs']
                         resp['servicePorts'].append(response_dict)
                     # TODO: handle shutdown of dangling tasks
-                    asyncio.create_task(registry.execute_batch(session_id))
+                    asyncio.create_task(root_ctx.registry.execute_batch(session_id))
                 else:
                     resp['status'] = row['status'].name
 
@@ -999,11 +1012,11 @@ async def create_cluster(request: web.Request, params: Any) -> web.Response:
     except UnknownImageReference:
         raise InvalidAPIParameters(f"Unknown image reference: {params['image']}")
     except Exception:
-        request.app['error_monitor'].capture_exception()
+        root_ctx.error_monitor.capture_exception()
         log.exception('GET_OR_CREATE: unexpected error!')
         raise InternalServerError
     finally:
-        request.app['pending_waits'].discard(asyncio.current_task())
+        app_ctx.pending_waits.discard(current_task)
         del session_creation_tracker[session_creation_id]
     return web.json_response(resp, status=201)
 
@@ -1022,20 +1035,20 @@ async def handle_kernel_creation_lifecycle(
     but distinguish which one to process using a unique creation_id
     generated when initiating the create_kernels() agent RPC call.
     """
+    root_ctx: RootContext = app['_root.context']
     ck_id = (event.creation_id, event.kernel_id)
-    registry: AgentRegistry = app['registry']
-    if ck_id not in registry.kernel_creation_tracker:
+    if ck_id not in root_ctx.registry.kernel_creation_tracker:
         return
     log.debug('handle_kernel_creation_lifecycle: ev:{} k:{}', event.name, event.kernel_id)
     if event.name == 'kernel_preparing':
-        await registry.set_kernel_status(event.kernel_id, KernelStatus.PREPARING, event.reason)
+        await root_ctx.registry.set_kernel_status(event.kernel_id, KernelStatus.PREPARING, event.reason)
     elif event.name == 'kernel_pulling':
-        await registry.set_kernel_status(event.kernel_id, KernelStatus.PULLING, event.reason)
+        await root_ctx.registry.set_kernel_status(event.kernel_id, KernelStatus.PULLING, event.reason)
     elif event.name == 'kernel_creating':
-        await registry.set_kernel_status(event.kernel_id, KernelStatus.PREPARING, event.reason)
+        await root_ctx.registry.set_kernel_status(event.kernel_id, KernelStatus.PREPARING, event.reason)
     elif event.name == 'kernel_started':
         # post_create_kernel() coroutines are waiting for the creation tracker events to be set.
-        registry.kernel_creation_tracker[ck_id].set()
+        root_ctx.registry.kernel_creation_tracker[ck_id].set()
 
 
 async def handle_kernel_termination_lifecycle(
@@ -1043,13 +1056,13 @@ async def handle_kernel_termination_lifecycle(
     source: AgentId,
     event: KernelTerminatingEvent | KernelTerminatedEvent,
 ) -> None:
-    registry: AgentRegistry = app['registry']
+    root_ctx: RootContext = app['_root.context']
     if event.name == 'kernel_terminating':
         # The destroy_kernel() API handler will set the "TERMINATING" status.
         pass
     elif event.name == 'kernel_terminated':
-        await registry.mark_kernel_terminated(event.kernel_id, event.reason, event.exit_code)
-        await registry.check_session_terminated(event.kernel_id, event.reason)
+        await root_ctx.registry.mark_kernel_terminated(event.kernel_id, event.reason, event.exit_code)
+        await root_ctx.registry.check_session_terminated(event.kernel_id, event.reason)
 
 
 async def handle_session_creation_lifecycle(
@@ -1061,14 +1074,14 @@ async def handle_session_creation_lifecycle(
     Update the database according to the session-level lifecycle events
     published by the manager.
     """
-    session_creation_tracker = app['session_creation_tracker']
-    if event.creation_id not in session_creation_tracker:
+    app_ctx: PrivateContext = app['session.context']
+    if event.creation_id not in app_ctx.session_creation_tracker:
         return
     log.debug('handle_session_creation_lifecycle: ev:{} s:{}', event.name, event.session_id)
     if event.name == 'session_started':
-        session_creation_tracker[event.creation_id].set()
+        app_ctx.session_creation_tracker[event.creation_id].set()
     elif event.name == 'session_cancelled':
-        session_creation_tracker[event.creation_id].set()
+        app_ctx.session_creation_tracker[event.creation_id].set()
 
 
 async def handle_session_termination_lifecycle(
@@ -1080,9 +1093,9 @@ async def handle_session_termination_lifecycle(
     Update the database according to the session-level lifecycle events
     published by the manager.
     """
-    registry: AgentRegistry = app['registry']
+    root_ctx: RootContext = app['_root.context']
     if event.name == 'session_terminated':
-        await registry.mark_session_terminated(event.session_id, event.reason)
+        await root_ctx.registry.mark_session_terminated(event.session_id, event.reason)
 
 
 async def handle_destroy_session(
@@ -1090,10 +1103,10 @@ async def handle_destroy_session(
     source: AgentId,
     event: DoTerminateSessionEvent,
 ) -> None:
-    registry: AgentRegistry = app['registry']
-    await registry.destroy_session(
+    root_ctx: RootContext = app['_root.context']
+    await root_ctx.registry.destroy_session(
         functools.partial(
-            registry.get_session_by_session_id,
+            root_ctx.registry.get_session_by_session_id,
             event.session_id,
         ),
         forced=False,
@@ -1106,8 +1119,8 @@ async def handle_kernel_stat_sync(
     agent_id: AgentId,
     event: DoSyncKernelStatsEvent,
 ) -> None:
-    registry: AgentRegistry = app['registry']
-    await registry.sync_kernel_stats(event.kernel_ids)
+    root_ctx: RootContext = app['_root.context']
+    await root_ctx.registry.sync_kernel_stats(event.kernel_ids)
 
 
 async def handle_batch_result(
@@ -1118,14 +1131,14 @@ async def handle_batch_result(
     """
     Update the database according to the batch-job completion results
     """
-    registry: AgentRegistry = app['registry']
+    root_ctx: RootContext = app['_root.context']
     if event.name == 'session_success':
-        await registry.set_session_result(event.session_id, True, event.exit_code)
+        await root_ctx.registry.set_session_result(event.session_id, True, event.exit_code)
     elif event.name == 'session_failure':
-        await registry.set_session_result(event.session_id, False, event.exit_code)
-    await registry.destroy_session(
+        await root_ctx.registry.set_session_result(event.session_id, False, event.exit_code)
+    await root_ctx.registry.destroy_session(
         functools.partial(
-            registry.get_session_by_session_id,
+            root_ctx.registry.get_session_by_session_id,
             event.session_id,
         ),
         reason='task-finished',
@@ -1137,23 +1150,24 @@ async def handle_agent_lifecycle(
     source: AgentId,
     event: AgentStartedEvent | AgentTerminatedEvent,
 ) -> None:
+    root_ctx: RootContext = app['_root.context']
     if event.name == 'agent_started':
         log.info('instance_lifecycle: ag:{0} joined ({1})', source, event.reason)
-        await app['registry'].update_instance(source, {
+        await root_ctx.registry.update_instance(source, {
             'status': AgentStatus.ALIVE,
         })
     elif event.name == 'agent_terminated':
         if event.reason == 'agent-lost':
-            await app['registry'].mark_agent_terminated(source, AgentStatus.LOST)
+            await root_ctx.registry.mark_agent_terminated(source, AgentStatus.LOST)
         elif event.reason == 'agent-restart':
             log.info('agent@{0} restarting for maintenance.', source)
-            await app['registry'].update_instance(source, {
+            await root_ctx.registry.update_instance(source, {
                 'status': AgentStatus.RESTARTING,
             })
         else:
             # On normal instance termination, kernel_terminated events were already
             # triggered by the agent.
-            await app['registry'].mark_agent_terminated(source, AgentStatus.TERMINATED)
+            await root_ctx.registry.mark_agent_terminated(source, AgentStatus.TERMINATED)
 
 
 async def handle_agent_heartbeat(
@@ -1161,20 +1175,21 @@ async def handle_agent_heartbeat(
     source: AgentId,
     event: AgentHeartbeatEvent,
 ) -> None:
-    await app['registry'].handle_heartbeat(source, event.agent_info)
+    root_ctx: RootContext = app['_root.context']
+    await root_ctx.registry.handle_heartbeat(source, event.agent_info)
 
 
 @catch_unexpected(log)
-async def check_agent_lost(app, interval):
+async def check_agent_lost(root_ctx: RootContext, interval: float) -> None:
     try:
         now = datetime.now(tzutc())
-        timeout = timedelta(seconds=app['local_config']['manager']['heartbeat-timeout'])
+        timeout = timedelta(seconds=root_ctx.local_config['manager']['heartbeat-timeout'])
 
         async def _check_impl():
-            async for agent_id, prev in app['redis_live'].ihscan('agent.last_seen'):
+            async for agent_id, prev in root_ctx.redis_live.ihscan('agent.last_seen'):
                 prev = datetime.fromtimestamp(float(prev), tzutc())
                 if now - prev > timeout:
-                    await app['event_producer'].produce_event(
+                    await root_ctx.event_producer.produce_event(
                         AgentTerminatedEvent("agent-lost"),
                         source=agent_id)
 
@@ -1183,23 +1198,14 @@ async def check_agent_lost(app, interval):
         pass
 
 
-# NOTE: This event is ignored during the grace period.
-async def handle_agent_stats(
-    app: web.Application,
-    source: AgentId,
-    event: AgentStatsEvent,
-) -> None:
-    await app['registry'].handle_stats(source, event.stats)
-
-
 async def handle_kernel_log(
     app: web.Application,
     source: AgentId,
     event: DoSyncKernelLogsEvent
 ) -> None:
-    dbpool = app['dbpool']
+    root_ctx: RootContext = app['_root.context']
     redis_conn: aioredis.Redis = await redis.connect_with_retries(
-        str(app['shared_config'].get_redis_url(db=REDIS_STREAM_DB)),
+        str(root_ctx.shared_config.get_redis_url(db=REDIS_STREAM_DB)),
         encoding=None,
     )
     # The log data is at most 10 MiB.
@@ -1220,7 +1226,7 @@ async def handle_kernel_log(
             chunk = await redis.execute_with_retries(lambda: redis_conn.lpop(log_key))
             log_buffer.write(chunk)
         try:
-            async with dbpool.acquire() as conn, conn.begin():
+            async with root_ctx.dbpool.acquire() as conn, conn.begin():
                 query = (sa.update(kernels)
                            .values(container_log=log_buffer.getvalue())
                            .where(kernels.c.id == event.kernel_id))
@@ -1236,18 +1242,18 @@ async def handle_kernel_log(
         await redis_conn.wait_closed()
 
 
-async def report_stats(app: web.Application) -> None:
-    stats_monitor = app['stats_monitor']
+async def report_stats(root_ctx: RootContext) -> None:
+    stats_monitor = root_ctx.stats_monitor
     await stats_monitor.report_metric(
         GAUGE, 'ai.backend.gateway.coroutines', len(asyncio.all_tasks()))
 
     all_inst_ids = [
         inst_id async for inst_id
-        in app['registry'].enumerate_instances()]
+        in root_ctx.registry.enumerate_instances()]
     await stats_monitor.report_metric(
         GAUGE, 'ai.backend.gateway.agent_instances', len(all_inst_ids))
 
-    async with app['dbpool'].acquire() as conn, conn.begin():
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         query = (sa.select([sa.func.sum(keypairs.c.concurrency_used)])
                    .select_from(keypairs))
         n = await conn.scalar(query)
@@ -1277,14 +1283,14 @@ async def report_stats(app: web.Application) -> None:
         """
 
 
-async def stats_report_timer(app):
+async def stats_report_timer(root_ctx: RootContext):
     while True:
         try:
-            await asyncio.shield(report_stats(app))
+            await asyncio.shield(report_stats(root_ctx))
         except asyncio.CancelledError:
             break
         except Exception:
-            await app['error_monitor'].capture_exception()
+            await root_ctx.error_monitor.capture_exception()
             log.exception('stats_report_timer: unexpected error')
         try:
             await asyncio.sleep(5)
@@ -1299,7 +1305,7 @@ async def stats_report_timer(app):
         t.Key('forced', default='false'): t.ToBool(),
     }))
 async def destroy(request: web.Request, params: Any) -> web.Response:
-    registry = request.app['registry']
+    root_ctx: RootContext = request.app['_root.context']
     session_name = request.match_info['session_name']
     if params['forced'] and request['user']['role'] not in (UserRole.ADMIN, UserRole.SUPERADMIN):
         raise InsufficientPrivilege('You are not allowed to force-terminate')
@@ -1310,9 +1316,9 @@ async def destroy(request: web.Request, params: Any) -> web.Response:
     #     domain_name = request['user']['domain_name']
     log.info('DESTROY (ak:{0}/{1}, s:{2}, forced:{3})',
              requester_access_key, owner_access_key, session_name, params['forced'])
-    last_stat = await registry.destroy_session(
+    last_stat = await root_ctx.registry.destroy_session(
         functools.partial(
-            registry.get_session,
+            root_ctx.registry.get_session,
             session_name, owner_access_key,
             # domain_name=domain_name,
         ),
@@ -1335,13 +1341,13 @@ async def match_sessions(request: web.Request, params: Any) -> web.Response:
     """
     A quick session-ID matcher API for use with auto-completion in CLI.
     """
-    dbpool = request.app['dbpool']
+    root_ctx: RootContext = request.app['_root.context']
     id_or_name_prefix = params['id']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('MATCH_SESSIONS(ak:{0}/{1}, prefix:{2})',
              requester_access_key, owner_access_key, id_or_name_prefix)
     matches: List[Dict[str, Any]] = []
-    async with dbpool.acquire() as conn:
+    async with root_ctx.dbpool.acquire() as conn:
         session_infos = await match_session_ids(
             id_or_name_prefix,
             owner_access_key,
@@ -1364,14 +1370,14 @@ async def match_sessions(request: web.Request, params: Any) -> web.Response:
 async def get_info(request: web.Request) -> web.Response:
     # NOTE: This API should be replaced with GraphQL version.
     resp = {}
-    registry = request.app['registry']
+    root_ctx: RootContext = request.app['_root.context']
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('GET_INFO (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, session_name)
     try:
-        await registry.increment_session_usage(session_name, owner_access_key)
-        kern = await registry.get_session(session_name, owner_access_key, field='*')
+        await root_ctx.registry.increment_session_usage(session_name, owner_access_key)
+        kern = await root_ctx.registry.get_session(session_name, owner_access_key)
         resp['domainName'] = kern['domain_name']
         resp['groupId'] = str(kern['group_id'])
         resp['userId'] = str(kern['user_uuid'])
@@ -1412,19 +1418,20 @@ async def get_info(request: web.Request) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def restart(request: web.Request) -> web.Response:
-    registry = request.app['registry']
+    root_ctx: RootContext = request.app['_root.context']
+    session_creation_id = secrets.token_urlsafe(16)
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('RESTART (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, session_name)
     try:
-        await registry.increment_session_usage(session_name, owner_access_key)
-        await registry.restart_session(session_name, owner_access_key)
+        await root_ctx.registry.increment_session_usage(session_name, owner_access_key)
+        await root_ctx.registry.restart_session(session_creation_id, session_name, owner_access_key)
     except BackendError:
         log.exception('RESTART: exception')
         raise
     except:
-        await request.app['error_monitor'].capture_exception(context={'user': request['user']['uuid']})
+        await root_ctx.error_monitor.capture_exception(context={'user': request['user']['uuid']})
         log.exception('RESTART: unexpected error')
         raise web.HTTPInternalServerError
     return web.Response(status=204)
@@ -1434,7 +1441,7 @@ async def restart(request: web.Request) -> web.Response:
 @auth_required
 async def execute(request: web.Request) -> web.Response:
     resp = {}
-    registry = request.app['registry']
+    root_ctx: RootContext = request.app['_root.context']
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     try:
@@ -1445,7 +1452,7 @@ async def execute(request: web.Request) -> web.Response:
         log.warning('EXECUTE: invalid/missing parameters')
         raise InvalidAPIParameters
     try:
-        await registry.increment_session_usage(session_name, owner_access_key)
+        await root_ctx.registry.increment_session_usage(session_name, owner_access_key)
         api_version = request['api_version']
         if api_version[0] == 1:
             run_id = params.get('runId', secrets.token_hex(8))
@@ -1468,10 +1475,10 @@ async def execute(request: web.Request) -> web.Response:
         if opts is None: opts = {}  # noqa
         if mode == 'complete':
             # For legacy
-            resp['result'] = await registry.get_completions(
+            resp['result'] = await root_ctx.registry.get_completions(
                 session_name, owner_access_key, code, opts)
         else:
-            raw_result = await registry.execute(
+            raw_result = await root_ctx.registry.execute(
                 session_name, owner_access_key,
                 api_version, run_id, mode, code, opts,
                 flush_timeout=2.0)
@@ -1516,14 +1523,14 @@ async def execute(request: web.Request) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def interrupt(request: web.Request) -> web.Response:
-    registry = request.app['registry']
+    root_ctx: RootContext = request.app['_root.context']
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('INTERRUPT(ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, session_name)
     try:
-        await registry.increment_session_usage(session_name, owner_access_key)
-        await registry.interrupt_session(session_name, owner_access_key)
+        await root_ctx.registry.increment_session_usage(session_name, owner_access_key)
+        await root_ctx.registry.interrupt_session(session_name, owner_access_key)
     except BackendError:
         log.exception('INTERRUPT: exception')
         raise
@@ -1540,7 +1547,7 @@ async def complete(request: web.Request) -> web.Response:
             'completions': [],
         }
     }
-    registry = request.app['registry']
+    root_ctx: RootContext = request.app['_root.context']
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     try:
@@ -1552,9 +1559,11 @@ async def complete(request: web.Request) -> web.Response:
     try:
         code = params.get('code', '')
         opts = params.get('options', None) or {}
-        await registry.increment_session_usage(session_name, owner_access_key)
-        resp['result'] = await request.app['registry'].get_completions(
-            session_name, owner_access_key, code, opts)
+        await root_ctx.registry.increment_session_usage(session_name, owner_access_key)
+        resp['result'] = cast(
+            Dict[str, Any],
+            await root_ctx.registry.get_completions(session_name, owner_access_key, code, opts),
+        )
     except AssertionError:
         raise InvalidAPIParameters
     except BackendError:
@@ -1571,14 +1580,14 @@ async def complete(request: web.Request) -> web.Response:
         t.Key('service_name'): t.String,
     }))
 async def shutdown_service(request: web.Request, params: Any) -> web.Response:
-    registry = request.app['registry']
+    root_ctx: RootContext = request.app['_root.context']
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('SHUTDOWN_SERVICE (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, session_name)
     service_name = params.get('service_name')
     try:
-        await registry.shutdown_service(session_name, owner_access_key, service_name)
+        await root_ctx.registry.shutdown_service(session_name, owner_access_key, service_name)
     except BackendError:
         log.exception('SHUTDOWN_SERVICE: exception')
         raise
@@ -1590,13 +1599,13 @@ async def shutdown_service(request: web.Request, params: Any) -> web.Response:
 async def upload_files(request: web.Request) -> web.Response:
     loop = asyncio.get_event_loop()
     reader = await request.multipart()
-    registry = request.app['registry']
+    root_ctx: RootContext = request.app['_root.context']
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('UPLOAD_FILE (ak:{0}/{1}, s:{2})',
              requester_access_key, owner_access_key, session_name)
     try:
-        await registry.increment_session_usage(session_name, owner_access_key)
+        await root_ctx.registry.increment_session_usage(session_name, owner_access_key)
         file_count = 0
         upload_tasks = []
         async for file in aiotools.aiter(reader.next, None):
@@ -1618,8 +1627,8 @@ async def upload_files(request: web.Request) -> web.Response:
             data = file.decode(b''.join(chunks))
             log.debug('received file: {0} ({1:,} bytes)', file.filename, recv_size)
             t = loop.create_task(
-                registry.upload_file(session_name, owner_access_key,
-                                     file.filename, data))
+                root_ctx.registry.upload_file(session_name, owner_access_key,
+                                              file.filename, data))
             upload_tasks.append(t)
         await asyncio.gather(*upload_tasks)
     except BackendError:
@@ -1635,20 +1644,25 @@ async def upload_files(request: web.Request) -> web.Response:
         tx.MultiKey('files'): t.List(t.String),
     }))
 async def download_files(request: web.Request, params: Any) -> web.Response:
-    registry = request.app['registry']
+    root_ctx: RootContext = request.app['_root.context']
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     files = params.get('files')
-    log.info('DOWNLOAD_FILE (ak:{0}/{1}, s:{2}, path:{3!r})',
-             requester_access_key, owner_access_key, session_name,
-             files[0])
+    log.info(
+        'DOWNLOAD_FILE (ak:{0}/{1}, s:{2}, path:{3!r})',
+        requester_access_key, owner_access_key, session_name,
+        files[0],
+    )
     try:
         assert len(files) <= 5, 'Too many files'
-        await registry.increment_session_usage(session_name, owner_access_key)
+        await root_ctx.registry.increment_session_usage(session_name, owner_access_key)
         # TODO: Read all download file contents. Need to fix by using chuncking, etc.
-        results = await asyncio.gather(*map(
-            functools.partial(registry.download_file, session_name, owner_access_key),
-            files))
+        results = await asyncio.gather(
+            *map(
+                functools.partial(root_ctx.registry.download_file, session_name, owner_access_key),
+                files,
+            )
+        )
         log.debug('file(s) inside container retrieved')
     except asyncio.CancelledError:
         raise
@@ -1658,7 +1672,7 @@ async def download_files(request: web.Request, params: Any) -> web.Response:
     except (ValueError, FileNotFoundError):
         raise InvalidAPIParameters('The file is not found.')
     except Exception:
-        await request.app['error_monitor'].capture_exception(context={'user': request['user']['uuid']})
+        await root_ctx.error_monitor.capture_exception(context={'user': request['user']['uuid']})
         log.exception('DOWNLOAD_FILE: unexpected error!')
         raise InternalServerError
 
@@ -1679,15 +1693,17 @@ async def download_single(request: web.Request, params: Any) -> web.Response:
     """
     Download a single file from the scratch root. Only for small files.
     """
-    registry = request.app['registry']
+    root_ctx: RootContext = request.app['_root.context']
     session_name = request.match_info['session_name']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     file = params['file']
-    log.info('DOWNLOAD_SINGLE (ak:{0}/{1}, s:{2}, path:{3!r})',
-             requester_access_key, owner_access_key, session_name, file)
+    log.info(
+        'DOWNLOAD_SINGLE (ak:{0}/{1}, s:{2}, path:{3!r})',
+        requester_access_key, owner_access_key, session_name, file,
+    )
     try:
-        await registry.increment_session_usage(session_name, owner_access_key)
-        result = await registry.download_file(session_name, owner_access_key, file)
+        await root_ctx.registry.increment_session_usage(session_name, owner_access_key)
+        result = await root_ctx.registry.download_file(session_name, owner_access_key, file)
     except asyncio.CancelledError:
         raise
     except BackendError:
@@ -1696,7 +1712,7 @@ async def download_single(request: web.Request, params: Any) -> web.Response:
     except (ValueError, FileNotFoundError):
         raise InvalidAPIParameters('The file is not found.')
     except Exception:
-        await request.app['error_monitor'].capture_exception(context={'user': request['user']['uuid']})
+        await root_ctx.error_monitor.capture_exception(context={'user': request['user']['uuid']})
         log.exception('DOWNLOAD_SINGLE: unexpected error!')
         raise InternalServerError
     return web.Response(body=result, status=200)
@@ -1706,22 +1722,24 @@ async def download_single(request: web.Request, params: Any) -> web.Response:
 @server_status_required(READ_ALLOWED)
 @auth_required
 async def list_files(request: web.Request) -> web.Response:
+    root_ctx: RootContext = request.app['_root.context']
     try:
         session_name = request.match_info['session_name']
         requester_access_key, owner_access_key = await get_access_key_scopes(request)
         params = await request.json(loads=json.loads)
         path = params.get('path', '.')
-        log.info('LIST_FILES (ak:{0}/{1}, s:{2}, path:{3})',
-                 requester_access_key, owner_access_key, session_name, path)
+        log.info(
+            'LIST_FILES (ak:{0}/{1}, s:{2}, path:{3})',
+            requester_access_key, owner_access_key, session_name, path,
+        )
     except (asyncio.TimeoutError, AssertionError,
             json.decoder.JSONDecodeError) as e:
         log.warning('LIST_FILES: invalid/missing parameters, {0!r}', e)
         raise InvalidAPIParameters(extra_msg=str(e.args[0]))
     resp: MutableMapping[str, Any] = {}
     try:
-        registry = request.app['registry']
-        await registry.increment_session_usage(session_name, owner_access_key)
-        result = await registry.list_files(session_name, owner_access_key, path)
+        await root_ctx.registry.increment_session_usage(session_name, owner_access_key)
+        result = await root_ctx.registry.list_files(session_name, owner_access_key, path)
         resp.update(result)
         log.debug('container file list for {0} retrieved', path)
     except asyncio.CancelledError:
@@ -1730,7 +1748,7 @@ async def list_files(request: web.Request) -> web.Response:
         log.exception('LIST_FILES: exception')
         raise
     except Exception:
-        await request.app['error_monitor'].capture_exception(context={'user': request['user']['uuid']})
+        await root_ctx.error_monitor.capture_exception(context={'user': request['user']['uuid']})
         log.exception('LIST_FILES: unexpected error!')
         raise InternalServerError
     return web.json_response(resp, status=200)
@@ -1744,15 +1762,14 @@ async def list_files(request: web.Request) -> web.Response:
         t.Key('owner_access_key', default=None): t.Null | t.String,
     }))
 async def get_container_logs(request: web.Request, params: Any) -> web.Response:
-    registry: AgentRegistry = request.app['registry']
+    root_ctx: RootContext = request.app['_root.context']
     session_name: str = request.match_info['session_name']
-    dbpool = request.app['dbpool']
     requester_access_key, owner_access_key = await get_access_key_scopes(request)
     log.info('GET_CONTAINER_LOG (ak:{}/{}, s:{})',
              requester_access_key, owner_access_key, session_name)
     resp = {'result': {'logs': ''}}
-    async with dbpool.acquire() as conn, conn.begin():
-        compute_session = await registry.get_session(
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
+        compute_session = await root_ctx.registry.get_session(
             session_name, owner_access_key,
             allow_stale=True,
             db_connection=conn,
@@ -1765,6 +1782,7 @@ async def get_container_logs(request: web.Request, params: Any) -> web.Response:
             resp['result']['logs'] = compute_session['container_log'].decode('utf-8')
             return web.json_response(resp, status=200)
     try:
+        registry = root_ctx.registry
         await registry.increment_session_usage(session_name, owner_access_key)
         resp['result']['logs'] = await registry.get_logs_from_agent(session_name, owner_access_key)
         log.debug('returning log from agent')
@@ -1784,11 +1802,12 @@ async def get_container_logs(request: web.Request, params: Any) -> web.Response:
 async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse:
     log.info('GET_TASK_LOG (ak:{}, k:{})',
              request['keypair']['access_key'], params['kernel_id'])
+    root_ctx: RootContext = request.app['_root.context']
     domain_name = request['user']['domain_name']
     user_role = request['user']['role']
     user_uuid = request['user']['uuid']
     kernel_id_str = params['kernel_id'].hex
-    async with request.app['dbpool'].acquire() as conn, conn.begin():
+    async with root_ctx.dbpool.acquire() as conn, conn.begin():
         matched_vfolders = await query_accessible_vfolders(
             conn, user_uuid,
             user_role=user_role, domain_name=domain_name,
@@ -1798,13 +1817,12 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
             raise GenericNotFound('You do not have ".logs" vfolder for persistent task logs.')
         log_vfolder = matched_vfolders[0]
 
-    storage_manager = request.app['storage_manager']
-    proxy_name, volume_name = storage_manager.split_host(log_vfolder['host'])
+    proxy_name, volume_name = root_ctx.storage_manager.split_host(log_vfolder['host'])
     response = web.StreamResponse(status=200)
     response.headers[hdrs.CONTENT_TYPE] = "text/plain"
     prepared = False
     try:
-        async with storage_manager.request(
+        async with root_ctx.storage_manager.request(
             log_vfolder['host'], 'POST', 'folder/file/fetch',
             json={
                 'volume': volume_name,
@@ -1833,46 +1851,57 @@ async def get_task_logs(request: web.Request, params: Any) -> web.StreamResponse
     return response
 
 
-async def init(app: web.Application) -> None:
-    event_dispatcher: EventDispatcher = app['event_dispatcher']
+@attr.s(slots=True, auto_attribs=True, init=False)
+class PrivateContext:
+    session_creation_tracker: Dict[str, asyncio.Event]
+    pending_waits: Set[asyncio.Task[None]]
+    agent_lost_checker: asyncio.Task[None]
+    stats_task: asyncio.Task[None]
 
-    app['session_creation_tracker'] = {}
+
+async def init(app: web.Application) -> None:
+    root_ctx: RootContext = app['_root.context']
+    app_ctx: PrivateContext = app['session.context']
+
+    app_ctx.session_creation_tracker = {}
 
     # passive events
-    event_dispatcher.subscribe(KernelPreparingEvent, app, handle_kernel_creation_lifecycle)
-    event_dispatcher.subscribe(KernelPullingEvent, app, handle_kernel_creation_lifecycle)
-    event_dispatcher.subscribe(KernelCreatingEvent, app, handle_kernel_creation_lifecycle)
-    event_dispatcher.subscribe(KernelStartedEvent, app, handle_kernel_creation_lifecycle)
-    event_dispatcher.subscribe(SessionStartedEvent, app, handle_session_creation_lifecycle)
-    event_dispatcher.subscribe(SessionCancelledEvent, app, handle_session_creation_lifecycle)
-    event_dispatcher.consume(KernelTerminatingEvent, app, handle_kernel_termination_lifecycle)
-    event_dispatcher.consume(KernelTerminatedEvent, app, handle_kernel_termination_lifecycle)
-    event_dispatcher.consume(SessionTerminatedEvent, app, handle_session_termination_lifecycle)
-    event_dispatcher.consume(SessionSuccessEvent, app, handle_batch_result)
-    event_dispatcher.consume(SessionFailureEvent, app, handle_batch_result)
-    event_dispatcher.consume(AgentStartedEvent, app, handle_agent_lifecycle)
-    event_dispatcher.consume(AgentTerminatedEvent, app, handle_agent_lifecycle)
-    event_dispatcher.consume(AgentHeartbeatEvent, app, handle_agent_heartbeat)
-    event_dispatcher.consume(AgentStatsEvent, app, handle_agent_stats)
+    evd = root_ctx.event_dispatcher
+    evd.subscribe(KernelPreparingEvent, app, handle_kernel_creation_lifecycle)
+    evd.subscribe(KernelPullingEvent, app, handle_kernel_creation_lifecycle)
+    evd.subscribe(KernelCreatingEvent, app, handle_kernel_creation_lifecycle)
+    evd.subscribe(KernelStartedEvent, app, handle_kernel_creation_lifecycle)
+    evd.subscribe(SessionStartedEvent, app, handle_session_creation_lifecycle)
+    evd.subscribe(SessionCancelledEvent, app, handle_session_creation_lifecycle)
+    evd.consume(KernelTerminatingEvent, app, handle_kernel_termination_lifecycle)
+    evd.consume(KernelTerminatedEvent, app, handle_kernel_termination_lifecycle)
+    evd.consume(SessionTerminatedEvent, app, handle_session_termination_lifecycle)
+    evd.consume(SessionSuccessEvent, app, handle_batch_result)
+    evd.consume(SessionFailureEvent, app, handle_batch_result)
+    evd.consume(AgentStartedEvent, app, handle_agent_lifecycle)
+    evd.consume(AgentTerminatedEvent, app, handle_agent_lifecycle)
+    evd.consume(AgentHeartbeatEvent, app, handle_agent_heartbeat)
 
     # action-trigerring events
-    event_dispatcher.consume(DoSyncKernelStatsEvent, app, handle_kernel_stat_sync)
-    event_dispatcher.consume(DoSyncKernelLogsEvent, app, handle_kernel_log)
-    event_dispatcher.consume(DoTerminateSessionEvent, app, handle_destroy_session)
+    evd.consume(DoSyncKernelStatsEvent, app, handle_kernel_stat_sync)
+    evd.consume(DoSyncKernelLogsEvent, app, handle_kernel_log)
+    evd.consume(DoTerminateSessionEvent, app, handle_destroy_session)
 
-    app['pending_waits'] = set()
+    app_ctx.pending_waits = set()
 
     # Scan ALIVE agents
-    app['agent_lost_checker'] = aiotools.create_timer(
-        functools.partial(check_agent_lost, app), 1.0)
-    app['stats_task'] = asyncio.create_task(stats_report_timer(app))
+    app_ctx.agent_lost_checker = aiotools.create_timer(
+        functools.partial(check_agent_lost, root_ctx), 1.0)
+    app_ctx.stats_task = asyncio.create_task(stats_report_timer(root_ctx))
 
 
 async def shutdown(app: web.Application) -> None:
-    app['agent_lost_checker'].cancel()
-    await app['agent_lost_checker']
-    app['stats_task'].cancel()
-    await app['stats_task']
+    app_ctx: PrivateContext = app['session.context']
+
+    app_ctx.agent_lost_checker.cancel()
+    await app_ctx.agent_lost_checker
+    app_ctx.stats_task.cancel()
+    await app_ctx.stats_task
 
     checked_tasks = ('kernel_agent_event_collector', 'kernel_ddtimer')
     for tname in checked_tasks:
@@ -1881,7 +1910,7 @@ async def shutdown(app: web.Application) -> None:
             t.cancel()
             await t
 
-    for task in {*app['pending_waits']}:
+    for task in {*app_ctx.pending_waits}:
         task.cancel()
         try:
             await task
@@ -1894,6 +1923,7 @@ def create_app(default_cors_options: CORSOptions) -> Tuple[web.Application, Iter
     app.on_startup.append(init)
     app.on_shutdown.append(shutdown)
     app['api_versions'] = (1, 2, 3, 4)
+    app['session.context'] = PrivateContext()
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     cors.add(app.router.add_route('POST', '', create_from_params))
     cors.add(app.router.add_route('POST', '/_/create', create_from_params))

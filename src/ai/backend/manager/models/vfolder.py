@@ -1,6 +1,18 @@
-import enum
-from typing import Any, Sequence
+from __future__ import annotations
 
+import enum
+from typing import (
+    Any,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    TYPE_CHECKING,
+)
+import uuid
+
+from aiopg.sa.connection import SAConnection
+from aiopg.sa.result import RowProxy
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 import sqlalchemy as sa
@@ -13,6 +25,8 @@ from .base import (
     batch_multiresult,
 )
 from .user import UserRole
+if TYPE_CHECKING:
+    from .gql import GraphQueryContext
 
 __all__: Sequence[str] = (
     'vfolders',
@@ -173,13 +187,18 @@ def verify_vfolder_name(folder: str) -> bool:
     return True
 
 
-async def query_accessible_vfolders(conn, user_uuid, *,
-                                    user_role=None, domain_name=None,
-                                    allowed_vfolder_types=None,
-                                    extra_vf_conds=None,
-                                    extra_vfperm_conds=None,
-                                    extra_vf_user_conds=None,
-                                    extra_vf_group_conds=None):
+async def query_accessible_vfolders(
+    conn: SAConnection,
+    user_uuid: uuid.UUID,
+    *,
+    user_role=None,
+    domain_name=None,
+    allowed_vfolder_types=None,
+    extra_vf_conds=None,
+    extra_vfperm_conds=None,
+    extra_vf_user_conds=None,
+    extra_vf_group_conds=None,
+) -> Sequence[Mapping[str, Any]]:
     from ai.backend.manager.models import groups, users, association_groups_users as agus
     if allowed_vfolder_types is None:
         allowed_vfolder_types = ['user']  # legacy default
@@ -363,8 +382,13 @@ async def query_accessible_vfolders(conn, user_uuid, *,
     return entries
 
 
-async def get_allowed_vfolder_hosts_by_group(conn, resource_policy,
-                                             domain_name, group_id=None, domain_admin=False):
+async def get_allowed_vfolder_hosts_by_group(
+    conn: SAConnection,
+    resource_policy,
+    domain_name: str,
+    group_id: uuid.UUID = None,
+    domain_admin: bool = False,
+) -> Set[str]:
     '''
     Union `allowed_vfolder_hosts` from domain, group, and keypair_resource_policy.
 
@@ -396,8 +420,12 @@ async def get_allowed_vfolder_hosts_by_group(conn, resource_policy,
     return allowed_hosts
 
 
-async def get_allowed_vfolder_hosts_by_user(conn, resource_policy,
-                                            domain_name, user_uuid):
+async def get_allowed_vfolder_hosts_by_user(
+    conn: SAConnection,
+    resource_policy,
+    domain_name: str,
+    user_uuid: uuid.UUID,
+) -> Set[str]:
     '''
     Union `allowed_vfolder_hosts` from domain, groups, and keypair_resource_policy.
 
@@ -451,7 +479,7 @@ class VirtualFolder(graphene.ObjectType):
     cloneable = graphene.Boolean()
 
     @classmethod
-    def from_row(cls, context, row):
+    def from_row(cls, ctx: GraphQueryContext, row: RowProxy) -> Optional[VirtualFolder]:
         if row is None:
             return None
         return cls(
@@ -473,19 +501,25 @@ class VirtualFolder(graphene.ObjectType):
             cloneable=row['cloneable'],
         )
 
-    async def resolve_num_files(self, info):
+    async def resolve_num_files(self, info: graphene.ResolveInfo) -> int:
         # TODO: measure on-the-fly
         return 0
 
-    async def resolve_cur_size(self, info):
+    async def resolve_cur_size(self, info: graphene.ResolveInfo) -> int:
         # TODO: measure on-the-fly
         return 0
 
     @classmethod
-    async def load_count(cls, context, *,
-                         domain_name=None, group_id=None, user_id=None):
+    async def load_count(
+        cls,
+        ctx: GraphQueryContext,
+        *,
+        domain_name: str = None,
+        group_id: uuid.UUID = None,
+        user_id: uuid.UUID = None,
+    ) -> int:
         from .user import users
-        async with context['dbpool'].acquire() as conn:
+        async with ctx.dbpool.acquire() as conn:
             j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
             query = (
                 sa.select([sa.func.count(vfolders.c.id)])
@@ -502,11 +536,20 @@ class VirtualFolder(graphene.ObjectType):
             return await result.scalar()
 
     @classmethod
-    async def load_slice(cls, context, limit, offset, *,
-                         domain_name=None, group_id=None, user_id=None,
-                         order_key=None, order_asc=None):
+    async def load_slice(
+        cls,
+        ctx: GraphQueryContext,
+        limit: int,
+        offset: int,
+        *,
+        domain_name: str = None,
+        group_id: uuid.UUID = None,
+        user_id: uuid.UUID = None,
+        order_key: str = None,
+        order_asc: bool = True
+    ) -> Sequence[VirtualFolder]:
         from .user import users
-        async with context['dbpool'].acquire() as conn:
+        async with ctx.dbpool.acquire() as conn:
             if order_key is None:
                 _ordering = vfolders.c.created_at
             else:
@@ -526,13 +569,22 @@ class VirtualFolder(graphene.ObjectType):
                 query = query.where(vfolders.c.group == group_id)
             if user_id is not None:
                 query = query.where(vfolders.c.user == user_id)
-            return [cls.from_row(context, r) async for r in conn.execute(query)]
+            return [
+                obj async for r in conn.execute(query)
+                if (obj := cls.from_row(ctx, r)) is not None
+            ]
 
     @classmethod
-    async def batch_load_by_user(cls, context, user_uuids, *,
-                                 domain_name=None, group_id=None):
+    async def batch_load_by_user(
+        cls,
+        ctx: GraphQueryContext,
+        user_uuids: Sequence[uuid.UUID],
+        *,
+        domain_name: str = None,
+        group_id: uuid.UUID = None,
+    ) -> Sequence[Sequence[VirtualFolder]]:
         from .user import users
-        async with context['dbpool'].acquire() as conn:
+        async with ctx.dbpool.acquire() as conn:
             # TODO: num_attached count group-by
             j = sa.join(vfolders, users, vfolders.c.user == users.c.uuid)
             query = (
@@ -546,7 +598,7 @@ class VirtualFolder(graphene.ObjectType):
             if group_id is not None:
                 query = query.where(vfolders.c.group == group_id)
             return await batch_multiresult(
-                context, conn, query, cls,
+                ctx, conn, query, cls,
                 user_uuids, lambda row: row['user']
             )
 

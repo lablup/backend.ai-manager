@@ -1,11 +1,11 @@
+from __future__ import annotations
+
 import logging
 import sys
 import traceback
-from typing import Any, Mapping
+from typing import Any, Mapping, TYPE_CHECKING
 
-from aiohttp import web
-
-from ai.backend.common.events import AgentErrorEvent, EventDispatcher
+from ai.backend.common.events import AgentErrorEvent
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (
     AgentId,
@@ -13,22 +13,19 @@ from ai.backend.common.types import (
 )
 from ai.backend.common.plugin.monitor import AbstractErrorReporterPlugin
 from ..models import error_logs
-from .exceptions import PluginError
+if TYPE_CHECKING:
+    from ai.backend.gateway.context import RootContext
 
 log = BraceStyleAdapter(logging.getLogger(__name__))
 
 
 class ErrorMonitor(AbstractErrorReporterPlugin):
 
-    event_dispatcher: EventDispatcher
-
     async def init(self, context: Any = None) -> None:
-        if context is None or 'app' not in context:
-            raise PluginError('App was not passed in to ErrorMonitor plugin')
-        app = context['app']
-        self.event_dispatcher = app['event_dispatcher']
-        self._evh = self.event_dispatcher.consume(AgentErrorEvent, app, self.handle_agent_error)
-        self.dbpool = app['dbpool']
+        root_ctx: RootContext = context['_root.context']  # type: ignore
+        self.event_dispatcher = root_ctx.event_dispatcher
+        self._evh = self.event_dispatcher.consume(AgentErrorEvent, None, self.handle_agent_error)
+        self.dbpool = root_ctx.dbpool
 
     async def cleanup(self) -> None:
         self.event_dispatcher.unconsume(self._evh)
@@ -82,7 +79,7 @@ class ErrorMonitor(AbstractErrorReporterPlugin):
 
     async def handle_agent_error(
         self,
-        app: web.Application,
+        context: None,
         source: AgentId,
         event: AgentErrorEvent,
     ) -> None:
