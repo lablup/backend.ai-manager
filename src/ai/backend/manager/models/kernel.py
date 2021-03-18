@@ -758,7 +758,7 @@ class ComputeSession(graphene.ObjectType):
         and return the JSON-serializable object from the sum result.
         """
         graph_ctx: GraphQueryContext = info.context
-        loader = graph_ctx.dataloader_manager.get_loader('ComputeContainer.by_session')
+        loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'ComputeContainer.by_session')
         containers = await loader.load(self.session_id)
         zero = ResourceSlot()
         return sum(
@@ -773,7 +773,7 @@ class ComputeSession(graphene.ObjectType):
         info: graphene.ResolveInfo,
     ) -> Iterable[ComputeContainer]:
         graph_ctx: GraphQueryContext = info.context
-        loader = graph_ctx.dataloader_manager.get_loader('ComputeContainer.by_session')
+        loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'ComputeContainer.by_session')
         return await loader.load(self.session_id)
 
     async def resolve_dependencies(
@@ -781,7 +781,7 @@ class ComputeSession(graphene.ObjectType):
         info: graphene.ResolveInfo,
     ) -> Iterable[ComputeSession]:
         graph_ctx: GraphQueryContext = info.context
-        loader = graph_ctx.dataloader_manager.get_loader('ComputeSession.by_dependency')
+        loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'ComputeSession.by_dependency')
         return await loader.load(self.id)
 
     @classmethod

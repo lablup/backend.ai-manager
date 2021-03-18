@@ -35,8 +35,6 @@ from .base import (
 if TYPE_CHECKING:
     from ai.backend.manager.models.gql import GraphQueryContext
 
-    from ..registry import AgentRegistry
-
 __all__: Sequence[str] = (
     'agents', 'AgentStatus',
     'AgentList', 'Agent',

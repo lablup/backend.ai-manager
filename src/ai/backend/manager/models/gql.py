@@ -1029,7 +1029,7 @@ class Queries(graphene.ObjectType):
         # by other users and in other groups.
         # Let's just protect the domain/user boundary here.
         graph_ctx: GraphQueryContext = info.context
-        loader = graph_ctx.dataloader_manager.get_loader('ComputeContainer.detail')
+        loader = graph_ctx.dataloader_manager.get_loader(graph_ctx, 'ComputeContainer.detail')
         return await loader.load(container_id)
 
     @staticmethod
@@ -1082,6 +1082,7 @@ class Queries(graphene.ObjectType):
         # Let's just protect the domain/user boundary here.
         graph_ctx: GraphQueryContext = info.context
         loader = graph_ctx.dataloader_manager.get_loader(
+            graph_ctx,
             'ComputeSession.detail',
             domain_name=domain_name,
             access_key=access_key
@@ -1140,6 +1141,7 @@ class Queries(graphene.ObjectType):
         # Let's just protect the domain/user boundary here.
         graph_ctx: GraphQueryContext = info.context
         loader = graph_ctx.dataloader_manager.get_loader(
+            graph_ctx,
             'LegacyComputeSession.detail',
             domain_name=domain_name,
             access_key=access_key,
