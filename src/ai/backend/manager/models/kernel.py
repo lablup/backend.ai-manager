@@ -697,7 +697,7 @@ class ComputeSession(graphene.ObjectType):
     dependencies = graphene.List(lambda: ComputeSession)
 
     @classmethod
-    def parse_row(cls, context: Any, row: RowProxy) -> Mapping[str, Any]:
+    def parse_row(cls, ctx: GraphQueryContext, row: RowProxy) -> Mapping[str, Any]:
         assert row is not None
         return {
             # identity
@@ -746,10 +746,10 @@ class ComputeSession(graphene.ObjectType):
         }
 
     @classmethod
-    def from_row(cls, context: Mapping[str, Any], row: RowProxy) -> Optional[ComputeSession]:
+    def from_row(cls, ctx: GraphQueryContext, row: RowProxy) -> ComputeSession | None:
         if row is None:
             return None
-        props = cls.parse_row(context, row)
+        props = cls.parse_row(ctx, row)
         return cls(**props)
 
     async def resolve_occupied_slots(self, info: graphene.ResolveInfo) -> Mapping[str, Any]:
@@ -787,18 +787,18 @@ class ComputeSession(graphene.ObjectType):
     @classmethod
     async def load_count(
         cls,
-        context,
+        ctx: GraphQueryContext,
         *,
-        domain_name=None,
-        group_id=None,
-        access_key=None,
-        status=None,
+        domain_name: str = None,
+        group_id: uuid.UUID = None,
+        access_key: str = None,
+        status: str = None,
     ) -> int:
         if isinstance(status, str):
             status_list = [KernelStatus[s] for s in status.split(',')]
         elif isinstance(status, KernelStatus):
             status_list = [status]
-        async with context['dbpool'].acquire() as conn:
+        async with ctx.dbpool.acquire() as conn:
             query = (
                 sa.select([sa.func.count(kernels.c.id)])
                 .select_from(kernels)
@@ -819,22 +819,22 @@ class ComputeSession(graphene.ObjectType):
     @classmethod
     async def load_slice(
         cls,
-        context,
+        ctx: GraphQueryContext,
         limit: int,
         offset: int,
         *,
-        domain_name=None,
-        group_id=None,
-        access_key=None,
-        status=None,
-        order_key=None,
-        order_asc=None,
-    ) -> Sequence[Optional[ComputeSession]]:
+        domain_name: str = None,
+        group_id: uuid.UUID = None,
+        access_key: str = None,
+        status: str = None,
+        order_key: str = None,
+        order_asc: bool = True,
+    ) -> Sequence[ComputeSession | None]:
         if isinstance(status, str):
             status_list = [KernelStatus[s] for s in status.split(',')]
         elif isinstance(status, KernelStatus):
             status_list = [status]
-        async with context['dbpool'].acquire() as conn:
+        async with ctx.dbpool.acquire() as conn:
             if order_key is None:
                 _ordering = DEFAULT_SESSION_ORDERING
             else:
@@ -865,15 +865,15 @@ class ComputeSession(graphene.ObjectType):
                 query = query.where(kernels.c.access_key == access_key)
             if status is not None:
                 query = query.where(kernels.c.status.in_(status_list))
-            return [cls.from_row(context, r) async for r in conn.execute(query)]
+            return [cls.from_row(ctx, r) async for r in conn.execute(query)]
 
     @classmethod
     async def batch_load_by_dependency(
         cls,
-        context,
+        ctx: GraphQueryContext,
         session_ids: Sequence[SessionId],
     ) -> Sequence[Sequence[ComputeSession]]:
-        async with context['dbpool'].acquire() as conn:
+        async with ctx.dbpool.acquire() as conn:
             j = sa.join(
                 kernels, session_dependencies,
                 kernels.c.session_id == session_dependencies.c.depends_on,
@@ -887,20 +887,20 @@ class ComputeSession(graphene.ObjectType):
                 )
             )
             return await batch_multiresult(
-                context, conn, query, cls,
+                ctx, conn, query, cls,
                 session_ids, lambda row: row['id'],
             )
 
     @classmethod
     async def batch_load_detail(
         cls,
-        context,
+        ctx: GraphQueryContext,
         session_ids: Sequence[SessionId],
         *,
-        domain_name=None,
-        access_key=None,
-    ) -> Sequence[Optional[ComputeSession]]:
-        async with context['dbpool'].acquire() as conn:
+        domain_name: str = None,
+        access_key: str = None,
+    ) -> Sequence[ComputeSession | None]:
+        async with ctx.dbpool.acquire() as conn:
             j = (
                 kernels
                 .join(groups, groups.c.id == kernels.c.group_id)
@@ -922,7 +922,7 @@ class ComputeSession(graphene.ObjectType):
             if access_key is not None:
                 query = query.where(kernels.c.access_key == access_key)
             return await batch_result(
-                context, conn, query, cls,
+                ctx, conn, query, cls,
                 session_ids, lambda row: row['id'],
             )
 
