@@ -16,6 +16,13 @@ Changes
 
 .. towncrier release notes start
 
+20.09.12 (2021-03-19)
+---------------------
+
+### Fixes
+* A follow-up hot fix for #400 ([#405](https://github.com/lablup/backend.ai-manager/issues/405))
+
+
 20.09.11 (2021-03-18)
 ---------------------
 
