@@ -790,18 +790,18 @@ class AgentRegistry:
                     determined_mounts.append((
                         item['name'],
                         item['host'],
-                        f"{mount_path}/{user_uuid.hex}",
+                        str(item['id']),
                         item['permission'].value,
-                        ''
+                        f"{mount_path}/{user_uuid.hex}",
                     ))
                 else:
                     matched_mounts.add(item['name'])
                     determined_mounts.append((
                         item['name'],
                         item['host'],
-                        mount_path,
+                        str(item['id']),
                         item['permission'].value,
-                        item['unmanaged_path'] if item['unmanaged_path'] else '',
+                        item['unmanaged_path'] if item['unmanaged_path'] else mount_path,
                     ))
             if mounts and set(mounts) > matched_mounts:
                 raise VFolderNotFound
