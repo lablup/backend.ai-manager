@@ -61,7 +61,6 @@ from .kernel import (
     ComputeContainerList,
     LegacyComputeSession,
     LegacyComputeSessionList,
-    KernelStatus,
 )
 from .keypair import (
     KeyPair,
@@ -1043,7 +1042,7 @@ class Queries(graphene.ObjectType):
         domain_name: str = None,
         group_id: uuid.UUID = None,
         access_key: AccessKey = None,
-        status: KernelStatus = None,
+        status: str = None,
         order_key: str = None,
         order_asc: bool = True,
     ) -> ComputeSessionList:
