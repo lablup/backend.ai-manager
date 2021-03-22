@@ -26,7 +26,6 @@ import aiohttp_cors
 import aiojobs
 from aiojobs.aiohttp import atomic
 import sqlalchemy as sa
-import psycopg2
 import trafaret as t
 
 from ai.backend.common import validators as tx
@@ -1250,7 +1249,7 @@ async def delete_invitation(request: web.Request, params: Any) -> web.Response:
                 .values(state=state)
             )
             await conn.execute(query)
-    except (psycopg2.IntegrityError, sa.exc.IntegrityError) as e:
+    except sa.exc.IntegrityError as e:
         raise InternalServerError(f'integrity error: {e}')
     except (asyncio.CancelledError, asyncio.TimeoutError):
         raise

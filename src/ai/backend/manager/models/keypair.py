@@ -413,7 +413,7 @@ class CreateKeyPair(graphene.Mutation):
                 user_uuid = result.scalar()
                 if user_uuid is None:
                     return cls(ok=False, msg=f'User not found: {user_id}', keypair=None)
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+            except sa.exc.IntegrityError as e:
                 return cls(ok=False, msg=f'integrity error: {e}', keypair=None)
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 raise
@@ -448,7 +448,7 @@ class CreateKeyPair(graphene.Mutation):
                     return cls(ok=True, msg='success', keypair=o)
                 else:
                     return cls(ok=False, msg='failed to create keypair', keypair=None)
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+            except sa.exc.IntegrityError as e:
                 return cls(ok=False, msg=f'integrity error: {e}', keypair=None)
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 raise

@@ -363,7 +363,7 @@ class ModifyGroup(graphene.Mutation):
                     return cls(ok=False, msg='no such group', group=None)
                 else:  # updated association_groups_users table
                     return cls(ok=True, msg='success', group=None)
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+            except sa.exc.IntegrityError as e:
                 return cls(ok=False, msg=f'integrity error: {e}', group=None)
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 raise

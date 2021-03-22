@@ -28,11 +28,11 @@ import uuid
 
 from aiodataloader import DataLoader
 from aiotools import apartial
+from asyncpg.exceptions import UniqueViolationError
 import graphene
 from graphene.types import Scalar
 from graphql.language import ast
 from graphene.types.scalars import MIN_INT, MAX_INT
-import psycopg2 as pg
 import sqlalchemy as sa
 from sqlalchemy.engine.row import Row
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
@@ -575,7 +575,7 @@ async def simple_db_mutate(
                 return result_cls(True, 'success')
             else:
                 return result_cls(False, 'no matching record')
-        except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+        except sa.exc.IntegrityError as e:
             return result_cls(False, f'integrity error: {e}')
         except (asyncio.CancelledError, asyncio.TimeoutError):
             raise
@@ -600,7 +600,7 @@ async def simple_db_mutate_returning_item(
                 return result_cls(True, 'success', item_cls.from_row(ctx, item))
             else:
                 return result_cls(False, 'no matching record', None)
-        except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+        except sa.exc.IntegrityError as e:
             return result_cls(False, f'integrity error: {e}', None)
         except (asyncio.CancelledError, asyncio.TimeoutError):
             raise
@@ -640,7 +640,7 @@ def populate_fixture(db_connection, fixture_data, *,
                 try:
                     insert(table, row)
                 except sa.exc.IntegrityError as e:
-                    if ignore_unique_violation and isinstance(e.orig, pg.errors.UniqueViolation):
+                    if ignore_unique_violation and isinstance(e.orig, UniqueViolationError):
                         continue
                     raise
                 continue

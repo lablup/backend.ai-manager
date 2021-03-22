@@ -17,7 +17,6 @@ import aiohttp
 import graphene
 from graphene.types.datetime import DateTime as GQLDateTime
 from passlib.hash import bcrypt
-import psycopg2 as pg
 import sqlalchemy as sa
 from sqlalchemy.engine.row import Row
 from sqlalchemy.ext.asyncio import (
@@ -515,7 +514,7 @@ class CreateUser(graphene.Mutation):
                     return cls(ok=True, msg='success', user=o)
                 else:
                     return cls(ok=False, msg='failed to create user', user=None)
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+            except sa.exc.IntegrityError as e:
                 return cls(ok=False, msg=f'integrity error: {e}', user=None)
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 raise
@@ -662,7 +661,7 @@ class ModifyUser(graphene.Mutation):
                         query = association_groups_users.insert().values(values)
                         await conn.execute(query)
                 return cls(ok=True, msg='success', user=o)
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+            except sa.exc.IntegrityError as e:
                 return cls(ok=False, msg=f'integrity error: {e}', user=None)
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 raise
@@ -715,7 +714,7 @@ class DeleteUser(graphene.Mutation):
                     return cls(ok=True, msg='success')
                 else:
                     return cls(ok=False, msg='no such user')
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+            except sa.exc.IntegrityError as e:
                 return cls(ok=False, msg=f'integrity error: {e}')
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 raise
@@ -793,7 +792,7 @@ class PurgeUser(graphene.Mutation):
                     return cls(ok=True, msg='success')
                 else:
                     return cls(ok=False, msg='no such user')
-            except (pg.IntegrityError, sa.exc.IntegrityError) as e:
+            except sa.exc.IntegrityError as e:
                 return cls(ok=False, msg=f'integrity error: {e}')
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 raise
