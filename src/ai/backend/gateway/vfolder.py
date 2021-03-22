@@ -176,7 +176,7 @@ def vfolder_check_exists(handler: Callable[..., Awaitable[web.Response]]):
                        (vfolders.c.name == folder_name)))
             try:
                 result = await conn.execute(query)
-            except psycopg2.DataError:
+            except sa.exc.DataError:
                 raise InvalidAPIParameters
             row = result.first()
             if row is None:
@@ -356,7 +356,7 @@ async def create(request: web.Request, params: Any) -> web.Response:
         query = (vfolders.insert().values(insert_values))
         try:
             result = await conn.execute(query)
-        except psycopg2.DataError:
+        except sa.exc.DataError:
             raise InvalidAPIParameters
         assert result.rowcount == 1
     return web.json_response(resp, status=201)
@@ -1019,7 +1019,7 @@ async def invite(request: web.Request, params: Any) -> web.Response:
                           (vfolders.c.name == folder_name)))
         try:
             result = await conn.execute(query)
-        except psycopg2.DataError:
+        except sa.exc.DataError:
             raise InvalidAPIParameters
         vf = result.first()
         if vf is None:
@@ -1032,7 +1032,7 @@ async def invite(request: web.Request, params: Any) -> web.Response:
                    .where(keypairs.c.user_id != request['user']['email']))
         try:
             result = await conn.execute(query)
-        except psycopg2.DataError:
+        except sa.exc.DataError:
             raise InvalidAPIParameters
         if result.rowcount < 1:
             raise GenericNotFound('No such vfolder invitation')
@@ -1083,7 +1083,7 @@ async def invite(request: web.Request, params: Any) -> web.Response:
             try:
                 await conn.execute(query)
                 invited_ids.append(invitee)
-            except psycopg2.DataError:
+            except sa.exc.DataError:
                 pass
     resp = {'invited_ids': invited_ids}
     return web.json_response(resp, status=201)
@@ -1486,7 +1486,7 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
         query = (vfolders.insert().values(insert_values))
         try:
             result = await conn.execute(query)
-        except psycopg2.DataError:
+        except sa.exc.DataError:
             raise InvalidAPIParameters
         assert result.rowcount == 1
     return web.json_response(resp, status=201)
