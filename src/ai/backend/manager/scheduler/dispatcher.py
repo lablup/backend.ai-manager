@@ -209,16 +209,17 @@ class SchedulerDispatcher(aobject):
         # It is executed under a globally exclusive context using aioredlock.
         async with self.dbpool.connect() as agent_db_conn, \
                    self.dbpool.connect() as kernel_db_conn:
-            query = (
-                sa.select([agents.c.scaling_group])
-                .select_from(agents)
-                .where(agents.c.status == AgentStatus.ALIVE)
-                .group_by(agents.c.scaling_group)
-            )
-            result = await agent_db_conn.execute(query)
-            schedulable_scaling_groups = [
-                row.scaling_group for row in result.fetchall()
-            ]
+            async with agent_db_conn.begin():
+                query = (
+                    sa.select([agents.c.scaling_group])
+                    .select_from(agents)
+                    .where(agents.c.status == AgentStatus.ALIVE)
+                    .group_by(agents.c.scaling_group)
+                )
+                result = await agent_db_conn.execute(query)
+                schedulable_scaling_groups = [
+                    row.scaling_group for row in result.fetchall()
+                ]
             for sgroup_name in schedulable_scaling_groups:
                 try:
                     args_list = await self._schedule_in_sgroup(
@@ -229,7 +230,7 @@ class SchedulerDispatcher(aobject):
                     # Proceed to the next scaling group and come back later.
                     log.debug('schedule({}): instance not available', sgroup_name)
                 except Exception as e:
-                    log.error('schedule({}): scheduling error!\n{}', sgroup_name, repr(e))
+                    log.exception('schedule({}): scheduling error!\n{}', sgroup_name, repr(e))
 
         # At this point, all scheduling decisions are made
         # and the resource occupation is committed to the database.
@@ -863,7 +864,7 @@ async def _list_agents_by_sgroup(
         )
     )
     items = []
-    async for row in db_conn.execute(query):
+    for row in (await db_conn.execute(query)):
         item = AgentContext(
             row['id'],
             row['addr'],

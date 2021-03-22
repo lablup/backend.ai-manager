@@ -2274,7 +2274,7 @@ class AgentRegistry:
         assert status != KernelStatus.TERMINATED, \
                'TERMINATED status update must be handled in ' \
                'mark_kernel_terminated()'
-        now = datetime.now(tzutc()),
+        now = datetime.now(tzutc())
         data = {
             'status': status,
             'status_info': reason,
