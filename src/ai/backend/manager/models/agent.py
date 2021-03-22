@@ -192,7 +192,6 @@ class Agent(graphene.ObjectType):
             query = (
                 sa.select([sa.func.count(agents.c.id)])
                 .select_from(agents)
-                .as_scalar()
             )
             if scaling_group is not None:
                 query = query.where(agents.c.scaling_group == scaling_group)

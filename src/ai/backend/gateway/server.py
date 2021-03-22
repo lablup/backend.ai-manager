@@ -326,8 +326,9 @@ async def database_ctx(root_ctx: RootContext) -> AsyncIterator[None]:
         url,
         echo=False,
         # echo=bool(root_ctx.local_config['logging']['level'] == 'DEBUG'),
-        # minsize=8, maxsize=256,
-        # timeout=60, pool_recycle=120,
+        pool_size=8,
+        pool_recycle=120,
+        # timeout=60,
         json_serializer=functools.partial(json.dumps, cls=ExtendedJSONEncoder)
     )
     yield

@@ -524,7 +524,6 @@ class VirtualFolder(graphene.ObjectType):
             query = (
                 sa.select([sa.func.count(vfolders.c.id)])
                 .select_from(j)
-                .as_scalar()
             )
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)

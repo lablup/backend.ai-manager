@@ -259,13 +259,11 @@ class User(graphene.ObjectType):
                     sa.select([sa.func.count(users.c.uuid)])
                     .select_from(j)
                     .where(agus.c.group_id == group_id)
-                    .as_scalar()
                 )
             else:
                 query = (
                     sa.select([sa.func.count(users.c.uuid)])
                     .select_from(users)
-                    .as_scalar()
                 )
             if domain_name is not None:
                 query = query.where(users.c.domain_name == domain_name)

@@ -547,7 +547,6 @@ class ComputeContainer(graphene.ObjectType):
                 sa.select([sa.func.count(kernels.c.id)])
                 .select_from(kernels)
                 .where(kernels.c.session_id == session_id)
-                .as_scalar()
             )
             if cluster_role is not None:
                 query = query.where(kernels.c.cluster_role == cluster_role)
@@ -809,7 +808,6 @@ class ComputeSession(graphene.ObjectType):
                 sa.select([sa.func.count(kernels.c.id)])
                 .select_from(kernels)
                 .where(kernels.c.cluster_role == DEFAULT_ROLE)
-                .as_scalar()
             )
             if domain_name is not None:
                 query = query.where(kernels.c.domain_name == domain_name)
@@ -1190,7 +1188,6 @@ class LegacyComputeSession(graphene.ObjectType):
                 sa.select([sa.func.count(kernels.c.session_id)])
                 .select_from(kernels)
                 .where(kernels.c.cluster_role == DEFAULT_ROLE)
-                .as_scalar()
             )
             if domain_name is not None:
                 query = query.where(kernels.c.domain_name == domain_name)
@@ -1343,7 +1340,7 @@ async def recalc_concurrency_used(db_conn: SAConnection, access_key: AccessKey) 
                     (kernels.c.access_key == access_key) &
                     (kernels.c.status.in_(USER_RESOURCE_OCCUPYING_KERNEL_STATUSES))
                 )
-                .as_scalar()
+                .scalar_subquery()
             ),
         )
         .where(keypairs.c.access_key == access_key)
