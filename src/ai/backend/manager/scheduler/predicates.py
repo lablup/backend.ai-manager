@@ -4,9 +4,9 @@ from typing import (
     List,
 )
 
-from aiopg.sa.connection import SAConnection
 from dateutil.tz import tzutc
 import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
 from ai.backend.common.logging import BraceStyleAdapter
 from ai.backend.common.types import (

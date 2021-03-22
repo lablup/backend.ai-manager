@@ -45,7 +45,7 @@ import sqlalchemy as sa
 from sqlalchemy.sql.expression import true, null
 import trafaret as t
 if TYPE_CHECKING:
-    from aiopg.sa.connection import SAConnection
+    from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
 from ai.backend.common import redis, validators as tx
 from ai.backend.common.docker import ImageRef

@@ -41,10 +41,10 @@ drivers = ["console"]
 [logging.pkg-ns]
 "" = "WARNING"
 "aiotools" = "INFO"
-"aiopg" = "WARNING"
 "aiohttp" = "INFO"
 "ai.backend" = "INFO"
 "alembic" = "INFO"
+"sqlalchemy" = "WARNING"
 
 [logging.console]
 colored = true

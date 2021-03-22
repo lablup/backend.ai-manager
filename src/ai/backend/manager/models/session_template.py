@@ -10,9 +10,9 @@ from typing import (
 )
 import uuid
 
-from aiopg.sa.connection import SAConnection
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pgsql
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 import trafaret as t
 
 from ai.backend.common import validators as tx

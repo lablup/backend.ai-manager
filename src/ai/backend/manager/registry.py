@@ -2349,11 +2349,12 @@ class AgentRegistry:
             per_kernel_updates[kernel_id] = updates
 
         async with reenter_txn(self.dbpool, db_conn) as conn:
-            # TODO: update to use execute_batch() if aiopg supports it.
             for kernel_id, updates in per_kernel_updates.items():
-                query = (sa.update(kernels)
-                           .values(updates)
-                           .where(kernels.c.id == kernel_id))
+                query = (
+                    sa.update(kernels)
+                    .values(updates)
+                    .where(kernels.c.id == kernel_id)
+                )
                 await conn.execute(query)
 
     async def mark_kernel_terminated(
